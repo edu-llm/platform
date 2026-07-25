@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import subprocess
 from datetime import UTC, datetime, timedelta
@@ -11,7 +12,7 @@ from pydantic import ValidationError
 
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.workload import WorkloadCatalog
-from edullm_platform.evidence import scan_for_secrets
+from edullm_platform.evidence import AWS_ACCOUNT_ID_PATTERN, scan_for_secrets
 from tools.capture_phase0_evidence import (
     BatchQuotaRecord,
     GitHubPlanEvidence,
@@ -32,6 +33,42 @@ from tools.capture_phase0_evidence import (
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FIXTURES_DIR = PROJECT_ROOT / "fixtures" / "evidence"
 AWS_EXAMPLE_ACCOUNT_ID = "123456789012"
+ALLOWED_ACCOUNT_ID_INTS = {int(AWS_EXAMPLE_ACCOUNT_ID)}
+TRACKED_TREE_PATHS = ("tools", "tests", "fixtures/evidence", "src/edullm_platform")
+
+
+def tracked_tree_files() -> list[Path] | None:
+    if not (PROJECT_ROOT / ".git").is_dir():
+        return None
+    result = subprocess.run(
+        ["git", "ls-files", *TRACKED_TREE_PATHS],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return [PROJECT_ROOT / relative_path for relative_path in result.stdout.splitlines() if relative_path]
+
+
+def suspicious_account_id_int(value: int) -> bool:
+    if value in ALLOWED_ACCOUNT_ID_INTS:
+        return False
+    if value < 0 or value >= 10**12:
+        return False
+    return AWS_ACCOUNT_ID_PATTERN.search(f"{value:012d}") is not None
+
+
+def find_suspicious_account_id_ints(source: str) -> list[int]:
+    tree = ast.parse(source)
+    matches: list[int] = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, int)
+            and suspicious_account_id_int(node.value)
+        ):
+            matches.append(node.value)
+    return matches
 
 
 def assert_validation_error(
@@ -358,6 +395,32 @@ def test_service_quotas_rejects_increase_required_without_insufficient_quota() -
     )
 
 
+def test_service_quotas_accepts_blocked_for_non_quota_reason() -> None:
+    payload = service_quotas_payload(
+        capacity_verdict="blocked",
+        capacity_verdict_note=(
+            "Regional g5.12xlarge capacity unavailable in us-east-1 during review."
+        ),
+    )
+    evidence = ServiceQuotasEvidence.model_validate(payload)
+    assert evidence.capacity_verdict == "blocked"
+
+
+def test_service_quotas_rejects_blocked_without_reason_note() -> None:
+    payload = service_quotas_payload(
+        capacity_verdict="blocked",
+        capacity_verdict_note="   ",
+    )
+    with pytest.raises(ValidationError) as exc_info:
+        ServiceQuotasEvidence.model_validate(payload)
+    assert_validation_error(
+        exc_info.value,
+        loc_suffix=(),
+        error_type="value_error",
+        message_fragment="blocked verdict requires a non-empty reason note",
+    )
+
+
 def test_github_plan_rejects_secrets_in_plan_name() -> None:
     payload = github_plan_payload(plan_name="AKIAIOSFODNN7EXAMPLE")
     with pytest.raises(ValidationError) as exc_info:
@@ -396,8 +459,29 @@ def test_service_quotas_reject_secrets_and_account_ids(field: str, secret_value:
         ("lowercase access key", "prefix akiaiosfodnn7example suffix"),
         ("40-char secret key", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"),
         ("github pat", "github_pat_11AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+        ("github ghs token", "ghs_abcdefghijklmnopqrstuvwxyz1234567890ABCD"),
+        ("github ghu token", "ghu_abcdefghijklmnopqrstuvwxyz1234567890ABCD"),
         ("pem header", "-----BEGIN RSA PRIVATE KEY-----"),
         ("bearer token", "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"),
+        (
+            "sts prefix only",
+            "FwoGZXIv" + "A" * 20,
+        ),
+        (
+            "sts token FQo",
+            "FQoGZXIvYXdzEBQaD"
+            + "A" * 60,
+        ),
+        (
+            "sts token AQo",
+            "AQoDYXdzEJr"
+            + "B" * 60,
+        ),
+        (
+            "sts token IQo",
+            "IQoDYXdzEjr"
+            + "C" * 60,
+        ),
         (
             "jwt",
             (
@@ -423,6 +507,48 @@ def test_service_quotas_rejects_secrets_in_quota_unit() -> None:
     assert_validation_error(
         exc_info.value,
         loc_suffix=("quotas", 0, "unit"),
+        error_type="value_error",
+        message_fragment="must not contain credentials or raw AWS account IDs",
+    )
+
+
+@pytest.mark.parametrize("field", ["organization"])
+def test_github_plan_rejects_secrets_in_scanned_fields(field: str) -> None:
+    payload = github_plan_payload(**{field: "AKIAIOSFODNN7EXAMPLE"})
+    with pytest.raises(ValidationError) as exc_info:
+        GitHubPlanEvidence.model_validate(payload)
+    assert_validation_error(
+        exc_info.value,
+        loc_suffix=(field,),
+        error_type="value_error",
+        message_fragment="must not contain credentials or raw AWS account IDs",
+    )
+
+
+@pytest.mark.parametrize("field", ["region"])
+def test_service_quotas_rejects_secrets_in_scanned_fields(field: str) -> None:
+    payload = service_quotas_payload(**{field: "AKIAIOSFODNN7EXAMPLE"})
+    with pytest.raises(ValidationError) as exc_info:
+        ServiceQuotasEvidence.model_validate(payload)
+    assert_validation_error(
+        exc_info.value,
+        loc_suffix=(field,),
+        error_type="value_error",
+        message_fragment="must not contain credentials or raw AWS account IDs",
+    )
+
+
+@pytest.mark.parametrize("field", ["quota_code", "quota_name", "workload_profile"])
+def test_quota_records_reject_secrets_in_scanned_fields(field: str) -> None:
+    payload = service_quotas_payload()
+    quotas = list(payload["quotas"])  # type: ignore[arg-type]
+    quotas[0][field] = "AKIAIOSFODNN7EXAMPLE"
+    payload["quotas"] = quotas
+    with pytest.raises(ValidationError) as exc_info:
+        ServiceQuotasEvidence.model_validate(payload)
+    assert_validation_error(
+        exc_info.value,
+        loc_suffix=("quotas", 0, field),
         error_type="value_error",
         message_fragment="must not contain credentials or raw AWS account IDs",
     )
@@ -693,15 +819,30 @@ def test_capture_phase0_evidence_writes_under_allowed_output_root(
         )
 
 
-def test_tracked_tree_contains_no_real_sandbox_account_id() -> None:
-    import subprocess
+def test_tracked_tree_contains_no_aws_account_id_patterns() -> None:
+    tracked_files = tracked_tree_files()
+    if tracked_files is None:
+        pytest.skip("not in a git checkout")
 
-    forbidden_account_id = f"{56956104102:012d}"
-    result = subprocess.run(
-        ["git", "grep", "-F", forbidden_account_id, "--", "tools", "tests", "fixtures/evidence"],
-        cwd=PROJECT_ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == 1, result.stdout
+    pattern_matches: list[str] = []
+    int_matches: list[str] = []
+    for path in tracked_files:
+        source = path.read_text(encoding="utf-8")
+        if AWS_ACCOUNT_ID_PATTERN.search(source):
+            pattern_matches.append(str(path.relative_to(PROJECT_ROOT)))
+        suspicious_ints = find_suspicious_account_id_ints(source)
+        if suspicious_ints:
+            int_matches.append(
+                f"{path.relative_to(PROJECT_ROOT)}: {suspicious_ints}"
+            )
+
+    assert not pattern_matches, f"12-digit account ID pattern matched in {pattern_matches}"
+    assert not int_matches, f"reconstructible account ID ints found in {int_matches}"
+
+
+def test_tracked_tree_guard_skips_outside_git_checkout(tmp_path: Path) -> None:
+    outside_root = tmp_path / "outside"
+    outside_root.mkdir()
+    test_file = outside_root / "test_evidence.py"
+    test_file.write_text(Path(__file__).read_text(encoding="utf-8"), encoding="utf-8")
+    assert tracked_tree_files() is None

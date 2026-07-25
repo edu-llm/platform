@@ -22,8 +22,12 @@ AWS_SECRET_ACCESS_KEY_PATTERN = re.compile(
     r"(?<![A-Za-z0-9/+=])[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])"
 )
 AWS_STS_SESSION_TOKEN_PATTERN = re.compile(r"(?i)(?:FwoGZXIv|IQoJb3)[A-Za-z0-9/+]{20,}")
+LONG_BASE64_CREDENTIAL_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9/+=])[A-Za-z0-9/+=]{60,}(?![A-Za-z0-9/+=])"
+)
 GITHUB_TOKEN_PATTERN = re.compile(
-    r"(?:ghp_[A-Za-z0-9_]{36,}|gho_[A-Za-z0-9_]{36,}|github_pat_[A-Za-z0-9_]{22,})"
+    r"(?:ghp_[A-Za-z0-9_]{36,}|gho_[A-Za-z0-9_]{36,}|ghs_[A-Za-z0-9_]{36,}|"
+    r"ghu_[A-Za-z0-9_]{36,}|github_pat_[A-Za-z0-9_]{22,})"
 )
 PEM_PRIVATE_KEY_PATTERN = re.compile(
     r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"
@@ -36,6 +40,7 @@ SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
     AWS_ACCESS_KEY_ID_PATTERN,
     AWS_SECRET_ACCESS_KEY_PATTERN,
     AWS_STS_SESSION_TOKEN_PATTERN,
+    LONG_BASE64_CREDENTIAL_PATTERN,
     GITHUB_TOKEN_PATTERN,
     PEM_PRIVATE_KEY_PATTERN,
     BEARER_TOKEN_PATTERN,
@@ -213,6 +218,6 @@ class ServiceQuotasEvidence(FreshEvidenceModel):
                 raise ValueError(
                     "increase_required verdict requires at least one insufficient quota"
                 )
-        elif self.capacity_verdict == "blocked" and not incomplete:
-            raise ValueError("blocked verdict requires incomplete workload mapping")
+        elif self.capacity_verdict == "blocked" and not self.capacity_verdict_note.strip():
+            raise ValueError("blocked verdict requires a non-empty reason note")
         return self
