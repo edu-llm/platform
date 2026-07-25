@@ -1,0 +1,79 @@
+{
+  "$defs": {
+    "PersonRef": {
+      "additionalProperties": false,
+      "properties": {
+        "display_name": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Display Name"
+        },
+        "github_login": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9-]+$",
+          "title": "Github Login",
+          "type": "string"
+        }
+      },
+      "required": [
+        "github_login"
+      ],
+      "title": "PersonRef",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "admins": {
+      "items": {
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9-]+$",
+        "type": "string"
+      },
+      "title": "Admins",
+      "type": "array"
+    },
+    "members": {
+      "items": {
+        "$ref": "#/$defs/PersonRef"
+      },
+      "minItems": 1,
+      "title": "Members",
+      "type": "array"
+    },
+    "pilot_repositories": {
+      "items": {
+        "minLength": 1,
+        "pattern": "^\\S+$",
+        "type": "string"
+      },
+      "title": "Pilot Repositories",
+      "type": "array"
+    },
+    "team_leads": {
+      "items": {
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9-]+$",
+        "type": "string"
+      },
+      "title": "Team Leads",
+      "type": "array"
+    }
+  },
+  "required": [
+    "admins",
+    "team_leads",
+    "members",
+    "pilot_repositories"
+  ],
+  "title": "OrganizationInventory",
+  "type": "object"
+}

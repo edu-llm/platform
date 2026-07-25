@@ -1,2 +1,17 @@
 .worktrees/
 .superpowers/
+docs-frank/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Build and distribution metadata
+build/
+dist/
+*.egg-info/
+.eggs/

@@ -1,0 +1,73 @@
+{
+  "$defs": {
+    "PolicyThresholds": {
+      "additionalProperties": false,
+      "properties": {
+        "routine_maximum_attempts": {
+          "minimum": 1,
+          "title": "Routine Maximum Attempts",
+          "type": "integer"
+        },
+        "routine_maximum_cost_usd": {
+          "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]+)?$",
+          "title": "Routine Maximum Cost Usd",
+          "type": "string"
+        },
+        "routine_maximum_runtime_hours": {
+          "pattern": "^(?:[1-9][0-9]*(?:\\.[0-9]+)?|0\\.[0-9]*[1-9][0-9]*)$",
+          "title": "Routine Maximum Runtime Hours",
+          "type": "string"
+        }
+      },
+      "required": [
+        "routine_maximum_cost_usd",
+        "routine_maximum_runtime_hours",
+        "routine_maximum_attempts"
+      ],
+      "title": "PolicyThresholds",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "denied_outright": {
+      "items": {
+        "enum": [
+          "unregistered_repository",
+          "unregistered_dataset",
+          "unregistered_compute_profile",
+          "mutable_repository_revision",
+          "mutable_image_reference"
+        ],
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Denied Outright",
+      "type": "array"
+    },
+    "exception_approver_roles": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Exception Approver Roles",
+      "type": "array"
+    },
+    "routine_approver_role": {
+      "minLength": 1,
+      "title": "Routine Approver Role",
+      "type": "string"
+    },
+    "thresholds": {
+      "$ref": "#/$defs/PolicyThresholds"
+    }
+  },
+  "required": [
+    "thresholds",
+    "routine_approver_role",
+    "exception_approver_roles",
+    "denied_outright"
+  ],
+  "title": "ApprovalPolicy",
+  "type": "object"
+}

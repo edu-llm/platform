@@ -1,0 +1,29 @@
+compute_profiles:
+  - name: cpu-32vcpu
+    accelerator: cpu
+    nodes: 1
+    hourly_rate_usd: "1.428"
+    pricing_source: "AWS Price List API get-products AmazonEC2 c7i.8xlarge us-east-1 Linux/Shared/NA/Used"
+    pricing_observed_at: "2026-07-24"
+  - name: gpu-4xa10g
+    accelerator: gpu
+    nodes: 1
+    hourly_rate_usd: "5.672"
+    pricing_source: "AWS Price List API get-products AmazonEC2 g5.12xlarge us-east-1 Linux/Shared/NA/Used"
+    pricing_observed_at: "2026-07-24"
+workloads:
+  - name: dolma-tokenize-smoke
+    repository: dolma
+    compute_profile: cpu-32vcpu
+    maximum_runtime_hours: "2"
+    maximum_attempts: 1
+    checkpoint: null
+  - name: olmo-core-train-smoke
+    repository: OLMo-core
+    compute_profile: gpu-4xa10g
+    maximum_runtime_hours: "1"
+    maximum_attempts: 1
+    checkpoint:
+      interval_minutes: 30
+      destination_prefix: "s3://edullm-checkpoints/runs/"
+      resume_required: false

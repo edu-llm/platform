@@ -1,0 +1,123 @@
+{
+  "$defs": {
+    "CheckpointContract": {
+      "additionalProperties": false,
+      "properties": {
+        "destination_prefix": {
+          "pattern": "^s3://[^/]+/.+/$",
+          "title": "Destination Prefix",
+          "type": "string"
+        },
+        "interval_minutes": {
+          "exclusiveMinimum": 0,
+          "title": "Interval Minutes",
+          "type": "integer"
+        },
+        "resume_required": {
+          "title": "Resume Required",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "interval_minutes",
+        "destination_prefix",
+        "resume_required"
+      ],
+      "title": "CheckpointContract",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "checkpoint": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CheckpointContract"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "command": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Command",
+      "type": "array"
+    },
+    "commit_sha": {
+      "pattern": "^[0-9a-f]{40}$",
+      "title": "Commit Sha",
+      "type": "string"
+    },
+    "compute_profile": {
+      "minLength": 1,
+      "title": "Compute Profile",
+      "type": "string"
+    },
+    "dataset_release": {
+      "minLength": 1,
+      "title": "Dataset Release",
+      "type": "string"
+    },
+    "image_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Image Digest",
+      "type": "string"
+    },
+    "maximum_attempts": {
+      "minimum": 1,
+      "title": "Maximum Attempts",
+      "type": "integer"
+    },
+    "maximum_runtime_hours": {
+      "pattern": "^(?:[1-9][0-9]*(?:\\.[0-9]+)?|0\\.[0-9]*[1-9][0-9]*)$",
+      "title": "Maximum Runtime Hours",
+      "type": "string"
+    },
+    "repository": {
+      "minLength": 1,
+      "title": "Repository",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "team": {
+      "minLength": 1,
+      "title": "Team",
+      "type": "string"
+    },
+    "wandb_project": {
+      "minLength": 1,
+      "title": "Wandb Project",
+      "type": "string"
+    },
+    "workload_profile": {
+      "minLength": 1,
+      "title": "Workload Profile",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "repository",
+    "commit_sha",
+    "image_digest",
+    "dataset_release",
+    "command",
+    "team",
+    "wandb_project",
+    "workload_profile",
+    "compute_profile",
+    "maximum_runtime_hours",
+    "maximum_attempts",
+    "checkpoint"
+  ],
+  "title": "RunManifest",
+  "type": "object"
+}
