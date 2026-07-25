@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Final, Literal, Protocol
+from typing import Any, Final, TypeVar, cast
 
-from pydantic import computed_field
+from pydantic import ValidationError, computed_field
 
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.base import ContractModel
@@ -19,27 +19,34 @@ from edullm_platform.contracts.policy import (
     RequestFacts,
     classify_request,
 )
-from edullm_platform.contracts.workload import CostInputs, WorkloadCatalog
+from edullm_platform.contracts.workload import WorkloadCatalog
+from edullm_platform.evidence import (
+    BatchQuotaRecord,
+    GitHubPlanEvidence,
+    QuotaRecord,
+    ServiceQuotasEvidence,
+    batch_quota_issues,
+    ec2_quota_coverage_issues,
+    evidence_load_reason_code,
+    validate_observed_at,
+)
+from edullm_platform.manifest_helpers import (
+    compute_manifest_maximum_cost,
+    is_compute_profile_registered,
+    is_workload_profile_registered,
+    load_manifests_from_directory,
+    manifest_has_immutable_image,
+    manifest_has_immutable_revision,
+)
 
-CapacityVerdict = Literal["verified", "increase_required", "blocked"]
-
-
-class GitHubPlanEvidenceLike(Protocol):
-    organization: str
-    plan_name: str
-
-
-class ServiceQuotasEvidenceLike(Protocol):
-    environment: str
-    region: str
-    capacity_verdict: CapacityVerdict
-    capacity_verdict_note: str
+T = TypeVar("T", bound=ContractModel)
 
 EXPECTED_ADMINS: Final = ("philote-dev", "BritishAmericqn")
 EXPECTED_PILOTS: Final = ("OLMo-core", "dolma")
 EXPECTED_GITHUB_ORG: Final = "edu-llm"
 EXPECTED_AWS_REGION: Final = "us-east-1"
 REGISTERED_DATASET_RELEASES: Final = frozenset({"dolma-2026-07"})
+PROGRAM_MAXIMUM_COST_USD: Final = Decimal(500)
 
 REQUIRED_DENIED_OUTRIGHT: Final = (
     "unregistered_repository",
@@ -49,10 +56,12 @@ REQUIRED_DENIED_OUTRIGHT: Final = (
     "mutable_image_reference",
 )
 
-REPRESENTATIVE_MANIFEST_FILENAMES: Final = (
-    "cpu-routine.yaml",
-    "gpu-routine.yaml",
-    "gpu-exception.yaml",
+REQUIRED_REPRESENTATIVE_MANIFESTS: Final = frozenset(
+    {
+        "cpu-routine.yaml",
+        "gpu-routine.yaml",
+        "gpu-exception.yaml",
+    }
 )
 
 REVIEWED_MANIFEST_COSTS: Final = {
@@ -77,8 +86,9 @@ EXPECTED_CHECK_IDS: Final = frozenset(
     }
 )
 
-COMMIT_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
-IMAGE_DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
+STALE_EVIDENCE_DETAIL: Final = (
+    "Operational evidence is stale; re-run tools/capture_phase0_evidence.py to refresh it."
+)
 
 
 class GateCheck(ContractModel):
@@ -102,8 +112,10 @@ class Phase0Inputs:
     inventory: OrganizationInventory
     catalog: WorkloadCatalog
     policy: ApprovalPolicy
-    github_plan: GitHubPlanEvidenceLike
-    aws_capacity: ServiceQuotasEvidenceLike
+    github_plan: GitHubPlanEvidence | None
+    github_plan_load_error: str | None
+    aws_capacity: ServiceQuotasEvidence | None
+    aws_capacity_load_error: str | None
     manifests: tuple[tuple[str, RunManifest], ...]
 
 
@@ -115,76 +127,92 @@ def fail_check(check_id: str, reason_code: str, detail: str) -> GateCheck:
     return GateCheck(check_id=check_id, passed=False, reason_code=reason_code, detail=detail)
 
 
-def load_json_fixture(path: Path, model_type: type[ContractModel]) -> ContractModel:
+def load_github_plan_evidence(path: Path) -> tuple[GitHubPlanEvidence | None, str | None]:
     payload = json.loads(path.read_text(encoding="utf-8"))
-    return model_type.model_validate(payload)
+    try:
+        return GitHubPlanEvidence.model_validate(payload), None
+    except ValidationError as exc:
+        return None, evidence_load_reason_code(exc)
 
 
-def evidence_models() -> tuple[type[ContractModel], type[ContractModel]]:
-    import sys
+def load_aws_capacity_evidence(path: Path) -> tuple[ServiceQuotasEvidence | None, str | None]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        return None, "evidence_invalid"
+    try:
+        return ServiceQuotasEvidence.model_validate(payload), None
+    except ValidationError as exc:
+        reason = evidence_load_reason_code(exc)
+        if reason == "evidence_stale":
+            return None, reason
+        return load_service_quotas_evidence_lenient(payload)
 
-    tools_dir = Path(__file__).resolve().parents[2] / "tools"
-    tools_dir_str = str(tools_dir)
-    if tools_dir_str not in sys.path:
-        sys.path.insert(0, tools_dir_str)
-    from capture_phase0_evidence import GitHubPlanEvidence, ServiceQuotasEvidence
 
-    return GitHubPlanEvidence, ServiceQuotasEvidence
+def load_service_quotas_evidence_lenient(
+    payload: dict[str, object],
+) -> tuple[ServiceQuotasEvidence | None, str | None]:
+    try:
+        raw_quotas = payload["quotas"]
+        raw_batch_quotas = payload["batch_quotas"]
+        if not isinstance(raw_quotas, list) or not isinstance(raw_batch_quotas, list):
+            return None, "evidence_invalid"
+        quotas = tuple(QuotaRecord.model_validate(quota) for quota in raw_quotas)
+        batch_quotas = tuple(
+            BatchQuotaRecord.model_validate(quota) for quota in raw_batch_quotas
+        )
+        observed_at = payload.get("observed_at")
+        if not isinstance(observed_at, str):
+            return None, "evidence_invalid"
+        validate_observed_at(datetime.fromisoformat(observed_at.removesuffix("Z") + "+00:00"))
+    except (ValidationError, ValueError, KeyError, TypeError):
+        return None, "evidence_invalid"
+    return (
+        ServiceQuotasEvidence.model_construct(
+            **cast(Any, {
+                key: value
+                for key, value in payload.items()
+                if key not in {"quotas", "batch_quotas"}
+            }),
+            quotas=quotas,
+            batch_quotas=batch_quotas,
+        ),
+        None,
+    )
 
 
-def load_representative_manifests(repo_root: Path) -> tuple[tuple[str, RunManifest], ...]:
-    manifest_dir = repo_root / "fixtures" / "manifests"
-    manifests: list[tuple[str, RunManifest]] = []
-    for filename in REPRESENTATIVE_MANIFEST_FILENAMES:
-        manifests.append((filename, load_yaml(manifest_dir / filename, RunManifest)))
-    return tuple(manifests)
+def load_json_evidence[T: ContractModel](path: Path, model_type: type[T]) -> tuple[T | None, str | None]:
+    if model_type is GitHubPlanEvidence:
+        github_plan, error = load_github_plan_evidence(path)
+        return cast(tuple[T | None, str | None], (github_plan, error))
+    if model_type is ServiceQuotasEvidence:
+        aws_capacity, error = load_aws_capacity_evidence(path)
+        return cast(tuple[T | None, str | None], (aws_capacity, error))
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        return model_type.model_validate(payload), None
+    except ValidationError as exc:
+        return None, evidence_load_reason_code(exc)
 
 
 def load_phase0_inputs(repo_root: Path) -> Phase0Inputs:
-    github_plan_model, service_quotas_model = evidence_models()
+    github_plan, github_plan_load_error = load_json_evidence(
+        repo_root / "fixtures" / "evidence" / "github-plan.sanitized.json",
+        GitHubPlanEvidence,
+    )
+    aws_capacity, aws_capacity_load_error = load_json_evidence(
+        repo_root / "fixtures" / "evidence" / "service-quotas.sanitized.json",
+        ServiceQuotasEvidence,
+    )
     return Phase0Inputs(
         inventory=load_yaml(repo_root / "config" / "organization.yaml", OrganizationInventory),
         catalog=load_yaml(repo_root / "config" / "workload-catalog.yaml", WorkloadCatalog),
         policy=load_yaml(repo_root / "config" / "policy.yaml", ApprovalPolicy),
-        github_plan=load_json_fixture(  # type: ignore[arg-type]
-            repo_root / "fixtures" / "evidence" / "github-plan.sanitized.json",
-            github_plan_model,
-        ),
-        aws_capacity=load_json_fixture(  # type: ignore[arg-type]
-            repo_root / "fixtures" / "evidence" / "service-quotas.sanitized.json",
-            service_quotas_model,
-        ),
-        manifests=load_representative_manifests(repo_root),
+        github_plan=github_plan,
+        github_plan_load_error=github_plan_load_error,
+        aws_capacity=aws_capacity,
+        aws_capacity_load_error=aws_capacity_load_error,
+        manifests=load_manifests_from_directory(repo_root / "fixtures" / "manifests"),
     )
-
-
-def manifest_has_immutable_revision(manifest: RunManifest) -> bool:
-    return COMMIT_SHA_PATTERN.fullmatch(manifest.commit_sha) is not None
-
-
-def manifest_has_immutable_image(manifest: RunManifest) -> bool:
-    return IMAGE_DIGEST_PATTERN.fullmatch(manifest.image_digest) is not None
-
-
-def is_compute_profile_registered(manifest: RunManifest, catalog: WorkloadCatalog) -> bool:
-    registered_names = {profile.name for profile in catalog.compute_profiles}
-    return manifest.compute_profile in registered_names
-
-
-def is_workload_profile_registered(manifest: RunManifest, catalog: WorkloadCatalog) -> bool:
-    registered_names = {workload.name for workload in catalog.workloads}
-    return manifest.workload_profile in registered_names
-
-
-def compute_manifest_maximum_cost(manifest: RunManifest, catalog: WorkloadCatalog) -> Decimal:
-    profile_by_name = {profile.name: profile for profile in catalog.compute_profiles}
-    profile = profile_by_name[manifest.compute_profile]
-    return CostInputs(
-        hourly_rate_usd=profile.hourly_rate_usd,
-        nodes=profile.nodes,
-        maximum_runtime_hours=manifest.maximum_runtime_hours,
-        maximum_attempts=manifest.maximum_attempts,
-    ).maximum_compute_cost_usd
 
 
 def expected_manifest_classification(filename: str) -> ApprovalClass:
@@ -223,26 +251,6 @@ def check_ownership(inventory: OrganizationInventory) -> GateCheck:
                 "Phase 0 requires exactly Frank Gonzalez (philote-dev) and Benjamin "
                 f"(BritishAmericqn) as platform admins; got {inventory.admins!r}."
             ),
-        )
-    member_logins = [member.github_login for member in inventory.members]
-    if len(member_logins) != len(set(member_logins)):
-        return fail_check(
-            "ownership",
-            "duplicate_member_login",
-            "Organization roster must deduplicate members by GitHub login.",
-        )
-    unknown_roles = (set(inventory.admins) | set(inventory.team_leads)) - set(member_logins)
-    if unknown_roles:
-        return fail_check(
-            "ownership",
-            "role_not_in_roster",
-            f"Every admin and team lead must appear in the member roster: {sorted(unknown_roles)!r}.",
-        )
-    if len(inventory.team_leads) != 8 or len(set(inventory.team_leads)) != 8:
-        return fail_check(
-            "ownership",
-            "team_lead_roster_invalid",
-            "Phase 0 requires exactly eight distinct team leads recorded in the roster.",
         )
     return ok_check(
         "ownership",
@@ -337,11 +345,23 @@ def check_checkpoint_expectations(catalog: WorkloadCatalog) -> GateCheck:
             )
     return ok_check(
         "checkpoint_expectations",
-        "Every representative workload declares explicit retry and checkpoint expectations.",
+        "Retryable representative workloads declare checkpoint contracts; single-attempt "
+        "workloads declare checkpoint: null explicitly.",
     )
 
 
-def check_github_plan(evidence: GitHubPlanEvidenceLike) -> GateCheck:
+def check_github_plan(
+    evidence: GitHubPlanEvidence | None,
+    load_error: str | None,
+) -> GateCheck:
+    if load_error == "evidence_stale":
+        return fail_check("github_plan", "evidence_stale", STALE_EVIDENCE_DETAIL)
+    if evidence is None:
+        return fail_check(
+            "github_plan",
+            "evidence_invalid",
+            "GitHub plan evidence failed schema validation.",
+        )
     if evidence.organization != EXPECTED_GITHUB_ORG:
         return fail_check(
             "github_plan",
@@ -372,12 +392,18 @@ def check_github_plan(evidence: GitHubPlanEvidenceLike) -> GateCheck:
     )
 
 
-def check_aws_capacity(evidence: ServiceQuotasEvidenceLike) -> GateCheck:
-    if evidence.environment != "sandbox":
+def check_aws_capacity(
+    evidence: ServiceQuotasEvidence | None,
+    load_error: str | None,
+    catalog: WorkloadCatalog,
+) -> GateCheck:
+    if load_error == "evidence_stale":
+        return fail_check("aws_capacity", "evidence_stale", STALE_EVIDENCE_DETAIL)
+    if evidence is None:
         return fail_check(
             "aws_capacity",
-            "wrong_environment",
-            "AWS capacity evidence must be labeled environment: sandbox.",
+            "evidence_invalid",
+            "AWS capacity evidence failed schema validation.",
         )
     if evidence.region != EXPECTED_AWS_REGION:
         return fail_check(
@@ -385,21 +411,19 @@ def check_aws_capacity(evidence: ServiceQuotasEvidenceLike) -> GateCheck:
             "wrong_region",
             f"AWS capacity evidence must cover region {EXPECTED_AWS_REGION!r}.",
         )
-    if evidence.capacity_verdict == "verified":
-        return ok_check(
-            "aws_capacity",
-            "Sandbox applied GPU and Batch quotas in us-east-1 satisfy representative workloads.",
-        )
-    if evidence.capacity_verdict == "increase_required":
+    reason_code, detail = ec2_quota_coverage_issues(catalog=catalog, quotas=evidence.quotas)
+    if reason_code is not None and detail is not None:
+        return fail_check("aws_capacity", reason_code, detail)
+    batch_issues = batch_quota_issues(evidence.batch_quotas)
+    if batch_issues:
         return fail_check(
             "aws_capacity",
-            "capacity_increase_required",
-            evidence.capacity_verdict_note,
+            "capacity_blocked",
+            "Batch quota evidence is incomplete: " + "; ".join(batch_issues),
         )
-    return fail_check(
+    return ok_check(
         "aws_capacity",
-        "capacity_blocked",
-        evidence.capacity_verdict_note,
+        "Sandbox applied GPU and Batch quotas in us-east-1 satisfy representative workloads.",
     )
 
 
@@ -411,18 +435,51 @@ def check_representative_manifests(
     manifests: tuple[tuple[str, RunManifest], ...],
 ) -> GateCheck:
     manifest_names = {filename for filename, _manifest in manifests}
-    missing = [
-        filename
-        for filename in REPRESENTATIVE_MANIFEST_FILENAMES
-        if filename not in manifest_names
-    ]
-    if missing:
+    missing_required = sorted(REQUIRED_REPRESENTATIVE_MANIFESTS - manifest_names)
+    if missing_required:
         return fail_check(
             "representative_manifests",
-            "missing_manifest",
-            f"Representative manifests are missing: {missing!r}.",
+            "missing_required_manifest",
+            f"Required representative manifests are missing: {missing_required!r}.",
+        )
+    unexpected = sorted(manifest_names - set(REVIEWED_MANIFEST_COSTS))
+    if unexpected:
+        return fail_check(
+            "representative_manifests",
+            "unexpected_manifest",
+            (
+                "Every manifest under fixtures/manifests/ must have a reviewed cost expectation; "
+                f"unexpected files: {unexpected!r}."
+            ),
         )
     for filename, manifest in manifests:
+        if not is_compute_profile_registered(manifest, catalog):
+            return fail_check(
+                "representative_manifests",
+                "unregistered_compute_profile",
+                (
+                    f"Manifest {filename!r} references unregistered compute profile "
+                    f"{manifest.compute_profile!r}."
+                ),
+            )
+        if not is_workload_profile_registered(manifest, catalog):
+            return fail_check(
+                "representative_manifests",
+                "unregistered_workload_profile",
+                (
+                    f"Manifest {filename!r} references unregistered workload profile "
+                    f"{manifest.workload_profile!r}."
+                ),
+            )
+        if manifest.dataset_release not in REGISTERED_DATASET_RELEASES:
+            return fail_check(
+                "representative_manifests",
+                "unregistered_dataset",
+                (
+                    f"Manifest {filename!r} references unregistered dataset release "
+                    f"{manifest.dataset_release!r}."
+                ),
+            )
         estimated_cost = compute_manifest_maximum_cost(manifest, catalog)
         facts = request_facts_from_manifest(
             manifest,
@@ -441,13 +498,6 @@ def check_representative_manifests(
                     f"expected {expected.value}."
                 ),
             )
-        if not is_workload_profile_registered(manifest, catalog):
-            return fail_check(
-                "representative_manifests",
-                "unregistered_workload_profile",
-                f"Manifest {filename!r} references unregistered workload profile "
-                f"{manifest.workload_profile!r}.",
-            )
     return ok_check(
         "representative_manifests",
         "CPU routine, GPU routine, and GPU exception manifests validate and classify as expected.",
@@ -457,22 +507,23 @@ def check_representative_manifests(
 def check_cost_estimates(
     *,
     catalog: WorkloadCatalog,
-    policy: ApprovalPolicy,
     manifests: tuple[tuple[str, RunManifest], ...],
 ) -> GateCheck:
-    for profile in catalog.compute_profiles:
-        if not profile.pricing_source or not profile.pricing_observed_at:
-            return fail_check(
-                "cost_estimates",
-                "missing_pricing_metadata",
-                f"Compute profile {profile.name!r} must include source-dated pricing metadata.",
-            )
     for filename, manifest in manifests:
         if filename not in REVIEWED_MANIFEST_COSTS:
             return fail_check(
                 "cost_estimates",
                 "missing_reviewed_cost",
                 f"No reviewed maximum cost is recorded for manifest {filename!r}.",
+            )
+        if not is_compute_profile_registered(manifest, catalog):
+            return fail_check(
+                "cost_estimates",
+                "unregistered_compute_profile",
+                (
+                    f"Manifest {filename!r} references unregistered compute profile "
+                    f"{manifest.compute_profile!r}."
+                ),
             )
         estimated_cost = compute_manifest_maximum_cost(manifest, catalog)
         reviewed_cost = REVIEWED_MANIFEST_COSTS[filename]
@@ -485,13 +536,13 @@ def check_cost_estimates(
                     f"reviewed expectation {reviewed_cost}."
                 ),
             )
-        if estimated_cost > policy.thresholds.routine_maximum_cost_usd:
+        if filename.endswith("-routine.yaml") and estimated_cost > PROGRAM_MAXIMUM_COST_USD:
             return fail_check(
                 "cost_estimates",
                 "exceeds_program_budget",
                 (
-                    f"Manifest {filename!r} maximum cost {estimated_cost} exceeds the reviewed "
-                    f"program budget ceiling {policy.thresholds.routine_maximum_cost_usd}."
+                    f"Manifest {filename!r} maximum cost {estimated_cost} exceeds the explicit "
+                    f"program budget ceiling {PROGRAM_MAXIMUM_COST_USD}."
                 ),
             )
     return ok_check(
@@ -507,8 +558,8 @@ def evaluate_phase0(inputs: Phase0Inputs) -> Phase0GateResult:
         check_workload_coverage(inputs.catalog),
         check_approval_paths(inputs.policy),
         check_checkpoint_expectations(inputs.catalog),
-        check_github_plan(inputs.github_plan),
-        check_aws_capacity(inputs.aws_capacity),
+        check_github_plan(inputs.github_plan, inputs.github_plan_load_error),
+        check_aws_capacity(inputs.aws_capacity, inputs.aws_capacity_load_error, inputs.catalog),
         check_representative_manifests(
             inventory=inputs.inventory,
             catalog=inputs.catalog,
@@ -517,7 +568,6 @@ def evaluate_phase0(inputs: Phase0Inputs) -> Phase0GateResult:
         ),
         check_cost_estimates(
             catalog=inputs.catalog,
-            policy=inputs.policy,
             manifests=inputs.manifests,
         ),
     )

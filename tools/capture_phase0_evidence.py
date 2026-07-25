@@ -5,50 +5,28 @@ import json
 import re
 import subprocess
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Literal, Self, TypedDict
-
-from pydantic import AfterValidator, BeforeValidator, Field, field_validator, model_validator
+from typing import TypedDict
 
 from edullm_platform.config import load_yaml
-from edullm_platform.contracts.base import ContractModel, require_ordered_sequence
+from edullm_platform.contracts.base import ContractModel
 from edullm_platform.contracts.workload import WorkloadCatalog
+from edullm_platform.evidence import (
+    BATCH_QUOTA_TARGETS,
+    BatchQuotaRecord,
+    CapacityVerdict,
+    EvidenceEnvironment,
+    GitHubPlanEvidence,
+    QuotaRecord,
+    ServiceQuotasEvidence,
+    quota_capacity_issues,
+    scan_for_secrets,
+)
 
-AWS_ACCOUNT_ID_PATTERN = re.compile(r"(?<![0-9])\d{12}(?![0-9])")
-AWS_ACCESS_KEY_ID_PATTERN = re.compile(r"(?i)(?<![A-Z0-9])(?:AKIA|ASIA)[0-9A-Z]{16}(?![A-Z0-9])")
-AWS_SECRET_ACCESS_KEY_PATTERN = re.compile(
-    r"(?<![A-Za-z0-9/+=])[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])"
-)
-AWS_STS_SESSION_TOKEN_PATTERN = re.compile(r"(?i)(?:FwoGZXIv|IQoJb3)[A-Za-z0-9/+]{20,}")
-GITHUB_TOKEN_PATTERN = re.compile(
-    r"(?:ghp_[A-Za-z0-9_]{36,}|gho_[A-Za-z0-9_]{36,}|github_pat_[A-Za-z0-9_]{22,})"
-)
-PEM_PRIVATE_KEY_PATTERN = re.compile(
-    r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"
-)
-BEARER_TOKEN_PATTERN = re.compile(r"Bearer [A-Za-z0-9\-._~+/]+=*")
-JWT_PATTERN = re.compile(r"eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
 INSTANCE_TYPE_PATTERN = re.compile(r"\b([a-z0-9]+\.[a-z0-9]+)\b")
 
-SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
-    AWS_ACCOUNT_ID_PATTERN,
-    AWS_ACCESS_KEY_ID_PATTERN,
-    AWS_SECRET_ACCESS_KEY_PATTERN,
-    AWS_STS_SESSION_TOKEN_PATTERN,
-    GITHUB_TOKEN_PATTERN,
-    PEM_PRIVATE_KEY_PATTERN,
-    BEARER_TOKEN_PATTERN,
-    JWT_PATTERN,
-)
-
-FRESHNESS_WINDOW = timedelta(days=30)
 ALLOWED_OUTPUT_SUFFIX = Path("docs-frank/working/phase-0-evidence")
-
-CapacityVerdict = Literal["verified", "increase_required", "blocked"]
-EvidenceEnvironment = Literal["sandbox"]
-EvidenceStatus = Literal["ok"]
-QuotaAppliedAtLevel = Literal["ACCOUNT"]
 
 class InstanceEvidence(TypedDict):
     required_vcpus: int
@@ -66,17 +44,6 @@ class Ec2QuotaTarget(TypedDict):
     workload_profile: str
     required_vcpus: int
     instance_type: str
-
-
-class BatchQuotaTarget(TypedDict):
-    quota_code: str
-    quota_name: str
-
-
-BATCH_QUOTA_TARGETS: tuple[BatchQuotaTarget, ...] = (
-    {"quota_code": "L-144F0CA5", "quota_name": "Compute environment limit"},
-    {"quota_code": "L-4CEA37AD", "quota_name": "Job queue limit"},
-)
 
 
 def project_root() -> Path:
@@ -100,118 +67,6 @@ def resolve_output_dir(output_dir: Path, *, base_dir: Path | None = None) -> Pat
             "output_dir must be under docs-frank/working/phase-0-evidence/"
         ) from exc
     return resolved
-
-
-def scan_for_secrets(value: str) -> str:
-    if any(pattern.search(value) for pattern in SECRET_PATTERNS):
-        raise ValueError("must not contain credentials or raw AWS account IDs")
-    return value
-
-
-SecretFreeStr = Annotated[str, AfterValidator(scan_for_secrets)]
-
-
-def validate_observed_at(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        raise ValueError("observation timestamps must be timezone-aware")
-    observed_at = value.astimezone(UTC)
-    now = datetime.now(tz=UTC)
-    if observed_at > now:
-        raise ValueError("observation timestamps must not be in the future")
-    if now - observed_at > FRESHNESS_WINDOW:
-        raise ValueError("observation must be at most 30 days old")
-    return observed_at
-
-
-class FreshEvidenceModel(ContractModel):
-    observed_at: datetime = Field(strict=False)
-
-    @field_validator("observed_at")
-    @classmethod
-    def validate_fresh_observation(cls, value: datetime) -> datetime:
-        return validate_observed_at(value)
-
-
-class GitHubPlanEvidence(FreshEvidenceModel):
-    source: Literal["github"]
-    environment: EvidenceEnvironment
-    organization: SecretFreeStr = Field(min_length=1)
-    status: EvidenceStatus
-    plan_name: SecretFreeStr = Field(min_length=1)
-
-
-class QuotaRecord(ContractModel):
-    service_code: SecretFreeStr = Field(min_length=1)
-    quota_code: SecretFreeStr = Field(min_length=1)
-    quota_name: SecretFreeStr = Field(min_length=1)
-    applied_value: float = Field(gt=0)
-    unit: SecretFreeStr = Field(min_length=1)
-    quota_applied_at_level: QuotaAppliedAtLevel
-    workload_profile: SecretFreeStr | None = Field(default=None, min_length=1)
-    required_vcpus: int | None = Field(default=None, gt=0)
-
-
-class BatchQuotaRecord(ContractModel):
-    service_code: Literal["batch"]
-    quota_code: SecretFreeStr = Field(min_length=1)
-    quota_name: SecretFreeStr = Field(min_length=1)
-    applied_value: float = Field(gt=0)
-    quota_applied_at_level: QuotaAppliedAtLevel
-
-
-def quota_capacity_issues(
-    quotas: tuple[QuotaRecord, ...],
-) -> tuple[bool, list[str]]:
-    incomplete = False
-    insufficient: list[str] = []
-    for quota in quotas:
-        if quota.required_vcpus is None or quota.workload_profile is None:
-            incomplete = True
-            continue
-        if quota.applied_value < quota.required_vcpus:
-            insufficient.append(
-                f"{quota.workload_profile} requires {quota.required_vcpus} vCPU "
-                f"but {quota.quota_code} applied quota is {quota.applied_value:g}"
-            )
-    return incomplete, insufficient
-
-
-class ServiceQuotasEvidence(FreshEvidenceModel):
-    source: Literal["aws"]
-    environment: EvidenceEnvironment
-    account_alias: SecretFreeStr = Field(min_length=1)
-    region: SecretFreeStr = Field(min_length=1)
-    status: EvidenceStatus
-    capacity_verdict: CapacityVerdict
-    capacity_verdict_note: SecretFreeStr = Field(min_length=1)
-    quotas: Annotated[tuple[QuotaRecord, ...], BeforeValidator(require_ordered_sequence)] = Field(
-        min_length=1,
-        strict=False,
-    )
-    batch_quotas: Annotated[
-        tuple[BatchQuotaRecord, ...], BeforeValidator(require_ordered_sequence)
-    ] = Field(min_length=1, strict=False)
-
-    @model_validator(mode="after")
-    def validate_capacity_verdict_matches_quotas(self) -> Self:
-        incomplete, insufficient = quota_capacity_issues(self.quotas)
-        if self.capacity_verdict == "verified":
-            if incomplete or insufficient:
-                raise ValueError(
-                    "verified verdict requires every quota record to cover its required vcpus"
-                )
-        elif self.capacity_verdict == "increase_required":
-            if incomplete:
-                raise ValueError(
-                    "increase_required verdict requires complete workload mapping"
-                )
-            if not insufficient:
-                raise ValueError(
-                    "increase_required verdict requires at least one insufficient quota"
-                )
-        elif self.capacity_verdict == "blocked" and not incomplete:
-            raise ValueError("blocked verdict requires incomplete workload mapping")
-        return self
 
 
 def instance_type_from_pricing_source(pricing_source: str) -> str:

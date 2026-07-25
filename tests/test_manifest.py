@@ -7,7 +7,15 @@ from pydantic import ValidationError
 
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.manifest import RunManifest
-from edullm_platform.contracts.workload import CostInputs, WorkloadCatalog
+from edullm_platform.contracts.workload import WorkloadCatalog
+from edullm_platform.manifest_helpers import (
+    compute_manifest_maximum_cost,
+    is_compute_profile_registered,
+    is_workload_profile_registered,
+    load_manifest,
+    manifest_has_immutable_image,
+    manifest_has_immutable_revision,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_FIXTURES_DIR = PROJECT_ROOT / "fixtures" / "manifests"
@@ -27,42 +35,28 @@ REPRESENTATIVE_MANIFEST_COSTS = {
 
 
 def load_representative_manifest(filename: str) -> RunManifest:
-    return load_yaml(MANIFEST_FIXTURES_DIR / filename, RunManifest)
+    return load_manifest(MANIFEST_FIXTURES_DIR / filename)
 
 
 def load_workload_catalog() -> WorkloadCatalog:
     return load_yaml(PROJECT_ROOT / "config" / "workload-catalog.yaml", WorkloadCatalog)
 
 
-def manifest_has_immutable_revision(manifest: RunManifest) -> bool:
-    return COMMIT_SHA_PATTERN.fullmatch(manifest.commit_sha) is not None
-
-
-def manifest_has_immutable_image(manifest: RunManifest) -> bool:
-    return IMAGE_DIGEST_PATTERN.fullmatch(manifest.image_digest) is not None
-
-
-def is_compute_profile_registered(manifest: RunManifest, catalog: WorkloadCatalog) -> bool:
-    registered_names = {profile.name for profile in catalog.compute_profiles}
-    return manifest.compute_profile in registered_names
-
-
-def is_workload_profile_registered(manifest: RunManifest, catalog: WorkloadCatalog) -> bool:
-    registered_names = {workload.name for workload in catalog.workloads}
-    return manifest.workload_profile in registered_names
-
-
-def compute_manifest_maximum_cost(manifest: RunManifest, catalog: WorkloadCatalog) -> Decimal:
-    if not is_compute_profile_registered(manifest, catalog):
-        raise AssertionError(f"unregistered compute profile: {manifest.compute_profile!r}")
-    profile_by_name = {profile.name: profile for profile in catalog.compute_profiles}
-    profile = profile_by_name[manifest.compute_profile]
-    return CostInputs(
-        hourly_rate_usd=profile.hourly_rate_usd,
-        nodes=profile.nodes,
-        maximum_runtime_hours=manifest.maximum_runtime_hours,
-        maximum_attempts=manifest.maximum_attempts,
-    ).maximum_compute_cost_usd
+__all__ = (
+    "COMMIT_SHA_PATTERN",
+    "IMAGE_DIGEST_PATTERN",
+    "MANIFEST_FIXTURES_DIR",
+    "PROJECT_ROOT",
+    "REPRESENTATIVE_MANIFEST_COSTS",
+    "REPRESENTATIVE_MANIFEST_FILENAMES",
+    "compute_manifest_maximum_cost",
+    "is_compute_profile_registered",
+    "is_workload_profile_registered",
+    "load_representative_manifest",
+    "load_workload_catalog",
+    "manifest_has_immutable_image",
+    "manifest_has_immutable_revision",
+)
 
 
 def manifest_payload() -> dict[str, object]:
