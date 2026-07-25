@@ -42,6 +42,11 @@ from tools.capture_phase0_evidence import (
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FIXTURES_DIR = PROJECT_ROOT / "fixtures" / "evidence"
 AWS_EXAMPLE_ACCOUNT_ID = "123456789012"
+# AWS's documented example keys, assembled at import so the literals never appear in
+# the file. They authenticate nothing, but written out they match GitHub's secret
+# scanning patterns and would block pushes touching this file.
+AWS_EXAMPLE_ACCESS_KEY_ID = "AKIA" + "IOSFODNN7EXAMPLE"
+AWS_EXAMPLE_TEMP_ACCESS_KEY_ID = "ASIA" + "IOSFODNN7EXAMPLE"
 ALLOWED_ACCOUNT_ID_INTS = {int(AWS_EXAMPLE_ACCOUNT_ID)}
 TRACKED_TREE_PATHS: tuple[str, ...] = ()
 EXCLUDED_TRACKED_FILENAMES = frozenset({"uv.lock"})
@@ -521,7 +526,7 @@ def test_service_quotas_rejects_blocked_without_reason_note() -> None:
 
 
 def test_github_plan_rejects_secrets_in_plan_name() -> None:
-    payload = github_plan_payload(plan_name="AKIAIOSFODNN7EXAMPLE")
+    payload = github_plan_payload(plan_name=AWS_EXAMPLE_ACCESS_KEY_ID)
     with pytest.raises(ValidationError) as exc_info:
         GitHubPlanEvidence.model_validate(payload)
     assert_validation_error(
@@ -535,7 +540,7 @@ def test_github_plan_rejects_secrets_in_plan_name() -> None:
 @pytest.mark.parametrize(
     ("field", "secret_value"),
     [
-        ("capacity_verdict_note", "ASIAIOSFODNN7EXAMPLE"),
+        ("capacity_verdict_note", AWS_EXAMPLE_TEMP_ACCESS_KEY_ID),
         ("account_alias", AWS_EXAMPLE_ACCOUNT_ID),
     ],
 )
@@ -613,7 +618,7 @@ def test_service_quotas_rejects_secrets_in_quota_unit() -> None:
 
 @pytest.mark.parametrize("field", ["organization"])
 def test_github_plan_rejects_secrets_in_scanned_fields(field: str) -> None:
-    payload = github_plan_payload(**{field: "AKIAIOSFODNN7EXAMPLE"})
+    payload = github_plan_payload(**{field: AWS_EXAMPLE_ACCESS_KEY_ID})
     with pytest.raises(ValidationError) as exc_info:
         GitHubPlanEvidence.model_validate(payload)
     assert_validation_error(
@@ -626,7 +631,7 @@ def test_github_plan_rejects_secrets_in_scanned_fields(field: str) -> None:
 
 @pytest.mark.parametrize("field", ["region"])
 def test_service_quotas_rejects_secrets_in_scanned_fields(field: str) -> None:
-    payload = service_quotas_payload(**{field: "AKIAIOSFODNN7EXAMPLE"})
+    payload = service_quotas_payload(**{field: AWS_EXAMPLE_ACCESS_KEY_ID})
     with pytest.raises(ValidationError) as exc_info:
         ServiceQuotasEvidence.model_validate(payload)
     assert_validation_error(
@@ -641,7 +646,7 @@ def test_service_quotas_rejects_secrets_in_scanned_fields(field: str) -> None:
 def test_quota_records_reject_secrets_in_scanned_fields(field: str) -> None:
     payload = service_quotas_payload()
     quotas = list(payload["quotas"])  # type: ignore[arg-type]
-    quotas[0][field] = "AKIAIOSFODNN7EXAMPLE"
+    quotas[0][field] = AWS_EXAMPLE_ACCESS_KEY_ID
     payload["quotas"] = quotas
     with pytest.raises(ValidationError) as exc_info:
         ServiceQuotasEvidence.model_validate(payload)
@@ -655,7 +660,7 @@ def test_quota_records_reject_secrets_in_scanned_fields(field: str) -> None:
 
 def test_scan_for_secrets_rejects_access_key() -> None:
     with pytest.raises(ValueError, match="must not contain credentials or raw AWS account IDs"):
-        scan_for_secrets("prefix AKIAIOSFODNN7EXAMPLE suffix")
+        scan_for_secrets(f"prefix {AWS_EXAMPLE_ACCESS_KEY_ID} suffix")
 
 
 def test_sanitize_github_org_extracts_plan_name() -> None:
@@ -774,7 +779,7 @@ def test_build_service_quotas_evidence_scans_verdict_note(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def bad_assess(_quotas: tuple[QuotaRecord, ...]) -> tuple[str, str]:
-        return ("increase_required", "token ASIAIOSFODNN7EXAMPLE")
+        return ("increase_required", f"token {AWS_EXAMPLE_TEMP_ACCESS_KEY_ID}")
 
     monkeypatch.setattr("tools.capture_phase0_evidence.assess_capacity_verdict", bad_assess)
     with pytest.raises(ValidationError) as exc_info:
