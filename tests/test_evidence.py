@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.workload import WorkloadCatalog
+from edullm_platform.evidence import scan_for_secrets
 from tools.capture_phase0_evidence import (
     BatchQuotaRecord,
     GitHubPlanEvidence,
@@ -25,7 +26,6 @@ from tools.capture_phase0_evidence import (
     run_command,
     sanitize_github_org,
     sanitize_quota_record,
-    scan_for_secrets,
     write_json,
 )
 

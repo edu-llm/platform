@@ -21,7 +21,6 @@ from edullm_platform.evidence import (
     QuotaRecord,
     ServiceQuotasEvidence,
     quota_capacity_issues,
-    scan_for_secrets,
 )
 
 INSTANCE_TYPE_PATTERN = re.compile(r"\b([a-z0-9]+\.[a-z0-9]+)\b")
