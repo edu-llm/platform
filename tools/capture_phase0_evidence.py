@@ -102,7 +102,7 @@ def run_command(args: list[str]) -> object:
     return json.loads(completed.stdout)
 
 
-def sanitize_github_org(raw: dict[str, object], *, observed_at: str) -> GitHubPlanEvidence:
+def sanitize_github_org(raw: dict[str, object], *, observed_at: str) -> tuple[str, str]:
     login = raw.get("login")
     plan = raw.get("plan")
     if not isinstance(login, str) or not login:
@@ -112,11 +112,34 @@ def sanitize_github_org(raw: dict[str, object], *, observed_at: str) -> GitHubPl
     plan_name = plan.get("name")
     if not isinstance(plan_name, str) or not plan_name:
         raise ValueError("GitHub organization response missing non-empty plan name")
+    return login, plan_name
+
+
+def sanitize_github_repository(raw: dict[str, object]) -> tuple[str, str]:
+    name = raw.get("name")
+    visibility = raw.get("visibility")
+    if not isinstance(name, str) or not name:
+        raise ValueError("GitHub repository response missing name")
+    if visibility not in {"public", "private", "internal"}:
+        raise ValueError("GitHub repository response missing supported visibility")
+    return name, visibility
+
+
+def build_github_plan_evidence(
+    *,
+    organization: str,
+    plan_name: str,
+    repository: str,
+    visibility: str,
+    observed_at: str,
+) -> GitHubPlanEvidence:
     return GitHubPlanEvidence.model_validate(
         {
             "source": "github",
             "environment": "sandbox",
-            "organization": login,
+            "organization": organization,
+            "repository": repository,
+            "visibility": visibility,
             "observed_at": observed_at,
             "status": "ok",
             "plan_name": plan_name,
@@ -279,13 +302,28 @@ def fetch_service_quota(
     return quota
 
 
-def capture_github_plan(*, github_org: str) -> tuple[GitHubPlanEvidence, dict[str, object]]:
+def capture_github_plan(
+    *,
+    github_org: str,
+    github_repo: str = "platform",
+) -> tuple[GitHubPlanEvidence, dict[str, object]]:
     observed_at = datetime.now(tz=UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    raw = run_command(["gh", "api", f"orgs/{github_org}"])
-    if not isinstance(raw, dict):
+    org_raw = run_command(["gh", "api", f"orgs/{github_org}"])
+    if not isinstance(org_raw, dict):
         raise TypeError("GitHub organization response must be a JSON object")
-    evidence = sanitize_github_org(raw, observed_at=observed_at)
-    return evidence, raw
+    repo_raw = run_command(["gh", "api", f"repos/{github_org}/{github_repo}"])
+    if not isinstance(repo_raw, dict):
+        raise TypeError("GitHub repository response must be a JSON object")
+    organization, plan_name = sanitize_github_org(org_raw, observed_at=observed_at)
+    repository, visibility = sanitize_github_repository(repo_raw)
+    evidence = build_github_plan_evidence(
+        organization=organization,
+        plan_name=plan_name,
+        repository=repository,
+        visibility=visibility,
+        observed_at=observed_at,
+    )
+    return evidence, {"organization": org_raw, "repository": repo_raw}
 
 
 def capture_service_quotas(
@@ -381,7 +419,8 @@ def capture_phase0_evidence(
         environment=environment,
     )
 
-    write_json(raw_dir / "github-org.json", github_raw)
+    write_json(raw_dir / "github-org.json", github_raw["organization"])
+    write_json(raw_dir / "github-repository.json", github_raw["repository"])
     write_json(raw_dir / "service-quotas.json", quotas_raw)
     write_sanitized_evidence(sanitized_dir / "github-plan.sanitized.json", github_evidence)
     write_sanitized_evidence(sanitized_dir / "service-quotas.sanitized.json", quotas_evidence)

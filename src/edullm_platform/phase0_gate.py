@@ -52,6 +52,7 @@ EXPECTED_TEAM_LEADS: Final = (
 )
 EXPECTED_PILOTS: Final = ("OLMo-core", "dolma")
 EXPECTED_GITHUB_ORG: Final = "edu-llm"
+EXPECTED_GITHUB_REPOSITORY: Final = "platform"
 EXPECTED_AWS_REGION: Final = "us-east-1"
 REGISTERED_DATASET_RELEASES: Final = frozenset({"dolma-2026-07"})
 PROGRAM_MAXIMUM_COST_USD: Final = Decimal(500)
@@ -349,8 +350,19 @@ def check_github_plan(
                 f"got {evidence.organization!r}."
             ),
         )
+    if evidence.repository != EXPECTED_GITHUB_REPOSITORY:
+        return fail_check(
+            "github_plan",
+            "repository_mismatch",
+            (
+                f"GitHub plan evidence must describe repository {EXPECTED_GITHUB_REPOSITORY!r}; "
+                f"got {evidence.repository!r}."
+            ),
+        )
     plan_name = evidence.plan_name.lower()
-    if plan_name not in PHASE1_PRIVATE_REPO_GITHUB_PLANS:
+    controls_via_visibility = evidence.visibility == "public"
+    controls_via_plan = plan_name in PHASE1_PRIVATE_REPO_GITHUB_PLANS
+    if not controls_via_visibility and not controls_via_plan:
         return fail_check(
             "github_plan",
             "plan_insufficient_for_private_repo_controls",
@@ -361,13 +373,17 @@ def check_github_plan(
                 "plane on the private platform repository."
             ),
         )
-    return ok_check(
-        "github_plan",
-        (
-            f"GitHub organization plan {evidence.plan_name!r} supports Phase 1 private-repository "
-            "governance controls."
-        ),
-    )
+    if controls_via_visibility:
+        detail = (
+            f"GitHub repository {evidence.repository!r} is public, so Phase 1 governance controls "
+            f"are available under organization plan {evidence.plan_name!r}."
+        )
+    else:
+        detail = (
+            f"GitHub organization plan {evidence.plan_name!r} supports Phase 1 governance controls "
+            f"for the {evidence.visibility} platform repository."
+        )
+    return ok_check("github_plan", detail)
 
 
 def check_aws_capacity(

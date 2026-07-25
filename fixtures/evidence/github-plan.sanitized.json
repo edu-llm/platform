@@ -1,8 +1,10 @@
 {
   "environment": "sandbox",
-  "observed_at": "2026-07-25T03:25:24Z",
+  "observed_at": "2026-07-25T18:53:51Z",
   "organization": "edu-llm",
   "plan_name": "free",
+  "repository": "platform",
   "source": "github",
-  "status": "ok"
+  "status": "ok",
+  "visibility": "public"
 }

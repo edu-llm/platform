@@ -136,22 +136,25 @@ def copy_gate_repo(destination: Path) -> Path:
     return repo_root
 
 
-def test_repository_gate_reports_github_plan_as_only_blocker() -> None:
+def test_repository_gate_passes_with_public_platform_repository() -> None:
     result = evaluate_phase0(loaded_inputs())
-    assert result.passed is False
+    assert result.passed is True
     assert {check.check_id for check in result.checks} == EXPECTED_CHECK_IDS
-    failing = [check for check in result.checks if not check.passed]
-    assert [check.check_id for check in failing] == ["github_plan"]
-    assert failing[0].reason_code == "plan_insufficient_for_private_repo_controls"
-    assert all(check.passed for check in result.checks if check.check_id != "github_plan")
+    assert all(check.passed for check in result.checks)
+    assert all(check.reason_code == "ok" for check in result.checks)
 
 
 def test_gate_passes_when_github_plan_supports_private_repo_controls() -> None:
     inputs = loaded_inputs()
-    team_plan = inputs.github_plan
-    assert team_plan is not None
+    github_plan = inputs.github_plan
+    assert github_plan is not None
     result = evaluate_phase0(
-        replace(inputs, github_plan=team_plan.model_copy(update={"plan_name": "team"}))
+        replace(
+            inputs,
+            github_plan=github_plan.model_copy(
+                update={"plan_name": "team", "visibility": "private"}
+            ),
+        )
     )
     assert result.passed is True
     assert all(check.passed for check in result.checks)
@@ -161,13 +164,15 @@ def test_gate_passes_when_github_plan_supports_private_repo_controls() -> None:
 def test_gate_executes_every_check_even_after_failure() -> None:
     inputs = loaded_inputs()
     broken_inventory = inputs.inventory.model_copy(update={"admins": ("philote-dev", "philote-dev")})
-    team_plan = inputs.github_plan
-    assert team_plan is not None
+    github_plan = inputs.github_plan
+    assert github_plan is not None
     result = evaluate_phase0(
         replace(
             inputs,
             inventory=broken_inventory,
-            github_plan=team_plan.model_copy(update={"plan_name": "team"}),
+            github_plan=github_plan.model_copy(
+                update={"plan_name": "team", "visibility": "private"}
+            ),
         )
     )
     assert result.passed is False
@@ -178,12 +183,7 @@ def test_gate_executes_every_check_even_after_failure() -> None:
 
 @pytest.mark.parametrize("check_id", sorted(EXPECTED_CHECK_IDS))
 def test_passing_gate_reports_ok_reason_code(check_id: str) -> None:
-    inputs = loaded_inputs()
-    team_plan = inputs.github_plan
-    assert team_plan is not None
-    result = evaluate_phase0(
-        replace(inputs, github_plan=team_plan.model_copy(update={"plan_name": "team"}))
-    )
+    result = evaluate_phase0(loaded_inputs())
     check = get_check(result, check_id)
     assert check.passed is True
     assert check.reason_code == "ok"
@@ -271,11 +271,80 @@ def test_checkpoint_expectations_fails_for_retry_without_checkpoint() -> None:
 
 def test_github_plan_fails_for_free_plan_on_private_repository() -> None:
     inputs = loaded_inputs()
-    result = evaluate_phase0(inputs)
+    github_plan = inputs.github_plan
+    assert github_plan is not None
+    result = evaluate_phase0(
+        replace(inputs, github_plan=github_plan.model_copy(update={"visibility": "private"}))
+    )
     check = get_check(result, "github_plan")
     assert check.passed is False
     assert check.reason_code == "plan_insufficient_for_private_repo_controls"
     assert "private" in check.detail.lower()
+
+
+def test_github_plan_passes_for_public_repository_on_free_plan() -> None:
+    inputs = loaded_inputs()
+    github_plan = inputs.github_plan
+    assert github_plan is not None
+    result = evaluate_phase0(
+        replace(
+            inputs,
+            github_plan=github_plan.model_copy(update={"plan_name": "free", "visibility": "public"}),
+        )
+    )
+    check = get_check(result, "github_plan")
+    assert check.passed is True
+    assert check.reason_code == "ok"
+    assert "public" in check.detail.lower()
+
+
+def test_github_plan_passes_for_private_repository_on_team_plan() -> None:
+    inputs = loaded_inputs()
+    github_plan = inputs.github_plan
+    assert github_plan is not None
+    result = evaluate_phase0(
+        replace(
+            inputs,
+            github_plan=github_plan.model_copy(update={"plan_name": "team", "visibility": "private"}),
+        )
+    )
+    check = get_check(result, "github_plan")
+    assert check.passed is True
+    assert check.reason_code == "ok"
+
+
+def test_github_plan_passes_for_private_repository_on_enterprise_plan() -> None:
+    inputs = loaded_inputs()
+    github_plan = inputs.github_plan
+    assert github_plan is not None
+    result = evaluate_phase0(
+        replace(
+            inputs,
+            github_plan=github_plan.model_copy(
+                update={"plan_name": "enterprise", "visibility": "private"}
+            ),
+        )
+    )
+    check = get_check(result, "github_plan")
+    assert check.passed is True
+    assert check.reason_code == "ok"
+
+
+def test_github_plan_fails_for_unknown_plan_on_private_repository() -> None:
+    inputs = loaded_inputs()
+    github_plan = inputs.github_plan
+    assert github_plan is not None
+    result = evaluate_phase0(
+        replace(
+            inputs,
+            github_plan=github_plan.model_copy(
+                update={"plan_name": "unknown-plan", "visibility": "private"}
+            ),
+        )
+    )
+    check = get_check(result, "github_plan")
+    assert check.passed is False
+    assert check.reason_code == "plan_insufficient_for_private_repo_controls"
 
 
 def test_github_plan_fails_for_organization_mismatch() -> None:
@@ -443,8 +512,6 @@ def test_cost_estimates_does_not_apply_program_budget_to_exception_manifest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     inputs = loaded_inputs()
-    team_plan = inputs.github_plan
-    assert team_plan is not None
     inflated_cost = compute_manifest_maximum_cost(
         next(manifest for name, manifest in inputs.manifests if name == "gpu-exception.yaml").model_copy(
             update={"maximum_runtime_hours": Decimal(100)}
@@ -465,7 +532,6 @@ def test_cost_estimates_does_not_apply_program_budget_to_exception_manifest(
     result = evaluate_phase0(
         replace(
             inputs,
-            github_plan=team_plan.model_copy(update={"plan_name": "team"}),
             manifests=manifests,
         )
     )
@@ -523,22 +589,31 @@ def test_load_phase0_inputs_rejects_invalid_organization_yaml(tmp_path: Path) ->
     assert exc_info.value.errors()[0]["loc"] == ("members",)
 
 
-def test_validate_phase0_exits_one_for_current_repository_state(tmp_path: Path) -> None:
+def test_validate_phase0_exits_one_for_private_repository_without_team_plan(tmp_path: Path) -> None:
     repo_root = copy_gate_repo(tmp_path)
+    evidence_path = repo_root / "fixtures" / "evidence" / "github-plan.sanitized.json"
+    payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+    payload["visibility"] = "private"
+    evidence_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     completed = run_validate_phase0(repo_root)
     assert completed.returncode == 1
-    payload = json.loads(completed.stdout)
-    assert payload["passed"] is False
-    failing = [check for check in payload["checks"] if not check["passed"]]
+    parsed = json.loads(completed.stdout)
+    assert parsed["passed"] is False
+    failing = [check for check in parsed["checks"] if not check["passed"]]
     assert [check["check_id"] for check in failing] == ["github_plan"]
+    assert failing[0]["reason_code"] == "plan_insufficient_for_private_repo_controls"
+
+
+def test_validate_phase0_exits_zero_for_current_repository_state(tmp_path: Path) -> None:
+    repo_root = copy_gate_repo(tmp_path)
+    completed = run_validate_phase0(repo_root)
+    assert completed.returncode == 0, completed.stderr
+    payload = json.loads(completed.stdout)
+    assert payload["passed"] is True
 
 
 def test_validate_phase0_exits_zero_when_all_checks_pass(tmp_path: Path) -> None:
     repo_root = copy_gate_repo(tmp_path)
-    evidence_path = repo_root / "fixtures" / "evidence" / "github-plan.sanitized.json"
-    payload = json.loads(evidence_path.read_text(encoding="utf-8"))
-    payload["plan_name"] = "team"
-    evidence_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     completed = run_validate_phase0(repo_root)
     assert completed.returncode == 0, completed.stderr
     parsed = json.loads(completed.stdout)

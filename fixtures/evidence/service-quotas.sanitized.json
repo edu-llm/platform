@@ -17,20 +17,10 @@
     }
   ],
   "capacity_verdict": "verified",
-  "capacity_verdict_note": "Sandbox applied quotas satisfy representative gpu-4xa10g and cpu-32vcpu profiles; does not attest production capacity.",
+  "capacity_verdict_note": "Sandbox applied quotas satisfy representative cpu-32vcpu and gpu-4xa10g profiles; does not attest production capacity.",
   "environment": "sandbox",
-  "observed_at": "2026-07-25T03:25:25Z",
+  "observed_at": "2026-07-25T18:53:52Z",
   "quotas": [
-    {
-      "applied_value": 768.0,
-      "quota_applied_at_level": "ACCOUNT",
-      "quota_code": "L-DB2E81BA",
-      "quota_name": "Running On-Demand G and VT instances",
-      "required_vcpus": 48,
-      "service_code": "ec2",
-      "unit": "vCPU",
-      "workload_profile": "gpu-4xa10g"
-    },
     {
       "applied_value": 1152.0,
       "quota_applied_at_level": "ACCOUNT",
@@ -40,6 +30,16 @@
       "service_code": "ec2",
       "unit": "vCPU",
       "workload_profile": "cpu-32vcpu"
+    },
+    {
+      "applied_value": 768.0,
+      "quota_applied_at_level": "ACCOUNT",
+      "quota_code": "L-DB2E81BA",
+      "quota_name": "Running On-Demand G and VT instances",
+      "required_vcpus": 48,
+      "service_code": "ec2",
+      "unit": "vCPU",
+      "workload_profile": "gpu-4xa10g"
     }
   ],
   "region": "us-east-1",

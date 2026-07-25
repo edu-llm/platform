@@ -27,12 +27,14 @@ from edullm_platform.evidence import (
 from tools.capture_phase0_evidence import (
     allowed_output_root,
     assess_capacity_verdict,
+    build_github_plan_evidence,
     build_service_quotas_evidence,
     capture_phase0_evidence,
     ec2_quota_targets_from_catalog,
     resolve_output_dir,
     run_command,
     sanitize_github_org,
+    sanitize_github_repository,
     sanitize_quota_record,
     write_json,
 )
@@ -176,6 +178,8 @@ def github_plan_payload(**overrides: object) -> dict[str, object]:
         "source": "github",
         "environment": "sandbox",
         "organization": "edu-llm",
+        "repository": "platform",
+        "visibility": "public",
         "observed_at": recent_observed_at(),
         "status": "ok",
         "plan_name": "free",
@@ -248,6 +252,8 @@ def test_github_plan_fixture_is_fresh_and_complete() -> None:
     payload = json.loads((FIXTURES_DIR / "github-plan.sanitized.json").read_text(encoding="utf-8"))
     evidence = GitHubPlanEvidence.model_validate(payload)
     assert evidence.organization == "edu-llm"
+    assert evidence.repository == "platform"
+    assert evidence.visibility == "public"
     assert evidence.plan_name == "free"
 
 
@@ -657,9 +663,29 @@ def test_sanitize_github_org_extracts_plan_name() -> None:
         "login": "edu-llm",
         "plan": {"name": "free", "space": 1, "private_repos": 1, "filled_seats": 1, "seats": 1},
     }
-    evidence = sanitize_github_org(raw, observed_at=recent_observed_at())
+    organization, plan_name = sanitize_github_org(raw, observed_at=recent_observed_at())
+    assert plan_name == "free"
+    assert organization == "edu-llm"
+
+
+def test_sanitize_github_repository_extracts_visibility() -> None:
+    raw = {"name": "platform", "visibility": "public"}
+    repository, visibility = sanitize_github_repository(raw)
+    assert repository == "platform"
+    assert visibility == "public"
+
+
+def test_build_github_plan_evidence_combines_org_and_repository() -> None:
+    evidence = build_github_plan_evidence(
+        organization="edu-llm",
+        plan_name="free",
+        repository="platform",
+        visibility="public",
+        observed_at=recent_observed_at(),
+    )
+    assert evidence.repository == "platform"
+    assert evidence.visibility == "public"
     assert evidence.plan_name == "free"
-    assert evidence.organization == "edu-llm"
 
 
 def test_sanitize_quota_record_rejects_default_level_quota() -> None:
@@ -877,7 +903,10 @@ def test_capture_phase0_evidence_writes_under_allowed_output_root(
 
     monkeypatch.setattr(
         "tools.capture_phase0_evidence.capture_github_plan",
-        lambda **_: (github_evidence, {"login": "edu-llm"}),
+        lambda **_: (
+            github_evidence,
+            {"organization": {"login": "edu-llm"}, "repository": {"name": "platform"}},
+        ),
     )
     monkeypatch.setattr(
         "tools.capture_phase0_evidence.capture_service_quotas",

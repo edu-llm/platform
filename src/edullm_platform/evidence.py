@@ -54,6 +54,7 @@ CapacityVerdict = Literal["verified", "increase_required", "blocked"]
 EvidenceEnvironment = Literal["sandbox"]
 EvidenceStatus = Literal["ok"]
 QuotaAppliedAtLevel = Literal["ACCOUNT"]
+RepositoryVisibility = Literal["public", "private", "internal"]
 
 BATCH_QUOTA_TARGETS: tuple[dict[str, str], ...] = (
     {"quota_code": "L-144F0CA5", "quota_name": "Compute environment limit"},
@@ -130,6 +131,8 @@ class GitHubPlanEvidence(FreshEvidenceModel):
     source: Literal["github"]
     environment: EvidenceEnvironment
     organization: SecretFreeStr = Field(min_length=1)
+    repository: SecretFreeStr = Field(min_length=1)
+    visibility: RepositoryVisibility
     status: EvidenceStatus
     plan_name: SecretFreeStr = Field(min_length=1)
 
