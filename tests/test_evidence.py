@@ -37,8 +37,22 @@ ALLOWED_ACCOUNT_ID_INTS = {int(AWS_EXAMPLE_ACCOUNT_ID)}
 TRACKED_TREE_PATHS = ("tools", "tests", "fixtures/evidence", "src/edullm_platform")
 
 
+def is_git_checkout(root: Path) -> bool:
+    git_path = root / ".git"
+    if not (git_path.is_dir() or git_path.is_file()):
+        return False
+    result = subprocess.run(
+        ["git", "rev-parse", "--is-inside-work-tree"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0 and result.stdout.strip() == "true"
+
+
 def tracked_tree_files() -> list[Path] | None:
-    if not (PROJECT_ROOT / ".git").is_dir():
+    if not is_git_checkout(PROJECT_ROOT):
         return None
     result = subprocess.run(
         ["git", "ls-files", *TRACKED_TREE_PATHS],
@@ -53,9 +67,20 @@ def tracked_tree_files() -> list[Path] | None:
 def suspicious_account_id_int(value: int) -> bool:
     if value in ALLOWED_ACCOUNT_ID_INTS:
         return False
-    if value < 0 or value >= 10**12:
-        return False
-    return AWS_ACCOUNT_ID_PATTERN.search(f"{value:012d}") is not None
+    digit_count = len(str(abs(value)))
+    if digit_count == 12:
+        return AWS_ACCOUNT_ID_PATTERN.search(str(value)) is not None
+    if digit_count == 11:
+        return AWS_ACCOUNT_ID_PATTERN.search(f"{value:012d}") is not None
+    return False
+
+
+def forbidden_account_id_substrings(source: str) -> list[str]:
+    return [
+        match.group(0)
+        for match in AWS_ACCOUNT_ID_PATTERN.finditer(source)
+        if match.group(0) != AWS_EXAMPLE_ACCOUNT_ID
+    ]
 
 
 def find_suspicious_account_id_ints(source: str) -> list[int]:
@@ -828,8 +853,11 @@ def test_tracked_tree_contains_no_aws_account_id_patterns() -> None:
     int_matches: list[str] = []
     for path in tracked_files:
         source = path.read_text(encoding="utf-8")
-        if AWS_ACCOUNT_ID_PATTERN.search(source):
-            pattern_matches.append(str(path.relative_to(PROJECT_ROOT)))
+        forbidden_ids = forbidden_account_id_substrings(source)
+        if forbidden_ids:
+            pattern_matches.append(
+                f"{path.relative_to(PROJECT_ROOT)}: {forbidden_ids}"
+            )
         suspicious_ints = find_suspicious_account_id_ints(source)
         if suspicious_ints:
             int_matches.append(
@@ -840,9 +868,9 @@ def test_tracked_tree_contains_no_aws_account_id_patterns() -> None:
     assert not int_matches, f"reconstructible account ID ints found in {int_matches}"
 
 
-def test_tracked_tree_guard_skips_outside_git_checkout(tmp_path: Path) -> None:
-    outside_root = tmp_path / "outside"
-    outside_root.mkdir()
-    test_file = outside_root / "test_evidence.py"
-    test_file.write_text(Path(__file__).read_text(encoding="utf-8"), encoding="utf-8")
+def test_tracked_tree_guard_skips_outside_git_checkout(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        f"{__name__}.is_git_checkout",
+        lambda _root: False,
+    )
     assert tracked_tree_files() is None
