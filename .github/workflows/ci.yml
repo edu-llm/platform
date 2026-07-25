@@ -1,0 +1,74 @@
+name: CI
+
+# pull_request (not pull_request_target) is deliberate: fork pull requests run with a
+# read-only token and no access to secrets. Do not change this without understanding
+# that pull_request_target grants write access and secrets to code from forks.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: checks (python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.12 is the declared floor in pyproject.toml; 3.13 is what maintainers run.
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Lint
+        run: uv run --frozen ruff check .
+
+      - name: Type check
+        run: uv run --frozen mypy
+
+      - name: Tests
+        run: uv run --frozen pytest -q
+
+      - name: Schemas reproduce from the models
+        run: |
+          uv run --frozen python tools/export_schemas.py
+          git diff --exit-code schemas
+
+  gate:
+    name: phase 0 gate (informational)
+    runs-on: ubuntu-latest
+    # Not a required check. The gate reads captured AWS and GitHub evidence that
+    # expires after 30 days, so it can legitimately go red for reasons unrelated to
+    # the change under review. The contract rules it enforces are covered by the
+    # test suite above, which is what blocks a merge.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Run the acceptance gate
+        run: uv run --frozen python tools/validate_phase0.py
