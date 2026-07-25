@@ -6,7 +6,6 @@ from pydantic import ValidationError
 
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.inventory import OrganizationInventory
-from edullm_platform.contracts.manifest import RunManifest
 from edullm_platform.contracts.policy import (
     ApprovalClass,
     ApprovalPolicy,
@@ -14,28 +13,22 @@ from edullm_platform.contracts.policy import (
     RequestFacts,
     classify_request,
 )
-from edullm_platform.contracts.workload import WorkloadCatalog
+from edullm_platform.phase0_gate import (
+    expected_manifest_classification,
+    request_facts_from_manifest,
+)
 from tests.test_manifest import (
     PROJECT_ROOT,
     REPRESENTATIVE_MANIFEST_FILENAMES,
     compute_manifest_maximum_cost,
-    is_compute_profile_registered,
     is_workload_profile_registered,
     load_representative_manifest,
     load_workload_catalog,
-    manifest_has_immutable_image,
-    manifest_has_immutable_revision,
 )
-
-REGISTERED_DATASET_RELEASES = frozenset({"dolma-2026-07"})
 
 
 def expected_classification(filename: str) -> ApprovalClass:
-    if filename.endswith("-exception.yaml"):
-        return ApprovalClass.EXCEPTION
-    if filename.endswith("-routine.yaml"):
-        return ApprovalClass.ROUTINE
-    raise AssertionError(f"unexpected fixture filename: {filename!r}")
+    return expected_manifest_classification(filename)
 
 
 def numeric_bound_violations(
@@ -58,25 +51,6 @@ def load_organization_inventory() -> OrganizationInventory:
 
 def load_approval_policy() -> ApprovalPolicy:
     return load_yaml(PROJECT_ROOT / "config" / "policy.yaml", ApprovalPolicy)
-
-
-def request_facts_from_manifest(
-    manifest: RunManifest,
-    *,
-    inventory: OrganizationInventory,
-    catalog: WorkloadCatalog,
-    estimated_cost_usd: Decimal,
-) -> RequestFacts:
-    return RequestFacts(
-        repository_registered=manifest.repository in inventory.pilot_repositories,
-        dataset_registered=manifest.dataset_release in REGISTERED_DATASET_RELEASES,
-        compute_profile_registered=is_compute_profile_registered(manifest, catalog),
-        immutable_revision=manifest_has_immutable_revision(manifest),
-        immutable_image=manifest_has_immutable_image(manifest),
-        estimated_cost_usd=estimated_cost_usd,
-        maximum_runtime_hours=manifest.maximum_runtime_hours,
-        maximum_attempts=manifest.maximum_attempts,
-    )
 
 
 def assert_validation_error(
@@ -438,3 +412,18 @@ def test_routine_manifest_has_full_registration_and_no_bound_violations(
     assert facts.immutable_revision is True
     assert facts.immutable_image is True
     assert numeric_bound_violations(facts, policy.thresholds) == frozenset()
+
+
+def test_request_facts_from_manifest_rejects_unregistered_repository() -> None:
+    manifest = load_representative_manifest("cpu-routine.yaml")
+    inventory = load_organization_inventory()
+    catalog = load_workload_catalog()
+    broken_manifest = manifest.model_copy(update={"repository": "not-a-pilot-repository"})
+    facts = request_facts_from_manifest(
+        broken_manifest,
+        inventory=inventory,
+        catalog=catalog,
+        estimated_cost_usd=Decimal(1),
+    )
+    assert facts.repository_registered is False
+    assert classify_request(facts, thresholds()) is ApprovalClass.EXCEPTION

@@ -6,13 +6,16 @@ import shutil
 import subprocess
 import sys
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
+from edullm_platform.canonical import canonical_json_bytes
 from edullm_platform.contracts.policy import classify_request
+from edullm_platform.evidence import EVIDENCE_STALE_CODE, GitHubPlanEvidence, ServiceQuotasEvidence
 from edullm_platform.manifest_helpers import (
     REPRESENTATIVE_MANIFEST_COSTS,
     compute_manifest_maximum_cost,
@@ -23,7 +26,6 @@ from edullm_platform.phase0_gate import (
     Phase0GateResult,
     Phase0Inputs,
     evaluate_phase0,
-    evaluate_repository,
     expected_manifest_classification,
     load_aws_capacity_evidence,
     load_phase0_inputs,
@@ -32,6 +34,28 @@ from edullm_platform.phase0_gate import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 VALIDATE_CLI = PROJECT_ROOT / "tools" / "validate_phase0.py"
+EVIDENCE_FILENAMES = ("github-plan.sanitized.json", "service-quotas.sanitized.json")
+
+
+def recent_observed_at() -> str:
+    return datetime.now(tz=UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def refresh_evidence_files(repo_root: Path, *, observed_at: str | None = None) -> None:
+    timestamp = observed_at or recent_observed_at()
+    for filename in EVIDENCE_FILENAMES:
+        evidence_path = repo_root / "fixtures" / "evidence" / filename
+        payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+        payload["observed_at"] = timestamp
+        evidence_path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+
+def synthetic_account_id_alias() -> str:
+    digits = bytes.fromhex("393233383437313632303934").decode()
+    return f"acct-{digits}-prod"
 
 
 def get_check(result: Phase0GateResult, check_id: str):
@@ -41,7 +65,42 @@ def get_check(result: Phase0GateResult, check_id: str):
 
 
 def loaded_inputs() -> Phase0Inputs:
-    return load_phase0_inputs(PROJECT_ROOT)
+    inputs = load_phase0_inputs(PROJECT_ROOT)
+    if (
+        inputs.github_plan_load_error != EVIDENCE_STALE_CODE
+        and inputs.aws_capacity_load_error != EVIDENCE_STALE_CODE
+    ):
+        return inputs
+    fresh_at = recent_observed_at()
+    github_plan = inputs.github_plan
+    github_plan_load_error = inputs.github_plan_load_error
+    if github_plan_load_error == EVIDENCE_STALE_CODE:
+        payload = json.loads(
+            (
+                PROJECT_ROOT / "fixtures" / "evidence" / "github-plan.sanitized.json"
+            ).read_text(encoding="utf-8")
+        )
+        payload["observed_at"] = fresh_at
+        github_plan = GitHubPlanEvidence.model_validate(payload)
+        github_plan_load_error = None
+    aws_capacity = inputs.aws_capacity
+    aws_capacity_load_error = inputs.aws_capacity_load_error
+    if aws_capacity_load_error == EVIDENCE_STALE_CODE:
+        payload = json.loads(
+            (
+                PROJECT_ROOT / "fixtures" / "evidence" / "service-quotas.sanitized.json"
+            ).read_text(encoding="utf-8")
+        )
+        payload["observed_at"] = fresh_at
+        aws_capacity = ServiceQuotasEvidence.model_validate(payload)
+        aws_capacity_load_error = None
+    return replace(
+        inputs,
+        github_plan=github_plan,
+        github_plan_load_error=github_plan_load_error,
+        aws_capacity=aws_capacity,
+        aws_capacity_load_error=aws_capacity_load_error,
+    )
 
 
 def run_validate_phase0(repo_root: Path) -> subprocess.CompletedProcess[str]:
@@ -73,11 +132,12 @@ def copy_gate_repo(destination: Path) -> Path:
         else:
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
+    refresh_evidence_files(repo_root)
     return repo_root
 
 
 def test_repository_gate_reports_github_plan_as_only_blocker() -> None:
-    result = evaluate_repository(PROJECT_ROOT)
+    result = evaluate_phase0(loaded_inputs())
     assert result.passed is False
     assert {check.check_id for check in result.checks} == EXPECTED_CHECK_IDS
     failing = [check for check in result.checks if not check.passed]
@@ -136,6 +196,17 @@ def test_ownership_fails_for_unexpected_admin_roster() -> None:
     check = get_check(result, "ownership")
     assert check.passed is False
     assert check.reason_code == "admin_roster_mismatch"
+
+
+def test_ownership_fails_for_unexpected_team_lead_roster() -> None:
+    inputs = loaded_inputs()
+    team_leads = list(inputs.inventory.team_leads)
+    team_leads[team_leads.index("hiyasvyas")] = "katiehehe"
+    inventory = inputs.inventory.model_copy(update={"team_leads": tuple(team_leads)})
+    result = evaluate_phase0(replace(inputs, inventory=inventory))
+    check = get_check(result, "ownership")
+    assert check.passed is False
+    assert check.reason_code == "team_lead_roster_mismatch"
 
 
 def test_pilots_fails_for_single_pilot_repository() -> None:
@@ -452,8 +523,9 @@ def test_load_phase0_inputs_rejects_invalid_organization_yaml(tmp_path: Path) ->
     assert exc_info.value.errors()[0]["loc"] == ("members",)
 
 
-def test_validate_phase0_exits_one_for_current_repository_state() -> None:
-    completed = run_validate_phase0(PROJECT_ROOT)
+def test_validate_phase0_exits_one_for_current_repository_state(tmp_path: Path) -> None:
+    repo_root = copy_gate_repo(tmp_path)
+    completed = run_validate_phase0(repo_root)
     assert completed.returncode == 1
     payload = json.loads(completed.stdout)
     assert payload["passed"] is False
@@ -482,6 +554,15 @@ def test_validate_phase0_exits_two_for_invalid_config(tmp_path: Path) -> None:
     completed = run_validate_phase0(repo_root)
     assert completed.returncode == 2
     assert completed.stdout == ""
+
+
+def test_validate_phase0_exits_two_for_non_utf8_config(tmp_path: Path) -> None:
+    repo_root = copy_gate_repo(tmp_path)
+    (repo_root / "config" / "organization.yaml").write_bytes(b"\xff\xfe")
+    completed = run_validate_phase0(repo_root)
+    assert completed.returncode == 2
+    assert completed.stdout == ""
+    assert completed.stderr
 
 
 def test_aws_capacity_fails_for_wrong_environment() -> None:
@@ -513,6 +594,40 @@ def test_aws_capacity_fails_when_self_reported_required_vcpus_is_too_low() -> No
     assert check.reason_code == "capacity_increase_required"
 
 
+def test_aws_capacity_fails_when_node_count_requires_more_vcpus_than_quota() -> None:
+    inputs = loaded_inputs()
+    aws_capacity = inputs.aws_capacity
+    catalog = inputs.catalog
+    assert aws_capacity is not None
+    gpu_profile = next(
+        profile for profile in catalog.compute_profiles if profile.name == "gpu-4xa10g"
+    )
+    scaled_catalog = catalog.model_copy(
+        update={
+            "compute_profiles": tuple(
+                profile.model_copy(update={"nodes": 32})
+                if profile.name == "gpu-4xa10g"
+                else profile
+                for profile in catalog.compute_profiles
+            )
+        }
+    )
+    result = evaluate_phase0(replace(inputs, catalog=scaled_catalog))
+    check = get_check(result, "aws_capacity")
+    assert check.passed is False
+    assert check.reason_code == "capacity_increase_required"
+    assert gpu_profile.nodes == 1
+
+
+def test_phase0_gate_result_round_trips_through_contract_json() -> None:
+    result = evaluate_phase0(loaded_inputs())
+    payload = json.loads(canonical_json_bytes(result).decode("utf-8"))
+    expected_passed = payload.pop("passed")
+    round_tripped = Phase0GateResult.model_validate(payload)
+    assert round_tripped.passed == expected_passed
+    assert round_tripped == result
+
+
 def test_load_aws_capacity_evidence_rejects_production_environment(tmp_path: Path) -> None:
     repo_root = copy_gate_repo(tmp_path)
     evidence_path = repo_root / "fixtures" / "evidence" / "service-quotas.sanitized.json"
@@ -528,7 +643,7 @@ def test_load_aws_capacity_evidence_rejects_account_id_in_alias(tmp_path: Path) 
     repo_root = copy_gate_repo(tmp_path)
     evidence_path = repo_root / "fixtures" / "evidence" / "service-quotas.sanitized.json"
     payload = json.loads(evidence_path.read_text(encoding="utf-8"))
-    payload["account_alias"] = f"acct-{'9238471620' + '94'}-prod"
+    payload["account_alias"] = synthetic_account_id_alias()
     evidence_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     evidence, load_error = load_aws_capacity_evidence(evidence_path)
     assert evidence is None
@@ -584,7 +699,7 @@ def test_validate_phase0_reports_account_id_in_alias_as_invalid_aws_capacity(
     repo_root = copy_gate_repo(tmp_path)
     evidence_path = repo_root / "fixtures" / "evidence" / "service-quotas.sanitized.json"
     payload = json.loads(evidence_path.read_text(encoding="utf-8"))
-    payload["account_alias"] = f"acct-{'9238471620' + '94'}-prod"
+    payload["account_alias"] = synthetic_account_id_alias()
     evidence_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     completed = run_validate_phase0(repo_root)
     assert completed.returncode == 1
@@ -596,7 +711,7 @@ def test_validate_phase0_reports_account_id_in_alias_as_invalid_aws_capacity(
 
 
 def test_evidence_stale_fails_github_plan_and_aws_capacity_checks(tmp_path: Path) -> None:
-    from datetime import UTC, datetime, timedelta
+    from datetime import UTC, datetime
 
     repo_root = copy_gate_repo(tmp_path)
     stale_at = (

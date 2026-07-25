@@ -22,6 +22,9 @@ def main() -> int:
     except (OSError, json.JSONDecodeError, yaml.YAMLError, TypeError, ValidationError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
+    except Exception as exc:  # noqa: BLE001 - CLI must map unexpected failures to exit 2
+        print(str(exc), file=sys.stderr)
+        return 2
 
     sys.stdout.write(canonical_json_bytes(result).decode("utf-8") + "\n")
     return 0 if result.passed else 1

@@ -41,7 +41,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FIXTURES_DIR = PROJECT_ROOT / "fixtures" / "evidence"
 AWS_EXAMPLE_ACCOUNT_ID = "123456789012"
 ALLOWED_ACCOUNT_ID_INTS = {int(AWS_EXAMPLE_ACCOUNT_ID)}
-TRACKED_TREE_PATHS = ("tools", "tests", "fixtures/evidence", "src/edullm_platform")
+TRACKED_TREE_PATHS: tuple[str, ...] = ()
+EXCLUDED_TRACKED_FILENAMES = frozenset({"uv.lock"})
 
 
 def is_git_checkout(root: Path) -> bool:
@@ -61,14 +62,19 @@ def is_git_checkout(root: Path) -> bool:
 def tracked_tree_files() -> list[Path] | None:
     if not is_git_checkout(PROJECT_ROOT):
         return None
+    args = ["git", "ls-files", *TRACKED_TREE_PATHS] if TRACKED_TREE_PATHS else ["git", "ls-files"]
     result = subprocess.run(
-        ["git", "ls-files", *TRACKED_TREE_PATHS],
+        args,
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
         check=True,
     )
-    return [PROJECT_ROOT / relative_path for relative_path in result.stdout.splitlines() if relative_path]
+    return [
+        PROJECT_ROOT / relative_path
+        for relative_path in result.stdout.splitlines()
+        if relative_path and Path(relative_path).name not in EXCLUDED_TRACKED_FILENAMES
+    ]
 
 
 def suspicious_account_id_int(value: int) -> bool:
@@ -88,6 +94,37 @@ def forbidden_account_id_substrings(source: str) -> list[str]:
         for match in AWS_ACCOUNT_ID_PATTERN.finditer(source)
         if match.group(0) != AWS_EXAMPLE_ACCOUNT_ID
     ]
+
+
+def eval_string_concat(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left = eval_string_concat(node.left)
+        right = eval_string_concat(node.right)
+        if left is not None and right is not None:
+            return left + right
+    return None
+
+
+def find_concatenated_account_id_substrings(source: str) -> list[str]:
+    tree = ast.parse(source)
+    matches: list[str] = []
+    for node in ast.walk(tree):
+        candidate_nodes: list[ast.AST] = []
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            candidate_nodes.append(node)
+        if isinstance(node, ast.JoinedStr):
+            candidate_nodes.extend(
+                part.value for part in node.values if isinstance(part, ast.FormattedValue)
+            )
+        for candidate in candidate_nodes:
+            value = eval_string_concat(candidate)
+            if value is None:
+                continue
+            forbidden_ids = forbidden_account_id_substrings(value)
+            matches.extend(forbidden_ids)
+    return matches
 
 
 def find_suspicious_account_id_ints(source: str) -> list[int]:
@@ -882,6 +919,7 @@ def test_tracked_tree_contains_no_aws_account_id_patterns() -> None:
 
     pattern_matches: list[str] = []
     int_matches: list[str] = []
+    concat_matches: list[str] = []
     for path in tracked_files:
         source = path.read_text(encoding="utf-8")
         forbidden_ids = forbidden_account_id_substrings(source)
@@ -889,14 +927,22 @@ def test_tracked_tree_contains_no_aws_account_id_patterns() -> None:
             pattern_matches.append(
                 f"{path.relative_to(PROJECT_ROOT)}: {forbidden_ids}"
             )
+        if path.suffix != ".py":
+            continue
         suspicious_ints = find_suspicious_account_id_ints(source)
         if suspicious_ints:
             int_matches.append(
                 f"{path.relative_to(PROJECT_ROOT)}: {suspicious_ints}"
             )
+        concatenated_ids = find_concatenated_account_id_substrings(source)
+        if concatenated_ids:
+            concat_matches.append(
+                f"{path.relative_to(PROJECT_ROOT)}: {concatenated_ids}"
+            )
 
     assert not pattern_matches, f"12-digit account ID pattern matched in {pattern_matches}"
     assert not int_matches, f"reconstructible account ID ints found in {int_matches}"
+    assert not concat_matches, f"concatenated account ID substrings found in {concat_matches}"
 
 
 def test_tracked_tree_guard_skips_outside_git_checkout(monkeypatch: pytest.MonkeyPatch) -> None:

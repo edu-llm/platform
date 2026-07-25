@@ -159,13 +159,32 @@ def authoritative_required_vcpus(workload_profile: str | None) -> int | None:
     return WORKLOAD_PROFILE_REQUIRED_VCPUS.get(workload_profile)
 
 
+def required_vcpus_for_workload_profile(
+    catalog: WorkloadCatalog,
+    workload_profile: str | None,
+) -> int | None:
+    per_instance = authoritative_required_vcpus(workload_profile)
+    if per_instance is None:
+        return None
+    profile_by_name = {profile.name: profile for profile in catalog.compute_profiles}
+    compute_profile = profile_by_name.get(workload_profile or "")
+    if compute_profile is None:
+        return per_instance
+    return per_instance * compute_profile.nodes
+
+
 def quota_capacity_issues(
     quotas: tuple[QuotaRecord, ...],
+    *,
+    catalog: WorkloadCatalog | None = None,
 ) -> tuple[bool, list[str]]:
     incomplete = False
     insufficient: list[str] = []
     for quota in quotas:
-        required_vcpus = authoritative_required_vcpus(quota.workload_profile)
+        if catalog is not None:
+            required_vcpus = required_vcpus_for_workload_profile(catalog, quota.workload_profile)
+        else:
+            required_vcpus = authoritative_required_vcpus(quota.workload_profile)
         if quota.workload_profile is None or required_vcpus is None:
             incomplete = True
             continue
@@ -190,7 +209,7 @@ def ec2_quota_coverage_issues(
             "capacity_blocked",
             f"Missing EC2 quota records for representative profiles: {', '.join(missing_profiles)}.",
         )
-    incomplete, insufficient = quota_capacity_issues(quotas)
+    incomplete, insufficient = quota_capacity_issues(quotas, catalog=catalog)
     if incomplete:
         return (
             "capacity_blocked",

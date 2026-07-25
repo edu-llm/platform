@@ -4,12 +4,12 @@ import json
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import Final, TypeVar, cast
+from typing import Annotated, Final, TypeVar, cast
 
-from pydantic import ValidationError, computed_field
+from pydantic import BeforeValidator, Field, ValidationError, computed_field
 
 from edullm_platform.config import load_yaml
-from edullm_platform.contracts.base import ContractModel
+from edullm_platform.contracts.base import ContractModel, require_ordered_sequence
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.manifest import RunManifest
 from edullm_platform.contracts.policy import (
@@ -40,6 +40,16 @@ from edullm_platform.manifest_helpers import (
 T = TypeVar("T", bound=ContractModel)
 
 EXPECTED_ADMINS: Final = ("philote-dev", "BritishAmericqn")
+EXPECTED_TEAM_LEADS: Final = (
+    "philote-dev",
+    "ericrcwu001",
+    "alsy7009",
+    "meric233",
+    "syz2026",
+    "gorpyshortlegs",
+    "hiyasvyas",
+    "pianomaster99",
+)
 EXPECTED_PILOTS: Final = ("OLMo-core", "dolma")
 EXPECTED_GITHUB_ORG: Final = "edu-llm"
 EXPECTED_AWS_REGION: Final = "us-east-1"
@@ -91,7 +101,9 @@ class GateCheck(ContractModel):
 
 
 class Phase0GateResult(ContractModel):
-    checks: tuple[GateCheck, ...]
+    checks: Annotated[tuple[GateCheck, ...], BeforeValidator(require_ordered_sequence)] = Field(
+        strict=False
+    )
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -207,6 +219,15 @@ def check_ownership(inventory: OrganizationInventory) -> GateCheck:
             (
                 "Phase 0 requires exactly Frank Gonzalez (philote-dev) and Benjamin "
                 f"(BritishAmericqn) as platform admins; got {inventory.admins!r}."
+            ),
+        )
+    if inventory.team_leads != EXPECTED_TEAM_LEADS:
+        return fail_check(
+            "ownership",
+            "team_lead_roster_mismatch",
+            (
+                "Phase 0 requires the reviewed team-lead roster; "
+                f"got {inventory.team_leads!r}."
             ),
         )
     return ok_check(
