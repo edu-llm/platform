@@ -14,14 +14,14 @@ pilot_repositories:
   - OLMo-core
   - dolma
 members:
-  - {github_login: BritishAmericqn}
-  - {github_login: ericrcwu001}
+  - {github_login: BritishAmericqn, display_name: Benjamin}
+  - {github_login: ericrcwu001, display_name: Eric Wu}
   - {github_login: GMatherne}
   - {github_login: nzhao721}
-  - {github_login: pianomaster99}
+  - {github_login: pianomaster99, display_name: Tom Liu}
   - {github_login: cd1313}
   - {github_login: IsabellaChen70}
-  - {github_login: gorpyshortlegs}
+  - {github_login: gorpyshortlegs, display_name: Arhant Choudhary}
   - {github_login: Elitelord}
   - {github_login: anshulmago1}
   - {github_login: arteexu}
@@ -35,13 +35,13 @@ members:
   - {github_login: TejasviTyagi14}
   - {github_login: caiiris}
   - {github_login: yuen-kai}
-  - {github_login: alsy7009}
+  - {github_login: alsy7009, display_name: Amy Lin}
   - {github_login: Adarsh-Rajesh-Github}
-  - {github_login: syz2026}
-  - {github_login: philote-dev}
+  - {github_login: syz2026, display_name: Stephen Zhang}
+  - {github_login: philote-dev, display_name: Frank Gonzalez}
   - {github_login: ninLi0}
-  - {github_login: meric233}
-  - {github_login: hiyasvyas}
+  - {github_login: meric233, display_name: Meric Xing}
+  - {github_login: hiyasvyas, display_name: Hiya Vyas}
   - {github_login: mathishard17}
   - {github_login: LawrenceDong71}
   - {github_login: katiehehe}
