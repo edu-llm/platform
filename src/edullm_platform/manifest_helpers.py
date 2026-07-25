@@ -3,21 +3,32 @@ from __future__ import annotations
 import re
 from decimal import Decimal
 from pathlib import Path
+from typing import Final
 
 from edullm_platform.config import load_yaml
-from edullm_platform.contracts.manifest import RunManifest
+from edullm_platform.contracts.manifest import (
+    COMMIT_SHA_PATTERN,
+    IMAGE_DIGEST_PATTERN,
+    RunManifest,
+)
 from edullm_platform.contracts.workload import CostInputs, WorkloadCatalog
 
-COMMIT_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
-IMAGE_DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
+COMMIT_SHA_REGEX = re.compile(COMMIT_SHA_PATTERN)
+IMAGE_DIGEST_REGEX = re.compile(IMAGE_DIGEST_PATTERN)
+
+REPRESENTATIVE_MANIFEST_COSTS: Final = {
+    "cpu-routine.yaml": Decimal("2.86"),
+    "gpu-routine.yaml": Decimal("5.67"),
+    "gpu-exception.yaml": Decimal("73.74"),
+}
 
 
 def manifest_has_immutable_revision(manifest: RunManifest) -> bool:
-    return COMMIT_SHA_PATTERN.fullmatch(manifest.commit_sha) is not None
+    return COMMIT_SHA_REGEX.fullmatch(manifest.commit_sha) is not None
 
 
 def manifest_has_immutable_image(manifest: RunManifest) -> bool:
-    return IMAGE_DIGEST_PATTERN.fullmatch(manifest.image_digest) is not None
+    return IMAGE_DIGEST_REGEX.fullmatch(manifest.image_digest) is not None
 
 
 def is_compute_profile_registered(manifest: RunManifest, catalog: WorkloadCatalog) -> bool:

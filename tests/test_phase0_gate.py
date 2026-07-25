@@ -14,21 +14,21 @@ from pydantic import ValidationError
 
 from edullm_platform.contracts.policy import classify_request
 from edullm_platform.manifest_helpers import (
+    REPRESENTATIVE_MANIFEST_COSTS,
     compute_manifest_maximum_cost,
     load_manifest,
 )
 from edullm_platform.phase0_gate import (
     EXPECTED_CHECK_IDS,
-    REVIEWED_MANIFEST_COSTS,
     Phase0GateResult,
     Phase0Inputs,
     evaluate_phase0,
     evaluate_repository,
     expected_manifest_classification,
+    load_aws_capacity_evidence,
     load_phase0_inputs,
     request_facts_from_manifest,
 )
-from tests.test_manifest import REPRESENTATIVE_MANIFEST_COSTS
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 VALIDATE_CLI = PROJECT_ROOT / "tools" / "validate_phase0.py"
@@ -361,15 +361,27 @@ def test_cost_estimates_fails_when_routine_manifest_exceeds_program_budget(
     profiles = list(inputs.catalog.compute_profiles)
     profiles[0] = profiles[0].model_copy(update={"hourly_rate_usd": Decimal(300)})
     catalog = inputs.catalog.model_copy(update={"compute_profiles": tuple(profiles)})
-    monkeypatch.setitem(REVIEWED_MANIFEST_COSTS, "cpu-routine.yaml", Decimal("600.00"))
+    monkeypatch.setitem(REPRESENTATIVE_MANIFEST_COSTS, "cpu-routine.yaml", Decimal("600.00"))
     result = evaluate_phase0(replace(inputs, catalog=catalog))
     check = get_check(result, "cost_estimates")
     assert check.passed is False
     assert check.reason_code == "exceeds_program_budget"
 
 
-def test_cost_estimates_does_not_apply_program_budget_to_exception_manifest() -> None:
+def test_cost_estimates_does_not_apply_program_budget_to_exception_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     inputs = loaded_inputs()
+    team_plan = inputs.github_plan
+    assert team_plan is not None
+    inflated_cost = compute_manifest_maximum_cost(
+        next(manifest for name, manifest in inputs.manifests if name == "gpu-exception.yaml").model_copy(
+            update={"maximum_runtime_hours": Decimal(100)}
+        ),
+        inputs.catalog,
+    )
+    assert inflated_cost > Decimal(500)
+    monkeypatch.setitem(REPRESENTATIVE_MANIFEST_COSTS, "gpu-exception.yaml", inflated_cost)
     manifests = tuple(
         (
             name,
@@ -379,10 +391,17 @@ def test_cost_estimates_does_not_apply_program_budget_to_exception_manifest() ->
         )
         for name, manifest in inputs.manifests
     )
-    result = evaluate_phase0(replace(inputs, manifests=manifests))
+    result = evaluate_phase0(
+        replace(
+            inputs,
+            github_plan=team_plan.model_copy(update={"plan_name": "team"}),
+            manifests=manifests,
+        )
+    )
     check = get_check(result, "cost_estimates")
-    assert check.reason_code == "reviewed_cost_mismatch"
-    assert check.reason_code != "exceeds_program_budget"
+    assert check.passed is True
+    assert check.reason_code == "ok"
+    assert inflated_cost > Decimal(500)
 
 
 def test_unregistered_compute_profile_cli_emits_structured_json(tmp_path: Path) -> None:
@@ -465,20 +484,135 @@ def test_validate_phase0_exits_two_for_invalid_config(tmp_path: Path) -> None:
     assert completed.stdout == ""
 
 
-def test_evidence_stale_fails_github_plan_and_aws_capacity_checks() -> None:
+def test_aws_capacity_fails_for_wrong_environment() -> None:
     inputs = loaded_inputs()
-    github_plan = inputs.github_plan
     aws_capacity = inputs.aws_capacity
-    assert github_plan is not None and aws_capacity is not None
+    assert aws_capacity is not None
     result = evaluate_phase0(
         replace(
             inputs,
-            github_plan=None,
-            github_plan_load_error="evidence_stale",
-            aws_capacity=None,
-            aws_capacity_load_error="evidence_stale",
+            aws_capacity=aws_capacity.model_copy(update={"environment": "production"}),  # type: ignore[arg-type]
         )
     )
+    check = get_check(result, "aws_capacity")
+    assert check.passed is False
+    assert check.reason_code == "wrong_environment"
+
+
+def test_aws_capacity_fails_when_self_reported_required_vcpus_is_too_low() -> None:
+    inputs = loaded_inputs()
+    aws_capacity = inputs.aws_capacity
+    assert aws_capacity is not None
+    quotas = list(aws_capacity.quotas)
+    quotas[0] = quotas[0].model_copy(update={"required_vcpus": 1, "applied_value": 2.0})
+    result = evaluate_phase0(
+        replace(inputs, aws_capacity=aws_capacity.model_copy(update={"quotas": tuple(quotas)}))
+    )
+    check = get_check(result, "aws_capacity")
+    assert check.passed is False
+    assert check.reason_code == "capacity_increase_required"
+
+
+def test_load_aws_capacity_evidence_rejects_production_environment(tmp_path: Path) -> None:
+    repo_root = copy_gate_repo(tmp_path)
+    evidence_path = repo_root / "fixtures" / "evidence" / "service-quotas.sanitized.json"
+    payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+    payload["environment"] = "production"
+    evidence_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    evidence, load_error = load_aws_capacity_evidence(evidence_path)
+    assert evidence is None
+    assert load_error == "evidence_invalid"
+
+
+def test_load_aws_capacity_evidence_rejects_account_id_in_alias(tmp_path: Path) -> None:
+    repo_root = copy_gate_repo(tmp_path)
+    evidence_path = repo_root / "fixtures" / "evidence" / "service-quotas.sanitized.json"
+    payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+    payload["account_alias"] = f"acct-{'9238471620' + '94'}-prod"
+    evidence_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    evidence, load_error = load_aws_capacity_evidence(evidence_path)
+    assert evidence is None
+    assert load_error == "evidence_invalid"
+
+
+def test_load_aws_capacity_evidence_rejects_missing_region(tmp_path: Path) -> None:
+    repo_root = copy_gate_repo(tmp_path)
+    evidence_path = repo_root / "fixtures" / "evidence" / "service-quotas.sanitized.json"
+    payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+    del payload["region"]
+    evidence_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    evidence, load_error = load_aws_capacity_evidence(evidence_path)
+    assert evidence is None
+    assert load_error == "evidence_invalid"
+
+
+def test_validate_phase0_reports_invalid_aws_capacity_evidence(tmp_path: Path) -> None:
+    repo_root = copy_gate_repo(tmp_path)
+    evidence_path = repo_root / "fixtures" / "evidence" / "service-quotas.sanitized.json"
+    payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+    del payload["region"]
+    evidence_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    completed = run_validate_phase0(repo_root)
+    assert completed.returncode == 1
+    assert completed.stdout
+    parsed = json.loads(completed.stdout)
+    aws_check = next(check for check in parsed["checks"] if check["check_id"] == "aws_capacity")
+    assert aws_check["passed"] is False
+    assert aws_check["reason_code"] == "evidence_invalid"
+
+
+def test_validate_phase0_reports_production_environment_as_invalid_aws_capacity(
+    tmp_path: Path,
+) -> None:
+    repo_root = copy_gate_repo(tmp_path)
+    evidence_path = repo_root / "fixtures" / "evidence" / "service-quotas.sanitized.json"
+    payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+    payload["environment"] = "production"
+    evidence_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    completed = run_validate_phase0(repo_root)
+    assert completed.returncode == 1
+    assert completed.stdout
+    parsed = json.loads(completed.stdout)
+    aws_check = next(check for check in parsed["checks"] if check["check_id"] == "aws_capacity")
+    assert aws_check["passed"] is False
+    assert aws_check["reason_code"] == "evidence_invalid"
+
+
+def test_validate_phase0_reports_account_id_in_alias_as_invalid_aws_capacity(
+    tmp_path: Path,
+) -> None:
+    repo_root = copy_gate_repo(tmp_path)
+    evidence_path = repo_root / "fixtures" / "evidence" / "service-quotas.sanitized.json"
+    payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+    payload["account_alias"] = f"acct-{'9238471620' + '94'}-prod"
+    evidence_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    completed = run_validate_phase0(repo_root)
+    assert completed.returncode == 1
+    assert completed.stdout
+    parsed = json.loads(completed.stdout)
+    aws_check = next(check for check in parsed["checks"] if check["check_id"] == "aws_capacity")
+    assert aws_check["passed"] is False
+    assert aws_check["reason_code"] == "evidence_invalid"
+
+
+def test_evidence_stale_fails_github_plan_and_aws_capacity_checks(tmp_path: Path) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    repo_root = copy_gate_repo(tmp_path)
+    stale_at = (
+        datetime.now(tz=UTC) - timedelta(days=31)
+    ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    for filename in ("github-plan.sanitized.json", "service-quotas.sanitized.json"):
+        evidence_path = repo_root / "fixtures" / "evidence" / filename
+        payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+        payload["observed_at"] = stale_at
+        evidence_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    inputs = load_phase0_inputs(repo_root)
+    assert inputs.github_plan is None
+    assert inputs.github_plan_load_error == "evidence_stale"
+    assert inputs.aws_capacity is None
+    assert inputs.aws_capacity_load_error == "evidence_stale"
+    result = evaluate_phase0(inputs)
     github_check = get_check(result, "github_plan")
     aws_check = get_check(result, "aws_capacity")
     assert github_check.passed is False

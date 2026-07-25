@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Literal, Self
+from typing import Annotated, Final, Literal, Self, TypedDict
 
 from pydantic import (
     AfterValidator,
@@ -48,6 +48,7 @@ SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 FRESHNESS_WINDOW = timedelta(days=30)
+EVIDENCE_STALE_CODE: Final = "evidence_stale"
 
 CapacityVerdict = Literal["verified", "increase_required", "blocked"]
 EvidenceEnvironment = Literal["sandbox"]
@@ -58,6 +59,26 @@ BATCH_QUOTA_TARGETS: tuple[dict[str, str], ...] = (
     {"quota_code": "L-144F0CA5", "quota_name": "Compute environment limit"},
     {"quota_code": "L-4CEA37AD", "quota_name": "Job queue limit"},
 )
+
+
+class InstanceEvidence(TypedDict):
+    required_vcpus: int
+    quota_code: str
+
+
+INSTANCE_EVIDENCE: dict[str, InstanceEvidence] = {
+    "g5.12xlarge": {"required_vcpus": 48, "quota_code": "L-DB2E81BA"},
+    "c7i.8xlarge": {"required_vcpus": 32, "quota_code": "L-1216C47A"},
+}
+
+WORKLOAD_PROFILE_REQUIRED_VCPUS: Final = {
+    "gpu-4xa10g": INSTANCE_EVIDENCE["g5.12xlarge"]["required_vcpus"],
+    "cpu-32vcpu": INSTANCE_EVIDENCE["c7i.8xlarge"]["required_vcpus"],
+}
+
+
+class StaleEvidenceError(ValueError):
+    pass
 
 
 def scan_for_secrets(value: str) -> str:
@@ -77,13 +98,19 @@ def validate_observed_at(value: datetime) -> datetime:
     if observed_at > now:
         raise ValueError("observation timestamps must not be in the future")
     if now - observed_at > FRESHNESS_WINDOW:
-        raise ValueError("observation must be at most 30 days old")
+        raise StaleEvidenceError(EVIDENCE_STALE_CODE)
     return observed_at
 
 
 def evidence_load_reason_code(error: ValidationError) -> str:
-    if any("observation must be at most 30 days old" in item["msg"] for item in error.errors()):
-        return "evidence_stale"
+    for item in error.errors():
+        if item["loc"] != ("observed_at",):
+            continue
+        ctx_error = item.get("ctx", {}).get("error")
+        if isinstance(ctx_error, ValueError) and str(ctx_error) == EVIDENCE_STALE_CODE:
+            return EVIDENCE_STALE_CODE
+        if item.get("msg") == EVIDENCE_STALE_CODE:
+            return EVIDENCE_STALE_CODE
     return "evidence_invalid"
 
 
@@ -93,7 +120,10 @@ class FreshEvidenceModel(ContractModel):
     @field_validator("observed_at")
     @classmethod
     def validate_fresh_observation(cls, value: datetime) -> datetime:
-        return validate_observed_at(value)
+        try:
+            return validate_observed_at(value)
+        except StaleEvidenceError as exc:
+            raise ValueError(str(exc)) from exc
 
 
 class GitHubPlanEvidence(FreshEvidenceModel):
@@ -123,18 +153,25 @@ class BatchQuotaRecord(ContractModel):
     quota_applied_at_level: QuotaAppliedAtLevel
 
 
+def authoritative_required_vcpus(workload_profile: str | None) -> int | None:
+    if workload_profile is None:
+        return None
+    return WORKLOAD_PROFILE_REQUIRED_VCPUS.get(workload_profile)
+
+
 def quota_capacity_issues(
     quotas: tuple[QuotaRecord, ...],
 ) -> tuple[bool, list[str]]:
     incomplete = False
     insufficient: list[str] = []
     for quota in quotas:
-        if quota.required_vcpus is None or quota.workload_profile is None:
+        required_vcpus = authoritative_required_vcpus(quota.workload_profile)
+        if quota.workload_profile is None or required_vcpus is None:
             incomplete = True
             continue
-        if quota.applied_value < quota.required_vcpus:
+        if quota.applied_value < required_vcpus:
             insufficient.append(
-                f"{quota.workload_profile} requires {quota.required_vcpus} vCPU "
+                f"{quota.workload_profile} requires {required_vcpus} vCPU "
                 f"but {quota.quota_code} applied quota is {quota.applied_value:g}"
             )
     return incomplete, insufficient
@@ -174,14 +211,8 @@ def batch_quota_issues(
     issues: list[str] = []
     for target in BATCH_QUOTA_TARGETS:
         quota_code = target["quota_code"]
-        record = by_code.get(quota_code)
-        if record is None:
+        if quota_code not in by_code:
             issues.append(f"missing batch quota record {quota_code}")
-            continue
-        if record.applied_value < 1:
-            issues.append(
-                f"{quota_code} applied quota {record.applied_value:g} is below the minimum of 1"
-            )
     return issues
 
 
@@ -201,6 +232,8 @@ class ServiceQuotasEvidence(FreshEvidenceModel):
         tuple[BatchQuotaRecord, ...], BeforeValidator(require_ordered_sequence)
     ] = Field(min_length=1, strict=False)
 
+
+class CapturedServiceQuotasEvidence(ServiceQuotasEvidence):
     @model_validator(mode="after")
     def validate_capacity_verdict_matches_quotas(self) -> Self:
         incomplete, insufficient = quota_capacity_issues(self.quotas)

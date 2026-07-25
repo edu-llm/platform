@@ -14,28 +14,18 @@ from edullm_platform.contracts.base import ContractModel
 from edullm_platform.contracts.workload import WorkloadCatalog
 from edullm_platform.evidence import (
     BATCH_QUOTA_TARGETS,
+    INSTANCE_EVIDENCE,
     BatchQuotaRecord,
     CapacityVerdict,
+    CapturedServiceQuotasEvidence,
     EvidenceEnvironment,
     GitHubPlanEvidence,
     QuotaRecord,
-    ServiceQuotasEvidence,
     quota_capacity_issues,
 )
 
 INSTANCE_TYPE_PATTERN = re.compile(r"\b([a-z0-9]+\.[a-z0-9]+)\b")
-
 ALLOWED_OUTPUT_SUFFIX = Path("docs-frank/working/phase-0-evidence")
-
-class InstanceEvidence(TypedDict):
-    required_vcpus: int
-    quota_code: str
-
-
-INSTANCE_EVIDENCE: dict[str, InstanceEvidence] = {
-    "g5.12xlarge": {"required_vcpus": 48, "quota_code": "L-DB2E81BA"},
-    "c7i.8xlarge": {"required_vcpus": 32, "quota_code": "L-1216C47A"},
-}
 
 
 class Ec2QuotaTarget(TypedDict):
@@ -218,7 +208,7 @@ def build_service_quotas_evidence(
     observed_at: str,
     quota_records: list[QuotaRecord],
     batch_records: list[BatchQuotaRecord],
-) -> ServiceQuotasEvidence:
+) -> CapturedServiceQuotasEvidence:
     verdict, note = assess_capacity_verdict(tuple(quota_records))
     payload = {
         "source": "aws",
@@ -232,7 +222,7 @@ def build_service_quotas_evidence(
         "quotas": quota_records,
         "batch_quotas": batch_records,
     }
-    return ServiceQuotasEvidence.model_validate(payload)
+    return CapturedServiceQuotasEvidence.model_validate(payload)
 
 
 def fetch_account_alias(*, aws_profile: str, aws_region: str) -> str:
@@ -304,7 +294,7 @@ def capture_service_quotas(
     aws_region: str,
     environment: EvidenceEnvironment,
     catalog: WorkloadCatalog | None = None,
-) -> tuple[ServiceQuotasEvidence, dict[str, object]]:
+) -> tuple[CapturedServiceQuotasEvidence, dict[str, object]]:
     observed_at = datetime.now(tz=UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     workload_catalog = catalog if catalog is not None else load_workload_catalog()
     ec2_targets = ec2_quota_targets_from_catalog(workload_catalog)
@@ -379,7 +369,7 @@ def capture_phase0_evidence(
     environment: EvidenceEnvironment,
     output_dir: Path,
     base_dir: Path | None = None,
-) -> tuple[GitHubPlanEvidence, ServiceQuotasEvidence]:
+) -> tuple[GitHubPlanEvidence, CapturedServiceQuotasEvidence]:
     resolved_output_dir = resolve_output_dir(output_dir, base_dir=base_dir)
     raw_dir = resolved_output_dir / "raw"
     sanitized_dir = resolved_output_dir / "sanitized"

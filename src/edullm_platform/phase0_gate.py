@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Final, TypeVar, cast
+from typing import Final, TypeVar, cast
 
 from pydantic import ValidationError, computed_field
 
@@ -21,16 +20,15 @@ from edullm_platform.contracts.policy import (
 )
 from edullm_platform.contracts.workload import WorkloadCatalog
 from edullm_platform.evidence import (
-    BatchQuotaRecord,
+    EVIDENCE_STALE_CODE,
     GitHubPlanEvidence,
-    QuotaRecord,
     ServiceQuotasEvidence,
     batch_quota_issues,
     ec2_quota_coverage_issues,
     evidence_load_reason_code,
-    validate_observed_at,
 )
 from edullm_platform.manifest_helpers import (
+    REPRESENTATIVE_MANIFEST_COSTS,
     compute_manifest_maximum_cost,
     is_compute_profile_registered,
     is_workload_profile_registered,
@@ -63,12 +61,6 @@ REQUIRED_REPRESENTATIVE_MANIFESTS: Final = frozenset(
         "gpu-exception.yaml",
     }
 )
-
-REVIEWED_MANIFEST_COSTS: Final = {
-    "cpu-routine.yaml": Decimal("2.86"),
-    "gpu-routine.yaml": Decimal("5.67"),
-    "gpu-exception.yaml": Decimal("73.74"),
-}
 
 PHASE1_PRIVATE_REPO_GITHUB_PLANS: Final = frozenset({"team", "enterprise"})
 
@@ -142,42 +134,7 @@ def load_aws_capacity_evidence(path: Path) -> tuple[ServiceQuotasEvidence | None
     try:
         return ServiceQuotasEvidence.model_validate(payload), None
     except ValidationError as exc:
-        reason = evidence_load_reason_code(exc)
-        if reason == "evidence_stale":
-            return None, reason
-        return load_service_quotas_evidence_lenient(payload)
-
-
-def load_service_quotas_evidence_lenient(
-    payload: dict[str, object],
-) -> tuple[ServiceQuotasEvidence | None, str | None]:
-    try:
-        raw_quotas = payload["quotas"]
-        raw_batch_quotas = payload["batch_quotas"]
-        if not isinstance(raw_quotas, list) or not isinstance(raw_batch_quotas, list):
-            return None, "evidence_invalid"
-        quotas = tuple(QuotaRecord.model_validate(quota) for quota in raw_quotas)
-        batch_quotas = tuple(
-            BatchQuotaRecord.model_validate(quota) for quota in raw_batch_quotas
-        )
-        observed_at = payload.get("observed_at")
-        if not isinstance(observed_at, str):
-            return None, "evidence_invalid"
-        validate_observed_at(datetime.fromisoformat(observed_at.removesuffix("Z") + "+00:00"))
-    except (ValidationError, ValueError, KeyError, TypeError):
-        return None, "evidence_invalid"
-    return (
-        ServiceQuotasEvidence.model_construct(
-            **cast(Any, {
-                key: value
-                for key, value in payload.items()
-                if key not in {"quotas", "batch_quotas"}
-            }),
-            quotas=quotas,
-            batch_quotas=batch_quotas,
-        ),
-        None,
-    )
+        return None, evidence_load_reason_code(exc)
 
 
 def load_json_evidence[T: ContractModel](path: Path, model_type: type[T]) -> tuple[T | None, str | None]:
@@ -354,8 +311,8 @@ def check_github_plan(
     evidence: GitHubPlanEvidence | None,
     load_error: str | None,
 ) -> GateCheck:
-    if load_error == "evidence_stale":
-        return fail_check("github_plan", "evidence_stale", STALE_EVIDENCE_DETAIL)
+    if load_error == EVIDENCE_STALE_CODE:
+        return fail_check("github_plan", EVIDENCE_STALE_CODE, STALE_EVIDENCE_DETAIL)
     if evidence is None:
         return fail_check(
             "github_plan",
@@ -397,13 +354,19 @@ def check_aws_capacity(
     load_error: str | None,
     catalog: WorkloadCatalog,
 ) -> GateCheck:
-    if load_error == "evidence_stale":
-        return fail_check("aws_capacity", "evidence_stale", STALE_EVIDENCE_DETAIL)
+    if load_error == EVIDENCE_STALE_CODE:
+        return fail_check("aws_capacity", EVIDENCE_STALE_CODE, STALE_EVIDENCE_DETAIL)
     if evidence is None:
         return fail_check(
             "aws_capacity",
             "evidence_invalid",
             "AWS capacity evidence failed schema validation.",
+        )
+    if evidence.environment != "sandbox":
+        return fail_check(
+            "aws_capacity",
+            "wrong_environment",
+            "AWS capacity evidence must describe the sandbox environment.",
         )
     if evidence.region != EXPECTED_AWS_REGION:
         return fail_check(
@@ -419,7 +382,7 @@ def check_aws_capacity(
         return fail_check(
             "aws_capacity",
             "capacity_blocked",
-            "Batch quota evidence is incomplete: " + "; ".join(batch_issues),
+            "Batch quota evidence is missing required records: " + "; ".join(batch_issues),
         )
     return ok_check(
         "aws_capacity",
@@ -442,7 +405,7 @@ def check_representative_manifests(
             "missing_required_manifest",
             f"Required representative manifests are missing: {missing_required!r}.",
         )
-    unexpected = sorted(manifest_names - set(REVIEWED_MANIFEST_COSTS))
+    unexpected = sorted(manifest_names - set(REPRESENTATIVE_MANIFEST_COSTS))
     if unexpected:
         return fail_check(
             "representative_manifests",
@@ -510,7 +473,7 @@ def check_cost_estimates(
     manifests: tuple[tuple[str, RunManifest], ...],
 ) -> GateCheck:
     for filename, manifest in manifests:
-        if filename not in REVIEWED_MANIFEST_COSTS:
+        if filename not in REPRESENTATIVE_MANIFEST_COSTS:
             return fail_check(
                 "cost_estimates",
                 "missing_reviewed_cost",
@@ -526,7 +489,7 @@ def check_cost_estimates(
                 ),
             )
         estimated_cost = compute_manifest_maximum_cost(manifest, catalog)
-        reviewed_cost = REVIEWED_MANIFEST_COSTS[filename]
+        reviewed_cost = REPRESENTATIVE_MANIFEST_COSTS[filename]
         if estimated_cost != reviewed_cost:
             return fail_check(
                 "cost_estimates",

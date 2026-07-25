@@ -1,4 +1,3 @@
-import re
 from decimal import Decimal
 from pathlib import Path
 
@@ -9,6 +8,9 @@ from edullm_platform.config import load_yaml
 from edullm_platform.contracts.manifest import RunManifest
 from edullm_platform.contracts.workload import WorkloadCatalog
 from edullm_platform.manifest_helpers import (
+    COMMIT_SHA_REGEX,
+    IMAGE_DIGEST_REGEX,
+    REPRESENTATIVE_MANIFEST_COSTS,
     compute_manifest_maximum_cost,
     is_compute_profile_registered,
     is_workload_profile_registered,
@@ -20,18 +22,9 @@ from edullm_platform.manifest_helpers import (
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_FIXTURES_DIR = PROJECT_ROOT / "fixtures" / "manifests"
 
-COMMIT_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
-IMAGE_DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
-
 REPRESENTATIVE_MANIFEST_FILENAMES = tuple(
     sorted(path.name for path in MANIFEST_FIXTURES_DIR.glob("*.yaml"))
 )
-
-REPRESENTATIVE_MANIFEST_COSTS = {
-    "cpu-routine.yaml": Decimal("2.86"),
-    "gpu-routine.yaml": Decimal("5.67"),
-    "gpu-exception.yaml": Decimal("73.74"),
-}
 
 
 def load_representative_manifest(filename: str) -> RunManifest:
@@ -43,8 +36,8 @@ def load_workload_catalog() -> WorkloadCatalog:
 
 
 __all__ = (
-    "COMMIT_SHA_PATTERN",
-    "IMAGE_DIGEST_PATTERN",
+    "COMMIT_SHA_REGEX",
+    "IMAGE_DIGEST_REGEX",
     "MANIFEST_FIXTURES_DIR",
     "PROJECT_ROOT",
     "REPRESENTATIVE_MANIFEST_COSTS",

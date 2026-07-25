@@ -12,12 +12,19 @@ from pydantic import ValidationError
 
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.workload import WorkloadCatalog
-from edullm_platform.evidence import AWS_ACCOUNT_ID_PATTERN, scan_for_secrets
-from tools.capture_phase0_evidence import (
+from edullm_platform.evidence import (
+    AWS_ACCOUNT_ID_PATTERN,
+    EVIDENCE_STALE_CODE,
     BatchQuotaRecord,
+    CapturedServiceQuotasEvidence,
     GitHubPlanEvidence,
     QuotaRecord,
     ServiceQuotasEvidence,
+    evidence_load_reason_code,
+    quota_capacity_issues,
+    scan_for_secrets,
+)
+from tools.capture_phase0_evidence import (
     allowed_output_root,
     assess_capacity_verdict,
     build_service_quotas_evidence,
@@ -244,11 +251,12 @@ def test_github_plan_rejects_stale_observation() -> None:
     payload = github_plan_payload(observed_at=stale_observed_at())
     with pytest.raises(ValidationError) as exc_info:
         GitHubPlanEvidence.model_validate(payload)
+    assert evidence_load_reason_code(exc_info.value) == EVIDENCE_STALE_CODE
     assert_validation_error(
         exc_info.value,
         loc_suffix=("observed_at",),
         error_type="value_error",
-        message_fragment="observation must be at most 30 days old",
+        message_fragment=EVIDENCE_STALE_CODE,
     )
 
 
@@ -305,12 +313,35 @@ def test_service_quotas_rejects_stale_observation() -> None:
     payload = service_quotas_payload(observed_at=stale_observed_at())
     with pytest.raises(ValidationError) as exc_info:
         ServiceQuotasEvidence.model_validate(payload)
+    assert evidence_load_reason_code(exc_info.value) == EVIDENCE_STALE_CODE
     assert_validation_error(
         exc_info.value,
         loc_suffix=("observed_at",),
         error_type="value_error",
-        message_fragment="observation must be at most 30 days old",
+        message_fragment=EVIDENCE_STALE_CODE,
     )
+
+
+def test_quota_capacity_issues_uses_authoritative_required_vcpus_not_self_reported() -> None:
+    payload = service_quotas_payload()
+    quotas = list(payload["quotas"])  # type: ignore[arg-type]
+    quotas[0]["required_vcpus"] = 1
+    quotas[0]["applied_value"] = 2.0
+    evidence = ServiceQuotasEvidence.model_validate(payload)
+    incomplete, insufficient = quota_capacity_issues(evidence.quotas)
+    assert incomplete is False
+    assert insufficient == [
+        "gpu-4xa10g requires 48 vCPU but L-DB2E81BA applied quota is 2"
+    ]
+
+
+def test_service_quotas_base_model_allows_unjustified_verified_verdict() -> None:
+    payload = service_quotas_payload()
+    quotas = list(payload["quotas"])  # type: ignore[arg-type]
+    quotas[0]["applied_value"] = 1.0
+    payload["quotas"] = quotas
+    evidence = ServiceQuotasEvidence.model_validate(payload)
+    assert evidence.capacity_verdict == "verified"
 
 
 def test_service_quotas_rejects_missing_quota_code() -> None:
@@ -396,7 +427,7 @@ def test_service_quotas_rejects_unjustified_verified_verdict() -> None:
     quotas[0]["applied_value"] = 1.0
     payload["quotas"] = quotas
     with pytest.raises(ValidationError) as exc_info:
-        ServiceQuotasEvidence.model_validate(payload)
+        CapturedServiceQuotasEvidence.model_validate(payload)
     assert_validation_error(
         exc_info.value,
         loc_suffix=(),
@@ -411,7 +442,7 @@ def test_service_quotas_rejects_increase_required_without_insufficient_quota() -
         capacity_verdict_note="Sandbox quota increase required before Phase 1: test",
     )
     with pytest.raises(ValidationError) as exc_info:
-        ServiceQuotasEvidence.model_validate(payload)
+        CapturedServiceQuotasEvidence.model_validate(payload)
     assert_validation_error(
         exc_info.value,
         loc_suffix=(),
@@ -427,7 +458,7 @@ def test_service_quotas_accepts_blocked_for_non_quota_reason() -> None:
             "Regional g5.12xlarge capacity unavailable in us-east-1 during review."
         ),
     )
-    evidence = ServiceQuotasEvidence.model_validate(payload)
+    evidence = CapturedServiceQuotasEvidence.model_validate(payload)
     assert evidence.capacity_verdict == "blocked"
 
 
@@ -437,7 +468,7 @@ def test_service_quotas_rejects_blocked_without_reason_note() -> None:
         capacity_verdict_note="   ",
     )
     with pytest.raises(ValidationError) as exc_info:
-        ServiceQuotasEvidence.model_validate(payload)
+        CapturedServiceQuotasEvidence.model_validate(payload)
     assert_validation_error(
         exc_info.value,
         loc_suffix=(),
@@ -615,7 +646,7 @@ def test_assess_capacity_verdict_blocked_when_mapping_incomplete() -> None:
         ),
     )
     quotas = list(payload["quotas"])  # type: ignore[arg-type]
-    quotas[0]["required_vcpus"] = None
+    quotas[0]["workload_profile"] = None
     payload["quotas"] = quotas
     evidence = ServiceQuotasEvidence.model_validate(payload)
     verdict, note = assess_capacity_verdict(evidence.quotas)
