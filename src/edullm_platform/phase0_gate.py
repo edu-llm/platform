@@ -218,8 +218,8 @@ def check_ownership(inventory: OrganizationInventory) -> GateCheck:
             "ownership",
             "admin_roster_mismatch",
             (
-                "Phase 0 requires exactly Frank Gonzalez (philote-dev) and Benjamin "
-                f"(BritishAmericqn) as platform admins; got {inventory.admins!r}."
+                f"Phase 0 requires exactly {EXPECTED_ADMINS!r} as platform admins; "
+                f"got {inventory.admins!r}."
             ),
         )
     if inventory.team_leads != EXPECTED_TEAM_LEADS:

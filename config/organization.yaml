@@ -15,35 +15,35 @@ pilot_repositories:
   - dolma
 members:
   - {github_login: BritishAmericqn}
-  - {github_login: ericrcwu001, display_name: Eric Wu}
-  - {github_login: GMatherne, display_name: Grant Matherne}
-  - {github_login: nzhao721, display_name: Nathan Zhao}
-  - {github_login: pianomaster99, display_name: Tom Liu}
-  - {github_login: cd1313, display_name: Cathy Du}
-  - {github_login: IsabellaChen70, display_name: Isabella Chen}
-  - {github_login: gorpyshortlegs, display_name: Arhant Choudhary}
-  - {github_login: Elitelord, display_name: Sameer Agarwal}
-  - {github_login: anshulmago1, display_name: Anshul Mago}
-  - {github_login: arteexu, display_name: Arthur Xu}
-  - {github_login: sidvenkatayogi, display_name: Siddhartha Venkatayogi}
-  - {github_login: banksaj27, display_name: Adam}
-  - {github_login: claire-mao, display_name: Claire Mao}
-  - {github_login: VS-code-cloud, display_name: Vishnu Sharma}
-  - {github_login: Avaneesh-Ramesh-07, display_name: Avaneesh Ramesh}
-  - {github_login: aryanjverma, display_name: Aryan Verma}
-  - {github_login: William-2357, display_name: William Wang}
-  - {github_login: TejasviTyagi14, display_name: Tejasvi Tyagi}
-  - {github_login: caiiris, display_name: Iris Cai}
-  - {github_login: yuen-kai, display_name: Yuen Kai Chow}
-  - {github_login: alsy7009, display_name: Amy Lin}
-  - {github_login: Adarsh-Rajesh-Github, display_name: Adarsh Rajesh}
-  - {github_login: syz2026, display_name: Stephen Zhang}
-  - {github_login: philote-dev, display_name: Frank Gonzalez}
-  - {github_login: ninLi0, display_name: Eric Ni}
-  - {github_login: meric233, display_name: Meric Xing}
-  - {github_login: hiyasvyas, display_name: Hiya Vyas}
-  - {github_login: mathishard17, display_name: Sophia Zhang}
-  - {github_login: LawrenceDong71, display_name: Lawrence Dong}
-  - {github_login: katiehehe, display_name: Katie He}
-  - {github_login: alphaxia2100, display_name: Andrew Xia}
-  - {github_login: NotAnAlgorithm, display_name: Eve Feng}
+  - {github_login: ericrcwu001}
+  - {github_login: GMatherne}
+  - {github_login: nzhao721}
+  - {github_login: pianomaster99}
+  - {github_login: cd1313}
+  - {github_login: IsabellaChen70}
+  - {github_login: gorpyshortlegs}
+  - {github_login: Elitelord}
+  - {github_login: anshulmago1}
+  - {github_login: arteexu}
+  - {github_login: sidvenkatayogi}
+  - {github_login: banksaj27}
+  - {github_login: claire-mao}
+  - {github_login: VS-code-cloud}
+  - {github_login: Avaneesh-Ramesh-07}
+  - {github_login: aryanjverma}
+  - {github_login: William-2357}
+  - {github_login: TejasviTyagi14}
+  - {github_login: caiiris}
+  - {github_login: yuen-kai}
+  - {github_login: alsy7009}
+  - {github_login: Adarsh-Rajesh-Github}
+  - {github_login: syz2026}
+  - {github_login: philote-dev}
+  - {github_login: ninLi0}
+  - {github_login: meric233}
+  - {github_login: hiyasvyas}
+  - {github_login: mathishard17}
+  - {github_login: LawrenceDong71}
+  - {github_login: katiehehe}
+  - {github_login: alphaxia2100}
+  - {github_login: NotAnAlgorithm}
