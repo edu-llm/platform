@@ -1,6 +1,6 @@
 # Phase 0 schema compatibility report
 
-46 contract models. The structural digest is `sha256` over the model's JSON schema with sorted keys, so it changes when a field is added, removed, retyped, or reconstrained, and does not change when unrelated code moves. Comparing this table between phases answers whether a schema changed.
+58 contract models. The structural digest is `sha256` over the model's JSON schema with sorted keys, so it changes when a field is added, removed, retyped, or reconstrained, and does not change when unrelated code moves. Comparing this table between phases answers whether a schema changed.
 
 The kind column separates a `record`, which some payload is validated against, from a `base`, which exists only for other models to inherit from and which no payload names directly.
 
@@ -29,7 +29,7 @@ The kind column separates a `record`, which some payload is validated against, f
 
 ## Runtime records
 
-30 models are not exported to `schemas/`. These are produced while work runs or while a decision is made: lineage, results, datasets, authorization outcomes, operational evidence, and gate results. They carry a `schema_version` field where they are persisted, and they are deliberately not published as repository configuration, because no human authors them by hand.
+42 models are not exported to `schemas/`. These are produced while work runs or while a decision is made: lineage, results, datasets, authorization outcomes, operational evidence, and gate results. They carry a `schema_version` field where they are persisted, and they are deliberately not published as repository configuration, because no human authors them by hand.
 
 | model | module | kind | schema_version | structural digest |
 | --- | --- | --- | --- | --- |
@@ -63,6 +63,18 @@ The kind column separates a `record`, which some payload is validated against, f
 | GateCheck | edullm_platform.phase0_gate | record | unversioned | sha256:3dbb91b49e418557346c57de4ddf6fbfc2ecbd44056b3767df7d897e4a35f487 |
 | Phase0GateReport | edullm_platform.phase0_gate | record | unversioned | sha256:02eb9d875d971b229069b345e83a5646deca38af71d787a32cbe4be81b3d3883 |
 | Phase0GateResult | edullm_platform.phase0_gate | record | unversioned | sha256:bb8b182761dc0a67cb9e455e030f4d3f23545ca49b09caa877f9ec01357a5f5c |
+| BuildProvenanceEvidence | edullm_platform.phase1_evidence | record | unversioned | sha256:79ab5763ecdaa73fa042f2f5b3793c67ca9441389c07bb636cca28c3778e82e3 |
+| DenialEvidence | edullm_platform.phase1_evidence | record | unversioned | sha256:d51a5c45e15361a25928c9ae8fdaf41d688118e48509ee3e5cd69e8a830748b0 |
+| DeployedRoleEvidence | edullm_platform.phase1_evidence | record | unversioned | sha256:8d51719a61d259a260e8d46235b5b4a7a59037e3d699713485d7993222718f35 |
+| EcrImageEvidence | edullm_platform.phase1_evidence | record | unversioned | sha256:5fab49ea0545fcbfbb020825bfdc11eed13673e61d120b95c07116f54b9bae2d |
+| IamConditionEntry | edullm_platform.phase1_evidence | record | unversioned | sha256:62f08ad03ea5065071d0b1cdbdbbbf5ec9c936573e178809f675cf7ef3160547 |
+| IamInlinePolicy | edullm_platform.phase1_evidence | record | unversioned | sha256:9ae9d6d43a133eca550d8ccb6a24a753a5ea733a44d77a6685311198866d15f2 |
+| IamPermissionStatement | edullm_platform.phase1_evidence | record | unversioned | sha256:dcbbef10dcf4257f0748bf2926004c66c44a9d407a737809348ddf31c56f25cd |
+| IamPrincipal | edullm_platform.phase1_evidence | record | unversioned | sha256:582fd07af09f7a56763f23a907f1d842ba525954927a126168229dd76b2265ee |
+| IamTrustStatement | edullm_platform.phase1_evidence | record | unversioned | sha256:69f09a911c43f34ec150a7010ecddc6bff9d191b021a0d870c6775356b2be00b |
+| ImageScanEvidence | edullm_platform.phase1_evidence | record | unversioned | sha256:fe319ebea128d53ad24f38b5a6ba1cb9a1d7113e2517e2be4f4e1fc1ccaa9adc |
+| ImageScanFindingCounts | edullm_platform.phase1_evidence | record | unversioned | sha256:3ecbfd6c0d498de0074f167970f5124624b7821b7270d2d049d48bd6e182d07c |
+| OidcSessionEvidence | edullm_platform.phase1_evidence | record | unversioned | sha256:ac5da5197bfab87802a8940e85cef7c2a98b22bba5fa1603e9e3d4b157f47856 |
 
 ## Exported JSON Schema files
 
