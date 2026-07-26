@@ -2,8 +2,8 @@
 
 Phase: phase-1
 Bundle schema version: 1
-Source commit: 9ab8cb407f1becb81e8a6814c703afc16f6a4d2a
-Generated: 2026-07-26T21:07:45+00:00
+Source commit: 0b71287e0c2e0ef49fa238d9a842e5857168ffe7
+Generated: 2026-07-26T21:09:41+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 1 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase1_proof.py` at generation time. It is not done, and the Result table below says by how much.
 
@@ -69,7 +69,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 
 ## Known limitations
 
-- The role comparison says the deployed roles are what their templates declare. It does not say what those roles were refused: no session has been issued to the publisher role and no call of its has been denied, which is why check 6 is a gap even though the account half of it now holds.
+- The role comparison says the deployed roles are what their templates declare. It does not say what either role was refused: no session has been issued to the publisher role and nothing it attempted has been denied, which is why check 6 is a gap even though the account half of it now holds.
 - Nothing else in Phase 1 has run against the account. No image has been built, no digest returned, no session issued and no call refused, which is why 4 of the 8 criteria fail the gate; the matrix names them.
 - A capture is a statement about one moment. The records under `fixtures/evidence/phase-1/roles/` stop loading thirty days after they were observed — sbsandbox-intern-edullm-ecr-publisher on 2026-08-25, sbsandbox-intern-edullm-infra-deployer on 2026-08-25 — and every claim resting on them is a gap again from that date. Nothing renews it, and nothing should.
 - The drift comparison does not reason about IAM wildcards. A deployed resource of `repository/*` against a template's `repository/x` is reported as one resource gained and one lost, not as one being wider than the other.

@@ -727,9 +727,9 @@ def known_limitations(
     limitations: list[str] = []
     limitations.append(
         "The role comparison says the deployed roles are what their templates declare. It does "
-        "not say what those roles were refused: no session has been issued to the publisher "
-        f"role and no call of its has been denied, which is why check 6 is {status_of('6')} "
-        "even though the account half of it now holds."
+        "not say what either role was refused: no session has been issued to the publisher "
+        f"role and nothing it attempted has been denied, which is why check 6 is "
+        f"{status_of('6')} even though the account half of it now holds."
     )
     gap_numbers = [check.number for check in checks if check.status is CriterionStatus.GAP]
     limitations.append(
