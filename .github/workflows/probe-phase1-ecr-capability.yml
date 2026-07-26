@@ -37,6 +37,7 @@ jobs:
           Resources:
             ProbeRepository:
               Type: AWS::ECR::Repository
+              DeletionPolicy: Retain
               Properties:
                 RepositoryName: ${REPOSITORY_NAME}
           EOF

@@ -33,6 +33,23 @@ def _credentials_step(job: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+def _probe_template(workflow: dict[str, Any]) -> dict[str, Any]:
+    create_step = next(
+        step
+        for step in workflow["jobs"]["probe"]["steps"]
+        if step.get("name") == "Create probe stack"
+    )
+    template_match = re.search(
+        r"cat > probe-template\.yml <<EOF\n(?P<template>.*?)\nEOF",
+        create_step["run"],
+        flags=re.DOTALL,
+    )
+    assert template_match is not None
+    template = yaml.safe_load(template_match.group("template"))
+    assert isinstance(template, dict)
+    return template
+
+
 def test_codeowners_protects_phase1_infrastructure_surfaces() -> None:
     lines = {
         line.strip()
@@ -114,22 +131,17 @@ def test_probe_workflow_creates_verifies_and_always_deletes_stack() -> None:
 
 def test_probe_inline_template_declares_named_ecr_repository() -> None:
     _, workflow = _load_workflow()
-    create_step = next(
-        step
-        for step in workflow["jobs"]["probe"]["steps"]
-        if step.get("name") == "Create probe stack"
-    )
-    template_match = re.search(
-        r"cat > probe-template\.yml <<EOF\n(?P<template>.*?)\nEOF",
-        create_step["run"],
-        flags=re.DOTALL,
-    )
-    assert template_match is not None
-
-    template = yaml.safe_load(template_match.group("template"))
+    template = _probe_template(workflow)
     repository = template["Resources"]["ProbeRepository"]
     assert repository["Type"] == "AWS::ECR::Repository"
     assert repository["Properties"]["RepositoryName"] == "${REPOSITORY_NAME}"
+
+
+def test_probe_inline_template_retains_repository() -> None:
+    _, workflow = _load_workflow()
+    template = _probe_template(workflow)
+
+    assert template["Resources"]["ProbeRepository"]["DeletionPolicy"] == "Retain"
 
 
 def test_probe_resource_names_use_sandbox_prefix() -> None:
