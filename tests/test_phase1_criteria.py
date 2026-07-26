@@ -14,10 +14,18 @@ proof-bundle tests that will live here, so no criterion can ever cite it.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 
 from edullm_platform.criteria import REENTRANT_TEST_MODULES, CriterionSpec, CriterionStatus
 from edullm_platform.phase1_criteria import PHASE1_CRITERION_COUNT, phase1_criteria
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+#: A path a criterion's prose points at, as a reader would type it.
+REFERENCED_PATH = re.compile(r"\b(?:tools|src|infra|fixtures|config)/[\w./-]*[\w]")
 
 #: The eight Phase 1 checks as the master plan states them.
 PHASE1_STATEMENTS = (
@@ -136,6 +144,41 @@ def test_source_identity_is_what_rejects_a_bad_commit_or_repository(
         }
         assert "tests/test_source_identity.py" in modules, number
         assert "tests/test_verify_source_identity_cli.py" in modules, number
+
+
+def test_every_path_a_criterion_names_is_one_that_exists(
+    criteria: tuple[CriterionSpec, ...],
+) -> None:
+    # A gap says what would close it, and half of those sentences name a tool. A tool
+    # that was renamed, or one that was described and never written, turns the honest
+    # part of this module into a set of directions to nowhere.
+    named = [
+        (check.number, path)
+        for check in criteria
+        for text in (*check.gaps, *check.scope_limits)
+        for path in REFERENCED_PATH.findall(text)
+    ]
+
+    assert [path for _number, path in named if not (PROJECT_ROOT / path).exists()] == []
+    # Anchors the assertion above, which would pass on prose that names nothing at all.
+    assert {path for _number, path in named} >= {
+        "tools/capture_phase1_evidence.py",
+        "tools/verify_publisher_denials.py",
+        "fixtures/evidence",
+    }
+
+
+def test_the_gap_that_the_drift_comparison_bears_on_says_what_is_still_missing(
+    criteria: tuple[CriterionSpec, ...],
+) -> None:
+    # Criterion 6 is the one the comparison was built for, and it is still a gap. The
+    # risk is that building the machinery reads later as having closed it, so the gap
+    # text has to name both halves: the comparison exists, and nobody has run it.
+    gaps = " ".join(by_number(criteria, "6").gaps)
+
+    assert "role_drift" in gaps
+    assert "tools/capture_phase1_evidence.py" in gaps
+    assert "no capture" in gaps.lower() or "no run against the account" in gaps.lower()
 
 
 def test_no_criterion_cites_a_module_that_starts_a_gate(

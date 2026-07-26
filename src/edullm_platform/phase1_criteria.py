@@ -21,10 +21,24 @@ what the artifact is:
 * A workflow file is read by GitHub exactly as committed, with no deployment step in
   between, so a test that pins it proves what runs. Those citations are proving.
 * A CloudFormation template describes a role that was deployed once, by hand, from a
-  laptop. No test in this repository compares the deployed role to the template, so a
-  template test is evidence about the document rather than proof about the role. Those
-  citations are supporting, and they are only ever a second mechanism standing behind a
-  criterion that something else already proves.
+  laptop. ``edullm_platform.role_drift`` can now compare a deployed role to its template,
+  but a comparison needs a captured role to compare, and no capture has been taken. Until
+  one is, a template test is evidence about the document rather than proof about the
+  role, so those citations are supporting, and they are only ever a second mechanism
+  standing behind a criterion that something else already proves.
+
+**What a citation resting on captured evidence would be worth.** None of the criteria
+below cites captured evidence today, and the rule for the day one does is worth writing
+down before it is convenient to forget. Captured evidence is a statement about one
+moment. Every record in ``edullm_platform.phase1_evidence`` is a ``FreshEvidenceModel``,
+which refuses to load at all once it is more than ``FRESHNESS_WINDOW`` old and reports
+``evidence_stale`` when it does. A criterion proved by such a record is therefore proved
+for as long as the record loads and no longer: the citation is valid while a committed
+fixture under ``fixtures/evidence/`` carries an ``observed_at`` inside the window and the
+comparison against the committed template reports no drift, and it expires — back to a
+gap, with the gate red — thirty days after the capture, or the moment the template it was
+compared against changes. Nothing renews that automatically, and nothing should: the
+point of the window is that somebody has to go and look again.
 """
 
 from __future__ import annotations
@@ -48,9 +62,23 @@ NO_LIVE_RUN: Final = (
 )
 
 TRUST_POLICY_IS_A_DOCUMENT: Final = (
-    "The publisher role was deployed once from a laptop and is not redeployed by CI, and "
-    "nothing here compares the live role to the committed template, so this citation is "
-    "supporting: it proves what the template says rather than what the role does."
+    "The publisher role was deployed once from a laptop and is not redeployed by CI. "
+    "edullm_platform.role_drift can now compare the deployed role to this template, and "
+    "tools/capture_phase1_evidence.py runs that comparison as it captures, but no capture "
+    "has been taken, so the comparison has nothing to run against. Until one is committed "
+    "under fixtures/evidence/, this citation stays supporting: it proves what the template "
+    "says rather than what the role does."
+)
+
+#: What the drift comparison closes, and what it does not. It makes a widened role
+#: detectable; it does not make one narrow, and it detects nothing until a capture exists.
+DRIFT_COMPARISON_EXISTS: Final = (
+    "edullm_platform.role_drift compares a captured DeployedRoleEvidence against the "
+    "committed template and reports any divergence in trust conditions, permission "
+    "statements, boundary, session duration or attached managed policies, in both "
+    "directions. tools/capture_phase1_evidence.py runs it against the live account and "
+    "refuses to report success when the two disagree. What is missing is the capture: no "
+    "run against the account has been taken, so nothing has compared anything yet."
 )
 
 #: The CLI the workflow actually invokes, parametrised over one rejection reason each.
@@ -240,14 +268,28 @@ def phase1_criteria() -> tuple[CriterionSpec, ...]:
                     "or IAM action appears anywhere in it. That is a fact about a document."
                 ),
                 (
-                    "Nothing compares the deployed role to that document. The role was created "
-                    "once from a laptop and is not redeployed by CI, so a policy widened in "
-                    "the console would leave every test in this repository green."
+                    f"{DRIFT_COMPARISON_EXISTS} So a policy widened in the console is now "
+                    "detectable, and is still undetected: a comparison nobody has run leaves "
+                    "every test in this repository green exactly as before."
                 ),
                 (
-                    "Closing this needs a denial observed rather than argued: a session issued "
-                    "to the publisher role attempting a Batch submit, an S3 read, and an IAM "
-                    "change, and the CloudTrail records of those three refusals."
+                    "Two things close this and both are runs rather than tests. The first is a "
+                    "capture: tools/capture_phase1_evidence.py against the sandbox, and the "
+                    "sanitized role record committed under fixtures/evidence/ with no drift "
+                    "findings. That would show the deployed role is the template, which is what "
+                    "makes the template's absence of Batch, S3 and IAM actions mean something."
+                ),
+                (
+                    "The second is a denial observed rather than argued: a session issued to "
+                    "the publisher role attempting a Batch submit, an S3 read, and an IAM "
+                    "change, and the CloudTrail records of those three refusals. "
+                    "edullm_platform.publisher_denials attempts exactly that matrix and "
+                    "tools/verify_publisher_denials.py runs it, and no session has run it."
+                ),
+                (
+                    "A citation on the capture would expire. See the freshness rule in this "
+                    "module's docstring: the record stops loading thirty days after it was "
+                    "taken, and the criterion is a gap again from that moment."
                 ),
             ),
         ),
@@ -261,6 +303,13 @@ def phase1_criteria() -> tuple[CriterionSpec, ...]:
                     "repository was deployed from it. Neither fact is the criterion: what is "
                     "claimed here is that a second push to an existing tag is refused, and "
                     "that behaviour belongs to ECR at push time."
+                ),
+                (
+                    "tools/capture_phase1_evidence.py can now record what the deployed "
+                    "repository's tag mutability actually is, which would at least close the "
+                    "distance between the template and the account. It would not close this: "
+                    "a setting read back from a describe call is still not a push that was "
+                    "refused."
                 ),
                 f"{NO_LIVE_RUN} No image has been pushed once, let alone twice.",
                 (
