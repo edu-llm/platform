@@ -1387,6 +1387,107 @@ def test_an_action_element_iam_does_not_have_cannot_validate(element: str) -> No
     )
 
 
+def test_a_permission_statement_can_record_a_deny_the_template_does_not_have() -> None:
+    # A Deny added by hand narrows the role rather than widening it, but it is still a
+    # difference from the template, and a record that only held Allow could not say so.
+    denying = DeployedRoleEvidence.model_validate(
+        role_with_one_statement(effect="Deny", action_match=action_match_payload(["ecr:PutImage"]))
+    )
+    assert denying.inline_policies[0].statements[0].effect == "Deny"
+
+
+@pytest.mark.parametrize(
+    "operator",
+    [
+        "StringEquals",
+        "StringNotEqualsIgnoreCase",
+        "StringLike",
+        "NumericLessThanEquals",
+        "DateGreaterThanEquals",
+        "Bool",
+        "BinaryEquals",
+        "IpAddress",
+        "NotIpAddress",
+        "ArnNotLike",
+        "Null",
+        "StringEqualsIfExists",
+        "ForAllValues:StringLike",
+        "ForAnyValue:StringEquals",
+        "ForAllValues:StringEqualsIfExists",
+    ],
+)
+def test_a_condition_operator_these_templates_never_use_is_still_recordable(
+    operator: str,
+) -> None:
+    # The templates use StringEquals and StringLike. IAM has around thirty operators,
+    # each taking an IfExists suffix and a set prefix, and a condition added by hand is
+    # as likely to use one of the others. Enumerating the two in use would refuse the
+    # rest, which would mean refusing the drift rather than reporting it.
+    evidence = DeployedRoleEvidence.model_validate(role_with_one_condition(operator=operator))
+    assert evidence.trust_statements[0].conditions[0].operator == operator
+
+
+@pytest.mark.parametrize(
+    "operator", ["ForSomeValues:StringEquals", "String Equals", "S", "StringEquals:", ""]
+)
+def test_a_condition_operator_iam_would_not_store_cannot_validate(operator: str) -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        DeployedRoleEvidence.model_validate(role_with_one_condition(operator=operator))
+    assert_validation_error(
+        exc_info.value,
+        loc_suffix=("conditions", 0, "operator"),
+        error_type="string_pattern_mismatch",
+    )
+
+
+def test_a_trust_statement_can_record_the_wildcard_principal() -> None:
+    # IAM's grammar allows "Principal": "*" in place of a principal map, and it admits
+    # everyone. It is the single worst thing that could happen to this trust policy, so
+    # it had better be recordable.
+    everyone = DeployedRoleEvidence.model_validate(
+        deployed_role_payload(
+            trust_statements=[
+                trust_statement_payload(
+                    principal_match=principal_match_payload(
+                        [{"principal_type": "*", "identifier": "*"}]
+                    )
+                )
+            ]
+        )
+    )
+    principal = everyone.trust_statements[0].principal_match.principals[0]
+    assert (principal.principal_type, principal.identifier) == ("*", "*")
+
+
+def test_an_account_number_principal_must_arrive_with_the_account_redacted() -> None:
+    # IAM lets a trust policy name an account by number alone, so this principal is a
+    # bare account ID and the one shape here that has no name to fall back on.
+    def role_trusting(identifier: str) -> dict[str, object]:
+        return deployed_role_payload(
+            trust_statements=[
+                trust_statement_payload(
+                    principal_match=principal_match_payload(
+                        [{"principal_type": "AWS", "identifier": identifier}]
+                    )
+                )
+            ]
+        )
+
+    with pytest.raises(ValidationError) as exc_info:
+        DeployedRoleEvidence.model_validate(role_trusting(AWS_EXAMPLE_ACCOUNT_ID))
+    assert_validation_error(
+        exc_info.value,
+        loc_suffix=("principals", 0, "identifier"),
+        error_type="value_error",
+        message_fragment="must not contain credentials or raw AWS account IDs",
+    )
+    accepted = DeployedRoleEvidence.model_validate(
+        role_trusting(redact_aws_account_ids(AWS_EXAMPLE_ACCOUNT_ID))
+    )
+    recorded = accepted.trust_statements[0].principal_match.principals[0].identifier
+    assert AWS_EXAMPLE_ACCOUNT_ID not in recorded
+
+
 def test_denial_requires_the_resource_key_even_when_the_call_has_no_resource() -> None:
     without_resource = DenialEvidence.model_validate(denial_payload(attempted_resource=None))
     assert without_resource.attempted_resource is None
