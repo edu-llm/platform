@@ -136,11 +136,12 @@ def test_checked_in_schemas_match_contract_models() -> None:
         assert (schemas_dir / filename).read_text(encoding="utf-8") == expected
 
 
-def test_rendered_schemas_cover_four_root_contract_models() -> None:
+def test_rendered_schemas_cover_all_root_contract_models() -> None:
     assert set(rendered_schemas()) == {
         "organization.schema.json",
         "workload-catalog.schema.json",
         "policy.schema.json",
+        "repositories.schema.json",
         "run-manifest.schema.json",
     }
 
