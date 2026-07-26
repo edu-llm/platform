@@ -1,3 +1,4 @@
+import json
 import re
 from collections.abc import Iterator
 from pathlib import Path
@@ -9,9 +10,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 INFRA_ROOT = PROJECT_ROOT / "infra"
 IAM_ROOT = INFRA_ROOT / "iam"
 PUBLISHER_TEMPLATE_PATH = IAM_ROOT / "ecr-publisher-role.yaml"
+ECR_TEMPLATE_PATH = INFRA_ROOT / "ecr-repositories.yaml"
 
 ROLE_NAME = "sbsandbox-intern-edullm-ecr-publisher"
 MANAGED_POLICY_NAME = "sbsandbox-intern-edullm-ecr-publisher"
+OLMO_CORE_REPOSITORY_NAME = "sbsandbox-intern-edullm-olmo-core"
 BOUNDARY = {
     "Fn::Sub": ("arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/InternSandboxBoundary")
 }
@@ -206,9 +209,88 @@ def test_publisher_outputs_only_the_role_name_and_arn() -> None:
     }
 
 
+def test_ecr_template_creates_exactly_one_finished_image_repository() -> None:
+    template = _load_template(ECR_TEMPLATE_PATH)
+
+    resources = template["Resources"]
+    assert len(resources) == 1
+    logical_id, repository = _resource_of_type(template, "AWS::ECR::Repository")
+    assert list(resources) == [logical_id]
+    assert repository["Properties"]["RepositoryName"] == OLMO_CORE_REPOSITORY_NAME
+
+
+def test_ecr_repository_is_encrypted_scanned_immutable_and_retained() -> None:
+    template = _load_template(ECR_TEMPLATE_PATH)
+    _, repository = _resource_of_type(template, "AWS::ECR::Repository")
+
+    assert repository["DeletionPolicy"] == "Retain"
+    assert repository["UpdateReplacePolicy"] == "Retain"
+    assert repository["Properties"]["EncryptionConfiguration"] == {
+        "EncryptionType": "AES256"
+    }
+    assert repository["Properties"]["ImageScanningConfiguration"] == {"ScanOnPush": True}
+    assert repository["Properties"]["ImageTagMutability"] == "IMMUTABLE"
+
+
+def test_ecr_lifecycle_expires_old_untagged_and_caps_all_tagged_images() -> None:
+    template = _load_template(ECR_TEMPLATE_PATH)
+    _, repository = _resource_of_type(template, "AWS::ECR::Repository")
+    policy_text = repository["Properties"]["LifecyclePolicy"]["LifecyclePolicyText"]
+    assert isinstance(policy_text, str)
+
+    policy = json.loads(policy_text)
+    assert policy == {
+        "rules": [
+            {
+                "rulePriority": 1,
+                "description": "Expire untagged images older than 7 days",
+                "selection": {
+                    "tagStatus": "untagged",
+                    "countType": "sinceImagePushed",
+                    "countUnit": "days",
+                    "countNumber": 7,
+                },
+                "action": {"type": "expire"},
+            },
+            {
+                "rulePriority": 2,
+                "description": "Retain at most 50 tagged images",
+                "selection": {
+                    "tagStatus": "tagged",
+                    "tagPatternList": ["*"],
+                    "countType": "imageCountMoreThan",
+                    "countNumber": 50,
+                },
+                "action": {"type": "expire"},
+            },
+        ]
+    }
+
+
+def test_ecr_template_has_no_iam_policy_principal_or_account_literal() -> None:
+    template = _load_template(ECR_TEMPLATE_PATH)
+    strings = list(_walk_strings(template))
+
+    assert not any(value.startswith("AWS::IAM::") for value in strings)
+    assert "AWS::ECR::RepositoryPolicy" not in strings
+    assert "Principal" not in strings
+    assert "PolicyDocument" not in strings
+    assert not re.search(r"(?<!\d)\d{12}(?!\d)", ECR_TEMPLATE_PATH.read_text(encoding="utf-8"))
+
+
+def test_ecr_template_outputs_only_the_repository_name() -> None:
+    template = _load_template(ECR_TEMPLATE_PATH)
+    logical_id, _ = _resource_of_type(template, "AWS::ECR::Repository")
+
+    assert template["Outputs"] == {
+        "RepositoryName": {"Value": {"Ref": logical_id}},
+    }
+
+
 def test_iam_resources_are_confined_and_all_roles_have_boundaries() -> None:
     yaml_paths = sorted((*INFRA_ROOT.rglob("*.yaml"), *INFRA_ROOT.rglob("*.yml")))
     assert PUBLISHER_TEMPLATE_PATH in yaml_paths
+    assert ECR_TEMPLATE_PATH in yaml_paths
 
     for path in yaml_paths:
         template = _load_template(path)
