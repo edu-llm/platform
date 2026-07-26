@@ -185,15 +185,9 @@ REBUILD_COMPARISONS: Final = tuple(
 #: tuple: a node id split across two adjacent string literals inside a tuple is one
 #: missing comma away from being two node ids, and neither pytest nor a reader would say so.
 WORKFLOW_MODULE: Final = "tests/test_build_research_image_workflow.py"
-DIGEST_READ_BACK_FROM_THE_REGISTRY: Final = (
-    f"{WORKFLOW_MODULE}::test_publish_job_takes_the_digest_from_an_ecr_read_back_not_the_local_build"
-)
-BUILD_USES_THE_REGISTERED_BASE: Final = (
-    f"{WORKFLOW_MODULE}::test_publish_job_builds_from_the_registered_base_digest_under_an_immutable_tag"
-)
-RERUN_RESUMES_RATHER_THAN_REBUILDS: Final = (
-    f"{WORKFLOW_MODULE}::test_a_published_tag_short_circuits_to_the_digest_the_registry_already_holds"
-)
+DIGEST_READ_BACK_FROM_THE_REGISTRY: Final = f"{WORKFLOW_MODULE}::test_publish_job_takes_the_digest_from_an_ecr_read_back_not_the_local_build"
+BUILD_USES_THE_REGISTERED_BASE: Final = f"{WORKFLOW_MODULE}::test_publish_job_builds_from_the_registered_base_digest_under_an_immutable_tag"
+RERUN_RESUMES_RATHER_THAN_REBUILDS: Final = f"{WORKFLOW_MODULE}::test_a_published_tag_short_circuits_to_the_digest_the_registry_already_holds"
 PUBLISHER_GRANTS_ECR_AND_NOTHING_ELSE: Final = (
     "tests/test_phase1_deployed_roles.py::test_the_deployed_publisher_grants_ecr_and_nothing_else"
 )
@@ -274,9 +268,7 @@ def phase1_criteria() -> tuple[CriterionSpec, ...]:
                 f"{REBUILD_MODULE}::test_the_builds_were_made_from_the_base_this_repository_registers",
                 f"{REBUILD_MODULE}::test_every_pinned_field_pattern_matches_something_that_was_recorded",
             ),
-            supporting_node_ids=(
-                RERUN_RESUMES_RATHER_THAN_REBUILDS,
-            ),
+            supporting_node_ids=(RERUN_RESUMES_RATHER_THAN_REBUILDS,),
             scope_limits=(
                 (
                     "What is claimed is explainability, and what closes it is an explanation "

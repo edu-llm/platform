@@ -73,9 +73,7 @@ PHASE1_STATEMENTS = (
 
 #: What each criterion is recorded as, stated here rather than read from the definition
 #: so that promoting a gap to covered has to be done twice and reviewed once.
-EXPECTED_STATUSES = dict.fromkeys(
-    (str(number) for number in range(1, 9)), CriterionStatus.COVERED
-)
+EXPECTED_STATUSES = dict.fromkeys((str(number) for number in range(1, 9)), CriterionStatus.COVERED)
 
 #: The criteria that describe what the live path did, and therefore rest on the committed
 #: records of one run. Each cites RUN_EVIDENCE_HOLDS and each is a gap again when it

@@ -269,7 +269,7 @@ def run_answers() -> dict[str, Any]:
                 # The same probe from an hour-earlier run of the matrix, which the join
                 # has to leave alone.
                 cloudtrail_event(
-                    event_id="00000000-0000-4000-8000-000000000000",
+                    event_id="00000000-0000-4000-8000-00000000eeee",
                     event_name=operation,
                     event_source=source,
                     event_time=DENIAL_ATTEMPTED_AT + timedelta(seconds=offset, hours=-1),
@@ -505,7 +505,7 @@ def test_a_denial_is_joined_to_its_own_run_rather_than_to_an_earlier_one(
         loaded(tmp_path, f"sanitized/denials/{action.replace(':', '-')}.sanitized.json")["event_id"]
         for action in PUBLISHER_DENIED_ACTIONS
     }
-    assert "00000000-0000-4000-8000-000000000000" not in recorded
+    assert "00000000-0000-4000-8000-00000000eeee" not in recorded
 
 
 def test_the_tag_refusal_target_records_the_refusal_and_the_digest_that_survived(
@@ -576,10 +576,10 @@ def test_a_push_on_a_later_page_of_the_trail_is_still_found(
     answers["cloudtrail lookup-events PutImage"] = {
         "Events": [
             {
-                "EventId": "11111111-1111-4111-8111-111111111111",
+                "EventId": "11111111-1111-4111-8111-11111111ffff",
                 "CloudTrailEvent": json.dumps(
                     cloudtrail_event(
-                        event_id="11111111-1111-4111-8111-111111111111",
+                        event_id="11111111-1111-4111-8111-11111111ffff",
                         event_name="PutImage",
                         event_source="ecr.amazonaws.com",
                         event_time=datetime(2026, 7, 26, 22, 12, 41, tzinfo=UTC),
