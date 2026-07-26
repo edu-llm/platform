@@ -30,6 +30,8 @@ from edullm_platform.role_drift import (
 )
 from tools.capture_phase1_evidence import (
     CAPTURE_TARGET_NAMES,
+    OutputDirectoryRefusedError,
+    allowed_output_root,
     capture_phase1_evidence,
     main,
     resolve_output_dir,
@@ -324,7 +326,9 @@ def test_an_account_that_matches_its_templates_captures_clean(
         report = loaded(tmp_path, f"drift/{role_name}.json")
         assert report["matches"] is True, report["findings"]
         assert report["findings"] == []
-    assert json.loads(captured.out)["drift_findings"] == 0
+    summary = json.loads(captured.out)
+    assert summary["drift_findings"] == 0
+    assert summary["verdict"] == "ok"
 
 
 def test_the_captured_role_is_the_role_the_template_declares(
@@ -475,6 +479,39 @@ def test_a_role_widened_in_the_console_is_reported_and_fails_the_capture(
     assert "wider" in captured.err
     # The evidence is still written. What drifted is the account, not the capture.
     assert f"sanitized/roles/{PUBLISHER_ROLE}.sanitized.json" in written(tmp_path)
+
+
+def test_a_summary_written_after_drift_says_the_capture_is_not_clean(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The summary is written whether or not the comparison agreed, because the records
+    # were captured either way. What it may not do is read like a clean run and leave the
+    # exit code as the only thing that says otherwise.
+    install_aws_stub(
+        tmp_path,
+        monkeypatch,
+        answers=mutated_answers(
+            f"iam get-role-policy {PUBLISHER_ROLE} publish-olmo-core-images",
+            lambda answer: answer["PolicyDocument"]["Statement"][1]["Action"].append(
+                "ecr:DeleteRepository"
+            ),
+        ),
+    )
+
+    exit_code = capture(tmp_path, **{"--target": "roles"})
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    summary = json.loads(captured.out)
+    assert summary["verdict"] == "role_drift"
+    assert summary["drift_findings"] == 1
+    assert summary["roles_compared"] == 2
+    assert captured.err.splitlines()[-1] == (
+        "capture_not_clean: 1 finding across 2 roles compared; "
+        "the committed templates do not describe the account"
+    )
 
 
 def test_a_role_narrowed_in_the_console_also_fails_the_capture(
@@ -680,8 +717,41 @@ def test_the_capture_refuses_to_write_outside_the_working_directory(tmp_path: Pa
     # Captured evidence is local-only until somebody reviews it and copies the part they
     # want into fixtures. A tool that could write anywhere would make that a choice
     # nobody had to take.
-    with pytest.raises(ValueError, match="phase-1-evidence"):
+    with pytest.raises(OutputDirectoryRefusedError, match="phase-1-evidence"):
         resolve_output_dir(tmp_path / "somewhere-else", base_dir=tmp_path)
+
+
+def test_a_refused_output_directory_says_which_constraint_it_broke(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # An absolute path is not the problem and reads like one, because the path that gets
+    # typed is usually absolute into a different checkout of the same repository. A
+    # reason code alone leaves the operator guessing at which of the two it was.
+    install_aws_stub(tmp_path, monkeypatch)
+    elsewhere = tmp_path / "elsewhere" / OUTPUT_SUFFIX / "run"
+
+    exit_code = capture(tmp_path, **{"--output-dir": str(elsewhere)})
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert captured.err.splitlines()[0] == "output_dir_outside_working_directory"
+    assert str(elsewhere) in captured.err
+    assert str(allowed_output_root(tmp_path)) in captured.err
+    assert captured.out == ""
+
+
+def test_an_absolute_path_inside_the_working_directory_is_accepted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The constraint is where the path lands, not how it was spelled.
+    install_aws_stub(tmp_path, monkeypatch)
+    absolute = (tmp_path / OUTPUT_SUFFIX / "run").resolve()
+
+    assert capture(tmp_path, **{"--output-dir": str(absolute)}) == 0
+    assert written(tmp_path) != {}
 
 
 def test_the_capture_accepts_a_directory_under_the_working_directory(tmp_path: Path) -> None:

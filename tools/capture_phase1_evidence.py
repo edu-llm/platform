@@ -101,6 +101,31 @@ class CaptureFailedError(RuntimeError):
         super().__init__(reason)
 
 
+class OutputDirectoryRefusedError(CaptureFailedError, ValueError):
+    """The capture was aimed somewhere it is not allowed to write.
+
+    Deliberate, and worth saying out loud rather than reporting as a failed write: a
+    capture is local-only until somebody has read it and copied the part they want into
+    ``fixtures/``, and a tool that could write anywhere would make that a step nobody had
+    to take. What the operator needs back is *which* constraint refused, because the path
+    that gets typed is usually absolute — and an absolute path is fine. What is not fine
+    is where it lands, which for an absolute path into another checkout of this
+    repository is somewhere this one does not own.
+    """
+
+    def __init__(self, *, requested: Path, resolved: Path, allowed_root: Path) -> None:
+        super().__init__(
+            "output_dir_outside_working_directory\n"
+            f"  asked for: {requested}\n"
+            f"  resolves to: {resolved}\n"
+            f"  must be under: {allowed_root}\n"
+            "A capture is local-only until somebody reads it and copies what they want into "
+            f"fixtures/, so this tool writes only under {ALLOWED_OUTPUT_SUFFIX}/ and refuses "
+            "anywhere else. Absolute paths are accepted; they are resolved against this "
+            "checkout, so one naming a different worktree of this repository lands outside it."
+        )
+
+
 @dataclass(frozen=True)
 class AccountIdentity:
     """Who the capture is running as. Neither field is ever written to a file.
@@ -163,10 +188,13 @@ def resolve_output_dir(output_dir: Path, *, base_dir: Path | None = None) -> Pat
     root = base_dir if base_dir is not None else project_root()
     candidate = output_dir if output_dir.is_absolute() else (root / output_dir)
     resolved = candidate.resolve()
+    allowed = allowed_output_root(root)
     try:
-        resolved.relative_to(allowed_output_root(root))
+        resolved.relative_to(allowed)
     except ValueError as exc:
-        raise ValueError(f"output_dir must be under {ALLOWED_OUTPUT_SUFFIX}/") from exc
+        raise OutputDirectoryRefusedError(
+            requested=output_dir, resolved=resolved, allowed_root=allowed
+        ) from exc
     return resolved
 
 
@@ -567,19 +595,33 @@ def main(argv: Sequence[str] | None = None, *, base_dir: Path | None = None) -> 
                 f"role_drift:{report.role_name}:{finding.direction.value}:{finding.element}",
                 file=sys.stderr,
             )
+    findings = captured.drift_findings
+    # The records are written either way — what drifted is the account, not the capture —
+    # so the summary is printed for a failed comparison too. It carries the verdict so
+    # that a reader of the summary alone is told, rather than being left to notice a
+    # count and infer what it meant from the exit code.
     print(
         json.dumps(
             {
                 "targets": list(arguments.target or CAPTURE_TARGET_NAMES),
                 "written": sorted(path.name for path in captured.written),
                 "roles_compared": len(captured.drift),
-                "drift_findings": captured.drift_findings,
+                "drift_findings": findings,
+                "verdict": "role_drift" if findings else "ok",
             },
             indent=2,
             sort_keys=True,
         )
     )
-    return 1 if captured.drift_findings else 0
+    if not findings:
+        return 0
+    print(
+        f"capture_not_clean: {findings} finding{'' if findings == 1 else 's'} across "
+        f"{len(captured.drift)} roles compared; the committed templates do not describe "
+        "the account",
+        file=sys.stderr,
+    )
+    return 1
 
 
 if __name__ == "__main__":
