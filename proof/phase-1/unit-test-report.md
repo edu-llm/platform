@@ -17,9 +17,9 @@ uv run python tools/build_phase1_proof.py
 
 | measure | count |
 | --- | --- |
-| collected by pytest | 2023 |
-| executed (excluding tests/test_phase0_proof.py, tests/test_phase1_proof.py) | 1953 |
-| passed | 1953 |
+| collected by pytest | 2046 |
+| executed (excluding tests/test_phase0_proof.py, tests/test_phase1_proof.py) | 1971 |
+| passed | 1971 |
 | failed | 0 |
 | errored | 0 |
 | skipped | 0 |
@@ -31,9 +31,9 @@ Every test node id cited by the negative-case matrix, plus every test in the mod
 
 | measure | count |
 | --- | --- |
-| selected node ids | 308 |
-| executed | 308 |
-| passed | 308 |
+| selected node ids | 324 |
+| executed | 324 |
+| passed | 324 |
 | failed | 0 |
 | errored | 0 |
 | skipped | 0 |
@@ -45,7 +45,8 @@ The test modules Phase 1 added, excluding the two that invoke a gate or this gen
 
 | module | tests | result |
 | --- | --- | --- |
-| tests/test_capture_phase1_evidence_cli.py | 21 | pass |
+| tests/test_capture_phase1_evidence_cli.py | 24 | pass |
+| tests/test_phase1_deployed_roles.py | 13 | pass |
 | tests/test_phase1_deployer_role.py | 12 | pass |
 | tests/test_phase1_ecr_deployment_workflow.py | 7 | pass |
 | tests/test_phase1_evidence.py | 186 | pass |

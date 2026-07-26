@@ -1,6 +1,6 @@
 # Phase 1 deployed-role drift
 
-Both Phase 1 roles were created once from a laptop and neither is redeployed by CI, so each committed template is a claim about the account rather than a description of it. `edullm_platform.role_drift` is what turns the claim back into something checkable, and `tools/capture_phase1_evidence.py` runs it against the live account as it captures.
+Both Phase 1 roles were created once from a laptop and neither is redeployed by CI, so each committed template began as a claim about the account rather than a description of it. `edullm_platform.role_drift` is what turns the claim back into something checkable, `tools/capture_phase1_evidence.py` runs it against the live account as it captures, and the sanitized records it wrote are committed under `fixtures/evidence/phase-1/roles/` so the comparison can be re-run by anybody, with no credentials, as often as the suite runs.
 
 ## The roles compared
 
@@ -37,8 +37,11 @@ A template spells a resource `arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::Ac
 
 ## What this bundle compared
 
-Nothing. No captured role evidence is committed under `fixtures/evidence/phase-1/roles/`, so the comparison had nothing to run against. The machinery above is built and tested against synthetic roles derived from these templates; it has not been pointed at the account.
+One capture per role, taken against the sandbox and committed after review. The generator refuses to write at all if any of them has expired, drifted or stopped loading, so this table can only ever report agreement — the interesting states are reported by the refusal instead.
 
-To change that: run `uv run python tools/capture_phase1_evidence.py --aws-profile <profile> --aws-region us-east-1 --environment sandbox --repository OLMo-core --output-dir docs-frank/working/phase-1-evidence/<date>`, read what it wrote, and copy the sanitized role records into `fixtures/evidence/phase-1/roles/`. Regenerate this bundle afterwards and this section will report the comparison.
+| role | observed | matches its template | findings | expires |
+| --- | --- | --- | --- | --- |
+| sbsandbox-intern-edullm-ecr-publisher | 2026-07-26 | yes | 0 | 2026-08-25 |
+| sbsandbox-intern-edullm-infra-deployer | 2026-07-26 | yes | 0 | 2026-08-25 |
 
-A capture is a statement about one moment. Every evidence record stops loading thirty days after it was taken, so a committed capture expires and this section goes back to reporting nothing until somebody looks again. That is the intended behaviour and not a defect to work around.
+**Expires** is thirty days after the observation, and it is not a formality. Every Phase 1 evidence record refuses to load past it, so on that date `tests/test_phase1_deployed_roles.py` goes red, every criterion resting on it reverts with reason `cited_test_failed`, `tools/validate_phase1.py` exits 1, and this bundle stops building. Nothing about the roles will have changed; what will have lapsed is anybody's knowledge of them. The two honest responses are to re-capture, or to delete the records and remove the citations resting on them, which is a decision somebody takes in writing.

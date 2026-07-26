@@ -4,7 +4,7 @@ The 8 Phase 1 acceptance criteria, mapped to the tests cited for each one by nod
 
 This mapping is defined once, in `src/edullm_platform/phase1_criteria.py`. The acceptance gate reads the same definition and executes the same node ids, so this matrix and `tools/validate_phase1.py` cannot disagree.
 
-Verification run: 308 tests executed, 308 passed, 0 failed, 0 errored, pytest exit code 0.
+Verification run: 324 tests executed, 324 passed, 0 failed, 0 errored, pytest exit code 0.
 
 Three statuses exist and no more. **COVERED** means one or more cited tests prove the criterion as stated against the shipped configuration and all of them pass; the gate passes it. **DEFERRED** means an explicit recorded decision not to satisfy it yet, which requires both a written reason and a written trigger describing what makes it live again; the gate passes it. **GAP** is everything else, and the gate fails it. There is no in-between status, because an in-between status is what lets a gate be green and wrong at the same time.
 
@@ -15,8 +15,8 @@ Three statuses exist and no more. **COVERED** means one or more cited tests prov
 | 1 | GAP | 0 | 0 | A pushed branch commit produces a digest. |
 | 2 | GAP | 0 | 0 | Rebuilding identical inputs is explainable even if byte-level image reproducibility differs. |
 | 3 | COVERED | 8 | 0 | A dirty or unpushed commit is rejected. |
-| 4 | COVERED | 7 | 1 | A commit from an unauthorized repository is rejected. |
-| 5 | COVERED | 4 | 1 | A pull-request test job cannot request AWS credentials. |
+| 4 | COVERED | 7 | 4 | A commit from an unauthorized repository is rejected. |
+| 5 | COVERED | 4 | 4 | A pull-request test job cannot request AWS credentials. |
 | 6 | GAP | 0 | 0 | The publisher role cannot submit jobs, read datasets, alter IAM, or modify Batch. |
 | 7 | GAP | 0 | 0 | An immutable tag cannot be overwritten. |
 | 8 | COVERED | 4 | 0 | A run manifest using a tag instead of a digest is rejected. |
@@ -38,16 +38,15 @@ Read these first. A matrix that overstates coverage is worse than no matrix. Eve
 
 ### Check 6 (GAP) — The publisher role cannot submit jobs, read datasets, alter IAM, or modify Batch.
 
-- The criterion is about what the live role can do. The committed template grants one inline policy of nine ECR actions on one repository, plus the authorization-token call that takes no resource, and no Batch, S3, EC2, or IAM action appears anywhere in it. That is a fact about a document.
-- edullm_platform.role_drift compares a captured DeployedRoleEvidence against the committed template and reports any divergence in trust conditions, permission statements, boundary, session duration or attached managed policies, in both directions. tools/capture_phase1_evidence.py runs it against the live account and refuses to report success when the two disagree. What is missing is the capture: no run against the account has been taken, so nothing has compared anything yet. So a policy widened in the console is now detectable, and is still undetected: a comparison nobody has run leaves every test in this repository green exactly as before.
-- Two things close this and both are runs rather than tests. The first is a capture: tools/capture_phase1_evidence.py against the sandbox, and the sanitized role record committed under fixtures/evidence/ with no drift findings. That would show the deployed role is the template, which is what makes the template's absence of Batch, S3 and IAM actions mean something.
-- The second is a denial observed rather than argued: a session issued to the publisher role attempting a Batch submit, an S3 read, and an IAM change, and the CloudTrail records of those three refusals. edullm_platform.publisher_denials attempts exactly that matrix and tools/verify_publisher_denials.py runs it, and no session has run it.
-- A citation on the capture would expire. See the freshness rule in this module's docstring: the record stops loading thirty days after it was taken, and the criterion is a gap again from that moment.
+- Two things close this and both are runs rather than tests. The first has happened and the second has not, so read the halves separately.
+- The first was the distance between the template and the account. The committed template grants one inline policy of nine ECR actions on one repository, plus the authorization-token call that takes no resource, and no Batch, S3, EC2 or IAM action appears anywhere in it — and the deployed role has now been captured and compared, and matches. So that is a fact about the account rather than about a document, which is what makes the template's silence about Batch, S3 and IAM mean anything at all. edullm_platform.role_drift compares a captured DeployedRoleEvidence against the committed template and reports any divergence in trust conditions, permission statements, boundary, session duration or attached managed policies, in both directions. tools/capture_phase1_evidence.py ran it against the sandbox: two roles compared, no findings. The sanitized records are committed under fixtures/evidence/phase-1/roles/ and tests/test_phase1_deployed_roles.py re-runs the comparison on every test run, so a policy widened in the console would now be caught the next time either is executed rather than leaving every test green.
+- The second is a denial observed rather than argued, and nothing about the capture supplies it. A policy that grants no Batch action is a policy; a session that tried to submit a Batch job and was refused is the claim. Closing this needs a session issued to the publisher role attempting a Batch submit, an S3 read and an IAM change, and the CloudTrail records of those three refusals. edullm_platform.publisher_denials attempts exactly that matrix and tools/verify_publisher_denials.py runs it, and no session has run it. Until one has, this stays a gap and citing the capture here would put a green tick beside the half that is missing.
+- The half that did move expires. The records under fixtures/evidence/phase-1/roles/ stop loading thirty days after the capture, tests/test_phase1_deployed_roles.py goes red when they do, and this paragraph reverts to describing a template nobody has checked. See this module's docstring for the two honest responses to that.
 
 ### Check 7 (GAP) — An immutable tag cannot be overwritten.
 
 - The committed ECR template declares IMMUTABLE tag mutability and the repository was deployed from it. Neither fact is the criterion: what is claimed here is that a second push to an existing tag is refused, and that behaviour belongs to ECR at push time.
-- tools/capture_phase1_evidence.py can now record what the deployed repository's tag mutability actually is, which would at least close the distance between the template and the account. It would not close this: a setting read back from a describe call is still not a push that was refused.
+- tools/capture_phase1_evidence.py records what the deployed repository's tag mutability actually is, and no such record is committed here. The two roles are committed because something compares them to a template; nothing compares a repository to infra/ecr-repositories.yaml, so a committed record would be a file that expires and that no test reads. It would not close this in any case: a setting read back from a describe call is not a push that was refused.
 - The reusable publish workflow has never completed a run. OLMo-core has neither a caller workflow nor the registered Dockerfile, so the build path has not executed once. No image has been pushed once, let alone twice.
 - Closing this needs a live second push of a different image under a tag the registry already holds, and the error it returns. The pre-flight tag lookup in the publish workflow exists because that refusal is real and unrecoverable, so proving it also confirms the reason that lookup is there.
 
@@ -105,7 +104,7 @@ Scope:
 
 - Authorization is by name and by GitHub's numeric repository id, and both are checked. The name alone would be reusable: a repository can be renamed and its old name claimed by another, while the numeric id it was registered under cannot move.
 - The shipped registry authorizes exactly one repository, so the negative case is everything else rather than a curated deny list.
-- A second mechanism refuses the same thing further down. The publisher role was deployed once from a laptop and is not redeployed by CI. edullm_platform.role_drift can now compare the deployed role to this template, and tools/capture_phase1_evidence.py runs that comparison as it captures, but no capture has been taken, so the comparison has nothing to run against. Until one is committed under fixtures/evidence/, this citation stays supporting: it proves what the template says rather than what the role does. What the template says is that the publisher role's trust policy pins repository_id and the OIDC subject to OLMo-core, so a workflow running in another repository cannot assume the role even if source-identity verification were bypassed entirely.
+- A second mechanism refuses the same thing further down: the publisher role's trust policy pins repository_id and the OIDC subject to OLMo-core, so a workflow running in another repository cannot assume the role even if source-identity verification were bypassed entirely. That is a fact about the deployed role and not only about the template. The publisher role was deployed once from a laptop and is not redeployed by CI, so this template began as a claim about the account rather than a description of it. A capture has since been taken and compared, and the deployed role matches the template with no findings in either direction; the sanitized record it compared is committed under fixtures/evidence/phase-1/roles/ and the tests cited beside this one re-run the comparison. The citation is still supporting rather than proving, because what a trust policy refuses is an argument from a policy rather than a refusal anybody has observed, and because it expires with the capture.
 
 Proving tests (7), all executed and passing:
 
@@ -117,9 +116,12 @@ Proving tests (7), all executed and passing:
 - `tests/test_repository_registry.py::test_repository_registry_unknown_lookups_raise_domain_error`
 - `tests/test_build_research_image_workflow.py::test_publish_job_reverifies_the_source_before_it_holds_aws_credentials`
 
-Supporting tests (1), all executed and passing, cited as evidence rather than as proof:
+Supporting tests (4), all executed and passing, cited as evidence rather than as proof:
 
 - `tests/test_phase1_infrastructure.py::test_publisher_trusts_only_the_existing_github_oidc_provider`
+- `tests/test_phase1_deployed_roles.py::test_a_capture_is_committed_for_every_role_a_template_declares`
+- `tests/test_phase1_deployed_roles.py::test_every_committed_capture_is_inside_its_freshness_window`
+- `tests/test_phase1_deployed_roles.py::test_every_committed_capture_matches_the_template_that_declares_it`
 
 ### Check 5 — A pull-request test job cannot request AWS credentials.
 
@@ -129,8 +131,8 @@ Scope:
 
 - Two independent mechanisms close this and both are cited, because citing one would let the other be removed without anything going red.
 - The first is proved as stated. The job that runs untrusted branch code holds contents: read and nothing else, so it has no id-token permission to request a token with; it cannot rather than may not. A reusable workflow can only narrow the permissions its caller grants, so no caller can widen this, and the workflow accepts no secrets either.
-- The second is the trust policy's subject condition. The publisher role was deployed once from a laptop and is not redeployed by CI. edullm_platform.role_drift can now compare the deployed role to this template, and tools/capture_phase1_evidence.py runs that comparison as it captures, but no capture has been taken, so the comparison has nothing to run against. Until one is committed under fixtures/evidence/, this citation stays supporting: it proves what the template says rather than what the role does. What the template says is that sub must match ref:refs/heads/*, and a pull-request job's subject ends in :pull_request, so the role refuses it.
-- What is not proved is the caller side. OLMo-core has no caller workflow yet, so nothing here constrains what a future pull-request job in that repository grants itself. The trust policy above is what stands between such a job and this account, and it is supporting evidence rather than proof.
+- The second is the trust policy's subject condition: sub must match ref:refs/heads/*, and a pull-request job's subject ends in :pull_request, so the role refuses it. The deployed role carries that condition and not merely the template. The publisher role was deployed once from a laptop and is not redeployed by CI, so this template began as a claim about the account rather than a description of it. A capture has since been taken and compared, and the deployed role matches the template with no findings in either direction; the sanitized record it compared is committed under fixtures/evidence/phase-1/roles/ and the tests cited beside this one re-run the comparison. The citation is still supporting rather than proving, because what a trust policy refuses is an argument from a policy rather than a refusal anybody has observed, and because it expires with the capture.
+- What is not proved is the caller side. OLMo-core has no caller workflow yet, so nothing here constrains what a future pull-request job in that repository grants itself. The trust policy above is what stands between such a job and this account, and it is supporting evidence rather than proof: a condition nobody has watched refuse anything.
 
 Proving tests (4), all executed and passing:
 
@@ -139,9 +141,12 @@ Proving tests (4), all executed and passing:
 - `tests/test_build_research_image_workflow.py::test_nothing_lets_the_publish_job_run_after_a_gate_has_failed`
 - `tests/test_build_research_image_workflow.py::test_workflow_is_reusable_with_exact_inputs_and_no_secrets`
 
-Supporting tests (1), all executed and passing, cited as evidence rather than as proof:
+Supporting tests (4), all executed and passing, cited as evidence rather than as proof:
 
 - `tests/test_phase1_infrastructure.py::test_publisher_trusts_only_the_existing_github_oidc_provider`
+- `tests/test_phase1_deployed_roles.py::test_a_capture_is_committed_for_every_role_a_template_declares`
+- `tests/test_phase1_deployed_roles.py::test_every_committed_capture_is_inside_its_freshness_window`
+- `tests/test_phase1_deployed_roles.py::test_every_committed_capture_matches_the_template_that_declares_it`
 
 ### Check 6 — The publisher role cannot submit jobs, read datasets, alter IAM, or modify Batch.
 
@@ -149,11 +154,10 @@ Supporting tests (1), all executed and passing, cited as evidence rather than as
 
 Gap:
 
-- The criterion is about what the live role can do. The committed template grants one inline policy of nine ECR actions on one repository, plus the authorization-token call that takes no resource, and no Batch, S3, EC2, or IAM action appears anywhere in it. That is a fact about a document.
-- edullm_platform.role_drift compares a captured DeployedRoleEvidence against the committed template and reports any divergence in trust conditions, permission statements, boundary, session duration or attached managed policies, in both directions. tools/capture_phase1_evidence.py runs it against the live account and refuses to report success when the two disagree. What is missing is the capture: no run against the account has been taken, so nothing has compared anything yet. So a policy widened in the console is now detectable, and is still undetected: a comparison nobody has run leaves every test in this repository green exactly as before.
-- Two things close this and both are runs rather than tests. The first is a capture: tools/capture_phase1_evidence.py against the sandbox, and the sanitized role record committed under fixtures/evidence/ with no drift findings. That would show the deployed role is the template, which is what makes the template's absence of Batch, S3 and IAM actions mean something.
-- The second is a denial observed rather than argued: a session issued to the publisher role attempting a Batch submit, an S3 read, and an IAM change, and the CloudTrail records of those three refusals. edullm_platform.publisher_denials attempts exactly that matrix and tools/verify_publisher_denials.py runs it, and no session has run it.
-- A citation on the capture would expire. See the freshness rule in this module's docstring: the record stops loading thirty days after it was taken, and the criterion is a gap again from that moment.
+- Two things close this and both are runs rather than tests. The first has happened and the second has not, so read the halves separately.
+- The first was the distance between the template and the account. The committed template grants one inline policy of nine ECR actions on one repository, plus the authorization-token call that takes no resource, and no Batch, S3, EC2 or IAM action appears anywhere in it — and the deployed role has now been captured and compared, and matches. So that is a fact about the account rather than about a document, which is what makes the template's silence about Batch, S3 and IAM mean anything at all. edullm_platform.role_drift compares a captured DeployedRoleEvidence against the committed template and reports any divergence in trust conditions, permission statements, boundary, session duration or attached managed policies, in both directions. tools/capture_phase1_evidence.py ran it against the sandbox: two roles compared, no findings. The sanitized records are committed under fixtures/evidence/phase-1/roles/ and tests/test_phase1_deployed_roles.py re-runs the comparison on every test run, so a policy widened in the console would now be caught the next time either is executed rather than leaving every test green.
+- The second is a denial observed rather than argued, and nothing about the capture supplies it. A policy that grants no Batch action is a policy; a session that tried to submit a Batch job and was refused is the claim. Closing this needs a session issued to the publisher role attempting a Batch submit, an S3 read and an IAM change, and the CloudTrail records of those three refusals. edullm_platform.publisher_denials attempts exactly that matrix and tools/verify_publisher_denials.py runs it, and no session has run it. Until one has, this stays a gap and citing the capture here would put a green tick beside the half that is missing.
+- The half that did move expires. The records under fixtures/evidence/phase-1/roles/ stop loading thirty days after the capture, tests/test_phase1_deployed_roles.py goes red when they do, and this paragraph reverts to describing a template nobody has checked. See this module's docstring for the two honest responses to that.
 
 No test proves this check.
 
@@ -164,7 +168,7 @@ No test proves this check.
 Gap:
 
 - The committed ECR template declares IMMUTABLE tag mutability and the repository was deployed from it. Neither fact is the criterion: what is claimed here is that a second push to an existing tag is refused, and that behaviour belongs to ECR at push time.
-- tools/capture_phase1_evidence.py can now record what the deployed repository's tag mutability actually is, which would at least close the distance between the template and the account. It would not close this: a setting read back from a describe call is still not a push that was refused.
+- tools/capture_phase1_evidence.py records what the deployed repository's tag mutability actually is, and no such record is committed here. The two roles are committed because something compares them to a template; nothing compares a repository to infra/ecr-repositories.yaml, so a committed record would be a file that expires and that no test reads. It would not close this in any case: a setting read back from a describe call is not a push that was refused.
 - The reusable publish workflow has never completed a run. OLMo-core has neither a caller workflow nor the registered Dockerfile, so the build path has not executed once. No image has been pushed once, let alone twice.
 - Closing this needs a live second push of a different image under a tag the registry already holds, and the error it returns. The pre-flight tag lookup in the publish workflow exists because that refusal is real and unrecoverable, so proving it also confirms the reason that lookup is there.
 
