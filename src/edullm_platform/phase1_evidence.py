@@ -19,11 +19,14 @@ SHA matches ``AWS_SECRET_ACCESS_KEY_PATTERN`` and a sixty-four-character digest 
 ``LONG_BASE64_CREDENTIAL_PATTERN``, so scanning them would refuse every valid value. The
 pattern is the stricter constraint in any case: it admits one shape and nothing else.
 
-Everything else is ``SecretFreeStr``, including the twelve-character image tag. That tag
-is a commit prefix, so roughly one commit in two hundred produces twelve decimal digits
-that no reader could tell from an account ID, and that capture fails here rather than
-recording something ambiguous. The failure is loud and the remedy is another commit;
-the alternative is a field an account ID fits exactly and nothing checks.
+Everything else is ``SecretFreeStr``, with one exception that is worth stating plainly.
+The twelve-character image tag is a commit prefix, and one commit in 281 produces twelve
+decimal digits that no reader could tell from an account ID. Scanning the tag would
+refuse those commits; not scanning it would leave a field an account ID fits exactly.
+``EcrImageEvidence`` does neither: it carries the full commit SHA beside the tag and
+requires the tag to be its leading characters, so the digits are demonstrably a commit
+prefix. The cross-check, not the scan, is what licenses them, and a pair that does not
+agree still fails.
 """
 
 from __future__ import annotations
@@ -40,6 +43,7 @@ from edullm_platform.contracts.base import (
     require_ordered_sequence,
 )
 from edullm_platform.contracts.image import GitHubWorkflowRunReference
+from edullm_platform.contracts.manifest import COMMIT_SHA_PATTERN
 from edullm_platform.contracts.repository_registry import ECR_REPOSITORY_PATTERN
 from edullm_platform.contracts.source_identity import SourceIdentity
 from edullm_platform.evidence import (
@@ -133,6 +137,12 @@ EcrRepositoryName = Annotated[
     Field(min_length=1, max_length=256, pattern=ECR_REPOSITORY_PATTERN),
     AfterValidator(scan_for_secrets),
 ]
+#: Neither of these is scanned. A commit SHA is forty characters drawn from the alphabet
+#: a secret access key uses, and a tag is twelve characters that may all be digits. The
+#: cross-check on ``EcrImageEvidence`` is what stands in for the scan on the tag, so the
+#: two belong to each other: neither field means anything here without the other.
+ImageTag = Annotated[str, Field(pattern=IMAGE_TAG_PATTERN)]
+GitCommitSha = Annotated[str, Field(pattern=COMMIT_SHA_PATTERN)]
 AwsRegion = Annotated[
     str,
     Field(pattern=AWS_REGION_PATTERN),
@@ -219,6 +229,13 @@ class EcrImageEvidence(FreshEvidenceModel):
 
     The registry ID is deliberately absent. It is the account ID and nothing else, and
     the repository name identifies the repository uniquely within the account already.
+
+    ``source_commit_sha`` is here to license ``image_tag``. The tag is the commit's first
+    twelve characters, which one time in 281 are all decimal digits and so exactly the
+    shape of an account ID. Recording the commit and checking the tag against it turns
+    that coincidence into something a reader can verify, which is why the tag itself is
+    not scanned: the cross-check is the stronger claim. A tag that does not match the
+    commit beside it fails, so the field cannot be used to smuggle twelve digits through.
     """
 
     source: Literal["aws"]
@@ -227,9 +244,19 @@ class EcrImageEvidence(FreshEvidenceModel):
     region: AwsRegion
     repository_name: EcrRepositoryName
     image_digest: Sha256Digest
-    image_tag: SecretFreeStr = Field(pattern=IMAGE_TAG_PATTERN)
+    image_tag: ImageTag
+    source_commit_sha: GitCommitSha
     base_image_digest: Sha256Digest
     image_pushed_at: EvidenceInstant
+
+    @model_validator(mode="after")
+    def validate_the_tag_is_this_commit_prefix(self) -> Self:
+        tag_length = len(self.image_tag)
+        if self.image_tag != self.source_commit_sha[:tag_length]:
+            raise ValueError(
+                f"the image tag must be the first {tag_length} characters of the commit SHA"
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_the_image_differs_from_its_base(self) -> Self:

@@ -33,6 +33,10 @@ AWS_EXAMPLE_ACCESS_KEY_ID = "AKIA" + "IOSFODNN7EXAMPLE"
 
 COMMIT_SHA = "9f2c1d4e" + "0" * 32
 IMAGE_TAG = COMMIT_SHA[:12]
+#: A commit whose first twelve characters are decimal digits, and not merely digits: they
+#: are the example account ID. One commit in 281 has a prefix like this, and the tag it
+#: produces is indistinguishable from an account ID except by the commit it came from.
+ACCOUNT_ID_SHAPED_COMMIT_SHA = AWS_EXAMPLE_ACCOUNT_ID + "b3f0" * 7
 IMAGE_DIGEST = "sha256:" + "1a" * 32
 BASE_IMAGE_DIGEST = "sha256:" + "2b" * 32
 ECR_REPOSITORY = "sbsandbox-intern-edullm-olmo-core"
@@ -149,6 +153,7 @@ def ecr_image_payload(**overrides: object) -> dict[str, object]:
         "repository_name": ECR_REPOSITORY,
         "image_digest": IMAGE_DIGEST,
         "image_tag": IMAGE_TAG,
+        "source_commit_sha": COMMIT_SHA,
         "base_image_digest": BASE_IMAGE_DIGEST,
         "image_pushed_at": moments_ago(120),
     }
@@ -325,9 +330,10 @@ EVIDENCE_MODELS: tuple[tuple[type[ContractModel], PayloadBuilder], ...] = (
 EVIDENCE_MODEL_IDS = [model_type.__name__ for model_type, _builder in EVIDENCE_MODELS]
 
 #: Fields whose legitimate values are close enough to a twelve-digit account ID that a
-#: reader could not tell one from the other, so each is proved to refuse one.
+#: reader could not tell one from the other, so each is proved to refuse one. The image
+#: tag is not among them: it is licensed by the commit SHA beside it rather than by the
+#: scan, which the tests around ``ACCOUNT_ID_SHAPED_COMMIT_SHA`` cover instead.
 ACCOUNT_ID_PROBES: tuple[tuple[type[ContractModel], PayloadBuilder, str, str], ...] = (
-    (EcrImageEvidence, ecr_image_payload, "image_tag", AWS_EXAMPLE_ACCOUNT_ID),
     (
         ImageScanEvidence,
         image_scan_payload,
@@ -536,7 +542,66 @@ def test_ecr_image_records_the_registry_answer() -> None:
     evidence = EcrImageEvidence.model_validate(ecr_image_payload())
     assert evidence.repository_name == ECR_REPOSITORY
     assert evidence.image_tag == IMAGE_TAG
+    assert evidence.source_commit_sha == COMMIT_SHA
     assert evidence.base_image_digest == BASE_IMAGE_DIGEST
+
+
+def test_a_tag_of_twelve_digits_is_recordable_because_the_commit_licenses_it() -> None:
+    # The tag here is character for character the example account ID, and it is accepted
+    # only because the commit it was built from begins with those digits. That pairing is
+    # the proof: the digits are a commit prefix, and a reader can check that they are.
+    evidence = EcrImageEvidence.model_validate(
+        ecr_image_payload(
+            image_tag=AWS_EXAMPLE_ACCOUNT_ID,
+            source_commit_sha=ACCOUNT_ID_SHAPED_COMMIT_SHA,
+        )
+    )
+    assert evidence.image_tag == AWS_EXAMPLE_ACCOUNT_ID
+    assert evidence.source_commit_sha.startswith(evidence.image_tag)
+
+
+def test_the_same_twelve_digits_are_refused_when_no_commit_licenses_them() -> None:
+    # Same tag, ordinary commit. Nothing licenses the digits, so this is how an account
+    # ID pasted into the tag by a capture bug fails rather than being recorded.
+    with pytest.raises(ValidationError) as exc_info:
+        EcrImageEvidence.model_validate(ecr_image_payload(image_tag=AWS_EXAMPLE_ACCOUNT_ID))
+    assert_validation_error(
+        exc_info.value,
+        loc_suffix=(),
+        error_type="value_error",
+        message_fragment="the image tag must be the first 12 characters of the commit SHA",
+    )
+
+
+def test_a_tag_that_is_not_this_commit_prefix_cannot_validate() -> None:
+    other_commit = "0" * 8 + COMMIT_SHA[8:]
+    with pytest.raises(ValidationError) as exc_info:
+        EcrImageEvidence.model_validate(ecr_image_payload(source_commit_sha=other_commit))
+    assert_validation_error(
+        exc_info.value,
+        loc_suffix=(),
+        error_type="value_error",
+        message_fragment="the image tag must be the first 12 characters of the commit SHA",
+    )
+
+
+def test_a_tag_without_the_commit_that_licenses_it_cannot_validate() -> None:
+    payload = ecr_image_payload()
+    del payload["source_commit_sha"]
+    with pytest.raises(ValidationError) as exc_info:
+        EcrImageEvidence.model_validate(payload)
+    assert_validation_error(exc_info.value, loc_suffix=("source_commit_sha",), error_type="missing")
+
+
+@pytest.mark.parametrize("sha", [IMAGE_TAG, COMMIT_SHA.upper(), COMMIT_SHA + "0", IMAGE_DIGEST])
+def test_the_licensing_commit_must_itself_be_a_full_commit_sha(sha: str) -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        EcrImageEvidence.model_validate(ecr_image_payload(source_commit_sha=sha))
+    assert_validation_error(
+        exc_info.value,
+        loc_suffix=("source_commit_sha",),
+        error_type="string_pattern_mismatch",
+    )
 
 
 def test_ecr_image_refuses_a_repository_arn_in_place_of_the_name() -> None:
