@@ -1,0 +1,274 @@
+name: Build research image
+
+# The publisher role trust policy pins job_workflow_ref to
+# edu-llm/platform/.github/workflows/build-research-image.yml@refs/heads/main.
+# Renaming or moving this file silently revokes every publish. Do not rename it.
+on:
+  workflow_call:
+    inputs:
+      repository:
+        description: Registry key of the research repository, such as OLMo-core.
+        required: true
+        type: string
+      publisher_role_arn:
+        description: ARN of the ECR publisher role assumed through OIDC.
+        required: true
+        type: string
+      aws_region:
+        description: Region hosting the registered ECR repository.
+        required: false
+        type: string
+        default: us-east-1
+      test_command:
+        description: Optional shell command running the caller's own tests.
+        required: false
+        type: string
+        default: ""
+    outputs:
+      image_digest:
+        description: Digest of the published image, read back from the registry.
+        value: ${{ jobs.publish.outputs.image_digest }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-research-image-${{ github.repository }}-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  # Credential free by construction. The absent id-token permission is one of the two
+  # independent reasons a pull request cannot reach AWS through this workflow; the other
+  # is the branch-scoped `sub` condition on the publisher role.
+  verify:
+    name: Verify source identity
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      commit_sha: ${{ steps.identity.outputs.commit_sha }}
+      ecr_repository: ${{ steps.identity.outputs.ecr_repository }}
+    steps:
+      - name: Check out research repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          path: source
+
+      # Pinned to the reviewed reusable-workflow commit rather than to a branch, so the
+      # tooling that judges the caller is the tooling that was reviewed with this file.
+      - name: Check out platform tooling
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: edu-llm/platform
+          ref: ${{ github.job_workflow_sha }}
+          path: platform
+          persist-credentials: false
+
+      - name: Install platform tooling
+        working-directory: platform
+        run: |
+          set -euo pipefail
+          pipx install uv==0.11.32
+          uv sync --locked
+
+      # Runs before the caller's tests: verification requires a clean work tree, and a
+      # test run leaves caches and artefacts behind that would look like a dirty tree.
+      - name: Verify source identity
+        id: identity
+        working-directory: platform
+        env:
+          RESEARCH_REPOSITORY: ${{ inputs.repository }}
+          RESEARCH_REPOSITORY_ID: ${{ github.repository_id }}
+          RESEARCH_REF: ${{ github.ref }}
+          RESEARCH_COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          uv run --frozen python tools/verify_source_identity.py \
+            --registry config/repositories.yaml \
+            --repository "${RESEARCH_REPOSITORY}" \
+            --github-repository-id "${RESEARCH_REPOSITORY_ID}" \
+            --ref "${RESEARCH_REF}" \
+            --commit-sha "${RESEARCH_COMMIT_SHA}" \
+            --repository-root "${GITHUB_WORKSPACE}/source" \
+            --output "${RUNNER_TEMP}/source-identity.json" \
+            --github-output "${GITHUB_OUTPUT}"
+
+      - name: Run research repository tests
+        if: inputs.test_command != ''
+        working-directory: source
+        env:
+          TEST_COMMAND: ${{ inputs.test_command }}
+        run: |
+          set -euo pipefail
+          bash -c "${TEST_COMMAND}"
+
+  publish:
+    name: Build and publish image
+    runs-on: ubuntu-latest
+    needs: verify
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      image_digest: ${{ steps.digest.outputs.image_digest }}
+    steps:
+      - name: Check out research repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ needs.verify.outputs.commit_sha }}
+          fetch-depth: 0
+          path: source
+
+      - name: Check out platform tooling
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: edu-llm/platform
+          ref: ${{ github.job_workflow_sha }}
+          path: platform
+          persist-credentials: false
+
+      - name: Install platform tooling
+        working-directory: platform
+        run: |
+          set -euo pipefail
+          pipx install uv==0.11.32
+          uv sync --locked
+
+      # This job runs on a second runner, so it re-derives the SourceIdentity document
+      # instead of trusting a value carried across the job boundary. It also fails if the
+      # branch head moved while the gate was running.
+      - name: Re-verify source identity
+        working-directory: platform
+        env:
+          RESEARCH_REPOSITORY: ${{ inputs.repository }}
+          RESEARCH_REPOSITORY_ID: ${{ github.repository_id }}
+          RESEARCH_REF: ${{ github.ref }}
+          RESEARCH_COMMIT_SHA: ${{ needs.verify.outputs.commit_sha }}
+        run: |
+          set -euo pipefail
+          uv run --frozen python tools/verify_source_identity.py \
+            --registry config/repositories.yaml \
+            --repository "${RESEARCH_REPOSITORY}" \
+            --github-repository-id "${RESEARCH_REPOSITORY_ID}" \
+            --ref "${RESEARCH_REF}" \
+            --commit-sha "${RESEARCH_COMMIT_SHA}" \
+            --repository-root "${GITHUB_WORKSPACE}/source" \
+            --output "${RUNNER_TEMP}/source-identity.json"
+
+      - name: Resolve build inputs
+        id: build_inputs
+        working-directory: platform
+        env:
+          RESEARCH_REPOSITORY: ${{ inputs.repository }}
+        run: |
+          set -euo pipefail
+          uv run --frozen python tools/resolve_build_inputs.py \
+            --registry config/repositories.yaml \
+            --repository "${RESEARCH_REPOSITORY}" \
+            --github-output "${GITHUB_OUTPUT}"
+
+      - name: Configure AWS credentials
+        id: credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ inputs.publisher_role_arn }}
+          aws-region: ${{ inputs.aws_region }}
+          role-duration-seconds: 3600
+
+      # The registry host is composed here from the assumed identity so that no account
+      # identifier is written into this repository or into any published artefact.
+      - name: Log in to Amazon ECR
+        id: login
+        env:
+          AWS_ACCOUNT_ID: ${{ steps.credentials.outputs.aws-account-id }}
+          AWS_REGION: ${{ inputs.aws_region }}
+        run: |
+          set -euo pipefail
+          registry="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          aws ecr get-login-password | docker login --username AWS --password-stdin "${registry}"
+          echo "registry=${registry}" >> "${GITHUB_OUTPUT}"
+
+      # The tag is immutable in ECR, so a second push of the same commit fails and is
+      # meant to fail. There is deliberately no retry, overwrite, or fallback tag.
+      - name: Build and push image
+        id: image
+        working-directory: source
+        env:
+          REGISTRY: ${{ steps.login.outputs.registry }}
+          ECR_REPOSITORY: ${{ needs.verify.outputs.ecr_repository }}
+          BASE_REFERENCE: ${{ steps.build_inputs.outputs.base_reference }}
+          DOCKERFILE_PATH: ${{ steps.build_inputs.outputs.dockerfile_path }}
+          BUILD_CONTEXT: ${{ steps.build_inputs.outputs.build_context }}
+          COMMIT_SHA: ${{ needs.verify.outputs.commit_sha }}
+          SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          image_tag="${COMMIT_SHA:0:12}"
+          image_reference="${REGISTRY}/${ECR_REPOSITORY}:${image_tag}"
+          docker build \
+            --file "${DOCKERFILE_PATH}" \
+            --build-arg "BASE_IMAGE=${BASE_REFERENCE}" \
+            --label "org.opencontainers.image.revision=${COMMIT_SHA}" \
+            --label "org.opencontainers.image.source=${SOURCE_URL}" \
+            --label "org.opencontainers.image.base.name=${BASE_REFERENCE}" \
+            --label "edullm.workflow.run.url=${RUN_URL}" \
+            --tag "${image_reference}" \
+            "${BUILD_CONTEXT}"
+          docker push "${image_reference}"
+          echo "image_tag=${image_tag}" >> "${GITHUB_OUTPUT}"
+
+      # The digest that leaves this workflow is the one the registry stored, not the one
+      # the local daemon reported. Anything else would let a local build claim an
+      # identity ECR never accepted.
+      - name: Read published digest from the registry
+        id: digest
+        env:
+          ECR_REPOSITORY: ${{ needs.verify.outputs.ecr_repository }}
+          IMAGE_TAG: ${{ steps.image.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          digest_file="${RUNNER_TEMP}/image-digest.txt"
+          aws ecr describe-images \
+            --repository-name "${ECR_REPOSITORY}" \
+            --image-ids "imageTag=${IMAGE_TAG}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text > "${digest_file}"
+          image_digest="$(cat "${digest_file}")"
+          if [[ ! "${image_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "registry_digest_unreadable" >&2
+            exit 1
+          fi
+          echo "image_digest=${image_digest}" >> "${GITHUB_OUTPUT}"
+
+      - name: Write image provenance
+        working-directory: platform
+        env:
+          RESEARCH_REPOSITORY: ${{ inputs.repository }}
+          IMAGE_DIGEST: ${{ steps.digest.outputs.image_digest }}
+          RUN_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_REPOSITORY: edu-llm/platform
+          WORKFLOW_PATH: .github/workflows/build-research-image.yml
+          WORKFLOW_REF: ${{ github.job_workflow_sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          provenance_file="${RUNNER_TEMP}/image-provenance.json"
+          uv run --frozen python tools/write_image_provenance.py \
+            --registry config/repositories.yaml \
+            --repository "${RESEARCH_REPOSITORY}" \
+            --source-identity "${RUNNER_TEMP}/source-identity.json" \
+            --image-digest "${IMAGE_DIGEST}" \
+            --run-repository "${RUN_REPOSITORY}" \
+            --workflow-repository "${WORKFLOW_REPOSITORY}" \
+            --workflow-path "${WORKFLOW_PATH}" \
+            --workflow-ref "${WORKFLOW_REF}" \
+            --run-id "${RUN_ID}" \
+            --run-attempt "${RUN_ATTEMPT}" \
+            --output "${provenance_file}"
+          cat "${provenance_file}"
