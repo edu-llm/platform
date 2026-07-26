@@ -2,8 +2,8 @@
 
 Phase: phase-1
 Bundle schema version: 1
-Source commit: 0b71287e0c2e0ef49fa238d9a842e5857168ffe7
-Generated: 2026-07-26T21:09:41+00:00
+Source commit: b48eb91ee91ba7296d0f794c5c63dd4801e277d7
+Generated: 2026-07-26T21:57:11+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 1 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase1_proof.py` at generation time. It is not done, and the Result table below says by how much.
 
@@ -19,9 +19,9 @@ This bundle exists so that a reviewer can decide whether Phase 1 is done without
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 2046 |
-| suite tests executed | 1971 |
-| suite passed | 1971 |
+| suite tests collected | 2072 |
+| suite tests executed | 1997 |
+| suite passed | 1997 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
@@ -58,7 +58,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 
 | file | digest |
 | --- | --- |
-| .github/workflows/build-research-image.yml | sha256:6755816186926e20f4b5e5e7445d29562668b795c143c959b6b17a2d5d41ff76 |
+| .github/workflows/build-research-image.yml | sha256:2797be4b88d3569c87fbc929cc9de25b484b42207987f139de5592707a3a23d8 |
 | .github/workflows/deploy-phase1-ecr.yml | sha256:8320eda8dcf143695ffbed148efadf9aceb8052d5e4b2c3578aeb92fb97cdf4a |
 | config/repositories.yaml | sha256:607b4e0db31f0f9e119f233ba019896b8ff3866bca50a048ea7d44d9d10e23d4 |
 | fixtures/evidence/phase-1/roles/sbsandbox-intern-edullm-ecr-publisher.sanitized.json | sha256:9705f3eb935a2f86171142d4268a77c6b0a0be89c02f7bae66b6181a9502eb56 |
