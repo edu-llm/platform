@@ -8,9 +8,10 @@ tests are written.
 
 A handful of the checks here are repository-wide rather than Phase 0's own: that only a
 ``phase*_criteria.py`` module defines a criterion, that the criterion contract itself is
-declared once, and that no consumer keeps a second copy of a statement. They live here
-because this module already pays for a full pytest collection and already may not be
-cited, so a later phase gets them without a second collection run.
+declared once, that no consumer keeps a second copy of a statement, and that every node
+id any phase cites can be collected. They live here because this module already pays for
+a full pytest collection and already may not be cited, so a later phase gets them without
+a second collection run.
 """
 
 from __future__ import annotations
@@ -56,6 +57,7 @@ from edullm_platform.phase0_gate import (
     evaluate_criteria,
     execute_criteria,
 )
+from edullm_platform.phase1_criteria import phase1_criteria
 from tests.gate_support import (
     copy_gate_repo,
     run_validate_phase0,
@@ -225,7 +227,15 @@ def statements_by_definition() -> list[tuple[str, tuple[str, ...]]]:
             "src/edullm_platform/phase0_criteria.py",
             tuple(check.statement for check in recorded_checks(discover_fixtures(PROJECT_ROOT))),
         ),
+        (
+            "src/edullm_platform/phase1_criteria.py",
+            tuple(check.statement for check in phase1_criteria()),
+        ),
     ]
+
+
+def every_recorded_check(references: tuple[object, ...]) -> tuple[CriterionSpec, ...]:
+    return recorded_checks(references) + phase1_criteria()  # type: ignore[arg-type]
 
 
 def spec(
@@ -292,7 +302,10 @@ def test_the_gate_and_the_proof_generator_see_identical_criteria(
 def test_a_phase_criteria_module_exists_to_be_checked() -> None:
     # Everything below is expressed as "no file outside this set", which a glob matching
     # nothing would satisfy without proving anything.
-    assert criteria_definition_files() == ["src/edullm_platform/phase0_criteria.py"]
+    assert criteria_definition_files() == [
+        "src/edullm_platform/phase0_criteria.py",
+        "src/edullm_platform/phase1_criteria.py",
+    ]
 
 
 @pytest.mark.parametrize("marker", DEFINITION_MARKERS)
@@ -716,7 +729,7 @@ def test_every_node_id_the_criteria_cite_can_be_collected(
     collected: frozenset[str],
 ) -> None:
     assert collected, "pytest collected nothing; the runner cannot verify anything"
-    uncollectable = sorted(cited_node_ids(recorded_checks(references)) - collected)  # type: ignore[arg-type]
+    uncollectable = sorted(cited_node_ids(every_recorded_check(references)) - collected)
     assert uncollectable == []
 
 
@@ -831,7 +844,7 @@ def test_every_reentrant_entry_names_a_test_module() -> None:
 
 
 def test_no_criterion_cites_a_reentrant_module(references: tuple[object, ...]) -> None:
-    for node_id in cited_node_ids(recorded_checks(references)):  # type: ignore[arg-type]
+    for node_id in cited_node_ids(every_recorded_check(references)):
         assert node_id.split("::", 1)[0] not in REENTRANT_TEST_MODULES
 
 
