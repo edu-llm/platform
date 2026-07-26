@@ -13,6 +13,7 @@ from .manifest import COMMIT_SHA_PATTERN
 from .repository_registry import RepositoryRegistry, UnknownRepositoryError
 
 BRANCH_REF_PATTERN = r"^refs/heads/[A-Za-z0-9][A-Za-z0-9._/-]*$"
+REMOTE_NAME_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]*$"
 GIT_TIMEOUT_SECONDS = 10
 
 
@@ -21,6 +22,7 @@ class SourceIdentityReason(StrEnum):
     REPOSITORY_ID_MISMATCH = "repository_id_mismatch"
     INVALID_REF = "invalid_ref"
     INVALID_COMMIT_SHA = "invalid_commit_sha"
+    INVALID_REMOTE = "invalid_remote"
     NOT_GIT_REPOSITORY = "not_git_repository"
     DIRTY_TREE = "dirty_tree"
     HEAD_MISMATCH = "head_mismatch"
@@ -45,6 +47,7 @@ def _is_valid_branch_ref(ref: str) -> bool:
         ".." in branch_name
         or "@{" in branch_name
         or branch_name.endswith((".", ".lock"))
+        or "" in components
         or any(component.startswith(".") or component.endswith(".lock") for component in components)
     )
 
@@ -133,9 +136,21 @@ def verify_source_identity(
             SourceIdentityReason.INVALID_COMMIT_SHA,
             "commit SHA must contain exactly 40 lowercase hexadecimal characters",
         )
+    if re.fullmatch(REMOTE_NAME_PATTERN, remote_name) is None:
+        raise SourceIdentityError(
+            SourceIdentityReason.INVALID_REMOTE,
+            "remote name must use only letters, digits, dots, underscores, and hyphens",
+        )
 
     work_tree = _run_git(repository_root, "rev-parse", "--is-inside-work-tree")
-    if work_tree.returncode != 0 or work_tree.stdout.strip() != "true":
+    if work_tree.returncode != 0:
+        if "not a git repository" not in work_tree.stderr.lower():
+            _require_success(work_tree, "checking Git work tree")
+        raise SourceIdentityError(
+            SourceIdentityReason.NOT_GIT_REPOSITORY,
+            "repository root is not a Git work tree",
+        )
+    if work_tree.stdout.strip() != "true":
         raise SourceIdentityError(
             SourceIdentityReason.NOT_GIT_REPOSITORY,
             "repository root is not a Git work tree",
@@ -165,6 +180,7 @@ def verify_source_identity(
         repository_root,
         "ls-remote",
         "--exit-code",
+        "--",
         remote_name,
         ref,
     )

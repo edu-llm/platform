@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -176,6 +177,8 @@ def test_source_identity_rejects_wrong_extra_swapped_or_non_strict_values(
         "refs/heads/feature lock",
         "refs/heads/main.lock",
         "refs/heads//main",
+        "refs/heads/main/",
+        "refs/heads/main//x",
         "refs/heads/@{bad",
     ],
 )
@@ -245,6 +248,8 @@ def test_unknown_repository_fails(git_fixture: GitFixture) -> None:
         ("ref", "main", SourceIdentityReason.INVALID_REF),
         ("ref", "refs/pull/1/head", SourceIdentityReason.INVALID_REF),
         ("ref", "refs/tags/main", SourceIdentityReason.INVALID_REF),
+        ("ref", "refs/heads/main/", SourceIdentityReason.INVALID_REF),
+        ("ref", "refs/heads/main//x", SourceIdentityReason.INVALID_REF),
         ("ref", "refs/heads/main;echo-no", SourceIdentityReason.INVALID_REF),
     ],
 )
@@ -291,6 +296,23 @@ def test_non_git_root_fails(git_fixture: GitFixture, tmp_path: Path) -> None:
     )
 
 
+def test_initial_git_probe_failure_is_git_command_failure(
+    git_fixture: GitFixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_git = fake_bin / "git"
+    fake_git.write_text("#!/bin/sh\nexit 42\n")
+    fake_git.chmod(0o755)
+    monkeypatch.setenv("PATH", str(fake_bin))
+
+    error = assert_reason(SourceIdentityReason.GIT_COMMAND_FAILURE, git_fixture)
+
+    assert "exit code 42" in error.detail
+
+
 def test_missing_remote_is_sanitized_git_command_failure(
     git_fixture: GitFixture,
 ) -> None:
@@ -303,3 +325,71 @@ def test_missing_remote_is_sanitized_git_command_failure(
     assert "missing" in str(error)
     assert "CAAS_" not in str(error)
     assert "AWS_" not in str(error)
+
+
+def test_upload_pack_option_is_rejected_without_executing_command(
+    git_fixture: GitFixture,
+    tmp_path: Path,
+) -> None:
+    marker = tmp_path / "option-injection-marker"
+    unsafe_remote = f"--upload-pack=touch {marker}"
+
+    error = assert_reason(
+        SourceIdentityReason.INVALID_REMOTE,
+        git_fixture,
+        remote_name=unsafe_remote,
+    )
+
+    assert "remote name" in error.detail
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize(
+    "remote_name",
+    [
+        "",
+        "-origin",
+        "team/origin",
+        "team origin",
+        "https://example.invalid/repository.git",
+        "ssh://example.invalid/repository.git",
+    ],
+)
+def test_unsafe_remote_names_are_rejected(
+    git_fixture: GitFixture,
+    remote_name: str,
+) -> None:
+    assert_reason(
+        SourceIdentityReason.INVALID_REMOTE,
+        git_fixture,
+        remote_name=remote_name,
+    )
+
+
+def test_ls_remote_uses_option_terminator(
+    git_fixture: GitFixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_git = shutil.which("git")
+    assert real_git is not None
+    wrapper_directory = tmp_path / "bin"
+    wrapper_directory.mkdir()
+    invocation_log = tmp_path / "git-invocations"
+    wrapper = wrapper_directory / "git"
+    wrapper.write_text(
+        "#!/bin/sh\n"
+        f'printf "<%s>" "$@" >> "{invocation_log}"\n'
+        f'printf "\\n" >> "{invocation_log}"\n'
+        f'exec "{real_git}" "$@"\n'
+    )
+    wrapper.chmod(0o755)
+    monkeypatch.setenv("PATH", str(wrapper_directory))
+
+    git_fixture.verify()
+
+    assert (
+        "<-C>"
+        f"<{git_fixture.checkout}>"
+        "<ls-remote><--exit-code><--><origin><refs/heads/main>"
+    ) in invocation_log.read_text()
