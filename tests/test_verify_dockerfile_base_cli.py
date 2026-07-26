@@ -73,6 +73,9 @@ ACCEPTED = {
         "ARG BASE_IMAGE\nFROM ${BASE_IMAGE} AS Build\nFROM bUiLd AS final\n"
     ),
     "several names on one global ARG": "ARG TARGET BASE_IMAGE\nFROM ${BASE_IMAGE}\n",
+    "a trailing comment on the ARG": (
+        "ARG BASE_IMAGE # chosen by the platform\nFROM ${BASE_IMAGE}\n"
+    ),
     "a copy from an earlier stage by index": (
         "ARG BASE_IMAGE\nFROM ${BASE_IMAGE}\nFROM ${BASE_IMAGE}\nCOPY --from=0 /wheel /wheel\n"
     ),
@@ -116,6 +119,13 @@ REJECTED = {
         "base_image_arg_has_default",
     ),
     "an empty default": ("ARG BASE_IMAGE=\nFROM ${BASE_IMAGE}\n", "base_image_arg_has_default"),
+    # Docker does not stop reading ARG names at a `#`, so this line declares BASE_IMAGE,
+    # then `#`, then BASE_IMAGE again with a default that wins. Reading the comment as a
+    # comment would accept a file that builds from an image nobody registered.
+    "a default behind a trailing comment": (
+        "ARG BASE_IMAGE # BASE_IMAGE=docker.io/library/busybox:stable\nFROM ${BASE_IMAGE}\n",
+        "base_image_arg_has_default",
+    ),
     "a literal tag": ("ARG BASE_IMAGE\nFROM python:3.12\n", "unregistered_base_image"),
     "a literal digest": (
         "ARG BASE_IMAGE\nFROM docker.io/library/python@sha256:" + "a" * 64 + "\n",

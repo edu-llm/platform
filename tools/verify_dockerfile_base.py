@@ -158,6 +158,14 @@ def require_base_image_contract(text: str) -> None:
         argument = ARG_PATTERN.match(instruction)
         # Only a global-scope ARG, declared before the first FROM, is in scope for FROM.
         if argument is not None and stages == 0:
+            # Every whitespace-separated token is a name, including one that follows a
+            # `#`. That looks like a parser bug and is not: BuildKit's parseWords does
+            # not treat an inline `#` as a comment, so `ARG BASE_IMAGE # BASE_IMAGE=x`
+            # declares BASE_IMAGE twice and the second one carries a default that stands
+            # in when the build argument is not passed. Docker 29.6.1 resolves exactly
+            # that file to x with no InvalidDefaultArgInFrom warning, under both the
+            # built-in frontend and docker/dockerfile:1. Stopping at the `#` here would
+            # read a base image the platform never registered as a comment.
             for name in argument.group("names").split():
                 if name == BASE_IMAGE_ARG:
                     declares_base_image = True
