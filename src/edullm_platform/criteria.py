@@ -1,9 +1,10 @@
 """The contract every phase's acceptance criteria are recorded against.
 
 A phase records its criteria as :class:`CriterionSpec` values in its own
-``phase*_criteria.py`` module. This module holds only the shape of that record and the
-rules it must satisfy; it names no phase and states no criterion, so a new phase adds a
-definition rather than a second copy of the machinery.
+``phase*_criteria.py`` module. This module holds the shape of that record, the rules it
+must satisfy, and the verdict a gate reaches for one criterion once its cited tests have
+run. It names no phase and states no criterion, so a new phase adds a definition rather
+than a second copy of the machinery.
 
 Three statuses exist and no more:
 
@@ -23,21 +24,39 @@ There is deliberately no fourth status. A partly satisfied criterion is either a
 recorded decision with a trigger, in which case it is ``DEFERRED``, or it is unfinished
 work, in which case it is a ``GAP``. A status that sits between the two is what lets a
 gate be green and wrong at the same time, so no such status exists here.
+
+:func:`criterion_result` is here rather than in a phase's gate for the same reason the
+statuses are. It is where execution is allowed to overrule the recorded table, and a
+phase that carried its own copy could quietly overrule it in the other direction.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Final
+from pathlib import Path
+from typing import Annotated, Final
+
+from pydantic import BeforeValidator, Field
+
+from edullm_platform.contracts.base import (
+    ContractModel,
+    parse_str_enum,
+    require_ordered_sequence,
+)
+from edullm_platform.criteria_runner import SelectionOutcome, run_node_ids
 
 __all__ = [
     "REENTRANT_TEST_MODULES",
     "CriteriaDefinitionError",
+    "CriterionResult",
     "CriterionSpec",
     "CriterionStatus",
     "cited_node_ids",
+    "criterion_result",
+    "evaluate_criteria",
+    "execute_criteria",
     "validate_criterion_specs",
 ]
 
@@ -179,3 +198,124 @@ def validate_criterion_specs(specs: Sequence[CriterionSpec]) -> None:
 
 def cited_node_ids(specs: Sequence[CriterionSpec]) -> frozenset[str]:
     return frozenset(node_id for spec in specs for node_id in spec.cited_node_ids)
+
+
+CriterionStatusValue = Annotated[
+    CriterionStatus, BeforeValidator(parse_str_enum(CriterionStatus))
+]
+NodeIdSequence = Annotated[tuple[str, ...], BeforeValidator(require_ordered_sequence)]
+
+
+class CriterionResult(ContractModel):
+    """One acceptance criterion of any phase, after its cited tests were executed."""
+
+    number: str
+    statement: str
+    status: CriterionStatusValue
+    passed: bool
+    reason_code: str
+    detail: str
+    cited_node_ids: NodeIdSequence = Field(strict=False)
+    missing_node_ids: NodeIdSequence = Field(strict=False)
+    failed_node_ids: NodeIdSequence = Field(strict=False)
+
+
+def _ordered(node_ids: Iterable[str]) -> tuple[str, ...]:
+    return tuple(sorted(node_ids))
+
+
+def criterion_result(spec: CriterionSpec, outcome: SelectionOutcome) -> CriterionResult:
+    """Decide one criterion from its recorded status and what its cited tests did.
+
+    Execution beats the table in every direction that makes the gate stricter and in no
+    direction that makes it looser. A criterion the definition calls covered is a gap if
+    a cited test is missing or red; a criterion the definition calls a gap stays a gap
+    however green its citations are.
+    """
+    cited = _ordered(spec.cited_node_ids)
+    missing = _ordered(outcome.missing.intersection(cited))
+    failed = _ordered(outcome.failed.intersection(cited))
+
+    def result(status: CriterionStatus, reason_code: str, detail: str) -> CriterionResult:
+        return CriterionResult(
+            number=spec.number,
+            statement=spec.statement,
+            status=status,
+            passed=status is not CriterionStatus.GAP,
+            reason_code=reason_code,
+            detail=detail,
+            cited_node_ids=cited,
+            missing_node_ids=missing,
+            failed_node_ids=failed,
+        )
+
+    if outcome.execution_error is not None:
+        return result(
+            CriterionStatus.GAP,
+            "criterion_execution_failed",
+            (
+                "The cited tests could not be executed, so this criterion is unproved: "
+                f"{outcome.execution_error}"
+            ),
+        )
+    if missing:
+        return result(
+            CriterionStatus.GAP,
+            "cited_test_missing",
+            (
+                "pytest cannot collect every test this criterion cites, so the citation no "
+                "longer means anything. Missing: "
+                + ", ".join(missing)
+                + ". Either the test was renamed or deleted, or the phase's criteria "
+                "definition is wrong."
+            ),
+        )
+    if failed:
+        return result(
+            CriterionStatus.GAP,
+            "cited_test_failed",
+            (
+                "Cited tests ran and did not pass, so this criterion is a gap regardless of the "
+                "status recorded for it. Not passing: " + ", ".join(failed) + "."
+            ),
+        )
+    if spec.status is CriterionStatus.GAP:
+        return result(
+            CriterionStatus.GAP,
+            "recorded_gap",
+            " ".join(spec.gaps),
+        )
+    if spec.status is CriterionStatus.DEFERRED:
+        return result(
+            CriterionStatus.DEFERRED,
+            "deferred_by_recorded_decision",
+            (
+                f"Deferred. Reason: {spec.deferral_reason} "
+                f"Becomes live again when: {spec.deferral_trigger}"
+            ),
+        )
+    return result(
+        CriterionStatus.COVERED,
+        "ok",
+        (
+            f"{len(spec.proving_node_ids)} proving and {len(spec.supporting_node_ids)} "
+            "supporting tests were executed and all passed."
+        ),
+    )
+
+
+def evaluate_criteria(
+    specs: Sequence[CriterionSpec],
+    outcome: SelectionOutcome,
+) -> tuple[CriterionResult, ...]:
+    return tuple(criterion_result(spec, outcome) for spec in specs)
+
+
+def execute_criteria(
+    repo_root: Path,
+    specs: Sequence[CriterionSpec],
+) -> tuple[CriterionResult, ...]:
+    """Run every node id the criteria cite, then decide each criterion from the result."""
+    cited = sorted(cited_node_ids(specs))
+    outcome = run_node_ids(repo_root, cited)
+    return evaluate_criteria(specs, outcome)

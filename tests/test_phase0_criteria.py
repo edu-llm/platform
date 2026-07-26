@@ -30,9 +30,13 @@ from edullm_platform.canonical import canonical_json_bytes
 from edullm_platform.criteria import (
     REENTRANT_TEST_MODULES,
     CriteriaDefinitionError,
+    CriterionResult,
     CriterionSpec,
     CriterionStatus,
     cited_node_ids,
+    criterion_result,
+    evaluate_criteria,
+    execute_criteria,
 )
 from edullm_platform.criteria_runner import (
     NESTED_GATE_ENV,
@@ -49,14 +53,7 @@ from edullm_platform.phase0_criteria import (
     recorded_checks,
     related_deferrals,
 )
-from edullm_platform.phase0_gate import (
-    CriterionResult,
-    GateCheck,
-    Phase0GateReport,
-    criterion_result,
-    evaluate_criteria,
-    execute_criteria,
-)
+from edullm_platform.phase0_gate import GateCheck, Phase0GateReport
 from edullm_platform.phase1_criteria import phase1_criteria
 from tests.gate_support import (
     copy_gate_repo,
@@ -135,12 +132,15 @@ DEFINITION_MARKERS = (
 )
 
 #: Markers that only appear where the criterion contract itself is declared. The three
-#: statuses, the spec, and its error type are one contract shared by every phase; a
-#: second declaration of any of them is a second contract wearing the same names.
+#: statuses, the spec, its error type, and the verdict a gate reaches for one criterion
+#: are one contract shared by every phase; a second declaration of any of them is a
+#: second contract wearing the same names.
 CONTRACT_DECLARATION_MARKERS = (
     "class CriterionSpec",
     "class CriterionStatus",
     "class CriteriaDefinitionError",
+    "class CriterionResult",
+    "def criterion_result",
 )
 
 #: Where the shared machinery lives, and where a criterion may be defined.
