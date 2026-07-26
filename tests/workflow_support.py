@@ -6,8 +6,10 @@ Not collected by pytest: the filename deliberately does not start with ``test_``
 from __future__ import annotations
 
 import ast
+import os
 import re
 import shlex
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +17,7 @@ import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS_ROOT = PROJECT_ROOT / ".github" / "workflows"
+STEP_SCRIPT_TIMEOUT_SECONDS = 30
 
 
 class GitHubActionsLoader(yaml.SafeLoader):
@@ -101,6 +104,42 @@ def command_tokens(script: str, service: str, operation: str) -> list[str]:
     ]
     assert len(matching) == 1, f"expected exactly one aws {service} {operation} command"
     return matching[0]
+
+
+def run_step_script(
+    script: str,
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    stub_bin: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Execute a workflow ``run`` body the way the Actions runner executes it.
+
+    GitHub runs an unqualified ``run`` body as ``bash -e <file>`` on Linux runners, so the
+    script's own ``set`` line is what supplies the rest of the strictness. The environment
+    is replaced rather than extended so a test cannot pass because of an inherited value.
+    """
+    script_path = cwd / "step.sh"
+    script_path.write_text(script, encoding="utf-8")
+    search_path = os.defpath if stub_bin is None else f"{stub_bin}{os.pathsep}{os.defpath}"
+    return subprocess.run(
+        ["bash", "-e", str(script_path)],
+        cwd=cwd,
+        env={"PATH": search_path, **env},
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=STEP_SCRIPT_TIMEOUT_SECONDS,
+    )
+
+
+def write_stub(directory: Path, name: str, body: str) -> Path:
+    """Install an executable stub so a step script can run without its real tooling."""
+    directory.mkdir(parents=True, exist_ok=True)
+    stub = directory / name
+    stub.write_text(f"#!/usr/bin/env bash\nset -euo pipefail\n{body}", encoding="utf-8")
+    stub.chmod(0o755)
+    return stub
 
 
 def literal_assignment(source: str, name: str) -> object:
