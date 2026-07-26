@@ -24,6 +24,7 @@ CREDENTIALS_ACTION = (
 PLATFORM_REPOSITORY = "edu-llm/platform"
 WORKFLOW_PATH_INPUT = ".github/workflows/build-research-image.yml"
 CONTRACT_STEP = "Verify the caller contract"
+PREFLIGHT_STEP = "Look for an already published image"
 JOB_WORKFLOW_REF = f"{PLATFORM_REPOSITORY}/{WORKFLOW_PATH_INPUT}@refs/heads/main"
 
 
@@ -324,13 +325,108 @@ def test_publish_job_logs_in_to_ecr_without_a_third_party_login_action() -> None
     assert "docker/login-action" not in str(_load())
 
 
+SKIP_CONDITION = "steps.preflight.outputs.image_digest == ''"
+
+
+def test_an_already_published_tag_skips_the_build_and_the_push() -> None:
+    # ECR tags are immutable and the push happens before the read-back and the provenance
+    # record, so any failure after the push would make that commit unpublishable forever:
+    # the run-URL label guarantees a different manifest digest on the retry, and the tag
+    # cannot be rewritten. A pre-flight lookup makes a re-run resume instead of collide.
+    publish = _job("publish")
+    names = [candidate.get("name") for candidate in publish["steps"]]
+    preflight = step(publish, PREFLIGHT_STEP)
+
+    assert preflight["id"] == "preflight"
+    assert names.index("Configure AWS credentials") < names.index(PREFLIGHT_STEP)
+    assert names.index(PREFLIGHT_STEP) < names.index("Log in to Amazon ECR")
+    assert step(publish, "Log in to Amazon ECR")["if"] == SKIP_CONDITION
+    assert step(publish, "Build and push image")["if"] == SKIP_CONDITION
+
+    # The read-back is never skipped: the digest that leaves this workflow is the one the
+    # registry reports on this run, whether or not this run is what put it there.
+    assert "if" not in step(publish, "Read published digest from the registry")
+    assert "if" not in step(publish, "Write image provenance")
+    assert preflight["env"]["COMMIT_SHA"] == "${{ needs.verify.outputs.commit_sha }}"
+    assert preflight["env"]["ECR_REPOSITORY"] == "${{ needs.verify.outputs.ecr_repository }}"
+
+
+def _preflight_environment(tmp_path: Path) -> dict[str, str]:
+    return {
+        "RUNNER_TEMP": str(tmp_path),
+        "GITHUB_OUTPUT": str(tmp_path / "step-output.txt"),
+        "COMMIT_SHA": "a" * 40,
+        "ECR_REPOSITORY": "sbsandbox-intern-edullm-olmo-core",
+    }
+
+
+def _run_preflight(tmp_path: Path, aws_stub: str) -> tuple[Any, dict[str, str]]:
+    stub_bin = tmp_path / "bin"
+    write_stub(stub_bin, "aws", aws_stub)
+    result = run_step_script(
+        step(_job("publish"), PREFLIGHT_STEP)["run"],
+        cwd=tmp_path,
+        env=_preflight_environment(tmp_path),
+        stub_bin=stub_bin,
+    )
+    lines = (tmp_path / "step-output.txt").read_text(encoding="utf-8").splitlines()
+    return result, dict(line.split("=", 1) for line in lines)
+
+
+def test_a_missing_tag_leaves_the_build_to_run(tmp_path: Path) -> None:
+    result, outputs = _run_preflight(
+        tmp_path,
+        'echo "An error occurred (ImageNotFoundException) when calling the DescribeImages'
+        ' operation: The image with imageId {"imageTag":"aaaaaaaaaaaa"} does not exist" >&2\n'
+        "exit 254\n",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert outputs == {"image_tag": "a" * 12}
+    assert "not published yet" in result.stdout
+
+
+def test_a_published_tag_short_circuits_to_the_digest_the_registry_already_holds(
+    tmp_path: Path,
+) -> None:
+    digest = "sha256:" + "b" * 64
+    result, outputs = _run_preflight(tmp_path, f'echo "{digest}"\n')
+
+    assert result.returncode == 0, result.stderr
+    assert outputs == {"image_tag": "a" * 12, "image_digest": digest}
+    assert "already published" in result.stdout
+    assert "Skipping build and push" in result.stdout
+
+
+def test_a_lookup_that_fails_for_any_other_reason_fails_closed(tmp_path: Path) -> None:
+    # DescribeImages names the registry id in its error text, so a failed lookup must not
+    # be echoed and must not be mistaken for an absent image.
+    result, outputs = _run_preflight(
+        tmp_path,
+        'echo "An error occurred (AccessDeniedException) when calling the DescribeImages'
+        ' operation: registry 123456789012" >&2\nexit 254\n',
+    )
+
+    assert result.returncode == 1
+    assert outputs == {"image_tag": "a" * 12}
+    assert "preflight_lookup_failed" in result.stderr
+    assert "123456789012" not in result.stderr + result.stdout
+
+
+def test_a_lookup_that_answers_with_a_non_digest_fails_closed(tmp_path: Path) -> None:
+    result, _ = _run_preflight(tmp_path, 'echo "None"\n')
+
+    assert result.returncode == 1
+    assert "preflight_digest_unreadable" in result.stderr
+
+
 def test_publish_job_builds_from_the_registered_base_digest_under_an_immutable_tag() -> None:
     workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
     build = step(_job("publish"), "Build and push image")
     script = build["run"]
 
     assert build["id"] == "image"
-    assert 'image_tag="${COMMIT_SHA:0:12}"' in script
+    assert build["env"]["IMAGE_TAG"] == "${{ steps.preflight.outputs.image_tag }}"
     assert '--build-arg "BASE_IMAGE=${BASE_REFERENCE}"' in script
     assert '--label "org.opencontainers.image.revision=${COMMIT_SHA}"' in script
     assert '--label "org.opencontainers.image.source=${SOURCE_URL}"' in script
@@ -338,7 +434,6 @@ def test_publish_job_builds_from_the_registered_base_digest_under_an_immutable_t
     assert '--label "edullm.workflow.run.url=${RUN_URL}"' in script
     assert 'docker push "${image_reference}"' in script
     assert build["env"]["BASE_REFERENCE"] == ("${{ steps.build_inputs.outputs.base_reference }}")
-    assert 'echo "image_tag=${image_tag}" >> "${GITHUB_OUTPUT}"' in script
 
     assert "--force" not in workflow_text
     assert ":latest" not in workflow_text
@@ -368,7 +463,7 @@ def test_publish_job_takes_the_digest_from_an_ecr_read_back_not_the_local_build(
     ]
     assert 'image_digest="$(cat "${digest_file}")"' in script
     assert 'echo "image_digest=${image_digest}" >> "${GITHUB_OUTPUT}"' in script
-    assert digest["env"]["IMAGE_TAG"] == "${{ steps.image.outputs.image_tag }}"
+    assert digest["env"]["IMAGE_TAG"] == "${{ steps.preflight.outputs.image_tag }}"
 
     # `describe-images --output text` prints "None" for a missing image, so the read-back
     # has to reject anything that is not a digest before it becomes a workflow output.
