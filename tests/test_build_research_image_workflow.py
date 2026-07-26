@@ -41,6 +41,15 @@ PUBLISHED_IMAGE_DIGEST = "sha256:" + "b" * 64
 PUBLISHED_CONFIG_DIGEST = "sha256:" + "c" * 64
 PUBLISHED_BASE_REFERENCE = "public.ecr.aws/example/base@sha256:" + "e" * 64
 PRESIGNED_URL = "https://example.invalid/blob?X-Amz-Signature=deadbeefcafe"
+# Outputs no run body can be read for. The two CLI steps are pinned on the other side by
+# the tuples the CLI test modules assert against GITHUB_OUTPUT, so renaming an output in
+# the tool fails there and renaming it here fails the expression checker.
+DECLARED_OUTPUTS = {
+    "identity": ("commit_sha", "ecr_repository"),
+    "build_inputs": ("base_reference", "build_context", "dockerfile_path"),
+    # Documented output of aws-actions/configure-aws-credentials.
+    "credentials": ("aws-account-id",),
+}
 
 
 def _load() -> dict[str, Any]:
@@ -229,7 +238,7 @@ def test_every_expression_names_something_that_actually_exists() -> None:
     # typo, because GitHub resolves an unknown property to the empty string rather than
     # failing. That is how `github.job_workflow_sha` survived a green suite while making
     # every run of this workflow impossible to complete.
-    assert unreal_context_references(WORKFLOW_PATH) == []
+    assert unreal_context_references(WORKFLOW_PATH, declared_step_outputs=DECLARED_OUTPUTS) == []
 
 
 def test_the_workflow_never_reaches_for_a_job_workflow_property_of_the_github_context() -> None:

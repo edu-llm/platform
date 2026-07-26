@@ -10,7 +10,7 @@ import os
 import re
 import shlex
 import subprocess
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -191,6 +191,9 @@ EXPRESSION_FUNCTIONS = frozenset(
 EXPRESSION_LITERALS = frozenset({"false", "null", "true"})
 FREE_FORM_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 EXPRESSION_PATTERN = re.compile(r"\$\{\{(.*?)\}\}", re.DOTALL)
+STEP_OUTPUT_WRITE_PATTERN = re.compile(
+    r'echo\s+"(?P<name>[A-Za-z_][A-Za-z0-9_-]*)=[^"]*"\s*>>\s*"\$\{GITHUB_OUTPUT\}"'
+)
 QUOTED_LITERAL_PATTERN = re.compile(r"'(?:[^']|'')*'")
 PROPERTY_CHAIN_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_.$-])([A-Za-z_][A-Za-z0-9_-]*)((?:\.[A-Za-z0-9_*-]+)*)"
@@ -207,24 +210,25 @@ class ExpressionScope:
     needs: frozenset[str]
     step_ids: frozenset[str]
     job_outputs: Mapping[str, frozenset[str]]
+    step_outputs: Mapping[str, frozenset[str]]
     allows_jobs_context: bool
 
 
-def _iter_strings(value: Any) -> Iterator[str]:
-    if isinstance(value, dict):
-        for key, item in value.items():
-            yield str(key)
-            yield from _iter_strings(item)
-    elif isinstance(value, list):
-        for item in value:
-            yield from _iter_strings(item)
-    elif value is not None:
-        yield str(value)
-
-
 def _iter_expressions(node: Any) -> Iterator[str]:
-    for text in _iter_strings(node):
-        yield from EXPRESSION_PATTERN.findall(text)
+    if isinstance(node, dict):
+        for key, value in node.items():
+            # GitHub evaluates an `if:` as an expression whether or not it is braced, so a
+            # reader that only looks inside `${{ }}` leaves every gate in the file unread.
+            if key == "if" and isinstance(value, str):
+                braced = EXPRESSION_PATTERN.findall(value)
+                yield from braced if braced else [value]
+            else:
+                yield from _iter_expressions(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _iter_expressions(item)
+    elif node is not None:
+        yield from EXPRESSION_PATTERN.findall(str(node))
 
 
 def _as_set(value: Any) -> frozenset[str]:
@@ -256,6 +260,26 @@ def _job_outputs(workflow: Mapping[str, Any]) -> dict[str, frozenset[str]]:
     if not isinstance(jobs, dict):
         return {}
     return {str(name): _as_set(job.get("outputs")) for name, job in jobs.items()}
+
+
+def _step_outputs(
+    steps: list[Any],
+    declared: Mapping[str, Sequence[str]],
+) -> dict[str, frozenset[str]]:
+    """What each step in a job can be shown to put on GITHUB_OUTPUT.
+
+    A shell-written output is readable straight out of the run body. An output written by
+    an action or by a platform CLI is not, so the caller declares it; that declaration is
+    what makes a rename on either side visible instead of resolving to the empty string.
+    """
+    outputs: dict[str, frozenset[str]] = {}
+    for item in steps:
+        if not isinstance(item, dict) or "id" not in item:
+            continue
+        identifier = str(item["id"])
+        written = set(STEP_OUTPUT_WRITE_PATTERN.findall(str(item.get("run", ""))))
+        outputs[identifier] = frozenset(written | set(declared.get(identifier, ())))
+    return outputs
 
 
 def _validate_chain(context: str, segments: list[str], scope: ExpressionScope) -> str | None:
@@ -294,6 +318,8 @@ def _validate_chain(context: str, segments: list[str], scope: ExpressionScope) -
             return None if len(segments) == 2 else f"steps.{segments[0]}.{segments[1]} is a string"
         if segments[1:2] != ["outputs"] or len(segments) != 3:
             return f"steps.{segments[0]} exposes only outputs, outcome, and conclusion"
+        if segments[2] not in scope.step_outputs.get(segments[0], frozenset()):
+            return f"step {segments[0]} writes no output {segments[2]}"
         return None
     if context in ("needs", "jobs"):
         if context == "jobs" and not scope.allows_jobs_context:
@@ -323,8 +349,18 @@ def _reject_expression(expression: str, scope: ExpressionScope) -> Iterator[str]
             yield f"{scope.where}: ${{{{{expression}}}}} -> {reason}"
 
 
-def unreal_context_references(path: Path) -> list[str]:
-    """Report every ``${{ }}`` reference that names something GitHub does not define."""
+def unreal_context_references(
+    path: Path,
+    *,
+    declared_step_outputs: Mapping[str, Sequence[str]] | None = None,
+) -> list[str]:
+    """Report every expression reference that names something GitHub does not define.
+
+    ``declared_step_outputs`` supplies the outputs of steps whose run body cannot be read
+    for them, keyed by step id: an ``uses:`` step, or one whose outputs are written by a
+    platform CLI whose own tests already pin the names.
+    """
+    declared = declared_step_outputs or {}
     workflow = load_workflow(path)
     jobs = workflow.get("jobs") if isinstance(workflow.get("jobs"), dict) else {}
     outputs = _job_outputs(workflow)
@@ -339,6 +375,7 @@ def unreal_context_references(path: Path) -> list[str]:
         where=f"{path.name} (workflow)",
         needs=frozenset(),
         step_ids=frozenset(),
+        step_outputs={},
         allows_jobs_context=True,
         **shared,
     )
@@ -352,6 +389,7 @@ def unreal_context_references(path: Path) -> list[str]:
             where=f"{path.name} (job {name})",
             needs=_as_set(job.get("needs")),
             step_ids=frozenset(str(item["id"]) for item in steps if "id" in item),
+            step_outputs=_step_outputs(steps, declared),
             allows_jobs_context=False,
             **shared,
         )
