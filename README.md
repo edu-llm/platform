@@ -103,20 +103,44 @@ The bundle is committed because a tripwire nobody can diff is not a tripwire.
 ## Captured evidence
 
 `fixtures/evidence/` holds sanitized, read-only observations of the account: the GitHub
-organization plan, applied AWS service quotas, and under `phase-1/roles/` the two IAM
-roles Phase 1 depends on, as IAM returned them. Account IDs are masked, and this account
-is masked differently from any other so that a grant pointing somewhere else cannot be
-mistaken for a local one.
+organization plan, applied AWS service quotas, under `phase-1/roles/` the two IAM roles
+Phase 1 depends on as IAM returned them, and under `phase-1/run/` what one completed
+publish left behind — the image, its scan, the publisher session that pushed it, the five
+refusals that session met, and a second push the registry turned away. Account IDs are
+masked, and this account is masked differently from any other so that a grant pointing
+somewhere else cannot be mistaken for a local one. An identity this repository does not
+declare is not named at all, because in a shared sandbox account those are people.
 
 Records expire after 30 days so a stale reading cannot pass as current. When that
 happens the Phase 0 gate reports `evidence_stale`, and in Phase 1 the tests that read the
-committed role captures fail, which takes the criteria citing them back to gaps and the
+committed captures fail, which takes the criteria citing them back to gaps and the
 gate to exit 1. Either way the remedy is a maintainer with credentials re-running the
-capture tool; nothing renews on its own.
+capture tool; nothing renews on its own. Re-capturing the run costs a read of the account
+rather than another publish: the image, its scan, the session and the refusals are all
+still in the registry and in CloudTrail, and what lapses is when somebody last looked.
 
-The role captures are worth committing because something compares them: the deployed role
-is checked against the CloudFormation template that claims to describe it, in both
-directions, by `edullm_platform.role_drift`. See `proof/phase-1/deployed-role-drift.md`.
+Each set of records is worth committing because something reads them. A deployed role is
+checked against the CloudFormation template that claims to describe it, in both
+directions, by `edullm_platform.role_drift`; see `proof/phase-1/deployed-role-drift.md`.
+The run records are checked against each other — a scan filed under another digest, a
+refusal on another tag or a matrix missing an action stops them counting as a record of
+this run; see `proof/phase-1/publisher-denial-matrix.md`.
+
+`fixtures/evidence/phase-1/rebuild/` is different in kind and does not expire. It holds
+the image configurations of one commit built several times from the same pinned base, and
+the analysis of where they diverge is a test rather than a paragraph. See
+`proof/phase-1/image-rebuild-comparison.md`.
+
+## Open decisions
+
+`src/edullm_platform/open_decisions.py` records questions this repository has surfaced and
+deliberately has not answered. A gap means unfinished work and a deferral means a
+postponement with a written trigger; neither fits a question whose answer is a policy
+choice, and one that is not written down gets settled by accident by whoever first trips
+over it. No entry may carry a recommendation, and an entry with fewer than two options is
+refused, so a question cannot become a decision by having its alternatives deleted.
+Answering one means deleting it from there and putting the answer where it is enforced.
+The register is rendered into `proof/phase-1/open-decisions.md`.
 
 Evidence is captured from a sandbox account and is labelled as such. A sandbox
 observation never attests production capacity.
