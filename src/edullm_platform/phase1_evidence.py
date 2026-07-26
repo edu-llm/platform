@@ -540,8 +540,17 @@ class IamPermissionStatement(ContractModel):
 
 
 class IamInlinePolicy(ContractModel):
+    """One inline policy on the role, by name and statement.
+
+    ``policy_version`` is the document's ``Version`` element, which IAM's grammar makes
+    optional; a document without one is evaluated as ``2008-10-17``. It is nullable so
+    that absence can be written down, and required so an uncaptured version cannot be
+    read as an absent one. Recording the default IAM would have applied would put a fact
+    in the record that the account never returned.
+    """
+
     policy_name: SecretFreeStr = Field(min_length=1, max_length=128, pattern=IAM_NAME_PATTERN)
-    policy_version: SecretFreeStr = Field(pattern=IAM_POLICY_VERSION_PATTERN)
+    policy_version: SecretFreeStr | None = Field(pattern=IAM_POLICY_VERSION_PATTERN)
     statements: Annotated[
         tuple[IamPermissionStatement, ...], BeforeValidator(require_ordered_sequence)
     ] = Field(min_length=1, strict=False)
@@ -561,7 +570,8 @@ class DeployedRoleEvidence(FreshEvidenceModel):
     widen a role; a record without that field would be blind to it.
     ``permissions_boundary_policy_name`` is nullable so a detached boundary can be
     written down, and required so an uncaptured one cannot be mistaken for a detached
-    one.     ``max_session_duration_seconds`` accepts IAM's full range rather than the 3600
+    one. ``trust_policy_version`` is nullable on the same terms, for the reason
+    :class:`IamInlinePolicy` gives.     ``max_session_duration_seconds`` accepts IAM's full range rather than the 3600
     the templates ask for. Actions accept wildcards. Trust conditions may be empty. A
     statement may select by exclusion, which no template here does; see
     :class:`IamActionMatch` for why that is recorded rather than refused.
@@ -589,7 +599,7 @@ class DeployedRoleEvidence(FreshEvidenceModel):
         ge=MINIMUM_SESSION_DURATION_SECONDS,
         le=MAXIMUM_SESSION_DURATION_SECONDS,
     )
-    trust_policy_version: SecretFreeStr = Field(pattern=IAM_POLICY_VERSION_PATTERN)
+    trust_policy_version: SecretFreeStr | None = Field(pattern=IAM_POLICY_VERSION_PATTERN)
     trust_statements: Annotated[
         tuple[IamTrustStatement, ...], BeforeValidator(require_ordered_sequence)
     ] = Field(min_length=1, strict=False)

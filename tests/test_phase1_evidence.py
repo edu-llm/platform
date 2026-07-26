@@ -945,6 +945,31 @@ def test_a_detached_permissions_boundary_is_recordable_and_not_the_same_as_uncap
     assert detached.permissions_boundary_policy_name is None
 
 
+def test_a_policy_document_with_no_version_records_that_it_has_none() -> None:
+    # IAM's grammar makes Version optional, and a document without one is evaluated as
+    # 2008-10-17, which does not support policy variables. Requiring a value here would
+    # have made the capture tool invent the default and write a fact into the record that
+    # the account never returned.
+    policy = inline_policy_payload(policy_version=None)
+    evidence = DeployedRoleEvidence.model_validate(
+        deployed_role_payload(trust_policy_version=None, inline_policies=[policy])
+    )
+    assert evidence.trust_policy_version is None
+    assert evidence.inline_policies[0].policy_version is None
+
+
+def test_a_policy_version_nobody_captured_is_not_the_same_as_one_that_is_absent() -> None:
+    policy = inline_policy_payload()
+    del policy["policy_version"]
+    with pytest.raises(ValidationError) as exc_info:
+        DeployedRoleEvidence.model_validate(deployed_role_payload(inline_policies=[policy]))
+    assert_validation_error(
+        exc_info.value,
+        loc_suffix=("inline_policies", 0, "policy_version"),
+        error_type="missing",
+    )
+
+
 def test_an_attached_managed_policy_is_recorded_because_no_template_would_show_it() -> None:
     # The committed template attaches nothing, so a managed policy attached in the
     # console is drift the template cannot express. A record that could not hold it
