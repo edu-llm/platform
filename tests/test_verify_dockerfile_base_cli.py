@@ -72,6 +72,31 @@ ACCEPTED = {
         "ARG BASE_IMAGE\nFROM ${BASE_IMAGE} AS Build\nFROM bUiLd AS final\n"
     ),
     "several names on one global ARG": "ARG TARGET BASE_IMAGE\nFROM ${BASE_IMAGE}\n",
+    "a copy from an earlier stage by index": (
+        "ARG BASE_IMAGE\nFROM ${BASE_IMAGE}\nFROM ${BASE_IMAGE}\nCOPY --from=0 /wheel /wheel\n"
+    ),
+    "a copy from an earlier stage named in another case": (
+        "ARG BASE_IMAGE\nFROM ${BASE_IMAGE} AS Build\nFROM ${BASE_IMAGE}\nCOPY --from=bUiLd /a /b\n"
+    ),
+    "a copy carrying other flags": (
+        "ARG BASE_IMAGE\n"
+        "FROM ${BASE_IMAGE} AS build\n"
+        "FROM ${BASE_IMAGE}\n"
+        "COPY --chown=1000:1000 --from=build /a /b\n"
+    ),
+    "a bind mount from an earlier stage": (
+        "ARG BASE_IMAGE\n"
+        "FROM ${BASE_IMAGE} AS build\n"
+        "RUN make wheel\n"
+        "FROM ${BASE_IMAGE} AS runtime\n"
+        "RUN --mount=type=bind,from=build,source=/wheel,target=/wheel pip install /wheel\n"
+    ),
+    "a cache mount that names no image": (
+        "ARG BASE_IMAGE\nFROM ${BASE_IMAGE}\nRUN --mount=type=cache,target=/root/.cache make\n"
+    ),
+    "a flag that merely ends in the word from": (
+        "ARG BASE_IMAGE\nFROM ${BASE_IMAGE}\nRUN build --copy-from=/etc/hosts\n"
+    ),
 }
 
 REJECTED = {
@@ -128,6 +153,59 @@ REJECTED = {
     "a continuation that never ends": (
         "ARG BASE_IMAGE\nFROM ${BASE_IMAGE} \\\n",
         "unterminated_line_continuation",
+    ),
+    "a copy from an unregistered image": (
+        "ARG BASE_IMAGE\nFROM ${BASE_IMAGE}\nCOPY --from=docker.io/library/alpine:3.20 /a /b\n",
+        "unregistered_stage_reference",
+    ),
+    "a copy from an unregistered image at a digest": (
+        "ARG BASE_IMAGE\nFROM ${BASE_IMAGE}\nCOPY --from=alpine@sha256:" + "a" * 64 + " /a /b\n",
+        "unregistered_stage_reference",
+    ),
+    "a bind mount from an unregistered image": (
+        (
+            "ARG BASE_IMAGE\n"
+            "FROM ${BASE_IMAGE}\n"
+            "RUN --mount=type=bind,from=golang:1.24,target=/go go build\n"
+        ),
+        "unregistered_stage_reference",
+    ),
+    "a cache mount from an unregistered image": (
+        (
+            "ARG BASE_IMAGE\n"
+            "FROM ${BASE_IMAGE}\n"
+            "RUN --mount=type=cache,from=alpine,source=/x,target=/y make\n"
+        ),
+        "unregistered_stage_reference",
+    ),
+    "a copy from a stage that does not exist yet": (
+        (
+            "ARG BASE_IMAGE\n"
+            "FROM ${BASE_IMAGE} AS build\n"
+            "COPY --from=runtime /a /b\n"
+            "FROM ${BASE_IMAGE} AS runtime\n"
+        ),
+        "unregistered_stage_reference",
+    ),
+    "a copy from the stage doing the copying": (
+        "ARG BASE_IMAGE\nFROM ${BASE_IMAGE} AS build\nCOPY --from=build /a /b\n",
+        "unregistered_stage_reference",
+    ),
+    "a copy from a stage index that does not exist yet": (
+        "ARG BASE_IMAGE\nFROM ${BASE_IMAGE}\nFROM ${BASE_IMAGE}\nCOPY --from=2 /a /b\n",
+        "unregistered_stage_reference",
+    ),
+    "a copy from the current stage index": (
+        "ARG BASE_IMAGE\nFROM ${BASE_IMAGE}\nCOPY --from=0 /a /b\n",
+        "unregistered_stage_reference",
+    ),
+    "a stage index written with a leading zero": (
+        "ARG BASE_IMAGE\nFROM ${BASE_IMAGE}\nFROM ${BASE_IMAGE}\nCOPY --from=01 /a /b\n",
+        "unregistered_stage_reference",
+    ),
+    "a copy before any stage exists": (
+        "ARG BASE_IMAGE\nCOPY --from=build /a /b\nFROM ${BASE_IMAGE}\n",
+        "unregistered_stage_reference",
     ),
 }
 

@@ -7,6 +7,13 @@ so the provenance record would assert a fact about the image that nothing establ
 An unverified assertion in a provenance record is worse than an absent field, and
 provenance is the deliverable, so this gate runs before the build and fails closed.
 
+``FROM`` is not the only instruction that reaches outside the build: ``COPY --from=`` and
+``RUN --mount=type=bind,from=`` name an image too, and what they pull in ends up in a
+published layer just the same. They are held to the same rule. What no static gate can
+promise is anything about the *contents* of the registered base, so the guarantee stops
+at "every image this build reads was registered", not at "this image contains only
+registered bytes".
+
 Like its siblings it prints only a machine-readable reason: the runner log is world
 readable for any public caller repository.
 """
@@ -24,6 +31,10 @@ from edullm_platform.contracts.repository_registry import UnknownRepositoryError
 
 ARG_PATTERN = re.compile(r"^ARG\s+(?P<names>\S.*)$", re.IGNORECASE)
 FROM_PATTERN = re.compile(r"^FROM\s*(?P<arguments>.*)$", re.IGNORECASE)
+COPY_FROM_PATTERN = re.compile(r"(?<!\S)--from=(?P<value>\S+)", re.IGNORECASE)
+MOUNT_PATTERN = re.compile(r"(?<!\S)--mount=(?P<value>\S+)", re.IGNORECASE)
+MOUNT_FROM_PATTERN = re.compile(r"^from=(?P<value>.*)$", re.IGNORECASE)
+STAGE_INDEX_PATTERN = re.compile(r"0|[1-9][0-9]*")
 BASE_IMAGE_ARG = "BASE_IMAGE"
 BASE_IMAGE_REFERENCES = frozenset({"${BASE_IMAGE}", "$BASE_IMAGE"})
 
@@ -89,6 +100,21 @@ def _parse_from(arguments: str) -> tuple[str, str | None]:
     return image, alias[1]
 
 
+def _stage_references(instruction: str) -> list[str]:
+    """Every ``--from=`` an instruction resolves against the set of build stages.
+
+    ``COPY --from=`` spells it directly; a bind or cache mount spells it as one field of
+    the comma-separated ``--mount=`` value.
+    """
+    references = [match.group("value") for match in COPY_FROM_PATTERN.finditer(instruction)]
+    for mount in MOUNT_PATTERN.finditer(instruction):
+        for field in mount.group("value").strip("\"'").split(","):
+            source = MOUNT_FROM_PATTERN.match(field)
+            if source is not None:
+                references.append(source.group("value"))
+    return [reference.strip("\"'") for reference in references]
+
+
 def require_base_image_contract(text: str) -> None:
     """Raise unless every build stage derives from the platform-supplied base image.
 
@@ -96,9 +122,14 @@ def require_base_image_contract(text: str) -> None:
     but the root of every chain has to be ``${BASE_IMAGE}``. A default on the ``ARG`` is
     refused too: it is a base image nobody registered, waiting for the day the build-arg
     is dropped.
+
+    ``COPY --from=`` and ``RUN --mount=...,from=`` reach outside the build just as a
+    ``FROM`` does, and what they reach for lands in a published layer, so they are held to
+    the same rule: an earlier stage, by name or by index, and nothing else.
     """
     declares_base_image = False
-    stage_names: set[str] = set()
+    declared_names: set[str] = set()
+    earlier_names: set[str] = set()
     stages = 0
 
     for instruction in _logical_lines(text):
@@ -113,16 +144,27 @@ def require_base_image_contract(text: str) -> None:
 
         stage = FROM_PATTERN.match(instruction)
         if stage is None:
+            for reference in _stage_references(instruction):
+                index = STAGE_INDEX_PATTERN.fullmatch(reference)
+                # A stage can name neither itself nor a stage declared after it, so the
+                # current stage is excluded from both the names and the index range.
+                if index is not None and int(reference) < stages - 1:
+                    continue
+                if index is None and reference.casefold() in earlier_names:
+                    continue
+                raise DockerfileBaseError("unregistered_stage_reference")
             continue
+
         if not declares_base_image:
             raise DockerfileBaseError("missing_base_image_arg")
         image, alias = _parse_from(stage.group("arguments"))
-        if image not in BASE_IMAGE_REFERENCES and image.casefold() not in stage_names:
+        if image not in BASE_IMAGE_REFERENCES and image.casefold() not in declared_names:
             raise DockerfileBaseError("unregistered_base_image")
         stages += 1
+        earlier_names = set(declared_names)
         if alias is not None:
             # Docker matches stage names case-insensitively, so the record has to as well.
-            stage_names.add(alias.casefold())
+            declared_names.add(alias.casefold())
 
     if stages == 0:
         raise DockerfileBaseError("no_build_stage")
