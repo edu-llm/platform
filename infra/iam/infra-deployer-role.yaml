@@ -13,6 +13,13 @@ Resources:
       # that creates it is applied from a laptop, so no branch ever needs to reach AWS
       # through it. A branch wildcard here would hand every feature branch the ability to
       # rewrite the account's ECR stacks.
+      #
+      # The sub value carries owner and repository ids because this organization issues
+      # immutable subject claims. Verified against the live repository settings:
+      # `gh api repos/edu-llm/platform/actions/oidc/customization/sub` reports
+      # sub_claim_prefix repo:edu-llm@306859726/platform@1311508598. A repository still on
+      # legacy subjects would need repo:edu-llm/platform here instead, and would fail to
+      # assume this role until the value is corrected.
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -52,8 +59,13 @@ Resources:
                   - cloudformation:DescribeStackResources
                   - cloudformation:GetTemplateSummary
                   - cloudformation:ListStackResources
+                # The wildcard starts after the edullm segment on purpose. This is a
+                # shared account: sbsandbox-intern- alone is every intern's prefix, so
+                # sbsandbox-intern-* would grant DeleteStack over their stacks too.
+                # Everything this repository deploys is named sbsandbox-intern-edullm-*,
+                # so nothing is gained by widening it back.
                 Resource:
-                  Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-*/*
+                  Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-*/*
               # cloudformation:ValidateTemplate is the only action here that the
               # CloudFormation service authorization reference lists with no resource type
               # at all, so "*" is the narrowest grant that exists for it. Every other
@@ -65,6 +77,10 @@ Resources:
               # CloudFormation acts as this role while it reconciles the ECR stack, so the
               # role needs the repository lifecycle itself. ecr:PutLifecyclePolicy is what
               # the retired shared role was missing.
+              #
+              # Deliberately absent: ecr:SetRepositoryPolicy, ecr:GetRepositoryPolicy and
+              # ecr:DeleteRepositoryPolicy. A repository policy is the one ECR grant that
+              # changes who may pull or push an image, and no committed template sets one.
               - Effect: Allow
                 Action:
                   - ecr:CreateRepository
@@ -78,11 +94,9 @@ Resources:
                   - ecr:TagResource
                   - ecr:UntagResource
                   - ecr:ListTagsForResource
-                  - ecr:SetRepositoryPolicy
-                  - ecr:GetRepositoryPolicy
-                  - ecr:DeleteRepositoryPolicy
+                # Narrowed after the edullm segment for the same reason as the stack scope.
                 Resource:
-                  Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-*
+                  Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-*
 
 Outputs:
   RoleName:

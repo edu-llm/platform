@@ -21,15 +21,17 @@ DEPLOY_WORKFLOW = ".github/workflows/deploy-phase1-ecr.yml"
 JOB_WORKFLOW_REF = f"edu-llm/platform/{DEPLOY_WORKFLOW}@refs/heads/main"
 SUBJECT = "repo:edu-llm@306859726/platform@1311508598:ref:refs/heads/main"
 
+RESOURCE_PREFIX = "sbsandbox-intern-edullm-"
 STACK_RESOURCE = {
     "Fn::Sub": (
         "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:"
-        "stack/sbsandbox-intern-*/*"
+        f"stack/{RESOURCE_PREFIX}*/*"
     )
 }
 REPOSITORY_RESOURCE = {
     "Fn::Sub": (
-        "arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-*"
+        "arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:"
+        f"repository/{RESOURCE_PREFIX}*"
     )
 }
 UNSCOPED_STATEMENT = {
@@ -55,19 +57,21 @@ EXPECTED_REPOSITORY_ACTIONS = {
     "ecr:CreateRepository",
     "ecr:DeleteLifecyclePolicy",
     "ecr:DeleteRepository",
-    "ecr:DeleteRepositoryPolicy",
     "ecr:DescribeRepositories",
     "ecr:GetLifecyclePolicy",
-    "ecr:GetRepositoryPolicy",
     "ecr:ListTagsForResource",
     "ecr:PutImageScanningConfiguration",
     "ecr:PutImageTagMutability",
     "ecr:PutLifecyclePolicy",
-    "ecr:SetRepositoryPolicy",
     "ecr:TagResource",
     "ecr:UntagResource",
 }
 FORBIDDEN_ACTION_PREFIXES = ("batch:", "ec2:", "iam:", "s3:")
+FORBIDDEN_REPOSITORY_POLICY_ACTIONS = {
+    "ecr:DeleteRepositoryPolicy",
+    "ecr:GetRepositoryPolicy",
+    "ecr:SetRepositoryPolicy",
+}
 
 
 def _role() -> dict[str, Any]:
@@ -148,7 +152,7 @@ def test_trusted_job_workflow_ref_names_the_workflow_file_that_deploys_the_stack
     assert (PROJECT_ROOT / DEPLOY_WORKFLOW).is_file()
 
 
-def test_deployer_can_only_touch_stacks_carrying_the_sandbox_prefix() -> None:
+def test_deployer_can_only_touch_stacks_carrying_our_own_prefix() -> None:
     statement = _statement_scoped_to(STACK_RESOURCE)
     actions = statement_actions(statement)
 
@@ -174,13 +178,38 @@ def test_validate_template_is_the_only_action_granted_without_a_resource_scope()
     )
 
 
-def test_deployer_can_only_touch_ecr_repositories_carrying_the_sandbox_prefix() -> None:
+def test_deployer_can_only_touch_ecr_repositories_carrying_our_own_prefix() -> None:
     statement = _statement_scoped_to(REPOSITORY_RESOURCE)
     actions = statement_actions(statement)
 
     assert statement["Effect"] == "Allow"
     assert set(actions) == EXPECTED_REPOSITORY_ACTIONS
     assert len(actions) == len(EXPECTED_REPOSITORY_ACTIONS)
+
+
+def test_deployer_resource_scopes_never_widen_to_the_shared_intern_prefix() -> None:
+    # sbsandbox-intern- is the whole account's prefix: every intern's stacks and
+    # registries begin with it. Only the edullm segment makes a name ours, so a wildcard
+    # placed any earlier would hand this role other people's infrastructure to delete.
+    scoped = [
+        statement["Resource"]["Fn::Sub"]
+        for statement in _statements()
+        if isinstance(statement["Resource"], dict)
+    ]
+
+    assert len(scoped) == 2
+    assert all(f"{RESOURCE_PREFIX}*" in arn for arn in scoped)
+    assert not [arn for arn in scoped if "sbsandbox-intern-*" in arn]
+
+
+def test_deployer_can_never_manage_an_ecr_repository_policy() -> None:
+    # A repository policy is the one ECR grant that changes who may pull or push an
+    # image. Nothing committed sets one -- infra/ecr-repositories.yaml is forbidden from
+    # carrying RepositoryPolicyText -- so reintroducing these actions must fail here.
+    actions = {action for statement in _statements() for action in statement_actions(statement)}
+
+    assert not actions & FORBIDDEN_REPOSITORY_POLICY_ACTIONS
+    assert not [action for action in actions if "repositorypolicy" in action.lower()]
 
 
 def test_deployer_grants_no_identity_storage_or_compute_action() -> None:
