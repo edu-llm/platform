@@ -2,8 +2,8 @@
 
 Phase: phase-0
 Bundle schema version: 1
-Source commit: 8d7350cc3166e3ef04db800c89c29fbe8e74952a
-Generated: 2026-07-26T19:38:31+00:00
+Source commit: 7ddd38f696167ea85b05537f8a68b03fe7e8ff27
+Generated: 2026-07-26T20:33:20+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 0 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase0_proof.py` at generation time.
 
@@ -18,9 +18,9 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 1847 |
-| suite tests executed | 1801 |
-| suite passed | 1801 |
+| suite tests collected | 2023 |
+| suite tests executed | 1953 |
+| suite passed | 1953 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
@@ -33,7 +33,7 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 | criteria GAP (each one fails the gate) | 0 |
 | related recorded deferrals | 1 (D1) |
 | fixtures with recorded digests | 9 |
-| contract models inventoried | 62 |
+| contract models inventoried | 70 |
 | JSON Schema files exported | 5 |
 
 ## Contract versions
@@ -46,6 +46,7 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 | ImageProvenance | 1 |
 | LifecycleEvent | 1 |
 | LogicalRun | 1 |
+| PublisherDenialMatrix | 1 |
 | ResultManifest | 1 |
 | RunManifest | 1 |
 | SchedulerAttempt | 1 |
@@ -99,7 +100,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 - Approval scope is organization. Any team lead may approve any member's routine submission. Check D1 in the negative-case matrix is deferred for this reason.
 - Cross-team attribution is implemented but cannot reject anything yet. Every decision records the claimed team and a team_verified flag, and a submitter naming a team they do not belong to is denied as soon as team bindings exist. With bindings empty, every shipped decision records team_verified: false, which is the audit record's way of saying the attribution was accepted unchecked. Check 9 is deferred for this reason: no test can show a shipped rejection that the shipped configuration cannot produce.
 - The secret scan applied to this bundle masks its own content digests before scanning. A 64-character hexadecimal sha256 digest and a 40-character hexadecimal commit SHA both match the generic long-credential patterns in evidence.py, so the two exact token shapes this bundle emits are replaced with placeholders and everything else is scanned unchanged. No other exemption is applied.
-- The nested verification run excludes tests/test_phase0_proof.py, because those tests invoke this generator and would recurse. They run in the reviewer's own `uv run pytest -q`, which is the command this bundle asks the reviewer to run.
+- The nested verification run excludes every test module that builds a proof bundle (tests/test_phase0_proof.py, tests/test_phase1_proof.py), because those tests invoke a generator and would recurse. They run in the reviewer's own `uv run pytest -q`, which is the command this bundle asks the reviewer to run.
 - This bundle describes the working tree at generation time, which may differ from the commit named above. The input digests recorded in the bundle index identify exactly what was measured.
 - Nothing forces this bundle to stay current. It is a snapshot, and its counts go stale as soon as a test is added or a contract changes. Re-run `uv run python tools/build_phase0_proof.py` and read the diff before accepting a phase gate. The recorded fixture digests are the one part that fails loudly on its own when it goes stale.
 
