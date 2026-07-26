@@ -29,6 +29,7 @@ only part a reader can act on, so each is its own verdict and each carries its o
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -284,6 +285,6 @@ def read_committed_role_captures(
 
 
 def captures_that_do_not_hold(
-    captures: tuple[CommittedRoleCapture, ...],
+    captures: Sequence[CommittedRoleCapture],
 ) -> tuple[CommittedRoleCapture, ...]:
     return tuple(capture for capture in captures if not capture.holds)

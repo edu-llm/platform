@@ -24,6 +24,14 @@ from edullm_platform.criteria import (
 # The criterion-to-test mapping is defined once, in the library, and imported here and by
 # the acceptance gate. This module must never grow its own copy: the matrix below and
 # tools/validate_phase1.py have to be the same claim, or the bundle is decoration.
+from edullm_platform.phase1_capture import (
+    CAPTURE_PARTITION,
+    CAPTURE_REGION,
+    ROLE_CAPTURE_DIR,
+    CommittedRoleCapture,
+    captures_that_do_not_hold,
+    read_committed_role_captures,
+)
 from edullm_platform.phase1_criteria import phase1_criteria
 from edullm_platform.proof_bundle import (
     CITATION_LEGEND,
@@ -60,9 +68,7 @@ from edullm_platform.proof_bundle import (
 from edullm_platform.role_drift import (
     COMMITTED_ROLE_TEMPLATES,
     DriftDirection,
-    RoleDriftReport,
     TemplateRole,
-    compare_role_to_template,
     load_template_roles,
 )
 
@@ -82,15 +88,6 @@ BUNDLE_FILENAMES: Final = (
 NESTED_RUN_ENV: Final = "EDULLM_PHASE1_PROOF_NESTED"
 GENERATOR_TEST_PATH: Final = "tests/test_phase1_proof.py"
 GENERATOR_COMMAND: Final = "uv run python tools/build_phase1_proof.py"
-
-#: What the account is expected to be, and the only two values the drift comparison is
-#: allowed to fold. Stated here rather than defaulted, because an ARN naming any other
-#: partition or region survives normalisation and is reported.
-AWS_PARTITION: Final = "aws"
-AWS_REGION: Final = "us-east-1"
-
-#: Where a reviewed capture is copied to once somebody has read it. Empty today.
-ROLE_EVIDENCE_DIR: Final = Path("fixtures") / "evidence" / "phase-1" / "roles"
 
 #: The committed artifacts Phase 1 owns, whose digests this bundle records so a reviewer
 #: can confirm it describes the tree in front of them.
@@ -259,51 +256,29 @@ def verify_repository(repo_root: Path) -> Verification:
 # --------------------------------------------------------------------------------------
 
 
-def committed_role_evidence(repo_root: Path) -> tuple[Path, ...]:
-    directory = repo_root / ROLE_EVIDENCE_DIR
-    if not directory.is_dir():
-        return ()
-    return tuple(sorted(directory.glob("*.sanitized.json")))
+def refuse_a_capture_that_no_longer_holds(captures: Sequence[CommittedRoleCapture]) -> None:
+    """Stop rather than describe a comparison that has stopped being true.
 
-
-def compare_committed_evidence(repo_root: Path) -> tuple[RoleDriftReport, ...]:
-    """Compare every captured role a reviewer has committed. Today there are none.
-
-    Reading the directory rather than a list is what makes this a seam rather than a
-    promise: the day a sanitized capture lands under it, this bundle compares it and says
-    so, without anybody remembering to come back here.
+    Criteria 4 and 5 are recorded as covered partly on the strength of these records, and
+    the matrix prints the recorded status. So once a capture expires, drifts or fails to
+    load, the gate fails those criteria and this bundle would still print them covered —
+    which is the one defect a bundle cannot survive. Refusing is also what makes the
+    expiry visible: somebody has to re-capture, or delete the records and the citations.
     """
-    import json
-
-    from edullm_platform.phase1_evidence import DeployedRoleEvidence
-
-    templates = dict(COMMITTED_ROLE_TEMPLATES)
-    reports: list[RoleDriftReport] = []
-    for path in committed_role_evidence(repo_root):
-        evidence = DeployedRoleEvidence.model_validate(json.loads(path.read_text(encoding="utf-8")))
-        relative_path = templates.get(evidence.role_name)
-        if relative_path is None:
-            raise ProofBundleError(
-                f"{path.name} describes {evidence.role_name}, which no committed template "
-                "declares, so there is nothing to compare it against"
-            )
-        reports.append(
-            compare_role_to_template(
-                evidence,
-                committed_role(
-                    repo_root, role_name=evidence.role_name, relative_path=relative_path
-                ),
-                template_path=relative_path,
-                partition=AWS_PARTITION,
-                region=AWS_REGION,
-            )
-        )
-    return tuple(reports)
+    broken = captures_that_do_not_hold(captures)
+    if not broken:
+        return
+    raise ProofBundleError(
+        "a committed role capture no longer holds, and the criteria that rest on it are "
+        "recorded as covered, so this bundle would state a status the acceptance gate "
+        "does not reach:\n  "
+        + "\n  ".join(f"{capture.verdict.value}: {capture.detail}" for capture in broken)
+    )
 
 
 def render_role_drift(
     repo_root: Path,
-    reports: Sequence[RoleDriftReport],
+    captures: Sequence[CommittedRoleCapture],
 ) -> str:
     role_rows = [
         [
@@ -329,10 +304,12 @@ def render_role_drift(
         "",
         (
             "Both Phase 1 roles were created once from a laptop and neither is redeployed by "
-            "CI, so each committed template is a claim about the account rather than a "
+            "CI, so each committed template began as a claim about the account rather than a "
             "description of it. `edullm_platform.role_drift` is what turns the claim back into "
-            "something checkable, and `tools/capture_phase1_evidence.py` runs it against the "
-            "live account as it captures."
+            "something checkable, `tools/capture_phase1_evidence.py` runs it against the live "
+            "account as it captures, and the sanitized records it wrote are committed under "
+            f"`{ROLE_CAPTURE_DIR}/` so the comparison can be re-run by anybody, with no "
+            "credentials, as often as the suite runs."
         ),
         "",
         "## The roles compared",
@@ -390,9 +367,10 @@ def render_role_drift(
                 ),
                 (
                     f"It is exact. A field folds only when it holds precisely the pseudo-"
-                    f"parameter, or precisely `{AWS_PARTITION}` and `{AWS_REGION}`, which the "
-                    "caller names. Another region, another partition, any wildcard, and every "
-                    "character of the resource survive untouched and are still compared."
+                    f"parameter, or precisely `{CAPTURE_PARTITION}` and `{CAPTURE_REGION}`, "
+                    "which the caller names. Another region, another partition, any wildcard, "
+                    "and every character of the resource survive untouched and are still "
+                    "compared."
                 ),
                 (
                     "It distinguishes accounts. Capture masks this account and any other "
@@ -436,57 +414,47 @@ def render_role_drift(
         "",
         "## What this bundle compared",
         "",
-    ]
-    if not reports:
-        sections.extend(
+        (
+            "One capture per role, taken against the sandbox and committed after review. The "
+            "generator refuses to write at all if any of them has expired, drifted or stopped "
+            "loading, so this table can only ever report agreement — the interesting states "
+            "are reported by the refusal instead."
+        ),
+        "",
+        table(
+            ["role", "observed", "matches its template", "findings", "expires"],
             [
-                (
-                    f"Nothing. No captured role evidence is committed under "
-                    f"`{ROLE_EVIDENCE_DIR}/`, so the comparison had nothing to run against. "
-                    "The machinery above is built and tested against synthetic roles derived "
-                    "from these templates; it has not been pointed at the account."
-                ),
-                "",
-                (
-                    "To change that: run `uv run python tools/capture_phase1_evidence.py "
-                    "--aws-profile <profile> --aws-region " + AWS_REGION + " --environment "
-                    "sandbox --repository OLMo-core --output-dir "
-                    "docs-frank/working/phase-1-evidence/<date>`, read what it wrote, and copy "
-                    f"the sanitized role records into `{ROLE_EVIDENCE_DIR}/`. Regenerate this "
-                    "bundle afterwards and this section will report the comparison."
-                ),
-                "",
-                (
-                    "A capture is a statement about one moment. Every evidence record stops "
-                    "loading thirty days after it was taken, so a committed capture expires "
-                    "and this section goes back to reporting nothing until somebody looks "
-                    "again. That is the intended behaviour and not a defect to work around."
-                ),
-            ]
-        )
-        return "\n".join(sections).rstrip() + "\n"
-    finding_rows = [
-        [report.role_name, "yes" if report.matches else "no", str(len(report.findings))]
-        for report in reports
+                [
+                    capture.role_name,
+                    observation_date(capture),
+                    "yes",
+                    str(len(capture.report.findings)) if capture.report else "0",
+                    expiry_date(capture),
+                ]
+                for capture in captures
+            ],
+        ),
+        "",
+        (
+            "**Expires** is thirty days after the observation, and it is not a formality. Every "
+            "Phase 1 evidence record refuses to load past it, so on that date "
+            "`tests/test_phase1_deployed_roles.py` goes red, every criterion resting on it "
+            "reverts with reason `cited_test_failed`, `tools/validate_phase1.py` exits 1, and "
+            "this bundle stops building. Nothing about the roles will have changed; what will "
+            "have lapsed is anybody's knowledge of them. The two honest responses are to "
+            "re-capture, or to delete the records and remove the citations resting on them, "
+            "which is a decision somebody takes in writing."
+        ),
     ]
-    sections.extend([table(["role", "matches its template", "findings"], finding_rows), ""])
-    for report in reports:
-        sections.extend([f"### {report.role_name}", ""])
-        if report.matches:
-            sections.extend([f"Matches `{report.template_path}` with no findings.", ""])
-            continue
-        sections.extend(
-            [
-                bullets(
-                    [
-                        f"**{finding.direction.value}** — {finding.element}: {finding.detail}"
-                        for finding in report.findings
-                    ]
-                ),
-                "",
-            ]
-        )
     return "\n".join(sections).rstrip() + "\n"
+
+
+def observation_date(capture: CommittedRoleCapture) -> str:
+    return "—" if capture.evidence is None else capture.evidence.observed_at.date().isoformat()
+
+
+def expiry_date(capture: CommittedRoleCapture) -> str:
+    return "—" if capture.expires_at is None else capture.expires_at.date().isoformat()
 
 
 # --------------------------------------------------------------------------------------
@@ -744,7 +712,7 @@ def render_matrix(criteria: Sequence[CriterionSpec], verification: Verification)
 def known_limitations(
     repo_root: Path,
     checks: Sequence[CriterionSpec],
-    reports: Sequence[RoleDriftReport],
+    captures: Sequence[CommittedRoleCapture],
 ) -> tuple[str, ...]:
     """What this bundle does not establish, read off the tree rather than remembered.
 
@@ -757,28 +725,24 @@ def known_limitations(
         return STATUS_PROSE[recorded_status(checks, number)]
 
     limitations: list[str] = []
-    if not reports:
-        limitations.append(
-            f"No captured role evidence is committed under `{ROLE_EVIDENCE_DIR}/`, so the drift "
-            "comparison in this bundle compared nothing. The comparison is built and tested "
-            f"against synthetic roles; check 6 is {status_of('6')} partly for this reason."
-        )
-    if not (repo_root / ROLE_EVIDENCE_DIR).is_dir():
-        limitations.append(
-            f"`{ROLE_EVIDENCE_DIR}/` does not exist yet. The generator reads the directory "
-            "rather than a list, so a sanitized capture copied into it is compared by the next "
-            "build without anybody editing this generator."
-        )
+    limitations.append(
+        "The role comparison says the deployed roles are what their templates declare. It does "
+        "not say what those roles were refused: no session has been issued to the publisher "
+        f"role and no call of its has been denied, which is why check 6 is {status_of('6')} "
+        "even though the account half of it now holds."
+    )
     gap_numbers = [check.number for check in checks if check.status is CriterionStatus.GAP]
     limitations.append(
-        "Nothing in Phase 1 has run against the account. No image has been built, no digest "
-        "returned, no session issued and no call refused, which is why "
+        "Nothing else in Phase 1 has run against the account. No image has been built, no "
+        "digest returned, no session issued and no call refused, which is why "
         f"{len(gap_numbers)} of the {len(checks)} criteria fail the gate; the matrix names them."
     )
     limitations.append(
-        "A capture is a statement about one moment. Every Phase 1 evidence record refuses to "
-        "load once it is more than thirty days old, so a committed capture expires and takes "
-        "any claim resting on it back to a gap. Nothing renews that, and nothing should."
+        "A capture is a statement about one moment. The records under "
+        f"`{ROLE_CAPTURE_DIR}/` stop loading thirty days after they were observed — "
+        + ", ".join(f"{capture.role_name} on {expiry_date(capture)}" for capture in captures)
+        + " — and every claim resting on them is a gap again from that date. Nothing renews it, "
+        "and nothing should."
     )
     limitations.append(
         "The drift comparison does not reason about IAM wildcards. A deployed resource of "
@@ -828,10 +792,13 @@ def gate_verdict(gap_numbers: Sequence[str]) -> str:
     )
 
 
-def input_digest_table(repo_root: Path) -> tuple[tuple[str, str], ...]:
+def input_digest_table(
+    repo_root: Path,
+    captures: Sequence[CommittedRoleCapture],
+) -> tuple[tuple[str, str], ...]:
     paths = [
         *PHASE1_INPUTS,
-        *(str(path.relative_to(repo_root)) for path in committed_role_evidence(repo_root)),
+        *(capture.capture_path for capture in captures if capture.capture_path is not None),
     ]
     return tuple((path, file_digest(repo_root / path)) for path in sorted(paths))
 
@@ -844,7 +811,7 @@ def render_index(
     verification: Verification,
     goldens: Sequence[RecordedGolden],
     models: Sequence[ModelRecord],
-    reports: Sequence[RoleDriftReport],
+    captures: Sequence[CommittedRoleCapture],
     input_digests: Sequence[tuple[str, str]],
     limitations: Sequence[str],
 ) -> str:
@@ -855,7 +822,9 @@ def render_index(
         check.number for check in criteria if check.status is CriterionStatus.DEFERRED
     ]
     gap_numbers = [check.number for check in criteria if check.status is CriterionStatus.GAP]
-    findings = sum(len(report.findings) for report in reports)
+    findings = sum(
+        len(capture.report.findings) for capture in captures if capture.report is not None
+    )
     return (
         "\n".join(
             [
@@ -924,7 +893,7 @@ def render_index(
                         ["criteria COVERED", count_naming(covered_numbers)],
                         ["criteria DEFERRED", count_naming(deferred_numbers)],
                         ["criteria GAP (each one fails the gate)", count_naming(gap_numbers)],
-                        ["roles with a committed capture", str(len(reports))],
+                        ["roles compared to their template", str(len(captures))],
                         ["role drift findings", str(findings)],
                         ["role templates with recorded digests", str(len(goldens))],
                         ["contract models added by this phase", str(len(models))],
@@ -989,11 +958,12 @@ def build_bundle(
 
     resolved = verify_repository(repo_root) if verification is None else verification
     models = phase1_models(repo_root)
-    reports = compare_committed_evidence(repo_root)
+    captures = read_committed_role_captures(repo_root)
+    refuse_a_capture_that_no_longer_holds(captures)
     documents = {
         "unit-test-report.md": render_unit_test_report(resolved),
         "negative-case-matrix.md": render_matrix(criteria, resolved),
-        "deployed-role-drift.md": render_role_drift(repo_root, reports),
+        "deployed-role-drift.md": render_role_drift(repo_root, captures),
         "serialization-goldens.md": render_goldens_report(goldens),
         "schema-compatibility.md": render_schema_report(models),
         "README.md": render_index(
@@ -1003,9 +973,9 @@ def build_bundle(
             verification=resolved,
             goldens=goldens,
             models=models,
-            reports=reports,
-            input_digests=input_digest_table(repo_root),
-            limitations=known_limitations(repo_root, criteria, reports),
+            captures=captures,
+            input_digests=input_digest_table(repo_root, captures),
+            limitations=known_limitations(repo_root, criteria, captures),
         ),
     }
     if set(documents) | {GOLDENS_FILENAME} != set(BUNDLE_FILENAMES):

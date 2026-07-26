@@ -13,12 +13,20 @@ is why building a bundle here does not recurse.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from edullm_platform.criteria import CriterionSpec, CriterionStatus
+from edullm_platform.evidence import FRESHNESS_WINDOW
+from edullm_platform.phase1_capture import (
+    CAPTURE_SUFFIX,
+    ROLE_CAPTURE_DIR,
+    read_committed_role_captures,
+)
 from edullm_platform.proof_bundle import (
     GoldenDigestDriftError,
     MissingTestNodeError,
@@ -26,12 +34,12 @@ from edullm_platform.proof_bundle import (
     contradicting_status_claims,
     load_recorded_goldens,
 )
+from edullm_platform.role_drift import COMMITTED_ROLE_TEMPLATES
 from tools.build_phase1_proof import (
     BUNDLE_FILENAMES,
     GENERATOR_TEST_PATH,
     GOLDENS_FILENAME,
     NESTED_RUN_ENV,
-    ROLE_EVIDENCE_DIR,
     Verification,
     build_bundle,
     compute_goldens,
@@ -46,6 +54,33 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FIRST_INSTANT = datetime(2026, 1, 1, tzinfo=UTC)
 SECOND_INSTANT = datetime(2026, 6, 30, 12, 34, 56, tzinfo=UTC)
 GENERATED_AT_PREFIX = "Generated: "
+PUBLISHER_ROLE = "sbsandbox-intern-edullm-ecr-publisher"
+
+
+def long_ago() -> str:
+    """An observation timestamp far enough past the window to be stale on any machine."""
+    return (datetime.now(tz=UTC) - FRESHNESS_WINDOW - timedelta(days=1)).isoformat()
+
+
+def committed_payload(role_name: str) -> dict[str, Any]:
+    path = PROJECT_ROOT / ROLE_CAPTURE_DIR / f"{role_name}{CAPTURE_SUFFIX}"
+    payload: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    return payload
+
+
+def write_capture(directory: Path, role_name: str, payload: dict[str, Any]) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / f"{role_name}{CAPTURE_SUFFIX}").write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
+def widen_the_publisher(payload: dict[str, Any]) -> None:
+    if payload["role_name"] != PUBLISHER_ROLE:
+        return
+    payload["inline_policies"][0]["statements"][1]["action_match"]["actions"].append(
+        "ecr:DeleteRepository"
+    )
 
 
 @pytest.fixture(scope="session")
@@ -305,17 +340,98 @@ def test_the_generator_refuses_to_run_from_inside_its_own_verification(
 # --------------------------------------------------------------------------------------
 
 
-def test_the_drift_document_reports_that_nothing_has_been_captured(
+def test_the_drift_document_reports_the_comparison_it_actually_ran(
     first_bundle: dict[str, str],
 ) -> None:
-    # This is the state today, and the assertion is here so that committing a capture
-    # forces somebody to come back and read what the comparison found.
+    # A bundle that described the machinery and compared nothing was the state before a
+    # capture existed. Now that one does, the document has to say what it found and when
+    # what it found stops being true.
     drift = first_bundle["deployed-role-drift.md"]
+    captures = read_committed_role_captures(PROJECT_ROOT)
 
-    assert not (PROJECT_ROOT / ROLE_EVIDENCE_DIR).exists()
     assert "## What this bundle compared" in drift
-    assert "Nothing." in drift
-    assert str(ROLE_EVIDENCE_DIR) in drift
+    assert "Nothing." not in drift
+    assert str(ROLE_CAPTURE_DIR) in drift
+    for capture in captures:
+        assert capture.expires_at is not None
+        assert capture.role_name in drift
+        assert capture.expires_at.date().isoformat() in drift
+
+
+def test_the_index_counts_the_roles_compared_and_what_the_comparison_found(
+    first_bundle: dict[str, str],
+) -> None:
+    readme = first_bundle["README.md"]
+
+    assert f"| roles compared to their template | {len(COMMITTED_ROLE_TEMPLATES)} |" in readme
+    assert "| role drift findings | 0 |" in readme
+
+
+@pytest.mark.parametrize(
+    ("break_the_capture", "expected"),
+    [
+        (lambda payload: payload.update({"observed_at": long_ago()}), "evidence_stale"),
+        (widen_the_publisher, "role_drift"),
+        (lambda payload: payload.clear(), "evidence_invalid"),
+    ],
+    ids=["expired", "drifted", "unreadable"],
+)
+def test_the_generator_refuses_to_build_on_a_capture_that_no_longer_holds(
+    tmp_path: Path,
+    verification: Verification,
+    monkeypatch: pytest.MonkeyPatch,
+    break_the_capture: Callable[[dict[str, Any]], None],
+    expected: str,
+) -> None:
+    # The matrix prints the status the definition records, and the definition records
+    # criteria 4 and 5 as covered on the strength of this capture. Once the capture stops
+    # holding, the gate disagrees with that, and writing the bundle anyway would hand a
+    # reviewer a document whose prose the gate contradicts.
+    broken = tmp_path / "captures"
+    for role_name, _template in COMMITTED_ROLE_TEMPLATES:
+        payload = committed_payload(role_name)
+        break_the_capture(payload)
+        write_capture(broken, role_name, payload)
+    monkeypatch.setattr(
+        "tools.build_phase1_proof.read_committed_role_captures",
+        lambda repo_root: read_committed_role_captures(repo_root, capture_dir=broken),
+    )
+
+    with pytest.raises(ProofBundleError, match=expected):
+        build_bundle(
+            PROJECT_ROOT,
+            tmp_path / "bundle",
+            generated_at=FIRST_INSTANT,
+            verification=verification,
+        )
+
+    assert not (tmp_path / "bundle" / "README.md").exists()
+
+
+def test_the_refusal_says_what_to_do_about_it(
+    tmp_path: Path,
+    verification: Verification,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A refusal an operator cannot act on is a wall. Both honest responses are named,
+    # including the one that removes the citations rather than renewing them.
+    aged = tmp_path / "captures"
+    for role_name, _template in COMMITTED_ROLE_TEMPLATES:
+        payload = committed_payload(role_name)
+        payload["observed_at"] = long_ago()
+        write_capture(aged, role_name, payload)
+    monkeypatch.setattr(
+        "tools.build_phase1_proof.read_committed_role_captures",
+        lambda repo_root: read_committed_role_captures(repo_root, capture_dir=aged),
+    )
+
+    with pytest.raises(ProofBundleError) as raised:
+        build_bundle(
+            PROJECT_ROOT, tmp_path / "bundle", generated_at=FIRST_INSTANT, verification=verification
+        )
+
+    assert "tools/capture_phase1_evidence.py" in str(raised.value)
+    assert "phase1_criteria.py" in str(raised.value)
 
 
 def test_the_matrix_reports_the_gaps_before_the_per_check_detail(
