@@ -1,0 +1,20 @@
+{
+  "attempted_at": "2026-07-26T23:03:38Z",
+  "attempted_by": "<another-identity-in-this-account>",
+  "attempted_by_publisher_role": false,
+  "environment": "sandbox",
+  "error_code": "ImageTagAlreadyExistsException",
+  "error_message": "The image tag '4204375e6db8' already exists in the 'sbsandbox-intern-edullm-olmo-core' repository and cannot be overwritten because the tag is immutable.",
+  "event_id": "933f6c46-583b-403c-9cc7-b24da66394ce",
+  "event_name": "PutImage",
+  "event_source": "ecr.amazonaws.com",
+  "image_digest": "sha256:4ebdba1ba3b57096efb4f4647ed41ed5ded4ac9e77e8c9038b7ff24db0bc6db8",
+  "image_tag": "4204375e6db8",
+  "observed_at": "2026-07-26T23:20:05Z",
+  "outcome": "refused",
+  "region": "us-east-1",
+  "repository_name": "sbsandbox-intern-edullm-olmo-core",
+  "source": "aws",
+  "source_commit_sha": "4204375e6db85abc244ec7f626de8d3cc3511402",
+  "status": "ok"
+}

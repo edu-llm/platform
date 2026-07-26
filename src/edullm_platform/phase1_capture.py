@@ -38,10 +38,24 @@ from typing import Final
 
 from pydantic import ValidationError
 
-from edullm_platform.evidence import FRESHNESS_WINDOW, evidence_load_reason_code
-from edullm_platform.phase1_evidence import DeployedRoleEvidence
+from edullm_platform.evidence import (
+    FRESHNESS_WINDOW,
+    FreshEvidenceModel,
+    evidence_load_reason_code,
+)
+from edullm_platform.phase1_evidence import (
+    DenialEvidence,
+    DeployedRoleEvidence,
+    EcrImageEvidence,
+    EcrRepositoryEvidence,
+    ImageScanEvidence,
+    ImmutableTagRefusalEvidence,
+    OidcSessionEvidence,
+)
+from edullm_platform.publisher_denials import PUBLISHER_DENIED_ACTIONS
 from edullm_platform.role_drift import (
     COMMITTED_ROLE_TEMPLATES,
+    PUBLISHER_ROLE_NAME,
     RoleDriftReport,
     compare_role_to_template,
     load_template_roles,
@@ -53,10 +67,15 @@ __all__ = [
     "CAPTURE_SUFFIX",
     "RECAPTURE_GUIDANCE",
     "ROLE_CAPTURE_DIR",
+    "RUN_CAPTURE_DIR",
+    "RUN_RECAPTURE_GUIDANCE",
     "CaptureVerdict",
     "CommittedRoleCapture",
+    "CommittedRunEvidence",
+    "RunEvidenceProblem",
     "captures_that_do_not_hold",
     "read_committed_role_captures",
+    "read_committed_run_evidence",
 ]
 
 #: Where a capture lives once somebody has read it and decided to commit it. Beside the
@@ -288,3 +307,251 @@ def captures_that_do_not_hold(
     captures: Sequence[CommittedRoleCapture],
 ) -> tuple[CommittedRoleCapture, ...]:
     return tuple(capture for capture in captures if not capture.holds)
+
+
+# --------------------------------------------------------------------------------------
+# What one publish run left behind
+# --------------------------------------------------------------------------------------
+
+#: Where the records of one completed publish run live once somebody has read them and
+#: decided to commit them. Beside the role captures rather than under ``proof/``, for the
+#: same reason: a bundle is generated and these are not.
+RUN_CAPTURE_DIR: Final = Path("fixtures") / "evidence" / "phase-1" / "run"
+DENIALS_SUBDIR: Final = "denials"
+
+#: The five records one run produces beside its denials, and the contract each is read
+#: through. Driven from here rather than from the directory, so a record somebody deleted
+#: reads as missing instead of vanishing from the answer.
+RUN_RECORDS: Final[tuple[tuple[str, type[FreshEvidenceModel]], ...]] = (
+    ("ecr-image", EcrImageEvidence),
+    ("image-scan", ImageScanEvidence),
+    ("publisher-session", OidcSessionEvidence),
+    ("immutable-tag-refusal", ImmutableTagRefusalEvidence),
+    ("ecr-repository", EcrRepositoryEvidence),
+)
+
+RUN_RECAPTURE_GUIDANCE: Final = (
+    "Re-run tools/capture_phase1_evidence.py against the sandbox with --target image "
+    "--target scan --target session --target tag-refusal --target repository and "
+    f"--target denials, and commit the sanitized records it writes into {RUN_CAPTURE_DIR}/. "
+    "The run itself does not need repeating: the image, its scan, the session that pushed "
+    "it and the refusals it met are all still in the account and in CloudTrail, so what "
+    "expires is when somebody last looked rather than what they saw. If nobody is going "
+    "to look again, delete the committed records and remove the citations resting on them "
+    "from src/edullm_platform/phase1_criteria.py, which is a decision somebody takes in "
+    "writing."
+)
+
+
+@dataclass(frozen=True)
+class RunEvidenceProblem:
+    """One reason the committed record of a run does not establish what it claims."""
+
+    record: str
+    reason: str
+    detail: str
+
+
+@dataclass(frozen=True)
+class CommittedRunEvidence:
+    """Everything one publish run left behind, as committed, and whether it holds.
+
+    A role capture is checked against a template. These records have no template, so what
+    is checked instead is that they are about the same image: a scan filed under another
+    digest, a refusal on another tag, or a session held by another role would each read as
+    a statement about this run and be a statement about something else. Those joins are
+    the whole of what :attr:`holds` means, together with the two things every committed
+    capture needs — that the record is there and that somebody looked recently enough.
+
+    Every field is ``None`` when its record did not load, so a caller cannot read half a
+    run as a whole one, and :attr:`problems` says which and why.
+    """
+
+    image: EcrImageEvidence | None
+    scan: ImageScanEvidence | None
+    session: OidcSessionEvidence | None
+    refusal: ImmutableTagRefusalEvidence | None
+    repository: EcrRepositoryEvidence | None
+    denials: tuple[DenialEvidence, ...]
+    problems: tuple[RunEvidenceProblem, ...]
+
+    @property
+    def holds(self) -> bool:
+        return not self.problems
+
+    @property
+    def denied_actions(self) -> tuple[str, ...]:
+        return tuple(denial.attempted_action for denial in self.denials)
+
+
+def _load_run_record(
+    path: Path,
+    contract: type[FreshEvidenceModel],
+) -> tuple[FreshEvidenceModel | None, RunEvidenceProblem | None]:
+    """One committed file, whatever state it is in. Never raises for its contents."""
+    name = path.stem.removesuffix(".sanitized")
+    if not path.is_file():
+        return None, RunEvidenceProblem(
+            record=name,
+            reason=CaptureVerdict.ABSENT.value,
+            detail=(
+                f"No {name} record is committed under {RUN_CAPTURE_DIR}/, so nothing here "
+                f"says what the run produced. {RUN_RECAPTURE_GUIDANCE}"
+            ),
+        )
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None, RunEvidenceProblem(
+            record=name,
+            reason=CaptureVerdict.INVALID.value,
+            detail=f"{name} is not readable JSON, so it records nothing.",
+        )
+    try:
+        return contract.model_validate(payload), None
+    except ValidationError as error:
+        reason = evidence_load_reason_code(error)
+        stale = reason == CaptureVerdict.STALE.value
+        return None, RunEvidenceProblem(
+            record=name,
+            reason=reason,
+            detail=(
+                f"The committed {name} record is more than {FRESHNESS_WINDOW.days} days old "
+                f"and no longer loads, so it establishes nothing about the run. "
+                f"{RUN_RECAPTURE_GUIDANCE}"
+                if stale
+                else f"{name} does not load as a {contract.__name__}: {reason}."
+            ),
+        )
+
+
+def _joins(
+    image: EcrImageEvidence | None,
+    scan: ImageScanEvidence | None,
+    session: OidcSessionEvidence | None,
+    refusal: ImmutableTagRefusalEvidence | None,
+    repository: EcrRepositoryEvidence | None,
+    denials: Sequence[DenialEvidence],
+) -> tuple[RunEvidenceProblem, ...]:
+    """Whether these records are all about the same image, the same role and the same run.
+
+    Nothing here re-checks a rule a contract already enforces. What is checked is what no
+    single record can see: that the five of them agree with each other.
+    """
+    problems: list[RunEvidenceProblem] = []
+    if image is None:
+        # Every join below is against the image, so with no image there is nothing to
+        # check rather than five further failures saying the same thing.
+        return ()
+    if scan is not None and scan.image_digest != image.image_digest:
+        problems.append(
+            RunEvidenceProblem(
+                record="image-scan",
+                reason="record_describes_another_image",
+                detail=(
+                    "The committed scan is of a different digest from the committed image, "
+                    "so it says nothing about what this run published."
+                ),
+            )
+        )
+    if refusal is not None and (
+        refusal.image_digest != image.image_digest or refusal.image_tag != image.image_tag
+    ):
+        problems.append(
+            RunEvidenceProblem(
+                record="immutable-tag-refusal",
+                reason="record_describes_another_image",
+                detail=(
+                    "The committed refusal is about a different tag or resolves to a "
+                    "different digest from the committed image, so it does not say that "
+                    "this image survived a second push."
+                ),
+            )
+        )
+    if repository is not None and repository.repository_name != image.repository_name:
+        problems.append(
+            RunEvidenceProblem(
+                record="ecr-repository",
+                reason="record_describes_another_repository",
+                detail=(
+                    "The committed repository record is of a different repository from the "
+                    "one the image was published to."
+                ),
+            )
+        )
+    if session is not None and session.role_name != PUBLISHER_ROLE_NAME:
+        problems.append(
+            RunEvidenceProblem(
+                record="publisher-session",
+                reason="session_is_not_the_publisher_role",
+                detail=(
+                    f"The committed session was held by {session.role_name} rather than by "
+                    f"{PUBLISHER_ROLE_NAME}, so it is not the session this phase is about."
+                ),
+            )
+        )
+    attempted = tuple(denial.attempted_action for denial in denials)
+    if attempted != PUBLISHER_DENIED_ACTIONS:
+        problems.append(
+            RunEvidenceProblem(
+                record=DENIALS_SUBDIR,
+                reason="denial_matrix_incomplete",
+                detail=(
+                    "The committed denials are not one record per matrix action, in matrix "
+                    f"order. Committed: {', '.join(attempted) or 'nothing'}. A run that "
+                    "refused some of the actions proved the criterion for those actions, "
+                    "and a partial set read later would look like a run that refused them "
+                    f"all. {RUN_RECAPTURE_GUIDANCE}"
+                ),
+            )
+        )
+    return tuple(problems)
+
+
+def read_committed_run_evidence(
+    repo_root: Path,
+    *,
+    directory: Path | None = None,
+) -> CommittedRunEvidence:
+    """The committed record of one publish run, and what it is still worth today."""
+    root = repo_root / RUN_CAPTURE_DIR if directory is None else directory
+    loaded: dict[str, FreshEvidenceModel | None] = {}
+    problems: list[RunEvidenceProblem] = []
+    for name, contract in RUN_RECORDS:
+        record, problem = _load_run_record(root / f"{name}{CAPTURE_SUFFIX}", contract)
+        loaded[name] = record
+        if problem is not None:
+            problems.append(problem)
+
+    denials: list[DenialEvidence] = []
+    denials_dir = root / DENIALS_SUBDIR
+    # Ordered by the matrix rather than by filename, so a record for an action the matrix
+    # does not name is absent from this list and reported by the ordering check below.
+    for action in PUBLISHER_DENIED_ACTIONS:
+        path = denials_dir / f"{action.replace(':', '-')}{CAPTURE_SUFFIX}"
+        record, problem = _load_run_record(path, DenialEvidence)
+        if problem is not None:
+            problems.append(problem)
+        elif isinstance(record, DenialEvidence):
+            denials.append(record)
+
+    image = loaded["ecr-image"]
+    scan = loaded["image-scan"]
+    session = loaded["publisher-session"]
+    refusal = loaded["immutable-tag-refusal"]
+    repository = loaded["ecr-repository"]
+    assert image is None or isinstance(image, EcrImageEvidence)
+    assert scan is None or isinstance(scan, ImageScanEvidence)
+    assert session is None or isinstance(session, OidcSessionEvidence)
+    assert refusal is None or isinstance(refusal, ImmutableTagRefusalEvidence)
+    assert repository is None or isinstance(repository, EcrRepositoryEvidence)
+    problems.extend(_joins(image, scan, session, refusal, repository, denials))
+    return CommittedRunEvidence(
+        image=image,
+        scan=scan,
+        session=session,
+        refusal=refusal,
+        repository=repository,
+        denials=tuple(denials),
+        problems=tuple(problems),
+    )

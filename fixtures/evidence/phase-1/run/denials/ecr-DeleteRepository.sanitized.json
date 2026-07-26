@@ -1,0 +1,18 @@
+{
+  "attempted_action": "ecr:DeleteRepository",
+  "attempted_at": "2026-07-26T22:05:01.035651Z",
+  "attempted_resource": "sbsandbox-intern-edullm-olmo-core-denial-probe-absent",
+  "environment": "sandbox",
+  "error_code": "AccessDeniedException",
+  "error_message": "User: arn:aws:sts::<aws-account-id>:assumed-role/sbsandbox-intern-edullm-ecr-publisher/GitHubActions is not authorized to perform: ecr:DeleteRepository on resource: arn:aws:ecr:us-east-1:<aws-account-id>:repository/sbsandbox-intern-edullm-olmo-core-denial-probe-absent because no identity-based policy allows the ecr:DeleteRepository action",
+  "event_id": "386779c1-c28d-4abd-960e-f28547020cfd",
+  "event_name": "DeleteRepository",
+  "event_source": "ecr.amazonaws.com",
+  "observed_at": "2026-07-26T23:17:34Z",
+  "outcome": "denied",
+  "region": "us-east-1",
+  "role_name": "sbsandbox-intern-edullm-ecr-publisher",
+  "session_name": "GitHubActions",
+  "source": "aws",
+  "status": "ok"
+}

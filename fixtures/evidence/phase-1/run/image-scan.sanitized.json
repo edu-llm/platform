@@ -1,0 +1,20 @@
+{
+  "environment": "sandbox",
+  "finding_counts": {
+    "critical": 4,
+    "high": 8,
+    "informational": 0,
+    "low": 1,
+    "medium": 4,
+    "undefined": 0
+  },
+  "image_digest": "sha256:4ebdba1ba3b57096efb4f4647ed41ed5ded4ac9e77e8c9038b7ff24db0bc6db8",
+  "observed_at": "2026-07-26T23:17:34Z",
+  "region": "us-east-1",
+  "repository_name": "sbsandbox-intern-edullm-olmo-core",
+  "scan_completed_at": "2026-07-26T22:05:49Z",
+  "scan_status": "COMPLETE",
+  "scan_status_description": "The scan was completed successfully.",
+  "source": "aws",
+  "status": "ok"
+}
