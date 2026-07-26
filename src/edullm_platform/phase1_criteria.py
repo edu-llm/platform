@@ -4,16 +4,20 @@ Phase 1 takes one clean, pushed research-branch commit through shared CI and pro
 one immutable ECR image digest. This module records the eight checks the phase must
 satisfy, against the contract in ``edullm_platform.criteria``.
 
-Four of the eight are gaps, and they are gaps rather than deferrals. The build path has
-never completed a run: ``OLMo-core`` has neither a caller workflow nor the registered
-Dockerfile, so no digest has been produced, nothing has been rebuilt, no publisher
-session has been denied anything, and no tag has been pushed twice. Nobody decided to
-postpone those checks, which is what a deferral records; they are unfinished work, and a
-deferral needs a written reason and a written trigger that would both be inventions here.
+All eight are covered, and four of them were gaps until the build path ran. What closed
+them is not new machinery: OLMo-core gained a caller workflow and the registered
+Dockerfile, the publish workflow completed against a real branch commit, and the records
+of what it produced were captured and committed. Criteria 1, 6 and 7 rest on those
+records; criterion 2 rests on a comparison of builds nobody could have made through the
+workflow, for a reason the criterion's own scope limits explain.
 
-The four gaps cite no test at all. There are committed templates and workflow tests near
-each one, and citing the nearest of them would put a green tick beside a claim nothing
-executed. What each gap needs instead is written out in its ``gaps`` text.
+**Three kinds of citation are in use here and they are worth telling apart.** A test that
+reads a committed workflow file proves what runs, because GitHub reads the file exactly as
+committed. A test that reads a committed capture proves that the capture says what it is
+being read as saying — not that the account still looks like that, which is what the
+freshness window is for. And a test that reads a committed template proves only what a
+document declares, which is why those citations stay supporting even now that a capture
+has been compared against them.
 
 Where a criterion is covered, the split between proving and supporting citations follows
 what the artifact is:
@@ -51,6 +55,24 @@ re-capture, or to delete the records and remove these citations, which is a deci
 somebody takes in writing. Nothing renews it automatically, and nothing should: the point
 of the window is that a role deployed by hand can be widened by hand, and only somebody
 going and looking again establishes that it has not been.
+
+**The records of the live run expire on the same terms and it means something different.**
+:data:`RUN_EVIDENCE_HOLDS` is the single citation criteria 1, 6 and 7 rest on, and it goes
+red thirty days after the capture in exactly the same way. Here the lapse is purely one of
+attention: the image, its scan, the session that pushed it and the five refusals it met are
+all still in the registry and in CloudTrail, and none of them can change. What stops being
+true is that somebody has recently confirmed the repository is still immutable, the role is
+still refused, and the digest the tag resolves to is still the one this phase published.
+Re-capturing costs a read of the account rather than another publish, and
+``edullm_platform.phase1_capture.RUN_RECAPTURE_GUIDANCE`` says so where a reader will meet
+it, because an expiry read as "publish again" would push a second image for no reason.
+
+**Where criterion 2 is different from the other three.** It rests on builds nobody could
+make through the workflow: the publish job's pre-flight tag lookup resumes to the published
+digest rather than building a commit twice, which is correct and is why the shipped path
+can never produce the comparison. The builds were therefore made locally and recorded, and
+the criterion's scope limits say so plainly rather than leaving a reader to assume the
+workflow produced them.
 """
 
 from __future__ import annotations
@@ -71,11 +93,6 @@ __all__ = [
 ]
 
 PHASE1_CRITERION_COUNT: Final = 8
-
-NO_LIVE_RUN: Final = (
-    "The reusable publish workflow has never completed a run. OLMo-core has neither a "
-    "caller workflow nor the registered Dockerfile, so the build path has not executed once."
-)
 
 #: The three facts a committed capture has to establish before a citation may rest on it,
 #: one test each: a record exists for every role a template declares, it is inside its
@@ -132,6 +149,71 @@ PUBLISHER_TRUST_POLICY: Final = (
     "::test_publisher_trusts_only_the_existing_github_oidc_provider"
 )
 
+#: The one citation every claim about the live run rests on. It is one test rather than
+#: three because a run's records hold or do not hold as a set: the reader checks that
+#: each is committed, that each is inside its window, and that they are all about the
+#: same image, and any of the three failing means the rest establish nothing. It expires
+#: the same way the role captures do; see this module's docstring.
+RUN_MODULE: Final = "tests/test_phase1_run_evidence.py"
+RUN_EVIDENCE_HOLDS: Final = f"{RUN_MODULE}::test_the_committed_records_of_the_run_all_hold"
+
+#: What every claim resting on the live run gives up thirty days after the capture, and
+#: what is different about this expiry from the role captures'.
+RUN_EVIDENCE_EXPIRES: Final = (
+    "This rests on captured evidence and expires with it. The records under "
+    "fixtures/evidence/phase-1/run/ stop loading thirty days after they were observed, "
+    "tests/test_phase1_run_evidence.py goes red when they do, and this criterion is a gap "
+    "again from that date. What has lapsed then is not the run — the image, its scan, the "
+    "session and the refusals are all still in the account and in CloudTrail — but how "
+    "recently anybody went and looked. Re-capturing costs a read of the account and not "
+    "another publish."
+)
+
+REBUILD_MODULE: Final = "tests/test_phase1_rebuild_comparison.py"
+
+#: One citation per recorded comparison, because each isolates a different variable and a
+#: single parametrised name would let three of the four be deleted silently.
+REBUILD_COMPARISONS: Final = tuple(
+    f"{REBUILD_MODULE}::test_every_difference_from_the_first_build_has_a_recorded_cause[{build}]"
+    for build in ("b", "c", "d", "published")
+) + tuple(
+    f"{REBUILD_MODULE}::test_no_field_derived_from_a_pinned_input_ever_differs[{build}]"
+    for build in ("b", "c", "d", "published")
+)
+
+#: The workflow tests these criteria lean on, named here rather than spelled inside a
+#: tuple: a node id split across two adjacent string literals inside a tuple is one
+#: missing comma away from being two node ids, and neither pytest nor a reader would say so.
+WORKFLOW_MODULE: Final = "tests/test_build_research_image_workflow.py"
+DIGEST_READ_BACK_FROM_THE_REGISTRY: Final = (
+    f"{WORKFLOW_MODULE}::test_publish_job_takes_the_digest_from_an_ecr_read_back_not_the_local_build"
+)
+BUILD_USES_THE_REGISTERED_BASE: Final = (
+    f"{WORKFLOW_MODULE}::test_publish_job_builds_from_the_registered_base_digest_under_an_immutable_tag"
+)
+RERUN_RESUMES_RATHER_THAN_REBUILDS: Final = (
+    f"{WORKFLOW_MODULE}::test_a_published_tag_short_circuits_to_the_digest_the_registry_already_holds"
+)
+PUBLISHER_GRANTS_ECR_AND_NOTHING_ELSE: Final = (
+    "tests/test_phase1_deployed_roles.py::test_the_deployed_publisher_grants_ecr_and_nothing_else"
+)
+PROBES_OBEY_THE_FIRST_LESSON: Final = (
+    "tests/test_publisher_denials.py::test_every_probe_in_the_matrix_obeys_the_first_lesson"
+)
+ECR_REPOSITORY_IS_IMMUTABLE: Final = (
+    "tests/test_phase1_infrastructure.py"
+    "::test_ecr_repository_is_encrypted_scanned_immutable_and_retained"
+)
+REBUILD_OF_IDENTICAL_INPUTS: Final = (
+    f"{REBUILD_MODULE}::test_two_builds_of_identical_inputs_differ_only_in_two_clock_readings"
+)
+TAG_WAS_NOT_OVERWRITTEN: Final = (
+    f"{RUN_MODULE}::test_an_immutable_tag_was_not_overwritten_and_the_original_digest_survived"
+)
+DENIAL_MATRIX_WAS_REFUSED: Final = (
+    f"{RUN_MODULE}::test_the_publisher_session_was_refused_every_action_the_matrix_attempts"
+)
+
 
 def phase1_criteria() -> tuple[CriterionSpec, ...]:
     """The eight Phase 1 acceptance criteria, in order."""
@@ -139,18 +221,41 @@ def phase1_criteria() -> tuple[CriterionSpec, ...]:
         CriterionSpec(
             number="1",
             statement="A pushed branch commit produces a digest.",
-            status=CriterionStatus.GAP,
-            gaps=(
+            status=CriterionStatus.COVERED,
+            proving_node_ids=(
+                RUN_EVIDENCE_HOLDS,
+                f"{RUN_MODULE}::test_a_pushed_branch_commit_produced_a_digest",
+                f"{RUN_MODULE}::test_the_digest_was_pushed_by_a_bounded_publisher_session",
+            ),
+            supporting_node_ids=(
+                DIGEST_READ_BACK_FROM_THE_REGISTRY,
+                BUILD_USES_THE_REGISTERED_BASE,
+                SOURCE_IDENTITY_RUNS_ON_THE_PUBLISH_PATH,
+            ),
+            scope_limits=(
                 (
-                    f"{NO_LIVE_RUN} No ECR digest exists for any commit, so the one thing "
-                    "this criterion asserts has not happened."
+                    "This is the one criterion that could only ever close with evidence. The "
+                    "publish workflow ran against a real branch commit of OLMo-core, ECR "
+                    "returned a digest, and the sanitized record of what the registry holds "
+                    "is committed under fixtures/evidence/phase-1/run/. Every test in this "
+                    "repository stops at the edge of the AWS call, so no test substitutes; "
+                    "what the cited tests prove is that the committed record says what it is "
+                    "read as saying."
                 ),
                 (
-                    "This closes with evidence rather than with a test: a completed run of "
-                    "the publish workflow against a real branch commit, and the digest the "
-                    "registry returned for it. No test in this repository can substitute, "
-                    "because every one of them stops at the edge of the AWS call."
+                    "The digest belongs to the commit rather than to whatever was last "
+                    "pushed. The tag is the commit's first twelve characters and the contract "
+                    "re-checks that, the recorded base image digest is the one "
+                    "config/repositories.yaml registers, and the recorded push time falls "
+                    "inside the window of a publisher session the capture tied to the push "
+                    "through the session-creation instant the push itself carries."
                 ),
+                (
+                    "One commit, one repository, one run. Nothing here says the next commit "
+                    "will publish, and nothing here is a claim about a repository other than "
+                    "the one registered."
+                ),
+                RUN_EVIDENCE_EXPIRES,
             ),
         ),
         CriterionSpec(
@@ -159,22 +264,61 @@ def phase1_criteria() -> tuple[CriterionSpec, ...]:
                 "Rebuilding identical inputs is explainable even if byte-level image "
                 "reproducibility differs."
             ),
-            status=CriterionStatus.GAP,
-            gaps=(
-                f"{NO_LIVE_RUN} Nothing has been built once, so nothing has been rebuilt.",
+            status=CriterionStatus.COVERED,
+            proving_node_ids=(
+                REBUILD_OF_IDENTICAL_INPUTS,
+                *REBUILD_COMPARISONS,
+                f"{REBUILD_MODULE}::test_the_differences_are_exactly_the_ones_recorded[b]",
+                f"{REBUILD_MODULE}::test_the_filesystem_the_image_carries_is_identical_when_nothing_varies",
+                f"{REBUILD_MODULE}::test_the_layers_inherited_from_the_pinned_base_never_move",
+                f"{REBUILD_MODULE}::test_the_builds_were_made_from_the_base_this_repository_registers",
+                f"{REBUILD_MODULE}::test_every_pinned_field_pattern_matches_something_that_was_recorded",
+            ),
+            supporting_node_ids=(
+                RERUN_RESUMES_RATHER_THAN_REBUILDS,
+            ),
+            scope_limits=(
                 (
-                    "The claim is about two runs and a written account of the difference "
-                    "between them, and neither the runs nor the account exists. The account "
-                    "has to cover at least the image label carrying the run URL, which "
-                    "differs per run and therefore changes the manifest digest by "
-                    "construction, and the base image, which is pinned by digest and so "
-                    "should not."
+                    "What is claimed is explainability, and what closes it is an explanation "
+                    "with an executable check behind it rather than a paragraph. The same "
+                    "commit was built from the same digest-pinned base four times, the image "
+                    "the workflow published was fetched from the registry to compare against, "
+                    "and the five image configurations are committed under "
+                    "fixtures/evidence/phase-1/rebuild/. Of seventy leaf fields, two "
+                    "independent no-cache builds of identical inputs differ in exactly two: "
+                    "the instant the image records for itself and the same instant against "
+                    "the one step this Dockerfile executes."
                 ),
                 (
-                    "Producing the comparison at all takes a deliberate second build. The "
-                    "pre-flight tag lookup makes an ordinary re-run of the same commit "
-                    "short-circuit to the digest already in the registry, which is the "
-                    "correct behaviour and is not a rebuild."
+                    "Four causes account for every difference in all four comparisons, and "
+                    "each is checked rather than asserted. Varying only the per-run label "
+                    "adds that label and nothing else. Varying only the file modification "
+                    "times of the checkout adds the copied layer's digest and nothing else. "
+                    "The published image differs further in the layer the WORKDIR creates, "
+                    "which carries the build's own clock. A field derived from a pinned "
+                    "input — the environment, the command, the working directory, the "
+                    "architecture, the three content labels, every recorded build step, and "
+                    "all four layers inherited from the base — never moves in any comparison, "
+                    "and that is asserted separately so the list of causes cannot be widened "
+                    "until it covers anything."
+                ),
+                (
+                    "The builds are local and are not workflow runs, and they could not have "
+                    "been. The publish job looks the tag up before it builds, so a re-run of "
+                    "the same commit resumes to the published digest rather than building "
+                    "again — correct behaviour, and the reason the shipped path can never "
+                    "produce this comparison. The comparison therefore describes one builder "
+                    "on one machine, both recorded in the file, and says nothing about a "
+                    "different BuildKit."
+                ),
+                (
+                    "Byte-level reproducibility is not claimed and is not attempted. Three of "
+                    "the four causes are clock readings that SOURCE_DATE_EPOCH could pin; the "
+                    "fourth is the per-run label, which is deliberate and whose removal would "
+                    "cost the provenance that lets somebody holding a digest find the run "
+                    "that produced it. Deciding to pin the clocks is a change to the publish "
+                    "workflow that nobody has asked for, and this criterion does not ask for "
+                    "it."
                 ),
             ),
         ),
@@ -293,83 +437,109 @@ def phase1_criteria() -> tuple[CriterionSpec, ...]:
             statement=(
                 "The publisher role cannot submit jobs, read datasets, alter IAM, or modify Batch."
             ),
-            status=CriterionStatus.GAP,
-            gaps=(
+            status=CriterionStatus.COVERED,
+            proving_node_ids=(
+                RUN_EVIDENCE_HOLDS,
+                DENIAL_MATRIX_WAS_REFUSED,
+                f"{RUN_MODULE}::test_every_service_criterion_six_names_was_refused",
+            ),
+            supporting_node_ids=(
+                PUBLISHER_GRANTS_ECR_AND_NOTHING_ELSE,
+                PROBES_OBEY_THE_FIRST_LESSON,
+                *DEPLOYED_ROLES_MATCH_THEIR_TEMPLATES,
+            ),
+            scope_limits=(
                 (
-                    "Two things close this and both are runs rather than tests. The first has "
-                    "happened and the second has not, so read the halves separately."
-                ),
-                (
-                    "The first was the distance between the template and the account. The "
-                    "committed template grants one inline policy of nine ECR actions on one "
-                    "repository, plus the authorization-token call that takes no resource, and "
-                    "no Batch, S3, EC2 or IAM action appears anywhere in it — and the deployed "
-                    "role has now been captured and compared, and matches. So that is a fact "
-                    "about the account rather than about a document, which is what makes the "
-                    "template's silence about Batch, S3 and IAM mean anything at all. "
+                    "Two mechanisms close this and they are different in kind, so read them "
+                    "separately. The first is the distance between the template and the "
+                    "account: the committed template grants one inline policy of nine ECR "
+                    "actions on one repository plus the authorization-token call, no Batch, "
+                    f"S3, EC2 or IAM action appears in it, and the deployed role matches. "
                     f"{DRIFT_COMPARISON_RAN}"
                 ),
                 (
-                    "The second is a denial observed rather than argued, and nothing about the "
-                    "capture supplies it. A policy that grants no Batch action is a policy; a "
-                    "session that tried to submit a Batch job and was refused is the claim. "
-                    "Closing this needs a session issued to the publisher role attempting a "
-                    "Batch submit, an S3 call and an IAM change, and the CloudTrail records of "
-                    "those three refusals. edullm_platform.publisher_denials attempts exactly "
-                    "that matrix and tools/verify_publisher_denials.py runs it. One session has "
-                    "run it and none has completed it: the S3 probe read an object from a "
-                    "bucket chosen not to exist, and S3 answers NoSuchBucket before it "
-                    "authorizes anybody, so the run recorded nothing and refused the publish. "
-                    "Until a session completes the matrix this stays a gap, and citing the "
-                    "capture here would put a green tick beside the half that is missing."
+                    "The second is what actually proves it: refusals observed rather than "
+                    "argued. A session issued to the publisher role through OIDC attempted a "
+                    "Batch job submission, an S3 listing, an IAM role creation, a Batch "
+                    "compute-environment update and a deletion of an ECR repository, and was "
+                    "refused all five. Each refusal is committed under "
+                    "fixtures/evidence/phase-1/run/denials/ with the CloudTrail event id a "
+                    "reviewer can look up, and the record must hold one denial per matrix "
+                    "action in matrix order — four refusals would prove the criterion for four "
+                    "actions, and a partial set read later would look like a run that was "
+                    "refused them all."
                 ),
                 (
-                    "The S3 half of this will stay narrower than the words above even once a "
-                    "session completes the matrix. The probe is now ListBuckets, an "
-                    "account-level call with no bucket to be absent, so a refusal proves the "
-                    "role holds no account-wide S3 permission rather than that it cannot read "
-                    "a dataset: a policy granting only s3:GetObject on one bucket would be "
-                    "refused ListBuckets just the same. Closing that difference needs an object "
-                    "read that reaches authorization, which needs a bucket this project owns "
-                    "and an object in it that exists, and no such bucket is deployed."
+                    "The S3 half is narrower than the criterion's words and will stay so. The "
+                    "probe is ListBuckets, an account-level call with no bucket to be absent, "
+                    "so a refusal proves the role holds no account-wide S3 permission rather "
+                    "than that it cannot read a dataset: a policy granting only s3:GetObject "
+                    "on one bucket would be refused ListBuckets just the same. Closing that "
+                    "difference needs an object read that reaches authorization, which needs a "
+                    "bucket this project owns and an object in it that exists. No such bucket "
+                    "is deployed, and pointing the probe at another team's bucket in the "
+                    "shared account would read a refusal from their policy rather than ours."
                 ),
                 (
-                    "The half that did move expires. The records under "
-                    "fixtures/evidence/phase-1/roles/ stop loading thirty days after the "
-                    "capture, tests/test_phase1_deployed_roles.py goes red when they do, and "
-                    "this paragraph reverts to describing a template nobody has checked. See "
-                    "this module's docstring for the two honest responses to that."
+                    "Why the probe is ListBuckets at all is worth knowing before anybody adds "
+                    "a sixth. The original S3 probe read an object from a bucket chosen not to "
+                    "exist and answered AccessDenied on one run and NoSuchBucket on the next, "
+                    "for the same role against the same absent bucket — a flake that fails "
+                    "towards passing, since AccessDenied is what the matrix is looking for. "
+                    "edullm_platform.publisher_denials.PROBE_SELECTION_LESSONS records the "
+                    "rule and the run that taught it, and a cited test holds every probe in "
+                    "the matrix to it."
+                ),
+                (
+                    "Five refusals under one session at one moment. A role widened tomorrow "
+                    "would be refused nothing tomorrow, and this record would still read as it "
+                    "does now, which is what the freshness window is for. "
+                    f"{RUN_EVIDENCE_EXPIRES}"
                 ),
             ),
         ),
         CriterionSpec(
             number="7",
             statement="An immutable tag cannot be overwritten.",
-            status=CriterionStatus.GAP,
-            gaps=(
+            status=CriterionStatus.COVERED,
+            proving_node_ids=(
+                RUN_EVIDENCE_HOLDS,
+                TAG_WAS_NOT_OVERWRITTEN,
+            ),
+            supporting_node_ids=(
+                ECR_REPOSITORY_IS_IMMUTABLE,
+                RERUN_RESUMES_RATHER_THAN_REBUILDS,
+            ),
+            scope_limits=(
                 (
-                    "The committed ECR template declares IMMUTABLE tag mutability and the "
-                    "repository was deployed from it. Neither fact is the criterion: what is "
-                    "claimed here is that a second push to an existing tag is refused, and "
-                    "that behaviour belongs to ECR at push time."
+                    "Three things are recorded and only one of them is the criterion. The "
+                    "committed template declares IMMUTABLE; the deployed repository was "
+                    "captured and is IMMUTABLE; and a second push of a different image under "
+                    "a tag the registry already held was refused with "
+                    "ImageTagAlreadyExistsException. The first is a document, the second is a "
+                    "setting read back from a describe call, and only the third is a push that "
+                    "was turned away."
                 ),
                 (
-                    "tools/capture_phase1_evidence.py records what the deployed repository's "
-                    "tag mutability actually is, and no such record is committed here. The two "
-                    "roles are committed because something compares them to a template; "
-                    "nothing compares a repository to infra/ecr-repositories.yaml, so a "
-                    "committed record would be a file that expires and that no test reads. It "
-                    "would not close this in any case: a setting read back from a describe "
-                    "call is not a push that was refused."
+                    "The refusal and the survival are separate claims and both are recorded. "
+                    "The committed refusal carries the digest the tag resolves to after the "
+                    "attempt, and a test checks it against the digest of the image the run "
+                    "published, so this says the original image is still there rather than "
+                    "only that one push failed."
                 ),
-                f"{NO_LIVE_RUN} No image has been pushed once, let alone twice.",
                 (
-                    "Closing this needs a live second push of a different image under a tag "
-                    "the registry already holds, and the error it returns. The pre-flight tag "
-                    "lookup in the publish workflow exists because that refusal is real and "
-                    "unrecoverable, so proving it also confirms the reason that lookup is "
-                    "there."
+                    "The second push was made by hand from a laptop, under an identity that is "
+                    "not the publisher role, and the record says so in a field of its own. "
+                    "That is a real limit and a small one: tag immutability is a property of "
+                    "the repository rather than of the caller, so what was observed is that "
+                    "ECR refuses the overwrite, which is the whole of what the criterion "
+                    "claims. What was not observed is the publisher role meeting the same "
+                    "refusal, and the reason nobody arranged that is that the publish workflow "
+                    "deliberately cannot produce it: its pre-flight tag lookup resumes instead "
+                    "of pushing again. The identity that attempted it is not named, because in "
+                    "a shared sandbox account it is a person."
                 ),
+                RUN_EVIDENCE_EXPIRES,
             ),
         ),
         CriterionSpec(
