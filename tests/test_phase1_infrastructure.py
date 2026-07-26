@@ -11,6 +11,7 @@ IAM_ROOT = INFRA_ROOT / "iam"
 PUBLISHER_TEMPLATE_PATH = IAM_ROOT / "ecr-publisher-role.yaml"
 
 ROLE_NAME = "sbsandbox-intern-edullm-ecr-publisher"
+MANAGED_POLICY_NAME = "sbsandbox-intern-edullm-ecr-publisher"
 BOUNDARY = {
     "Fn::Sub": ("arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/InternSandboxBoundary")
 }
@@ -80,23 +81,37 @@ def _iam_roles(template: dict[str, Any]) -> Iterator[dict[str, Any]]:
             yield properties
 
 
-def test_publisher_template_creates_only_the_strictly_named_role() -> None:
+def _resource_of_type(template: dict[str, Any], resource_type: str) -> tuple[str, dict[str, Any]]:
+    matching = [
+        (logical_id, resource)
+        for logical_id, resource in template["Resources"].items()
+        if isinstance(resource, dict) and resource.get("Type") == resource_type
+    ]
+    assert len(matching) == 1
+    return matching[0]
+
+
+def test_publisher_template_creates_only_the_role_and_managed_policy() -> None:
     template = _load_template(PUBLISHER_TEMPLATE_PATH)
 
     resources = template["Resources"]
-    assert len(resources) == 1
-    resource = next(iter(resources.values()))
-    assert resource["Type"] == "AWS::IAM::Role"
-    assert resource["Properties"]["RoleName"] == ROLE_NAME
-    assert resource["Properties"]["PermissionsBoundary"] == BOUNDARY
-    assert resource["Properties"]["MaxSessionDuration"] <= 3600
-    assert not any(
-        resource_type.startswith("AWS::IAM::") or resource_type == "AWS::ECR::Repository"
-        for resource_type in (
-            candidate["Type"] for candidate in resources.values() if isinstance(candidate, dict)
-        )
-        if resource_type != "AWS::IAM::Role"
-    )
+    assert len(resources) == 2
+    assert [resource["Type"] for resource in resources.values()] == [
+        "AWS::IAM::Role",
+        "AWS::IAM::ManagedPolicy",
+    ]
+
+    role_logical_id, role = _resource_of_type(template, "AWS::IAM::Role")
+    role_properties = role["Properties"]
+    assert role_properties["RoleName"] == ROLE_NAME
+    assert role_properties["PermissionsBoundary"] == BOUNDARY
+    assert role_properties["MaxSessionDuration"] <= 3600
+    assert "Policies" not in role_properties
+
+    _, managed_policy = _resource_of_type(template, "AWS::IAM::ManagedPolicy")
+    policy_properties = managed_policy["Properties"]
+    assert policy_properties["ManagedPolicyName"] == MANAGED_POLICY_NAME
+    assert policy_properties["Roles"] == [{"Ref": role_logical_id}]
 
 
 def test_publisher_trusts_only_the_existing_github_oidc_provider() -> None:
@@ -129,11 +144,9 @@ def test_publisher_trusts_only_the_existing_github_oidc_provider() -> None:
 
 
 def test_publisher_permissions_are_the_exact_phase1_ecr_permissions() -> None:
-    role = next(_iam_roles(_load_template(PUBLISHER_TEMPLATE_PATH)))
-
-    policies = role["Policies"]
-    assert len(policies) == 1
-    document = policies[0]["PolicyDocument"]
+    template = _load_template(PUBLISHER_TEMPLATE_PATH)
+    _, managed_policy = _resource_of_type(template, "AWS::IAM::ManagedPolicy")
+    document = managed_policy["Properties"]["PolicyDocument"]
     assert document["Version"] == "2012-10-17"
     statements = document["Statement"]
     assert len(statements) == 2
@@ -185,7 +198,7 @@ def test_template_has_only_the_two_required_wildcards_and_no_account_literal() -
 
 def test_publisher_outputs_only_the_role_name_and_arn() -> None:
     template = _load_template(PUBLISHER_TEMPLATE_PATH)
-    logical_id = next(iter(template["Resources"]))
+    logical_id, _ = _resource_of_type(template, "AWS::IAM::Role")
 
     assert template["Outputs"] == {
         "RoleName": {"Value": {"Ref": logical_id}},
