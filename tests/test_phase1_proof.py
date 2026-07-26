@@ -1,0 +1,348 @@
+"""The Phase 1 proof bundle, and the two things it must never be able to do.
+
+A bundle exists so a reviewer can decide whether the phase is done without reading the
+suite, so the failures worth testing are the ones that would mislead that reader: prose
+that gives a criterion a status the gate did not reach, and a recorded role digest
+silently re-recorded after the template it describes was widened.
+
+This module builds bundles, so it is listed in ``REENTRANT_TEST_MODULES`` and no criterion
+may cite it. It is also excluded from the verification run inside every generator, which
+is why building a bundle here does not recurse.
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
+
+from edullm_platform.criteria import CriterionSpec, CriterionStatus
+from edullm_platform.proof_bundle import (
+    GoldenDigestDriftError,
+    MissingTestNodeError,
+    ProofBundleError,
+    contradicting_status_claims,
+    load_recorded_goldens,
+)
+from tools.build_phase1_proof import (
+    BUNDLE_FILENAMES,
+    GENERATOR_TEST_PATH,
+    GOLDENS_FILENAME,
+    NESTED_RUN_ENV,
+    ROLE_EVIDENCE_DIR,
+    Verification,
+    build_bundle,
+    compute_goldens,
+    goldens_path,
+    known_limitations,
+    main,
+    phase1_criteria,
+    verify_repository,
+)
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+FIRST_INSTANT = datetime(2026, 1, 1, tzinfo=UTC)
+SECOND_INSTANT = datetime(2026, 6, 30, 12, 34, 56, tzinfo=UTC)
+GENERATED_AT_PREFIX = "Generated: "
+
+
+@pytest.fixture(scope="session")
+def verification() -> Verification:
+    return verify_repository(PROJECT_ROOT)
+
+
+def shipped_checks() -> tuple[CriterionSpec, ...]:
+    return phase1_criteria()
+
+
+def read_bundle(directory: Path) -> dict[str, str]:
+    return {
+        path.name: path.read_text(encoding="utf-8")
+        for path in sorted(directory.iterdir())
+        if path.is_file()
+    }
+
+
+def build_into(directory: Path, verification: Verification, moment: datetime) -> dict[str, str]:
+    build_bundle(PROJECT_ROOT, directory, generated_at=moment, verification=verification)
+    return read_bundle(directory)
+
+
+def strip_generated_at(documents: dict[str, str]) -> dict[str, str]:
+    return {
+        name: "\n".join(
+            line for line in text.splitlines() if not line.startswith(GENERATED_AT_PREFIX)
+        )
+        for name, text in documents.items()
+    }
+
+
+@pytest.fixture(scope="session")
+def first_bundle(
+    tmp_path_factory: pytest.TempPathFactory,
+    verification: Verification,
+) -> dict[str, str]:
+    return build_into(tmp_path_factory.mktemp("first"), verification, FIRST_INSTANT)
+
+
+def test_the_bundle_contains_every_document_it_declares(first_bundle: dict[str, str]) -> None:
+    assert set(first_bundle) == set(BUNDLE_FILENAMES)
+
+
+def test_two_runs_at_the_same_instant_are_byte_identical(
+    tmp_path_factory: pytest.TempPathFactory,
+    verification: Verification,
+    first_bundle: dict[str, str],
+) -> None:
+    again = build_into(tmp_path_factory.mktemp("second"), verification, FIRST_INSTANT)
+
+    assert again == first_bundle
+
+
+def test_a_later_run_differs_only_in_its_generated_at_line(
+    tmp_path_factory: pytest.TempPathFactory,
+    verification: Verification,
+    first_bundle: dict[str, str],
+) -> None:
+    later = build_into(tmp_path_factory.mktemp("later"), verification, SECOND_INSTANT)
+
+    assert later != first_bundle
+    assert strip_generated_at(later) == strip_generated_at(first_bundle)
+
+
+def test_every_document_passes_the_evidence_secret_scan(first_bundle: dict[str, str]) -> None:
+    # The bundle quotes IAM policy resources, which is where an account ID would arrive.
+    # Nothing here should carry one, and the generator refuses to write if it does.
+    from edullm_platform.proof_bundle import assert_secret_free
+
+    for name, text in first_bundle.items():
+        assert_secret_free(name, text)
+
+
+# --------------------------------------------------------------------------------------
+# The bundle may not state a status the gate did not reach
+# --------------------------------------------------------------------------------------
+
+
+def test_no_prose_in_the_bundle_contradicts_a_recorded_check_status(
+    first_bundle: dict[str, str],
+) -> None:
+    assert contradicting_status_claims(first_bundle, shipped_checks()) == ()
+
+
+@pytest.mark.parametrize(
+    ("prose", "expected"),
+    [
+        ("Check 6 is covered by the drift comparison.", "covered"),
+        ("Criterion 3 remains a gap.", "gap"),
+        ("Check 12 is covered.", "covered"),
+    ],
+    ids=["gap called covered", "covered called gap", "criterion that does not exist"],
+)
+def test_a_sentence_that_disagrees_with_the_definition_is_caught(
+    prose: str,
+    expected: str,
+) -> None:
+    problems = contradicting_status_claims({"README.md": prose}, shipped_checks())
+
+    assert len(problems) == 1
+    assert expected in problems[0]
+
+
+def test_the_generator_refuses_to_write_a_bundle_whose_prose_contradicts_the_gate(
+    tmp_path: Path,
+    verification: Verification,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The one defect a bundle cannot survive. A reviewer who trusts it without reading the
+    # suite would come away believing a gap was closed.
+    monkeypatch.setattr(
+        "tools.build_phase1_proof.known_limitations",
+        lambda repo_root, checks, reports: ("Check 6 is covered by the role comparison.",),
+    )
+
+    with pytest.raises(ProofBundleError, match="did not reach"):
+        build_bundle(PROJECT_ROOT, tmp_path, generated_at=FIRST_INSTANT, verification=verification)
+
+    assert not (tmp_path / "README.md").exists()
+
+
+def test_a_limitation_that_names_a_check_takes_its_status_from_the_definition() -> None:
+    # The limitations are the one place prose and status meet, so the status word is read
+    # off the checks rather than typed. This is what makes the guard above never fire.
+    limitations = known_limitations(PROJECT_ROOT, shipped_checks(), ())
+
+    assert any("check 6 is a gap" in text for text in limitations)
+
+
+def test_a_limitation_naming_a_check_the_phase_does_not_have_is_refused() -> None:
+    with pytest.raises(ProofBundleError, match="does not record"):
+        known_limitations(PROJECT_ROOT, shipped_checks()[:2], ())
+
+
+# --------------------------------------------------------------------------------------
+# Golden digests over what a role template grants
+# --------------------------------------------------------------------------------------
+
+
+def test_the_recorded_goldens_cover_every_committed_role() -> None:
+    goldens = compute_goldens(PROJECT_ROOT)
+    recorded = load_recorded_goldens(goldens_path(PROJECT_ROOT / "proof" / "phase-1"))
+
+    assert {record.fixture for record in recorded} == {record.fixture for record in goldens}
+    assert {record.digest for record in recorded} == {record.digest for record in goldens}
+
+
+def test_a_widened_template_refuses_the_build_rather_than_being_re_recorded(
+    tmp_path: Path,
+    verification: Verification,
+) -> None:
+    # The digest is over what the role grants, so this is a template that gained an
+    # action. Re-recording it has to be a deliberate act, because the account was last
+    # compared against the projection this replaces.
+    build_bundle(PROJECT_ROOT, tmp_path, generated_at=FIRST_INSTANT, verification=verification)
+    recorded = json.loads(goldens_path(tmp_path).read_text(encoding="utf-8"))
+    recorded["fixtures"][0]["digest"] = "sha256:" + "0" * 64
+    goldens_path(tmp_path).write_text(json.dumps(recorded, indent=2, sort_keys=True) + "\n")
+
+    with pytest.raises(GoldenDigestDriftError, match="--regenerate-goldens"):
+        build_bundle(PROJECT_ROOT, tmp_path, generated_at=FIRST_INSTANT, verification=verification)
+
+
+def test_regenerating_records_the_live_digest(tmp_path: Path, verification: Verification) -> None:
+    build_bundle(PROJECT_ROOT, tmp_path, generated_at=FIRST_INSTANT, verification=verification)
+    recorded = json.loads(goldens_path(tmp_path).read_text(encoding="utf-8"))
+    recorded["fixtures"][0]["digest"] = "sha256:" + "0" * 64
+    goldens_path(tmp_path).write_text(json.dumps(recorded, indent=2, sort_keys=True) + "\n")
+
+    build_bundle(
+        PROJECT_ROOT,
+        tmp_path,
+        generated_at=FIRST_INSTANT,
+        regenerate_goldens=True,
+        verification=verification,
+    )
+
+    assert load_recorded_goldens(goldens_path(tmp_path)) == compute_goldens(PROJECT_ROOT)
+
+
+def test_main_reports_a_drifted_digest_as_a_failure(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    goldens_path(tmp_path).parent.mkdir(parents=True, exist_ok=True)
+    goldens_path(tmp_path).write_text(
+        json.dumps({"fixtures": [], "phase": "phase-1", "schema_version": 1}) + "\n"
+    )
+
+    exit_code = main(["--output-dir", str(tmp_path)])
+
+    assert exit_code == 1
+    assert "no longer serializes to its recorded canonical digest" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------------------
+# The verification run
+# --------------------------------------------------------------------------------------
+
+
+def test_the_verification_run_never_selects_a_module_that_would_recurse(
+    verification: Verification,
+) -> None:
+    assert any(
+        node_id.startswith(GENERATOR_TEST_PATH) for node_id in verification.collected_node_ids
+    )
+    assert not any(
+        node_id.startswith(GENERATOR_TEST_PATH) for node_id in verification.selected_node_ids
+    )
+    assert not any(
+        node_id.startswith("tests/test_phase1_criteria.py")
+        for node_id in verification.selected_node_ids
+    )
+
+
+def test_the_verification_run_executed_every_cited_node_id(verification: Verification) -> None:
+    cited = {node_id for check in shipped_checks() for node_id in check.cited_node_ids}
+
+    assert cited <= set(verification.selected_node_ids)
+    assert verification.failed_node_ids == ()
+    assert verification.selected.green
+
+
+def test_the_full_suite_ran_green_inside_the_generator(verification: Verification) -> None:
+    assert verification.full_suite.green
+    assert verification.full_suite.tests > 0
+
+
+def test_a_citation_pytest_cannot_collect_aborts_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A matrix may not print a citation nothing ran. Writing the bundle anyway is how a
+    # renamed test turns into a green tick beside a claim nobody checked.
+    monkeypatch.setattr(
+        "tools.build_phase1_proof.collect_node_ids",
+        lambda repo_root, *, nested_env: ("tests/test_manifest.py::test_something_else",),
+    )
+
+    with pytest.raises(MissingTestNodeError, match="may not claim coverage it cannot run"):
+        verify_repository(PROJECT_ROOT)
+
+
+def test_the_generator_refuses_to_run_from_inside_its_own_verification(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv(NESTED_RUN_ENV, "1")
+
+    assert main([]) == 2
+    assert "would" not in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------------------
+# What the bundle says about the account
+# --------------------------------------------------------------------------------------
+
+
+def test_the_drift_document_reports_that_nothing_has_been_captured(
+    first_bundle: dict[str, str],
+) -> None:
+    # This is the state today, and the assertion is here so that committing a capture
+    # forces somebody to come back and read what the comparison found.
+    drift = first_bundle["deployed-role-drift.md"]
+
+    assert not (PROJECT_ROOT / ROLE_EVIDENCE_DIR).exists()
+    assert "## What this bundle compared" in drift
+    assert "Nothing." in drift
+    assert str(ROLE_EVIDENCE_DIR) in drift
+
+
+def test_the_matrix_reports_the_gaps_before_the_per_check_detail(
+    first_bundle: dict[str, str],
+) -> None:
+    matrix = first_bundle["negative-case-matrix.md"]
+    gaps = [check.number for check in shipped_checks() if check.status is CriterionStatus.GAP]
+
+    assert matrix.index("## Gaps") < matrix.index("## Checks")
+    for number in gaps:
+        assert f"### Check {number} (GAP)" in matrix
+
+
+def test_the_index_reports_the_verdict_the_gate_reaches(first_bundle: dict[str, str]) -> None:
+    gaps = [check.number for check in shipped_checks() if check.status is CriterionStatus.GAP]
+
+    assert (
+        f"`tools/validate_phase1.py` exits 1 against this tree. Phase 1 is not accepted: "
+        f"criteria {', '.join(gaps)} are GAPs." in first_bundle["README.md"]
+    )
+
+
+def test_the_goldens_document_names_the_regeneration_command(
+    first_bundle: dict[str, str],
+) -> None:
+    goldens = first_bundle["serialization-goldens.md"]
+
+    assert "--regenerate-goldens" in goldens
+    assert GOLDENS_FILENAME in goldens
+    assert "tests/test_phase1_golden.py" in goldens

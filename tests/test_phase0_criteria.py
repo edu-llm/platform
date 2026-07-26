@@ -130,6 +130,7 @@ KNOWN_GATE_INVOKING_MODULES = (
     "tests/test_phase0_criteria.py",
     "tests/test_phase0_proof.py",
     "tests/test_phase1_criteria.py",
+    "tests/test_phase1_proof.py",
 )
 
 #: Markers that only appear where a criterion is defined.

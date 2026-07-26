@@ -1,27 +1,18 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
-import importlib
-import json
 import os
-import pkgutil
-import re
-import subprocess
 import sys
-import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Final, get_args
-from xml.etree import ElementTree
+from typing import Final
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-import edullm_platform
 from edullm_platform.canonical import canonical_json_bytes, sha256_digest
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.base import ContractModel
@@ -34,7 +25,6 @@ from edullm_platform.criteria import (
     CriterionSpec,
     CriterionStatus,
 )
-from edullm_platform.evidence import redact_content_digests, scan_for_secrets
 
 # The criterion-to-test mapping is defined once, in the library, and imported here and
 # by the acceptance gate. This module must never grow its own copy: the matrix below and
@@ -45,6 +35,40 @@ from edullm_platform.phase0_criteria import (
     phase0_criteria,
     recorded_checks,
     related_deferrals,
+)
+from edullm_platform.proof_bundle import (
+    CITATION_LEGEND,
+    GENERATOR_TEST_PATHS,
+    STATUS_LEGEND,
+    STATUS_PROSE,
+    GoldenDigestDriftError,
+    MissingTestNodeError,
+    ModelRecord,
+    ProofBundleError,
+    RecordedGolden,
+    SchemaFileRecord,
+    SuiteOutcome,
+    assert_secret_free,
+    bullets,
+    collect_node_ids,
+    command_block,
+    contradicting_status_claims,
+    count_naming,
+    describe_drift,
+    file_digest,
+    golden_drift,
+    golden_drift_guidance,
+    load_recorded_goldens,
+    model_records,
+    recorded_status,
+    render_check_detail,
+    render_goldens_document,
+    run_full_suite,
+    run_test_selection,
+    schema_file_records,
+    source_commit_sha,
+    status_label,
+    table,
 )
 
 PHASE: Final = "phase-0"
@@ -77,100 +101,11 @@ VERIFICATION_COMMANDS: Final = (
     "uv run python tools/validate_phase0.py",
     GENERATOR_COMMAND,
 )
-
-SHA256_DIGEST_TOKEN: Final = re.compile(r"sha256:[0-9a-f]{64}")
-GIT_COMMIT_SHA_TOKEN: Final = re.compile(r"(?<![0-9a-f])[0-9a-f]{40}(?![0-9a-f])")
-
-# Prose that names a check and gives it a status. A sentence is the unit, because a
-# status word further away than that is talking about something else.
-CHECK_REFERENCE: Final = re.compile(
-    r"\b(?:check|criterion|criteria)\s+(?P<number>D?[0-9]+)\b", re.IGNORECASE
-)
-STATUS_CLAIM: Final = re.compile(r"\b(?P<word>covered|deferred|gaps?)\b", re.IGNORECASE)
-CLAUSE_BREAK: Final = re.compile(r"[.;|\n]")
-STATUS_BY_WORD: Final = {
-    "covered": CriterionStatus.COVERED,
-    "deferred": CriterionStatus.DEFERRED,
-    "gap": CriterionStatus.GAP,
-    "gaps": CriterionStatus.GAP,
-}
-STATUS_PROSE: Final = {
-    CriterionStatus.COVERED: "covered",
-    CriterionStatus.DEFERRED: "deferred",
-    CriterionStatus.GAP: "a gap",
-}
-
-GOLDEN_DRIFT_GUIDANCE: Final = """{fixture} ({contract}) no longer serializes to its recorded canonical digest.
-  recorded: {recorded}
-  live:     {live}
-
-This is a serialization tripwire, not a formatting check. A change to field ordering, to a
-serializer, to a default value, or to the fixture itself lands here and nowhere else.
-
-Do exactly one of these, deliberately:
-
-  1. The change was intended. Re-record with
-       uv run python tools/build_phase0_proof.py --regenerate-goldens
-     and review the digest diff in the same commit as the change that caused it, so the new
-     digest is approved by a human rather than absorbed silently.
-
-  2. The change was not intended. This is a regression: fix it instead of re-recording.
-     Every digest already written into a proof bundle, a run manifest reference, or a
-     lineage record disagrees with this build until you do."""
-
 GOLDENS_MISSING_GUIDANCE: Final = (
     "No recorded canonical digests were found at {path}. The Phase 0 proof bundle is the "
     "source of this tripwire; generate it with `uv run python tools/build_phase0_proof.py` "
     "and commit the result."
 )
-
-
-class ProofBundleError(RuntimeError):
-    pass
-
-
-class GoldenDigestDriftError(ProofBundleError):
-    pass
-
-
-class MissingTestNodeError(ProofBundleError):
-    pass
-
-
-@dataclass(frozen=True)
-class RecordedGolden:
-    fixture: str
-    relative_path: str
-    contract: str
-    canonical_json_bytes: int
-    digest: str
-
-
-@dataclass(frozen=True)
-class GoldenDrift:
-    fixture: str
-    contract: str
-    recorded: str
-    live: str
-
-
-@dataclass(frozen=True)
-class SuiteOutcome:
-    tests: int
-    failures: int
-    errors: int
-    skipped: int
-    exit_code: int
-
-    @property
-    def passed(self) -> int:
-        return self.tests - self.failures - self.errors - self.skipped
-
-    @property
-    def green(self) -> bool:
-        return self.exit_code == 0 and self.failures == 0 and self.errors == 0
-
-
 @dataclass(frozen=True)
 class FixtureCoverage:
     fixture: str
@@ -185,25 +120,6 @@ class Verification:
     selected: SuiteOutcome
     full_suite: SuiteOutcome
     fixture_coverage: tuple[FixtureCoverage, ...]
-
-
-@dataclass(frozen=True)
-class ModelRecord:
-    module: str
-    name: str
-    schema_version: str
-    exported: bool
-    base: bool
-    structural_digest: str
-
-
-@dataclass(frozen=True)
-class SchemaFileRecord:
-    filename: str
-    model: str
-    file_digest: str
-
-
 def default_output_dir(repo_root: Path) -> Path:
     return repo_root / BUNDLE_RELATIVE_DIR
 
@@ -238,189 +154,6 @@ def compute_goldens(
         )
         for reference in references
     )
-
-
-def render_goldens_document(goldens: Sequence[RecordedGolden]) -> str:
-    payload = {
-        "schema_version": BUNDLE_SCHEMA_VERSION,
-        "phase": PHASE,
-        "fixtures": [
-            {
-                "fixture": record.fixture,
-                "relative_path": record.relative_path,
-                "contract": record.contract,
-                "canonical_json_bytes": record.canonical_json_bytes,
-                "digest": record.digest,
-            }
-            for record in goldens
-        ],
-    }
-    return json.dumps(payload, indent=2, sort_keys=True) + "\n"
-
-
-def load_recorded_goldens(path: Path) -> tuple[RecordedGolden, ...]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    entries = payload["fixtures"]
-    return tuple(
-        RecordedGolden(
-            fixture=entry["fixture"],
-            relative_path=entry["relative_path"],
-            contract=entry["contract"],
-            canonical_json_bytes=entry["canonical_json_bytes"],
-            digest=entry["digest"],
-        )
-        for entry in entries
-    )
-
-
-def golden_drift(
-    recorded: Sequence[RecordedGolden],
-    live: Sequence[RecordedGolden],
-) -> tuple[GoldenDrift, ...]:
-    recorded_by_fixture = {record.fixture: record for record in recorded}
-    live_by_fixture = {record.fixture: record for record in live}
-    drift: list[GoldenDrift] = []
-    for fixture in sorted(set(recorded_by_fixture) | set(live_by_fixture)):
-        before = recorded_by_fixture.get(fixture)
-        after = live_by_fixture.get(fixture)
-        if before is not None and after is not None:
-            if before.digest != after.digest or before.contract != after.contract:
-                drift.append(
-                    GoldenDrift(
-                        fixture=fixture,
-                        contract=after.contract,
-                        recorded=before.digest,
-                        live=after.digest,
-                    )
-                )
-        elif before is None and after is not None:
-            drift.append(
-                GoldenDrift(
-                    fixture=fixture,
-                    contract=after.contract,
-                    recorded="not recorded",
-                    live=after.digest,
-                )
-            )
-        elif before is not None:
-            drift.append(
-                GoldenDrift(
-                    fixture=fixture,
-                    contract=before.contract,
-                    recorded=before.digest,
-                    live="fixture no longer present",
-                )
-            )
-    return tuple(drift)
-
-
-def describe_drift(drift: Sequence[GoldenDrift]) -> str:
-    return "\n\n".join(
-        GOLDEN_DRIFT_GUIDANCE.format(
-            fixture=entry.fixture,
-            contract=entry.contract,
-            recorded=entry.recorded,
-            live=entry.live,
-        )
-        for entry in drift
-    )
-
-
-def _pytest_environment() -> dict[str, str]:
-    environment = dict(os.environ)
-    environment[NESTED_RUN_ENV] = "1"
-    return environment
-
-
-def _run_pytest(repo_root: Path, arguments: Sequence[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", *arguments],
-        cwd=repo_root,
-        env=_pytest_environment(),
-        capture_output=True,
-        text=True,
-        check=False,
-        shell=False,
-    )
-
-
-def collect_node_ids(repo_root: Path) -> tuple[str, ...]:
-    completed = _run_pytest(repo_root, ["--collect-only", "-q", "--no-header"])
-    if completed.returncode != 0:
-        raise ProofBundleError(
-            "pytest could not collect the test suite:\n"
-            + (completed.stderr.strip() or completed.stdout.strip())
-        )
-    node_ids = tuple(line.strip() for line in completed.stdout.splitlines() if "::" in line)
-    if not node_ids:
-        raise ProofBundleError("pytest collected no test node ids")
-    return node_ids
-
-
-def _read_junit_outcome(path: Path, exit_code: int) -> SuiteOutcome:
-    root = ElementTree.parse(path).getroot()
-    suite = root.find("testsuite") if root.tag == "testsuites" else root
-    if suite is None:
-        raise ProofBundleError("pytest did not emit a JUnit test suite element")
-    return SuiteOutcome(
-        tests=int(suite.get("tests", "0")),
-        failures=int(suite.get("failures", "0")),
-        errors=int(suite.get("errors", "0")),
-        skipped=int(suite.get("skipped", "0")),
-        exit_code=exit_code,
-    )
-
-
-def _failed_node_ids(path: Path) -> tuple[str, ...]:
-    root = ElementTree.parse(path).getroot()
-    failed: list[str] = []
-    for case in root.iter("testcase"):
-        if case.find("failure") is None and case.find("error") is None:
-            continue
-        module = case.get("classname", "").replace(".", "/")
-        failed.append(f"{module}.py::{case.get('name', '')}")
-    return tuple(sorted(failed))
-
-
-def run_test_selection(
-    repo_root: Path,
-    node_ids: Sequence[str],
-) -> tuple[SuiteOutcome, tuple[str, ...]]:
-    with tempfile.TemporaryDirectory() as workspace:
-        report = Path(workspace) / "selection.xml"
-        completed = _run_pytest(
-            repo_root,
-            ["-q", "--no-header", "--tb=no", f"--junitxml={report}", *node_ids],
-        )
-        if not report.exists():
-            raise ProofBundleError(
-                "pytest did not run the selected node ids:\n"
-                + (completed.stderr.strip() or completed.stdout.strip())
-            )
-        return _read_junit_outcome(report, completed.returncode), _failed_node_ids(report)
-
-
-def run_full_suite(repo_root: Path) -> SuiteOutcome:
-    with tempfile.TemporaryDirectory() as workspace:
-        report = Path(workspace) / "suite.xml"
-        completed = _run_pytest(
-            repo_root,
-            [
-                "-q",
-                "--no-header",
-                "--tb=no",
-                f"--ignore={GENERATOR_TEST_PATH}",
-                f"--junitxml={report}",
-            ],
-        )
-        if not report.exists():
-            raise ProofBundleError(
-                "pytest did not run the full suite:\n"
-                + (completed.stderr.strip() or completed.stdout.strip())
-            )
-        return _read_junit_outcome(report, completed.returncode)
-
-
 def fixture_scoped_node_ids(
     collected: Sequence[str],
     references: Sequence[FixtureReference],
@@ -441,7 +174,7 @@ def verify_repository(
     references: Sequence[FixtureReference] | None = None,
 ) -> Verification:
     fixtures = discover_fixtures(repo_root) if references is None else tuple(references)
-    collected = collect_node_ids(repo_root)
+    collected = collect_node_ids(repo_root, nested_env=NESTED_RUN_ENV)
     checks = recorded_checks(fixtures)
     cited = {node_id for check in checks for node_id in check.cited_node_ids}
     missing = sorted(cited - set(collected))
@@ -464,177 +197,15 @@ def verify_repository(
             "the proof generator must not select a test that invokes the generator or the "
             "acceptance gate, which would recurse:\n  " + "\n  ".join(reentrant)
         )
-    outcome, failed = run_test_selection(repo_root, selected)
+    outcome, failed = run_test_selection(repo_root, selected, nested_env=NESTED_RUN_ENV)
     return Verification(
         collected_node_ids=collected,
         selected_node_ids=selected,
         failed_node_ids=failed,
         selected=outcome,
-        full_suite=run_full_suite(repo_root),
+        full_suite=run_full_suite(repo_root, nested_env=NESTED_RUN_ENV),
         fixture_coverage=coverage,
     )
-
-
-def discover_contract_models() -> tuple[type[ContractModel], ...]:
-    models: dict[str, type[ContractModel]] = {}
-    for module_info in pkgutil.walk_packages(
-        edullm_platform.__path__, prefix="edullm_platform."
-    ):
-        module = importlib.import_module(module_info.name)
-        for attribute in vars(module).values():
-            if not isinstance(attribute, type) or not issubclass(attribute, ContractModel):
-                continue
-            if attribute is ContractModel or attribute.__module__ != module_info.name:
-                continue
-            models[f"{attribute.__module__}.{attribute.__name__}"] = attribute
-    return tuple(models[key] for key in sorted(models))
-
-
-def structural_digest(model: type[ContractModel]) -> str:
-    encoded = json.dumps(
-        model.model_json_schema(),
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
-
-
-def declared_schema_version(model: type[ContractModel]) -> str:
-    field = model.model_fields.get("schema_version")
-    if field is None:
-        return "unversioned"
-    arguments = get_args(field.annotation)
-    if len(arguments) != 1:
-        return "unversioned"
-    return str(arguments[0])
-
-
-def exported_model_names(repo_root: Path) -> frozenset[str]:
-    names: set[str] = set()
-    for record in schema_file_records(repo_root):
-        payload = json.loads((repo_root / "schemas" / record.filename).read_text(encoding="utf-8"))
-        names.add(record.model)
-        names.update(payload.get("$defs", {}))
-    return frozenset(names)
-
-
-def model_records(repo_root: Path) -> tuple[ModelRecord, ...]:
-    exported = exported_model_names(repo_root)
-    models = discover_contract_models()
-    bases = {
-        ancestor
-        for model in models
-        for ancestor in model.__mro__[1:]
-        if ancestor is not ContractModel
-    }
-    return tuple(
-        ModelRecord(
-            module=model.__module__,
-            name=model.__name__,
-            schema_version=declared_schema_version(model),
-            exported=model.__name__ in exported,
-            base=model in bases,
-            structural_digest=structural_digest(model),
-        )
-        for model in models
-    )
-
-
-def file_digest(path: Path) -> str:
-    return f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
-
-
-def schema_file_records(repo_root: Path) -> tuple[SchemaFileRecord, ...]:
-    records: list[SchemaFileRecord] = []
-    for path in sorted((repo_root / "schemas").glob("*.json")):
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        title = payload.get("title")
-        if not isinstance(title, str):
-            raise ProofBundleError(f"{path.name} does not name the model it was rendered from")
-        records.append(
-            SchemaFileRecord(filename=path.name, model=title, file_digest=file_digest(path))
-        )
-    return tuple(records)
-
-
-def source_commit_sha(repo_root: Path) -> str:
-    completed = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        check=False,
-        shell=False,
-    )
-    if completed.returncode != 0:
-        return "unavailable (not a git checkout)"
-    return completed.stdout.strip()
-
-
-def _clause_around(text: str, reference: re.Match[str]) -> tuple[str, str]:
-    return (
-        CLAUSE_BREAK.split(text[: reference.start()])[-1],
-        CLAUSE_BREAK.split(text[reference.end() :], maxsplit=1)[0],
-    )
-
-
-def status_claims(text: str) -> tuple[tuple[str, CriterionStatus], ...]:
-    """Every ``(check number, status)`` pair this prose asserts.
-
-    A status word after the reference wins over one before it, because that is how a
-    status is ascribed: ``Check 9 is deferred``. Only the first word in the clause counts,
-    so ``deferred rather than covered`` claims one status and not two. No attempt is made
-    to read a negation: ``Check 9 is not covered`` reads here as a claim of COVERED, and
-    is meant to, because a claim a machine cannot check does not belong in this bundle.
-    """
-    claims: list[tuple[str, CriterionStatus]] = []
-    for reference in CHECK_REFERENCE.finditer(text):
-        before, after = _clause_around(text, reference)
-        claimed = STATUS_CLAIM.search(after) or STATUS_CLAIM.search(before)
-        if claimed is None:
-            continue
-        claims.append((reference.group("number"), STATUS_BY_WORD[claimed.group().lower()]))
-    return tuple(claims)
-
-
-def contradicting_status_claims(
-    documents: Mapping[str, str],
-    checks: Sequence[CriterionSpec],
-) -> tuple[str, ...]:
-    """Prose in the bundle that gives a check a status the criteria definition does not.
-
-    The bundle exists so a reviewer can trust it without reading the suite, so a sentence
-    that disagrees with the gate is the one defect it cannot survive. Tables are rendered
-    from the computed status and cannot disagree; a hand-written sentence can, and did.
-    """
-    recorded = {check.number: check.status for check in checks}
-    problems: list[str] = []
-    for filename, text in sorted(documents.items()):
-        for number, claimed in status_claims(text):
-            actual = recorded.get(number)
-            if actual is None:
-                problems.append(
-                    f"{filename} calls check {number} {claimed.value}, and no criterion of "
-                    "this phase carries that number"
-                )
-            elif actual is not claimed:
-                problems.append(
-                    f"{filename} calls check {number} {claimed.value}; the criteria "
-                    f"definition records it {actual.value}"
-                )
-    return tuple(problems)
-
-
-def _recorded_status(checks: Sequence[CriterionSpec], number: str) -> CriterionStatus:
-    for check in checks:
-        if check.number == number:
-            return check.status
-    raise ProofBundleError(
-        f"a known limitation names check {number}, which the criteria definition does not record"
-    )
-
-
 def known_limitations(repo_root: Path, checks: Sequence[CriterionSpec]) -> tuple[str, ...]:
     """What this bundle does not establish, read off the tree rather than remembered.
 
@@ -646,7 +217,7 @@ def known_limitations(repo_root: Path, checks: Sequence[CriterionSpec]) -> tuple
     """
 
     def status_of(number: str) -> str:
-        return STATUS_PROSE[_recorded_status(checks, number)]
+        return STATUS_PROSE[recorded_status(checks, number)]
 
     catalog = load_yaml(repo_root / "config" / "workload-catalog.yaml", WorkloadCatalog)
     inventory = load_yaml(repo_root / "config" / "organization.yaml", OrganizationInventory)
@@ -692,9 +263,10 @@ def known_limitations(repo_root: Path, checks: Sequence[CriterionSpec]) -> tuple
         "unchanged. No other exemption is applied."
     )
     limitations.append(
-        f"The nested verification run excludes {GENERATOR_TEST_PATH}, because those tests invoke "
-        "this generator and would recurse. They run in the reviewer's own `uv run pytest -q`, "
-        "which is the command this bundle asks the reviewer to run."
+        "The nested verification run excludes every test module that builds a proof bundle "
+        f"({', '.join(GENERATOR_TEST_PATHS)}), because those tests invoke a generator and would "
+        "recurse. They run in the reviewer's own `uv run pytest -q`, which is the command this "
+        "bundle asks the reviewer to run."
     )
     limitations.append(
         "This bundle describes the working tree at generation time, which may differ from the "
@@ -708,44 +280,6 @@ def known_limitations(repo_root: Path, checks: Sequence[CriterionSpec]) -> tuple
         "part that fails loudly on its own when it goes stale."
     )
     return tuple(limitations)
-
-
-def redact_own_digests(text: str) -> str:
-    return redact_content_digests(text)
-
-
-def assert_secret_free(filename: str, text: str) -> None:
-    try:
-        scan_for_secrets(redact_own_digests(text))
-    except ValueError as error:
-        raise ProofBundleError(
-            f"{filename} did not pass the evidence secret scan: {error}"
-        ) from error
-
-
-def _table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
-    lines = [
-        "| " + " | ".join(headers) + " |",
-        "| " + " | ".join("---" for _ in headers) + " |",
-    ]
-    lines.extend("| " + " | ".join(row) + " |" for row in rows)
-    return "\n".join(lines)
-
-
-def _bullets(items: Sequence[str]) -> str:
-    return "\n".join(f"- {item}" for item in items)
-
-
-def _command_block(commands: Sequence[str]) -> str:
-    return "```\n" + "\n".join(commands) + "\n```"
-
-
-def _count_naming(numbers: Sequence[str]) -> str:
-    if not numbers:
-        return "0"
-    return f"{len(numbers)} ({', '.join(numbers)})"
-
-
 def render_unit_test_report(verification: Verification) -> str:
     full = verification.full_suite
     selected = verification.selected
@@ -765,15 +299,15 @@ def render_unit_test_report(verification: Verification) -> str:
         "",
         "## Commands a reviewer can re-run",
         "",
-        _command_block(VERIFICATION_COMMANDS),
+        command_block(VERIFICATION_COMMANDS),
         "",
         "## Whole suite",
         "",
-        _table(
+        table(
             ["measure", "count"],
             [
                 ["collected by pytest", str(len(verification.collected_node_ids))],
-                [f"executed (excluding {GENERATOR_TEST_PATH})", str(full.tests)],
+                [f"executed (excluding {', '.join(GENERATOR_TEST_PATHS)})", str(full.tests)],
                 ["passed", str(full.passed)],
                 ["failed", str(full.failures)],
                 ["errored", str(full.errors)],
@@ -787,7 +321,7 @@ def render_unit_test_report(verification: Verification) -> str:
         ("Every test node id cited by the negative-case matrix, plus every test parametrised "
         "over one of the nine fixtures, executed as one selection."),
         "",
-        _table(
+        table(
             ["measure", "count"],
             [
                 ["selected node ids", str(len(verification.selected_node_ids))],
@@ -805,7 +339,7 @@ def render_unit_test_report(verification: Verification) -> str:
         ("Tests parametrised over each fixture by name. A fixture with no parametrised tests "
         "would show zero here."),
         "",
-        _table(["fixture", "parametrised tests", "result"], rows),
+        table(["fixture", "parametrised tests", "result"], rows),
     ]
     if verification.failed_node_ids:
         sections.extend(
@@ -813,7 +347,7 @@ def render_unit_test_report(verification: Verification) -> str:
                 "",
                 "## Failures",
                 "",
-                _bullets(verification.failed_node_ids),
+                bullets(verification.failed_node_ids),
             ]
         )
     return "\n".join(sections) + "\n"
@@ -842,7 +376,7 @@ def render_goldens_report(goldens: Sequence[RecordedGolden]) -> str:
                 "compact separators. It is the same function that produces manifest digests in "
                 "lineage records, so a drift here is a drift there."),
                 "",
-                _table(
+                table(
                     ["fixture", "contract", "canonical bytes", "digest"],
                     rows,
                 ),
@@ -863,7 +397,7 @@ def render_goldens_report(goldens: Sequence[RecordedGolden]) -> str:
                 "and what to do about each:"),
                 "",
                 "```",
-                GOLDEN_DRIFT_GUIDANCE.format(
+                golden_drift_guidance(command=GENERATOR_COMMAND).format(
                     fixture="<fixture>",
                     contract="<contract>",
                     recorded="<recorded digest>",
@@ -919,7 +453,7 @@ def render_schema_report(
                 "looks like. They are versioned by the checked-in JSON Schema files below rather "
                 "than by a `schema_version` field, except for RunManifest, which carries both."),
                 "",
-                _table(headers, rows(exported)),
+                table(headers, rows(exported)),
                 "",
                 "## Runtime records",
                 "",
@@ -929,7 +463,7 @@ def render_schema_report(
                 "`schema_version` field where they are persisted, and they are deliberately not "
                 "published as repository configuration, because no human authors them by hand."),
                 "",
-                _table(headers, rows(runtime)),
+                table(headers, rows(runtime)),
                 "",
                 "## Exported JSON Schema files",
                 "",
@@ -937,7 +471,7 @@ def render_schema_report(
                 "generated. `tests/test_schema_export.py::test_checked_in_schemas_match_contract_"
                 "models` fails if a file drifts from its model."),
                 "",
-                _table(
+                table(
                     ["file", "root model", "file digest"],
                     [
                         [f"schemas/{record.filename}", record.model, record.file_digest]
@@ -950,7 +484,7 @@ def render_schema_report(
                 "",
                 "## Declared contract versions",
                 "",
-                _table(
+                table(
                     ["model", "schema_version"],
                     [
                         [record.name, record.schema_version]
@@ -961,74 +495,6 @@ def render_schema_report(
         )
         + "\n"
     )
-
-
-def _status_label(check: CriterionSpec) -> str:
-    return {
-        CriterionStatus.COVERED: "COVERED",
-        CriterionStatus.DEFERRED: "DEFERRED",
-        CriterionStatus.GAP: "GAP",
-    }[check.status]
-
-
-STATUS_LEGEND: Final = (
-    "Three statuses exist and no more. **COVERED** means one or more cited tests prove the "
-    "criterion as stated against the shipped configuration and all of them pass; the gate "
-    "passes it. **DEFERRED** means an explicit recorded decision not to satisfy it yet, which "
-    "requires both a written reason and a written trigger describing what makes it live again; "
-    "the gate passes it. **GAP** is everything else, and the gate fails it. There is no "
-    "in-between status, because an in-between status is what lets a gate be green and wrong at "
-    "the same time."
-)
-
-CITATION_LEGEND: Final = (
-    "`proving` tests prove the criterion as stated against the shipped configuration; only a "
-    "COVERED criterion may cite one. `supporting` tests are cited evidence that does not amount "
-    "to proof — either because they exercise the code path under a synthetic configuration that "
-    "is not what ships, or because they prove only part of the claim. Both kinds are executed. "
-    "A supporting citation that is renamed or deleted still fails the criterion."
-)
-
-
-def _render_check_detail(check: CriterionSpec) -> list[str]:
-    sections = [
-        f"### Check {check.number} — {check.statement}",
-        "",
-        f"**Status: {_status_label(check)}**",
-        "",
-    ]
-    if check.deferral_reason:
-        sections.extend(["Deferred because:", "", check.deferral_reason, ""])
-    if check.deferral_trigger:
-        sections.extend(["Live again when:", "", check.deferral_trigger, ""])
-    if check.gaps:
-        sections.extend(["Gap:", "", _bullets(check.gaps), ""])
-    if check.scope_limits:
-        sections.extend(["Scope:", "", _bullets(check.scope_limits), ""])
-    if check.proving_node_ids:
-        sections.extend(
-            [
-                f"Proving tests ({len(check.proving_node_ids)}), all executed and passing:",
-                "",
-                _bullets([f"`{node_id}`" for node_id in check.proving_node_ids]),
-                "",
-            ]
-        )
-    else:
-        sections.extend(["No test proves this check.", ""])
-    if check.supporting_node_ids:
-        sections.extend(
-            [
-                (f"Supporting tests ({len(check.supporting_node_ids)}), all executed and "
-                "passing, cited as evidence rather than as proof:"),
-                "",
-                _bullets([f"`{node_id}`" for node_id in check.supporting_node_ids]),
-                "",
-            ]
-        )
-    return sections
-
-
 def render_matrix(
     criteria: Sequence[CriterionSpec],
     deferrals: Sequence[CriterionSpec],
@@ -1038,7 +504,7 @@ def render_matrix(
     summary_rows = [
         [
             check.number,
-            _status_label(check),
+            status_label(check),
             str(len(check.proving_node_ids)),
             str(len(check.supporting_node_ids)),
             check.statement,
@@ -1068,7 +534,7 @@ def render_matrix(
         "",
         CITATION_LEGEND,
         "",
-        _table(
+        table(
             ["#", "status", "proving", "supporting", "check"],
             summary_rows,
         ),
@@ -1095,7 +561,7 @@ def render_matrix(
                 [
                     f"### Check {check.number} (GAP) — {check.statement}",
                     "",
-                    _bullets(check.gaps),
+                    bullets(check.gaps),
                     "",
                 ]
             )
@@ -1123,7 +589,7 @@ def render_matrix(
             )
     sections.extend(["## Checks", ""])
     for check in checks:
-        sections.extend(_render_check_detail(check))
+        sections.extend(render_check_detail(check))
     return "\n".join(sections).rstrip() + "\n"
 
 
@@ -1182,7 +648,7 @@ def render_index(
                 "",
                 "## Contents",
                 "",
-                _bullets(
+                bullets(
                     [
                         ("`unit-test-report.md` — summarised pass and fail counts, per fixture "
                         "and for the whole suite, with the commands to reproduce them."),
@@ -1201,7 +667,7 @@ def render_index(
                 "",
                 "## Result",
                 "",
-                _table(
+                table(
                     ["measure", "value"],
                     [
                         [
@@ -1223,10 +689,10 @@ def render_index(
                         ["matrix node ids passed", str(verification.selected.passed)],
                         ["matrix node ids failed", str(verification.selected.failures)],
                         ["phase criteria", str(len(criteria))],
-                        ["criteria COVERED", _count_naming(covered_numbers)],
-                        ["criteria DEFERRED", _count_naming(deferred_numbers)],
-                        ["criteria GAP (each one fails the gate)", _count_naming(gap_numbers)],
-                        ["related recorded deferrals", _count_naming(related_numbers)],
+                        ["criteria COVERED", count_naming(covered_numbers)],
+                        ["criteria DEFERRED", count_naming(deferred_numbers)],
+                        ["criteria GAP (each one fails the gate)", count_naming(gap_numbers)],
+                        ["related recorded deferrals", count_naming(related_numbers)],
                         ["fixtures with recorded digests", str(len(goldens))],
                         ["contract models inventoried", str(len(models))],
                         ["JSON Schema files exported", str(len(schema_files))],
@@ -1235,7 +701,7 @@ def render_index(
                 "",
                 "## Contract versions",
                 "",
-                _table(
+                table(
                     ["contract", "schema_version"],
                     [
                         [record.name, record.schema_version]
@@ -1250,7 +716,7 @@ def render_index(
                 "",
                 "Run these from the repository root.",
                 "",
-                _command_block(VERIFICATION_COMMANDS),
+                command_block(VERIFICATION_COMMANDS),
                 "",
                 _gate_verdict(gap_numbers),
                 "",
@@ -1260,14 +726,14 @@ def render_index(
                 "the bundle describes the tree in front of them. Verify with "
                 "`shasum -a 256 <file>`."),
                 "",
-                _table(
+                table(
                     ["file", "digest"],
                     [[path, digest] for path, digest in input_digests],
                 ),
                 "",
                 "## Known limitations",
                 "",
-                _bullets(limitations),
+                bullets(limitations),
                 "",
                 "## Reviewer sign-off",
                 "",
@@ -1279,7 +745,7 @@ def render_index(
     )
 
 
-def input_digest_table(
+def input_digesttable(
     repo_root: Path,
     goldens: Sequence[RecordedGolden],
     schema_files: Sequence[SchemaFileRecord],
@@ -1309,10 +775,10 @@ def build_bundle(
     if goldens_file.exists() and not regenerate_goldens:
         drift = golden_drift(load_recorded_goldens(goldens_file), goldens)
         if drift:
-            raise GoldenDigestDriftError(describe_drift(drift))
+            raise GoldenDigestDriftError(describe_drift(drift, command=GENERATOR_COMMAND))
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    goldens_document = render_goldens_document(goldens)
+    goldens_document = render_goldens_document(goldens, phase=PHASE)
     assert_secret_free(GOLDENS_FILENAME, goldens_document)
     goldens_file.write_text(goldens_document, encoding="utf-8")
 
@@ -1333,7 +799,7 @@ def build_bundle(
             goldens=goldens,
             models=models,
             schema_files=schema_files,
-            input_digests=input_digest_table(repo_root, goldens, schema_files),
+            input_digests=input_digesttable(repo_root, goldens, schema_files),
             limitations=known_limitations(repo_root, criteria + deferrals),
         ),
     }

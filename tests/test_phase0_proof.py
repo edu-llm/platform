@@ -9,30 +9,32 @@ from edullm_platform.criteria import (
     CriterionSpec,
     CriterionStatus,
 )
+from edullm_platform.proof_bundle import (
+    GoldenDigestDriftError,
+    MissingTestNodeError,
+    ProofBundleError,
+    assert_secret_free,
+    contradicting_status_claims,
+    count_naming,
+    golden_drift,
+    load_recorded_goldens,
+    pytest_environment,
+    redact_own_digests,
+)
 from tools.build_phase0_proof import (
     BUNDLE_FILENAMES,
     GENERATOR_TEST_PATH,
     GOLDENS_FILENAME,
     NESTED_RUN_ENV,
-    GoldenDigestDriftError,
-    MissingTestNodeError,
-    ProofBundleError,
     Verification,
-    _count_naming,
-    _pytest_environment,
-    assert_secret_free,
     build_bundle,
     compute_goldens,
-    contradicting_status_claims,
     discover_fixtures,
-    golden_drift,
     goldens_path,
     known_limitations,
-    load_recorded_goldens,
     main,
     phase0_criteria,
     recorded_checks,
-    redact_own_digests,
     related_deferrals,
     render_matrix,
     verify_repository,
@@ -252,7 +254,7 @@ def test_the_generator_refuses_to_run_inside_its_own_verification(
 
 
 def test_the_nested_guard_is_set_for_every_pytest_subprocess() -> None:
-    assert _pytest_environment()[NESTED_RUN_ENV] == "1"
+    assert pytest_environment(NESTED_RUN_ENV)[NESTED_RUN_ENV] == "1"
 
 
 def test_the_verification_run_never_selects_the_generators_own_tests(
@@ -422,8 +424,8 @@ def test_the_index_reports_the_gate_verdict_that_matches_the_recorded_gaps(
     else:
         assert "`tools/validate_phase0.py` exits 0 against this tree" in index
         assert "exits 1 against this tree" not in index
-    assert f"criteria GAP (each one fails the gate) | {_count_naming(gap_numbers)}" in index
-    assert f"criteria DEFERRED | {_count_naming([n for n in deferred if n.isdigit()])}" in index
+    assert f"criteria GAP (each one fails the gate) | {count_naming(gap_numbers)}" in index
+    assert f"criteria DEFERRED | {count_naming([n for n in deferred if n.isdigit()])}" in index
 
 
 def shipped_checks() -> tuple[CriterionSpec, ...]:

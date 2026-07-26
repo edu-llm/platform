@@ -2,19 +2,23 @@ from pathlib import Path
 
 import pytest
 
-from tools.build_phase0_proof import (
-    GOLDEN_DRIFT_GUIDANCE,
-    GOLDENS_MISSING_GUIDANCE,
+from edullm_platform.proof_bundle import (
     RecordedGolden,
+    golden_drift_guidance,
+    load_recorded_goldens,
+)
+from tools.build_phase0_proof import (
+    GENERATOR_COMMAND,
+    GOLDENS_MISSING_GUIDANCE,
     default_output_dir,
     discover_fixtures,
     fixture_canonical_length,
     fixture_digest,
     goldens_path,
-    load_recorded_goldens,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+GOLDEN_DRIFT_GUIDANCE = golden_drift_guidance(command=GENERATOR_COMMAND)
 GOLDENS_PATH = goldens_path(default_output_dir(PROJECT_ROOT))
 
 RECORDED_GOLDENS = load_recorded_goldens(GOLDENS_PATH) if GOLDENS_PATH.exists() else ()
