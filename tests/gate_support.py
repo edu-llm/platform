@@ -81,17 +81,26 @@ def loaded_inputs() -> Phase0Inputs:
     )
 
 
-def run_validate_phase0(repo_root: Path) -> subprocess.CompletedProcess[str]:
+def run_gate(repo_root: Path, tool: str, **environment: str) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["PYTHONPATH"] = os.pathsep.join([str(repo_root / "src"), str(repo_root)])
+    env.update(environment)
     return subprocess.run(
-        [sys.executable, str(repo_root / "tools" / "validate_phase0.py")],
+        [sys.executable, str(repo_root / "tools" / tool)],
         cwd=repo_root,
         check=False,
         capture_output=True,
         text=True,
         env=env,
     )
+
+
+def run_validate_phase0(repo_root: Path, **environment: str) -> subprocess.CompletedProcess[str]:
+    return run_gate(repo_root, "validate_phase0.py", **environment)
+
+
+def run_validate_phase1(repo_root: Path, **environment: str) -> subprocess.CompletedProcess[str]:
+    return run_gate(repo_root, "validate_phase1.py", **environment)
 
 
 def copy_gate_repo(destination: Path) -> Path:

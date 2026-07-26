@@ -1,12 +1,14 @@
-"""Run the pytest node ids a Phase 0 criterion cites, without recursing.
+"""Run the pytest node ids a phase's criterion cites, without recursing.
 
-The acceptance gate runs pytest, and pytest runs tests of the acceptance gate. Four
+An acceptance gate runs pytest, and pytest runs tests of the acceptance gate. Four
 things keep that from turning into an unbounded recursion or a hang:
 
-1. Every pytest subprocess this module starts carries ``EDULLM_PHASE0_GATE_NESTED=1``.
+1. Every pytest subprocess this module starts carries ``EDULLM_GATE_NESTED=1``.
    :func:`refuse_nested_execution` raises before any subprocess is started when that
    variable is already set, so a gate invoked from inside a gate's own test run stops
-   instead of spawning another level. Depth is bounded at one.
+   instead of spawning another level. Depth is bounded at one, and the variable names no
+   phase: a Phase 1 gate started from inside a Phase 0 criteria run is the same recursion
+   and stops for the same reason.
 2. A criterion may never cite a test from a module that invokes the gate or the proof
    generator. ``edullm_platform.criteria.REENTRANT_TEST_MODULES`` lists them and
    ``CriterionSpec`` rejects such a citation when the spec is constructed, so the guard
@@ -42,14 +44,14 @@ __all__ = [
     "subprocess_environment",
 ]
 
-NESTED_GATE_ENV: Final = "EDULLM_PHASE0_GATE_NESTED"
+NESTED_GATE_ENV: Final = "EDULLM_GATE_NESTED"
 COLLECT_TIMEOUT_SECONDS: Final = 300.0
 EXECUTION_TIMEOUT_SECONDS: Final = 1800.0
 
 NESTED_EXECUTION_MESSAGE: Final = (
-    "refusing to execute Phase 0 criteria from inside a Phase 0 criteria run. "
-    f"{NESTED_GATE_ENV} is set, which means this process is already a child of the gate. "
-    "Running the gate here would recurse."
+    "refusing to execute phase criteria from inside a phase criteria run. "
+    f"{NESTED_GATE_ENV} is set, which means this process is already a child of a gate. "
+    "Running a gate here would recurse."
 )
 
 

@@ -1,4 +1,4 @@
-"""The Phase 1 acceptance criteria and the status recorded for each one.
+"""The Phase 1 acceptance criteria, the status recorded for each one, and the gate.
 
 The eight statements below are transcribed from the master plan. They are the
 specification; ``edullm_platform.phase1_criteria`` is the implementation. Comparing them
@@ -8,19 +8,25 @@ Phase 1 has produced no live run, so half of it is honestly unproved. The tests 
 exist mostly to hold that line: they pin which criteria are gaps, that a gap cites
 nothing, and that nothing was relabelled ``DEFERRED`` to make the count look better.
 
-This module is listed in ``REENTRANT_TEST_MODULES`` ahead of the Wave 4 gate and
-proof-bundle tests that will live here, so no criterion can ever cite it.
+The gate cases at the end of this module start ``tools/validate_phase1.py`` and
+``evaluate_repository``, which is why the module is listed in ``REENTRANT_TEST_MODULES``:
+no criterion may cite a test that would re-enter the runner that selected it.
 """
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
 import pytest
 
+from edullm_platform.canonical import canonical_json_bytes
 from edullm_platform.criteria import REENTRANT_TEST_MODULES, CriterionSpec, CriterionStatus
+from edullm_platform.criteria_runner import NESTED_GATE_ENV
 from edullm_platform.phase1_criteria import PHASE1_CRITERION_COUNT, phase1_criteria
+from edullm_platform.phase1_gate import Phase1GateReport, evaluate_repository
+from tests.gate_support import copy_gate_repo, run_validate_phase1
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -191,3 +197,90 @@ def test_no_criterion_cites_a_module_that_starts_a_gate(
 
 def test_this_module_can_never_be_cited() -> None:
     assert "tests/test_phase1_criteria.py" in REENTRANT_TEST_MODULES
+
+
+# --------------------------------------------------------------------------------------
+# The gate
+# --------------------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def report() -> Phase1GateReport:
+    return evaluate_repository(PROJECT_ROOT)
+
+
+def test_the_gate_reports_one_result_for_every_criterion_in_order(
+    report: Phase1GateReport,
+    criteria: tuple[CriterionSpec, ...],
+) -> None:
+    assert [result.number for result in report.phase_criteria] == [
+        check.number for check in criteria
+    ]
+    assert [result.statement for result in report.phase_criteria] == list(PHASE1_STATEMENTS)
+
+
+def test_the_gate_executed_every_node_id_the_criteria_cite(
+    report: Phase1GateReport,
+    criteria: tuple[CriterionSpec, ...],
+) -> None:
+    # A citation nothing ran is a citation that means nothing. Neither list may be
+    # non-empty for any criterion, and every cited id has to appear in the report.
+    for result in report.phase_criteria:
+        assert result.missing_node_ids == (), result.number
+        assert result.failed_node_ids == (), result.number
+    assert {node_id for result in report.phase_criteria for node_id in result.cited_node_ids} == {
+        node_id for check in criteria for node_id in check.cited_node_ids
+    }
+
+
+def test_the_gate_fails_and_names_the_four_criteria_no_run_has_established(
+    report: Phase1GateReport,
+) -> None:
+    # This is the honest state of the phase rather than a broken gate. A green Phase 1
+    # gate today would mean the definition had been softened, not that the phase was done.
+    failing = [result.number for result in report.phase_criteria if not result.passed]
+
+    assert failing == list(AWAITING_A_LIVE_RUN)
+    assert report.passed is False
+    for result in report.phase_criteria:
+        if result.number in AWAITING_A_LIVE_RUN:
+            assert result.reason_code == "recorded_gap"
+            assert result.status is CriterionStatus.GAP
+        else:
+            assert result.reason_code == "ok"
+
+
+def test_the_command_exits_one_and_prints_the_verdict_the_gate_reached(
+    report: Phase1GateReport,
+) -> None:
+    completed = run_validate_phase1(PROJECT_ROOT)
+
+    assert completed.returncode == 1
+    printed = json.loads(completed.stdout)
+    assert printed["passed"] is False
+    assert [result["number"] for result in printed["phase_criteria"]] == [
+        result.number for result in report.phase_criteria
+    ]
+    assert completed.stdout.encode("utf-8") == canonical_json_bytes(report) + b"\n"
+
+
+def test_the_command_refuses_to_run_from_inside_a_gate_run() -> None:
+    # The gate runs pytest and pytest runs this module. Without the guard, a Phase 1 gate
+    # started from inside a Phase 0 criteria run would spawn another level of both.
+    completed = run_validate_phase1(PROJECT_ROOT, **{NESTED_GATE_ENV: "1"})
+
+    assert completed.returncode == 2
+    assert completed.stdout == ""
+    assert "would recurse" in completed.stderr
+
+
+def test_a_tree_with_no_tests_proves_no_criterion(tmp_path: Path) -> None:
+    # A checkout the cited tests cannot be collected from is not a checkout that passes
+    # them, and the covered criteria have to fail closed on it.
+    repo_root = copy_gate_repo(tmp_path)
+
+    results = evaluate_repository(repo_root).phase_criteria
+
+    assert [result.passed for result in results] == [False] * PHASE1_CRITERION_COUNT
+    covered = [result for result in results if result.number not in AWAITING_A_LIVE_RUN]
+    assert {result.reason_code for result in covered} == {"cited_test_missing"}

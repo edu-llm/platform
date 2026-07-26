@@ -97,14 +97,21 @@ PHASE0_STATEMENTS = (
 )
 
 #: Anything that starts a gate run, a proof-bundle build, or a pytest subprocess. A test
-#: module containing one of these must be in REENTRANT_TEST_MODULES. The phase-1 entries
-#: name tooling Wave 4 will add, and mirror the phase-0 trio exactly; the generic markers
-#: below them already cover a Phase 1 generator, which will reuse those function names.
+#: module containing one of these must be in REENTRANT_TEST_MODULES. Both phases are
+#: named where the name differs and the generic markers cover the rest, which is why the
+#: Phase 1 gate's own entry point is called ``evaluate_repository`` like Phase 0's.
+#:
+#: The two generator filenames are here for a module that runs a generator as a
+#: subprocess and never mentions ``build_bundle`` or ``verify_repository`` in its own
+#: text, which the function markers alone would miss.
 GATE_INVOCATION_MARKERS = (
     "run_validate_phase0",
     "run_validate_phase1",
+    "run_gate(",
     "validate_phase0.py",
     "validate_phase1.py",
+    "build_phase0_proof.py",
+    "build_phase1_proof.py",
     "evaluate_repository(",
     "evaluate_phase0_criteria(",
     "evaluate_phase1_criteria(",
@@ -115,11 +122,14 @@ GATE_INVOCATION_MARKERS = (
     "verify_repository(",
 )
 
-#: Test modules that certainly start the gate today. They anchor the marker list, which
-#: would otherwise be able to detect nothing at all and still look satisfied.
+#: Test modules that certainly start a gate today. They anchor the marker list, which
+#: would otherwise be able to detect nothing at all and still look satisfied. Both phases
+#: are anchored, because a marker list that only recognised Phase 0 would pass this while
+#: leaving every Phase 1 module free to recurse.
 KNOWN_GATE_INVOKING_MODULES = (
     "tests/test_phase0_criteria.py",
     "tests/test_phase0_proof.py",
+    "tests/test_phase1_criteria.py",
 )
 
 #: Markers that only appear where a criterion is defined.
