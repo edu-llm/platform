@@ -44,15 +44,16 @@ def _is_well_formed_git_ref(value: str) -> bool:
 
 
 class GitHubWorkflowRunReference(ContractModel):
-    repository: str = Field(pattern=GITHUB_REPOSITORY_PATTERN)
-    path: str = Field(pattern=GITHUB_WORKFLOW_PATH_PATTERN)
-    ref: str = Field(pattern=GITHUB_REF_PATTERN)
+    run_repository: str = Field(pattern=GITHUB_REPOSITORY_PATTERN)
+    workflow_repository: str = Field(pattern=GITHUB_REPOSITORY_PATTERN)
+    workflow_path: str = Field(pattern=GITHUB_WORKFLOW_PATH_PATTERN)
+    workflow_ref: str = Field(pattern=GITHUB_REF_PATTERN)
     run_id: int = Field(gt=0)
     run_attempt: int = Field(gt=0)
 
-    @field_validator("ref")
+    @field_validator("workflow_ref")
     @classmethod
-    def validate_ref(cls, value: str) -> str:
+    def validate_workflow_ref(cls, value: str) -> str:
         if not _is_well_formed_git_ref(value):
             raise ValueError("workflow ref must be a well-formed branch, tag, or commit ref")
         return value
@@ -60,8 +61,15 @@ class GitHubWorkflowRunReference(ContractModel):
     @property
     def url(self) -> str:
         return (
-            f"https://github.com/{self.repository}/actions/runs/"
+            f"https://github.com/{self.run_repository}/actions/runs/"
             f"{self.run_id}/attempts/{self.run_attempt}"
+        )
+
+    @property
+    def job_workflow_ref(self) -> str:
+        return (
+            f"{self.workflow_repository}/{self.workflow_path}"
+            f"@{self.workflow_ref}"
         )
 
 

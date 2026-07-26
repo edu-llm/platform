@@ -39,9 +39,10 @@ def source_payload(**overrides: object) -> dict[str, object]:
 
 def workflow_payload(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
-        "repository": "allenai/OLMo",
-        "path": ".github/workflows/build-image.yaml",
-        "ref": "refs/heads/main",
+        "run_repository": "edu-llm/OLMo-core",
+        "workflow_repository": "edu-llm/platform",
+        "workflow_path": ".github/workflows/build-research-image.yml",
+        "workflow_ref": "refs/heads/main",
         "run_id": 987654321,
         "run_attempt": 2,
     }
@@ -68,7 +69,11 @@ def test_image_provenance_has_exact_durable_dump_and_run_url() -> None:
 
     assert provenance.model_dump(mode="json") == image_payload()
     assert provenance.workflow_run.url == (
-        "https://github.com/allenai/OLMo/actions/runs/987654321/attempts/2"
+        "https://github.com/edu-llm/OLMo-core/actions/runs/987654321/attempts/2"
+    )
+    assert provenance.workflow_run.job_workflow_ref == (
+        "edu-llm/platform/.github/workflows/"
+        "build-research-image.yml@refs/heads/main"
     )
 
 
@@ -146,16 +151,20 @@ def test_image_provenance_requires_valid_verified_clean_source(
 @pytest.mark.parametrize(
     "workflow",
     [
-        workflow_payload(repository="allenai"),
-        workflow_payload(repository="/OLMo"),
-        workflow_payload(repository="allenai/OLMo/extra"),
-        workflow_payload(repository="allen ai/OLMo"),
-        workflow_payload(path="build-image.yaml"),
-        workflow_payload(path=".github/workflows/../build.yaml"),
-        workflow_payload(path=".github/workflows/build.txt"),
-        workflow_payload(ref="main"),
-        workflow_payload(ref="refs/pull/1/head"),
-        workflow_payload(ref="refs/heads/main lock"),
+        workflow_payload(run_repository="edu-llm"),
+        workflow_payload(run_repository="/OLMo-core"),
+        workflow_payload(run_repository="edu-llm/OLMo-core/extra"),
+        workflow_payload(run_repository="edu llm/OLMo-core"),
+        workflow_payload(workflow_repository="edu-llm"),
+        workflow_payload(workflow_repository="/platform"),
+        workflow_payload(workflow_repository="edu-llm/platform/extra"),
+        workflow_payload(workflow_repository="edu llm/platform"),
+        workflow_payload(workflow_path="build-research-image.yml"),
+        workflow_payload(workflow_path=".github/workflows/../build.yml"),
+        workflow_payload(workflow_path=".github/workflows/build.txt"),
+        workflow_payload(workflow_ref="main"),
+        workflow_payload(workflow_ref="refs/pull/1/head"),
+        workflow_payload(workflow_ref="refs/heads/main lock"),
         workflow_payload(run_id=0),
         workflow_payload(run_attempt=0),
         workflow_payload(run_id="987654321"),
