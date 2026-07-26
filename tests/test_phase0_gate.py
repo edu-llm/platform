@@ -1,12 +1,8 @@
 from __future__ import annotations
 
 import json
-import os
-import shutil
-import subprocess
-import sys
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -15,133 +11,48 @@ from pydantic import ValidationError
 
 from edullm_platform.canonical import canonical_json_bytes
 from edullm_platform.contracts.policy import classify_request
-from edullm_platform.evidence import EVIDENCE_STALE_CODE, GitHubPlanEvidence, ServiceQuotasEvidence
 from edullm_platform.manifest_helpers import (
     REPRESENTATIVE_MANIFEST_COSTS,
     compute_manifest_maximum_cost,
     load_manifest,
 )
 from edullm_platform.phase0_gate import (
-    EXPECTED_CHECK_IDS,
+    OPERATIONAL_INVENTORY_CHECK_IDS,
+    GateCheck,
     Phase0GateResult,
-    Phase0Inputs,
     evaluate_phase0,
     expected_manifest_classification,
     load_aws_capacity_evidence,
     load_phase0_inputs,
     request_facts_from_manifest,
 )
+from tests.gate_support import (
+    copy_gate_repo,
+    loaded_inputs,
+    synthetic_account_id_alias,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-VALIDATE_CLI = PROJECT_ROOT / "tools" / "validate_phase0.py"
-EVIDENCE_FILENAMES = ("github-plan.sanitized.json", "service-quotas.sanitized.json")
 
 
-def recent_observed_at() -> str:
-    return datetime.now(tz=UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
-def refresh_evidence_files(repo_root: Path, *, observed_at: str | None = None) -> None:
-    timestamp = observed_at or recent_observed_at()
-    for filename in EVIDENCE_FILENAMES:
-        evidence_path = repo_root / "fixtures" / "evidence" / filename
-        payload = json.loads(evidence_path.read_text(encoding="utf-8"))
-        payload["observed_at"] = timestamp
-        evidence_path.write_text(
-            json.dumps(payload, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-
-
-def synthetic_account_id_alias() -> str:
-    digits = bytes.fromhex("393233383437313632303934").decode()
-    return f"acct-{digits}-prod"
-
-
-def get_check(result: Phase0GateResult, check_id: str):
+def get_check(result: Phase0GateResult, check_id: str) -> GateCheck:
     matching = [check for check in result.checks if check.check_id == check_id]
     assert len(matching) == 1, f"expected one check {check_id!r}, got {result.checks}"
     return matching[0]
 
 
-def loaded_inputs() -> Phase0Inputs:
-    inputs = load_phase0_inputs(PROJECT_ROOT)
-    if (
-        inputs.github_plan_load_error != EVIDENCE_STALE_CODE
-        and inputs.aws_capacity_load_error != EVIDENCE_STALE_CODE
-    ):
-        return inputs
-    fresh_at = recent_observed_at()
-    github_plan = inputs.github_plan
-    github_plan_load_error = inputs.github_plan_load_error
-    if github_plan_load_error == EVIDENCE_STALE_CODE:
-        payload = json.loads(
-            (
-                PROJECT_ROOT / "fixtures" / "evidence" / "github-plan.sanitized.json"
-            ).read_text(encoding="utf-8")
-        )
-        payload["observed_at"] = fresh_at
-        github_plan = GitHubPlanEvidence.model_validate(payload)
-        github_plan_load_error = None
-    aws_capacity = inputs.aws_capacity
-    aws_capacity_load_error = inputs.aws_capacity_load_error
-    if aws_capacity_load_error == EVIDENCE_STALE_CODE:
-        payload = json.loads(
-            (
-                PROJECT_ROOT / "fixtures" / "evidence" / "service-quotas.sanitized.json"
-            ).read_text(encoding="utf-8")
-        )
-        payload["observed_at"] = fresh_at
-        aws_capacity = ServiceQuotasEvidence.model_validate(payload)
-        aws_capacity_load_error = None
-    return replace(
-        inputs,
-        github_plan=github_plan,
-        github_plan_load_error=github_plan_load_error,
-        aws_capacity=aws_capacity,
-        aws_capacity_load_error=aws_capacity_load_error,
-    )
-
-
-def run_validate_phase0(repo_root: Path) -> subprocess.CompletedProcess[str]:
-    env = os.environ.copy()
-    env["PYTHONPATH"] = os.pathsep.join([str(repo_root / "src"), str(repo_root)])
-    return subprocess.run(
-        [sys.executable, str(repo_root / "tools" / "validate_phase0.py")],
-        cwd=repo_root,
-        check=False,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-
-
-def copy_gate_repo(destination: Path) -> Path:
-    repo_root = destination / "repo"
-    for relative in (
-        "config",
-        "fixtures",
-        "src",
-        "tools",
-        "pyproject.toml",
-    ):
-        source = PROJECT_ROOT / relative
-        target = repo_root / relative
-        if source.is_dir():
-            shutil.copytree(source, target, dirs_exist_ok=True)
-        else:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, target)
-    refresh_evidence_files(repo_root)
-    return repo_root
-
-
 def test_repository_gate_passes_with_public_platform_repository() -> None:
     result = evaluate_phase0(loaded_inputs())
     assert result.passed is True
-    assert {check.check_id for check in result.checks} == EXPECTED_CHECK_IDS
+    assert {check.check_id for check in result.checks} == OPERATIONAL_INVENTORY_CHECK_IDS
     assert all(check.passed for check in result.checks)
     assert all(check.reason_code == "ok" for check in result.checks)
+
+
+def test_every_inventory_check_is_named_so_it_cannot_be_read_as_a_phase_criterion() -> None:
+    result = evaluate_phase0(loaded_inputs())
+    assert len(result.checks) == 9
+    assert all(check.check_id.startswith("inventory_") for check in result.checks)
 
 
 def test_gate_passes_when_github_plan_supports_private_repo_controls() -> None:
@@ -176,12 +87,12 @@ def test_gate_executes_every_check_even_after_failure() -> None:
         )
     )
     assert result.passed is False
-    assert len(result.checks) == len(EXPECTED_CHECK_IDS)
-    assert not get_check(result, "ownership").passed
-    assert get_check(result, "github_plan").passed
+    assert len(result.checks) == len(OPERATIONAL_INVENTORY_CHECK_IDS)
+    assert not get_check(result, "inventory_ownership").passed
+    assert get_check(result, "inventory_github_plan").passed
 
 
-@pytest.mark.parametrize("check_id", sorted(EXPECTED_CHECK_IDS))
+@pytest.mark.parametrize("check_id", sorted(OPERATIONAL_INVENTORY_CHECK_IDS))
 def test_passing_gate_reports_ok_reason_code(check_id: str) -> None:
     result = evaluate_phase0(loaded_inputs())
     check = get_check(result, check_id)
@@ -193,7 +104,7 @@ def test_ownership_fails_for_unexpected_admin_roster() -> None:
     inputs = loaded_inputs()
     inventory = inputs.inventory.model_copy(update={"admins": ("philote-dev", "ericrcwu001")})
     result = evaluate_phase0(replace(inputs, inventory=inventory))
-    check = get_check(result, "ownership")
+    check = get_check(result, "inventory_ownership")
     assert check.passed is False
     assert check.reason_code == "admin_roster_mismatch"
 
@@ -204,7 +115,7 @@ def test_ownership_fails_for_unexpected_team_lead_roster() -> None:
     team_leads[team_leads.index("hiyasvyas")] = "katiehehe"
     inventory = inputs.inventory.model_copy(update={"team_leads": tuple(team_leads)})
     result = evaluate_phase0(replace(inputs, inventory=inventory))
-    check = get_check(result, "ownership")
+    check = get_check(result, "inventory_ownership")
     assert check.passed is False
     assert check.reason_code == "team_lead_roster_mismatch"
 
@@ -213,7 +124,7 @@ def test_pilots_fails_for_single_pilot_repository() -> None:
     inputs = loaded_inputs()
     inventory = inputs.inventory.model_copy(update={"pilot_repositories": ("OLMo-core",)})
     result = evaluate_phase0(replace(inputs, inventory=inventory))
-    check = get_check(result, "pilots")
+    check = get_check(result, "inventory_pilots")
     assert check.passed is False
     assert check.reason_code == "pilot_repository_mismatch"
 
@@ -224,7 +135,7 @@ def test_workload_coverage_fails_without_gpu_representative() -> None:
     workloads[1] = workloads[1].model_copy(update={"compute_profile": "cpu-32vcpu"})
     catalog = inputs.catalog.model_copy(update={"workloads": tuple(workloads)})
     result = evaluate_phase0(replace(inputs, catalog=catalog))
-    check = get_check(result, "workload_coverage")
+    check = get_check(result, "inventory_workload_coverage")
     assert check.passed is False
     assert check.reason_code == "missing_gpu_representative"
 
@@ -235,7 +146,7 @@ def test_approval_paths_fails_when_denial_paths_incomplete() -> None:
         update={"denied_outright": ("unregistered_repository", "unregistered_dataset")}
     )
     result = evaluate_phase0(replace(inputs, policy=policy))
-    check = get_check(result, "approval_paths")
+    check = get_check(result, "inventory_approval_paths")
     assert check.passed is False
     assert check.reason_code == "denied_outright_incomplete"
 
@@ -244,7 +155,7 @@ def test_approval_paths_fails_when_routine_approver_missing() -> None:
     inputs = loaded_inputs()
     policy = inputs.policy.model_copy(update={"routine_approver_role": "platform_admin"})
     result = evaluate_phase0(replace(inputs, policy=policy))
-    check = get_check(result, "approval_paths")
+    check = get_check(result, "inventory_approval_paths")
     assert check.passed is False
     assert check.reason_code == "routine_approver_missing"
 
@@ -253,7 +164,7 @@ def test_approval_paths_fails_when_exception_approver_missing() -> None:
     inputs = loaded_inputs()
     policy = inputs.policy.model_copy(update={"exception_approver_roles": ("team_lead",)})
     result = evaluate_phase0(replace(inputs, policy=policy))
-    check = get_check(result, "approval_paths")
+    check = get_check(result, "inventory_approval_paths")
     assert check.passed is False
     assert check.reason_code == "exception_approver_missing"
 
@@ -264,7 +175,7 @@ def test_checkpoint_expectations_fails_for_retry_without_checkpoint() -> None:
     workloads[0] = workloads[0].model_copy(update={"maximum_attempts": 2, "checkpoint": None})
     catalog = inputs.catalog.model_copy(update={"workloads": tuple(workloads)})
     result = evaluate_phase0(replace(inputs, catalog=catalog))
-    check = get_check(result, "checkpoint_expectations")
+    check = get_check(result, "inventory_checkpoint_expectations")
     assert check.passed is False
     assert check.reason_code == "retry_missing_checkpoint"
 
@@ -276,7 +187,7 @@ def test_github_plan_fails_for_free_plan_on_private_repository() -> None:
     result = evaluate_phase0(
         replace(inputs, github_plan=github_plan.model_copy(update={"visibility": "private"}))
     )
-    check = get_check(result, "github_plan")
+    check = get_check(result, "inventory_github_plan")
     assert check.passed is False
     assert check.reason_code == "plan_insufficient_for_private_repo_controls"
     assert "private" in check.detail.lower()
@@ -292,7 +203,7 @@ def test_github_plan_passes_for_public_repository_on_free_plan() -> None:
             github_plan=github_plan.model_copy(update={"plan_name": "free", "visibility": "public"}),
         )
     )
-    check = get_check(result, "github_plan")
+    check = get_check(result, "inventory_github_plan")
     assert check.passed is True
     assert check.reason_code == "ok"
     assert "public" in check.detail.lower()
@@ -308,7 +219,7 @@ def test_github_plan_passes_for_private_repository_on_team_plan() -> None:
             github_plan=github_plan.model_copy(update={"plan_name": "team", "visibility": "private"}),
         )
     )
-    check = get_check(result, "github_plan")
+    check = get_check(result, "inventory_github_plan")
     assert check.passed is True
     assert check.reason_code == "ok"
 
@@ -325,7 +236,7 @@ def test_github_plan_passes_for_private_repository_on_enterprise_plan() -> None:
             ),
         )
     )
-    check = get_check(result, "github_plan")
+    check = get_check(result, "inventory_github_plan")
     assert check.passed is True
     assert check.reason_code == "ok"
 
@@ -342,7 +253,7 @@ def test_github_plan_fails_for_unknown_plan_on_private_repository() -> None:
             ),
         )
     )
-    check = get_check(result, "github_plan")
+    check = get_check(result, "inventory_github_plan")
     assert check.passed is False
     assert check.reason_code == "plan_insufficient_for_private_repo_controls"
 
@@ -354,7 +265,7 @@ def test_github_plan_fails_for_organization_mismatch() -> None:
     result = evaluate_phase0(
         replace(inputs, github_plan=github_plan.model_copy(update={"organization": "other-org"}))
     )
-    check = get_check(result, "github_plan")
+    check = get_check(result, "inventory_github_plan")
     assert check.passed is False
     assert check.reason_code == "organization_mismatch"
 
@@ -369,7 +280,7 @@ def test_aws_capacity_fails_when_gpu_quota_mapping_incomplete() -> None:
     result = evaluate_phase0(
         replace(inputs, aws_capacity=aws_capacity.model_copy(update={"quotas": quotas}))
     )
-    check = get_check(result, "aws_capacity")
+    check = get_check(result, "inventory_aws_capacity")
     assert check.passed is False
     assert check.reason_code == "capacity_blocked"
 
@@ -383,7 +294,7 @@ def test_aws_capacity_fails_when_gpu_quota_insufficient() -> None:
     result = evaluate_phase0(
         replace(inputs, aws_capacity=aws_capacity.model_copy(update={"quotas": tuple(quotas)}))
     )
-    check = get_check(result, "aws_capacity")
+    check = get_check(result, "inventory_aws_capacity")
     assert check.passed is False
     assert check.reason_code == "capacity_increase_required"
 
@@ -395,7 +306,7 @@ def test_aws_capacity_fails_for_wrong_region() -> None:
     result = evaluate_phase0(
         replace(inputs, aws_capacity=aws_capacity.model_copy(update={"region": "us-west-2"}))
     )
-    check = get_check(result, "aws_capacity")
+    check = get_check(result, "inventory_aws_capacity")
     assert check.passed is False
     assert check.reason_code == "wrong_region"
 
@@ -410,7 +321,7 @@ def test_aws_capacity_fails_when_batch_quota_missing() -> None:
             aws_capacity=aws_capacity.model_copy(update={"batch_quotas": (aws_capacity.batch_quotas[0],)}),
         )
     )
-    check = get_check(result, "aws_capacity")
+    check = get_check(result, "inventory_aws_capacity")
     assert check.passed is False
     assert check.reason_code == "capacity_blocked"
 
@@ -424,7 +335,7 @@ def test_representative_manifests_fails_for_unregistered_compute_profile() -> No
         for name, current in inputs.manifests
     )
     result = evaluate_phase0(replace(inputs, manifests=manifests))
-    check = get_check(result, "representative_manifests")
+    check = get_check(result, "inventory_representative_manifests")
     assert check.passed is False
     assert check.reason_code == "unregistered_compute_profile"
 
@@ -438,7 +349,7 @@ def test_representative_manifests_fails_for_unregistered_workload_profile() -> N
         for name, current in inputs.manifests
     )
     result = evaluate_phase0(replace(inputs, manifests=manifests))
-    check = get_check(result, "representative_manifests")
+    check = get_check(result, "inventory_representative_manifests")
     assert check.passed is False
     assert check.reason_code == "unregistered_workload_profile"
 
@@ -452,7 +363,7 @@ def test_representative_manifests_fails_for_unregistered_dataset() -> None:
         for name, current in inputs.manifests
     )
     result = evaluate_phase0(replace(inputs, manifests=manifests))
-    check = get_check(result, "representative_manifests")
+    check = get_check(result, "inventory_representative_manifests")
     assert check.passed is False
     assert check.reason_code == "unregistered_dataset"
 
@@ -466,7 +377,7 @@ def test_representative_manifests_fails_on_classification_mismatch() -> None:
         for filename, current in inputs.manifests
     )
     result = evaluate_phase0(replace(inputs, manifests=manifests))
-    check = get_check(result, "representative_manifests")
+    check = get_check(result, "inventory_representative_manifests")
     assert check.passed is False
     assert check.reason_code == "classification_mismatch"
 
@@ -478,7 +389,7 @@ def test_representative_manifests_fails_for_unreviewed_manifest(tmp_path: Path) 
     )
     manifests = (*inputs.manifests, ("extra-long.yaml", extra_manifest))
     result = evaluate_phase0(replace(inputs, manifests=manifests))
-    check = get_check(result, "representative_manifests")
+    check = get_check(result, "inventory_representative_manifests")
     assert check.passed is False
     assert check.reason_code == "unexpected_manifest"
 
@@ -489,7 +400,7 @@ def test_cost_estimates_fails_when_reviewed_cost_does_not_match() -> None:
     profiles[0] = profiles[0].model_copy(update={"hourly_rate_usd": Decimal("9.999")})
     catalog = inputs.catalog.model_copy(update={"compute_profiles": tuple(profiles)})
     result = evaluate_phase0(replace(inputs, catalog=catalog))
-    check = get_check(result, "cost_estimates")
+    check = get_check(result, "inventory_cost_estimates")
     assert check.passed is False
     assert check.reason_code == "reviewed_cost_mismatch"
 
@@ -503,7 +414,7 @@ def test_cost_estimates_fails_when_routine_manifest_exceeds_program_budget(
     catalog = inputs.catalog.model_copy(update={"compute_profiles": tuple(profiles)})
     monkeypatch.setitem(REPRESENTATIVE_MANIFEST_COSTS, "cpu-routine.yaml", Decimal("600.00"))
     result = evaluate_phase0(replace(inputs, catalog=catalog))
-    check = get_check(result, "cost_estimates")
+    check = get_check(result, "inventory_cost_estimates")
     assert check.passed is False
     assert check.reason_code == "exceeds_program_budget"
 
@@ -535,47 +446,10 @@ def test_cost_estimates_does_not_apply_program_budget_to_exception_manifest(
             manifests=manifests,
         )
     )
-    check = get_check(result, "cost_estimates")
+    check = get_check(result, "inventory_cost_estimates")
     assert check.passed is True
     assert check.reason_code == "ok"
     assert inflated_cost > Decimal(500)
-
-
-def test_unregistered_compute_profile_cli_emits_structured_json(tmp_path: Path) -> None:
-    repo_root = copy_gate_repo(tmp_path)
-    manifest_path = repo_root / "fixtures" / "manifests" / "cpu-routine.yaml"
-    text = manifest_path.read_text(encoding="utf-8").replace("cpu-32vcpu", "not-a-registered-profile")
-    manifest_path.write_text(text, encoding="utf-8")
-    completed = run_validate_phase0(repo_root)
-    assert completed.returncode == 1
-    assert completed.stdout
-    payload = json.loads(completed.stdout)
-    assert payload["passed"] is False
-    failing = [check for check in payload["checks"] if not check["passed"]]
-    assert any(check["reason_code"] == "unregistered_compute_profile" for check in failing)
-
-
-def test_missing_gpu_quota_cli_emits_structured_json(tmp_path: Path) -> None:
-    repo_root = copy_gate_repo(tmp_path)
-    evidence_path = repo_root / "fixtures" / "evidence" / "service-quotas.sanitized.json"
-    payload = json.loads(evidence_path.read_text(encoding="utf-8"))
-    payload["quotas"] = [
-        quota
-        for quota in payload["quotas"]
-        if quota.get("workload_profile") != "gpu-4xa10g"
-    ]
-    payload["capacity_verdict"] = "blocked"
-    payload["capacity_verdict_note"] = (
-        "Capacity review blocked because representative workload mapping is incomplete."
-    )
-    evidence_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    completed = run_validate_phase0(repo_root)
-    assert completed.returncode == 1
-    assert completed.stdout
-    parsed = json.loads(completed.stdout)
-    aws_check = next(check for check in parsed["checks"] if check["check_id"] == "aws_capacity")
-    assert aws_check["passed"] is False
-    assert aws_check["reason_code"] == "capacity_blocked"
 
 
 def test_load_phase0_inputs_rejects_invalid_organization_yaml(tmp_path: Path) -> None:
@@ -586,58 +460,15 @@ def test_load_phase0_inputs_rejects_invalid_organization_yaml(tmp_path: Path) ->
     )
     with pytest.raises(ValidationError) as exc_info:
         load_phase0_inputs(repo_root)
-    assert exc_info.value.errors()[0]["loc"] == ("members",)
-
-
-def test_validate_phase0_exits_one_for_private_repository_without_team_plan(tmp_path: Path) -> None:
-    repo_root = copy_gate_repo(tmp_path)
-    evidence_path = repo_root / "fixtures" / "evidence" / "github-plan.sanitized.json"
-    payload = json.loads(evidence_path.read_text(encoding="utf-8"))
-    payload["visibility"] = "private"
-    evidence_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    completed = run_validate_phase0(repo_root)
-    assert completed.returncode == 1
-    parsed = json.loads(completed.stdout)
-    assert parsed["passed"] is False
-    failing = [check for check in parsed["checks"] if not check["passed"]]
-    assert [check["check_id"] for check in failing] == ["github_plan"]
-    assert failing[0]["reason_code"] == "plan_insufficient_for_private_repo_controls"
-
-
-def test_validate_phase0_exits_zero_for_current_repository_state(tmp_path: Path) -> None:
-    repo_root = copy_gate_repo(tmp_path)
-    completed = run_validate_phase0(repo_root)
-    assert completed.returncode == 0, completed.stderr
-    payload = json.loads(completed.stdout)
-    assert payload["passed"] is True
-
-
-def test_validate_phase0_exits_zero_when_all_checks_pass(tmp_path: Path) -> None:
-    repo_root = copy_gate_repo(tmp_path)
-    completed = run_validate_phase0(repo_root)
-    assert completed.returncode == 0, completed.stderr
-    parsed = json.loads(completed.stdout)
-    assert parsed["passed"] is True
-
-
-def test_validate_phase0_exits_two_for_invalid_config(tmp_path: Path) -> None:
-    repo_root = copy_gate_repo(tmp_path)
-    (repo_root / "config" / "organization.yaml").write_text(
-        "admins: []\nteam_leads: []\nmembers: []\npilot_repositories: []\n",
-        encoding="utf-8",
-    )
-    completed = run_validate_phase0(repo_root)
-    assert completed.returncode == 2
-    assert completed.stdout == ""
-
-
-def test_validate_phase0_exits_two_for_non_utf8_config(tmp_path: Path) -> None:
-    repo_root = copy_gate_repo(tmp_path)
-    (repo_root / "config" / "organization.yaml").write_bytes(b"\xff\xfe")
-    completed = run_validate_phase0(repo_root)
-    assert completed.returncode == 2
-    assert completed.stdout == ""
-    assert completed.stderr
+    too_short_locations = {
+        item["loc"] for item in exc_info.value.errors() if item["type"] == "too_short"
+    }
+    assert too_short_locations == {
+        ("admins",),
+        ("team_leads",),
+        ("members",),
+        ("pilot_repositories",),
+    }
 
 
 def test_aws_capacity_fails_for_wrong_environment() -> None:
@@ -650,7 +481,7 @@ def test_aws_capacity_fails_for_wrong_environment() -> None:
             aws_capacity=aws_capacity.model_copy(update={"environment": "production"}),  # type: ignore[arg-type]
         )
     )
-    check = get_check(result, "aws_capacity")
+    check = get_check(result, "inventory_aws_capacity")
     assert check.passed is False
     assert check.reason_code == "wrong_environment"
 
@@ -664,7 +495,7 @@ def test_aws_capacity_fails_when_self_reported_required_vcpus_is_too_low() -> No
     result = evaluate_phase0(
         replace(inputs, aws_capacity=aws_capacity.model_copy(update={"quotas": tuple(quotas)}))
     )
-    check = get_check(result, "aws_capacity")
+    check = get_check(result, "inventory_aws_capacity")
     assert check.passed is False
     assert check.reason_code == "capacity_increase_required"
 
@@ -688,7 +519,7 @@ def test_aws_capacity_fails_when_node_count_requires_more_vcpus_than_quota() -> 
         }
     )
     result = evaluate_phase0(replace(inputs, catalog=scaled_catalog))
-    check = get_check(result, "aws_capacity")
+    check = get_check(result, "inventory_aws_capacity")
     assert check.passed is False
     assert check.reason_code == "capacity_increase_required"
     assert gpu_profile.nodes == 1
@@ -736,55 +567,6 @@ def test_load_aws_capacity_evidence_rejects_missing_region(tmp_path: Path) -> No
     assert load_error == "evidence_invalid"
 
 
-def test_validate_phase0_reports_invalid_aws_capacity_evidence(tmp_path: Path) -> None:
-    repo_root = copy_gate_repo(tmp_path)
-    evidence_path = repo_root / "fixtures" / "evidence" / "service-quotas.sanitized.json"
-    payload = json.loads(evidence_path.read_text(encoding="utf-8"))
-    del payload["region"]
-    evidence_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    completed = run_validate_phase0(repo_root)
-    assert completed.returncode == 1
-    assert completed.stdout
-    parsed = json.loads(completed.stdout)
-    aws_check = next(check for check in parsed["checks"] if check["check_id"] == "aws_capacity")
-    assert aws_check["passed"] is False
-    assert aws_check["reason_code"] == "evidence_invalid"
-
-
-def test_validate_phase0_reports_production_environment_as_invalid_aws_capacity(
-    tmp_path: Path,
-) -> None:
-    repo_root = copy_gate_repo(tmp_path)
-    evidence_path = repo_root / "fixtures" / "evidence" / "service-quotas.sanitized.json"
-    payload = json.loads(evidence_path.read_text(encoding="utf-8"))
-    payload["environment"] = "production"
-    evidence_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    completed = run_validate_phase0(repo_root)
-    assert completed.returncode == 1
-    assert completed.stdout
-    parsed = json.loads(completed.stdout)
-    aws_check = next(check for check in parsed["checks"] if check["check_id"] == "aws_capacity")
-    assert aws_check["passed"] is False
-    assert aws_check["reason_code"] == "evidence_invalid"
-
-
-def test_validate_phase0_reports_account_id_in_alias_as_invalid_aws_capacity(
-    tmp_path: Path,
-) -> None:
-    repo_root = copy_gate_repo(tmp_path)
-    evidence_path = repo_root / "fixtures" / "evidence" / "service-quotas.sanitized.json"
-    payload = json.loads(evidence_path.read_text(encoding="utf-8"))
-    payload["account_alias"] = synthetic_account_id_alias()
-    evidence_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    completed = run_validate_phase0(repo_root)
-    assert completed.returncode == 1
-    assert completed.stdout
-    parsed = json.loads(completed.stdout)
-    aws_check = next(check for check in parsed["checks"] if check["check_id"] == "aws_capacity")
-    assert aws_check["passed"] is False
-    assert aws_check["reason_code"] == "evidence_invalid"
-
-
 def test_evidence_stale_fails_github_plan_and_aws_capacity_checks(tmp_path: Path) -> None:
     from datetime import UTC, datetime
 
@@ -803,8 +585,8 @@ def test_evidence_stale_fails_github_plan_and_aws_capacity_checks(tmp_path: Path
     assert inputs.aws_capacity is None
     assert inputs.aws_capacity_load_error == "evidence_stale"
     result = evaluate_phase0(inputs)
-    github_check = get_check(result, "github_plan")
-    aws_check = get_check(result, "aws_capacity")
+    github_check = get_check(result, "inventory_github_plan")
+    aws_check = get_check(result, "inventory_aws_capacity")
     assert github_check.passed is False
     assert github_check.reason_code == "evidence_stale"
     assert aws_check.passed is False

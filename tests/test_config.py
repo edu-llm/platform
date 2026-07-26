@@ -124,7 +124,7 @@ def manifest_payload() -> dict[str, object]:
         "maximum_attempts": 2,
         "checkpoint": {
             "interval_minutes": 30,
-            "destination_prefix": "s3://edullm-checkpoints/runs/",
+            "destination_prefix": "s3://sbsandbox-intern-edullm-checkpoints/runs/",
             "resume_required": True,
         },
     }
@@ -163,19 +163,23 @@ def catalog_payload() -> dict[str, object]:
         "compute_profiles": [
             {
                 "name": "cpu-32vcpu",
+                "instance_type": "c7i.8xlarge",
                 "accelerator": "cpu",
                 "nodes": 1,
                 "hourly_rate_usd": "1.428",
                 "pricing_source": "test",
                 "pricing_observed_at": "2026-07-24",
+                "provisioned": False,
             },
             {
                 "name": "gpu-4xa10g",
+                "instance_type": "g5.12xlarge",
                 "accelerator": "gpu",
                 "nodes": 1,
                 "hourly_rate_usd": "5.672",
                 "pricing_source": "test",
                 "pricing_observed_at": "2026-07-24",
+                "provisioned": False,
             },
         ],
         "workloads": [
@@ -195,7 +199,7 @@ def catalog_payload() -> dict[str, object]:
                 "maximum_attempts": 1,
                 "checkpoint": {
                     "interval_minutes": 30,
-                    "destination_prefix": "s3://edullm-checkpoints/runs/",
+                    "destination_prefix": "s3://sbsandbox-intern-edullm-checkpoints/runs/",
                     "resume_required": False,
                 },
             },
@@ -209,7 +213,10 @@ def policy_payload() -> dict[str, object]:
             "routine_maximum_cost_usd": "500",
             "routine_maximum_runtime_hours": "12",
             "routine_maximum_attempts": 2,
+            "routine_maximum_fanout_size": 64,
+            "routine_maximum_parallelism": 8,
         },
+        "approval_scope": "organization",
         "routine_approver_role": "team_lead",
         "exception_approver_roles": ["platform_admin"],
         "denied_outright": [

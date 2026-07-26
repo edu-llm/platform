@@ -11,7 +11,11 @@ from edullm_platform.contracts.manifest import (
     IMAGE_DIGEST_PATTERN,
     RunManifest,
 )
-from edullm_platform.contracts.workload import CostInputs, WorkloadCatalog
+from edullm_platform.contracts.workload import (
+    CostInputs,
+    UnregisteredComputeProfileError,
+    WorkloadCatalog,
+)
 
 COMMIT_SHA_REGEX = re.compile(COMMIT_SHA_PATTERN)
 IMAGE_DIGEST_REGEX = re.compile(IMAGE_DIGEST_PATTERN)
@@ -20,6 +24,9 @@ REPRESENTATIVE_MANIFEST_COSTS: Final = {
     "cpu-routine.yaml": Decimal("2.86"),
     "gpu-routine.yaml": Decimal("5.67"),
     "gpu-exception.yaml": Decimal("73.74"),
+    "olmo-branch-routine.yaml": Decimal("6.04"),
+    "sagemaker-routine.yaml": Decimal("1.52"),
+    "multiseed-routine.yaml": Decimal("20.12"),
 }
 
 
@@ -41,9 +48,19 @@ def is_workload_profile_registered(manifest: RunManifest, catalog: WorkloadCatal
     return manifest.workload_profile in registered_names
 
 
+def manifest_fanout_size(manifest: RunManifest) -> int:
+    return 1 if manifest.fanout is None else manifest.fanout.size
+
+
+def manifest_fanout_parallelism(manifest: RunManifest) -> int:
+    return 1 if manifest.fanout is None else manifest.fanout.max_parallel
+
+
 def compute_manifest_maximum_cost(manifest: RunManifest, catalog: WorkloadCatalog) -> Decimal:
     if not is_compute_profile_registered(manifest, catalog):
-        raise ValueError(f"unregistered compute profile: {manifest.compute_profile!r}")
+        raise UnregisteredComputeProfileError(
+            f"unregistered compute profile: {manifest.compute_profile!r}"
+        )
     profile_by_name = {profile.name: profile for profile in catalog.compute_profiles}
     profile = profile_by_name[manifest.compute_profile]
     return CostInputs(
@@ -51,6 +68,7 @@ def compute_manifest_maximum_cost(manifest: RunManifest, catalog: WorkloadCatalo
         nodes=profile.nodes,
         maximum_runtime_hours=manifest.maximum_runtime_hours,
         maximum_attempts=manifest.maximum_attempts,
+        cells=manifest_fanout_size(manifest),
     ).maximum_compute_cost_usd
 
 

@@ -1,5 +1,28 @@
 {
   "$defs": {
+    "AttributionTag": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Key",
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "value"
+      ],
+      "title": "AttributionTag",
+      "type": "object"
+    },
     "PersonRef": {
       "additionalProperties": false,
       "properties": {
@@ -28,6 +51,130 @@
       ],
       "title": "PersonRef",
       "type": "object"
+    },
+    "RepositoryBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "permitted_team_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Permitted Team Ids",
+          "type": "array"
+        },
+        "repository": {
+          "minLength": 1,
+          "pattern": "^\\S+$",
+          "title": "Repository",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repository",
+        "permitted_team_ids"
+      ],
+      "title": "RepositoryBinding",
+      "type": "object"
+    },
+    "TeamBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_compute_profiles": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Allowed Compute Profiles",
+          "type": "array"
+        },
+        "attribution_tags": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AttributionTag"
+          },
+          "title": "Attribution Tags",
+          "type": "array"
+        },
+        "github_team_slug": {
+          "minLength": 1,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "title": "Github Team Slug",
+          "type": "string"
+        },
+        "lead_logins": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9-]+$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Lead Logins",
+          "type": "array"
+        },
+        "member_logins": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9-]+$",
+            "type": "string"
+          },
+          "title": "Member Logins",
+          "type": "array"
+        },
+        "s3_namespace": {
+          "pattern": "^sbsandbox-intern-[a-z0-9][a-z0-9-]*(?:/[a-z0-9][a-z0-9._-]*)*$",
+          "title": "S3 Namespace",
+          "type": "string"
+        },
+        "team_id": {
+          "minLength": 1,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "title": "Team Id",
+          "type": "string"
+        },
+        "wandb_entity": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Wandb Entity",
+          "type": "string"
+        }
+      },
+      "required": [
+        "team_id",
+        "github_team_slug",
+        "lead_logins",
+        "s3_namespace",
+        "wandb_entity"
+      ],
+      "title": "TeamBinding",
+      "type": "object"
+    },
+    "TeamBindingCatalog": {
+      "additionalProperties": false,
+      "properties": {
+        "repositories": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/RepositoryBinding"
+          },
+          "title": "Repositories",
+          "type": "array"
+        },
+        "teams": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/TeamBinding"
+          },
+          "title": "Teams",
+          "type": "array"
+        }
+      },
+      "title": "TeamBindingCatalog",
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -38,6 +185,7 @@
         "pattern": "^[A-Za-z0-9-]+$",
         "type": "string"
       },
+      "minItems": 1,
       "title": "Admins",
       "type": "array"
     },
@@ -55,8 +203,16 @@
         "pattern": "^\\S+$",
         "type": "string"
       },
+      "minItems": 1,
       "title": "Pilot Repositories",
       "type": "array"
+    },
+    "team_bindings": {
+      "$ref": "#/$defs/TeamBindingCatalog",
+      "default": {
+        "repositories": [],
+        "teams": []
+      }
     },
     "team_leads": {
       "items": {
@@ -64,6 +220,7 @@
         "pattern": "^[A-Za-z0-9-]+$",
         "type": "string"
       },
+      "minItems": 1,
       "title": "Team Leads",
       "type": "array"
     }

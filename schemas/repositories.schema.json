@@ -1,0 +1,84 @@
+{
+  "$defs": {
+    "RegisteredRepository": {
+      "additionalProperties": false,
+      "properties": {
+        "base_image_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Base Image Digest",
+          "type": "string"
+        },
+        "base_image_repository": {
+          "minLength": 1,
+          "pattern": "^[^:@]*[^:@\\s][^:@]*$",
+          "title": "Base Image Repository",
+          "type": "string"
+        },
+        "build_context": {
+          "minLength": 1,
+          "pattern": "^(?:\\.|[^./\\\\][^/\\\\]*|\\.[^./\\\\][^/\\\\]*|\\.\\.[^/\\\\]+)(?:/(?:\\.|[^./\\\\][^/\\\\]*|\\.[^./\\\\][^/\\\\]*|\\.\\.[^/\\\\]+))*$",
+          "title": "Build Context",
+          "type": "string"
+        },
+        "default_branch": {
+          "minLength": 1,
+          "pattern": ".*\\S.*",
+          "title": "Default Branch",
+          "type": "string"
+        },
+        "dockerfile_path": {
+          "minLength": 1,
+          "pattern": "^(?:(?:[^./\\\\][^/\\\\]*|\\.[^./\\\\][^/\\\\]*|\\.\\.[^/\\\\]+)|(?:\\.|[^./\\\\][^/\\\\]*|\\.[^./\\\\][^/\\\\]*|\\.\\.[^/\\\\]+)/(?:\\.|[^./\\\\][^/\\\\]*|\\.[^./\\\\][^/\\\\]*|\\.\\.[^/\\\\]+)(?:/(?:\\.|[^./\\\\][^/\\\\]*|\\.[^./\\\\][^/\\\\]*|\\.\\.[^/\\\\]+))*)$",
+          "title": "Dockerfile Path",
+          "type": "string"
+        },
+        "ecr_repository": {
+          "maxLength": 256,
+          "minLength": 18,
+          "pattern": "^sbsandbox-intern-[a-z0-9]+(?:[._/-][a-z0-9]+)*$",
+          "title": "Ecr Repository",
+          "type": "string"
+        },
+        "github_repository_id": {
+          "exclusiveMinimum": 0,
+          "title": "Github Repository Id",
+          "type": "integer"
+        },
+        "repository": {
+          "minLength": 1,
+          "pattern": ".*\\S.*",
+          "title": "Repository",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repository",
+        "github_repository_id",
+        "default_branch",
+        "ecr_repository",
+        "base_image_repository",
+        "base_image_digest",
+        "dockerfile_path",
+        "build_context"
+      ],
+      "title": "RegisteredRepository",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "repositories": {
+      "items": {
+        "$ref": "#/$defs/RegisteredRepository"
+      },
+      "minItems": 1,
+      "title": "Repositories",
+      "type": "array"
+    }
+  },
+  "required": [
+    "repositories"
+  ],
+  "title": "RepositoryRegistry",
+  "type": "object"
+}

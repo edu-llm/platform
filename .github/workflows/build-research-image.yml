@@ -1,0 +1,722 @@
+name: Build research image
+
+# The publisher role trust policy pins job_workflow_ref to
+# edu-llm/platform/.github/workflows/build-research-image.yml@refs/heads/main.
+# Renaming or moving this file silently revokes every publish. Do not rename it.
+#
+# Caller contract. None of this is discoverable from the call site, and the first two
+# fail as an AssumeRole denial that reads like a broken role ARN rather than like a cause:
+#
+#   1. The calling job must grant `permissions: id-token: write`. A called workflow can
+#      only downgrade the permissions it is given, so the `id-token: write` declared on
+#      the publish job below cannot create the grant on its own.
+#   2. The caller must reference this workflow as `@main`. The trust policy matches
+#      job_workflow_ref with StringEquals against `@refs/heads/main`, so a SHA-pinned or
+#      tag-pinned `uses:` mints a claim the role will never accept.
+#   3. The build sees one commit, not the history. The gate job checks the caller out at
+#      `fetch-depth: 0` because that checkout is also where the caller's own test command
+#      runs, but the publish job takes the default shallow clone, because a full .git is
+#      weight `docker build` copies into a layer from a `.` context. A Dockerfile that
+#      derives its version from the repository — `git describe`, setuptools_scm — will
+#      therefore pass the gate and then mis-version or fail in publish, where the failure
+#      arrives after the caller has already been told its commit is publishable. Pass the
+#      version in as a build argument instead of reading it out of the checkout.
+#
+#   jobs:
+#     publish:
+#       permissions:
+#         contents: read
+#         id-token: write
+#       uses: edu-llm/platform/.github/workflows/build-research-image.yml@main
+#       with:
+#         repository: OLMo-core
+#         publisher_role_arn: ${{ vars.AWS_ECR_PUBLISHER_ROLE_ARN }}
+on:
+  workflow_call:
+    inputs:
+      repository:
+        description: Registry key of the research repository, such as OLMo-core.
+        required: true
+        type: string
+      publisher_role_arn:
+        description: ARN of the ECR publisher role assumed through OIDC.
+        required: true
+        type: string
+      aws_region:
+        description: Region hosting the registered ECR repository.
+        required: false
+        type: string
+        default: us-east-1
+      test_command:
+        description: Optional shell command running the caller's own tests.
+        required: false
+        type: string
+        default: ""
+    outputs:
+      image_digest:
+        description: Digest of the published image, read back from the registry.
+        value: ${{ jobs.publish.outputs.image_digest }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-research-image-${{ github.repository }}-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  # Credential free by construction. The absent id-token permission is one of the two
+  # independent reasons a pull request cannot reach AWS through this workflow; the other
+  # is the branch-scoped `sub` condition on the publisher role.
+  verify:
+    name: Verify source identity
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      commit_sha: ${{ steps.identity.outputs.commit_sha }}
+      ecr_repository: ${{ steps.identity.outputs.ecr_repository }}
+    steps:
+      # Three preconditions that all degrade quietly or confusingly. The job.workflow_*
+      # values are documented as unavailable on GitHub Enterprise Server, where they
+      # resolve to the empty string rather than failing, which would pin the tooling
+      # checkout to the default branch and hand provenance a ref it cannot record. On
+      # schedule, issue_comment, and issues, github.ref is the default branch rather than
+      # a reviewed push, so those events would pass the branch gate and mint a `sub` the
+      # trust policy accepts. And a region outside the sandbox reaches AWS only to come
+      # back as an AccessDenied that reads like a broken role.
+      - name: Verify the caller contract
+        env:
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+          WORKFLOW_REF: ${{ job.workflow_ref }}
+          WORKFLOW_FILE_PATH: ${{ job.workflow_file_path }}
+          EVENT_NAME: ${{ github.event_name }}
+          AWS_REGION: ${{ inputs.aws_region }}
+        run: |
+          set -euo pipefail
+          missing=""
+          for name in WORKFLOW_REPOSITORY WORKFLOW_SHA WORKFLOW_REF WORKFLOW_FILE_PATH; do
+            if [[ -z "${!name-}" ]]; then
+              missing="${missing} ${name}"
+            fi
+          done
+          if [[ -n "${missing}" ]]; then
+            echo "job_workflow_context_unavailable:${missing}" >&2
+            echo "This workflow pins its own tooling and its provenance record to the job context workflow identity, which GitHub Enterprise Server does not provide." >&2
+            exit 1
+          fi
+          if [[ "${WORKFLOW_REF}" != */*@* ]]; then
+            echo "job_workflow_ref_malformed" >&2
+            echo "job.workflow_ref must read owner/repo/path@ref so provenance can record the claim the publisher role trust policy asserts." >&2
+            exit 1
+          fi
+          case "${EVENT_NAME}" in
+            push|workflow_dispatch) ;; # events whose github.ref names a reviewed commit
+            *)
+              echo "unsupported_caller_event:${EVENT_NAME}" >&2
+              echo "This workflow publishes the commit named by github.ref, which on every other event is the default branch rather than the commit the caller meant." >&2
+              exit 1
+              ;;
+          esac
+          case "${AWS_REGION}" in
+            us-east-1|us-east-2) ;; # allowed sandbox regions
+            *)
+              echo "unsupported_aws_region:${AWS_REGION}" >&2
+              echo "The publisher role and the registered ECR repository exist only in the allowed sandbox regions." >&2
+              exit 1
+              ;;
+          esac
+
+      # fetch-depth 0 is for the caller, not for us: verification needs only git status,
+      # git rev-parse HEAD, and git ls-remote, but the caller's own test command runs
+      # against this checkout and deriving a version from git describe is ordinary.
+      - name: Check out research repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          path: source
+
+      # Pinned to the reviewed reusable-workflow commit rather than to a branch, so the
+      # tooling that judges the caller is the tooling that was reviewed with this file.
+      # The repository comes from the same job context, so a fork of this workflow checks
+      # out its own tooling instead of this one's.
+      - name: Check out platform tooling
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: platform
+          persist-credentials: false
+
+      # pipx installs the pin, but an earlier uv already on PATH would keep answering and
+      # resolve the lockfile under a version nobody chose, so the pin is verified rather
+      # than assumed.
+      - name: Install platform tooling
+        working-directory: platform
+        env:
+          UV_VERSION: "0.11.32"
+        run: |
+          set -euo pipefail
+          pipx install "uv==${UV_VERSION}"
+          installed="$(uv --version)"
+          if [[ "${installed}" != "uv ${UV_VERSION}" && "${installed}" != "uv ${UV_VERSION} "* ]]; then
+            echo "unexpected_uv_version" >&2
+            echo "Expected uv ${UV_VERSION} but PATH answers with: ${installed}" >&2
+            exit 1
+          fi
+          uv sync --locked
+
+      # Runs before the caller's tests: verification requires a clean work tree, and a
+      # test run leaves caches and artefacts behind that would look like a dirty tree.
+      # No --output: this job runs on its own runner and the publish job re-derives the
+      # SourceIdentity document there, so a document written here is never read.
+      - name: Verify source identity
+        id: identity
+        working-directory: platform
+        env:
+          RESEARCH_REPOSITORY: ${{ inputs.repository }}
+          RESEARCH_REPOSITORY_ID: ${{ github.repository_id }}
+          RESEARCH_REF: ${{ github.ref }}
+          RESEARCH_COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          uv run --frozen python tools/verify_source_identity.py \
+            --registry config/repositories.yaml \
+            --repository "${RESEARCH_REPOSITORY}" \
+            --github-repository-id "${RESEARCH_REPOSITORY_ID}" \
+            --ref "${RESEARCH_REF}" \
+            --commit-sha "${RESEARCH_COMMIT_SHA}" \
+            --repository-root "${GITHUB_WORKSPACE}/source" \
+            --github-output "${GITHUB_OUTPUT}"
+
+      # The child shell gets its own strictness flags. Inheriting none of the step's, a
+      # compound command such as `pytest && ruff check .` would report only the status of
+      # its last component and a failing test suite would publish an image.
+      - name: Run research repository tests
+        if: inputs.test_command != ''
+        working-directory: source
+        env:
+          TEST_COMMAND: ${{ inputs.test_command }}
+        run: |
+          set -euo pipefail
+          bash -euo pipefail -c "${TEST_COMMAND}"
+
+  # The publisher role is meant to hold nine ECR actions on one repository and nothing
+  # else. That is a fact about a committed template: the role was deployed once from a
+  # laptop and is not redeployed by CI, so a policy widened in the console would leave
+  # every test in this repository green. This job is the other half of that claim, and it
+  # runs before publish so a widened role stops a publish rather than being found once an
+  # image is already in the registry.
+  #
+  # It is a job here rather than a workflow of its own, and it has to be. The trust policy
+  # pins job_workflow_ref to this file with StringEquals, so no other workflow file can
+  # assume the role at all, and widening the trust to a second file would let that file
+  # push images while bypassing the gate job, the clean-tree check and the registered-base
+  # enforcement. job_workflow_ref names the file rather than the job, so a job costs
+  # nothing. The separation that would have bought is not worth the gate it would open.
+  deny:
+    name: Verify the publisher role is still narrow
+    runs-on: ubuntu-latest
+    needs: verify
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      # Identical to the other two jobs' guard, and repeated for the same reason: this
+      # job runs on its own runner and must fail before it can reach AWS with an identity
+      # it cannot describe.
+      - name: Verify the caller contract
+        env:
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+          WORKFLOW_REF: ${{ job.workflow_ref }}
+          WORKFLOW_FILE_PATH: ${{ job.workflow_file_path }}
+          EVENT_NAME: ${{ github.event_name }}
+          AWS_REGION: ${{ inputs.aws_region }}
+        run: |
+          set -euo pipefail
+          missing=""
+          for name in WORKFLOW_REPOSITORY WORKFLOW_SHA WORKFLOW_REF WORKFLOW_FILE_PATH; do
+            if [[ -z "${!name-}" ]]; then
+              missing="${missing} ${name}"
+            fi
+          done
+          if [[ -n "${missing}" ]]; then
+            echo "job_workflow_context_unavailable:${missing}" >&2
+            echo "This workflow pins its own tooling and its provenance record to the job context workflow identity, which GitHub Enterprise Server does not provide." >&2
+            exit 1
+          fi
+          if [[ "${WORKFLOW_REF}" != */*@* ]]; then
+            echo "job_workflow_ref_malformed" >&2
+            echo "job.workflow_ref must read owner/repo/path@ref so provenance can record the claim the publisher role trust policy asserts." >&2
+            exit 1
+          fi
+          case "${EVENT_NAME}" in
+            push|workflow_dispatch) ;; # events whose github.ref names a reviewed commit
+            *)
+              echo "unsupported_caller_event:${EVENT_NAME}" >&2
+              echo "This workflow publishes the commit named by github.ref, which on every other event is the default branch rather than the commit the caller meant." >&2
+              exit 1
+              ;;
+          esac
+          case "${AWS_REGION}" in
+            us-east-1|us-east-2) ;; # allowed sandbox regions
+            *)
+              echo "unsupported_aws_region:${AWS_REGION}" >&2
+              echo "The publisher role and the registered ECR repository exist only in the allowed sandbox regions." >&2
+              exit 1
+              ;;
+          esac
+
+      # No checkout of the caller. This job holds a publisher session, and the caller's
+      # code has no part in deciding what that session is allowed to do.
+      - name: Check out platform tooling
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: platform
+          persist-credentials: false
+
+      - name: Install platform tooling
+        working-directory: platform
+        env:
+          UV_VERSION: "0.11.32"
+        run: |
+          set -euo pipefail
+          pipx install "uv==${UV_VERSION}"
+          installed="$(uv --version)"
+          if [[ "${installed}" != "uv ${UV_VERSION}" && "${installed}" != "uv ${UV_VERSION} "* ]]; then
+            echo "unexpected_uv_version" >&2
+            echo "Expected uv ${UV_VERSION} but PATH answers with: ${installed}" >&2
+            exit 1
+          fi
+          uv sync --locked
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ inputs.publisher_role_arn }}
+          aws-region: ${{ inputs.aws_region }}
+          # Six calls and a lockfile install. The role's maximum is an hour and this job
+          # has no use for one, so it asks for the shortest session STS issues.
+          role-duration-seconds: 900
+          mask-aws-account-id: true
+
+      # Every call is aimed so that being permitted changes nothing: at a resource that
+      # is not there, or at a role name IAM already holds and so cannot create twice.
+      # Deciding whether a failure was a refusal or merely a not-found needs the error
+      # text, and reading that in a run body would leave it one echo away from a
+      # world-readable log, so the attempts are made by the tool rather than by this
+      # shell. The record it writes is masked field by field by the contract that holds
+      # it; the raw text never leaves the process.
+      - name: Attempt the actions the publisher must not have
+        working-directory: platform
+        env:
+          RESEARCH_REPOSITORY: ${{ inputs.repository }}
+          AWS_REGION: ${{ inputs.aws_region }}
+        run: |
+          set -euo pipefail
+          denials_file="${RUNNER_TEMP}/publisher-denials.json"
+          uv run --frozen python tools/verify_publisher_denials.py \
+            --registry config/repositories.yaml \
+            --repository "${RESEARCH_REPOSITORY}" \
+            --region "${AWS_REGION}" \
+            --output "${denials_file}"
+          cat "${denials_file}"
+
+  publish:
+    name: Build and publish image
+    runs-on: ubuntu-latest
+    needs: [verify, deny]
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      image_digest: ${{ steps.digest.outputs.image_digest }}
+    steps:
+      # Identical to the gate job's guard, and repeated rather than inherited because this
+      # job runs on its own runner and must fail before it can reach AWS with an identity
+      # it cannot describe.
+      - name: Verify the caller contract
+        env:
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+          WORKFLOW_REF: ${{ job.workflow_ref }}
+          WORKFLOW_FILE_PATH: ${{ job.workflow_file_path }}
+          EVENT_NAME: ${{ github.event_name }}
+          AWS_REGION: ${{ inputs.aws_region }}
+        run: |
+          set -euo pipefail
+          missing=""
+          for name in WORKFLOW_REPOSITORY WORKFLOW_SHA WORKFLOW_REF WORKFLOW_FILE_PATH; do
+            if [[ -z "${!name-}" ]]; then
+              missing="${missing} ${name}"
+            fi
+          done
+          if [[ -n "${missing}" ]]; then
+            echo "job_workflow_context_unavailable:${missing}" >&2
+            echo "This workflow pins its own tooling and its provenance record to the job context workflow identity, which GitHub Enterprise Server does not provide." >&2
+            exit 1
+          fi
+          if [[ "${WORKFLOW_REF}" != */*@* ]]; then
+            echo "job_workflow_ref_malformed" >&2
+            echo "job.workflow_ref must read owner/repo/path@ref so provenance can record the claim the publisher role trust policy asserts." >&2
+            exit 1
+          fi
+          case "${EVENT_NAME}" in
+            push|workflow_dispatch) ;; # events whose github.ref names a reviewed commit
+            *)
+              echo "unsupported_caller_event:${EVENT_NAME}" >&2
+              echo "This workflow publishes the commit named by github.ref, which on every other event is the default branch rather than the commit the caller meant." >&2
+              exit 1
+              ;;
+          esac
+          case "${AWS_REGION}" in
+            us-east-1|us-east-2) ;; # allowed sandbox regions
+            *)
+              echo "unsupported_aws_region:${AWS_REGION}" >&2
+              echo "The publisher role and the registered ECR repository exist only in the allowed sandbox regions." >&2
+              exit 1
+              ;;
+          esac
+
+      # No fetch-depth here. Nothing in this job reads history, and this checkout is the
+      # `docker build` context, where a full .git is weight a layer can copy.
+      - name: Check out research repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ needs.verify.outputs.commit_sha }}
+          path: source
+
+      - name: Check out platform tooling
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: platform
+          persist-credentials: false
+
+      - name: Install platform tooling
+        working-directory: platform
+        env:
+          UV_VERSION: "0.11.32"
+        run: |
+          set -euo pipefail
+          pipx install "uv==${UV_VERSION}"
+          installed="$(uv --version)"
+          if [[ "${installed}" != "uv ${UV_VERSION}" && "${installed}" != "uv ${UV_VERSION} "* ]]; then
+            echo "unexpected_uv_version" >&2
+            echo "Expected uv ${UV_VERSION} but PATH answers with: ${installed}" >&2
+            exit 1
+          fi
+          uv sync --locked
+
+      # This job runs on a second runner, so it re-derives the SourceIdentity document
+      # instead of trusting a value carried across the job boundary. It also fails if the
+      # branch head moved while the gate was running.
+      - name: Re-verify source identity
+        working-directory: platform
+        env:
+          RESEARCH_REPOSITORY: ${{ inputs.repository }}
+          RESEARCH_REPOSITORY_ID: ${{ github.repository_id }}
+          RESEARCH_REF: ${{ github.ref }}
+          RESEARCH_COMMIT_SHA: ${{ needs.verify.outputs.commit_sha }}
+        run: |
+          set -euo pipefail
+          uv run --frozen python tools/verify_source_identity.py \
+            --registry config/repositories.yaml \
+            --repository "${RESEARCH_REPOSITORY}" \
+            --github-repository-id "${RESEARCH_REPOSITORY_ID}" \
+            --ref "${RESEARCH_REF}" \
+            --commit-sha "${RESEARCH_COMMIT_SHA}" \
+            --repository-root "${GITHUB_WORKSPACE}/source" \
+            --output "${RUNNER_TEMP}/source-identity.json"
+
+      # actions/checkout leaves the run's token in source/.git/config so that the
+      # re-verification above can reach the remote with `git ls-remote`. build_context is
+      # the repository root, so a Dockerfile with `COPY . .` would bake that token into a
+      # published layer. The credentials go the moment the last step that needs them is
+      # done, and anything left behind stops the run rather than being built into a layer.
+      - name: Remove the source checkout credentials
+        working-directory: source
+        run: |
+          set -euo pipefail
+          unset_status=0
+          git config --local --unset-all "http.https://github.com/.extraheader" || unset_status=$?
+          if [[ "${unset_status}" -ne 0 && "${unset_status}" -ne 5 ]]; then
+            echo "source_credentials_unset_failed" >&2
+            exit 1
+          fi
+          remaining_status=0
+          git config --local --name-only --get-regexp '^http\..*\.extraheader$' > /dev/null || remaining_status=$?
+          if [[ "${remaining_status}" -ne 1 ]]; then
+            echo "source_credentials_remain" >&2
+            exit 1
+          fi
+
+      - name: Resolve build inputs
+        id: build_inputs
+        working-directory: platform
+        env:
+          RESEARCH_REPOSITORY: ${{ inputs.repository }}
+        run: |
+          set -euo pipefail
+          uv run --frozen python tools/resolve_build_inputs.py \
+            --registry config/repositories.yaml \
+            --repository "${RESEARCH_REPOSITORY}" \
+            --github-output "${GITHUB_OUTPUT}"
+
+      # The registered base digest reaches docker build only as --build-arg BASE_IMAGE,
+      # which a Dockerfile is free to ignore by hardcoding its own FROM. Provenance would
+      # still record base_image_digest from the registry, so the record would assert a
+      # fact about the image that nothing established. Enforce the contract instead.
+      - name: Require the registered base image
+        working-directory: platform
+        env:
+          RESEARCH_REPOSITORY: ${{ inputs.repository }}
+        run: |
+          set -euo pipefail
+          uv run --frozen python tools/verify_dockerfile_base.py \
+            --registry config/repositories.yaml \
+            --repository "${RESEARCH_REPOSITORY}" \
+            --repository-root "${GITHUB_WORKSPACE}/source"
+
+      - name: Configure AWS credentials
+        id: credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ inputs.publisher_role_arn }}
+          aws-region: ${{ inputs.aws_region }}
+          role-duration-seconds: 3600
+          # Defaults to false in v6, and `docker push` prints the registry host, so
+          # without this the account id lands in a world-readable log.
+          mask-aws-account-id: true
+
+      # ECR tags are immutable and `docker push` happens before the read-back and the
+      # provenance record, so any failure after the push would make this commit
+      # unpublishable forever: the run-URL label guarantees a different manifest digest on
+      # the retry, and the tag cannot be rewritten. Resolving the tag first turns a re-run
+      # into a resume. DescribeImages names the registry id in its error text, so a failed
+      # lookup is never echoed and is never mistaken for an absent image.
+      - name: Look for an already published image
+        id: preflight
+        env:
+          ECR_REPOSITORY: ${{ needs.verify.outputs.ecr_repository }}
+          COMMIT_SHA: ${{ needs.verify.outputs.commit_sha }}
+        run: |
+          set -euo pipefail
+          image_tag="${COMMIT_SHA:0:12}"
+          echo "image_tag=${image_tag}" >> "${GITHUB_OUTPUT}"
+          digest_file="${RUNNER_TEMP}/preflight-digest.txt"
+          error_file="${RUNNER_TEMP}/preflight-error.txt"
+          lookup_status=0
+          aws ecr describe-images \
+            --repository-name "${ECR_REPOSITORY}" \
+            --image-ids "imageTag=${image_tag}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text > "${digest_file}" 2> "${error_file}" || lookup_status=$?
+          if [[ "${lookup_status}" -eq 0 ]]; then
+            existing_digest="$(cat "${digest_file}")"
+            if [[ ! "${existing_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "preflight_digest_unreadable" >&2
+              exit 1
+            fi
+            echo "image_digest=${existing_digest}" >> "${GITHUB_OUTPUT}"
+            echo "Tag ${image_tag} is already published. Skipping build and push."
+          elif grep -q ImageNotFoundException "${error_file}"; then
+            echo "Tag ${image_tag} is not published yet. Building and pushing."
+          else
+            echo "preflight_lookup_failed" >&2
+            exit 1
+          fi
+
+      # Resuming is only safe if the published image is the image this run would have
+      # built, and the tag alone cannot say so: it encodes twelve characters of the commit
+      # and nothing else, while the provenance record re-derives the rest at write time
+      # from config/repositories.yaml as it stands now. Resuming an older commit after the
+      # registered base digest changed would otherwise record the new base for an image
+      # built from the old one, which is the unverified assertion the Dockerfile gate
+      # above exists to prevent, arriving by a road that gate cannot see because it
+      # inspects the checkout rather than the image. Comparing the labels also restores
+      # the loud rejection a twelve-character tag collision used to get from the
+      # immutable push.
+      #
+      # BatchGetImage and GetDownloadUrlForLayer are already among the publisher role's
+      # actions, and the config blob those two reach carries the labels, so this needs no
+      # new permission. Reading it through the API rather than the Docker CLI also keeps
+      # the resume path free of both a registry login and a full image pull.
+      - name: Verify the published image is the one this run would have built
+        if: steps.preflight.outputs.image_digest != ''
+        working-directory: platform
+        env:
+          ECR_REPOSITORY: ${{ needs.verify.outputs.ecr_repository }}
+          IMAGE_DIGEST: ${{ steps.preflight.outputs.image_digest }}
+          BASE_REFERENCE: ${{ steps.build_inputs.outputs.base_reference }}
+          COMMIT_SHA: ${{ needs.verify.outputs.commit_sha }}
+        run: |
+          set -euo pipefail
+          manifest_file="${RUNNER_TEMP}/published-manifest.json"
+          digest_file="${RUNNER_TEMP}/published-config-digest.txt"
+          url_file="${RUNNER_TEMP}/published-config-url.txt"
+          config_file="${RUNNER_TEMP}/published-config.json"
+          aws ecr batch-get-image \
+            --repository-name "${ECR_REPOSITORY}" \
+            --image-ids "imageDigest=${IMAGE_DIGEST}" \
+            --accepted-media-types \
+              application/vnd.docker.distribution.manifest.v2+json \
+              application/vnd.oci.image.manifest.v1+json \
+            --query 'images[0].imageManifest' \
+            --output text > "${manifest_file}"
+          uv run --frozen python tools/read_image_config_digest.py \
+            --manifest "${manifest_file}" \
+            --output "${digest_file}"
+          config_digest="$(cat "${digest_file}")"
+          aws ecr get-download-url-for-layer \
+            --repository-name "${ECR_REPOSITORY}" \
+            --layer-digest "${config_digest}" \
+            --query downloadUrl \
+            --output text > "${url_file}"
+          # The download URL carries an S3 signature, which mask-aws-account-id cannot
+          # redact because it is not an account id, so the diagnostics curl writes about
+          # a failed fetch have to stay unprinted.
+          download_url="$(cat "${url_file}")"
+          download_status=0
+          curl --silent --show-error --fail --location \
+            --output "${config_file}" "${download_url}" 2>/dev/null || download_status=$?
+          if [[ "${download_status}" -ne 0 ]]; then
+            echo "published_config_unreachable" >&2
+            exit 1
+          fi
+          # The image was built by whatever run first published this tag, so the only
+          # honest built_at is the one the image records about itself. This step is the
+          # only place on the resume path that holds the configuration blob it lives in.
+          uv run --frozen python tools/verify_published_image.py \
+            --image-config "${config_file}" \
+            --base-reference "${BASE_REFERENCE}" \
+            --commit-sha "${COMMIT_SHA}" \
+            --created-output "${RUNNER_TEMP}/image-created.txt"
+          echo "The published image matches this commit and the registered base image."
+
+      # The registry host is composed here from the assumed identity so that no account
+      # identifier is written into this repository or into any published artefact.
+      - name: Log in to Amazon ECR
+        id: login
+        if: steps.preflight.outputs.image_digest == ''
+        env:
+          AWS_ACCOUNT_ID: ${{ steps.credentials.outputs.aws-account-id }}
+          AWS_REGION: ${{ inputs.aws_region }}
+        run: |
+          set -euo pipefail
+          registry="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          aws ecr get-login-password | docker login --username AWS --password-stdin "${registry}"
+          echo "registry=${registry}" >> "${GITHUB_OUTPUT}"
+
+      # The tag is immutable in ECR, so a second push of the same commit fails and is
+      # meant to fail. There is deliberately no retry, overwrite, or fallback tag: the
+      # pre-flight lookup above is what makes a re-run safe.
+      - name: Build and push image
+        id: image
+        if: steps.preflight.outputs.image_digest == ''
+        working-directory: source
+        env:
+          REGISTRY: ${{ steps.login.outputs.registry }}
+          ECR_REPOSITORY: ${{ needs.verify.outputs.ecr_repository }}
+          IMAGE_TAG: ${{ steps.preflight.outputs.image_tag }}
+          BASE_REFERENCE: ${{ steps.build_inputs.outputs.base_reference }}
+          DOCKERFILE_PATH: ${{ steps.build_inputs.outputs.dockerfile_path }}
+          BUILD_CONTEXT: ${{ steps.build_inputs.outputs.build_context }}
+          COMMIT_SHA: ${{ needs.verify.outputs.commit_sha }}
+          SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          image_reference="${REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          docker build \
+            --file "${DOCKERFILE_PATH}" \
+            --build-arg "BASE_IMAGE=${BASE_REFERENCE}" \
+            --label "org.opencontainers.image.revision=${COMMIT_SHA}" \
+            --label "org.opencontainers.image.source=${SOURCE_URL}" \
+            --label "org.opencontainers.image.base.name=${BASE_REFERENCE}" \
+            --label "edullm.workflow.run.url=${RUN_URL}" \
+            --tag "${image_reference}" \
+            "${BUILD_CONTEXT}"
+          # The creation time the image records for itself, which is what provenance
+          # writes as built_at on both paths. Read before the push so a build that cannot
+          # state one costs nothing: the tag is still free and the commit publishable.
+          created_file="${RUNNER_TEMP}/image-created.txt"
+          docker image inspect --format '{{.Created}}' "${image_reference}" \
+            > "${created_file}"
+          image_created="$(cat "${created_file}")"
+          if [[ ! "${image_created}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$ ]]; then
+            echo "image_created_unreadable" >&2
+            exit 1
+          fi
+          docker push "${image_reference}"
+
+      # The digest that leaves this workflow is the one the registry stored, not the one
+      # the local daemon reported. Anything else would let a local build claim an
+      # identity ECR never accepted. This never skips: a resumed run still states the
+      # digest the registry holds right now.
+      - name: Read published digest from the registry
+        id: digest
+        env:
+          ECR_REPOSITORY: ${{ needs.verify.outputs.ecr_repository }}
+          IMAGE_TAG: ${{ steps.preflight.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          digest_file="${RUNNER_TEMP}/image-digest.txt"
+          aws ecr describe-images \
+            --repository-name "${ECR_REPOSITORY}" \
+            --image-ids "imageTag=${IMAGE_TAG}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text > "${digest_file}"
+          image_digest="$(cat "${digest_file}")"
+          if [[ ! "${image_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "registry_digest_unreadable" >&2
+            exit 1
+          fi
+          echo "image_digest=${image_digest}" >> "${GITHUB_OUTPUT}"
+
+      # The recorded workflow_ref is the ref half of job.workflow_ref, never a commit SHA.
+      # ImageProvenance composes job_workflow_ref from these three fields, and the
+      # publisher role matches that claim with StringEquals against @refs/heads/main, so a
+      # SHA would record a claim string that could never have been asserted.
+      - name: Write image provenance
+        working-directory: platform
+        env:
+          RESEARCH_REPOSITORY: ${{ inputs.repository }}
+          IMAGE_DIGEST: ${{ steps.digest.outputs.image_digest }}
+          RUN_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_FILE_PATH: ${{ job.workflow_file_path }}
+          WORKFLOW_REF: ${{ job.workflow_ref }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          provenance_file="${RUNNER_TEMP}/image-provenance.json"
+          workflow_ref="${WORKFLOW_REF#*@}"
+          # Written by whichever of the build step and the resume step ran; they are
+          # mutually exclusive and exactly one of them always does. Missing means neither
+          # established when the image was built, and a clock reading is not a substitute.
+          image_created="$(cat "${RUNNER_TEMP}/image-created.txt")"
+          uv run --frozen python tools/write_image_provenance.py \
+            --registry config/repositories.yaml \
+            --repository "${RESEARCH_REPOSITORY}" \
+            --source-identity "${RUNNER_TEMP}/source-identity.json" \
+            --image-digest "${IMAGE_DIGEST}" \
+            --run-repository "${RUN_REPOSITORY}" \
+            --workflow-repository "${WORKFLOW_REPOSITORY}" \
+            --workflow-path "${WORKFLOW_FILE_PATH}" \
+            --workflow-ref "${workflow_ref}" \
+            --run-id "${RUN_ID}" \
+            --run-attempt "${RUN_ATTEMPT}" \
+            --image-created "${image_created}" \
+            --output "${provenance_file}"
+          cat "${provenance_file}"

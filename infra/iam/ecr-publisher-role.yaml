@@ -1,0 +1,62 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: GitHub Actions role for publishing finished OLMo-core images to ECR.
+
+Resources:
+  EcrPublisherRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sbsandbox-intern-edullm-ecr-publisher
+      PermissionsBoundary:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/InternSandboxBoundary
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated:
+                Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:job_workflow_ref: edu-llm/platform/.github/workflows/build-research-image.yml@refs/heads/main
+                token.actions.githubusercontent.com:repository_owner_id: "306859726"
+                token.actions.githubusercontent.com:repository_id: "1306868157"
+              StringLike:
+                token.actions.githubusercontent.com:sub: repo:edu-llm@306859726/OLMo-core@1306868157:ref:refs/heads/*
+      # Inline rather than a customer managed policy. InternSandboxBoundary denies
+      # iam:CreatePolicyVersion on every policy, so a managed policy could be created once
+      # and never amended; the first permission change would fail the stack update. Inline
+      # policies go through iam:PutRolePolicy, which the boundary permits on this name.
+      Policies:
+        - PolicyName: publish-olmo-core-images
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:CompleteLayerUpload
+                  - ecr:InitiateLayerUpload
+                  - ecr:PutImage
+                  - ecr:UploadLayerPart
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:DescribeImages
+                  - ecr:DescribeImageScanFindings
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-olmo-core
+
+Outputs:
+  RoleName:
+    Value:
+      Ref: EcrPublisherRole
+  RoleArn:
+    Value:
+      Fn::GetAtt:
+        - EcrPublisherRole
+        - Arn

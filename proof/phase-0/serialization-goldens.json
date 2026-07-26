@@ -1,0 +1,69 @@
+{
+  "fixtures": [
+    {
+      "canonical_json_bytes": 619,
+      "contract": "AuthorizationScenario",
+      "digest": "sha256:397e747f9183f3e06af807a0667cb604c7ed46d11eb723c1eb39c5ebaa32941b",
+      "fixture": "admin-exception.yaml",
+      "relative_path": "fixtures/authorization/admin-exception.yaml"
+    },
+    {
+      "canonical_json_bytes": 566,
+      "contract": "AuthorizationScenario",
+      "digest": "sha256:ee4e732bc5f188a4e8e0b952406fec7da4ffcd6459a8a90e82a2ea520b4d273f",
+      "fixture": "lead-self-authorization.yaml",
+      "relative_path": "fixtures/authorization/lead-self-authorization.yaml"
+    },
+    {
+      "canonical_json_bytes": 619,
+      "contract": "AuthorizationScenario",
+      "digest": "sha256:cd310ce8607856afe52366786265538f36937c7a7a3cca9e26dc95ca0509b185",
+      "fixture": "member-approval.yaml",
+      "relative_path": "fixtures/authorization/member-approval.yaml"
+    },
+    {
+      "canonical_json_bytes": 614,
+      "contract": "RunManifest",
+      "digest": "sha256:cb8eb2f73f14707478e457a31ca30a58b954b2109c86a444c841adc6661cf277",
+      "fixture": "cpu-routine.yaml",
+      "relative_path": "fixtures/manifests/cpu-routine.yaml"
+    },
+    {
+      "canonical_json_bytes": 633,
+      "contract": "RunManifest",
+      "digest": "sha256:1bbe9c4c3cc84cc16ded6c9076b5940244f4388658833bd60fffec2f74733db8",
+      "fixture": "gpu-exception.yaml",
+      "relative_path": "fixtures/manifests/gpu-exception.yaml"
+    },
+    {
+      "canonical_json_bytes": 620,
+      "contract": "RunManifest",
+      "digest": "sha256:69fd7d9a19741789dae24fa843eb831cf6a968cffb0bca3890b08761e84b9f90",
+      "fixture": "gpu-routine.yaml",
+      "relative_path": "fixtures/manifests/gpu-routine.yaml"
+    },
+    {
+      "canonical_json_bytes": 695,
+      "contract": "RunManifest",
+      "digest": "sha256:47b1c40ec11529eb9b798a0ee1094ef42befa1c20d4626bf919b5e58d5d52fa0",
+      "fixture": "multiseed-routine.yaml",
+      "relative_path": "fixtures/manifests/multiseed-routine.yaml"
+    },
+    {
+      "canonical_json_bytes": 638,
+      "contract": "RunManifest",
+      "digest": "sha256:b82bb9812dd3b7239457b9a3a2e51885f065e455f73e39f4a8933a05d6dc27b2",
+      "fixture": "olmo-branch-routine.yaml",
+      "relative_path": "fixtures/manifests/olmo-branch-routine.yaml"
+    },
+    {
+      "canonical_json_bytes": 630,
+      "contract": "RunManifest",
+      "digest": "sha256:dd9dc83aa569762a8844bef532bdf11a5bff4e3531f0db867de735bef25a1626",
+      "fixture": "sagemaker-routine.yaml",
+      "relative_path": "fixtures/manifests/sagemaker-routine.yaml"
+    }
+  ],
+  "phase": "phase-0",
+  "schema_version": 1
+}

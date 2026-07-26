@@ -1,0 +1,24 @@
+schema_version: 1
+repository: OLMo-core
+# NON-RUNNABLE FIXTURE IDENTITY — do not execute
+commit_sha: "0000000000000000000000000000000000000002"
+image_digest: "sha256:0000000000000000000000000000000000000000000000000000000000000002"
+dataset_release: dolma-2026-07
+command:
+  - python
+  - -m
+  - olmo_core.train
+  - --config
+  - configs/smoke.yaml
+team: modeling
+wandb_project: olmo-core-smoke
+workload_profile: olmo-core-train-smoke
+# BACKEND NEUTRALITY: this is gpu-routine.yaml with one field changed. A SageMaker-managed
+# submission names a SageMaker-intended compute profile and adds no backend field of its own.
+compute_profile: gpu-1xa10g-sagemaker
+maximum_runtime_hours: "1"
+maximum_attempts: 1
+checkpoint:
+  interval_minutes: 30
+  destination_prefix: s3://sbsandbox-intern-edullm-checkpoints/runs/
+  resume_required: false

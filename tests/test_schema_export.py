@@ -42,15 +42,19 @@ POLICY_THRESHOLDS_PAYLOAD: dict[str, object] = {
     "routine_maximum_cost_usd": "500",
     "routine_maximum_runtime_hours": "24",
     "routine_maximum_attempts": 2,
+    "routine_maximum_fanout_size": 64,
+    "routine_maximum_parallelism": 8,
 }
 
 COMPUTE_PROFILE_PAYLOAD: dict[str, object] = {
     "name": "cpu-test",
+    "instance_type": "c7i.8xlarge",
     "accelerator": "cpu",
     "nodes": 1,
     "hourly_rate_usd": "1.428",
     "pricing_source": "test",
     "pricing_observed_at": "2026-07-24",
+    "provisioned": False,
 }
 
 WORKLOAD_PROFILE_PAYLOAD: dict[str, object] = {
@@ -77,9 +81,20 @@ RUN_MANIFEST_PAYLOAD: dict[str, object] = {
     "maximum_attempts": 2,
     "checkpoint": {
         "interval_minutes": 30,
-        "destination_prefix": "s3://edullm-checkpoints/runs/",
+        "destination_prefix": "s3://sbsandbox-intern-edullm-checkpoints/runs/",
         "resume_required": True,
     },
+}
+
+REGISTERED_REPOSITORY_PAYLOAD: dict[str, object] = {
+    "repository": "OLMo-core",
+    "github_repository_id": 1306868157,
+    "default_branch": "main",
+    "ecr_repository": "sbsandbox-intern-edullm-olmo-core",
+    "base_image_repository": "docker.io/library/python",
+    "base_image_digest": "sha256:" + "a" * 64,
+    "dockerfile_path": ".edullm/Dockerfile",
+    "build_context": ".",
 }
 
 EXPORTED_DECIMAL_FIELDS: tuple[tuple[str, type[BaseModel], str, bool, dict[str, object]], ...] = (
@@ -132,13 +147,52 @@ def test_checked_in_schemas_match_contract_models() -> None:
         assert (schemas_dir / filename).read_text(encoding="utf-8") == expected
 
 
-def test_rendered_schemas_cover_four_root_contract_models() -> None:
+def test_rendered_schemas_cover_all_root_contract_models() -> None:
     assert set(rendered_schemas()) == {
         "organization.schema.json",
         "workload-catalog.schema.json",
         "policy.schema.json",
+        "repositories.schema.json",
         "run-manifest.schema.json",
     }
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid_value"),
+    [
+        ("base_image_repository", "docker.io/library/python:3.12"),
+        (
+            "base_image_repository",
+            "docker.io/library/python@sha256:" + "a" * 64,
+        ),
+        ("dockerfile_path", ""),
+        ("dockerfile_path", "."),
+        ("dockerfile_path", "/Dockerfile"),
+        ("dockerfile_path", "../Dockerfile"),
+        ("dockerfile_path", r"images\Dockerfile"),
+        ("build_context", ""),
+        ("build_context", "/workspace"),
+        ("build_context", "../workspace"),
+        ("build_context", r"images\workspace"),
+    ],
+)
+def test_repository_schema_rejects_runtime_invalid_image_and_path_values(
+    field: str,
+    invalid_value: str,
+) -> None:
+    schema = json.loads(rendered_schemas()["repositories.schema.json"])
+    validator = jsonschema.Draft202012Validator(schema)
+    repository = dict(REGISTERED_REPOSITORY_PAYLOAD)
+    repository[field] = invalid_value
+
+    assert not validator.is_valid({"repositories": [repository]})
+
+
+def test_repository_schema_allows_dot_build_context() -> None:
+    schema = json.loads(rendered_schemas()["repositories.schema.json"])
+    validator = jsonschema.Draft202012Validator(schema)
+
+    assert validator.is_valid({"repositories": [REGISTERED_REPOSITORY_PAYLOAD]})
 
 
 def test_load_yaml_rejects_duplicate_mapping_keys(tmp_path: Path) -> None:

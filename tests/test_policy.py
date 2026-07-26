@@ -42,6 +42,10 @@ def numeric_bound_violations(
         violations.add("runtime")
     if facts.maximum_attempts > thresholds.routine_maximum_attempts:
         violations.add("attempts")
+    if facts.fanout_size > thresholds.routine_maximum_fanout_size:
+        violations.add("fanout_size")
+    if facts.fanout_parallelism > thresholds.routine_maximum_parallelism:
+        violations.add("parallelism")
     return frozenset(violations)
 
 
@@ -73,11 +77,14 @@ def thresholds_payload() -> dict[str, object]:
         "routine_maximum_cost_usd": "500",
         "routine_maximum_runtime_hours": "24",
         "routine_maximum_attempts": 2,
+        "routine_maximum_fanout_size": 64,
+        "routine_maximum_parallelism": 8,
     }
 
 
 def request_facts_payload(**overrides: object) -> dict[str, object]:
     payload = {
+        "claimed_team": "memory-split",
         "repository_registered": True,
         "dataset_registered": True,
         "compute_profile_registered": True,
@@ -96,6 +103,8 @@ def thresholds() -> PolicyThresholds:
         routine_maximum_cost_usd=Decimal(500),
         routine_maximum_runtime_hours=Decimal(24),
         routine_maximum_attempts=2,
+        routine_maximum_fanout_size=64,
+        routine_maximum_parallelism=8,
     )
 
 
@@ -109,7 +118,10 @@ def policy_payload() -> dict[str, object]:
             "routine_maximum_cost_usd": "500",
             "routine_maximum_runtime_hours": "12",
             "routine_maximum_attempts": 2,
+            "routine_maximum_fanout_size": 64,
+            "routine_maximum_parallelism": 8,
         },
+        "approval_scope": "organization",
         "routine_approver_role": "team_lead",
         "exception_approver_roles": ["platform_admin"],
         "denied_outright": [
@@ -128,6 +140,7 @@ def test_registered_request_within_all_bounds_is_routine() -> None:
 
 def test_any_policy_violation_is_exception() -> None:
     facts = RequestFacts(
+        claimed_team="memory-split",
         repository_registered=True,
         dataset_registered=True,
         compute_profile_registered=True,
@@ -164,6 +177,8 @@ def test_unregistered_or_mutable_facts_classify_as_exception(
         ("estimated_cost_usd", Decimal("500.01")),
         ("maximum_runtime_hours", Decimal("24.01")),
         ("maximum_attempts", 3),
+        ("fanout_size", 65),
+        ("fanout_parallelism", 9),
     ],
 )
 def test_numeric_bound_violations_classify_as_exception(
@@ -180,6 +195,8 @@ def test_numeric_bound_violations_classify_as_exception(
         ("estimated_cost_usd", Decimal(500)),
         ("maximum_runtime_hours", Decimal(24)),
         ("maximum_attempts", 2),
+        ("fanout_size", 64),
+        ("fanout_parallelism", 8),
     ],
 )
 def test_numeric_values_at_threshold_remain_routine(
@@ -190,6 +207,13 @@ def test_numeric_values_at_threshold_remain_routine(
     assert classify_request(facts, thresholds()) is ApprovalClass.ROUTINE
 
 
+def test_request_facts_describe_a_single_cell_when_no_fanout_is_declared() -> None:
+    facts = routine_facts()
+    assert facts.fanout_size == 1
+    assert facts.fanout_parallelism == 1
+    assert numeric_bound_violations(facts, thresholds()) == frozenset()
+
+
 def test_policy_yaml_validates_against_contract() -> None:
     project_root = Path(__file__).resolve().parents[1]
     config_path = project_root / "config" / "policy.yaml"
@@ -197,6 +221,8 @@ def test_policy_yaml_validates_against_contract() -> None:
     assert policy.thresholds.routine_maximum_cost_usd == Decimal(500)
     assert policy.thresholds.routine_maximum_runtime_hours == Decimal(12)
     assert policy.thresholds.routine_maximum_attempts == 2
+    assert policy.thresholds.routine_maximum_fanout_size == 64
+    assert policy.thresholds.routine_maximum_parallelism == 8
     assert policy.routine_approver_role == "team_lead"
     assert policy.exception_approver_roles == ("platform_admin",)
     assert policy.denied_outright == (
@@ -233,13 +259,7 @@ def test_approval_policy_rejects_unknown_denied_outright_condition() -> None:
 
 def test_policy_thresholds_reject_non_decimal_cost() -> None:
     with pytest.raises(ValidationError) as exc_info:
-        PolicyThresholds.model_validate(
-            {
-                "routine_maximum_cost_usd": 500,
-                "routine_maximum_runtime_hours": "24",
-                "routine_maximum_attempts": 2,
-            }
-        )
+        PolicyThresholds.model_validate({**thresholds_payload(), "routine_maximum_cost_usd": 500})
     assert_validation_error(
         exc_info.value,
         error_type="value_error",
@@ -251,6 +271,7 @@ def test_request_facts_reject_non_decimal_runtime() -> None:
     with pytest.raises(ValidationError) as exc_info:
         RequestFacts.model_validate(
             {
+                "claimed_team": "memory-split",
                 "repository_registered": True,
                 "dataset_registered": True,
                 "compute_profile_registered": True,
@@ -268,12 +289,42 @@ def test_request_facts_reject_non_decimal_runtime() -> None:
     )
 
 
+def test_request_facts_require_an_explicit_claimed_team() -> None:
+    payload = request_facts_payload()
+    del payload["claimed_team"]
+    with pytest.raises(ValidationError) as exc_info:
+        RequestFacts.model_validate(payload)
+    assert_validation_error(exc_info.value, error_type="missing")
+    assert exc_info.value.errors()[0]["loc"] == ("claimed_team",), (
+        "attribution must be supplied deliberately; a default would let a caller skip it"
+    )
+
+
+@pytest.mark.parametrize("claimed_team", ["", "Memory Split", "memory_split", "-memory-split"])
+def test_request_facts_reject_a_claimed_team_that_is_not_a_team_identifier(
+    claimed_team: str,
+) -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        RequestFacts.model_validate(request_facts_payload(claimed_team=claimed_team))
+    assert exc_info.value.errors()[0]["loc"] == ("claimed_team",)
+
+
 @pytest.mark.parametrize(
     ("payload_override", "field", "error_type"),
     [
         ({"routine_maximum_cost_usd": Decimal(-1)}, "routine_maximum_cost_usd", "greater_than_equal"),
         ({"routine_maximum_runtime_hours": Decimal(0)}, "routine_maximum_runtime_hours", "greater_than"),
         ({"routine_maximum_attempts": 0}, "routine_maximum_attempts", "greater_than_equal"),
+        (
+            {"routine_maximum_fanout_size": 0},
+            "routine_maximum_fanout_size",
+            "greater_than_equal",
+        ),
+        (
+            {"routine_maximum_parallelism": 0},
+            "routine_maximum_parallelism",
+            "greater_than_equal",
+        ),
     ],
 )
 def test_policy_thresholds_reject_out_of_range_values(
@@ -294,6 +345,8 @@ def test_policy_thresholds_reject_out_of_range_values(
         ({"estimated_cost_usd": Decimal(-5)}, "estimated_cost_usd", "greater_than_equal"),
         ({"maximum_runtime_hours": Decimal(0)}, "maximum_runtime_hours", "greater_than"),
         ({"maximum_attempts": 0}, "maximum_attempts", "greater_than_equal"),
+        ({"fanout_size": 0}, "fanout_size", "greater_than_equal"),
+        ({"fanout_parallelism": 0}, "fanout_parallelism", "greater_than_equal"),
     ],
 )
 def test_request_facts_reject_out_of_range_values(

@@ -1,0 +1,20 @@
+{
+  "fixtures": [
+    {
+      "canonical_json_bytes": 2034,
+      "contract": "TemplateRole",
+      "digest": "sha256:a25031110ebe139885faaa6aa1ca3479f699ab46a597439031fb8db203e85f5d",
+      "fixture": "sbsandbox-intern-edullm-ecr-publisher",
+      "relative_path": "infra/iam/ecr-publisher-role.yaml"
+    },
+    {
+      "canonical_json_bytes": 2739,
+      "contract": "TemplateRole",
+      "digest": "sha256:795164b7fbe22e53ae1ca52cb1e5f14c23368d502f59e443a99869d26fcca430",
+      "fixture": "sbsandbox-intern-edullm-infra-deployer",
+      "relative_path": "infra/iam/infra-deployer-role.yaml"
+    }
+  ],
+  "phase": "phase-1",
+  "schema_version": 1
+}

@@ -6,12 +6,14 @@ from pydantic import BaseModel
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.manifest import RunManifest
 from edullm_platform.contracts.policy import ApprovalPolicy
+from edullm_platform.contracts.repository_registry import RepositoryRegistry
 from edullm_platform.contracts.workload import WorkloadCatalog
 
 SCHEMA_MODELS: dict[str, type[BaseModel]] = {
     "organization.schema.json": OrganizationInventory,
     "workload-catalog.schema.json": WorkloadCatalog,
     "policy.schema.json": ApprovalPolicy,
+    "repositories.schema.json": RepositoryRegistry,
     "run-manifest.schema.json": RunManifest,
 }
 

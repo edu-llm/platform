@@ -1,0 +1,27 @@
+schema_version: 1
+scenario: admin-exception
+submitter:
+  github_login: caiiris
+  admin: false
+  team_lead: false
+approver:
+  github_login: BritishAmericqn
+  admin: true
+  team_lead: false
+request:
+  claimed_team: modeling
+  repository_registered: true
+  dataset_registered: true
+  compute_profile_registered: true
+  immutable_revision: true
+  immutable_image: true
+  estimated_cost_usd: "73.74"
+  maximum_runtime_hours: "13"
+  maximum_attempts: 1
+  fanout_size: 1
+  fanout_parallelism: 1
+expected:
+  granted: true
+  approval_class: exception
+  approval_scope: organization
+  reason: exception_approved_by_admin

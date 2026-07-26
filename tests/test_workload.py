@@ -5,7 +5,17 @@ import pytest
 from pydantic import ValidationError
 
 from edullm_platform.config import load_yaml
-from edullm_platform.contracts.workload import CostInputs, WorkloadCatalog
+from edullm_platform.contracts.workload import (
+    CheckpointContract,
+    ComputeProfileResolutionError,
+    CostInputs,
+    UnprovisionedComputeProfileError,
+    UnregisteredComputeProfileError,
+    WorkloadCatalog,
+    resolve_compute_profile_for_execution,
+)
+
+COMPLIANT_DESTINATION_PREFIX = "s3://sbsandbox-intern-edullm-checkpoints/runs/"
 
 
 def catalog_payload() -> dict[str, object]:
@@ -13,19 +23,23 @@ def catalog_payload() -> dict[str, object]:
         "compute_profiles": [
             {
                 "name": "cpu-32vcpu",
+                "instance_type": "c7i.8xlarge",
                 "accelerator": "cpu",
                 "nodes": 1,
                 "hourly_rate_usd": "1.428",
                 "pricing_source": "test",
                 "pricing_observed_at": "2026-07-24",
+                "provisioned": False,
             },
             {
                 "name": "gpu-4xa10g",
+                "instance_type": "g5.12xlarge",
                 "accelerator": "gpu",
                 "nodes": 1,
                 "hourly_rate_usd": "5.672",
                 "pricing_source": "test",
                 "pricing_observed_at": "2026-07-24",
+                "provisioned": False,
             },
         ],
         "workloads": [
@@ -45,12 +59,29 @@ def catalog_payload() -> dict[str, object]:
                 "maximum_attempts": 1,
                 "checkpoint": {
                     "interval_minutes": 30,
-                    "destination_prefix": "s3://edullm-checkpoints/runs/",
+                    "destination_prefix": COMPLIANT_DESTINATION_PREFIX,
                     "resume_required": False,
                 },
             },
         ],
     }
+
+
+def checkpoint_payload(destination_prefix: str) -> dict[str, object]:
+    return {
+        "interval_minutes": 30,
+        "destination_prefix": destination_prefix,
+        "resume_required": False,
+    }
+
+
+def catalog_with_provisioned(*provisioned_names: str) -> WorkloadCatalog:
+    payload = catalog_payload()
+    payload["compute_profiles"] = [
+        {**profile, "provisioned": profile["name"] in provisioned_names}
+        for profile in payload["compute_profiles"]  # type: ignore[union-attr]
+    ]
+    return WorkloadCatalog.model_validate(payload)
 
 
 def assert_validation_error(
@@ -143,19 +174,23 @@ def test_catalog_requires_cpu_and_gpu_workload_representatives() -> None:
                 "compute_profiles": [
                     {
                         "name": "cpu-small",
+                        "instance_type": "c7i.xlarge",
                         "accelerator": "cpu",
                         "nodes": 1,
                         "hourly_rate_usd": "1.00",
                         "pricing_source": "test",
                         "pricing_observed_at": "2026-07-24",
+                        "provisioned": False,
                     },
                     {
                         "name": "gpu-small",
+                        "instance_type": "g5.xlarge",
                         "accelerator": "gpu",
                         "nodes": 1,
                         "hourly_rate_usd": "2.00",
                         "pricing_source": "test",
                         "pricing_observed_at": "2026-07-24",
+                        "provisioned": False,
                     },
                 ],
                 "workloads": [
@@ -257,7 +292,7 @@ def test_workload_catalog_yaml_validates_against_contract() -> None:
     project_root = Path(__file__).resolve().parents[1]
     config_path = project_root / "config" / "workload-catalog.yaml"
     catalog = load_yaml(config_path, WorkloadCatalog)
-    assert len(catalog.compute_profiles) == 2
+    assert len(catalog.compute_profiles) == 12
     assert len(catalog.workloads) == 2
     profile_by_name = {profile.name: profile for profile in catalog.compute_profiles}
     cpu_workload = next(
@@ -282,3 +317,113 @@ def test_workload_catalog_yaml_validates_against_contract() -> None:
     )
     assert cpu_cost.maximum_compute_cost_usd == Decimal("2.86")
     assert gpu_cost.maximum_compute_cost_usd == Decimal("5.67")
+
+
+def test_catalog_rejects_duplicate_profile_name_when_every_other_field_differs() -> None:
+    payload = catalog_payload()
+    profiles = list(payload["compute_profiles"])  # type: ignore[arg-type]
+    profiles.append(
+        {
+            "name": "gpu-4xa10g",
+            "instance_type": "p5.48xlarge",
+            "accelerator": "gpu",
+            "nodes": 4,
+            "hourly_rate_usd": "55.0400",
+            "pricing_source": "other",
+            "pricing_observed_at": "2026-07-25",
+            "provisioned": True,
+        }
+    )
+    payload["compute_profiles"] = profiles
+    with pytest.raises(ValidationError) as exc_info:
+        WorkloadCatalog.model_validate(payload)
+    assert_validation_error(
+        exc_info.value,
+        error_type="value_error",
+        message_fragment="compute profile names must be unique",
+    )
+
+
+def test_checkpoint_accepts_sandbox_owned_destination_prefix() -> None:
+    checkpoint = CheckpointContract.model_validate(
+        checkpoint_payload(COMPLIANT_DESTINATION_PREFIX)
+    )
+    assert checkpoint.destination_prefix == COMPLIANT_DESTINATION_PREFIX
+
+
+@pytest.mark.parametrize(
+    "destination_prefix",
+    [
+        "s3://edullm-checkpoints/runs/",
+        "s3://sbsandbox-intern/runs/",
+        "s3://not-sbsandbox-intern-checkpoints/runs/",
+        "s3://SBSANDBOX-INTERN-checkpoints/runs/",
+        "s3://sbsandbox-intern-checkpoints/runs",
+        "s3://sbsandbox-intern-checkpoints/",
+        "s3://sbsandbox-intern-/runs/",
+        "s3://sbsandbox-intern-checkpoints-/runs/",
+    ],
+)
+def test_checkpoint_rejects_destination_prefix_outside_sandbox_bucket_namespace(
+    destination_prefix: str,
+) -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        CheckpointContract.model_validate(checkpoint_payload(destination_prefix))
+    assert_validation_error(exc_info.value, error_type="string_pattern_mismatch")
+
+
+def test_catalog_rejects_workload_checkpoint_outside_sandbox_bucket_namespace() -> None:
+    payload = catalog_payload()
+    workloads = list(payload["workloads"])  # type: ignore[arg-type]
+    workloads[1] = {
+        **workloads[1],
+        "checkpoint": checkpoint_payload("s3://edullm-checkpoints/runs/"),
+    }
+    payload["workloads"] = workloads
+    with pytest.raises(ValidationError) as exc_info:
+        WorkloadCatalog.model_validate(payload)
+    assert_validation_error(exc_info.value, error_type="string_pattern_mismatch")
+
+
+def test_provisioned_profile_resolves_for_execution() -> None:
+    catalog = catalog_with_provisioned("gpu-4xa10g")
+    profile = resolve_compute_profile_for_execution(catalog, "gpu-4xa10g")
+    assert profile.name == "gpu-4xa10g"
+    assert profile.provisioned is True
+
+
+def test_resolving_unprovisioned_profile_reports_missing_capacity_not_missing_profile() -> None:
+    catalog = catalog_with_provisioned()
+    with pytest.raises(UnprovisionedComputeProfileError) as exc_info:
+        resolve_compute_profile_for_execution(catalog, "gpu-4xa10g")
+    assert exc_info.value.reason_code == "unprovisioned_compute_profile"
+    assert isinstance(exc_info.value, ComputeProfileResolutionError)
+    assert not isinstance(exc_info.value, UnregisteredComputeProfileError)
+    assert "g5.12xlarge" in str(exc_info.value)
+
+
+def test_resolving_unknown_profile_reports_unregistered_profile() -> None:
+    catalog = catalog_with_provisioned("gpu-4xa10g")
+    with pytest.raises(UnregisteredComputeProfileError) as exc_info:
+        resolve_compute_profile_for_execution(catalog, "gpu-8xh100")
+    assert exc_info.value.reason_code == "unregistered_compute_profile"
+    assert isinstance(exc_info.value, ComputeProfileResolutionError)
+    assert not isinstance(exc_info.value, UnprovisionedComputeProfileError)
+
+
+def test_unprovisioned_and_unregistered_resolution_failures_are_distinguishable() -> None:
+    catalog = catalog_with_provisioned()
+    with pytest.raises(UnregisteredComputeProfileError) as unregistered:
+        resolve_compute_profile_for_execution(catalog, "gpu-8xh100")
+    with pytest.raises(UnprovisionedComputeProfileError) as unprovisioned:
+        resolve_compute_profile_for_execution(catalog, "gpu-4xa10g")
+    assert type(unregistered.value) is not type(unprovisioned.value)
+    assert unregistered.value.reason_code != unprovisioned.value.reason_code
+    assert str(unregistered.value) != str(unprovisioned.value)
+
+
+def test_resolution_failures_remain_value_errors() -> None:
+    catalog = catalog_with_provisioned()
+    for profile_name in ("gpu-8xh100", "gpu-4xa10g"):
+        with pytest.raises(ValueError):
+            resolve_compute_profile_for_execution(catalog, profile_name)

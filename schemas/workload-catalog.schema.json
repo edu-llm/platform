@@ -4,7 +4,7 @@
       "additionalProperties": false,
       "properties": {
         "destination_prefix": {
-          "pattern": "^s3://[^/]+/.+/$",
+          "pattern": "^s3://sbsandbox-intern-[a-z0-9](?:[a-z0-9.-]{0,44}[a-z0-9])?/.+/$",
           "title": "Destination Prefix",
           "type": "string"
         },
@@ -42,6 +42,11 @@
           "title": "Hourly Rate Usd",
           "type": "string"
         },
+        "instance_type": {
+          "pattern": "^[a-z][a-z0-9]*\\.[a-z0-9]+$",
+          "title": "Instance Type",
+          "type": "string"
+        },
         "name": {
           "minLength": 1,
           "title": "Name",
@@ -61,15 +66,21 @@
           "minLength": 1,
           "title": "Pricing Source",
           "type": "string"
+        },
+        "provisioned": {
+          "title": "Provisioned",
+          "type": "boolean"
         }
       },
       "required": [
         "name",
+        "instance_type",
         "accelerator",
         "nodes",
         "hourly_rate_usd",
         "pricing_source",
-        "pricing_observed_at"
+        "pricing_observed_at",
+        "provisioned"
       ],
       "title": "ComputeProfile",
       "type": "object"

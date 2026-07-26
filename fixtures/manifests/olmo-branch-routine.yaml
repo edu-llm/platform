@@ -1,0 +1,22 @@
+schema_version: 1
+repository: OLMo-core
+# NON-RUNNABLE FIXTURE IDENTITY — do not execute
+commit_sha: "0000000000000000000000000000000000000004"
+image_digest: "sha256:0000000000000000000000000000000000000000000000000000000000000004"
+dataset_release: dolma-2026-07
+command:
+  - python
+  - -m
+  - olmo_core.train
+  - --config
+  - configs/curriculum-order.yaml
+team: curriculum
+wandb_project: olmo-core-curriculum
+workload_profile: olmo-core-train-smoke
+compute_profile: gpu-1xa10g
+maximum_runtime_hours: "6"
+maximum_attempts: 1
+checkpoint:
+  interval_minutes: 30
+  destination_prefix: s3://sbsandbox-intern-edullm-checkpoints/runs/
+  resume_required: false

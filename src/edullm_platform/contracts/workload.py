@@ -1,10 +1,11 @@
 from decimal import Decimal, InvalidOperation, localcontext
-from typing import Annotated, Literal, Self
+from typing import Annotated, ClassVar, Literal, Self
 
 from pydantic import BeforeValidator, Field, computed_field, model_validator
 
 from .base import (
     MAX_DECIMAL_DIGITS,
+    SANDBOX_BUCKET_PREFIX,
     ContractModel,
     PositiveStrictDecimal,
     StrictDecimal,
@@ -12,18 +13,24 @@ from .base import (
 )
 from .validation import require_checkpoint_for_retries
 
+INSTANCE_TYPE_PATTERN = r"^[a-z][a-z0-9]*\.[a-z0-9]+$"
+CHECKPOINT_DESTINATION_PREFIX_PATTERN = (
+    rf"^s3://{SANDBOX_BUCKET_PREFIX}[a-z0-9](?:[a-z0-9.-]{{0,44}}[a-z0-9])?/.+/$"
+)
+
 
 def compute_maximum_compute_cost_usd(
     hourly_rate_usd: Decimal,
     nodes: int,
     maximum_runtime_hours: Decimal,
     maximum_attempts: int,
+    cells: int = 1,
 ) -> Decimal:
     with localcontext() as ctx:
         ctx.prec = MAX_DECIMAL_DIGITS * 4
         try:
             product = (
-                hourly_rate_usd * nodes * maximum_runtime_hours * maximum_attempts
+                hourly_rate_usd * nodes * maximum_runtime_hours * maximum_attempts * cells
             )
             quantized = product.quantize(Decimal("0.01"))
         except InvalidOperation as exc:
@@ -39,6 +46,7 @@ class CostInputs(ContractModel):
     nodes: int = Field(gt=0)
     maximum_runtime_hours: StrictDecimal = Field(gt=0)
     maximum_attempts: int = Field(ge=1)
+    cells: int = Field(default=1, ge=1)
 
     @model_validator(mode="after")
     def validate_maximum_compute_cost(self) -> Self:
@@ -47,6 +55,7 @@ class CostInputs(ContractModel):
             self.nodes,
             self.maximum_runtime_hours,
             self.maximum_attempts,
+            self.cells,
         )
         return self
 
@@ -58,22 +67,25 @@ class CostInputs(ContractModel):
             self.nodes,
             self.maximum_runtime_hours,
             self.maximum_attempts,
+            self.cells,
         )
 
 
 class CheckpointContract(ContractModel):
     interval_minutes: int = Field(gt=0)
-    destination_prefix: str = Field(pattern=r"^s3://[^/]+/.+/$")
+    destination_prefix: str = Field(pattern=CHECKPOINT_DESTINATION_PREFIX_PATTERN)
     resume_required: bool
 
 
 class ComputeProfile(ContractModel):
     name: str = Field(min_length=1)
+    instance_type: str = Field(pattern=INSTANCE_TYPE_PATTERN)
     accelerator: Literal["cpu", "gpu"]
     nodes: int = Field(gt=0)
     hourly_rate_usd: PositiveStrictDecimal = Field(gt=0)
     pricing_source: str = Field(min_length=1)
     pricing_observed_at: str = Field(min_length=1)
+    provisioned: bool
 
 
 class WorkloadProfile(ContractModel):
@@ -119,3 +131,33 @@ class WorkloadCatalog(ContractModel):
         if workload_accelerators != {"cpu", "gpu"}:
             raise ValueError("representative CPU and GPU workloads are required")
         return self
+
+
+class ComputeProfileResolutionError(ValueError):
+    reason_code: ClassVar[str]
+
+
+class UnregisteredComputeProfileError(ComputeProfileResolutionError):
+    reason_code: ClassVar[str] = "unregistered_compute_profile"
+
+
+class UnprovisionedComputeProfileError(ComputeProfileResolutionError):
+    reason_code: ClassVar[str] = "unprovisioned_compute_profile"
+
+
+def resolve_compute_profile_for_execution(
+    catalog: WorkloadCatalog,
+    profile_name: str,
+) -> ComputeProfile:
+    profile_by_name = {profile.name: profile for profile in catalog.compute_profiles}
+    profile = profile_by_name.get(profile_name)
+    if profile is None:
+        raise UnregisteredComputeProfileError(
+            f"unregistered compute profile: {profile_name!r}"
+        )
+    if not profile.provisioned:
+        raise UnprovisionedComputeProfileError(
+            f"compute profile {profile_name!r} is priced in the catalog but no compute "
+            f"environment is provisioned for {profile.instance_type}"
+        )
+    return profile

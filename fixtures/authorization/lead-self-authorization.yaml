@@ -1,0 +1,24 @@
+schema_version: 1
+scenario: lead-self-authorization
+submitter:
+  github_login: ericrcwu001
+  admin: false
+  team_lead: true
+approver: null
+request:
+  claimed_team: memory-split
+  repository_registered: true
+  dataset_registered: true
+  compute_profile_registered: true
+  immutable_revision: true
+  immutable_image: true
+  estimated_cost_usd: "20.12"
+  maximum_runtime_hours: "4"
+  maximum_attempts: 1
+  fanout_size: 5
+  fanout_parallelism: 5
+expected:
+  granted: true
+  approval_class: routine
+  approval_scope: organization
+  reason: routine_self_authorized

@@ -14,9 +14,11 @@ from pydantic import (
 )
 
 from edullm_platform.contracts.base import ContractModel, require_ordered_sequence
-from edullm_platform.contracts.workload import WorkloadCatalog
+from edullm_platform.contracts.workload import ComputeProfile, WorkloadCatalog
 
 AWS_ACCOUNT_ID_PATTERN = re.compile(r"(?<![0-9])\d{12}(?![0-9])")
+SHA256_DIGEST_TOKEN = re.compile(r"sha256:[0-9a-f]{64}")
+GIT_COMMIT_SHA_TOKEN = re.compile(r"(?<![0-9a-f])[0-9a-f]{40}(?![0-9a-f])")
 AWS_ACCESS_KEY_ID_PATTERN = re.compile(r"(?i)(?<![A-Z0-9])(?:AKIA|ASIA)[0-9A-Z]{16}(?![A-Z0-9])")
 AWS_SECRET_ACCESS_KEY_PATTERN = re.compile(
     r"(?<![A-Za-z0-9/+=])[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])"
@@ -45,6 +47,30 @@ SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
     PEM_PRIVATE_KEY_PATTERN,
     BEARER_TOKEN_PATTERN,
     JWT_PATTERN,
+)
+
+#: Everything ``scan_for_secrets`` refuses that is not an account ID. Derived rather
+#: than listed, so a pattern added above is guarded against without a second edit.
+NON_ACCOUNT_SECRET_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    pattern for pattern in SECRET_PATTERNS if pattern is not AWS_ACCOUNT_ID_PATTERN
+)
+
+AWS_ACCOUNT_ID_PLACEHOLDER: Final = "<aws-account-id>"
+
+# Twelve digits or more, masked as one run. A thirteenth digit beside an account ID
+# matches neither AWS_ACCOUNT_ID_PATTERN nor a mask that stopped at twelve, so masking
+# exactly what the scanner refuses would leave the account ID in text the scanner then
+# passes. The cost is that any long decimal run in free text is masked too.
+DIGIT_RUN_HOLDING_AN_ACCOUNT_ID = re.compile(r"(?<![0-9])[0-9]{12,}(?![0-9])")
+
+# Content digests are alternatives of the same expression rather than a separate pass,
+# so the engine consumes each one whole before the digit run can reach inside it. A
+# sha256 digest or a commit SHA routinely contains twelve consecutive decimal digits,
+# and masking them would corrupt the identifier the evidence exists to record.
+ACCOUNT_ID_IN_FREE_TEXT = re.compile(
+    f"(?P<digest>{SHA256_DIGEST_TOKEN.pattern})"
+    f"|(?P<commit>{GIT_COMMIT_SHA_TOKEN.pattern})"
+    f"|(?P<account>{DIGIT_RUN_HOLDING_AN_ACCOUNT_ID.pattern})"
 )
 
 FRESHNESS_WINDOW = timedelta(days=30)
@@ -80,6 +106,49 @@ WORKLOAD_PROFILE_REQUIRED_VCPUS: Final = {
 
 class StaleEvidenceError(ValueError):
     pass
+
+
+def redact_content_digests(text: str) -> str:
+    masked = SHA256_DIGEST_TOKEN.sub("<sha256-content-digest>", text)
+    return GIT_COMMIT_SHA_TOKEN.sub("<git-commit-sha>", masked)
+
+
+def _mask_account_id(match: re.Match[str]) -> str:
+    if match.group("account") is None:
+        return match.group(0)
+    return AWS_ACCOUNT_ID_PLACEHOLDER
+
+
+def redact_aws_account_ids(text: str) -> str:
+    """Mask AWS account IDs in captured free text so it can pass ``scan_for_secrets``.
+
+    Phase 1 evidence records names rather than ARNs wherever a name identifies the thing
+    uniquely, which keeps account IDs out of most fields entirely. What is left is text
+    nobody here composed: an ``AccessDenied`` message, a CloudTrail record. The account
+    ID in those is unavoidable, and this is the only sanctioned way to record them.
+
+    Two things this refuses to do, both of which would make the mask worse than useless:
+
+    It will not redact text that carries any other credential. A forty-character secret
+    access key can contain twelve consecutive digits, and masking them would break the
+    forty-character run that identifies it, leaving a live credential the scanner then
+    accepts. Text like that is refused rather than laundered, which also means the
+    caller finds out instead of committing it. Text holding a bare sixty-character
+    hexadecimal token is refused for the same reason, since the scanner would refuse it
+    too; a digest written with its ``sha256:`` prefix is recognised and kept. Kept, not
+    accepted: ``scan_for_secrets`` still refuses a digest, so free text carrying one
+    needs ``redact_content_digests`` after this, which is the order the proof bundle
+    already uses.
+
+    It will not mask only what the scanner refuses. A digit beside an account ID hides
+    it from ``AWS_ACCOUNT_ID_PATTERN``, so any run of twelve or more digits is masked
+    whole. A long decimal literal in captured text is masked along with it, which is the
+    price of a mask that cannot be stepped around.
+    """
+    without_digests = redact_content_digests(text)
+    if any(pattern.search(without_digests) for pattern in NON_ACCOUNT_SECRET_PATTERNS):
+        raise ValueError("refusing to redact text that carries a credential")
+    return ACCOUNT_ID_IN_FREE_TEXT.sub(_mask_account_id, text)
 
 
 def scan_for_secrets(value: str) -> str:
@@ -199,18 +268,34 @@ def quota_capacity_issues(
     return incomplete, insufficient
 
 
+def profiles_requiring_capacity_evidence(
+    catalog: WorkloadCatalog,
+) -> tuple[ComputeProfile, ...]:
+    representative_profiles = {workload.compute_profile for workload in catalog.workloads}
+    return tuple(
+        profile
+        for profile in catalog.compute_profiles
+        if profile.provisioned or profile.name in representative_profiles
+    )
+
+
 def ec2_quota_coverage_issues(
     *,
     catalog: WorkloadCatalog,
     quotas: tuple[QuotaRecord, ...],
 ) -> tuple[str | None, str | None]:
-    required_profiles = {profile.name for profile in catalog.compute_profiles}
+    required_profiles = {
+        profile.name for profile in profiles_requiring_capacity_evidence(catalog)
+    }
     covered_profiles = {quota.workload_profile for quota in quotas if quota.workload_profile is not None}
     missing_profiles = sorted(required_profiles - covered_profiles)
     if missing_profiles:
         return (
             "capacity_blocked",
-            f"Missing EC2 quota records for representative profiles: {', '.join(missing_profiles)}.",
+            (
+                "Missing EC2 quota records for representative or provisioned profiles: "
+                f"{', '.join(missing_profiles)}."
+            ),
         )
     incomplete, insufficient = quota_capacity_issues(quotas, catalog=catalog)
     if incomplete:

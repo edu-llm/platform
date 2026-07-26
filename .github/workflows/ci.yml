@@ -55,8 +55,10 @@ jobs:
     runs-on: ubuntu-latest
     # Not a required check. The gate reads captured AWS and GitHub evidence that
     # expires after 30 days, so it can legitimately go red for reasons unrelated to
-    # the change under review. The contract rules it enforces are covered by the
-    # test suite above, which is what blocks a merge.
+    # the change under review. It is also red whenever a Phase 0 criterion is a
+    # recorded gap, which is a statement about the phase rather than about the
+    # change. The contract rules it enforces are covered by the test suite above,
+    # which is what blocks a merge.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v5

@@ -1,0 +1,27 @@
+schema_version: 1
+scenario: member-approval
+submitter:
+  github_login: caiiris
+  admin: false
+  team_lead: false
+approver:
+  github_login: ericrcwu001
+  admin: false
+  team_lead: true
+request:
+  claimed_team: curriculum
+  repository_registered: true
+  dataset_registered: true
+  compute_profile_registered: true
+  immutable_revision: true
+  immutable_image: true
+  estimated_cost_usd: "6.04"
+  maximum_runtime_hours: "6"
+  maximum_attempts: 1
+  fanout_size: 1
+  fanout_parallelism: 1
+expected:
+  granted: true
+  approval_class: routine
+  approval_scope: organization
+  reason: routine_approved_by_lead_or_admin

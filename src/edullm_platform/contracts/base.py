@@ -1,14 +1,28 @@
 import re
+from collections.abc import Callable
+from datetime import UTC, datetime
 from decimal import Decimal, localcontext
+from enum import StrEnum
 from typing import Annotated
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, PlainSerializer, WithJsonSchema
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    PlainSerializer,
+    WithJsonSchema,
+)
 
 DECIMAL_PATTERN = re.compile(r"^(0|[1-9][0-9]*)(\.[0-9]+)?$")
 POSITIVE_DECIMAL_PATTERN = re.compile(
     r"^(?:[1-9][0-9]*(?:\.[0-9]+)?|0\.[0-9]*[1-9][0-9]*)$"
 )
 MAX_DECIMAL_DIGITS = 28
+
+SANDBOX_BUCKET_PREFIX = "sbsandbox-intern-"
+SHA256_DIGEST_PATTERN = r"^sha256:[0-9a-f]{64}$"
+UTC_TIMESTAMP_PATTERN = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$"
 
 
 def _finalize_decimal(parsed: Decimal) -> Decimal:
@@ -44,6 +58,50 @@ def require_ordered_sequence(value: object) -> object:
         return value
     raise ValueError("ordered sequences must be provided as a list or tuple")
 
+
+def parse_str_enum[E: StrEnum](enum_type: type[E]) -> Callable[[object], object]:
+    def parse(value: object) -> object:
+        if isinstance(value, str) and not isinstance(value, enum_type):
+            return enum_type(value)
+        return value
+
+    return parse
+
+
+def parse_utc_timestamp(value: object) -> object:
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError("timestamps must be RFC 3339 date-times") from exc
+    elif isinstance(value, datetime):
+        parsed = value
+    else:
+        return value
+    if parsed.tzinfo is None:
+        raise ValueError("timestamps must carry an explicit UTC offset")
+    return parsed.astimezone(UTC)
+
+
+def serialize_utc_timestamp(value: datetime) -> str:
+    normalized = value.astimezone(UTC)
+    return normalized.isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+UTC_TIMESTAMP_JSON_SCHEMA = {
+    "type": "string",
+    "format": "date-time",
+    "pattern": UTC_TIMESTAMP_PATTERN,
+}
+
+UtcTimestamp = Annotated[
+    datetime,
+    BeforeValidator(parse_utc_timestamp),
+    PlainSerializer(serialize_utc_timestamp, return_type=str, when_used="json"),
+    WithJsonSchema(UTC_TIMESTAMP_JSON_SCHEMA),
+]
+
+Sha256Digest = Annotated[str, Field(pattern=SHA256_DIGEST_PATTERN)]
 
 STRICT_DECIMAL_JSON_SCHEMA = {
     "type": "string",

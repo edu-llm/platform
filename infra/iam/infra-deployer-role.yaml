@@ -1,0 +1,109 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: GitHub Actions role that deploys the Phase 1 CloudFormation stacks this repository owns.
+
+Resources:
+  InfraDeployerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sbsandbox-intern-edullm-infra-deployer
+      PermissionsBoundary:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/InternSandboxBoundary
+      MaxSessionDuration: 3600
+      # Pinned to main on purpose. This role only deploys bootstrap stacks, and the stack
+      # that creates it is applied from a laptop, so no branch ever needs to reach AWS
+      # through it. A branch wildcard here would hand every feature branch the ability to
+      # rewrite the account's ECR stacks.
+      #
+      # The sub value carries owner and repository ids because this organization issues
+      # immutable subject claims. Verified against the live repository settings:
+      # `gh api repos/edu-llm/platform/actions/oidc/customization/sub` reports
+      # sub_claim_prefix repo:edu-llm@306859726/platform@1311508598. A repository still on
+      # legacy subjects would need repo:edu-llm/platform here instead, and would fail to
+      # assume this role until the value is corrected.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated:
+                Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:job_workflow_ref: edu-llm/platform/.github/workflows/deploy-phase1-ecr.yml@refs/heads/main
+                token.actions.githubusercontent.com:repository_owner_id: "306859726"
+                token.actions.githubusercontent.com:repository_id: "1311508598"
+              StringLike:
+                token.actions.githubusercontent.com:sub: repo:edu-llm@306859726/platform@1311508598:ref:refs/heads/main
+      # Inline rather than a customer managed policy. InternSandboxBoundary denies
+      # iam:CreatePolicyVersion on every policy, so a managed policy could be created once
+      # and never amended; the first permission change would fail the stack update. Inline
+      # policies go through iam:PutRolePolicy, which the boundary permits on this name.
+      Policies:
+        - PolicyName: deploy-phase1-stacks
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:DeleteStack
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:DescribeStackResources
+                  - cloudformation:GetTemplateSummary
+                  - cloudformation:ListStackResources
+                # The wildcard starts after the edullm segment on purpose. This is a
+                # shared account: sbsandbox-intern- alone is every intern's prefix, so
+                # sbsandbox-intern-* would grant DeleteStack over their stacks too.
+                # Everything this repository deploys is named sbsandbox-intern-edullm-*,
+                # so nothing is gained by widening it back.
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-*/*
+              # cloudformation:ValidateTemplate is the only action here that the
+              # CloudFormation service authorization reference lists with no resource type
+              # at all, so "*" is the narrowest grant that exists for it. Every other
+              # action, GetTemplateSummary included, accepts a stack ARN and is scoped
+              # above: `aws cloudformation deploy` only ever calls it with a StackName.
+              - Effect: Allow
+                Action: cloudformation:ValidateTemplate
+                Resource: "*"
+              # CloudFormation acts as this role while it reconciles the ECR stack, so the
+              # role needs the repository lifecycle itself. ecr:PutLifecyclePolicy is what
+              # the retired shared role was missing.
+              #
+              # Deliberately absent: ecr:SetRepositoryPolicy, ecr:GetRepositoryPolicy and
+              # ecr:DeleteRepositoryPolicy. A repository policy is the one ECR grant that
+              # changes who may pull or push an image, and no committed template sets one.
+              - Effect: Allow
+                Action:
+                  - ecr:CreateRepository
+                  - ecr:DeleteRepository
+                  - ecr:DescribeRepositories
+                  - ecr:PutLifecyclePolicy
+                  - ecr:GetLifecyclePolicy
+                  - ecr:DeleteLifecyclePolicy
+                  - ecr:PutImageScanningConfiguration
+                  - ecr:PutImageTagMutability
+                  - ecr:TagResource
+                  - ecr:UntagResource
+                  - ecr:ListTagsForResource
+                # Narrowed after the edullm segment for the same reason as the stack scope.
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-*
+
+Outputs:
+  RoleName:
+    Value:
+      Ref: InfraDeployerRole
+  RoleArn:
+    Value:
+      Fn::GetAtt:
+        - InfraDeployerRole
+        - Arn

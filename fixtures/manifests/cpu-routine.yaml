@@ -9,9 +9,9 @@ command:
   - -m
   - dolma.tokenize
   - --input
-  - s3://edullm-datasets/dolma-2026-07/raw/
+  - s3://sbsandbox-intern-edullm-datasets/dolma-2026-07/raw/
   - --output
-  - s3://edullm-datasets/dolma-2026-07/tokenized/
+  - s3://sbsandbox-intern-edullm-datasets/dolma-2026-07/tokenized/
 team: data-prep
 wandb_project: dolma-tokenize
 workload_profile: dolma-tokenize-smoke

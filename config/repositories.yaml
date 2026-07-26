@@ -1,0 +1,9 @@
+repositories:
+  - repository: OLMo-core
+    github_repository_id: 1306868157
+    default_branch: main
+    ecr_repository: sbsandbox-intern-edullm-olmo-core
+    base_image_repository: docker.io/library/python
+    base_image_digest: sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+    dockerfile_path: .edullm/Dockerfile
+    build_context: .

@@ -12,6 +12,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from edullm_platform.canonical import canonical_json_bytes
+from edullm_platform.criteria import CriteriaDefinitionError
+from edullm_platform.criteria_runner import NestedExecutionError
 from edullm_platform.phase0_gate import evaluate_repository
 
 
@@ -19,6 +21,12 @@ def main() -> int:
     repo_root = Path.cwd()
     try:
         result = evaluate_repository(repo_root)
+    except NestedExecutionError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    except CriteriaDefinitionError as exc:
+        print(f"the Phase 0 criteria definition is not usable: {exc}", file=sys.stderr)
+        return 2
     except (OSError, json.JSONDecodeError, yaml.YAMLError, TypeError, ValidationError) as exc:
         print(str(exc), file=sys.stderr)
         return 2

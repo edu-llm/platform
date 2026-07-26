@@ -1,0 +1,56 @@
+# Phase 1 unit-test report
+
+Summarised counts only. Raw pytest output is not copied here; the commands below reproduce it in full.
+
+## Commands a reviewer can re-run
+
+```
+uv run pytest -q
+uv run ruff check .
+uv run mypy
+uv run python tools/export_schemas.py
+uv run python tools/validate_phase1.py
+uv run python tools/build_phase1_proof.py
+```
+
+## Whole suite
+
+| measure | count |
+| --- | --- |
+| collected by pytest | 2046 |
+| executed (excluding tests/test_phase0_proof.py, tests/test_phase1_proof.py) | 1971 |
+| passed | 1971 |
+| failed | 0 |
+| errored | 0 |
+| skipped | 0 |
+| pytest exit code | 0 |
+
+## Targeted verification run
+
+Every test node id cited by the negative-case matrix, plus every test in the modules Phase 1 added, executed as one selection.
+
+| measure | count |
+| --- | --- |
+| selected node ids | 324 |
+| executed | 324 |
+| passed | 324 |
+| failed | 0 |
+| errored | 0 |
+| skipped | 0 |
+| pytest exit code | 0 |
+
+## Per-module coverage
+
+The test modules Phase 1 added, excluding the two that invoke a gate or this generator; those run in the reviewer's own `uv run pytest -q`.
+
+| module | tests | result |
+| --- | --- | --- |
+| tests/test_capture_phase1_evidence_cli.py | 24 | pass |
+| tests/test_phase1_deployed_roles.py | 13 | pass |
+| tests/test_phase1_deployer_role.py | 12 | pass |
+| tests/test_phase1_ecr_deployment_workflow.py | 7 | pass |
+| tests/test_phase1_evidence.py | 186 | pass |
+| tests/test_phase1_golden.py | 5 | pass |
+| tests/test_phase1_infrastructure.py | 12 | pass |
+| tests/test_phase1_preconditions.py | 1 | pass |
+| tests/test_phase1_role_drift.py | 42 | pass |
