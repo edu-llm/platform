@@ -1,0 +1,66 @@
+name: Probe Phase 1 ECR capability
+
+on:
+  push:
+    branches:
+      - feature/phase-1-branch-to-image
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: phase1-ecr-capability-probe-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      STACK_NAME: sbsandbox-intern-edullm-phase1-ecr-probe-${{ github.run_id }}
+      REPOSITORY_NAME: sbsandbox-intern-edullm-phase1-ecr-probe-${{ github.run_id }}
+    steps:
+      - name: Assume shared deploy role
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-duration-seconds: 900
+
+      - name: Create probe stack
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > probe-template.yml <<EOF
+          AWSTemplateFormatVersion: "2010-09-09"
+          Resources:
+            ProbeRepository:
+              Type: AWS::ECR::Repository
+              Properties:
+                RepositoryName: ${REPOSITORY_NAME}
+          EOF
+          aws cloudformation create-stack \
+            --stack-name "$STACK_NAME" \
+            --template-body file://probe-template.yml
+          aws cloudformation wait stack-create-complete \
+            --stack-name "$STACK_NAME"
+
+      - name: Verify probe repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws ecr describe-repositories \
+            --repository-names "$REPOSITORY_NAME"
+
+      - name: Delete probe stack
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          cleanup_failed=0
+          aws cloudformation delete-stack \
+            --stack-name "$STACK_NAME" || cleanup_failed=1
+          aws cloudformation wait stack-delete-complete \
+            --stack-name "$STACK_NAME" || cleanup_failed=1
+          exit "$cleanup_failed"

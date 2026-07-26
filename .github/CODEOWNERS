@@ -1,0 +1,3 @@
+/.github/CODEOWNERS @philote-dev @BritishAmericqn
+/.github/workflows/** @philote-dev @BritishAmericqn
+/infra/** @philote-dev @BritishAmericqn
