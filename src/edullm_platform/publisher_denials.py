@@ -69,6 +69,10 @@ events, so all five are in the trail without data events being switched on.
 which taught us about S3 and nothing about the other four probes, and every fix after that
 would have cost another live run to learn one more thing. :func:`attempt_denials` attempts
 every action, records every outcome, and leaves the deciding to its caller.
+
+Before adding a probe, read :data:`PROBE_SELECTION_LESSONS`. It is short, and the first
+entry is there because a probe passed intermittently for a whole afternoon before anybody
+worked out why.
 """
 
 from __future__ import annotations
@@ -103,12 +107,14 @@ from edullm_platform.phase1_evidence import (
 
 __all__ = [
     "EVIDENCE_ONLY_FIELDS",
+    "PROBE_SELECTION_LESSONS",
     "PUBLISHER_DENIED_ACTIONS",
     "AttemptedDenial",
     "AwsApiError",
     "DenialMatrixRun",
     "DenialNotProvenError",
     "DenialProbe",
+    "ProbeLesson",
     "ProbeOutcome",
     "PublisherDenialMatrix",
     "PublisherDenialReason",
@@ -155,6 +161,94 @@ UNASSUMABLE_TRUST_POLICY: Final = json.dumps(
         "Statement": [{"Effect": "Deny", "Principal": {"AWS": "*"}, "Action": "sts:AssumeRole"}],
     },
     separators=(",", ":"),
+)
+
+
+@dataclass(frozen=True)
+class ProbeLesson:
+    """One rule for choosing a probe, and the run that taught it."""
+
+    rule: str
+    learned_from: str
+    detail: str
+
+
+#: What choosing a probe has cost so far. Read this before adding one.
+#:
+#: These are not general advice. Each entry is a rule some probe in this matrix broke,
+#: with the run that broke it, because a rule with no incident attached reads as caution
+#: and gets skipped.
+PROBE_SELECTION_LESSONS: Final[tuple[ProbeLesson, ...]] = (
+    ProbeLesson(
+        rule=(
+            "A probe whose target may not exist can be answered by existence instead of by "
+            "authorization, and will pass intermittently."
+        ),
+        learned_from=(
+            "The original S3 probe read an object from a bucket chosen not to exist. It "
+            "returned AccessDenied on one run and NoSuchBucket on the next, for the same "
+            "role against the same absent bucket."
+        ),
+        detail=(
+            "Two answers to one question is the symptom, and the cause is that the service "
+            "was answering a different question each time. S3 routes a request to a bucket "
+            "before it authorizes the caller, so which answer comes back depends on where "
+            "the request got to — which is a function of routing and caching rather than of "
+            "the role. The dangerous half is the direction the flake runs in: AccessDenied "
+            "is the answer the matrix is looking for, so a probe like this reports success "
+            "some of the time whatever the role can actually do, and a role widened to "
+            "include S3 would have been reported as narrow on any run that happened to "
+            "answer AccessDenied first.\n"
+            "\n"
+            "The rule generalises past S3. Any probe aimed at an absent resource is a race "
+            "between the service's not-found path and its authorization path, and a probe "
+            "that can be answered not-found can be answered not-found *instead of* denied. "
+            "That conflicts directly with the requirement that a permitted call must do "
+            "nothing, which is what pointed the probe at an absent resource in the first "
+            "place, so the two have to be reconciled per service rather than by a blanket "
+            "rule. Three ways out are in use here: an account-level call that names no "
+            "resource and so has nothing to be absent (s3:ListAllMyBuckets); a call whose "
+            "resource exists and whose permitted outcome is a collision rather than a "
+            "change (iam:CreateRole against a role name IAM already holds); and a call "
+            "against an absent resource in a service that authorizes first, which is the "
+            "remaining three probes and is safe only because those services do authorize "
+            "first — a fact about Batch and ECR today, not a guarantee.\n"
+            "\n"
+            "The price of the way out is recorded beside the probe: ListBuckets proves the "
+            "role holds no account-wide S3 permission, which is weaker than the criterion's "
+            "'cannot read datasets'. A weaker claim that is always true beats a stronger one "
+            "that is true at random."
+        ),
+    ),
+    ProbeLesson(
+        rule="A refusal is recognised by its error code and operation, never by its wording.",
+        learned_from=(
+            "The matrix first required the message to read 'is not authorized to perform: "
+            "<action>'. IAM and Batch say that; S3 answers AccessDenied with the message "
+            "'Access Denied' and nothing else."
+        ),
+        detail=(
+            "The service the criterion is most about was the one service that could never "
+            "satisfy the test. Wording is not part of any API contract and changes without "
+            "notice; the error code and the operation the error names are. The message is "
+            "still read where there is one — a message naming an action must name this one, "
+            "and one blaming a resource-based policy is refused whatever else it says — but "
+            "a terse refusal is accepted on the code alone, and that limit is real."
+        ),
+    ),
+    ProbeLesson(
+        rule="A run reports every probe's outcome, rather than stopping at the first anomaly.",
+        learned_from=(
+            "The first live run stopped when the S3 probe failed, so it established nothing "
+            "about the four probes after it and cost a workflow run to learn one thing."
+        ),
+        detail=(
+            "Reaching this account costs a real run under a real OIDC session, which is not "
+            "something a developer can do in a loop. A matrix that stops at its first "
+            "surprise turns one run into one fact; a matrix that attempts everything and "
+            "reports everything turns one run into five."
+        ),
+    ),
 )
 
 #: The five actions attempted, in order. The first four are the master plan's check —

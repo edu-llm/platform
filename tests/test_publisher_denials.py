@@ -28,6 +28,7 @@ from edullm_platform.evidence import AWS_ACCOUNT_ID_PLACEHOLDER, scan_for_secret
 from edullm_platform.phase1_evidence import DenialEvidence
 from edullm_platform.publisher_denials import (
     EVIDENCE_ONLY_FIELDS,
+    PROBE_SELECTION_LESSONS,
     PUBLISHER_DENIED_ACTIONS,
     AttemptedDenial,
     DenialNotProvenError,
@@ -749,3 +750,71 @@ def test_an_identity_that_is_not_an_assumed_role_stops_the_matrix(arn: str) -> N
 
     assert exc_info.value.reason is PublisherDenialReason.CALLER_IS_NOT_AN_ASSUMED_ROLE
     assert ACCOUNT_ID not in str(exc_info.value)
+
+
+# --------------------------------------------------------------------------------------
+# What choosing a probe has cost, written where the next person to choose one will look
+# --------------------------------------------------------------------------------------
+
+
+def test_every_probe_lesson_names_the_run_that_taught_it() -> None:
+    # A rule with no incident attached reads as caution and gets skipped. Each of these
+    # is a rule some probe in this matrix broke, and the run it broke it on.
+    assert PROBE_SELECTION_LESSONS
+    for lesson in PROBE_SELECTION_LESSONS:
+        assert lesson.rule.strip()
+        assert lesson.learned_from.strip()
+        assert lesson.detail.strip()
+
+
+def test_the_flaky_probe_is_recorded_with_both_answers_it_gave() -> None:
+    # The symptom was one probe answering two different things about the same role and
+    # the same absent bucket. Naming both is what lets somebody recognise it again.
+    lesson = PROBE_SELECTION_LESSONS[0]
+
+    assert "AccessDenied" in lesson.learned_from
+    assert "NoSuchBucket" in lesson.learned_from
+    assert "intermittently" in lesson.rule
+
+
+def test_the_flaky_probe_lesson_says_which_way_the_flake_fails() -> None:
+    # The half that matters. A probe that sometimes answers AccessDenied reports success
+    # some of the time whatever the role can do, so the flake fails towards passing.
+    lesson = PROBE_SELECTION_LESSONS[0]
+
+    assert "reported as narrow" in lesson.detail
+    assert "widened" in lesson.detail
+
+
+def test_the_flaky_probe_lesson_is_general_rather_than_about_s3() -> None:
+    # The bucket was the occasion, not the rule. Any probe aimed at a resource that may
+    # not exist is a race between the service's not-found path and its authorization path.
+    lesson = PROBE_SELECTION_LESSONS[0]
+
+    assert "generalises" in lesson.detail
+    assert "absent resource" in lesson.detail
+
+
+def test_the_flaky_probe_lesson_records_what_the_replacement_gave_up() -> None:
+    # ListBuckets cannot be answered not-found, and proves less than the criterion says.
+    # A rule that recorded only the fix would read as though nothing had been traded.
+    lesson = PROBE_SELECTION_LESSONS[0]
+
+    assert "ListBuckets" in lesson.detail
+    assert "weaker" in lesson.detail
+
+
+def test_every_probe_in_the_matrix_obeys_the_first_lesson() -> None:
+    # Either the probe names no resource at all, or its resource exists so that a
+    # permitted call collides rather than being answered not-found, or it is aimed at a
+    # service that authorizes before it routes. The third is the case for Batch and ECR
+    # and is a fact about them today rather than a guarantee, which the lesson says.
+    probes = denial_probes(region=REGION, ecr_repository=ECR_REPOSITORY, role_name=ROLE_NAME)
+    authorizes_before_it_routes = {"batch.amazonaws.com", "ecr.amazonaws.com"}
+
+    for probe in probes:
+        names_nothing = probe.resource_name is None
+        collides = probe.resource_name == ROLE_NAME
+        assert names_nothing or collides or probe.event_source in authorizes_before_it_routes, (
+            probe.action
+        )
