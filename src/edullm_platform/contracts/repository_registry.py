@@ -12,6 +12,22 @@ from .base import (
 ECR_REPOSITORY_PATTERN = (
     rf"^{SANDBOX_BUCKET_PREFIX}[a-z0-9]+(?:[._/-][a-z0-9]+)*$"
 )
+BASE_IMAGE_REPOSITORY_SCHEMA_PATTERN = r"^[^:@]*[^:@\s][^:@]*$"
+SAFE_PATH_COMPONENT_SCHEMA_PATTERN = (
+    r"(?:\.|[^./\\][^/\\]*|\.[^./\\][^/\\]*|\.\.[^/\\]+)"
+)
+NON_DOT_PATH_COMPONENT_SCHEMA_PATTERN = (
+    r"(?:[^./\\][^/\\]*|\.[^./\\][^/\\]*|\.\.[^/\\]+)"
+)
+BUILD_CONTEXT_SCHEMA_PATTERN = (
+    rf"^{SAFE_PATH_COMPONENT_SCHEMA_PATTERN}"
+    rf"(?:/{SAFE_PATH_COMPONENT_SCHEMA_PATTERN})*$"
+)
+DOCKERFILE_PATH_SCHEMA_PATTERN = (
+    rf"^(?:{NON_DOT_PATH_COMPONENT_SCHEMA_PATTERN}|"
+    rf"{SAFE_PATH_COMPONENT_SCHEMA_PATTERN}/{SAFE_PATH_COMPONENT_SCHEMA_PATTERN}"
+    rf"(?:/{SAFE_PATH_COMPONENT_SCHEMA_PATTERN})*)$"
+)
 
 
 class UnknownRepositoryError(ValueError):
@@ -27,10 +43,19 @@ class RegisteredRepository(ContractModel):
         max_length=256,
         pattern=ECR_REPOSITORY_PATTERN,
     )
-    base_image_repository: str = Field(min_length=1)
+    base_image_repository: str = Field(
+        min_length=1,
+        json_schema_extra={"pattern": BASE_IMAGE_REPOSITORY_SCHEMA_PATTERN},
+    )
     base_image_digest: Sha256Digest
-    dockerfile_path: str = Field(min_length=1)
-    build_context: str = Field(min_length=1)
+    dockerfile_path: str = Field(
+        min_length=1,
+        json_schema_extra={"pattern": DOCKERFILE_PATH_SCHEMA_PATTERN},
+    )
+    build_context: str = Field(
+        min_length=1,
+        json_schema_extra={"pattern": BUILD_CONTEXT_SCHEMA_PATTERN},
+    )
 
     @field_validator("base_image_repository")
     @classmethod

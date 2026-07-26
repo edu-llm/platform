@@ -86,6 +86,17 @@ RUN_MANIFEST_PAYLOAD: dict[str, object] = {
     },
 }
 
+REGISTERED_REPOSITORY_PAYLOAD: dict[str, object] = {
+    "repository": "OLMo-core",
+    "github_repository_id": 1306868157,
+    "default_branch": "main",
+    "ecr_repository": "sbsandbox-intern-edullm-olmo-core",
+    "base_image_repository": "docker.io/library/python",
+    "base_image_digest": "sha256:" + "a" * 64,
+    "dockerfile_path": ".edullm/Dockerfile",
+    "build_context": ".",
+}
+
 EXPORTED_DECIMAL_FIELDS: tuple[tuple[str, type[BaseModel], str, bool, dict[str, object]], ...] = (
     ("policy-cost", PolicyThresholds, "routine_maximum_cost_usd", False, POLICY_THRESHOLDS_PAYLOAD),
     (
@@ -144,6 +155,44 @@ def test_rendered_schemas_cover_all_root_contract_models() -> None:
         "repositories.schema.json",
         "run-manifest.schema.json",
     }
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid_value"),
+    [
+        ("base_image_repository", "docker.io/library/python:3.12"),
+        (
+            "base_image_repository",
+            "docker.io/library/python@sha256:" + "a" * 64,
+        ),
+        ("dockerfile_path", ""),
+        ("dockerfile_path", "."),
+        ("dockerfile_path", "/Dockerfile"),
+        ("dockerfile_path", "../Dockerfile"),
+        ("dockerfile_path", r"images\Dockerfile"),
+        ("build_context", ""),
+        ("build_context", "/workspace"),
+        ("build_context", "../workspace"),
+        ("build_context", r"images\workspace"),
+    ],
+)
+def test_repository_schema_rejects_runtime_invalid_image_and_path_values(
+    field: str,
+    invalid_value: str,
+) -> None:
+    schema = json.loads(rendered_schemas()["repositories.schema.json"])
+    validator = jsonschema.Draft202012Validator(schema)
+    repository = dict(REGISTERED_REPOSITORY_PAYLOAD)
+    repository[field] = invalid_value
+
+    assert not validator.is_valid({"repositories": [repository]})
+
+
+def test_repository_schema_allows_dot_build_context() -> None:
+    schema = json.loads(rendered_schemas()["repositories.schema.json"])
+    validator = jsonschema.Draft202012Validator(schema)
+
+    assert validator.is_valid({"repositories": [REGISTERED_REPOSITORY_PAYLOAD]})
 
 
 def test_load_yaml_rejects_duplicate_mapping_keys(tmp_path: Path) -> None:
