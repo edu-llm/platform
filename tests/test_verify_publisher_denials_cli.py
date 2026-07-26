@@ -4,6 +4,9 @@ Every case here runs the real command against a stub ``aws`` on PATH, so what is
 test is the plumbing as well as the judgement: the argv each probe builds, the exit
 status, and above all what does and does not reach the two streams a public runner log
 is made of.
+
+The stub answers each service in that service's own words, because the first live run
+failed on the assumption that they all answer alike.
 """
 
 from __future__ import annotations
@@ -19,7 +22,7 @@ from workflow_support import write_stub
 from edullm_platform import publisher_denials
 from edullm_platform.evidence import AWS_ACCOUNT_ID_PLACEHOLDER, scan_for_secrets
 from edullm_platform.publisher_denials import PUBLISHER_DENIED_ACTIONS, denial_probes
-from tools.verify_publisher_denials import main
+from tools.verify_publisher_denials import NOT_PROVEN_EXPLANATION, main
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REGISTRY_PATH = PROJECT_ROOT / "config" / "repositories.yaml"
@@ -40,11 +43,7 @@ EXPECTED_CALLS = (
         "--job-queue edullm-denial-probe-absent-queue "
         "--job-definition edullm-denial-probe-absent-job-definition"
     ),
-    (
-        f"s3api get-object --region {REGION} "
-        "--bucket sbsandbox-intern-edullm-denial-probe-absent-bucket "
-        "--key denial-probe/absent-object /dev/null"
-    ),
+    f"s3api list-buckets --region {REGION}",
     (
         f"iam create-role --region {REGION} --role-name {ROLE_NAME} "
         '--assume-role-policy-document {"Version":"2012-10-17","Statement":'
@@ -60,19 +59,41 @@ EXPECTED_CALLS = (
     ),
 )
 
+#: What the stub reports when every probe is refused, in matrix order. S3's line carries
+#: the code from a message that said nothing but "Access Denied".
+REFUSED_EVERYTHING = (
+    "denied:batch:SubmitJob:AccessDeniedException",
+    "denied:s3:ListAllMyBuckets:AccessDenied",
+    "denied:iam:CreateRole:AccessDenied",
+    "denied:batch:UpdateComputeEnvironment:AccessDeniedException",
+    "denied:ecr:DeleteRepository:AccessDeniedException",
+)
+
 
 def probes() -> tuple[publisher_denials.DenialProbe, ...]:
     return denial_probes(region=REGION, ecr_repository=ECR_REPOSITORY, role_name=ROLE_NAME)
 
 
 def denial_body(probe: publisher_denials.DenialProbe) -> str:
-    message = (
-        f"An error occurred (AccessDeniedException) when calling the {probe.operation} "
-        f"operation: User: {CALLER_ARN} is not authorized to perform: {probe.action} "
-        f"on resource: {probe.resource_name} because no identity-based policy allows "
-        f"the {probe.action} action"
-    )
-    return f"printf '%s\\n' '{message}' >&2; exit 254"
+    """A refusal in the words the service behind this probe really uses."""
+    service = probe.action.split(":", 1)[0]
+    if service == "s3":
+        message = "Access Denied"
+        code = "AccessDenied"
+    else:
+        code = "AccessDenied" if service == "iam" else "AccessDeniedException"
+        message = (
+            f"User: {CALLER_ARN} is not authorized to perform: {probe.action} "
+            f"on resource: {probe.resource_name} because no identity-based policy allows "
+            f"the {probe.action} action"
+        )
+    error = f"An error occurred ({code}) when calling the {probe.operation} operation: {message}"
+    return f"printf '%s\\n' '{error}' >&2; exit 254"
+
+
+def failing_body(operation: str, code: str, message: str) -> str:
+    error = f"An error occurred ({code}) when calling the {operation} operation: {message}"
+    return f"printf '%s\\n' '{error}' >&2; exit 254"
 
 
 def install_aws_stub(
@@ -166,6 +187,26 @@ def test_the_record_says_what_was_attempted_and_who_was_refused(
     assert submit["region"] == REGION
 
 
+def test_a_refusal_that_said_only_access_denied_is_recorded_as_the_refusal_it_is(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # S3 says "Access Denied" and nothing else, and it names no bucket to have been
+    # refused about. Both go into the record as they are rather than being embellished.
+    install_aws_stub(tmp_path, monkeypatch)
+
+    assert main(argv(tmp_path)) == 0
+
+    matrix = json.loads((tmp_path / "publisher-denials.json").read_text(encoding="utf-8"))
+    listing = matrix["attempts"][1]
+    assert listing["attempted_action"] == "s3:ListAllMyBuckets"
+    assert listing["attempted_resource"] is None
+    assert listing["error_code"] == "AccessDenied"
+    assert listing["error_message"] == "Access Denied"
+    assert listing["event_name"] == "ListBuckets"
+    assert listing["event_source"] == "s3.amazonaws.com"
+
+
 def test_nothing_the_account_said_about_itself_survives_into_the_record(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -199,8 +240,48 @@ def test_an_action_that_was_allowed_stops_the_run_instead_of_being_recorded(
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert captured.err.splitlines()[0] == "attempt_permitted:iam:CreateRole"
+    assert captured.err.splitlines() == [
+        REFUSED_EVERYTHING[0],
+        REFUSED_EVERYTHING[1],
+        "attempt_permitted:iam:CreateRole",
+        REFUSED_EVERYTHING[3],
+        REFUSED_EVERYTHING[4],
+        NOT_PROVEN_EXPLANATION,
+    ]
     assert captured.out == ""
+    assert not (tmp_path / "publisher-denials.json").exists()
+
+
+def test_one_run_reports_every_probe_rather_than_the_first_that_went_wrong(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The first live run stopped at the S3 probe, so four of the five actions were still
+    # unverified and every fix bought one more run to learn one more thing. A run that
+    # reports everything at once is the difference between one round trip and four.
+    recording = install_aws_stub(
+        tmp_path,
+        monkeypatch,
+        answers={
+            "batch:SubmitJob": failing_body("SubmitJob", "ClientException", "does not exist"),
+            "ecr:DeleteRepository": "exit 0",
+        },
+    )
+
+    exit_code = main(argv(tmp_path))
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert captured.err.splitlines() == [
+        "attempt_failed_for_another_reason:batch:SubmitJob:ClientException",
+        REFUSED_EVERYTHING[1],
+        REFUSED_EVERYTHING[2],
+        REFUSED_EVERYTHING[3],
+        "attempt_permitted:ecr:DeleteRepository",
+        NOT_PROVEN_EXPLANATION,
+    ]
+    assert recorded(recording) == list(EXPECTED_CALLS)
     assert not (tmp_path / "publisher-denials.json").exists()
 
 
@@ -217,6 +298,11 @@ def test_an_action_that_was_allowed_stops_the_run_instead_of_being_recorded(
             "1 validation error detected: value at repositoryName failed to satisfy",
             "attempt_failed_for_another_reason:ecr:DeleteRepository:ValidationException",
         ),
+        (
+            "ThrottlingException",
+            "Rate exceeded",
+            "attempt_failed_for_another_reason:ecr:DeleteRepository:ThrottlingException",
+        ),
     ],
 )
 def test_a_failure_for_the_wrong_reason_is_never_filed_as_a_denial(
@@ -227,26 +313,21 @@ def test_a_failure_for_the_wrong_reason_is_never_filed_as_a_denial(
     message: str,
     reason: str,
 ) -> None:
-    # A not-found says the call was authorized and the resource was absent, and a
-    # malformed parameter says the service never got as far as deciding. Neither is a
-    # refusal, and recording either would be recording the opposite of what happened.
+    # A not-found says the call was authorized and the resource was absent, a malformed
+    # parameter says the service never got as far as deciding, and a throttle says it
+    # declined to answer. None is a refusal of this identity.
     canary = f"{message} secret-detail-canary"
     install_aws_stub(
         tmp_path,
         monkeypatch,
-        answers={
-            "ecr:DeleteRepository": (
-                f"printf '%s\\n' 'An error occurred ({code}) when calling the "
-                f"DeleteRepository operation: {canary}' >&2; exit 254"
-            )
-        },
+        answers={"ecr:DeleteRepository": failing_body("DeleteRepository", code, canary)},
     )
 
     exit_code = main(argv(tmp_path))
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert captured.err.splitlines()[0] == reason
+    assert captured.err.splitlines()[4] == reason
     assert "secret-detail-canary" not in captured.out + captured.err
     assert not (tmp_path / "publisher-denials.json").exists()
 
@@ -260,7 +341,7 @@ def test_a_call_that_never_reached_aws_is_not_a_denial(
         tmp_path,
         monkeypatch,
         answers={
-            "s3:GetObject": (
+            "s3:ListAllMyBuckets": (
                 "printf '%s\\n' 'Could not connect to the endpoint URL: "
                 "https://s3.us-east-1.amazonaws.com/' >&2; exit 255"
             )
@@ -271,7 +352,9 @@ def test_a_call_that_never_reached_aws_is_not_a_denial(
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert captured.err.splitlines()[0] == "attempt_failed_without_an_aws_error:s3:GetObject"
+    assert captured.err.splitlines()[1] == (
+        "attempt_failed_without_an_aws_error:s3:ListAllMyBuckets"
+    )
     assert not (tmp_path / "publisher-denials.json").exists()
 
 
@@ -297,7 +380,10 @@ def test_a_probe_that_hangs_is_not_a_denial(
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert captured.err.splitlines()[0] == "attempt_timed_out:batch:SubmitJob"
+    assert captured.err.splitlines() == [
+        *(f"attempt_timed_out:{action}" for action in PUBLISHER_DENIED_ACTIONS),
+        NOT_PROVEN_EXPLANATION,
+    ]
     assert not (tmp_path / "publisher-denials.json").exists()
 
 
@@ -334,7 +420,8 @@ def test_a_session_the_record_could_not_describe_never_attempts_anything(
     reason: str,
 ) -> None:
     # Every field of the record describes a role session. Attempting the matrix without
-    # one would produce refusals nothing could be written down about.
+    # one would produce refusals nothing could be written down about, so this is the one
+    # failure that is a precondition rather than an outcome to collect.
     recording = install_aws_stub(
         tmp_path,
         monkeypatch,
@@ -346,7 +433,7 @@ def test_a_session_the_record_could_not_describe_never_attempts_anything(
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert captured.err.splitlines()[0] == reason
+    assert captured.err.splitlines() == [reason, NOT_PROVEN_EXPLANATION]
     assert ACCOUNT_ID not in captured.out + captured.err
     assert recorded(recording) == [EXPECTED_CALLS[0]]
     assert not (tmp_path / "publisher-denials.json").exists()
@@ -366,6 +453,23 @@ def test_the_ecr_probe_never_names_the_repository_the_role_publishes_to(
     assert f"--repository-name {ECR_REPOSITORY}-denial-probe-absent" in delete
     assert not delete.endswith(f"--repository-name {ECR_REPOSITORY}")
     assert "--force" not in delete
+
+
+def test_the_s3_probe_names_no_bucket_at_all(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A bucket that does not exist is answered NoSuchBucket before anybody is authorized,
+    # which is what the first live run hit, and a bucket that does exist in this shared
+    # account belongs to somebody else. The probe asks the account-level question.
+    recording = install_aws_stub(tmp_path, monkeypatch)
+
+    assert main(argv(tmp_path)) == 0
+
+    assert [call for call in recorded(recording) if call.startswith("s3api")] == [
+        f"s3api list-buckets --region {REGION}"
+    ]
+    assert not any("--bucket" in call for call in recorded(recording))
 
 
 def test_an_unregistered_repository_is_refused_before_any_credential_is_used(

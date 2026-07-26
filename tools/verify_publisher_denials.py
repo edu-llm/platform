@@ -2,13 +2,18 @@
 
 Runs in the publish workflow under a real publisher session, between the source-identity
 gate and the build, so a role that has been widened stops a publish rather than being
-discovered after one. It attempts every action in
-``edullm_platform.publisher_denials`` and exits non-zero unless every single one came
-back as an authorization failure naming that action. A not-found, a malformed parameter
-and a timeout are failures rather than refusals, and each of them is what a permitted
-call looks like when it is pointed at something that is not there.
+discovered after one. It attempts every action in ``edullm_platform.publisher_denials``
+and exits non-zero unless every single one came back as an authorization failure of that
+call. A not-found, a malformed parameter, a throttle and a timeout are failures rather
+than refusals, and each of them is what a permitted call looks like when it is pointed at
+something that is not there.
 
-Only the machine-readable reason reaches the two streams: the runner log is world
+Every action is attempted whatever the ones before it answered, and a run that could not
+prove the matrix prints one line per action rather than the first line that went wrong.
+Reaching this account costs a workflow run, so a run that reported one problem at a time
+would cost one run per problem.
+
+Only the machine-readable outcome reaches the two streams: the runner log is world
 readable for any public caller repository, and an AWS denial message names the account.
 The record written to ``--output`` is masked field by field by the contract that holds it.
 """
@@ -58,14 +63,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
 
     try:
-        matrix = attempt_denials(
+        run = attempt_denials(
             region=arguments.region,
             ecr_repository=registered.ecr_repository,
         )
     except DenialNotProvenError as exc:
+        # A precondition rather than an outcome: without a session this record can
+        # describe, there is nothing for any refusal to be written down in.
         print(str(exc), file=sys.stderr)
         print(NOT_PROVEN_EXPLANATION, file=sys.stderr)
         return 1
+
+    if not run.proven:
+        # Every action, in matrix order, including the ones that were refused. Which
+        # four held is as much of the answer as which one did not.
+        for outcome in run.summary:
+            print(outcome, file=sys.stderr)
+        print(NOT_PROVEN_EXPLANATION, file=sys.stderr)
+        return 1
+
+    try:
+        matrix = run.matrix()
     except ValidationError:
         # The refusals were real and the record of them is not writable, which is a bug
         # here rather than a finding about the role. It still stops the publish: a
