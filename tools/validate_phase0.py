@@ -12,8 +12,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from edullm_platform.canonical import canonical_json_bytes
+from edullm_platform.criteria import CriteriaDefinitionError
 from edullm_platform.criteria_runner import NestedExecutionError
-from edullm_platform.phase0_criteria import CriteriaDefinitionError
 from edullm_platform.phase0_gate import evaluate_repository
 
 

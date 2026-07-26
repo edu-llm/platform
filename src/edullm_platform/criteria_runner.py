@@ -8,7 +8,7 @@ things keep that from turning into an unbounded recursion or a hang:
    variable is already set, so a gate invoked from inside a gate's own test run stops
    instead of spawning another level. Depth is bounded at one.
 2. A criterion may never cite a test from a module that invokes the gate or the proof
-   generator. ``edullm_platform.phase0_criteria.REENTRANT_TEST_MODULES`` lists them and
+   generator. ``edullm_platform.criteria.REENTRANT_TEST_MODULES`` lists them and
    ``CriterionSpec`` rejects such a citation when the spec is constructed, so the guard
    above is never the only thing standing between the gate and itself.
 3. Only explicit ``path::name`` node ids are ever passed to pytest. A bare directory,

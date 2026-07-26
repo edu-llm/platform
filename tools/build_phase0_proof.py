@@ -28,16 +28,18 @@ from edullm_platform.contracts.base import ContractModel
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.policy import ApprovalPolicy
 from edullm_platform.contracts.workload import WorkloadCatalog
+from edullm_platform.criteria import (
+    REENTRANT_TEST_MODULES,
+    CriteriaDefinitionError,
+    CriterionSpec,
+    CriterionStatus,
+)
 from edullm_platform.evidence import redact_content_digests, scan_for_secrets
 
 # The criterion-to-test mapping is defined once, in the library, and imported here and
 # by the acceptance gate. This module must never grow its own copy: the matrix below and
 # the gate's verdict have to be the same claim, or the bundle is decoration.
 from edullm_platform.phase0_criteria import (
-    REENTRANT_TEST_MODULES,
-    CriteriaDefinitionError,
-    CriterionSpec,
-    CriterionStatus,
     FixtureReference,
     discover_fixtures,
     phase0_criteria,

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from edullm_platform.phase0_criteria import (
+from edullm_platform.criteria import (
     CriteriaDefinitionError,
     CriterionSpec,
     CriterionStatus,

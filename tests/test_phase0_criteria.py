@@ -5,6 +5,12 @@ is listed in ``REENTRANT_TEST_MODULES`` and can never be cited by a criterion. T
 the structural half of the recursion guard;
 ``test_no_test_module_that_starts_the_gate_is_citable`` keeps the list honest as more
 tests are written.
+
+A handful of the checks here are repository-wide rather than Phase 0's own: that only a
+``phase*_criteria.py`` module defines a criterion, that the criterion contract itself is
+declared once, and that no consumer keeps a second copy of a statement. They live here
+because this module already pays for a full pytest collection and already may not be
+cited, so a later phase gets them without a second collection run.
 """
 
 from __future__ import annotations
@@ -20,6 +26,13 @@ import pytest
 import tools.build_phase0_proof as proof_generator
 from edullm_platform import phase0_gate
 from edullm_platform.canonical import canonical_json_bytes
+from edullm_platform.criteria import (
+    REENTRANT_TEST_MODULES,
+    CriteriaDefinitionError,
+    CriterionSpec,
+    CriterionStatus,
+    cited_node_ids,
+)
 from edullm_platform.criteria_runner import (
     NESTED_GATE_ENV,
     NestedExecutionError,
@@ -30,11 +43,6 @@ from edullm_platform.criteria_runner import (
     subprocess_environment,
 )
 from edullm_platform.phase0_criteria import (
-    REENTRANT_TEST_MODULES,
-    CriteriaDefinitionError,
-    CriterionSpec,
-    CriterionStatus,
-    cited_node_ids,
     discover_fixtures,
     phase0_criteria,
     recorded_checks,
@@ -112,6 +120,20 @@ DEFINITION_MARKERS = (
     "deferral_trigger=",
 )
 
+#: Markers that only appear where the criterion contract itself is declared. The three
+#: statuses, the spec, and its error type are one contract shared by every phase; a
+#: second declaration of any of them is a second contract wearing the same names.
+CONTRACT_DECLARATION_MARKERS = (
+    "class CriterionSpec",
+    "class CriterionStatus",
+    "class CriteriaDefinitionError",
+)
+
+#: Where the shared machinery lives, and where a criterion may be defined.
+CONTRACT_MODULE = "src/edullm_platform/criteria.py"
+DEFINITION_GLOB = "phase*_criteria.py"
+LIBRARY_DIRECTORY = PROJECT_ROOT / "src" / "edullm_platform"
+
 MINI_SUITE = """
 def test_mini_passes() -> None:
     assert True
@@ -168,6 +190,29 @@ def files_containing(marker: str, paths: list[Path]) -> list[str]:
         str(path.relative_to(PROJECT_ROOT))
         for path in paths
         if marker in path.read_text(encoding="utf-8")
+    ]
+
+
+def criteria_definition_files() -> list[str]:
+    """Every source file allowed to define a criterion, as a repository-relative path."""
+    return sorted(
+        str(path.relative_to(PROJECT_ROOT)) for path in LIBRARY_DIRECTORY.glob(DEFINITION_GLOB)
+    )
+
+
+def statements_by_definition() -> list[tuple[str, tuple[str, ...]]]:
+    """Each phase definition and the statements it owns, read from the definition itself.
+
+    Reading the live statements rather than a transcription means a criterion added to
+    either phase is covered by the duplication check without anyone remembering to add
+    it here. The transcriptions in PHASE1_STATEMENTS and PHASE0_STATEMENTS are checked
+    separately, against the phase that owns them.
+    """
+    return [
+        (
+            "src/edullm_platform/phase0_criteria.py",
+            tuple(check.statement for check in recorded_checks(discover_fixtures(PROJECT_ROOT))),
+        ),
     ]
 
 
@@ -232,20 +277,40 @@ def test_the_gate_and_the_proof_generator_see_identical_criteria(
     assert cited_node_ids(from_gate) == cited_node_ids(from_generator)
 
 
+def test_a_phase_criteria_module_exists_to_be_checked() -> None:
+    # Everything below is expressed as "no file outside this set", which a glob matching
+    # nothing would satisfy without proving anything.
+    assert criteria_definition_files() == ["src/edullm_platform/phase0_criteria.py"]
+
+
 @pytest.mark.parametrize("marker", DEFINITION_MARKERS)
-def test_exactly_one_source_file_defines_criteria(marker: str) -> None:
-    assert files_containing(marker, source_files()) == [
-        "src/edullm_platform/phase0_criteria.py"
-    ], f"{marker!r} appears outside the single criteria definition"
+def test_only_a_phase_criteria_module_defines_criteria(marker: str) -> None:
+    definitions = set(criteria_definition_files())
+    found = files_containing(marker, source_files())
+
+    assert found, f"{marker!r} appears in no criteria definition at all"
+    assert sorted(set(found) - definitions) == [], (
+        f"{marker!r} appears outside a {DEFINITION_GLOB} definition"
+    )
+
+
+@pytest.mark.parametrize("marker", CONTRACT_DECLARATION_MARKERS)
+def test_exactly_one_source_file_declares_the_criterion_contract(marker: str) -> None:
+    assert files_containing(marker, source_files()) == [CONTRACT_MODULE], (
+        f"{marker!r} appears outside the shared criteria contract"
+    )
 
 
 def test_no_consumer_keeps_its_own_criterion_statement() -> None:
-    definition = PROJECT_ROOT / "src" / "edullm_platform" / "phase0_criteria.py"
-    others = [path for path in source_files() if path != definition]
-    for statement in PHASE0_STATEMENTS:
-        assert files_containing(statement, others) == [], (
-            f"a second copy of {statement!r} exists outside the definition"
-        )
+    for definition, statements in statements_by_definition():
+        others = [
+            path for path in source_files() if str(path.relative_to(PROJECT_ROOT)) != definition
+        ]
+        assert statements, f"{definition} states no criterion"
+        for statement in statements:
+            assert files_containing(statement, others) == [], (
+                f"a second copy of {statement!r} exists outside {definition}"
+            )
 
 
 def test_the_definition_states_the_thirteen_criteria_verbatim(
@@ -715,13 +780,18 @@ def test_the_runner_refuses_anything_that_is_not_an_explicit_node_id(
         run_node_ids(PROJECT_ROOT, selection)
 
 
+def gate_invoking_test_modules() -> set[str]:
+    return {
+        f"tests/{path.name}"
+        for path in sorted((PROJECT_ROOT / "tests").glob("test_*.py"))
+        if any(
+            marker in path.read_text(encoding="utf-8") for marker in GATE_INVOCATION_MARKERS
+        )
+    }
+
+
 def test_no_test_module_that_starts_the_gate_is_citable() -> None:
-    reentrant = []
-    for path in sorted((PROJECT_ROOT / "tests").glob("test_*.py")):
-        text = path.read_text(encoding="utf-8")
-        if any(marker in text for marker in GATE_INVOCATION_MARKERS):
-            reentrant.append(f"tests/{path.name}")
-    assert sorted(reentrant) == sorted(REENTRANT_TEST_MODULES), (
+    assert sorted(gate_invoking_test_modules()) == sorted(REENTRANT_TEST_MODULES), (
         "a test module that starts the gate or the proof generator is not listed in "
         "REENTRANT_TEST_MODULES, so a criterion could cite it and recurse"
     )

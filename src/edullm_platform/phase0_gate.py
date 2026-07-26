@@ -24,6 +24,7 @@ from edullm_platform.contracts.policy import (
     classify_request,
 )
 from edullm_platform.contracts.workload import WorkloadCatalog
+from edullm_platform.criteria import CriterionSpec, CriterionStatus
 from edullm_platform.criteria_runner import SelectionOutcome, run_node_ids
 from edullm_platform.evidence import (
     EVIDENCE_STALE_CODE,
@@ -44,12 +45,7 @@ from edullm_platform.manifest_helpers import (
     manifest_has_immutable_image,
     manifest_has_immutable_revision,
 )
-from edullm_platform.phase0_criteria import (
-    CriterionSpec,
-    CriterionStatus,
-    discover_fixtures,
-    phase0_criteria,
-)
+from edullm_platform.phase0_criteria import discover_fixtures, phase0_criteria
 
 T = TypeVar("T", bound=ContractModel)
 
