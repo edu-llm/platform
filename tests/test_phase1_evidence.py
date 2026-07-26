@@ -325,6 +325,12 @@ def inline_policy_payload(**overrides: object) -> dict[str, object]:
     return payload
 
 
+def attached_policy_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {"policy_name": "ReadOnlyAccess", "scope": "aws"}
+    payload.update(overrides)
+    return payload
+
+
 def deployed_role_payload(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
         "source": "aws",
@@ -337,7 +343,7 @@ def deployed_role_payload(**overrides: object) -> dict[str, object]:
         "trust_policy_version": "2012-10-17",
         "trust_statements": [trust_statement_payload()],
         "inline_policies": [inline_policy_payload()],
-        "attached_managed_policy_names": [],
+        "attached_managed_policies": [],
     }
     payload.update(overrides)
     return payload
@@ -905,7 +911,7 @@ def test_the_deployed_role_carries_what_a_template_comparison_needs() -> None:
     assert evidence.role_name == PUBLISHER_ROLE_NAME
     assert evidence.permissions_boundary_policy_name == "InternSandboxBoundary"
     assert evidence.max_session_duration_seconds == 3600
-    assert evidence.attached_managed_policy_names == ()
+    assert evidence.attached_managed_policies == ()
     trust = evidence.trust_statements[0]
     assert trust.principal_match.element == "Principal"
     assert trust.principal_match.principals[0].identifier == "token.actions.githubusercontent.com"
@@ -975,9 +981,12 @@ def test_an_attached_managed_policy_is_recorded_because_no_template_would_show_i
     # console is drift the template cannot express. A record that could not hold it
     # would be blind to the easiest way to widen this role.
     widened = DeployedRoleEvidence.model_validate(
-        deployed_role_payload(attached_managed_policy_names=["AdministratorAccess"])
+        deployed_role_payload(
+            attached_managed_policies=[attached_policy_payload(policy_name="AdministratorAccess")]
+        )
     )
-    assert widened.attached_managed_policy_names == ("AdministratorAccess",)
+    assert widened.attached_managed_policies[0].policy_name == "AdministratorAccess"
+    assert widened.attached_managed_policies[0].scope == "aws"
 
 
 def test_the_role_record_holds_a_policy_widened_in_the_console() -> None:
@@ -1030,9 +1039,26 @@ def test_the_role_record_refuses_a_duplicate_inline_policy_name() -> None:
     )
 
 
-def test_the_role_record_refuses_a_duplicate_attached_policy_name() -> None:
+def test_two_managed_policies_that_share_a_name_are_both_recordable() -> None:
+    # arn:aws:iam::aws:policy/ReadOnlyAccess and arn:aws:iam::<account>:policy/
+    # ReadOnlyAccess are different policies, and a role can have both attached. Recording
+    # names alone made that role unrecordable, and lost which of the two was attached —
+    # the AWS-managed one being the one worth noticing.
+    both = DeployedRoleEvidence.model_validate(
+        deployed_role_payload(
+            attached_managed_policies=[
+                attached_policy_payload(scope="aws"),
+                attached_policy_payload(scope="customer"),
+            ]
+        )
+    )
+    assert [policy.scope for policy in both.attached_managed_policies] == ["aws", "customer"]
+    assert {policy.policy_name for policy in both.attached_managed_policies} == {"ReadOnlyAccess"}
+
+
+def test_the_role_record_refuses_the_same_managed_policy_attached_twice() -> None:
     payload = deployed_role_payload(
-        attached_managed_policy_names=["ReadOnlyAccess", "ReadOnlyAccess"]
+        attached_managed_policies=[attached_policy_payload(), attached_policy_payload()]
     )
     with pytest.raises(ValidationError) as exc_info:
         DeployedRoleEvidence.model_validate(payload)
@@ -1040,7 +1066,21 @@ def test_the_role_record_refuses_a_duplicate_attached_policy_name() -> None:
         exc_info.value,
         loc_suffix=(),
         error_type="value_error",
-        message_fragment="attached managed policy names must be unique",
+        message_fragment="attached managed policies must be unique",
+    )
+
+
+@pytest.mark.parametrize("scope", ["AWS", "aws-managed", "account", ""])
+def test_a_managed_policy_scope_iam_does_not_have_cannot_validate(scope: str) -> None:
+    payload = deployed_role_payload(
+        attached_managed_policies=[attached_policy_payload(scope=scope)]
+    )
+    with pytest.raises(ValidationError) as exc_info:
+        DeployedRoleEvidence.model_validate(payload)
+    assert_validation_error(
+        exc_info.value,
+        loc_suffix=("attached_managed_policies", 0, "scope"),
+        error_type="literal_error",
     )
 
 

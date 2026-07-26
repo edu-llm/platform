@@ -62,6 +62,7 @@ __all__ = [
     "DeployedRoleEvidence",
     "EcrImageEvidence",
     "IamActionMatch",
+    "IamAttachedPolicy",
     "IamConditionEntry",
     "IamInlinePolicy",
     "IamPermissionStatement",
@@ -101,6 +102,9 @@ MAXIMUM_SESSION_DURATION_SECONDS: Final = 43200
 
 IamEffect = Literal["Allow", "Deny"]
 IamPrincipalType = Literal["*", "AWS", "CanonicalUser", "Federated", "Service"]
+#: Who manages an attached policy, in AWS's own terms: an AWS managed policy or a
+#: customer managed one. Recorded because the two can share a name.
+ManagedPolicyScope = Literal["aws", "customer"]
 
 #: Every state ECR reports for an image scan, basic and enhanced alike. A record that
 #: could not spell what the registry returned would force either a lie or a crash.
@@ -556,6 +560,21 @@ class IamInlinePolicy(ContractModel):
     ] = Field(min_length=1, strict=False)
 
 
+class IamAttachedPolicy(ContractModel):
+    """One managed policy attached to the role, by name and by who manages it.
+
+    A name alone does not identify a managed policy. ``arn:aws:iam::aws:policy/X`` and
+    ``arn:aws:iam::<account>:policy/X`` are different policies with the same name, and a
+    role may carry both, so a record of names alone refused that role outright and lost
+    the distinction that matters most: the AWS-managed ``AdministratorAccess`` is the
+    attachment worth noticing. ``scope`` is that distinction, and it is a name for the
+    policy's owner rather than the account ID the ARN would carry.
+    """
+
+    policy_name: SecretFreeStr = Field(min_length=1, max_length=128, pattern=IAM_NAME_PATTERN)
+    scope: ManagedPolicyScope
+
+
 class DeployedRoleEvidence(FreshEvidenceModel):
     """What a role in the account actually is, in terms a template can be compared to.
 
@@ -565,9 +584,9 @@ class DeployedRoleEvidence(FreshEvidenceModel):
     to be capable of describing a role that no longer matches its template.
 
     That capability is the design constraint, and it is why several fields exist that
-    the committed templates would never populate. ``attached_managed_policy_names`` is
-    empty in both templates, and an attachment made in the console is the easiest way to
-    widen a role; a record without that field would be blind to it.
+    the committed templates would never populate. ``attached_managed_policies`` is empty
+    in both templates, and an attachment made in the console is the easiest way to widen
+    a role; a record without that field would be blind to it.
     ``permissions_boundary_policy_name`` is nullable so a detached boundary can be
     written down, and required so an uncaptured one cannot be mistaken for a detached
     one. ``trust_policy_version`` is nullable on the same terms, for the reason
@@ -606,8 +625,8 @@ class DeployedRoleEvidence(FreshEvidenceModel):
     inline_policies: Annotated[
         tuple[IamInlinePolicy, ...], BeforeValidator(require_ordered_sequence)
     ] = Field(strict=False)
-    attached_managed_policy_names: Annotated[
-        tuple[SecretFreeStr, ...], BeforeValidator(require_ordered_sequence)
+    attached_managed_policies: Annotated[
+        tuple[IamAttachedPolicy, ...], BeforeValidator(require_ordered_sequence)
     ] = Field(strict=False)
 
     @model_validator(mode="after")
@@ -615,7 +634,9 @@ class DeployedRoleEvidence(FreshEvidenceModel):
         policy_names = [policy.policy_name for policy in self.inline_policies]
         if len(set(policy_names)) != len(policy_names):
             raise ValueError("inline policy names must be unique")
-        attached = list(self.attached_managed_policy_names)
+        # Scope and name together, because two policies of that name can be attached at
+        # once. Only the same policy listed twice is a capture that double-counted.
+        attached = [(policy.scope, policy.policy_name) for policy in self.attached_managed_policies]
         if len(set(attached)) != len(attached):
-            raise ValueError("attached managed policy names must be unique")
+            raise ValueError("attached managed policies must be unique")
         return self
