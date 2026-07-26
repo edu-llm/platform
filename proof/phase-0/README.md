@@ -2,8 +2,8 @@
 
 Phase: phase-0
 Bundle schema version: 1
-Source commit: 6a266ad66843a26dcace58e19e7c6640a42bdf4b
-Generated: 2026-07-26T04:45:27+00:00
+Source commit: 6de0c317b8ddb00ca5b764176fffc9e3bbf799b8
+Generated: 2026-07-26T17:07:38+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 0 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase0_proof.py` at generation time.
 
@@ -18,9 +18,9 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 1155 |
-| suite tests executed | 1118 |
-| suite passed | 1118 |
+| suite tests collected | 1657 |
+| suite tests executed | 1611 |
+| suite passed | 1611 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
@@ -33,8 +33,8 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 | criteria GAP (each one fails the gate) | 0 |
 | related recorded deferrals | 1 (D1) |
 | fixtures with recorded digests | 9 |
-| contract models inventoried | 41 |
-| JSON Schema files exported | 4 |
+| contract models inventoried | 46 |
+| JSON Schema files exported | 5 |
 
 ## Contract versions
 
@@ -43,11 +43,13 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 | AuthorizationScenario | 1 |
 | CheckpointManifest | 1 |
 | DatasetRelease | 1 |
+| ImageProvenance | 1 |
 | LifecycleEvent | 1 |
 | LogicalRun | 1 |
 | ResultManifest | 1 |
 | RunManifest | 1 |
 | SchedulerAttempt | 1 |
+| SourceIdentity | 1 |
 
 Repository-configuration contracts are versioned by their exported JSON Schema rather than by a field. See `schema-compatibility.md`.
 
@@ -86,6 +88,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | fixtures/manifests/sagemaker-routine.yaml | sha256:3a7277b614e990f9e1a827f272ff917603b8059f831abae1d4342d15be12956a |
 | schemas/organization.schema.json | sha256:5caadb560ced32562f2673591717ce836f1831292cab16a4f9c3a22ba3c0c1f1 |
 | schemas/policy.schema.json | sha256:1ddace2bcdeac29fb6bc686756fac59ecac93f318637b76d0dcc7d28bc394341 |
+| schemas/repositories.schema.json | sha256:ee5ef9172b9ab89aa0965cefda9d86fda855c4cd3f0eeda41ab50551327ff68e |
 | schemas/run-manifest.schema.json | sha256:62851f48df41a1dc270a525b44a8ef01eab660af9d5b60030d6c0a8776e196f2 |
 | schemas/workload-catalog.schema.json | sha256:4039ead3f77c0949db2a701dae90461788ed6856838075a1f223f3d4b853fa06 |
 
@@ -94,8 +97,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 - No compute profile is provisioned. All 12 profiles in the workload catalog are priced and dated but carry provisioned: false, so resolve_compute_profile_for_execution refuses every one of them. Phase 0 proves pricing and classification, not that anything can run.
 - Team bindings are empty. OrganizationInventory.team_bindings.teams is an empty tuple, so no submitter or lead is bound to a team. Every team-scoped rule is therefore either deferred or unenforceable today.
 - Approval scope is organization. Any team lead may approve any member's routine submission. Check D1 in the negative-case matrix is deferred for this reason.
-- Cross-team attribution is implemented but cannot reject anything yet. Every decision records the claimed team and a team_verified flag, and a submitter naming a team they do not belong to is denied as soon as team bindings exist. With bindings empty, every shipped decision records team_verified: false, which is the audit record's way of saying the attribution was accepted unchecked. Check 9 is deferred for this reason rather than covered.
-- Source-order independence is not proved for the three AuthorizationScenario fixtures. Check 2 is a gap for this reason and the acceptance gate fails on it. This is unfinished work with no recorded decision behind it, which is exactly the difference between a gap and a deferral.
+- Cross-team attribution is implemented but cannot reject anything yet. Every decision records the claimed team and a team_verified flag, and a submitter naming a team they do not belong to is denied as soon as team bindings exist. With bindings empty, every shipped decision records team_verified: false, which is the audit record's way of saying the attribution was accepted unchecked. Check 9 is deferred for this reason: no test can show a shipped rejection that the shipped configuration cannot produce.
 - The secret scan applied to this bundle masks its own content digests before scanning. A 64-character hexadecimal sha256 digest and a 40-character hexadecimal commit SHA both match the generic long-credential patterns in evidence.py, so the two exact token shapes this bundle emits are replaced with placeholders and everything else is scanned unchanged. No other exemption is applied.
 - The nested verification run excludes tests/test_phase0_proof.py, because those tests invoke this generator and would recurse. They run in the reviewer's own `uv run pytest -q`, which is the command this bundle asks the reviewer to run.
 - This bundle describes the working tree at generation time, which may differ from the commit named above. The input digests recorded in the bundle index identify exactly what was measured.
