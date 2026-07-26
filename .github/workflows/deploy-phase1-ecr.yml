@@ -1,0 +1,120 @@
+name: Deploy Phase 1 ECR repository
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      # Bootstrap only: remove after the first successful deployment.
+      - feature/phase-1-branch-to-image
+    paths:
+      - .github/workflows/deploy-phase1-ecr.yml
+      - infra/ecr-repositories.yaml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudformation-sbsandbox-intern-edullm-phase1-ecr
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Validate, deploy, and verify Phase 1 ECR
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-duration-seconds: 900
+
+      - name: Validate CloudFormation template
+        run: |
+          set -euo pipefail
+          aws cloudformation validate-template --template-body file://infra/ecr-repositories.yaml
+
+      - name: Deploy Phase 1 ECR stack
+        run: |
+          set -euo pipefail
+          aws cloudformation deploy \
+            --stack-name sbsandbox-intern-edullm-phase1-ecr \
+            --template-file infra/ecr-repositories.yaml \
+            --no-fail-on-empty-changeset
+
+      - name: Verify Phase 1 ECR repository
+        run: |
+          set -euo pipefail
+          repository_json="${RUNNER_TEMP}/phase1-ecr-repository.json"
+          lifecycle_json="${RUNNER_TEMP}/phase1-ecr-lifecycle.json"
+
+          aws ecr describe-repositories \
+            --repository-names sbsandbox-intern-edullm-olmo-core \
+            --query 'repositories[0].{repositoryName:repositoryName,encryptionType:encryptionConfiguration.encryptionType,scanOnPush:imageScanningConfiguration.scanOnPush,imageTagMutability:imageTagMutability}' \
+            --output json > "${repository_json}"
+
+          aws ecr get-lifecycle-policy \
+            --repository-name sbsandbox-intern-edullm-olmo-core \
+            --query '{lifecyclePolicyText:lifecyclePolicyText}' \
+            --output json > "${lifecycle_json}"
+
+          python - "${repository_json}" "${lifecycle_json}" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          repository_path = Path(sys.argv[1])
+          lifecycle_path = Path(sys.argv[2])
+
+          expected_repository = {
+              "repositoryName": "sbsandbox-intern-edullm-olmo-core",
+              "encryptionType": "AES256",
+              "scanOnPush": True,
+              "imageTagMutability": "IMMUTABLE",
+          }
+          expected_policy = {
+              "rules": [
+                  {
+                      "rulePriority": 1,
+                      "description": "Expire untagged images older than 7 days",
+                      "selection": {
+                          "tagStatus": "untagged",
+                          "countType": "sinceImagePushed",
+                          "countUnit": "days",
+                          "countNumber": 7,
+                      },
+                      "action": {"type": "expire"},
+                  },
+                  {
+                      "rulePriority": 2,
+                      "description": "Retain at most 50 tagged images",
+                      "selection": {
+                          "tagStatus": "tagged",
+                          "tagPatternList": ["*"],
+                          "countType": "imageCountMoreThan",
+                          "countNumber": 50,
+                      },
+                      "action": {"type": "expire"},
+                  },
+              ]
+          }
+
+          actual_repository = json.loads(repository_path.read_text(encoding="utf-8"))
+          lifecycle_response = json.loads(lifecycle_path.read_text(encoding="utf-8"))
+          actual_policy = json.loads(lifecycle_response["lifecyclePolicyText"])
+
+          if actual_repository != expected_repository:
+              raise SystemExit("repository configuration verification failed")
+          if actual_policy != expected_policy:
+              raise SystemExit("lifecycle policy verification failed")
+
+          print("PHASE1_ECR_VERIFICATION_PASSED")
+          PY
