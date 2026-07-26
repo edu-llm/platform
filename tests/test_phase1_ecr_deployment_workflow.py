@@ -9,6 +9,7 @@ from workflow_support import (
     load_workflow,
     only_job,
     step,
+    unreal_context_references,
 )
 
 WORKFLOW_FILE = ".github/workflows/deploy-phase1-ecr.yml"
@@ -37,6 +38,12 @@ def test_workflow_runs_only_on_dispatch_and_pushes_to_main() -> None:
     assert "feature/" not in WORKFLOW_PATH.read_text(encoding="utf-8")
 
 
+def test_every_expression_names_something_that_actually_exists() -> None:
+    # This workflow reaches AWS through two repository variables. A typo in either would
+    # resolve to the empty string and surface as an unexplained AssumeRole failure.
+    assert unreal_context_references(WORKFLOW_PATH) == []
+
+
 def test_workflow_permissions_concurrency_and_runtime_are_minimal_and_bounded() -> None:
     workflow = _load_workflow()
     job = only_job(workflow)
@@ -57,8 +64,7 @@ def test_workflow_pins_checkout_and_aws_credentials_to_approved_commits() -> Non
 
     assert checkout["uses"] == "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
     assert credentials["uses"] == (
-        "aws-actions/configure-aws-credentials@"
-        "e6de054238d6b7531b4efff3b6587d9aade6a06c"
+        "aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c"
     )
     assert credentials["with"] == {
         "role-to-assume": "${{ vars.AWS_INFRA_DEPLOYER_ROLE_ARN }}",

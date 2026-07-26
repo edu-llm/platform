@@ -12,6 +12,7 @@ from workflow_support import (
     load_workflow,
     run_step_script,
     step,
+    unreal_context_references,
     write_stub,
 )
 
@@ -184,6 +185,14 @@ def test_both_jobs_check_out_the_caller_and_the_pinned_reusable_workflow_commit(
         assert platform["with"]["path"] == "platform"
         assert platform["with"]["persist-credentials"] is False
         assert platform["with"]["path"] != caller["with"]["path"]
+
+
+def test_every_expression_names_something_that_actually_exists() -> None:
+    # Asserting literal expression strings cannot tell a real property from a plausible
+    # typo, because GitHub resolves an unknown property to the empty string rather than
+    # failing. That is how `github.job_workflow_sha` survived a green suite while making
+    # every run of this workflow impossible to complete.
+    assert unreal_context_references(WORKFLOW_PATH) == []
 
 
 def test_the_workflow_never_reaches_for_a_job_workflow_property_of_the_github_context() -> None:
