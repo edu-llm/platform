@@ -23,6 +23,7 @@ from tools.build_phase0_proof import (
     assert_secret_free,
     build_bundle,
     compute_goldens,
+    contradicting_status_claims,
     discover_fixtures,
     golden_drift,
     goldens_path,
@@ -425,10 +426,93 @@ def test_the_index_reports_the_gate_verdict_that_matches_the_recorded_gaps(
     assert f"criteria DEFERRED | {_count_naming([n for n in deferred if n.isdigit()])}" in index
 
 
+def shipped_checks() -> tuple[CriterionSpec, ...]:
+    return recorded_checks(discover_fixtures(PROJECT_ROOT))
+
+
 def test_known_limitations_name_the_unprovisioned_compute_and_empty_team_bindings() -> None:
-    limitations = known_limitations(PROJECT_ROOT)
+    limitations = known_limitations(PROJECT_ROOT, shipped_checks())
     assert any("No compute profile is provisioned" in item for item in limitations)
     assert any("Team bindings are empty" in item for item in limitations)
+
+
+def test_no_prose_in_the_bundle_contradicts_a_computed_check_status(
+    first_bundle: dict[str, str],
+) -> None:
+    assert contradicting_status_claims(first_bundle, shipped_checks()) == ()
+
+
+def test_prose_calling_a_covered_check_a_gap_is_reported() -> None:
+    # The sentence this plants shipped in the bundle until the limitations were derived
+    # from the computed criteria: criterion 2 is COVERED and the gate passes it.
+    planted = {
+        "README.md": (
+            "- Source-order independence is not proved for the three AuthorizationScenario "
+            "fixtures. Check 2 is a gap for this reason and the acceptance gate fails on it.\n"
+        )
+    }
+    problems = contradicting_status_claims(planted, shipped_checks())
+    assert len(problems) == 1
+    assert "README.md" in problems[0]
+    assert "check 2" in problems[0]
+    assert "gap" in problems[0]
+    assert "covered" in problems[0]
+
+
+@pytest.mark.parametrize(
+    ("prose", "number"),
+    [
+        ("Check 9 is covered by the shipped configuration.", "9"),
+        ("Criterion 1 remains deferred until sub-teams exist.", "1"),
+        ("The negative-case matrix records check D1 as covered.", "D1"),
+        ("Check 10 is a gap and the acceptance gate fails on it.", "10"),
+    ],
+    ids=["deferred called covered", "covered called deferred", "deferred called covered by name",
+         "deferred called a gap"],
+)
+def test_every_shape_of_contradicting_status_prose_is_reported(prose: str, number: str) -> None:
+    problems = contradicting_status_claims({"README.md": prose}, shipped_checks())
+    assert len(problems) == 1
+    assert f"check {number}" in problems[0]
+
+
+def test_prose_naming_a_check_no_criterion_records_is_reported() -> None:
+    problems = contradicting_status_claims(
+        {"README.md": "Check 99 is deferred for this reason.\n"},
+        shipped_checks(),
+    )
+    assert len(problems) == 1
+    assert "check 99" in problems[0]
+
+
+def test_prose_that_agrees_with_the_computed_status_is_not_reported() -> None:
+    agreeing = {
+        "README.md": (
+            "Check D1 in the negative-case matrix is deferred for this reason.\n"
+            "Check 2 is covered by the tests cited for it.\n"
+        )
+    }
+    assert contradicting_status_claims(agreeing, shipped_checks()) == ()
+
+
+def test_the_generator_refuses_to_write_a_bundle_whose_prose_contradicts_the_gate(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    verification: Verification,
+) -> None:
+    monkeypatch.setattr(
+        "tools.build_phase0_proof.known_limitations",
+        lambda _root, _checks: ("Check 2 is a gap and the acceptance gate fails on it.",),
+    )
+    output_dir = tmp_path / "contradicting"
+    with pytest.raises(ProofBundleError, match="check 2"):
+        build_bundle(
+            PROJECT_ROOT,
+            output_dir,
+            generated_at=FIRST_INSTANT,
+            verification=verification,
+        )
+    assert not (output_dir / "README.md").exists()
 
 
 def test_main_writes_a_complete_bundle_to_a_chosen_directory(tmp_path: Path) -> None:

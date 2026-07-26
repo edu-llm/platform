@@ -10,7 +10,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -26,7 +26,7 @@ from edullm_platform.canonical import canonical_json_bytes, sha256_digest
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.base import ContractModel
 from edullm_platform.contracts.inventory import OrganizationInventory
-from edullm_platform.contracts.policy import ApprovalPolicy
+from edullm_platform.contracts.policy import ApprovalPolicy, ApprovalScope
 from edullm_platform.contracts.workload import WorkloadCatalog
 from edullm_platform.criteria import (
     REENTRANT_TEST_MODULES,
@@ -80,6 +80,25 @@ VERIFICATION_COMMANDS: Final = (
 
 SHA256_DIGEST_TOKEN: Final = re.compile(r"sha256:[0-9a-f]{64}")
 GIT_COMMIT_SHA_TOKEN: Final = re.compile(r"(?<![0-9a-f])[0-9a-f]{40}(?![0-9a-f])")
+
+# Prose that names a check and gives it a status. A sentence is the unit, because a
+# status word further away than that is talking about something else.
+CHECK_REFERENCE: Final = re.compile(
+    r"\b(?:check|criterion|criteria)\s+(?P<number>D?[0-9]+)\b", re.IGNORECASE
+)
+STATUS_CLAIM: Final = re.compile(r"\b(?P<word>covered|deferred|gaps?)\b", re.IGNORECASE)
+CLAUSE_BREAK: Final = re.compile(r"[.;|\n]")
+STATUS_BY_WORD: Final = {
+    "covered": CriterionStatus.COVERED,
+    "deferred": CriterionStatus.DEFERRED,
+    "gap": CriterionStatus.GAP,
+    "gaps": CriterionStatus.GAP,
+}
+STATUS_PROSE: Final = {
+    CriterionStatus.COVERED: "covered",
+    CriterionStatus.DEFERRED: "deferred",
+    CriterionStatus.GAP: "a gap",
+}
 
 GOLDEN_DRIFT_GUIDANCE: Final = """{fixture} ({contract}) no longer serializes to its recorded canonical digest.
   recorded: {recorded}
@@ -553,7 +572,82 @@ def source_commit_sha(repo_root: Path) -> str:
     return completed.stdout.strip()
 
 
-def known_limitations(repo_root: Path) -> tuple[str, ...]:
+def _clause_around(text: str, reference: re.Match[str]) -> tuple[str, str]:
+    return (
+        CLAUSE_BREAK.split(text[: reference.start()])[-1],
+        CLAUSE_BREAK.split(text[reference.end() :], maxsplit=1)[0],
+    )
+
+
+def status_claims(text: str) -> tuple[tuple[str, CriterionStatus], ...]:
+    """Every ``(check number, status)`` pair this prose asserts.
+
+    A status word after the reference wins over one before it, because that is how a
+    status is ascribed: ``Check 9 is deferred``. Only the first word in the clause counts,
+    so ``deferred rather than covered`` claims one status and not two. No attempt is made
+    to read a negation: ``Check 9 is not covered`` reads here as a claim of COVERED, and
+    is meant to, because a claim a machine cannot check does not belong in this bundle.
+    """
+    claims: list[tuple[str, CriterionStatus]] = []
+    for reference in CHECK_REFERENCE.finditer(text):
+        before, after = _clause_around(text, reference)
+        claimed = STATUS_CLAIM.search(after) or STATUS_CLAIM.search(before)
+        if claimed is None:
+            continue
+        claims.append((reference.group("number"), STATUS_BY_WORD[claimed.group().lower()]))
+    return tuple(claims)
+
+
+def contradicting_status_claims(
+    documents: Mapping[str, str],
+    checks: Sequence[CriterionSpec],
+) -> tuple[str, ...]:
+    """Prose in the bundle that gives a check a status the criteria definition does not.
+
+    The bundle exists so a reviewer can trust it without reading the suite, so a sentence
+    that disagrees with the gate is the one defect it cannot survive. Tables are rendered
+    from the computed status and cannot disagree; a hand-written sentence can, and did.
+    """
+    recorded = {check.number: check.status for check in checks}
+    problems: list[str] = []
+    for filename, text in sorted(documents.items()):
+        for number, claimed in status_claims(text):
+            actual = recorded.get(number)
+            if actual is None:
+                problems.append(
+                    f"{filename} calls check {number} {claimed.value}, and no criterion of "
+                    "this phase carries that number"
+                )
+            elif actual is not claimed:
+                problems.append(
+                    f"{filename} calls check {number} {claimed.value}; the criteria "
+                    f"definition records it {actual.value}"
+                )
+    return tuple(problems)
+
+
+def _recorded_status(checks: Sequence[CriterionSpec], number: str) -> CriterionStatus:
+    for check in checks:
+        if check.number == number:
+            return check.status
+    raise ProofBundleError(
+        f"a known limitation names check {number}, which the criteria definition does not record"
+    )
+
+
+def known_limitations(repo_root: Path, checks: Sequence[CriterionSpec]) -> tuple[str, ...]:
+    """What this bundle does not establish, read off the tree rather than remembered.
+
+    Every entry is either conditional on a configuration value that can change, or true
+    by construction. No entry states a criterion status of its own: where one names a
+    check, the status word comes from ``checks``, so a limitation cannot disagree with the
+    verdict the gate reached. ``contradicting_status_claims`` refuses the bundle if one
+    ever does.
+    """
+
+    def status_of(number: str) -> str:
+        return STATUS_PROSE[_recorded_status(checks, number)]
+
     catalog = load_yaml(repo_root / "config" / "workload-catalog.yaml", WorkloadCatalog)
     inventory = load_yaml(repo_root / "config" / "organization.yaml", OrganizationInventory)
     policy = load_yaml(repo_root / "config" / "policy.yaml", ApprovalPolicy)
@@ -571,25 +665,25 @@ def known_limitations(repo_root: Path) -> tuple[str, ...]:
             "tuple, so no submitter or lead is bound to a team. Every team-scoped rule is "
             "therefore either deferred or unenforceable today."
         )
-    limitations.append(
-        f"Approval scope is {policy.approval_scope.value}. Any team lead may approve any "
-        "member's routine submission. Check D1 in the negative-case matrix is deferred for "
-        "this reason."
-    )
-    limitations.append(
-        "Cross-team attribution is implemented but cannot reject anything yet. Every decision "
-        "records the claimed team and a team_verified flag, and a submitter naming a team they "
-        "do not belong to is denied as soon as team bindings exist. With bindings empty, every "
-        "shipped decision records team_verified: false, which is the audit record's way of "
-        "saying the attribution was accepted unchecked. Check 9 is deferred for this reason "
-        "rather than covered."
-    )
-    limitations.append(
-        "Source-order independence is not proved for the three AuthorizationScenario fixtures. "
-        "Check 2 is a gap for this reason and the acceptance gate fails on it. This is "
-        "unfinished work with no recorded decision behind it, which is exactly the difference "
-        "between a gap and a deferral."
-    )
+    if policy.approval_scope is not ApprovalScope.TEAM:
+        limitations.append(
+            f"Approval scope is {policy.approval_scope.value}. Any team lead may approve any "
+            f"member's routine submission. Check D1 in the negative-case matrix is "
+            f"{status_of('D1')} for this reason."
+        )
+    if not inventory.team_bindings.teams:
+        limitations.append(
+            "Cross-team attribution is implemented but cannot reject anything yet. Every "
+            "decision records the claimed team and a team_verified flag, and a submitter "
+            "naming a team they do not belong to is denied as soon as team bindings exist. "
+            "With bindings empty, every shipped decision records team_verified: false, which "
+            "is the audit record's way of saying the attribution was accepted unchecked. "
+            f"Check 9 is {status_of('9')} for this reason: no test can show a shipped "
+            "rejection that the shipped configuration cannot produce."
+        )
+    # Everything below holds by construction rather than by configuration. Each one names
+    # something this generator always does, so there is no condition left to read off the
+    # tree, and none of them states a criterion status.
     limitations.append(
         "The secret scan applied to this bundle masks its own content digests before scanning. "
         "A 64-character hexadecimal sha256 digest and a 40-character hexadecimal commit SHA "
@@ -1240,11 +1334,18 @@ def build_bundle(
             models=models,
             schema_files=schema_files,
             input_digests=input_digest_table(repo_root, goldens, schema_files),
-            limitations=known_limitations(repo_root),
+            limitations=known_limitations(repo_root, criteria + deferrals),
         ),
     }
     if set(documents) | {GOLDENS_FILENAME} != set(BUNDLE_FILENAMES):
         raise ProofBundleError("the bundle wrote a different file set than it declares")
+    contradictions = contradicting_status_claims(documents, criteria + deferrals)
+    if contradictions:
+        raise ProofBundleError(
+            "the bundle states a criterion status the acceptance gate did not reach; a "
+            "reviewer who trusts this bundle without reading the suite would be misled:\n  "
+            + "\n  ".join(contradictions)
+        )
     for filename, text in sorted(documents.items()):
         assert_secret_free(filename, text)
     written = [goldens_file]
