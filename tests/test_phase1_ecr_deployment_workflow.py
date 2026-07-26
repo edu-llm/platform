@@ -53,13 +53,22 @@ def _step(job: dict[str, Any], name: str) -> dict[str, Any]:
     return matching[0]
 
 
-def _command_tokens(script: str, service: str, operation: str) -> list[str]:
+def _aws_commands(script: str) -> list[list[str]]:
     normalized = re.sub(r"\\\s*\n", " ", script)
+    commands = []
     for line in normalized.splitlines():
         tokens = shlex.split(line)
-        if tokens[:3] == ["aws", service, operation]:
-            return tokens
-    raise AssertionError(f"missing aws {service} {operation} command")
+        if tokens[:1] == ["aws"]:
+            commands.append(tokens)
+    return commands
+
+
+def _command_tokens(script: str, service: str, operation: str) -> list[str]:
+    matching = [
+        command for command in _aws_commands(script) if command[:3] == ["aws", service, operation]
+    ]
+    assert len(matching) == 1, f"expected exactly one aws {service} {operation} command"
+    return matching[0]
 
 
 def _literal_assignment(source: str, name: str) -> object:
@@ -150,21 +159,44 @@ def test_workflow_verifies_exact_repository_and_lifecycle_semantics_without_uri_
     verify_script = _step(_only_job(_load_workflow()), "Verify Phase 1 ECR repository")["run"]
 
     assert verify_script.startswith("set -euo pipefail\n")
-    assert _command_tokens(verify_script, "ecr", "describe-repositories")[:5] == [
-        "aws",
-        "ecr",
-        "describe-repositories",
-        "--repository-names",
-        REPOSITORY_NAME,
+    assert _aws_commands(verify_script) == [
+        [
+            "aws",
+            "ecr",
+            "describe-repositories",
+            "--repository-names",
+            REPOSITORY_NAME,
+            "--query",
+            (
+                "repositories[0].{repositoryName:repositoryName,"
+                "encryptionType:encryptionConfiguration.encryptionType,"
+                "scanOnPush:imageScanningConfiguration.scanOnPush,"
+                "imageTagMutability:imageTagMutability}"
+            ),
+            "--output",
+            "json",
+            ">",
+            "${repository_json}",
+        ],
+        [
+            "aws",
+            "ecr",
+            "get-lifecycle-policy",
+            "--repository-name",
+            REPOSITORY_NAME,
+            "--query",
+            "{lifecyclePolicyText:lifecyclePolicyText}",
+            "--output",
+            "json",
+            ">",
+            "${lifecycle_json}",
+        ],
     ]
-    assert _command_tokens(verify_script, "ecr", "get-lifecycle-policy")[:5] == [
-        "aws",
-        "ecr",
-        "get-lifecycle-policy",
-        "--repository-name",
-        REPOSITORY_NAME,
-    ]
-    assert "repositoryUri" not in verify_script
+
+    assert not re.search(r"(?<!\d)\d{12}(?!\d)", verify_script)
+    assert not {"repositoryarn", "repositoryuri", "registryid"} & set(
+        re.findall(r"[a-zA-Z][a-zA-Z0-9]*", verify_script.lower())
+    )
     assert "PHASE1_ECR_VERIFICATION_PASSED" in verify_script
 
     python_source = verify_script.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
