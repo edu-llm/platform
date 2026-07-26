@@ -247,17 +247,39 @@ def condition_payload(**overrides: object) -> dict[str, object]:
     return payload
 
 
+def action_match_payload(actions: list[str], **overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {"element": "Action", "actions": actions}
+    payload.update(overrides)
+    return payload
+
+
+def resource_match_payload(resources: list[str], **overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {"element": "Resource", "resources": resources}
+    payload.update(overrides)
+    return payload
+
+
+def principal_match_payload(
+    principals: list[dict[str, object]],
+    **overrides: object,
+) -> dict[str, object]:
+    payload: dict[str, object] = {"element": "Principal", "principals": principals}
+    payload.update(overrides)
+    return payload
+
+
+FEDERATED_GITHUB_PRINCIPAL: dict[str, object] = {
+    "principal_type": "Federated",
+    "identifier": "token.actions.githubusercontent.com",
+}
+
+
 def trust_statement_payload(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
         "sid": None,
         "effect": "Allow",
-        "actions": ["sts:AssumeRoleWithWebIdentity"],
-        "principals": [
-            {
-                "principal_type": "Federated",
-                "identifier": "token.actions.githubusercontent.com",
-            }
-        ],
+        "action_match": action_match_payload(["sts:AssumeRoleWithWebIdentity"]),
+        "principal_match": principal_match_payload([FEDERATED_GITHUB_PRINCIPAL]),
         "conditions": [
             condition_payload(),
             condition_payload(
@@ -279,8 +301,8 @@ def permission_statement_payload(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
         "sid": None,
         "effect": "Allow",
-        "actions": ["ecr:PutImage", "ecr:UploadLayerPart"],
-        "resources": [REDACTED_REPOSITORY_ARN],
+        "action_match": action_match_payload(["ecr:PutImage", "ecr:UploadLayerPart"]),
+        "resource_match": resource_match_payload([REDACTED_REPOSITORY_ARN]),
         "conditions": [],
     }
     payload.update(overrides)
@@ -292,7 +314,10 @@ def inline_policy_payload(**overrides: object) -> dict[str, object]:
         "policy_name": "publish-olmo-core-images",
         "policy_version": "2012-10-17",
         "statements": [
-            permission_statement_payload(actions=["ecr:GetAuthorizationToken"], resources=["*"]),
+            permission_statement_payload(
+                action_match=action_match_payload(["ecr:GetAuthorizationToken"]),
+                resource_match=resource_match_payload(["*"]),
+            ),
             permission_statement_payload(),
         ],
     }
@@ -882,7 +907,8 @@ def test_the_deployed_role_carries_what_a_template_comparison_needs() -> None:
     assert evidence.max_session_duration_seconds == 3600
     assert evidence.attached_managed_policy_names == ()
     trust = evidence.trust_statements[0]
-    assert trust.principals[0].identifier == "token.actions.githubusercontent.com"
+    assert trust.principal_match.element == "Principal"
+    assert trust.principal_match.principals[0].identifier == "token.actions.githubusercontent.com"
     assert [condition.condition_key for condition in trust.conditions] == [
         "token.actions.githubusercontent.com:aud",
         "token.actions.githubusercontent.com:repository_id",
@@ -890,7 +916,8 @@ def test_the_deployed_role_carries_what_a_template_comparison_needs() -> None:
     ]
     policy = evidence.inline_policies[0]
     assert policy.policy_name == "publish-olmo-core-images"
-    assert policy.statements[1].resources == (REDACTED_REPOSITORY_ARN,)
+    assert policy.statements[1].resource_match.element == "Resource"
+    assert policy.statements[1].resource_match.resources == (REDACTED_REPOSITORY_ARN,)
 
 
 def test_the_deployed_role_records_names_rather_than_its_own_arn() -> None:
@@ -935,13 +962,18 @@ def test_the_role_record_holds_a_policy_widened_in_the_console() -> None:
             inline_policies=[
                 inline_policy_payload(
                     policy_name="added-by-hand",
-                    statements=[permission_statement_payload(actions=["*"], resources=["*"])],
+                    statements=[
+                        permission_statement_payload(
+                            action_match=action_match_payload(["*"]),
+                            resource_match=resource_match_payload(["*"]),
+                        )
+                    ],
                 )
             ],
             trust_statements=[trust_statement_payload(conditions=[])],
         )
     )
-    assert widened.inline_policies[0].statements[0].actions == ("*",)
+    assert widened.inline_policies[0].statements[0].action_match.actions == ("*",)
     assert widened.trust_statements[0].conditions == ()
 
 
@@ -987,21 +1019,32 @@ def test_the_role_record_refuses_a_duplicate_attached_policy_name() -> None:
     )
 
 
-@pytest.mark.parametrize("field", ["actions", "resources"])
-def test_a_permission_statement_with_nothing_in_it_cannot_validate(field: str) -> None:
-    # A statement written with NotAction or NotResource lands here as an empty tuple,
-    # because this record has no way to spell the negated form. It is refused rather
-    # than narrowed, so a role using one fails capture instead of being understated.
-    payload = deployed_role_payload(
+def role_with_one_statement(**statement_overrides: object) -> dict[str, object]:
+    """A role whose single inline policy holds one statement, built from overrides."""
+    return deployed_role_payload(
         inline_policies=[
-            inline_policy_payload(statements=[permission_statement_payload(**{field: []})])
+            inline_policy_payload(statements=[permission_statement_payload(**statement_overrides)])
         ]
     )
+
+
+@pytest.mark.parametrize(
+    ("statement_field", "values_field"),
+    [("action_match", "actions"), ("resource_match", "resources")],
+)
+def test_a_permission_statement_that_selects_nothing_cannot_validate(
+    statement_field: str,
+    values_field: str,
+) -> None:
+    # IAM's grammar requires an action element and a resource element in every statement,
+    # each naming at least one value. An empty list is a capture that dropped something.
+    builder = action_match_payload if values_field == "actions" else resource_match_payload
+    payload = role_with_one_statement(**{statement_field: builder([])})
     with pytest.raises(ValidationError) as exc_info:
         DeployedRoleEvidence.model_validate(payload)
     assert_validation_error(
         exc_info.value,
-        loc_suffix=("statements", 0, field),
+        loc_suffix=(statement_field, values_field),
         error_type="too_short",
     )
 
@@ -1009,22 +1052,14 @@ def test_a_permission_statement_with_nothing_in_it_cannot_validate(field: str) -
 @pytest.mark.parametrize("action", ["ecr:*", "*", "ecr:PutImage"])
 def test_a_policy_action_may_be_a_wildcard_because_a_widened_role_has_one(action: str) -> None:
     evidence = DeployedRoleEvidence.model_validate(
-        deployed_role_payload(
-            inline_policies=[
-                inline_policy_payload(statements=[permission_statement_payload(actions=[action])])
-            ]
-        )
+        role_with_one_statement(action_match=action_match_payload([action]))
     )
-    assert evidence.inline_policies[0].statements[0].actions == (action,)
+    assert evidence.inline_policies[0].statements[0].action_match.actions == (action,)
 
 
 @pytest.mark.parametrize("action", ["submit a job", "Ecr:PutImage", "ecr:", ":PutImage"])
 def test_a_policy_action_that_is_not_an_action_cannot_validate(action: str) -> None:
-    payload = deployed_role_payload(
-        inline_policies=[
-            inline_policy_payload(statements=[permission_statement_payload(actions=[action])])
-        ]
-    )
+    payload = role_with_one_statement(action_match=action_match_payload([action]))
     with pytest.raises(ValidationError) as exc_info:
         DeployedRoleEvidence.model_validate(payload)
     assert_validation_error(
@@ -1047,12 +1082,14 @@ def test_an_inline_policy_with_no_statements_cannot_validate() -> None:
 
 
 def test_a_trust_statement_with_no_principals_cannot_validate() -> None:
-    payload = deployed_role_payload(trust_statements=[trust_statement_payload(principals=[])])
+    payload = deployed_role_payload(
+        trust_statements=[trust_statement_payload(principal_match=principal_match_payload([]))]
+    )
     with pytest.raises(ValidationError) as exc_info:
         DeployedRoleEvidence.model_validate(payload)
     assert_validation_error(
         exc_info.value,
-        loc_suffix=("trust_statements", 0, "principals"),
+        loc_suffix=("principal_match", "principals"),
         error_type="too_short",
     )
 
@@ -1081,13 +1118,7 @@ def test_a_condition_with_no_values_cannot_validate() -> None:
 
 
 def test_a_policy_resource_arn_must_arrive_with_its_account_id_redacted() -> None:
-    payload = deployed_role_payload(
-        inline_policies=[
-            inline_policy_payload(
-                statements=[permission_statement_payload(resources=[RAW_REPOSITORY_ARN])]
-            )
-        ]
-    )
+    payload = role_with_one_statement(resource_match=resource_match_payload([RAW_REPOSITORY_ARN]))
     with pytest.raises(ValidationError) as exc_info:
         DeployedRoleEvidence.model_validate(payload)
     assert_validation_error(
@@ -1097,17 +1128,18 @@ def test_a_policy_resource_arn_must_arrive_with_its_account_id_redacted() -> Non
         message_fragment="must not contain credentials or raw AWS account IDs",
     )
     accepted = DeployedRoleEvidence.model_validate(deployed_role_payload())
-    assert AWS_EXAMPLE_ACCOUNT_ID not in accepted.inline_policies[0].statements[1].resources[0]
-    assert ECR_REPOSITORY in accepted.inline_policies[0].statements[1].resources[0]
+    recorded = accepted.inline_policies[0].statements[1].resource_match.resources[0]
+    assert AWS_EXAMPLE_ACCOUNT_ID not in recorded
+    assert ECR_REPOSITORY in recorded
 
 
 def test_a_trust_principal_refuses_an_unredacted_credential() -> None:
     payload = deployed_role_payload(
         trust_statements=[
             trust_statement_payload(
-                principals=[
-                    {"principal_type": "AWS", "identifier": AWS_EXAMPLE_ACCESS_KEY_ID},
-                ]
+                principal_match=principal_match_payload(
+                    [{"principal_type": "AWS", "identifier": AWS_EXAMPLE_ACCESS_KEY_ID}]
+                )
             )
         ]
     )
@@ -1132,6 +1164,124 @@ def test_a_trust_statement_can_record_a_deny_that_the_template_does_not_have() -
     )
     assert [statement.effect for statement in denying.trust_statements] == ["Allow", "Deny"]
     assert denying.trust_statements[1].sid == "AddedByHand"
+
+
+def test_a_statement_records_that_its_actions_are_negated() -> None:
+    # AWS's own example of the shape: allow every action in every service except IAM's.
+    # Read as an Action list this statement grants two things; read correctly it grants
+    # nearly everything. A record that could not tell them apart would be worse than one
+    # that refused the statement, and refusing it would miss the widening outright.
+    widened = DeployedRoleEvidence.model_validate(
+        role_with_one_statement(
+            action_match=action_match_payload(["iam:*"], element="NotAction"),
+            resource_match=resource_match_payload(["*"]),
+        )
+    )
+    statement = widened.inline_policies[0].statements[0]
+    assert statement.action_match.element == "NotAction"
+    assert statement.action_match.actions == ("iam:*",)
+
+
+def test_a_negated_statement_is_never_equal_to_the_positive_one_it_inverts() -> None:
+    def role_selecting(element: str) -> DeployedRoleEvidence:
+        return DeployedRoleEvidence.model_validate(
+            role_with_one_statement(
+                action_match=action_match_payload(["iam:*"], element=element),
+                resource_match=resource_match_payload(["*"]),
+            )
+        )
+
+    positive = role_selecting("Action")
+    negated = role_selecting("NotAction")
+    assert positive != negated
+    encoded = canonical_json_bytes(negated)
+    assert b'"NotAction"' in encoded
+    assert canonical_json_bytes(positive) != encoded
+
+
+def test_a_statement_records_that_its_resources_are_negated() -> None:
+    widened = DeployedRoleEvidence.model_validate(
+        role_with_one_statement(
+            resource_match=resource_match_payload([REDACTED_REPOSITORY_ARN], element="NotResource")
+        )
+    )
+    statement = widened.inline_policies[0].statements[0]
+    assert statement.resource_match.element == "NotResource"
+    assert statement.resource_match.resources == (REDACTED_REPOSITORY_ARN,)
+
+
+def test_a_trust_statement_records_that_its_principals_are_negated() -> None:
+    # IAM Access Analyzer raises ALLOW_WITH_NOT_PRINCIPAL against this shape because it
+    # can admit anonymous principals. It is exactly what a drift record must be able to
+    # say about a trust policy someone edited by hand.
+    widened = DeployedRoleEvidence.model_validate(
+        deployed_role_payload(
+            trust_statements=[
+                trust_statement_payload(
+                    principal_match=principal_match_payload(
+                        [FEDERATED_GITHUB_PRINCIPAL], element="NotPrincipal"
+                    )
+                )
+            ]
+        )
+    )
+    statement = widened.trust_statements[0]
+    assert statement.principal_match.element == "NotPrincipal"
+    assert statement.principal_match.principals[0].identifier == (
+        "token.actions.githubusercontent.com"
+    )
+
+
+@pytest.mark.parametrize(
+    ("match_payload", "loc_suffix"),
+    [
+        (
+            {"element": "Action", "actions": ["ecr:PutImage"], "not_actions": ["iam:*"]},
+            ("action_match", "not_actions"),
+        ),
+        (
+            {"element": "Resource", "resources": ["*"], "not_resources": ["*"]},
+            ("resource_match", "not_resources"),
+        ),
+    ],
+)
+def test_a_statement_cannot_claim_a_form_and_its_negation_at_once(
+    match_payload: dict[str, object],
+    loc_suffix: tuple[str, ...],
+) -> None:
+    # There is one list and one element name, so naming both forms takes an extra key,
+    # and there is no room for one.
+    payload = role_with_one_statement(**{loc_suffix[0]: match_payload})
+    with pytest.raises(ValidationError) as exc_info:
+        DeployedRoleEvidence.model_validate(payload)
+    assert_validation_error(exc_info.value, loc_suffix=loc_suffix, error_type="extra_forbidden")
+
+
+@pytest.mark.parametrize("statement_field", ["action_match", "resource_match"])
+def test_a_statement_cannot_leave_the_form_of_its_selection_unsaid(statement_field: str) -> None:
+    builder = action_match_payload if statement_field == "action_match" else resource_match_payload
+    match_payload = builder(["*"])
+    del match_payload["element"]
+    payload = role_with_one_statement(**{statement_field: match_payload})
+    with pytest.raises(ValidationError) as exc_info:
+        DeployedRoleEvidence.model_validate(payload)
+    assert_validation_error(
+        exc_info.value,
+        loc_suffix=(statement_field, "element"),
+        error_type="missing",
+    )
+
+
+@pytest.mark.parametrize("element", ["Actions", "notAction", "NotActions", "Deny", ""])
+def test_an_action_element_iam_does_not_have_cannot_validate(element: str) -> None:
+    payload = role_with_one_statement(action_match=action_match_payload(["*"], element=element))
+    with pytest.raises(ValidationError) as exc_info:
+        DeployedRoleEvidence.model_validate(payload)
+    assert_validation_error(
+        exc_info.value,
+        loc_suffix=("action_match", "element"),
+        error_type="literal_error",
+    )
 
 
 def test_denial_requires_the_resource_key_even_when_the_call_has_no_resource() -> None:

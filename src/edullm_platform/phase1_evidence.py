@@ -60,10 +60,13 @@ __all__ = [
     "DenialEvidence",
     "DeployedRoleEvidence",
     "EcrImageEvidence",
+    "IamActionMatch",
     "IamConditionEntry",
     "IamInlinePolicy",
     "IamPermissionStatement",
     "IamPrincipal",
+    "IamPrincipalMatch",
+    "IamResourceMatch",
     "IamTrustStatement",
     "ImageScanEvidence",
     "ImageScanFindingCounts",
@@ -417,8 +420,40 @@ class IamConditionEntry(ContractModel):
     )
 
 
+class IamActionMatch(ContractModel):
+    """The actions a statement selects, and whether it selects them by exclusion.
+
+    IAM's grammar offers ``Action`` or ``NotAction`` and never both or neither, and the
+    two mean opposite things: ``NotAction`` with ``Allow`` permits every action that is
+    not listed. Naming the element beside the list is what stops a reader or a comparison
+    from taking one for the other, and the list is unreachable without passing the name.
+
+    This exists because refusing the negated form would have made the record useless in
+    the case it was built for. Neither committed template uses ``NotAction``, so a
+    statement that has one is drift by construction, and drift is what this must describe.
+    """
+
+    element: Literal["Action", "NotAction"]
+    actions: Annotated[tuple[IamPolicyAction, ...], BeforeValidator(require_ordered_sequence)] = (
+        Field(min_length=1, strict=False)
+    )
+
+
+class IamResourceMatch(ContractModel):
+    """The resources a statement selects, negated or not, on the terms above.
+
+    ``NotResource`` with ``Allow`` reaches every resource except those listed, which is
+    a wider grant than any spelling of ``Resource`` in either template.
+    """
+
+    element: Literal["Resource", "NotResource"]
+    resources: Annotated[tuple[SecretFreeStr, ...], BeforeValidator(require_ordered_sequence)] = (
+        Field(min_length=1, strict=False)
+    )
+
+
 class IamPrincipal(ContractModel):
-    """Who a trust statement admits.
+    """Who a trust statement names.
 
     ``identifier`` is a name wherever one exists: the provider host for a federated
     principal, the service principal for a service. Where only an ARN exists it is
@@ -429,21 +464,33 @@ class IamPrincipal(ContractModel):
     identifier: SecretFreeStr = Field(min_length=1, max_length=2048)
 
 
+class IamPrincipalMatch(ContractModel):
+    """Who a trust statement admits, negated or not, on the terms above.
+
+    ``NotPrincipal`` with ``Allow`` is the form IAM Access Analyzer reports as
+    ``ALLOW_WITH_NOT_PRINCIPAL``, because it can admit anonymous callers. A trust policy
+    edited by hand is where it would appear, and this record has to be able to say so.
+    """
+
+    element: Literal["Principal", "NotPrincipal"]
+    principals: Annotated[tuple[IamPrincipal, ...], BeforeValidator(require_ordered_sequence)] = (
+        Field(min_length=1, strict=False)
+    )
+
+
 class IamTrustStatement(ContractModel):
     """One statement of a deployed role's trust policy.
 
     ``conditions`` may be empty, and an empty tuple is a finding rather than a gap in
     the capture: a trust statement with no conditions admits its principal outright.
+
+    No resource element: IAM refuses one in a role's trust policy.
     """
 
     sid: SecretFreeStr | None = Field(min_length=1, max_length=128)
     effect: IamEffect
-    actions: Annotated[tuple[IamPolicyAction, ...], BeforeValidator(require_ordered_sequence)] = (
-        Field(min_length=1, strict=False)
-    )
-    principals: Annotated[tuple[IamPrincipal, ...], BeforeValidator(require_ordered_sequence)] = (
-        Field(min_length=1, strict=False)
-    )
+    action_match: IamActionMatch
+    principal_match: IamPrincipalMatch
     conditions: Annotated[
         tuple[IamConditionEntry, ...], BeforeValidator(require_ordered_sequence)
     ] = Field(strict=False)
@@ -452,21 +499,15 @@ class IamTrustStatement(ContractModel):
 class IamPermissionStatement(ContractModel):
     """One statement of a deployed role's inline policy.
 
-    Actions and resources are both required to be non-empty, which is what makes a
-    statement written with ``NotAction`` or ``NotResource`` fail to validate: this
-    record has no way to spell the negated form, so it refuses the statement rather
-    than recording a narrower one than the role actually carries. A role using one
-    fails capture loudly instead of being quietly understated.
+    Both elements IAM requires are present and each names at least one value, so a
+    capture that dropped a list fails here rather than recording a statement that grants
+    less than the role does.
     """
 
     sid: SecretFreeStr | None = Field(min_length=1, max_length=128)
     effect: IamEffect
-    actions: Annotated[tuple[IamPolicyAction, ...], BeforeValidator(require_ordered_sequence)] = (
-        Field(min_length=1, strict=False)
-    )
-    resources: Annotated[tuple[SecretFreeStr, ...], BeforeValidator(require_ordered_sequence)] = (
-        Field(min_length=1, strict=False)
-    )
+    action_match: IamActionMatch
+    resource_match: IamResourceMatch
     conditions: Annotated[
         tuple[IamConditionEntry, ...], BeforeValidator(require_ordered_sequence)
     ] = Field(strict=False)
@@ -494,8 +535,10 @@ class DeployedRoleEvidence(FreshEvidenceModel):
     widen a role; a record without that field would be blind to it.
     ``permissions_boundary_policy_name`` is nullable so a detached boundary can be
     written down, and required so an uncaptured one cannot be mistaken for a detached
-    one. ``max_session_duration_seconds`` accepts IAM's full range rather than the 3600
-    the templates ask for. Actions accept wildcards. Trust conditions may be empty.
+    one.     ``max_session_duration_seconds`` accepts IAM's full range rather than the 3600
+    the templates ask for. Actions accept wildcards. Trust conditions may be empty. A
+    statement may select by exclusion, which no template here does; see
+    :class:`IamActionMatch` for why that is recorded rather than refused.
 
     Everything is required, so a capture that stopped halfway fails here rather than
     producing a record that reads like a narrow role. Names are recorded rather than
