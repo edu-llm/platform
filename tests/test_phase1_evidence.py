@@ -12,12 +12,15 @@ from edullm_platform.contracts.base import ContractModel
 from edullm_platform.evidence import (
     EVIDENCE_STALE_CODE,
     evidence_load_reason_code,
+    redact_aws_account_ids,
     scan_for_secrets,
 )
 from edullm_platform.phase1_evidence import (
     BuildProvenanceEvidence,
+    DenialEvidence,
     EcrImageEvidence,
     ImageScanEvidence,
+    OidcSessionEvidence,
 )
 
 AWS_EXAMPLE_ACCOUNT_ID = "123456789012"
@@ -32,6 +35,19 @@ IMAGE_DIGEST = "sha256:" + "1a" * 32
 BASE_IMAGE_DIGEST = "sha256:" + "2b" * 32
 ECR_REPOSITORY = "sbsandbox-intern-edullm-olmo-core"
 PUBLISHER_ROLE_NAME = "sbsandbox-intern-edullm-ecr-publisher"
+CLOUDTRAIL_EVENT_ID = "7c1f2a3b-4d5e-4f60-a71b-8c9d0e1f2a3b"
+OTHER_CLOUDTRAIL_EVENT_ID = "5e4d3c2b-1a0f-4e9d-b8c7-6a5b4c3d2e1f"
+OIDC_SUBJECT = "repo:edu-llm@306859726/OLMo-core@1306868157:ref:refs/heads/pin-the-base-image"
+
+#: The shape of an STS denial, with the account ID the message cannot avoid. The
+#: capture tool is expected to redact it; the unredacted spelling is kept here so a
+#: test can prove the contract refuses it.
+RAW_DENIAL_MESSAGE = (
+    f"User: arn:aws:sts::{AWS_EXAMPLE_ACCOUNT_ID}:assumed-role/{PUBLISHER_ROLE_NAME}/"
+    "build-research-image is not authorized to perform: batch:SubmitJob because no "
+    "identity-based policy allows the batch:SubmitJob action"
+)
+REDACTED_DENIAL_MESSAGE = redact_aws_account_ids(RAW_DENIAL_MESSAGE)
 
 PayloadBuilder = Callable[..., dict[str, object]]
 
@@ -163,10 +179,57 @@ def image_scan_payload(**overrides: object) -> dict[str, object]:
     return payload
 
 
+def oidc_session_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "source": "aws",
+        "environment": "sandbox",
+        "observed_at": recent_observed_at(),
+        "status": "ok",
+        "region": "us-east-1",
+        "event_id": CLOUDTRAIL_EVENT_ID,
+        "event_name": "AssumeRoleWithWebIdentity",
+        "event_source": "sts.amazonaws.com",
+        "role_name": PUBLISHER_ROLE_NAME,
+        "session_name": "build-research-image",
+        "oidc_issuer": "token.actions.githubusercontent.com",
+        "oidc_audience": "sts.amazonaws.com",
+        "oidc_subject": OIDC_SUBJECT,
+        "assumed_at": moments_ago(3600),
+        "expires_at": recent_observed_at(),
+    }
+    payload.update(overrides)
+    return payload
+
+
+def denial_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "source": "aws",
+        "environment": "sandbox",
+        "observed_at": recent_observed_at(),
+        "status": "ok",
+        "region": "us-east-1",
+        "role_name": PUBLISHER_ROLE_NAME,
+        "session_name": "build-research-image",
+        "attempted_action": "batch:SubmitJob",
+        "attempted_resource": "sbsandbox-intern-edullm-gpu-queue",
+        "attempted_at": moments_ago(1800),
+        "outcome": "denied",
+        "error_code": "AccessDeniedException",
+        "error_message": REDACTED_DENIAL_MESSAGE,
+        "event_id": OTHER_CLOUDTRAIL_EVENT_ID,
+        "event_name": "SubmitJob",
+        "event_source": "batch.amazonaws.com",
+    }
+    payload.update(overrides)
+    return payload
+
+
 EVIDENCE_MODELS: tuple[tuple[type[ContractModel], PayloadBuilder], ...] = (
     (BuildProvenanceEvidence, build_provenance_payload),
     (EcrImageEvidence, ecr_image_payload),
     (ImageScanEvidence, image_scan_payload),
+    (OidcSessionEvidence, oidc_session_payload),
+    (DenialEvidence, denial_payload),
 )
 
 EVIDENCE_MODEL_IDS = [model_type.__name__ for model_type, _builder in EVIDENCE_MODELS]
@@ -181,6 +244,27 @@ ACCOUNT_ID_PROBES: tuple[tuple[type[ContractModel], PayloadBuilder, str, str], .
         "scan_status_description",
         f"scan of arn:aws:ecr:us-east-1:{AWS_EXAMPLE_ACCOUNT_ID}:repository/x failed",
     ),
+    (
+        OidcSessionEvidence,
+        oidc_session_payload,
+        "event_id",
+        f"{'a' * 8}-aaaa-4aaa-baaa-{AWS_EXAMPLE_ACCOUNT_ID}",
+    ),
+    (OidcSessionEvidence, oidc_session_payload, "session_name", AWS_EXAMPLE_ACCOUNT_ID),
+    (
+        OidcSessionEvidence,
+        oidc_session_payload,
+        "oidc_subject",
+        f"repo:edu-llm@{AWS_EXAMPLE_ACCOUNT_ID}/OLMo-core@1306868157:ref:refs/heads/main",
+    ),
+    (DenialEvidence, denial_payload, "error_message", RAW_DENIAL_MESSAGE),
+    (DenialEvidence, denial_payload, "role_name", AWS_EXAMPLE_ACCOUNT_ID),
+    (
+        DenialEvidence,
+        denial_payload,
+        "attempted_resource",
+        f"arn:aws:batch:us-east-1:{AWS_EXAMPLE_ACCOUNT_ID}:job-queue/gpu",
+    ),
 )
 
 ACCOUNT_ID_PROBE_IDS = [
@@ -189,6 +273,8 @@ ACCOUNT_ID_PROBE_IDS = [
 
 CREDENTIAL_PROBES: tuple[tuple[type[ContractModel], PayloadBuilder, str], ...] = (
     (ImageScanEvidence, image_scan_payload, "scan_status_description"),
+    (OidcSessionEvidence, oidc_session_payload, "oidc_subject"),
+    (DenialEvidence, denial_payload, "error_message"),
 )
 
 CREDENTIAL_PROBE_IDS = [
@@ -504,4 +590,115 @@ def test_finding_counts_refuse_a_negative_count() -> None:
         exc_info.value,
         loc_suffix=("finding_counts", "critical"),
         error_type="greater_than_equal",
+    )
+
+
+def test_the_session_records_the_role_by_name_and_the_window_it_held() -> None:
+    evidence = OidcSessionEvidence.model_validate(oidc_session_payload())
+    assert evidence.role_name == PUBLISHER_ROLE_NAME
+    assert evidence.oidc_issuer == "token.actions.githubusercontent.com"
+    assert evidence.session_duration == timedelta(hours=1)
+
+
+def test_a_session_with_no_recorded_expiry_cannot_be_written_down() -> None:
+    payload = oidc_session_payload()
+    del payload["expires_at"]
+    with pytest.raises(ValidationError) as exc_info:
+        OidcSessionEvidence.model_validate(payload)
+    assert_validation_error(exc_info.value, loc_suffix=("expires_at",), error_type="missing")
+
+
+@pytest.mark.parametrize("offset", [0, -60])
+def test_a_session_must_expire_after_it_was_assumed(offset: int) -> None:
+    assumed = moments_ago(600)
+    payload = oidc_session_payload(assumed_at=assumed, expires_at=moments_ago(600 - offset))
+    with pytest.raises(ValidationError) as exc_info:
+        OidcSessionEvidence.model_validate(payload)
+    assert_validation_error(
+        exc_info.value,
+        loc_suffix=(),
+        error_type="value_error",
+        message_fragment="a session must expire after it was assumed",
+    )
+
+
+def test_a_session_timestamp_must_carry_an_offset() -> None:
+    payload = oidc_session_payload(assumed_at="2026-07-25T03:24:36")
+    with pytest.raises(ValidationError) as exc_info:
+        OidcSessionEvidence.model_validate(payload)
+    assert_validation_error(
+        exc_info.value,
+        loc_suffix=("assumed_at",),
+        error_type="value_error",
+        message_fragment="timestamps must be timezone-aware",
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("event_name", "AssumeRole"), ("event_source", "ecr.amazonaws.com")],
+)
+def test_the_session_record_refuses_an_event_that_is_not_the_web_identity_assumption(
+    field: str,
+    value: str,
+) -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        OidcSessionEvidence.model_validate(oidc_session_payload(**{field: value}))
+    assert_validation_error(exc_info.value, loc_suffix=(field,), error_type="literal_error")
+
+
+def test_the_session_record_refuses_an_event_id_that_is_not_a_cloudtrail_uuid() -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        OidcSessionEvidence.model_validate(oidc_session_payload(event_id="not-a-uuid"))
+    assert_validation_error(
+        exc_info.value,
+        loc_suffix=("event_id",),
+        error_type="string_pattern_mismatch",
+    )
+
+
+def test_denial_records_the_action_attempted_and_the_refusal_that_came_back() -> None:
+    evidence = DenialEvidence.model_validate(denial_payload())
+    assert evidence.attempted_action == "batch:SubmitJob"
+    assert evidence.outcome == "denied"
+    assert evidence.error_code == "AccessDeniedException"
+    assert "is not authorized to perform" in evidence.error_message
+
+
+def test_denial_evidence_cannot_record_a_call_that_was_allowed() -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        DenialEvidence.model_validate(denial_payload(outcome="allowed"))
+    assert_validation_error(exc_info.value, loc_suffix=("outcome",), error_type="literal_error")
+
+
+def test_denial_accepts_the_redacted_message_and_refuses_the_raw_one() -> None:
+    evidence = DenialEvidence.model_validate(denial_payload())
+    assert AWS_EXAMPLE_ACCOUNT_ID not in evidence.error_message
+    assert f"assumed-role/{PUBLISHER_ROLE_NAME}" in evidence.error_message
+    with pytest.raises(ValidationError):
+        DenialEvidence.model_validate(denial_payload(error_message=RAW_DENIAL_MESSAGE))
+
+
+@pytest.mark.parametrize("action", ["batch:*", "*", "SubmitJob", "batch:", "Batch:SubmitJob"])
+def test_denial_refuses_an_action_that_is_not_one_concrete_api_call(action: str) -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        DenialEvidence.model_validate(denial_payload(attempted_action=action))
+    assert_validation_error(
+        exc_info.value,
+        loc_suffix=("attempted_action",),
+        error_type="string_pattern_mismatch",
+    )
+
+
+def test_denial_requires_the_resource_key_even_when_the_call_has_no_resource() -> None:
+    without_resource = DenialEvidence.model_validate(denial_payload(attempted_resource=None))
+    assert without_resource.attempted_resource is None
+    payload = denial_payload()
+    del payload["attempted_resource"]
+    with pytest.raises(ValidationError) as exc_info:
+        DenialEvidence.model_validate(payload)
+    assert_validation_error(
+        exc_info.value,
+        loc_suffix=("attempted_resource",),
+        error_type="missing",
     )

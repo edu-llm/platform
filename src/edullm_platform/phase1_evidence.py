@@ -28,7 +28,7 @@ the alternative is a field an account ID fits exactly and nothing checks.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Final, Literal, Self
 
 from pydantic import AfterValidator, Field, model_validator
@@ -48,15 +48,27 @@ from edullm_platform.evidence import (
 
 __all__ = [
     "BuildProvenanceEvidence",
+    "DenialEvidence",
     "EcrImageEvidence",
     "ImageScanEvidence",
     "ImageScanFindingCounts",
+    "OidcSessionEvidence",
 ]
 
 #: The publish workflow tags every image with the first twelve characters of the commit
 #: SHA, so the tag is lowercase hexadecimal and exactly that long.
 IMAGE_TAG_PATTERN: Final = r"^[0-9a-f]{12}$"
 AWS_REGION_PATTERN: Final = r"^[a-z]{2}(?:-[a-z]+)+-[0-9]$"
+CLOUDTRAIL_EVENT_ID_PATTERN: Final = (
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
+#: The characters IAM allows in a role name, and separately in a session name.
+IAM_NAME_PATTERN: Final = r"^[A-Za-z0-9+=,.@_-]+$"
+#: One concrete API call, service prefix and operation. No wildcard: an action that was
+#: attempted is a single call, and ``batch:*`` is a policy statement rather than a call.
+IAM_ACTION_PATTERN: Final = r"^[a-z0-9-]{2,64}:[A-Z][A-Za-z0-9]{0,127}$"
+AWS_ERROR_CODE_PATTERN: Final = r"^[A-Za-z][A-Za-z0-9.]{0,127}$"
+AWS_SERVICE_PRINCIPAL_PATTERN: Final = r"^[a-z0-9.-]{2,64}\.amazonaws\.com$"
 
 #: Every state ECR reports for an image scan, basic and enhanced alike. A record that
 #: could not spell what the registry returned would force either a lie or a crash.
@@ -100,6 +112,21 @@ EcrRepositoryName = Annotated[
 AwsRegion = Annotated[
     str,
     Field(pattern=AWS_REGION_PATTERN),
+    AfterValidator(scan_for_secrets),
+]
+IamRoleName = Annotated[
+    str,
+    Field(min_length=1, max_length=64, pattern=IAM_NAME_PATTERN),
+    AfterValidator(scan_for_secrets),
+]
+IamSessionName = Annotated[
+    str,
+    Field(min_length=2, max_length=64, pattern=IAM_NAME_PATTERN),
+    AfterValidator(scan_for_secrets),
+]
+CloudTrailEventId = Annotated[
+    str,
+    Field(pattern=CLOUDTRAIL_EVENT_ID_PATTERN),
     AfterValidator(scan_for_secrets),
 ]
 
@@ -235,3 +262,79 @@ class ImageScanEvidence(FreshEvidenceModel):
             if self.scan_status_description is None:
                 raise ValueError("a scan that did not complete must record why")
         return self
+
+
+class OidcSessionEvidence(FreshEvidenceModel):
+    """The bounded publisher session, as CloudTrail recorded it.
+
+    Bounded means the record cannot describe a session without an end: ``expires_at``
+    is required, and it has to fall after ``assumed_at``. How long the window may be is
+    the role's ``MaxSessionDuration``, which ``DeployedRoleEvidence`` records and a
+    comparison against the template checks. It is deliberately not asserted here.
+    CloudTrail timestamps have one-second resolution, so a ceiling written into this
+    contract would refuse an honest hour-long session that rounded to 3601 seconds, and
+    a contract that fails on rounding teaches its readers to work around it.
+
+    The role is named rather than given by ARN, and the session is identified by the
+    CloudTrail event ID, which is what a reviewer needs to find the record itself.
+    """
+
+    source: Literal["aws"]
+    environment: EvidenceEnvironment
+    status: EvidenceStatus
+    region: AwsRegion
+    event_id: CloudTrailEventId
+    event_name: Literal["AssumeRoleWithWebIdentity"]
+    event_source: Literal["sts.amazonaws.com"]
+    role_name: IamRoleName
+    session_name: IamSessionName
+    oidc_issuer: SecretFreeStr = Field(min_length=1, max_length=255)
+    oidc_audience: SecretFreeStr = Field(min_length=1, max_length=255)
+    oidc_subject: SecretFreeStr = Field(min_length=1, max_length=1024)
+    assumed_at: EvidenceInstant
+    expires_at: EvidenceInstant
+
+    @property
+    def session_duration(self) -> timedelta:
+        return self.expires_at - self.assumed_at
+
+    @model_validator(mode="after")
+    def validate_the_session_window(self) -> Self:
+        if self.expires_at <= self.assumed_at:
+            raise ValueError("a session must expire after it was assumed")
+        return self
+
+
+class DenialEvidence(FreshEvidenceModel):
+    """One action attempted under the publisher session, and the denial that came back.
+
+    ``outcome`` is the literal ``denied`` and nothing else. A call that succeeded is not
+    denial evidence; it is a criterion failing, and it belongs in the criterion's own
+    text rather than in a record whose name asserts the opposite. A capture tool that
+    meets one has to stop rather than file it here.
+
+    ``attempted_action`` is the IAM action a policy would have to allow, and
+    ``event_name`` is what CloudTrail logged. Both are recorded because they are not
+    always the same word: ``s3:ListBucket`` is logged as ``ListObjects``. Nothing here
+    cross-checks them for that reason.
+
+    ``error_message`` is the one field with no name to fall back on, and it is where an
+    account ID arrives. The capture tool passes it through ``redact_aws_account_ids``;
+    this contract is what refuses it if the tool forgets.
+    """
+
+    source: Literal["aws"]
+    environment: EvidenceEnvironment
+    status: EvidenceStatus
+    region: AwsRegion
+    role_name: IamRoleName
+    session_name: IamSessionName
+    attempted_action: SecretFreeStr = Field(pattern=IAM_ACTION_PATTERN)
+    attempted_resource: SecretFreeStr | None = Field(min_length=1, max_length=2048)
+    attempted_at: EvidenceInstant
+    outcome: Literal["denied"]
+    error_code: SecretFreeStr = Field(pattern=AWS_ERROR_CODE_PATTERN)
+    error_message: SecretFreeStr = Field(min_length=1, max_length=4096)
+    event_id: CloudTrailEventId
+    event_name: SecretFreeStr = Field(min_length=1, max_length=128)
+    event_source: SecretFreeStr = Field(pattern=AWS_SERVICE_PRINCIPAL_PATTERN)
