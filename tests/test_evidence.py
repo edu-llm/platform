@@ -14,6 +14,7 @@ from edullm_platform.config import load_yaml
 from edullm_platform.contracts.workload import WorkloadCatalog
 from edullm_platform.evidence import (
     AWS_ACCOUNT_ID_PATTERN,
+    AWS_ACCOUNT_ID_PLACEHOLDER,
     EVIDENCE_STALE_CODE,
     BatchQuotaRecord,
     CapturedServiceQuotasEvidence,
@@ -23,6 +24,7 @@ from edullm_platform.evidence import (
     evidence_load_reason_code,
     profiles_requiring_capacity_evidence,
     quota_capacity_issues,
+    redact_aws_account_ids,
     redact_content_digests,
     scan_for_secrets,
 )
@@ -52,6 +54,15 @@ AWS_EXAMPLE_TEMP_ACCESS_KEY_ID = "ASIA" + "IOSFODNN7EXAMPLE"
 ALLOWED_ACCOUNT_ID_INTS = {int(AWS_EXAMPLE_ACCOUNT_ID)}
 TRACKED_TREE_PATHS: tuple[str, ...] = ()
 EXCLUDED_TRACKED_FILENAMES = frozenset({"uv.lock"})
+
+# Content digests routinely carry twelve consecutive decimal digits. These two hold one
+# on purpose, so a redaction that reached inside them would be visible.
+ACCOUNT_ID_INSIDE_A_DIGEST = "a" * 26 + AWS_EXAMPLE_ACCOUNT_ID + "b" * 26
+ACCOUNT_ID_INSIDE_A_COMMIT_SHA = "c" * 14 + AWS_EXAMPLE_ACCOUNT_ID + "d" * 14
+# Forty characters of the secret-access-key alphabet wrapped around an account ID.
+# Masking the account ID alone breaks the forty-character run that makes this a
+# credential, and the scanner then accepts what is left.
+SECRET_KEY_WRAPPING_AN_ACCOUNT_ID = "wJalrXUtnFEMIK" + AWS_EXAMPLE_ACCOUNT_ID + "bPxRfiCYEXAMPL"
 
 
 def is_git_checkout(root: Path) -> bool:
@@ -965,6 +976,81 @@ def test_the_digest_exemption_still_reports_a_bare_account_id() -> None:
     alongside_a_digest = f"sha256:{'a' * 64} {synthetic}"
     assert forbidden_account_id_substrings(bare) == [synthetic]
     assert forbidden_account_id_substrings(alongside_a_digest) == [synthetic]
+
+
+def test_redaction_masks_an_account_id_that_free_text_cannot_avoid() -> None:
+    message = (
+        f"User: arn:aws:sts::{AWS_EXAMPLE_ACCOUNT_ID}:assumed-role/"
+        "sbsandbox-intern-edullm-ecr-publisher/publish is not authorized to perform "
+        "batch:SubmitJob"
+    )
+    redacted = redact_aws_account_ids(message)
+    assert AWS_EXAMPLE_ACCOUNT_ID not in redacted
+    assert AWS_ACCOUNT_ID_PLACEHOLDER in redacted
+    assert "assumed-role/sbsandbox-intern-edullm-ecr-publisher" in redacted
+    assert scan_for_secrets(redacted) == redacted
+
+
+@pytest.mark.parametrize("padding", ["", "0", "00", "9876"])
+def test_adjacent_digits_do_not_defeat_the_account_id_redaction(padding: str) -> None:
+    # Only the unpadded spelling is what SECRET_PATTERNS calls an account ID. Every
+    # padded one hides the same twelve digits from the scanner, so a mask that matched
+    # the scanner exactly would hand back text the scanner then waves through.
+    text = f"account {padding}{AWS_EXAMPLE_ACCOUNT_ID}{padding} denied"
+    redacted = redact_aws_account_ids(text)
+    assert AWS_EXAMPLE_ACCOUNT_ID not in redacted
+    assert AWS_ACCOUNT_ID_PLACEHOLDER in redacted
+    assert scan_for_secrets(redacted) == redacted
+
+
+def test_redaction_leaves_a_content_digest_and_a_commit_sha_intact() -> None:
+    text = f"image sha256:{ACCOUNT_ID_INSIDE_A_DIGEST} built from {ACCOUNT_ID_INSIDE_A_COMMIT_SHA}"
+    assert redact_aws_account_ids(text) == text
+    assert scan_for_secrets(redact_content_digests(text)) == redact_content_digests(text)
+
+
+def test_redaction_refuses_a_credential_a_naive_mask_would_have_hidden() -> None:
+    with pytest.raises(ValueError, match="refusing to redact text that carries a credential"):
+        redact_aws_account_ids(SECRET_KEY_WRAPPING_AN_ACCOUNT_ID)
+    naive = AWS_ACCOUNT_ID_PATTERN.sub(
+        AWS_ACCOUNT_ID_PLACEHOLDER,
+        SECRET_KEY_WRAPPING_AN_ACCOUNT_ID,
+    )
+    assert scan_for_secrets(naive) == naive
+
+
+@pytest.mark.parametrize(
+    ("probe", "credential"),
+    [
+        ("access key id", AWS_EXAMPLE_ACCESS_KEY_ID),
+        ("temporary access key id", AWS_EXAMPLE_TEMP_ACCESS_KEY_ID),
+        ("github token", "ghp_" + "a" * 36),
+        ("private key header", "-----BEGIN RSA PRIVATE KEY-----"),
+        ("bearer token", "Bearer abc123DEF456ghi789"),
+    ],
+)
+def test_redaction_refuses_any_text_that_carries_a_credential(
+    probe: str,
+    credential: str,
+) -> None:
+    with pytest.raises(ValueError, match="refusing to redact text that carries a credential"):
+        redact_aws_account_ids(f"account {AWS_EXAMPLE_ACCOUNT_ID} used {credential}")
+
+
+def test_the_placeholder_does_not_fuse_its_neighbours_into_a_credential() -> None:
+    text = "A" * 20 + AWS_EXAMPLE_ACCOUNT_ID + "B" * 20
+    redacted = redact_aws_account_ids(text)
+    assert scan_for_secrets(redacted) == redacted
+    with pytest.raises(ValueError, match="must not contain credentials or raw AWS account IDs"):
+        scan_for_secrets("A" * 20 + "B" * 20)
+
+
+def test_redaction_masks_every_account_id_in_one_pass() -> None:
+    other = AWS_EXAMPLE_ACCOUNT_ID[::-1]
+    redacted = redact_aws_account_ids(f"source {AWS_EXAMPLE_ACCOUNT_ID} target {other} done")
+    assert redacted == (
+        f"source {AWS_ACCOUNT_ID_PLACEHOLDER} target {AWS_ACCOUNT_ID_PLACEHOLDER} done"
+    )
 
 
 def test_tracked_tree_contains_no_aws_account_id_patterns() -> None:
