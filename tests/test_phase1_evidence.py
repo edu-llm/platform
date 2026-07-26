@@ -21,6 +21,7 @@ from edullm_platform.phase1_evidence import (
     DenialEvidence,
     DeployedRoleEvidence,
     EcrImageEvidence,
+    EcrRepositoryEvidence,
     ImageScanEvidence,
     OidcSessionEvidence,
 )
@@ -349,9 +350,54 @@ def deployed_role_payload(**overrides: object) -> dict[str, object]:
     return payload
 
 
+def lifecycle_rule_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "rule_priority": 1,
+        "description": "Expire untagged images older than 7 days",
+        "tag_status": "untagged",
+        "tag_patterns": [],
+        "tag_prefixes": [],
+        "count_type": "sinceImagePushed",
+        "count_number": 7,
+        "count_unit": "days",
+        "action_type": "expire",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def ecr_repository_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "source": "aws",
+        "environment": "sandbox",
+        "observed_at": recent_observed_at(),
+        "status": "ok",
+        "region": "us-east-1",
+        "repository_name": ECR_REPOSITORY,
+        "image_tag_mutability": "IMMUTABLE",
+        "scan_on_push": True,
+        "encryption_type": "AES256",
+        "lifecycle_rules": [
+            lifecycle_rule_payload(),
+            lifecycle_rule_payload(
+                rule_priority=2,
+                description="Retain at most 50 tagged images",
+                tag_status="tagged",
+                tag_patterns=["*"],
+                count_type="imageCountMoreThan",
+                count_number=50,
+                count_unit=None,
+            ),
+        ],
+    }
+    payload.update(overrides)
+    return payload
+
+
 EVIDENCE_MODELS: tuple[tuple[type[ContractModel], PayloadBuilder], ...] = (
     (BuildProvenanceEvidence, build_provenance_payload),
     (EcrImageEvidence, ecr_image_payload),
+    (EcrRepositoryEvidence, ecr_repository_payload),
     (ImageScanEvidence, image_scan_payload),
     (OidcSessionEvidence, oidc_session_payload),
     (DenialEvidence, denial_payload),
@@ -672,6 +718,70 @@ def test_ecr_image_refuses_an_image_that_is_its_own_base() -> None:
         error_type="value_error",
         message_fragment="an image cannot be its own base image",
     )
+
+
+def test_the_repository_record_holds_what_phase_1_turns_on() -> None:
+    repository = EcrRepositoryEvidence.model_validate(ecr_repository_payload())
+
+    assert repository.repository_name == ECR_REPOSITORY
+    assert repository.image_tag_mutability == "IMMUTABLE"
+    assert repository.scan_on_push is True
+    assert repository.encryption_type == "AES256"
+    assert [rule.rule_priority for rule in repository.lifecycle_rules] == [1, 2]
+
+
+def test_the_repository_record_can_describe_a_repository_that_went_mutable() -> None:
+    # The committed template asks for IMMUTABLE, and the criterion that turns on it is a
+    # gap until a live push proves the refusal. A record that could only hold IMMUTABLE
+    # would make the capture crash on exactly the account state worth reporting.
+    mutable = EcrRepositoryEvidence.model_validate(
+        ecr_repository_payload(image_tag_mutability="MUTABLE", scan_on_push=False)
+    )
+
+    assert mutable.image_tag_mutability == "MUTABLE"
+    assert mutable.scan_on_push is False
+
+
+def test_the_repository_record_refuses_a_registry_id() -> None:
+    # registryId is the account and nothing else, and the repository name already
+    # identifies the repository within the account.
+    with pytest.raises(ValidationError) as exc_info:
+        EcrRepositoryEvidence.model_validate(
+            ecr_repository_payload(registry_id=AWS_EXAMPLE_ACCOUNT_ID)
+        )
+    assert_validation_error(
+        exc_info.value,
+        loc_suffix=("registry_id",),
+        error_type="extra_forbidden",
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("image_tag_mutability", "SOMETIMES"),
+        ("encryption_type", "ROT13"),
+    ],
+)
+def test_the_repository_record_refuses_a_setting_ecr_does_not_have(
+    field: str,
+    value: str,
+) -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        EcrRepositoryEvidence.model_validate(ecr_repository_payload(**{field: value}))
+    assert_validation_error(exc_info.value, loc_suffix=(field,), error_type="literal_error")
+
+
+def test_a_repository_with_no_lifecycle_policy_records_that_it_has_none() -> None:
+    # ECR answers get-lifecycle-policy with LifecyclePolicyNotFoundException when none is
+    # set, which is a different fact from a policy with no rules in it. An empty tuple is
+    # the second; the first is what the capture has to be able to write down.
+    without = EcrRepositoryEvidence.model_validate(ecr_repository_payload(lifecycle_rules=None))
+
+    assert without.lifecycle_rules is None
+    assert EcrRepositoryEvidence.model_validate(
+        ecr_repository_payload(lifecycle_rules=[])
+    ).lifecycle_rules == ()
 
 
 def test_a_completed_scan_with_no_findings_is_not_a_scan_that_never_ran() -> None:

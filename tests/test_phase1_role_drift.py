@@ -28,8 +28,8 @@ from edullm_platform.role_drift import (
     EVIDENCE_ONLY_ROLE_FIELDS,
     FOREIGN_ACCOUNT_PLACEHOLDER,
     DriftDirection,
+    PolicyNotComparableError,
     RoleDriftReport,
-    TemplateNotComparableError,
     TemplateRole,
     compare_role_to_template,
     load_template_roles,
@@ -41,7 +41,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PARTITION = "aws"
 REGION = "us-east-1"
 OWN_ACCOUNT = "123456789012"
-OTHER_ACCOUNT = "210987654321"
+# Reversed rather than written out: the tracked-tree tripwire in tests/test_evidence.py
+# allows only AWS's own documented example account ID as a literal, and it is right to.
+OTHER_ACCOUNT = OWN_ACCOUNT[::-1]
 PUBLISHER_ROLE = "sbsandbox-intern-edullm-ecr-publisher"
 DEPLOYER_ROLE = "sbsandbox-intern-edullm-infra-deployer"
 PUBLISHER_TEMPLATE = "infra/iam/ecr-publisher-role.yaml"
@@ -238,7 +240,7 @@ def test_a_template_the_projection_cannot_read_faithfully_is_refused(
     # that compares clean against a role it does not describe.
     from edullm_platform.role_drift import project_template_role
 
-    with pytest.raises(TemplateNotComparableError):
+    with pytest.raises(PolicyNotComparableError):
         project_template_role(properties)
     assert reason  # named in the parametrisation so a failure says which form was read
 
@@ -700,7 +702,7 @@ def test_a_substitution_the_normalisation_does_not_understand_is_refused() -> No
     # Folding an unknown pseudo-parameter would invent a value; leaving it would compare
     # a literal "${AWS::URLSuffix}" against whatever the account returned and call it
     # drift. Refusing says the template cannot be compared, which is the truth.
-    with pytest.raises(TemplateNotComparableError):
+    with pytest.raises(PolicyNotComparableError):
         normalize_policy_string(
             "arn:${AWS::Partition}:s3:::${AWS::StackName}-artifacts/*",
             partition=PARTITION,

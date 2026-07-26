@@ -28,7 +28,7 @@ a field is folded only when it holds precisely the pseudo-parameter, or precisel
 partition and region the caller named. Anything else — another region, another partition,
 another account, any wildcard, and every character of the resource — survives untouched
 and is therefore still visible to the comparison. A substitution the folding does not
-recognise raises :class:`TemplateNotComparableError` rather than being guessed at or
+recognise raises :class:`PolicyNotComparableError` rather than being guessed at or
 compared literally.
 
 The account is the one field that cannot be compared on its own terms, because the
@@ -79,6 +79,7 @@ from edullm_platform.phase1_evidence import (
     IamRoleName,
     IamTrustStatement,
     ManagedPolicyScope,
+    parse_condition_value,
 )
 
 __all__ = [
@@ -86,15 +87,20 @@ __all__ = [
     "EVIDENCE_ONLY_ROLE_FIELDS",
     "FOREIGN_ACCOUNT_PLACEHOLDER",
     "DriftDirection",
+    "PolicyNotComparableError",
     "RoleDriftFinding",
     "RoleDriftReport",
-    "TemplateNotComparableError",
     "TemplateRole",
     "compare_role_to_template",
+    "iam_policy_from_arn",
     "load_template_roles",
     "normalize_policy_string",
     "project_template_role",
+    "read_inline_policy",
+    "read_trust_statements",
+    "redact_account_ids_in_document",
     "redact_account_in_arn",
+    "split_arn_fields",
 ]
 
 #: Every role this repository commits a template for, and the template that declares it.
@@ -137,7 +143,7 @@ AWS_ACCOUNT_ID: Final = re.compile(r"^[0-9]{12}$")
 IAM_POLICY_RESOURCE: Final = re.compile(r"^policy/(?P<name>.+)$")
 
 
-class TemplateNotComparableError(ValueError):
+class PolicyNotComparableError(ValueError):
     """The template cannot be projected into something a deployed role compares against.
 
     Raised rather than guessed at. Every alternative — resolving a ``Ref`` to whatever it
@@ -294,6 +300,28 @@ def redact_account_in_arn(value: str, *, own_account: str) -> str:
     return redact_aws_account_ids(value)
 
 
+def redact_account_ids_in_document(document: Any, *, own_account: str) -> Any:
+    """Mask every string in a captured policy document, leaving its shape alone.
+
+    Applied to what IAM returned before anything reads it, so the readers below work on
+    the same values whether they came from a template or from the account. Keys are left
+    as they are: a condition key, a principal type and an element name are names IAM
+    defines, and none of them can hold an account ID.
+    """
+    if isinstance(document, str):
+        return redact_account_in_arn(document, own_account=own_account)
+    if isinstance(document, dict):
+        return {
+            key: redact_account_ids_in_document(value, own_account=own_account)
+            for key, value in document.items()
+        }
+    if isinstance(document, list):
+        return [
+            redact_account_ids_in_document(value, own_account=own_account) for value in document
+        ]
+    return document
+
+
 # --------------------------------------------------------------------------------------
 # Normalising the two spellings of one resource
 # --------------------------------------------------------------------------------------
@@ -311,7 +339,7 @@ def normalize_policy_string(value: str, *, partition: str, region: str) -> str:
     the field holds exactly one of the accepted values for its own position. A string
     that is not a six-field ARN is returned unchanged.
 
-    Raises :class:`TemplateNotComparableError` if a substitution survives, which means the
+    Raises :class:`PolicyNotComparableError` if a substitution survives, which means the
     template used one this does not understand, or used one somewhere it is not folded.
     """
     fields = split_arn_fields(value)
@@ -336,7 +364,7 @@ def normalize_policy_string(value: str, *, partition: str, region: str) -> str:
         )
         value = ":".join(fields)
     if SUBSTITUTION_OPEN in value:
-        raise TemplateNotComparableError(
+        raise PolicyNotComparableError(
             f"a substitution this comparison does not understand survived normalisation: {value!r}"
         )
     return value
@@ -361,13 +389,25 @@ def _template_string(value: object, *, what: str) -> str:
         substituted = value["Fn::Sub"]
         if isinstance(substituted, str):
             return substituted
-    raise TemplateNotComparableError(f"{what} is not a literal or a plain Fn::Sub: {value!r}")
+    raise PolicyNotComparableError(f"{what} is not a literal or a plain Fn::Sub: {value!r}")
 
 
 def _template_strings(value: object, *, what: str) -> tuple[str, ...]:
     if isinstance(value, list):
         return tuple(_template_string(item, what=what) for item in value)
     return (_template_string(value, what=what),)
+
+
+def _condition_values(value: object, *, what: str) -> tuple[str, ...]:
+    """Condition values, with IAM's optional quotation marks put back on.
+
+    ``{"Bool": {"aws:SecureTransport": true}}`` is a policy IAM accepts and returns
+    unquoted, and it means the same thing as the quoted spelling. Both sides go through
+    the same normalisation the contract applies, so a template that quotes and an account
+    that does not cannot report as drift.
+    """
+    items = value if isinstance(value, list) else [value]
+    return tuple(_template_string(parse_condition_value(item), what=what) for item in items)
 
 
 def _optional_sid(statement: Mapping[str, Any], *, what: str) -> str | None:
@@ -378,17 +418,17 @@ def _optional_sid(statement: Mapping[str, Any], *, what: str) -> str | None:
 def _conditions(statement: Mapping[str, Any], *, what: str) -> tuple[IamConditionEntry, ...]:
     condition = statement.get("Condition", {})
     if not isinstance(condition, dict):
-        raise TemplateNotComparableError(f"{what} Condition is not a map: {condition!r}")
+        raise PolicyNotComparableError(f"{what} Condition is not a map: {condition!r}")
     entries: list[IamConditionEntry] = []
     for operator, keyed in sorted(condition.items()):
         if not isinstance(operator, str) or not isinstance(keyed, dict):
-            raise TemplateNotComparableError(f"{what} Condition is not a map of maps")
+            raise PolicyNotComparableError(f"{what} Condition is not a map of maps")
         for condition_key, values in sorted(keyed.items()):
             entries.append(
                 IamConditionEntry(
                     operator=operator,
                     condition_key=condition_key,
-                    values=_template_strings(values, what=f"{what} Condition value"),
+                    values=_condition_values(values, what=f"{what} Condition value"),
                 )
             )
     return tuple(entries)
@@ -401,7 +441,7 @@ def _action_match(statement: Mapping[str, Any], *, what: str) -> IamActionMatch:
                 element=element,
                 actions=_template_strings(statement[element], what=f"{what} {element}"),
             )
-    raise TemplateNotComparableError(f"{what} names neither Action nor NotAction")
+    raise PolicyNotComparableError(f"{what} names neither Action nor NotAction")
 
 
 def _resource_match(statement: Mapping[str, Any], *, what: str) -> IamResourceMatch:
@@ -411,14 +451,14 @@ def _resource_match(statement: Mapping[str, Any], *, what: str) -> IamResourceMa
                 element=element,
                 resources=_template_strings(statement[element], what=f"{what} {element}"),
             )
-    raise TemplateNotComparableError(f"{what} names neither Resource nor NotResource")
+    raise PolicyNotComparableError(f"{what} names neither Resource nor NotResource")
 
 
 def _principals(value: object, *, what: str) -> tuple[IamPrincipal, ...]:
     if value == "*":
         return (IamPrincipal(principal_type="*", identifier="*"),)
     if not isinstance(value, dict):
-        raise TemplateNotComparableError(f"{what} is not a principal map: {value!r}")
+        raise PolicyNotComparableError(f"{what} is not a principal map: {value!r}")
     principals: list[IamPrincipal] = []
     for principal_type, identifiers in sorted(value.items()):
         for identifier in _template_strings(identifiers, what=f"{what} {principal_type}"):
@@ -433,7 +473,7 @@ def _principal_match(statement: Mapping[str, Any], *, what: str) -> IamPrincipal
                 element=element,
                 principals=_principals(statement[element], what=f"{what} {element}"),
             )
-    raise TemplateNotComparableError(f"{what} names neither Principal nor NotPrincipal")
+    raise PolicyNotComparableError(f"{what} names neither Principal nor NotPrincipal")
 
 
 def _effect(statement: Mapping[str, Any], *, what: str) -> IamEffect:
@@ -442,18 +482,18 @@ def _effect(statement: Mapping[str, Any], *, what: str) -> IamEffect:
         return "Allow"
     if effect == "Deny":
         return "Deny"
-    raise TemplateNotComparableError(f"{what} Effect is not Allow or Deny: {effect!r}")
+    raise PolicyNotComparableError(f"{what} Effect is not Allow or Deny: {effect!r}")
 
 
 def _statements(document: object, *, what: str) -> list[Mapping[str, Any]]:
     if not isinstance(document, dict):
-        raise TemplateNotComparableError(f"{what} is not a policy document: {document!r}")
+        raise PolicyNotComparableError(f"{what} is not a policy document: {document!r}")
     statements = document.get("Statement")
     if not isinstance(statements, list) or not statements:
-        raise TemplateNotComparableError(f"{what} has no Statement list")
+        raise PolicyNotComparableError(f"{what} has no Statement list")
     for statement in statements:
         if not isinstance(statement, dict):
-            raise TemplateNotComparableError(f"{what} holds a statement that is not a map")
+            raise PolicyNotComparableError(f"{what} holds a statement that is not a map")
     return statements
 
 
@@ -462,7 +502,14 @@ def _policy_version(document: Mapping[str, Any], *, what: str) -> str | None:
     return None if version is None else _template_string(version, what=f"{what} Version")
 
 
-def _trust_statements(document: object) -> tuple[IamTrustStatement, ...]:
+def read_trust_statements(document: object) -> tuple[IamTrustStatement, ...]:
+    """Read a trust policy document, whether a template wrote it or IAM returned it.
+
+    IAM's own grammar is what both sides speak, so one reader serves both and a statement
+    cannot mean one thing in the template and another in the account. The capture tool
+    passes what IAM returned through :func:`redact_account_ids_in_document` first, which
+    is the only difference between the two callers.
+    """
     what = "AssumeRolePolicyDocument"
     return tuple(
         IamTrustStatement(
@@ -476,9 +523,15 @@ def _trust_statements(document: object) -> tuple[IamTrustStatement, ...]:
     )
 
 
-def _inline_policy(policy: object) -> IamInlinePolicy:
+def read_inline_policy(policy: object) -> IamInlinePolicy:
+    """Read one inline policy from ``PolicyName`` and ``PolicyDocument``.
+
+    Those are the keys CloudFormation uses under ``Policies`` and the keys IAM answers
+    ``get-role-policy`` with, so one reader serves both sides for the same reason
+    :func:`read_trust_statements` does.
+    """
     if not isinstance(policy, dict):
-        raise TemplateNotComparableError(f"an inline policy is not a map: {policy!r}")
+        raise PolicyNotComparableError(f"an inline policy is not a map: {policy!r}")
     name = _template_string(policy.get("PolicyName"), what="PolicyName")
     document = policy.get("PolicyDocument")
     what = f"inline policy {name!r}"
@@ -510,7 +563,7 @@ def iam_policy_from_arn(arn: str, *, what: str) -> tuple[str, ManagedPolicyScope
     fields = split_arn_fields(arn)
     resource = None if fields is None else IAM_POLICY_RESOURCE.fullmatch(fields[5])
     if fields is None or fields[2] != "iam" or resource is None:
-        raise TemplateNotComparableError(f"{what} is not an IAM policy ARN: {arn!r}")
+        raise PolicyNotComparableError(f"{what} is not an IAM policy ARN: {arn!r}")
     scope: ManagedPolicyScope = "aws" if fields[4] == "aws" else "customer"
     # An IAM policy ARN is a path followed by a name; the name is the last segment.
     path_and_name: str = resource.group("name")
@@ -529,7 +582,7 @@ def _permissions_boundary(properties: Mapping[str, Any]) -> str | None:
 def _attached_managed_policies(properties: Mapping[str, Any]) -> tuple[IamAttachedPolicy, ...]:
     arns = properties.get("ManagedPolicyArns", [])
     if not isinstance(arns, list):
-        raise TemplateNotComparableError(f"ManagedPolicyArns is not a list: {arns!r}")
+        raise PolicyNotComparableError(f"ManagedPolicyArns is not a list: {arns!r}")
     attached: list[IamAttachedPolicy] = []
     for arn in arns:
         name, scope = iam_policy_from_arn(
@@ -543,7 +596,7 @@ def _attached_managed_policies(properties: Mapping[str, Any]) -> tuple[IamAttach
 def _max_session_duration(properties: Mapping[str, Any]) -> int:
     duration = properties.get("MaxSessionDuration", DEFAULT_MAX_SESSION_DURATION_SECONDS)
     if not isinstance(duration, int) or isinstance(duration, bool):
-        raise TemplateNotComparableError(f"MaxSessionDuration is not an integer: {duration!r}")
+        raise PolicyNotComparableError(f"MaxSessionDuration is not an integer: {duration!r}")
     return duration
 
 
@@ -551,9 +604,9 @@ def project_template_role(properties: Mapping[str, Any]) -> TemplateRole:
     """Project the ``Properties`` of one ``AWS::IAM::Role`` into a comparable record."""
     policies = properties.get("Policies", [])
     if not isinstance(policies, list):
-        raise TemplateNotComparableError(f"Policies is not a list: {policies!r}")
+        raise PolicyNotComparableError(f"Policies is not a list: {policies!r}")
     trust_document = properties.get("AssumeRolePolicyDocument")
-    trust_statements = _trust_statements(trust_document)
+    trust_statements = read_trust_statements(trust_document)
     assert isinstance(trust_document, dict)
     return TemplateRole(
         role_name=_template_string(properties.get("RoleName"), what="RoleName"),
@@ -561,7 +614,7 @@ def project_template_role(properties: Mapping[str, Any]) -> TemplateRole:
         max_session_duration_seconds=_max_session_duration(properties),
         trust_policy_version=_policy_version(trust_document, what="AssumeRolePolicyDocument"),
         trust_statements=trust_statements,
-        inline_policies=tuple(_inline_policy(policy) for policy in policies),
+        inline_policies=tuple(read_inline_policy(policy) for policy in policies),
         attached_managed_policies=_attached_managed_policies(properties),
     )
 
@@ -570,17 +623,17 @@ def load_template_roles(path: Path) -> tuple[TemplateRole, ...]:
     """Every ``AWS::IAM::Role`` a committed template declares, projected for comparison."""
     document = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(document, dict):
-        raise TemplateNotComparableError(f"{path.name} is not a CloudFormation template")
+        raise PolicyNotComparableError(f"{path.name} is not a CloudFormation template")
     resources = document.get("Resources", {})
     if not isinstance(resources, dict):
-        raise TemplateNotComparableError(f"{path.name} has no Resources map")
+        raise PolicyNotComparableError(f"{path.name} has no Resources map")
     roles: list[TemplateRole] = []
     for resource in resources.values():
         if not isinstance(resource, dict) or resource.get("Type") != "AWS::IAM::Role":
             continue
         properties = resource.get("Properties")
         if not isinstance(properties, dict):
-            raise TemplateNotComparableError(f"{path.name} declares a role with no Properties")
+            raise PolicyNotComparableError(f"{path.name} declares a role with no Properties")
         roles.append(project_template_role(properties))
     return tuple(roles)
 

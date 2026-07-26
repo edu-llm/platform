@@ -61,6 +61,8 @@ __all__ = [
     "DenialEvidence",
     "DeployedRoleEvidence",
     "EcrImageEvidence",
+    "EcrLifecycleRule",
+    "EcrRepositoryEvidence",
     "IamActionMatch",
     "IamAttachedPolicy",
     "IamConditionEntry",
@@ -125,6 +127,23 @@ ImageScanStatus = Literal[
 #: ``ACTIVE`` for continuous enhanced scanning. Every other state means the question
 #: was never answered, which is not the same answer as none.
 SCAN_STATUSES_WITH_FINDINGS: Final = frozenset({"ACTIVE", "COMPLETE"})
+
+#: Every tag mutability setting ECR offers. The committed template asks for ``IMMUTABLE``
+#: and Phase 1 criterion 7 turns on it, which is exactly why the other three are here: a
+#: record that could only spell ``IMMUTABLE`` would crash on the one account state worth
+#: reporting rather than writing it down.
+EcrTagMutability = Literal[
+    "MUTABLE",
+    "IMMUTABLE",
+    "IMMUTABLE_WITH_EXCLUSION",
+    "MUTABLE_WITH_EXCLUSION",
+]
+#: Every encryption type ECR offers for a repository.
+EcrEncryptionType = Literal["AES256", "KMS", "KMS_DSSE"]
+#: What a lifecycle rule selects on, and how it counts. Both are closed sets in ECR's
+#: lifecycle policy grammar, which is why they are enumerated rather than patterned.
+EcrLifecycleTagStatus = Literal["tagged", "untagged", "any"]
+EcrLifecycleCountType = Literal["imageCountMoreThan", "sinceImagePushed"]
 
 
 def validate_instant(value: datetime) -> datetime:
@@ -271,6 +290,63 @@ class EcrImageEvidence(FreshEvidenceModel):
         if self.image_digest == self.base_image_digest:
             raise ValueError("an image cannot be its own base image")
         return self
+
+
+class EcrLifecycleRule(ContractModel):
+    """One rule of the repository's lifecycle policy, flattened out of its nesting.
+
+    ECR stores the policy as a JSON string of nested objects. Flattened, one rule
+    compares against one rule, so a retention change says which rule changed rather than
+    that two documents differ.
+
+    ``count_unit`` is nullable because ECR requires it for ``sinceImagePushed`` and
+    forbids it for ``imageCountMoreThan``. ``tag_patterns`` and ``tag_prefixes`` are
+    separate because ECR's two ways of selecting tags are separate and mean different
+    things; both are empty for a rule that selects untagged images, which is a rule that
+    matches everything untagged rather than one that matches nothing.
+    """
+
+    rule_priority: int = Field(ge=1)
+    description: SecretFreeStr | None = Field(min_length=1, max_length=256)
+    tag_status: EcrLifecycleTagStatus
+    tag_patterns: Annotated[
+        tuple[SecretFreeStr, ...], BeforeValidator(require_ordered_sequence)
+    ] = Field(strict=False)
+    tag_prefixes: Annotated[
+        tuple[SecretFreeStr, ...], BeforeValidator(require_ordered_sequence)
+    ] = Field(strict=False)
+    count_type: EcrLifecycleCountType
+    count_number: int = Field(ge=1)
+    count_unit: Literal["days"] | None
+    action_type: Literal["expire"]
+
+
+class EcrRepositoryEvidence(FreshEvidenceModel):
+    """The repository as ECR holds it, in the terms the committed template declares.
+
+    The registry ID is absent, as it is on :class:`EcrImageEvidence`, and for the same
+    reason: it is the account ID under another name. So is ``repositoryUri``, which
+    carries the account in its host name and adds nothing the repository name and region
+    do not already give.
+
+    ``lifecycle_rules`` is nullable rather than merely empty. ECR answers
+    ``get-lifecycle-policy`` with ``LifecyclePolicyNotFoundException`` when a repository
+    has none, and a repository with no policy at all is a different fact from one whose
+    policy has no rules. Recording the first as an empty tuple would say the capture
+    looked and found a policy that expires nothing.
+    """
+
+    source: Literal["aws"]
+    environment: EvidenceEnvironment
+    status: EvidenceStatus
+    region: AwsRegion
+    repository_name: EcrRepositoryName
+    image_tag_mutability: EcrTagMutability
+    scan_on_push: bool
+    encryption_type: EcrEncryptionType
+    lifecycle_rules: (
+        Annotated[tuple[EcrLifecycleRule, ...], BeforeValidator(require_ordered_sequence)] | None
+    ) = Field(strict=False)
 
 
 class ImageScanFindingCounts(ContractModel):
