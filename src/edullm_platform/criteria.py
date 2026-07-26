@@ -44,10 +44,15 @@ __all__ = [
 #: Test modules that themselves invoke a gate or a proof generator. A criterion may
 #: never cite one of these, because executing the citation would re-enter the runner
 #: that selected it. This is enforced by :class:`CriterionSpec`, and backed at runtime by
-#: the nested-execution guard in ``edullm_platform.criteria_runner``.
+#: the nested-execution guard in ``edullm_platform.criteria_runner``. An entry is allowed
+#: to name a module that does not exist yet: listing one early costs nothing, because the
+#: only effect is to refuse citations nobody wanted, and it means the guard is already in
+#: place on the day the module lands rather than one review later.
 REENTRANT_TEST_MODULES: Final = (
     "tests/test_phase0_criteria.py",
     "tests/test_phase0_proof.py",
+    "tests/test_phase1_criteria.py",
+    "tests/test_phase1_proof.py",
 )
 
 

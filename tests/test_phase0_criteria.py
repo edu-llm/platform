@@ -98,17 +98,29 @@ PHASE0_STATEMENTS = (
 )
 
 #: Anything that starts a gate run, a proof-bundle build, or a pytest subprocess. A test
-#: module containing one of these must be in REENTRANT_TEST_MODULES.
+#: module containing one of these must be in REENTRANT_TEST_MODULES. The phase-1 entries
+#: name tooling Wave 4 will add, and mirror the phase-0 trio exactly; the generic markers
+#: below them already cover a Phase 1 generator, which will reuse those function names.
 GATE_INVOCATION_MARKERS = (
     "run_validate_phase0",
+    "run_validate_phase1",
     "validate_phase0.py",
+    "validate_phase1.py",
     "evaluate_repository(",
     "evaluate_phase0_criteria(",
+    "evaluate_phase1_criteria(",
     "execute_criteria(",
     "run_node_ids(",
     "collect_node_ids(",
     "build_bundle(",
     "verify_repository(",
+)
+
+#: Test modules that certainly start the gate today. They anchor the marker list, which
+#: would otherwise be able to detect nothing at all and still look satisfied.
+KNOWN_GATE_INVOKING_MODULES = (
+    "tests/test_phase0_criteria.py",
+    "tests/test_phase0_proof.py",
 )
 
 #: Markers that only appear where a criterion is defined.
@@ -791,10 +803,31 @@ def gate_invoking_test_modules() -> set[str]:
 
 
 def test_no_test_module_that_starts_the_gate_is_citable() -> None:
-    assert sorted(gate_invoking_test_modules()) == sorted(REENTRANT_TEST_MODULES), (
+    # Only one direction of this can stay an equality. REENTRANT_TEST_MODULES is allowed
+    # to name a module that does not exist yet, or that exists but has not grown its gate
+    # tests yet, because listing one early only refuses citations that were never wanted.
+    # The direction that matters — a module that starts the gate and is not listed, which
+    # a criterion could then cite and recurse into — stays exact.
+    unlisted = sorted(gate_invoking_test_modules() - set(REENTRANT_TEST_MODULES))
+
+    assert unlisted == [], (
         "a test module that starts the gate or the proof generator is not listed in "
-        "REENTRANT_TEST_MODULES, so a criterion could cite it and recurse"
+        f"REENTRANT_TEST_MODULES, so a criterion could cite it and recurse: {unlisted}"
     )
+
+
+@pytest.mark.parametrize("module", KNOWN_GATE_INVOKING_MODULES)
+def test_the_markers_still_recognize_a_module_that_starts_the_gate(module: str) -> None:
+    # Anchors the check above, which is a subset assertion and would pass on an empty
+    # marker list.
+    assert module in gate_invoking_test_modules()
+
+
+def test_every_reentrant_entry_names_a_test_module() -> None:
+    # A listed module is no longer required to exist, so a typo in the path would
+    # otherwise be silently unenforced rather than loudly wrong.
+    for module in REENTRANT_TEST_MODULES:
+        assert module.startswith("tests/test_") and module.endswith(".py"), module
 
 
 def test_no_criterion_cites_a_reentrant_module(references: tuple[object, ...]) -> None:
