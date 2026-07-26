@@ -4,6 +4,11 @@ The ECR repository and base image digest are taken from the registry rather than
 the workflow, so a caller cannot describe its image as something the platform never
 registered. No registry host or account identifier is persisted: callers compose the
 pullable reference with ``resolve_image_reference`` at point of use.
+
+``--image-created`` is the ``created`` field of the image's own configuration blob and
+is required, because ``built_at`` is a claim about the image rather than about this
+process. There is deliberately no clock fallback: it would be approximately right on a
+fresh build and arbitrarily wrong on a resumed run, which is the worst of both.
 """
 
 from __future__ import annotations
@@ -12,14 +17,12 @@ import argparse
 import json
 import sys
 from collections.abc import Sequence
-from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic import ValidationError
 
 from edullm_platform.build_tooling import RegistryUnreadableError, load_registry
 from edullm_platform.canonical import canonical_json_bytes
-from edullm_platform.contracts.base import serialize_utc_timestamp
 from edullm_platform.contracts.image import ImageProvenance
 from edullm_platform.contracts.repository_registry import UnknownRepositoryError
 from edullm_platform.contracts.source_identity import SourceIdentity
@@ -37,7 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--workflow-ref", required=True)
     parser.add_argument("--run-id", type=int, required=True)
     parser.add_argument("--run-attempt", type=int, required=True)
-    parser.add_argument("--built-at", default=None)
+    parser.add_argument("--image-created", required=True)
     parser.add_argument("--output", type=Path, required=True)
     return parser
 
@@ -73,7 +76,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("repository_mismatch", file=sys.stderr)
         return 1
 
-    built_at = arguments.built_at or serialize_utc_timestamp(datetime.now(tz=UTC))
     try:
         provenance = ImageProvenance.model_validate(
             {
@@ -90,7 +92,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "run_id": arguments.run_id,
                     "run_attempt": arguments.run_attempt,
                 },
-                "built_at": built_at,
+                # UtcTimestamp truncates the nanosecond remainder rather than rounding
+                # it, so built_at is never later than the moment the image records.
+                "built_at": arguments.image_created,
             }
         )
     except ValidationError:

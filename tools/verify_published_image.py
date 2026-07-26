@@ -20,12 +20,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 
 BASE_NAME_LABEL = "org.opencontainers.image.base.name"
 REVISION_LABEL = "org.opencontainers.image.revision"
+RFC3339_INSTANT = re.compile(
+    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})"
+)
 
 __all__ = [
     "BASE_NAME_LABEL",
@@ -33,6 +37,7 @@ __all__ = [
     "PublishedImageError",
     "build_parser",
     "main",
+    "read_created",
     "require_matching_labels",
 ]
 
@@ -73,11 +78,30 @@ def require_matching_labels(payload: object, *, base_reference: str, commit_sha:
             raise PublishedImageError(reason)
 
 
+def read_created(payload: object) -> str:
+    """Return when the published image says it was created.
+
+    ``ImageProvenance.built_at`` is this value, so the resumed run records the moment the
+    image was built rather than the moment it was read back. A configuration that cannot
+    say when it was created stops the run: substituting the clock is exactly the claim
+    this path exists to remove, and it is unfalsifiable once written.
+    """
+    if not isinstance(payload, dict):
+        raise PublishedImageError("image_config_malformed")
+    created = payload.get("created")
+    if not isinstance(created, str) or RFC3339_INSTANT.fullmatch(created) is None:
+        raise PublishedImageError("published_image_created_unreadable")
+    return created
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image-config", type=Path, required=True)
     parser.add_argument("--base-reference", required=True)
     parser.add_argument("--commit-sha", required=True)
+    # Optional, because reading the creation time is a separate question from whether the
+    # image matches, and a caller that only asks the first must not fail on the second.
+    parser.add_argument("--created-output", type=Path, default=None)
     return parser
 
 
@@ -94,17 +118,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
 
     try:
+        payload = json.loads(text)
         require_matching_labels(
-            json.loads(text),
+            payload,
             base_reference=arguments.base_reference,
             commit_sha=arguments.commit_sha,
         )
+        # After the match, never before: an image this run may not resume onto has
+        # nothing to tell it, and writing the file anyway would leave a value behind for
+        # a later step to read as if the check had passed.
+        created = None if arguments.created_output is None else read_created(payload)
     except json.JSONDecodeError:
         print("image_config_malformed", file=sys.stderr)
         return 1
     except PublishedImageError as exc:
         print(exc.reason, file=sys.stderr)
         return 1
+
+    if created is not None:
+        try:
+            arguments.created_output.write_text(f"{created}\n", encoding="utf-8")
+        except OSError:
+            print("output_unwritable", file=sys.stderr)
+            return 2
     return 0
 
 

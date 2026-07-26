@@ -74,6 +74,23 @@ class GitHubWorkflowRunReference(ContractModel):
 
 
 class ImageProvenance(ContractModel):
+    """What one published image is, and where it came from.
+
+    ``built_at`` is the ``created`` field of the image's own configuration blob, not the
+    moment this record was written. The two coincide on a fresh build and diverge by
+    however long has passed on a resumed run, which reads back an image someone else's
+    run published; a record that dated that build to now would state a time at which
+    nothing happened. Taking it from the image also makes the field checkable: anyone
+    holding ``image_digest`` can inspect the image and compare.
+
+    Two consequences follow from that choice and are deliberate. The configuration's
+    ``created`` is RFC 3339 with nanoseconds while this field carries microseconds, so the
+    remainder is truncated rather than rounded and ``built_at`` is never later than the
+    moment the image records. And a build whose stages add no layer of their own carries
+    its base image's ``created`` forward, so ``built_at`` then describes the base rather
+    than the run — which is what the image itself claims, and is the fact worth recording.
+    """
+
     schema_version: Literal[1]
     ecr_repository: str = Field(
         min_length=len(SANDBOX_BUCKET_PREFIX) + 1,

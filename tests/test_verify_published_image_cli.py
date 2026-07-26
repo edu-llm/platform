@@ -16,13 +16,14 @@ from tools.verify_published_image import (
 
 BASE_REFERENCE = "public.ecr.aws/example/base@sha256:" + "e" * 64
 COMMIT_SHA = "f" * 40
+CREATED = "2026-07-26T11:00:00.000000000Z"
 
 
 def image_config(**labels: str) -> dict[str, Any]:
     declared = {BASE_NAME_LABEL: BASE_REFERENCE, REVISION_LABEL: COMMIT_SHA}
     declared.update(labels)
     return {
-        "created": "2026-07-26T11:00:00.000000000Z",
+        "created": CREATED,
         "architecture": "amd64",
         "os": "linux",
         "config": {"Env": ["PATH=/usr/bin"], "Labels": declared},
@@ -171,3 +172,66 @@ def test_an_image_config_that_is_not_utf_8_fails_closed(
 
     assert exit_code == 2
     assert capsys.readouterr().err.strip() == "image_config_undecodable"
+
+
+def test_the_proven_image_reports_when_it_was_created(tmp_path: Path) -> None:
+    # On a resumed run this blob is the only thing that knows when the image was built.
+    # The provenance record's built_at is a claim about the image, so it comes from here
+    # rather than from the clock on the runner that resumed.
+    (tmp_path / "config.json").write_text(json.dumps(image_config()), encoding="utf-8")
+    created_file = tmp_path / "created.txt"
+
+    exit_code = main(argv(tmp_path, **{"--created-output": str(created_file)}))
+
+    assert exit_code == 0
+    assert created_file.read_text(encoding="utf-8") == f"{CREATED}\n"
+
+
+def test_the_creation_time_is_not_written_for_an_image_that_fails_the_match(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "config.json").write_text(json.dumps(image_config()), encoding="utf-8")
+    created_file = tmp_path / "created.txt"
+
+    overrides = {"--commit-sha": "0" * 40, "--created-output": str(created_file)}
+    exit_code = main(argv(tmp_path, **overrides))
+
+    assert exit_code == 1
+    assert not created_file.exists()
+
+
+@pytest.mark.parametrize(
+    "created",
+    [None, "", "   ", 1753527600, "not a timestamp"],
+    ids=["absent", "empty", "blank", "a number", "not a timestamp"],
+)
+def test_an_image_that_cannot_say_when_it_was_created_fails_closed(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    created: object,
+) -> None:
+    # A build with no filesystem step of its own can leave `created` unset, and a
+    # provenance record that silently substituted the clock is the defect this replaced.
+    payload = image_config()
+    if created is None:
+        del payload["created"]
+    else:
+        payload["created"] = created
+    (tmp_path / "config.json").write_text(json.dumps(payload), encoding="utf-8")
+    created_file = tmp_path / "created.txt"
+
+    exit_code = main(argv(tmp_path, **{"--created-output": str(created_file)}))
+
+    assert exit_code == 1
+    assert capsys.readouterr().err.strip() == "published_image_created_unreadable"
+    assert not created_file.exists()
+
+
+def test_an_absent_creation_time_is_only_a_failure_when_it_was_asked_for(
+    tmp_path: Path,
+) -> None:
+    payload = image_config()
+    del payload["created"]
+    (tmp_path / "config.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    assert main(argv(tmp_path)) == 0

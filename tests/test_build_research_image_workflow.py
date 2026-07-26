@@ -36,10 +36,13 @@ PREFLIGHT_STEP = "Look for an already published image"
 RESUME_STEP = "Verify the published image is the one this run would have built"
 DECREDENTIAL_STEP = "Remove the source checkout credentials"
 BASE_GATE_STEP = "Require the registered base image"
+# Written by whichever of the build step and the resume step ran, read by provenance.
+IMAGE_CREATED_FILE = "image-created.txt"
 JOB_WORKFLOW_REF = f"{PLATFORM_REPOSITORY}/{WORKFLOW_PATH_INPUT}@refs/heads/main"
 PUBLISHED_IMAGE_DIGEST = "sha256:" + "b" * 64
 PUBLISHED_CONFIG_DIGEST = "sha256:" + "c" * 64
 PUBLISHED_BASE_REFERENCE = "public.ecr.aws/example/base@sha256:" + "e" * 64
+PUBLISHED_IMAGE_CREATED = "2026-01-04T03:02:01.026260339Z"
 PRESIGNED_URL = "https://example.invalid/blob?X-Amz-Signature=deadbeefcafe"
 # Outputs no run body can be read for. The two CLI steps are pinned on the other side by
 # the tuples the CLI test modules assert against GITHUB_OUTPUT, so renaming an output in
@@ -705,13 +708,14 @@ def _published_manifest() -> str:
 def _published_config(base_name: str, revision: str) -> str:
     return json.dumps(
         {
+            "created": PUBLISHED_IMAGE_CREATED,
             "config": {
                 "Labels": {
                     "org.opencontainers.image.base.name": base_name,
                     "org.opencontainers.image.revision": revision,
                     "edullm.workflow.run.url": "https://example.invalid/runs/1",
                 }
-            }
+            },
         }
     )
 
@@ -791,6 +795,19 @@ def test_a_published_image_that_matches_this_build_lets_the_run_resume(tmp_path:
     )
 
 
+def test_a_resumed_run_takes_the_build_time_from_the_image_it_resumed_onto(
+    tmp_path: Path,
+) -> None:
+    # The image was built whenever it was built. This run only reads it back, so the only
+    # honest built_at is the one the image itself records.
+    result, _ = _run_resume_check(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / IMAGE_CREATED_FILE).read_text(encoding="utf-8") == (
+        f"{PUBLISHED_IMAGE_CREATED}\n"
+    )
+
+
 def test_a_published_image_built_from_another_base_stops_the_run(tmp_path: Path) -> None:
     result, _ = _run_resume_check(
         tmp_path,
@@ -820,6 +837,153 @@ def test_a_config_blob_that_cannot_be_fetched_never_echoes_the_presigned_url(
     assert result.returncode == 1
     assert "published_config_unreachable" in result.stderr
     assert "X-Amz-Signature" not in result.stderr + result.stdout
+
+
+def test_the_build_records_the_images_own_creation_time_before_it_pushes(
+    tmp_path: Path,
+) -> None:
+    # built_at is a claim about the image, so it is read out of the image rather than off
+    # the clock. Reading it before the push keeps a failure here cheap: the immutable tag
+    # is not published yet, so the commit stays publishable.
+    script = step(_job("publish"), "Build and push image")["run"]
+    stub_bin = tmp_path / "bin"
+    write_stub(
+        stub_bin,
+        "docker",
+        'if [[ "${1-} ${2-}" == "image inspect" ]]; then\n'
+        f'  echo "{PUBLISHED_IMAGE_CREATED}"\n'
+        "fi\n",
+    )
+
+    result = run_step_script(
+        script,
+        cwd=tmp_path,
+        env={
+            "RUNNER_TEMP": str(tmp_path),
+            "REGISTRY": "123456789012.dkr.ecr.us-east-1.amazonaws.com",
+            "ECR_REPOSITORY": "sbsandbox-intern-edullm-olmo-core",
+            "IMAGE_TAG": "a" * 12,
+            "BASE_REFERENCE": PUBLISHED_BASE_REFERENCE,
+            "DOCKERFILE_PATH": ".edullm/Dockerfile",
+            "BUILD_CONTEXT": ".",
+            "COMMIT_SHA": "a" * 40,
+            "SOURCE_URL": "https://example.invalid/edu-llm/OLMo-core",
+            "RUN_URL": "https://example.invalid/runs/1",
+        },
+        stub_bin=stub_bin,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / IMAGE_CREATED_FILE).read_text(encoding="utf-8") == (
+        f"{PUBLISHED_IMAGE_CREATED}\n"
+    )
+    assert script.index("docker image inspect") < script.index("docker push")
+
+
+def test_an_image_that_cannot_say_when_it_was_built_stops_before_the_push(
+    tmp_path: Path,
+) -> None:
+    # A build whose stages add no layer of their own can leave `created` unset. Recording
+    # the clock instead is the substitution this whole path exists to remove.
+    script = step(_job("publish"), "Build and push image")["run"]
+    stub_bin = tmp_path / "bin"
+    write_stub(stub_bin, "docker", 'printf "%s\\n" "$*" >> "${RUNNER_TEMP}/docker-calls.txt"\n')
+
+    result = run_step_script(
+        script,
+        cwd=tmp_path,
+        env={
+            "RUNNER_TEMP": str(tmp_path),
+            "REGISTRY": "123456789012.dkr.ecr.us-east-1.amazonaws.com",
+            "ECR_REPOSITORY": "sbsandbox-intern-edullm-olmo-core",
+            "IMAGE_TAG": "a" * 12,
+            "BASE_REFERENCE": PUBLISHED_BASE_REFERENCE,
+            "DOCKERFILE_PATH": ".edullm/Dockerfile",
+            "BUILD_CONTEXT": ".",
+            "COMMIT_SHA": "a" * 40,
+            "SOURCE_URL": "https://example.invalid/edu-llm/OLMo-core",
+            "RUN_URL": "https://example.invalid/runs/1",
+        },
+        stub_bin=stub_bin,
+    )
+
+    assert result.returncode == 1
+    assert "image_created_unreadable" in result.stderr
+    calls = (tmp_path / "docker-calls.txt").read_text(encoding="utf-8")
+    assert "push" not in calls
+
+
+def test_provenance_is_told_when_the_image_was_built_by_whichever_path_ran(
+    tmp_path: Path,
+) -> None:
+    # The build step and the resume step are mutually exclusive and both write the same
+    # file, so provenance reads one value and does not have to know which path produced it.
+    provenance = step(_job("publish"), "Write image provenance")
+    recorded = tmp_path / "argv.txt"
+    stub_bin = tmp_path / "bin"
+    write_stub(
+        stub_bin,
+        "uv",
+        f'printf "%s\\n" "$@" > "{recorded}"\ntouch "${{RUNNER_TEMP}}/image-provenance.json"\n',
+    )
+    (tmp_path / IMAGE_CREATED_FILE).write_text(f"{PUBLISHED_IMAGE_CREATED}\n", encoding="utf-8")
+
+    result = run_step_script(
+        provenance["run"],
+        cwd=tmp_path,
+        env={
+            "RUNNER_TEMP": str(tmp_path),
+            "RESEARCH_REPOSITORY": "OLMo-core",
+            "IMAGE_DIGEST": PUBLISHED_IMAGE_DIGEST,
+            "RUN_REPOSITORY": "edu-llm/OLMo-core",
+            "WORKFLOW_REPOSITORY": PLATFORM_REPOSITORY,
+            "WORKFLOW_FILE_PATH": WORKFLOW_PATH_INPUT,
+            "WORKFLOW_REF": JOB_WORKFLOW_REF,
+            "RUN_ID": "987654321",
+            "RUN_ATTEMPT": "1",
+        },
+        stub_bin=stub_bin,
+    )
+
+    assert result.returncode == 0, result.stderr
+    passed = dict(itertools.pairwise(recorded.read_text(encoding="utf-8").splitlines()))
+    assert passed["--image-created"] == PUBLISHED_IMAGE_CREATED
+
+
+def test_provenance_refuses_to_run_when_no_path_recorded_a_creation_time(
+    tmp_path: Path,
+) -> None:
+    provenance = step(_job("publish"), "Write image provenance")
+    stub_bin = tmp_path / "bin"
+    write_stub(stub_bin, "uv", 'echo "the provenance tool was reached" >&2\nexit 0\n')
+
+    result = run_step_script(
+        provenance["run"],
+        cwd=tmp_path,
+        env={
+            "RUNNER_TEMP": str(tmp_path),
+            "RESEARCH_REPOSITORY": "OLMo-core",
+            "IMAGE_DIGEST": PUBLISHED_IMAGE_DIGEST,
+            "RUN_REPOSITORY": "edu-llm/OLMo-core",
+            "WORKFLOW_REPOSITORY": PLATFORM_REPOSITORY,
+            "WORKFLOW_FILE_PATH": WORKFLOW_PATH_INPUT,
+            "WORKFLOW_REF": JOB_WORKFLOW_REF,
+            "RUN_ID": "987654321",
+            "RUN_ATTEMPT": "1",
+        },
+        stub_bin=stub_bin,
+    )
+
+    assert result.returncode != 0
+    assert "the provenance tool was reached" not in result.stderr
+
+
+def test_the_only_thing_read_out_of_the_local_daemon_is_the_creation_time() -> None:
+    # The digest that leaves this workflow is the registry's. Nothing else may be taken
+    # from `docker inspect`, or a local build could claim an identity ECR never accepted.
+    inspects = re.findall(r"docker (?:image )?inspect[^\n]*", WORKFLOW_PATH.read_text("utf-8"))
+
+    assert inspects == ["docker image inspect --format '{{.Created}}' \"${image_reference}\" \\"]
 
 
 def test_publish_job_builds_from_the_registered_base_digest_under_an_immutable_tag() -> None:
@@ -981,6 +1145,7 @@ def test_provenance_records_the_branch_ref_that_the_trust_policy_asserts(
         "uv",
         f'printf "%s\\n" "$@" > "{recorded}"\ntouch "${{RUNNER_TEMP}}/image-provenance.json"\n',
     )
+    (tmp_path / IMAGE_CREATED_FILE).write_text(f"{PUBLISHED_IMAGE_CREATED}\n", encoding="utf-8")
 
     result = run_step_script(
         provenance["run"],
