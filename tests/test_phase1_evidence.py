@@ -13,6 +13,7 @@ from edullm_platform.evidence import (
     EVIDENCE_STALE_CODE,
     evidence_load_reason_code,
     redact_aws_account_ids,
+    redact_content_digests,
     scan_for_secrets,
 )
 from edullm_platform.phase1_evidence import (
@@ -765,6 +766,29 @@ def test_denial_evidence_cannot_record_a_call_that_was_allowed() -> None:
     with pytest.raises(ValidationError) as exc_info:
         DenialEvidence.model_validate(denial_payload(outcome="allowed"))
     assert_validation_error(exc_info.value, loc_suffix=("outcome",), error_type="literal_error")
+
+
+def test_free_text_holding_a_digest_needs_both_masks_before_a_field_takes_it() -> None:
+    # redact_aws_account_ids keeps a sha256 digest deliberately, and scan_for_secrets
+    # refuses one just as deliberately, because sixty-four hexadecimal characters are
+    # the shape of a long credential. A captured message carrying both an account ID
+    # and a digest therefore needs both masks, in this order.
+    message = f"image {IMAGE_DIGEST} already exists in {RAW_REPOSITORY_ARN}"
+    once = redact_aws_account_ids(message)
+    assert AWS_EXAMPLE_ACCOUNT_ID not in once
+    assert IMAGE_DIGEST in once
+    with pytest.raises(ValidationError) as exc_info:
+        DenialEvidence.model_validate(denial_payload(error_message=once))
+    assert_validation_error(
+        exc_info.value,
+        loc_suffix=("error_message",),
+        error_type="value_error",
+        message_fragment="must not contain credentials or raw AWS account IDs",
+    )
+    twice = redact_content_digests(once)
+    accepted = DenialEvidence.model_validate(denial_payload(error_message=twice))
+    assert accepted.error_message == twice
+    assert "already exists in" in accepted.error_message
 
 
 def test_denial_accepts_the_redacted_message_and_refuses_the_raw_one() -> None:

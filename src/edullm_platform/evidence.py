@@ -135,7 +135,10 @@ def redact_aws_account_ids(text: str) -> str:
     accepts. Text like that is refused rather than laundered, which also means the
     caller finds out instead of committing it. Text holding a bare sixty-character
     hexadecimal token is refused for the same reason, since the scanner would refuse it
-    too; a digest written with its ``sha256:`` prefix is recognised and kept.
+    too; a digest written with its ``sha256:`` prefix is recognised and kept. Kept, not
+    accepted: ``scan_for_secrets`` still refuses a digest, so free text carrying one
+    needs ``redact_content_digests`` after this, which is the order the proof bundle
+    already uses.
 
     It will not mask only what the scanner refuses. A digit beside an account ID hides
     it from ``AWS_ACCOUNT_ID_PATTERN``, so any run of twelve or more digits is masked
