@@ -31,6 +31,7 @@ WORKFLOW_PATH_INPUT = ".github/workflows/build-research-image.yml"
 CONTRACT_STEP = "Verify the caller contract"
 PREFLIGHT_STEP = "Look for an already published image"
 DECREDENTIAL_STEP = "Remove the source checkout credentials"
+BASE_GATE_STEP = "Require the registered base image"
 JOB_WORKFLOW_REF = f"{PLATFORM_REPOSITORY}/{WORKFLOW_PATH_INPUT}@refs/heads/main"
 
 
@@ -532,6 +533,22 @@ def test_publish_job_logs_in_to_ecr_without_a_third_party_login_action() -> None
     assert "docker/login-action" not in str(_load())
 
 
+def test_the_registered_base_is_enforced_on_the_dockerfile_before_the_build() -> None:
+    # BASE_IMAGE reaches docker build as a --build-arg, which a Dockerfile is free to
+    # ignore by hardcoding its own FROM. write_image_provenance records base_image_digest
+    # from the registry either way, so without this gate the provenance record would
+    # assert something nothing verified, which is worse than omitting the field.
+    publish = _job("publish")
+    names = [candidate.get("name") for candidate in publish["steps"]]
+    gate = step(publish, BASE_GATE_STEP)
+
+    assert names.index(BASE_GATE_STEP) < names.index("Configure AWS credentials")
+    assert names.index(BASE_GATE_STEP) < names.index("Build and push image")
+    assert "verify_dockerfile_base.py" in gate["run"]
+    assert gate["env"] == {"RESEARCH_REPOSITORY": "${{ inputs.repository }}"}
+    assert '--repository-root "${GITHUB_WORKSPACE}/source"' in gate["run"]
+
+
 SKIP_CONDITION = "steps.preflight.outputs.image_digest == ''"
 
 
@@ -859,6 +876,7 @@ def test_every_run_step_declares_the_directory_its_tooling_lives_in() -> None:
         "publish:Re-verify source identity": "platform",
         f"publish:{DECREDENTIAL_STEP}": "source",
         "publish:Resolve build inputs": "platform",
+        f"publish:{BASE_GATE_STEP}": "platform",
         f"publish:{PREFLIGHT_STEP}": None,
         "publish:Log in to Amazon ECR": None,
         "publish:Build and push image": "source",
