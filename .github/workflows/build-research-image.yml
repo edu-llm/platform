@@ -4,8 +4,8 @@ name: Build research image
 # edu-llm/platform/.github/workflows/build-research-image.yml@refs/heads/main.
 # Renaming or moving this file silently revokes every publish. Do not rename it.
 #
-# Caller contract. Neither obligation is discoverable from the call site, and both fail
-# as an AssumeRole denial that reads like a broken role ARN rather than like its cause:
+# Caller contract. None of this is discoverable from the call site, and the first two
+# fail as an AssumeRole denial that reads like a broken role ARN rather than like a cause:
 #
 #   1. The calling job must grant `permissions: id-token: write`. A called workflow can
 #      only downgrade the permissions it is given, so the `id-token: write` declared on
@@ -13,6 +13,14 @@ name: Build research image
 #   2. The caller must reference this workflow as `@main`. The trust policy matches
 #      job_workflow_ref with StringEquals against `@refs/heads/main`, so a SHA-pinned or
 #      tag-pinned `uses:` mints a claim the role will never accept.
+#   3. The build sees one commit, not the history. The gate job checks the caller out at
+#      `fetch-depth: 0` because that checkout is also where the caller's own test command
+#      runs, but the publish job takes the default shallow clone, because a full .git is
+#      weight `docker build` copies into a layer from a `.` context. A Dockerfile that
+#      derives its version from the repository — `git describe`, setuptools_scm — will
+#      therefore pass the gate and then mis-version or fail in publish, where the failure
+#      arrives after the caller has already been told its commit is publishable. Pass the
+#      version in as a build argument instead of reading it out of the checkout.
 #
 #   jobs:
 #     publish:

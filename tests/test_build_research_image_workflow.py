@@ -93,16 +93,21 @@ def test_workflow_file_name_matches_the_trusted_job_workflow_ref() -> None:
     assert f".github/workflows/{WORKFLOW_PATH.name}" == WORKFLOW_PATH_INPUT
 
 
-def test_the_header_documents_the_two_undiscoverable_caller_obligations() -> None:
+def test_the_header_documents_what_a_caller_cannot_discover_from_the_call_site() -> None:
     # A called workflow can only downgrade permissions, and the trust policy matches
     # job_workflow_ref with StringEquals against @refs/heads/main. Both obligations fail
     # far from their cause: a missing id-token grant and a SHA-pinned `uses:` both surface
-    # as an AssumeRole denial that reads like a broken role ARN.
+    # as an AssumeRole denial that reads like a broken role ARN. The third is not an
+    # obligation but a trap: the gate sees full history and publish sees one commit, so a
+    # Dockerfile deriving its version from the repository passes and then mis-versions.
     header = WORKFLOW_PATH.read_text(encoding="utf-8").split("\non:", 1)[0]
 
     assert "id-token: write" in header
     assert "@main" in header
     assert "job_workflow_ref" in header
+    assert "fetch-depth" in header
+    assert "setuptools_scm" in header
+    assert "git describe" in header
 
 
 def test_workflow_is_reusable_with_exact_inputs_and_no_secrets() -> None:
