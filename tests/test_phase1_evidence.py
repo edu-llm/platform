@@ -17,12 +17,14 @@ from edullm_platform.evidence import (
     scan_for_secrets,
 )
 from edullm_platform.phase1_evidence import (
+    UNDECLARED_IDENTITY_PLACEHOLDER,
     BuildProvenanceEvidence,
     DenialEvidence,
     DeployedRoleEvidence,
     EcrImageEvidence,
     EcrRepositoryEvidence,
     ImageScanEvidence,
+    ImmutableTagRefusalEvidence,
     OidcSessionEvidence,
 )
 
@@ -157,6 +159,34 @@ def ecr_image_payload(**overrides: object) -> dict[str, object]:
         "source_commit_sha": COMMIT_SHA,
         "base_image_digest": BASE_IMAGE_DIGEST,
         "image_pushed_at": moments_ago(120),
+    }
+    payload.update(overrides)
+    return payload
+
+
+def immutable_tag_refusal_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "source": "aws",
+        "environment": "sandbox",
+        "observed_at": recent_observed_at(),
+        "status": "ok",
+        "region": "us-east-1",
+        "repository_name": ECR_REPOSITORY,
+        "image_tag": IMAGE_TAG,
+        "source_commit_sha": COMMIT_SHA,
+        "image_digest": IMAGE_DIGEST,
+        "attempted_by": PUBLISHER_ROLE_NAME,
+        "attempted_by_publisher_role": True,
+        "attempted_at": moments_ago(120),
+        "outcome": "refused",
+        "error_code": "ImageTagAlreadyExistsException",
+        "error_message": (
+            f"The image tag '{IMAGE_TAG}' already exists in the '{ECR_REPOSITORY}' "
+            "repository and cannot be overwritten because the tag is immutable."
+        ),
+        "event_id": CLOUDTRAIL_EVENT_ID,
+        "event_name": "PutImage",
+        "event_source": "ecr.amazonaws.com",
     }
     payload.update(overrides)
     return payload
@@ -399,6 +429,7 @@ EVIDENCE_MODELS: tuple[tuple[type[ContractModel], PayloadBuilder], ...] = (
     (EcrImageEvidence, ecr_image_payload),
     (EcrRepositoryEvidence, ecr_repository_payload),
     (ImageScanEvidence, image_scan_payload),
+    (ImmutableTagRefusalEvidence, immutable_tag_refusal_payload),
     (OidcSessionEvidence, oidc_session_payload),
     (DenialEvidence, denial_payload),
     (DeployedRoleEvidence, deployed_role_payload),
@@ -430,6 +461,12 @@ ACCOUNT_ID_PROBES: tuple[tuple[type[ContractModel], PayloadBuilder, str, str], .
         "oidc_subject",
         f"repo:edu-llm@{AWS_EXAMPLE_ACCOUNT_ID}/OLMo-core@1306868157:ref:refs/heads/main",
     ),
+    (
+        ImmutableTagRefusalEvidence,
+        immutable_tag_refusal_payload,
+        "attempted_by",
+        AWS_EXAMPLE_ACCOUNT_ID,
+    ),
     (DenialEvidence, denial_payload, "error_message", RAW_DENIAL_MESSAGE),
     (DenialEvidence, denial_payload, "role_name", AWS_EXAMPLE_ACCOUNT_ID),
     (
@@ -455,6 +492,7 @@ CREDENTIAL_PROBES: tuple[tuple[type[ContractModel], PayloadBuilder, str], ...] =
     (ImageScanEvidence, image_scan_payload, "scan_status_description"),
     (OidcSessionEvidence, oidc_session_payload, "oidc_subject"),
     (DenialEvidence, denial_payload, "error_message"),
+    (ImmutableTagRefusalEvidence, immutable_tag_refusal_payload, "error_message"),
 )
 
 CREDENTIAL_PROBE_IDS = [
@@ -894,6 +932,63 @@ def test_finding_counts_refuse_a_negative_count() -> None:
         loc_suffix=("finding_counts", "critical"),
         error_type="greater_than_equal",
     )
+
+
+def test_a_refused_push_records_the_refusal_and_the_digest_that_outlived_it() -> None:
+    # Two claims, not one. A refusal says the push was turned away; the digest says the
+    # image that was already there is still what the tag resolves to.
+    refusal = ImmutableTagRefusalEvidence.model_validate(immutable_tag_refusal_payload())
+
+    assert refusal.outcome == "refused"
+    assert refusal.error_code == "ImageTagAlreadyExistsException"
+    assert refusal.image_digest == IMAGE_DIGEST
+    assert refusal.image_tag == IMAGE_TAG
+
+
+def test_a_refused_push_cannot_record_a_tag_that_is_not_this_commit_prefix() -> None:
+    # The same cross-check EcrImageEvidence carries, for the same reason: twelve
+    # characters that may all be digits are licensed by the commit rather than scanned.
+    with pytest.raises(ValidationError) as exc_info:
+        ImmutableTagRefusalEvidence.model_validate(
+            immutable_tag_refusal_payload(image_tag="0" * 12)
+        )
+
+    assert "first 12 characters of the commit SHA" in str(exc_info.value)
+
+
+def test_a_refused_push_can_record_a_tag_of_twelve_digits_the_commit_licenses() -> None:
+    refusal = ImmutableTagRefusalEvidence.model_validate(
+        immutable_tag_refusal_payload(
+            source_commit_sha=ACCOUNT_ID_SHAPED_COMMIT_SHA,
+            image_tag=ACCOUNT_ID_SHAPED_COMMIT_SHA[:12],
+        )
+    )
+
+    assert refusal.image_tag == AWS_EXAMPLE_ACCOUNT_ID
+
+
+def test_a_refusal_met_by_an_undeclared_identity_says_so_without_naming_anybody() -> None:
+    # The sandbox account is shared and its per-person roles carry personal names. What
+    # the record has to keep is the answer to "was this the publisher role", which is a
+    # field of its own rather than something inferred from a name that is not there.
+    refusal = ImmutableTagRefusalEvidence.model_validate(
+        immutable_tag_refusal_payload(
+            attempted_by=UNDECLARED_IDENTITY_PLACEHOLDER,
+            attempted_by_publisher_role=False,
+        )
+    )
+
+    assert refusal.attempted_by_publisher_role is False
+    assert refusal.attempted_by == UNDECLARED_IDENTITY_PLACEHOLDER
+
+
+def test_a_refusal_cannot_be_recorded_as_anything_but_a_refusal() -> None:
+    # A push that succeeded is not evidence that a tag is immutable; it is the criterion
+    # failing, and this record's name asserts the opposite.
+    with pytest.raises(ValidationError) as exc_info:
+        ImmutableTagRefusalEvidence.model_validate(immutable_tag_refusal_payload(outcome="pushed"))
+
+    assert_validation_error(exc_info.value, loc_suffix=("outcome",), error_type="literal_error")
 
 
 def test_the_session_records_the_role_by_name_and_the_window_it_held() -> None:
