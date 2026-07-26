@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import itertools
+import json
 import re
 import subprocess
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 from workflow_support import (
+    PROJECT_ROOT,
     WORKFLOWS_ROOT,
     aws_commands,
     command_tokens,
@@ -30,9 +33,14 @@ PLATFORM_REPOSITORY = "edu-llm/platform"
 WORKFLOW_PATH_INPUT = ".github/workflows/build-research-image.yml"
 CONTRACT_STEP = "Verify the caller contract"
 PREFLIGHT_STEP = "Look for an already published image"
+RESUME_STEP = "Verify the published image is the one this run would have built"
 DECREDENTIAL_STEP = "Remove the source checkout credentials"
 BASE_GATE_STEP = "Require the registered base image"
 JOB_WORKFLOW_REF = f"{PLATFORM_REPOSITORY}/{WORKFLOW_PATH_INPUT}@refs/heads/main"
+PUBLISHED_IMAGE_DIGEST = "sha256:" + "b" * 64
+PUBLISHED_CONFIG_DIGEST = "sha256:" + "c" * 64
+PUBLISHED_BASE_REFERENCE = "public.ecr.aws/example/base@sha256:" + "e" * 64
+PRESIGNED_URL = "https://example.invalid/blob?X-Amz-Signature=deadbeefcafe"
 
 
 def _load() -> dict[str, Any]:
@@ -644,6 +652,162 @@ def test_a_lookup_that_answers_with_a_non_digest_fails_closed(tmp_path: Path) ->
     assert "preflight_digest_unreadable" in result.stderr
 
 
+def test_a_resumed_run_proves_the_published_image_is_the_one_it_would_have_built() -> None:
+    # The tag encodes only the commit, but the provenance record re-derives the rest at
+    # write time: base_image_digest is read from config/repositories.yaml as it stands
+    # now. Resuming an older commit after the registered base digest changed would record
+    # the new base for an image built from the old one, which is the claim
+    # verify_dockerfile_base.py exists to prevent arriving by another road.
+    publish = _job("publish")
+    names = [candidate.get("name") for candidate in publish["steps"]]
+    resume = step(publish, RESUME_STEP)
+
+    assert resume["if"] == "steps.preflight.outputs.image_digest != ''"
+    assert names.index(PREFLIGHT_STEP) < names.index(RESUME_STEP)
+    assert names.index(RESUME_STEP) < names.index("Log in to Amazon ECR")
+    assert resume["env"] == {
+        "ECR_REPOSITORY": "${{ needs.verify.outputs.ecr_repository }}",
+        "IMAGE_DIGEST": "${{ steps.preflight.outputs.image_digest }}",
+        "BASE_REFERENCE": "${{ steps.build_inputs.outputs.base_reference }}",
+        "COMMIT_SHA": "${{ needs.verify.outputs.commit_sha }}",
+    }
+
+
+def _published_manifest() -> str:
+    return json.dumps(
+        {
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+            "config": {
+                "mediaType": "application/vnd.docker.container.image.v1+json",
+                "size": 7023,
+                "digest": PUBLISHED_CONFIG_DIGEST,
+            },
+            "layers": [],
+        }
+    )
+
+
+def _published_config(base_name: str, revision: str) -> str:
+    return json.dumps(
+        {
+            "config": {
+                "Labels": {
+                    "org.opencontainers.image.base.name": base_name,
+                    "org.opencontainers.image.revision": revision,
+                    "edullm.workflow.run.url": "https://example.invalid/runs/1",
+                }
+            }
+        }
+    )
+
+
+def _run_resume_check(
+    tmp_path: Path,
+    *,
+    base_name: str = PUBLISHED_BASE_REFERENCE,
+    revision: str = "a" * 40,
+    download_status: int = 0,
+) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    # `uv` is stubbed only to drop the locked-environment wrapper: the stub execs the real
+    # CLI, so both branches below run the tooling the workflow runs rather than a
+    # reimplementation of it. `aws` and `curl` are the only things genuinely faked.
+    platform_directory = tmp_path / "platform"
+    platform_directory.mkdir()
+    (platform_directory / "tools").symlink_to(PROJECT_ROOT / "tools")
+    (tmp_path / "manifest.json").write_text(_published_manifest(), encoding="utf-8")
+    (tmp_path / "config.json").write_text(_published_config(base_name, revision), encoding="utf-8")
+
+    stub_bin = tmp_path / "bin"
+    recording = tmp_path / "aws-calls.txt"
+    write_stub(
+        stub_bin,
+        "aws",
+        f'printf "%s\\n" "$*" >> "{recording}"\n'
+        f'case "${{1-}} ${{2-}}" in\n'
+        f'  "ecr batch-get-image") cat "{tmp_path / "manifest.json"}" ;;\n'
+        f'  "ecr get-download-url-for-layer") echo "{PRESIGNED_URL}" ;;\n'
+        f"  *) exit 64 ;;\n"
+        f"esac\n",
+    )
+    write_stub(
+        stub_bin,
+        "curl",
+        'destination=""\n'
+        "while [[ $# -gt 0 ]]; do\n"
+        '  if [[ "$1" == "--output" ]]; then shift; destination="$1"; fi\n'
+        "  shift\n"
+        "done\n"
+        f"if [[ {download_status} -ne 0 ]]; then\n"
+        f'  echo "curl: (22) The requested URL returned error: 403 for {PRESIGNED_URL}" >&2\n'
+        f"  exit {download_status}\n"
+        "fi\n"
+        f'cat "{tmp_path / "config.json"}" > "${{destination}}"\n',
+    )
+    write_stub(stub_bin, "uv", 'shift 3\nexec "${PYTHON_EXECUTABLE}" "$@"\n')
+
+    result = run_step_script(
+        step(_job("publish"), RESUME_STEP)["run"],
+        cwd=platform_directory,
+        env={
+            "RUNNER_TEMP": str(tmp_path),
+            "PYTHON_EXECUTABLE": sys.executable,
+            "ECR_REPOSITORY": "sbsandbox-intern-edullm-olmo-core",
+            "IMAGE_DIGEST": PUBLISHED_IMAGE_DIGEST,
+            "BASE_REFERENCE": PUBLISHED_BASE_REFERENCE,
+            "COMMIT_SHA": "a" * 40,
+        },
+        stub_bin=stub_bin,
+    )
+    recorded = recording.read_text(encoding="utf-8").splitlines() if recording.exists() else []
+    return result, recorded
+
+
+def test_a_published_image_that_matches_this_build_lets_the_run_resume(tmp_path: Path) -> None:
+    result, calls = _run_resume_check(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    # The manifest is asked for by the digest the pre-flight read, not by the tag, and the
+    # config blob is asked for by the digest that manifest names.
+    assert f"imageDigest={PUBLISHED_IMAGE_DIGEST}" in calls[0]
+    assert calls[0].startswith("ecr batch-get-image ")
+    assert calls[1] == (
+        "ecr get-download-url-for-layer --repository-name sbsandbox-intern-edullm-olmo-core"
+        f" --layer-digest {PUBLISHED_CONFIG_DIGEST} --query downloadUrl --output text"
+    )
+
+
+def test_a_published_image_built_from_another_base_stops_the_run(tmp_path: Path) -> None:
+    result, _ = _run_resume_check(
+        tmp_path,
+        base_name="public.ecr.aws/example/base@sha256:" + "0" * 64,
+    )
+
+    assert result.returncode == 1
+    assert "published_base_image_mismatch" in result.stderr
+
+
+def test_a_published_image_built_from_another_commit_stops_the_run(tmp_path: Path) -> None:
+    # Twelve hex characters of a commit can collide. Before the resume path existed the
+    # immutable push rejected a collision loudly; now only the revision label does.
+    result, _ = _run_resume_check(tmp_path, revision="b" * 40)
+
+    assert result.returncode == 1
+    assert "published_revision_mismatch" in result.stderr
+
+
+def test_a_config_blob_that_cannot_be_fetched_never_echoes_the_presigned_url(
+    tmp_path: Path,
+) -> None:
+    # The download URL carries an S3 signature, which mask-aws-account-id cannot redact
+    # because it is not the account id, so curl's own diagnostics have to stay unprinted.
+    result, _ = _run_resume_check(tmp_path, download_status=22)
+
+    assert result.returncode == 1
+    assert "published_config_unreachable" in result.stderr
+    assert "X-Amz-Signature" not in result.stderr + result.stdout
+
+
 def test_publish_job_builds_from_the_registered_base_digest_under_an_immutable_tag() -> None:
     workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
     build = step(_job("publish"), "Build and push image")
@@ -845,6 +1009,8 @@ def test_the_workflow_makes_exactly_these_aws_calls_in_exactly_this_order() -> N
 
     assert calls == [
         ("publish:Look for an already published image", ("aws", "ecr", "describe-images")),
+        (f"publish:{RESUME_STEP}", ("aws", "ecr", "batch-get-image")),
+        (f"publish:{RESUME_STEP}", ("aws", "ecr", "get-download-url-for-layer")),
         ("publish:Log in to Amazon ECR", ("aws", "ecr", "get-login-password")),
         (
             "publish:Read published digest from the registry",
@@ -878,6 +1044,7 @@ def test_every_run_step_declares_the_directory_its_tooling_lives_in() -> None:
         "publish:Resolve build inputs": "platform",
         f"publish:{BASE_GATE_STEP}": "platform",
         f"publish:{PREFLIGHT_STEP}": None,
+        f"publish:{RESUME_STEP}": "platform",
         "publish:Log in to Amazon ECR": None,
         "publish:Build and push image": "source",
         "publish:Read published digest from the registry": None,

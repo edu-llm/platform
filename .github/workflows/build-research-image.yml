@@ -403,6 +403,69 @@ jobs:
             exit 1
           fi
 
+      # Resuming is only safe if the published image is the image this run would have
+      # built, and the tag alone cannot say so: it encodes twelve characters of the commit
+      # and nothing else, while the provenance record re-derives the rest at write time
+      # from config/repositories.yaml as it stands now. Resuming an older commit after the
+      # registered base digest changed would otherwise record the new base for an image
+      # built from the old one, which is the unverified assertion the Dockerfile gate
+      # above exists to prevent, arriving by a road that gate cannot see because it
+      # inspects the checkout rather than the image. Comparing the labels also restores
+      # the loud rejection a twelve-character tag collision used to get from the
+      # immutable push.
+      #
+      # BatchGetImage and GetDownloadUrlForLayer are already among the publisher role's
+      # actions, and the config blob those two reach carries the labels, so this needs no
+      # new permission. Reading it through the API rather than the Docker CLI also keeps
+      # the resume path free of both a registry login and a full image pull.
+      - name: Verify the published image is the one this run would have built
+        if: steps.preflight.outputs.image_digest != ''
+        working-directory: platform
+        env:
+          ECR_REPOSITORY: ${{ needs.verify.outputs.ecr_repository }}
+          IMAGE_DIGEST: ${{ steps.preflight.outputs.image_digest }}
+          BASE_REFERENCE: ${{ steps.build_inputs.outputs.base_reference }}
+          COMMIT_SHA: ${{ needs.verify.outputs.commit_sha }}
+        run: |
+          set -euo pipefail
+          manifest_file="${RUNNER_TEMP}/published-manifest.json"
+          digest_file="${RUNNER_TEMP}/published-config-digest.txt"
+          url_file="${RUNNER_TEMP}/published-config-url.txt"
+          config_file="${RUNNER_TEMP}/published-config.json"
+          aws ecr batch-get-image \
+            --repository-name "${ECR_REPOSITORY}" \
+            --image-ids "imageDigest=${IMAGE_DIGEST}" \
+            --accepted-media-types \
+              application/vnd.docker.distribution.manifest.v2+json \
+              application/vnd.oci.image.manifest.v1+json \
+            --query 'images[0].imageManifest' \
+            --output text > "${manifest_file}"
+          uv run --frozen python tools/read_image_config_digest.py \
+            --manifest "${manifest_file}" \
+            --output "${digest_file}"
+          config_digest="$(cat "${digest_file}")"
+          aws ecr get-download-url-for-layer \
+            --repository-name "${ECR_REPOSITORY}" \
+            --layer-digest "${config_digest}" \
+            --query downloadUrl \
+            --output text > "${url_file}"
+          # The download URL carries an S3 signature, which mask-aws-account-id cannot
+          # redact because it is not an account id, so the diagnostics curl writes about
+          # a failed fetch have to stay unprinted.
+          download_url="$(cat "${url_file}")"
+          download_status=0
+          curl --silent --show-error --fail --location \
+            --output "${config_file}" "${download_url}" 2>/dev/null || download_status=$?
+          if [[ "${download_status}" -ne 0 ]]; then
+            echo "published_config_unreachable" >&2
+            exit 1
+          fi
+          uv run --frozen python tools/verify_published_image.py \
+            --image-config "${config_file}" \
+            --base-reference "${BASE_REFERENCE}" \
+            --commit-sha "${COMMIT_SHA}"
+          echo "The published image matches this commit and the registered base image."
+
       # The registry host is composed here from the assumed identity so that no account
       # identifier is written into this repository or into any published artefact.
       - name: Log in to Amazon ECR
