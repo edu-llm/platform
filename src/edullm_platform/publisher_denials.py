@@ -7,22 +7,37 @@ repository green. This module is the other half: it attempts, under a real publi
 session, the calls the role must not be able to make, and refuses to call anything but a
 genuine authorization failure a denial.
 
-Three constraints shape everything here.
+Four constraints shape everything here, and the first live run of this matrix is why
+three of them are worded the way they are.
 
-**A failure is not a denial.** A not-found, a malformed parameter, an expired token and a
-network timeout are all failures, and every one of them is also what a *permitted* call
-looks like when it is pointed at a resource that is not there. Counting any of them as a
-refusal would let the widening this matrix exists to catch pass as proof that it did not
-happen. So a denial has to be an authorization failure, from the identity rather than
-from somebody else's resource policy, naming the exact action that was attempted.
-Anything else stops the run.
+**A failure is not a denial.** A not-found, a malformed parameter, a throttle, an expired
+token and a network timeout are all failures, and every one of them is also what a
+*permitted* call looks like when it is pointed at a resource that is not there. Counting
+any of them as a refusal would let the widening this matrix exists to catch pass as proof
+that it did not happen.
 
-**A permitted call must not do anything.** Each probe targets a resource that is not
-there, so a permitted call fails on the resource. Two probes cannot work that way and are
-inert for their own reasons instead: ``iam:CreateRole`` names a role that already exists,
-so a permitted call collides rather than creating; and ``ecr:DeleteRepository`` names a
-repository beside the registered one rather than the registered one, because a permitted
-delete of that would take the published images with it.
+**A refusal is not reliably worded.** The matrix first required the error text to read
+``is not authorized to perform: <action>``. IAM and Batch do say that; S3 does not. Its
+error table gives ``AccessDenied`` the description "Access Denied" and that is the whole
+message, so the one service the criterion is most about was the one that could never
+satisfy the test. What every service does agree on is the error *code* and the *operation*
+it names, so that pair is what a denial rests on here. The wording is still read when
+there is any: a message that names an action must name this one, and a message that
+attributes the refusal to a resource-based policy is refused whatever else it says, since
+somebody else's policy says nothing about how wide this role is. The probes are chosen so
+that the second check has nothing to miss — none of the five targets can carry a resource
+policy of its own — but a terse refusal is accepted on the code, and that limit is real.
+
+**A permitted call must not do anything.** Each probe either targets a resource that is
+not there, so a permitted call fails on the resource, or is inert for its own reason:
+``s3:ListAllMyBuckets`` only reads and names nothing; ``iam:CreateRole`` names a role that
+already exists, so a permitted call collides rather than creating; ``ecr:DeleteRepository``
+names a repository beside the registered one, because a permitted delete of that would
+take the published images with it. That requirement is in direct conflict with the one
+above for anything aimed at an S3 bucket: S3 routes a request to a bucket before it
+authorizes it, so a bucket chosen not to exist answers ``NoSuchBucket`` and the refusal is
+never observable. The first live run reported exactly that. ``ListBuckets`` is the way out
+— it names no bucket, so nothing about it can be absent — at the price described below.
 
 **Nothing captured is echoed.** An AWS denial message names the account, the role and
 usually the resource ARN. It reaches a record only through ``redact_aws_account_ids``,
@@ -30,16 +45,30 @@ and the contract below is what refuses it if this module forgets. The reason tok
 module raises carry the action and the AWS error code and nothing else, so a failure is
 diagnosable from a world-readable runner log without the log becoming the leak.
 
+What the S3 probe proves, and what it does not: a session refused ``ListBuckets`` holds no
+account-wide S3 permission, which is what a policy widened to include S3 would most likely
+grant. It is weaker than the criterion's "cannot read datasets", because a policy granting
+only ``s3:GetObject`` on one bucket would be refused ``ListBuckets`` just the same. Closing
+that difference needs an object read that reaches authorization, which needs a bucket this
+project owns and a zero-byte object in it that exists — an absent key in an existing bucket
+is no good either, since a caller without ``s3:ListBucket`` is answered 403 for a missing
+object and the refusal would be ambiguous. No such bucket is deployed yet, and pointing
+the probe at another team's bucket in the shared account would be reading a refusal from
+their policy rather than ours.
+
 What is deliberately not here is the CloudTrail identity of each refusal.
 :class:`~edullm_platform.phase1_evidence.DenialEvidence` requires an ``event_id``, and
 the publisher session cannot read CloudTrail — the whole point of it is that it can read
 almost nothing. Minting an event ID would put a fact in an evidence record that nothing
 established, so an attempt is recorded as :class:`AttemptedDenial`, which carries every
 other field the evidence needs, and :func:`denial_evidence` completes the record once a
-capture with CloudTrail credentials has looked the event up. That join is not free for
-every action: ``s3:GetObject`` is an S3 data event, which CloudTrail does not record
-unless data events are switched on, so for that one the attempt record may be the only
-record there is.
+capture with CloudTrail credentials has looked the event up. All five calls are management
+events, so all five are in the trail without data events being switched on.
+
+**One run says everything that is wrong.** The matrix stopped at its first anomaly once,
+which taught us about S3 and nothing about the other four probes, and every fix after that
+would have cost another live run to learn one more thing. :func:`attempt_denials` attempts
+every action, records every outcome, and leaves the deciding to its caller.
 """
 
 from __future__ import annotations
@@ -53,7 +82,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Final, Literal, Self
 
-from pydantic import BeforeValidator, Field, model_validator
+from pydantic import BeforeValidator, Field, ValidationError, model_validator
 
 from edullm_platform.contracts.base import ContractModel, require_ordered_sequence
 from edullm_platform.evidence import (
@@ -77,8 +106,10 @@ __all__ = [
     "PUBLISHER_DENIED_ACTIONS",
     "AttemptedDenial",
     "AwsApiError",
+    "DenialMatrixRun",
     "DenialNotProvenError",
     "DenialProbe",
+    "ProbeOutcome",
     "PublisherDenialMatrix",
     "PublisherDenialReason",
     "assumed_role_identity",
@@ -87,6 +118,7 @@ __all__ = [
     "denial_probes",
     "record_denial",
     "require_denial",
+    "run_aws",
 ]
 
 #: How long one probe may take before the answer stops being worth waiting for. A hung
@@ -95,8 +127,11 @@ AWS_CALL_TIMEOUT_SECONDS: Final = 60
 
 #: The two codes the services in this matrix return for an authorization failure. IAM and
 #: S3 answer with ``AccessDenied``; Batch and ECR answer with ``AccessDeniedException``.
-#: Nothing else is added speculatively: an unrecognised code stops the run, which is the
-#: direction an unknown answer should fail in.
+#: This is the whole of what a denial is recognised by, together with the operation, so
+#: the list stays short: an unrecognised code stops the run, which is the direction an
+#: unknown answer should fail in. Every code an allowed call can come back with — a
+#: not-found, a validation error, a throttle, an expired token, a server fault — is
+#: outside it and therefore cannot be filed as a refusal.
 AUTHORIZATION_ERROR_CODES: Final = frozenset({"AccessDenied", "AccessDeniedException"})
 
 #: Resource names nothing in this account creates, so a permitted call fails on the
@@ -106,8 +141,6 @@ AUTHORIZATION_ERROR_CODES: Final = frozenset({"AccessDenied", "AccessDeniedExcep
 ABSENT_JOB_QUEUE: Final = "edullm-denial-probe-absent-queue"
 ABSENT_JOB_DEFINITION: Final = "edullm-denial-probe-absent-job-definition"
 ABSENT_COMPUTE_ENVIRONMENT: Final = "edullm-denial-probe-absent-compute-environment"
-ABSENT_BUCKET: Final = "sbsandbox-intern-edullm-denial-probe-absent-bucket"
-ABSENT_OBJECT_KEY: Final = "denial-probe/absent-object"
 ABSENT_REPOSITORY_SUFFIX: Final = "-denial-probe-absent"
 DENIAL_PROBE_JOB_NAME: Final = "edullm-denial-probe"
 
@@ -115,7 +148,7 @@ DENIAL_PROBE_JOB_NAME: Final = "edullm-denial-probe"
 #: the name it asks for is already taken — and this is the second reason it would not
 #: matter if it could. It is well-formed on purpose: a document IAM rejects might be
 #: rejected before the request is authorized, which would turn a real refusal into a
-#: malformed-parameter failure and stop the run for the wrong reason.
+#: malformed-parameter failure and leave that probe unproven.
 UNASSUMABLE_TRUST_POLICY: Final = json.dumps(
     {
         "Version": "2012-10-17",
@@ -130,7 +163,7 @@ UNASSUMABLE_TRUST_POLICY: Final = json.dumps(
 #: could delete the repository holding them would be able to destroy what it published.
 PUBLISHER_DENIED_ACTIONS: Final = (
     "batch:SubmitJob",
-    "s3:GetObject",
+    "s3:ListAllMyBuckets",
     "iam:CreateRole",
     "batch:UpdateComputeEnvironment",
     "ecr:DeleteRepository",
@@ -159,9 +192,14 @@ ASSUMED_ROLE_ARN_PATTERN: Final = re.compile(
     r"^arn:aws[a-z0-9-]*:sts::[0-9]{12}:assumed-role/(?P<role>[^/]{1,64})/(?P<session>[^/]{2,64})$"
 )
 
-#: The refusal has to be the identity's own. A resource policy in somebody else's account
-#: can refuse a call the identity was perfectly well allowed to make, and reading that as
-#: a denial would report the role as narrow when it had been widened.
+#: How a service that spells its refusal out begins. Its absence is not suspicious — S3
+#: never says it — but its presence means the message named an action, and a message that
+#: named an action is held to naming this one.
+NOT_AUTHORIZED_PHRASE: Final = "is not authorized to perform:"
+
+#: The refusal has to be the identity's own. A resource policy can refuse a call the
+#: identity was perfectly well allowed to make, and reading that as a denial would report
+#: the role as narrow when it had been widened.
 RESOURCE_POLICY_PHRASE: Final = "resource-based policy"
 
 
@@ -174,19 +212,24 @@ class PublisherDenialReason(StrEnum):
     ATTEMPT_CALLED_ANOTHER_OPERATION = "attempt_called_another_operation"
     ATTEMPT_TIMED_OUT = "attempt_timed_out"
     AWS_CLI_UNAVAILABLE = "aws_cli_unavailable"
-    DENIAL_NAMED_NO_ACTION = "denial_named_no_action"
+    DENIAL_NAMED_ANOTHER_ACTION = "denial_named_another_action"
     DENIAL_CAME_FROM_A_RESOURCE_POLICY = "denial_came_from_a_resource_policy"
     DENIAL_MESSAGE_HOLDS_A_CREDENTIAL = "denial_message_holds_a_credential"
+    DENIAL_COULD_NOT_BE_RECORDED = "denial_could_not_be_recorded"
     CALLER_IDENTITY_UNREADABLE = "caller_identity_unreadable"
     CALLER_IS_NOT_AN_ASSUMED_ROLE = "caller_is_not_an_assumed_role"
 
 
 class DenialNotProvenError(RuntimeError):
-    """One attempt did not establish a denial, so the whole matrix has failed.
+    """One attempt did not establish a denial.
 
     Carries the reason, the action it happened on, and the AWS error code where there
     was one. Nothing else: the message the service returned stays in the caller's hands
     until it has been masked, and the string form of this error reaches a public log.
+
+    A run collects these per probe rather than stopping at the first one. Raised out of
+    :func:`attempt_denials` it means something else: a precondition that leaves no probe
+    worth attempting, such as a session that cannot be described.
     """
 
     def __init__(
@@ -219,13 +262,15 @@ class DenialProbe:
     ``operation`` is the API operation the command invokes, which is checked against the
     error the CLI reports so that the command and the action recorded beside it cannot
     drift apart. ``event_source`` and ``operation`` are also what CloudTrail logs the call
-    as, and they are not always the action's own words.
+    as, and they are not always the action's own words. ``resource_name`` is ``None`` for
+    a call that names no resource, because inventing one would invent the only part of
+    the record a reader would use to check the claim.
     """
 
     action: str
     operation: str
     event_source: str
-    resource_name: str
+    resource_name: str | None
     arguments: tuple[str, ...]
 
 
@@ -260,21 +305,11 @@ def denial_probes(
             ),
         ),
         DenialProbe(
-            action="s3:GetObject",
-            operation="GetObject",
+            action="s3:ListAllMyBuckets",
+            operation="ListBuckets",
             event_source="s3.amazonaws.com",
-            resource_name=f"{ABSENT_BUCKET}/{ABSENT_OBJECT_KEY}",
-            arguments=(
-                "s3api",
-                "get-object",
-                "--region",
-                region,
-                "--bucket",
-                ABSENT_BUCKET,
-                "--key",
-                ABSENT_OBJECT_KEY,
-                "/dev/null",
-            ),
+            resource_name=None,
+            arguments=("s3api", "list-buckets", "--region", region),
         ),
         DenialProbe(
             action="iam:CreateRole",
@@ -336,11 +371,14 @@ def parse_aws_cli_error(stderr: str) -> AwsApiError | None:
     )
 
 
-def _names_the_action(message: str, action: str) -> bool:
+def _names_another_action(message: str, action: str) -> bool:
+    """Whether a message that spelled out an action spelled out a different one."""
+    if NOT_AUTHORIZED_PHRASE not in message:
+        return False
     # The trailing guard is why this is a pattern rather than a substring: a refusal of
-    # s3:GetObjectVersion contains the whole of s3:GetObject.
-    pattern = rf"is not authorized to perform:\s+{re.escape(action)}(?![A-Za-z0-9])"
-    return re.search(pattern, message) is not None
+    # s3:ListAllMyBucketsAndMore contains the whole of s3:ListAllMyBuckets.
+    pattern = rf"{re.escape(NOT_AUTHORIZED_PHRASE)}\s+{re.escape(action)}(?![A-Za-z0-9])"
+    return re.search(pattern, message) is None
 
 
 def require_denial(probe: DenialProbe, *, returncode: int, stderr: str) -> AwsApiError:
@@ -349,8 +387,9 @@ def require_denial(probe: DenialProbe, *, returncode: int, stderr: str) -> AwsAp
     The order matters. A call that succeeded is the worst case and is checked first; then
     that there is an AWS error at all; then that it is an error for the call this probe
     made; then that it is an authorization failure rather than the service declining to
-    process the request; then that the refusal names this action and came from the
-    identity rather than from a resource policy.
+    process the request. Those four are what a denial is. The last two read the message
+    where the service wrote one: it must not name a different action, and it must not
+    attribute the refusal to somebody's resource policy.
     """
     if returncode == 0:
         raise DenialNotProvenError(PublisherDenialReason.ATTEMPT_PERMITTED, action=probe.action)
@@ -372,9 +411,9 @@ def require_denial(probe: DenialProbe, *, returncode: int, stderr: str) -> AwsAp
             action=probe.action,
             error_code=error.code,
         )
-    if not _names_the_action(error.message, probe.action):
+    if _names_another_action(error.message, probe.action):
         raise DenialNotProvenError(
-            PublisherDenialReason.DENIAL_NAMED_NO_ACTION,
+            PublisherDenialReason.DENIAL_NAMED_ANOTHER_ACTION,
             action=probe.action,
             error_code=error.code,
         )
@@ -475,6 +514,57 @@ def record_denial(
     )
 
 
+@dataclass(frozen=True)
+class ProbeOutcome:
+    """What one probe established: a refusal, or the reason it established nothing.
+
+    Exactly one of the two, because a probe that established both would be a bug wearing
+    an answer. The string form is what a public runner log gets, and it is the action and
+    the AWS error code without a word of what the service said.
+    """
+
+    action: str
+    denial: AttemptedDenial | None
+    unproven: DenialNotProvenError | None
+
+    def __post_init__(self) -> None:
+        if (self.denial is None) == (self.unproven is None):
+            raise ValueError("a probe establishes either a refusal or a reason there was not one")
+
+    def __str__(self) -> str:
+        if self.denial is not None:
+            return f"denied:{self.action}:{self.denial.error_code}"
+        return str(self.unproven)
+
+
+@dataclass(frozen=True)
+class DenialMatrixRun:
+    """Every probe's outcome from one run, whether or not the run proved the matrix.
+
+    A run reports rather than decides, because the run before this one stopped at its
+    first anomaly and told us about one probe when it could have told us about five.
+    """
+
+    outcomes: tuple[ProbeOutcome, ...]
+
+    @property
+    def proven(self) -> bool:
+        """Whether every action in the matrix came back as a refusal."""
+        return all(outcome.denial is not None for outcome in self.outcomes)
+
+    @property
+    def summary(self) -> tuple[str, ...]:
+        """One line per action, in matrix order, safe for a world-readable log."""
+        return tuple(str(outcome) for outcome in self.outcomes)
+
+    def matrix(self) -> PublisherDenialMatrix:
+        """The record of the run, which exists only if every action was refused."""
+        denials = tuple(outcome.denial for outcome in self.outcomes if outcome.denial is not None)
+        if len(denials) != len(self.outcomes):
+            raise ValueError("a run that did not refuse every action has no matrix to write")
+        return PublisherDenialMatrix(schema_version=1, attempts=denials)
+
+
 def denial_evidence(
     attempt: AttemptedDenial,
     *,
@@ -550,26 +640,57 @@ def caller_identity(*, region: str) -> tuple[str, str]:
     return assumed_role_identity(completed.stdout)
 
 
-def attempt_denials(*, region: str, ecr_repository: str) -> PublisherDenialMatrix:
-    """Attempt every action in the matrix, and return the record if every one was refused.
+def attempt_denials(*, region: str, ecr_repository: str) -> DenialMatrixRun:
+    """Attempt every action in the matrix and report what each one answered.
 
-    Raises :class:`DenialNotProvenError` on the first attempt that establishes nothing,
-    which stops the run rather than filing a partial matrix that reads like a whole one.
+    Nothing about one probe stops another. An action that was permitted, or that failed
+    for a reason that proves nothing, is one outcome among five rather than the end of
+    the run, so a single run says everything that is wrong instead of the first thing.
+
+    Raises :class:`DenialNotProvenError` only for what leaves no probe worth attempting:
+    a session that cannot be described has no record for a refusal to be written in.
     """
     role_name, session_name = caller_identity(region=region)
-    attempts = []
+    outcomes = []
     for probe in denial_probes(region=region, ecr_repository=ecr_repository, role_name=role_name):
-        attempted_at = datetime.now(tz=UTC)
+        outcomes.append(
+            _attempt(probe, region=region, role_name=role_name, session_name=session_name)
+        )
+    return DenialMatrixRun(outcomes=tuple(outcomes))
+
+
+def _attempt(
+    probe: DenialProbe,
+    *,
+    region: str,
+    role_name: str,
+    session_name: str,
+) -> ProbeOutcome:
+    """Make one call and say what it established, without letting it stop the others."""
+    attempted_at = datetime.now(tz=UTC)
+    try:
         completed = run_aws(probe.arguments, action=probe.action)
         error = require_denial(probe, returncode=completed.returncode, stderr=completed.stderr)
-        attempts.append(
-            record_denial(
-                probe,
-                error,
-                region=region,
-                role_name=role_name,
-                session_name=session_name,
-                attempted_at=attempted_at,
-            )
+        denial = record_denial(
+            probe,
+            error,
+            region=region,
+            role_name=role_name,
+            session_name=session_name,
+            attempted_at=attempted_at,
         )
-    return PublisherDenialMatrix(schema_version=1, attempts=tuple(attempts))
+    except DenialNotProvenError as unproven:
+        return ProbeOutcome(action=probe.action, denial=None, unproven=unproven)
+    except ValidationError:
+        # A refusal the contract will not hold is a bug here rather than a finding about
+        # the role, and it still stops the publish: a denial that cannot be written down
+        # cannot be evidence. The message stays out of the reason, as it does everywhere.
+        return ProbeOutcome(
+            action=probe.action,
+            denial=None,
+            unproven=DenialNotProvenError(
+                PublisherDenialReason.DENIAL_COULD_NOT_BE_RECORDED,
+                action=probe.action,
+            ),
+        )
+    return ProbeOutcome(action=probe.action, denial=denial, unproven=None)
