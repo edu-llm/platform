@@ -23,6 +23,7 @@ from edullm_platform.evidence import (
     evidence_load_reason_code,
     profiles_requiring_capacity_evidence,
     quota_capacity_issues,
+    redact_content_digests,
     scan_for_secrets,
 )
 from tools.capture_phase0_evidence import (
@@ -99,7 +100,7 @@ def suspicious_account_id_int(value: int) -> bool:
 def forbidden_account_id_substrings(source: str) -> list[str]:
     return [
         match.group(0)
-        for match in AWS_ACCOUNT_ID_PATTERN.finditer(source)
+        for match in AWS_ACCOUNT_ID_PATTERN.finditer(redact_content_digests(source))
         if match.group(0) != AWS_EXAMPLE_ACCOUNT_ID
     ]
 
@@ -947,6 +948,23 @@ def test_capture_phase0_evidence_writes_under_allowed_output_root(
             output_dir=forbidden,
             base_dir=tmp_path,
         )
+
+
+def test_digit_runs_inside_content_digests_are_not_account_ids() -> None:
+    inside_sha256 = "sha256:31eacaa510964426782f8e5f8c7be431880538739ea3c5c7a94cc66340621ca1f"
+    inside_commit_sha = "a8727f150891357935b660adafba82b94046dc28"
+    assert forbidden_account_id_substrings(inside_sha256) == []
+    assert forbidden_account_id_substrings(inside_commit_sha) == []
+
+
+def test_the_digest_exemption_still_reports_a_bare_account_id() -> None:
+    synthetic = AWS_EXAMPLE_ACCOUNT_ID[::-1]
+    assert len(synthetic) == 12
+    assert synthetic != AWS_EXAMPLE_ACCOUNT_ID
+    bare = f"arn:aws:iam::{synthetic}:role/sbsandbox-intern-example"
+    alongside_a_digest = f"sha256:{'a' * 64} {synthetic}"
+    assert forbidden_account_id_substrings(bare) == [synthetic]
+    assert forbidden_account_id_substrings(alongside_a_digest) == [synthetic]
 
 
 def test_tracked_tree_contains_no_aws_account_id_patterns() -> None:

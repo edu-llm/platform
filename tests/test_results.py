@@ -30,9 +30,9 @@ CHECKPOINT_DIGEST = "sha256:" + "b" * 64
 LATER_CHECKPOINT_DIGEST = "sha256:" + "c" * 64
 
 CHECKPOINT_MANIFEST_DIGEST = (
-    "sha256:b272223dd1220f90c560b5e806bf4ed615b36d0418b5b9a2632dfaba3af99fa1"
+    "sha256:40895c7e549ac5aa0aa0fc524f0310e9ed567484f6f64482997b4829c717e45d"
 )
-RESULT_MANIFEST_DIGEST = "sha256:2adbd62a57d624af585d412fcc7c16c1fbecceed963c2ec6ad09cb53d4225c1a"
+RESULT_MANIFEST_DIGEST = "sha256:ab3f2a78c9b7923a503011cc7d88a67c9163e56aa9781cea270fb822c54e4aba"
 
 OUTSIDE_SANDBOX_PREFIXES = (
     "s3://edullm-checkpoints/runs/olmo/",
@@ -53,7 +53,7 @@ def checkpoint_payload(**overrides: object) -> dict[str, object]:
         "step": 1000,
         "epoch": 1,
         "created_at": "2026-07-25T12:30:00Z",
-        "size_bytes": 42_000_000_000,
+        "size_bytes": 2_600_000_000,
         "checksum": CHECKPOINT_DIGEST,
         "success_marker_uri": SUCCESS_MARKER_URI,
     }

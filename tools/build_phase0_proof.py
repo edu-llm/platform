@@ -28,7 +28,7 @@ from edullm_platform.contracts.base import ContractModel
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.policy import ApprovalPolicy
 from edullm_platform.contracts.workload import WorkloadCatalog
-from edullm_platform.evidence import scan_for_secrets
+from edullm_platform.evidence import redact_content_digests, scan_for_secrets
 
 # The criterion-to-test mapping is defined once, in the library, and imported here and
 # by the acceptance gate. This module must never grow its own copy: the matrix below and
@@ -615,8 +615,7 @@ def known_limitations(repo_root: Path) -> tuple[str, ...]:
 
 
 def redact_own_digests(text: str) -> str:
-    masked = SHA256_DIGEST_TOKEN.sub("<sha256-content-digest>", text)
-    return GIT_COMMIT_SHA_TOKEN.sub("<git-commit-sha>", masked)
+    return redact_content_digests(text)
 
 
 def assert_secret_free(filename: str, text: str) -> None:

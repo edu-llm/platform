@@ -17,6 +17,8 @@ from edullm_platform.contracts.base import ContractModel, require_ordered_sequen
 from edullm_platform.contracts.workload import ComputeProfile, WorkloadCatalog
 
 AWS_ACCOUNT_ID_PATTERN = re.compile(r"(?<![0-9])\d{12}(?![0-9])")
+SHA256_DIGEST_TOKEN = re.compile(r"sha256:[0-9a-f]{64}")
+GIT_COMMIT_SHA_TOKEN = re.compile(r"(?<![0-9a-f])[0-9a-f]{40}(?![0-9a-f])")
 AWS_ACCESS_KEY_ID_PATTERN = re.compile(r"(?i)(?<![A-Z0-9])(?:AKIA|ASIA)[0-9A-Z]{16}(?![A-Z0-9])")
 AWS_SECRET_ACCESS_KEY_PATTERN = re.compile(
     r"(?<![A-Za-z0-9/+=])[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])"
@@ -80,6 +82,11 @@ WORKLOAD_PROFILE_REQUIRED_VCPUS: Final = {
 
 class StaleEvidenceError(ValueError):
     pass
+
+
+def redact_content_digests(text: str) -> str:
+    masked = SHA256_DIGEST_TOKEN.sub("<sha256-content-digest>", text)
+    return GIT_COMMIT_SHA_TOKEN.sub("<git-commit-sha>", masked)
 
 
 def scan_for_secrets(value: str) -> str:
