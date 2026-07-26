@@ -70,16 +70,22 @@ jobs:
       commit_sha: ${{ steps.identity.outputs.commit_sha }}
       ecr_repository: ${{ steps.identity.outputs.ecr_repository }}
     steps:
-      # Every value below is documented as unavailable on GitHub Enterprise Server, where
-      # it resolves to the empty string rather than failing. Empty is exactly the silent
-      # degradation this guard exists to stop: it would pin the tooling checkout to the
-      # default branch and hand provenance a ref it cannot record.
+      # Three preconditions that all degrade quietly or confusingly. The job.workflow_*
+      # values are documented as unavailable on GitHub Enterprise Server, where they
+      # resolve to the empty string rather than failing, which would pin the tooling
+      # checkout to the default branch and hand provenance a ref it cannot record. On
+      # schedule, issue_comment, and issues, github.ref is the default branch rather than
+      # a reviewed push, so those events would pass the branch gate and mint a `sub` the
+      # trust policy accepts. And a region outside the sandbox reaches AWS only to come
+      # back as an AccessDenied that reads like a broken role.
       - name: Verify the caller contract
         env:
           WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
           WORKFLOW_SHA: ${{ job.workflow_sha }}
           WORKFLOW_REF: ${{ job.workflow_ref }}
           WORKFLOW_FILE_PATH: ${{ job.workflow_file_path }}
+          EVENT_NAME: ${{ github.event_name }}
+          AWS_REGION: ${{ inputs.aws_region }}
         run: |
           set -euo pipefail
           missing=""
@@ -98,7 +104,26 @@ jobs:
             echo "job.workflow_ref must read owner/repo/path@ref so provenance can record the claim the publisher role trust policy asserts." >&2
             exit 1
           fi
+          case "${EVENT_NAME}" in
+            push|workflow_dispatch) ;; # events whose github.ref names a reviewed commit
+            *)
+              echo "unsupported_caller_event:${EVENT_NAME}" >&2
+              echo "This workflow publishes the commit named by github.ref, which on every other event is the default branch rather than the commit the caller meant." >&2
+              exit 1
+              ;;
+          esac
+          case "${AWS_REGION}" in
+            us-east-1|us-east-2) ;; # allowed sandbox regions
+            *)
+              echo "unsupported_aws_region:${AWS_REGION}" >&2
+              echo "The publisher role and the registered ECR repository exist only in the allowed sandbox regions." >&2
+              exit 1
+              ;;
+          esac
 
+      # fetch-depth 0 is for the caller, not for us: verification needs only git status,
+      # git rev-parse HEAD, and git ls-remote, but the caller's own test command runs
+      # against this checkout and deriving a version from git describe is ordinary.
       - name: Check out research repository
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -118,15 +143,28 @@ jobs:
           path: platform
           persist-credentials: false
 
+      # pipx installs the pin, but an earlier uv already on PATH would keep answering and
+      # resolve the lockfile under a version nobody chose, so the pin is verified rather
+      # than assumed.
       - name: Install platform tooling
         working-directory: platform
+        env:
+          UV_VERSION: "0.11.32"
         run: |
           set -euo pipefail
-          pipx install uv==0.11.32
+          pipx install "uv==${UV_VERSION}"
+          installed="$(uv --version)"
+          if [[ "${installed}" != "uv ${UV_VERSION}" && "${installed}" != "uv ${UV_VERSION} "* ]]; then
+            echo "unexpected_uv_version" >&2
+            echo "Expected uv ${UV_VERSION} but PATH answers with: ${installed}" >&2
+            exit 1
+          fi
           uv sync --locked
 
       # Runs before the caller's tests: verification requires a clean work tree, and a
       # test run leaves caches and artefacts behind that would look like a dirty tree.
+      # No --output: this job runs on its own runner and the publish job re-derives the
+      # SourceIdentity document there, so a document written here is never read.
       - name: Verify source identity
         id: identity
         working-directory: platform
@@ -144,9 +182,11 @@ jobs:
             --ref "${RESEARCH_REF}" \
             --commit-sha "${RESEARCH_COMMIT_SHA}" \
             --repository-root "${GITHUB_WORKSPACE}/source" \
-            --output "${RUNNER_TEMP}/source-identity.json" \
             --github-output "${GITHUB_OUTPUT}"
 
+      # The child shell gets its own strictness flags. Inheriting none of the step's, a
+      # compound command such as `pytest && ruff check .` would report only the status of
+      # its last component and a failing test suite would publish an image.
       - name: Run research repository tests
         if: inputs.test_command != ''
         working-directory: source
@@ -154,7 +194,7 @@ jobs:
           TEST_COMMAND: ${{ inputs.test_command }}
         run: |
           set -euo pipefail
-          bash -c "${TEST_COMMAND}"
+          bash -euo pipefail -c "${TEST_COMMAND}"
 
   publish:
     name: Build and publish image
@@ -176,6 +216,8 @@ jobs:
           WORKFLOW_SHA: ${{ job.workflow_sha }}
           WORKFLOW_REF: ${{ job.workflow_ref }}
           WORKFLOW_FILE_PATH: ${{ job.workflow_file_path }}
+          EVENT_NAME: ${{ github.event_name }}
+          AWS_REGION: ${{ inputs.aws_region }}
         run: |
           set -euo pipefail
           missing=""
@@ -194,12 +236,29 @@ jobs:
             echo "job.workflow_ref must read owner/repo/path@ref so provenance can record the claim the publisher role trust policy asserts." >&2
             exit 1
           fi
+          case "${EVENT_NAME}" in
+            push|workflow_dispatch) ;; # events whose github.ref names a reviewed commit
+            *)
+              echo "unsupported_caller_event:${EVENT_NAME}" >&2
+              echo "This workflow publishes the commit named by github.ref, which on every other event is the default branch rather than the commit the caller meant." >&2
+              exit 1
+              ;;
+          esac
+          case "${AWS_REGION}" in
+            us-east-1|us-east-2) ;; # allowed sandbox regions
+            *)
+              echo "unsupported_aws_region:${AWS_REGION}" >&2
+              echo "The publisher role and the registered ECR repository exist only in the allowed sandbox regions." >&2
+              exit 1
+              ;;
+          esac
 
+      # No fetch-depth here. Nothing in this job reads history, and this checkout is the
+      # `docker build` context, where a full .git is weight a layer can copy.
       - name: Check out research repository
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ needs.verify.outputs.commit_sha }}
-          fetch-depth: 0
           path: source
 
       - name: Check out platform tooling
@@ -212,9 +271,17 @@ jobs:
 
       - name: Install platform tooling
         working-directory: platform
+        env:
+          UV_VERSION: "0.11.32"
         run: |
           set -euo pipefail
-          pipx install uv==0.11.32
+          pipx install "uv==${UV_VERSION}"
+          installed="$(uv --version)"
+          if [[ "${installed}" != "uv ${UV_VERSION}" && "${installed}" != "uv ${UV_VERSION} "* ]]; then
+            echo "unexpected_uv_version" >&2
+            echo "Expected uv ${UV_VERSION} but PATH answers with: ${installed}" >&2
+            exit 1
+          fi
           uv sync --locked
 
       # This job runs on a second runner, so it re-derives the SourceIdentity document
@@ -238,6 +305,28 @@ jobs:
             --repository-root "${GITHUB_WORKSPACE}/source" \
             --output "${RUNNER_TEMP}/source-identity.json"
 
+      # actions/checkout leaves the run's token in source/.git/config so that the
+      # re-verification above can reach the remote with `git ls-remote`. build_context is
+      # the repository root, so a Dockerfile with `COPY . .` would bake that token into a
+      # published layer. The credentials go the moment the last step that needs them is
+      # done, and anything left behind stops the run rather than being built into a layer.
+      - name: Remove the source checkout credentials
+        working-directory: source
+        run: |
+          set -euo pipefail
+          unset_status=0
+          git config --local --unset-all "http.https://github.com/.extraheader" || unset_status=$?
+          if [[ "${unset_status}" -ne 0 && "${unset_status}" -ne 5 ]]; then
+            echo "source_credentials_unset_failed" >&2
+            exit 1
+          fi
+          remaining_status=0
+          git config --local --name-only --get-regexp '^http\..*\.extraheader$' > /dev/null || remaining_status=$?
+          if [[ "${remaining_status}" -ne 1 ]]; then
+            echo "source_credentials_remain" >&2
+            exit 1
+          fi
+
       - name: Resolve build inputs
         id: build_inputs
         working-directory: platform
@@ -257,6 +346,9 @@ jobs:
           role-to-assume: ${{ inputs.publisher_role_arn }}
           aws-region: ${{ inputs.aws_region }}
           role-duration-seconds: 3600
+          # Defaults to false in v6, and `docker push` prints the registry host, so
+          # without this the account id lands in a world-readable log.
+          mask-aws-account-id: true
 
       # ECR tags are immutable and `docker push` happens before the read-back and the
       # provenance record, so any failure after the push would make this commit

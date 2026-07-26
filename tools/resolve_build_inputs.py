@@ -64,8 +64,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         base_reference = require_digest_pinned_reference(registered.immutable_base_reference)
+        # The ECR repository name is deliberately absent. The publish job takes it from
+        # the gate job's output, so emitting a second copy here would only ever be a
+        # second way for the two to disagree.
         pairs = (
-            ("ecr_repository", registered.ecr_repository),
             ("base_reference", base_reference),
             ("dockerfile_path", registered.dockerfile_path),
             ("build_context", registered.build_context),

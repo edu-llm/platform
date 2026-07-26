@@ -107,6 +107,25 @@ def test_clean_pushed_branch_writes_canonical_identity_and_step_outputs(
     )
 
 
+def test_the_identity_document_is_optional_so_the_gate_need_not_write_one(
+    checkout: Checkout,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The gate job runs on its own runner and the publish job re-derives the document
+    # there, so the file the gate used to write was never read by anything.
+    arguments = argv(checkout, tmp_path)
+    output_index = arguments.index("--output")
+    del arguments[output_index : output_index + 2]
+
+    assert main(arguments) == 0
+    assert capsys.readouterr().err == ""
+    assert not (tmp_path / "source-identity.json").exists()
+    assert (tmp_path / "step-output.txt").read_text(encoding="utf-8") == (
+        f"commit_sha={checkout.commit_sha}\necr_repository={ECR_REPOSITORY}\n"
+    )
+
+
 def test_step_outputs_are_appended_so_earlier_outputs_survive(
     checkout: Checkout,
     tmp_path: Path,

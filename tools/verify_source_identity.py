@@ -33,7 +33,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ref", required=True)
     parser.add_argument("--commit-sha", required=True)
     parser.add_argument("--repository-root", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
+    # Both sinks are optional: the gate job only needs the step outputs, and the publish
+    # job only needs the document. Writing a file nobody reads is not free on a runner
+    # whose log is world readable for any public caller.
+    parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--github-output", type=Path, default=None)
     return parser
 
@@ -62,7 +65,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     registered = registry.repository_by_name(identity.repository)
     try:
-        arguments.output.write_bytes(canonical_json_bytes(identity) + b"\n")
+        if arguments.output is not None:
+            arguments.output.write_bytes(canonical_json_bytes(identity) + b"\n")
         if arguments.github_output is not None:
             append_step_outputs(
                 arguments.github_output,

@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import itertools
 import re
+import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+import pytest
 from workflow_support import (
     WORKFLOWS_ROOT,
+    aws_commands,
     command_tokens,
     load_workflow,
     run_step_script,
@@ -15,6 +18,8 @@ from workflow_support import (
     unreal_context_references,
     write_stub,
 )
+
+from edullm_platform.contracts.image import SANDBOX_REGIONS
 
 WORKFLOW_PATH = WORKFLOWS_ROOT / "build-research-image.yml"
 CHECKOUT_ACTION = "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
@@ -25,6 +30,7 @@ PLATFORM_REPOSITORY = "edu-llm/platform"
 WORKFLOW_PATH_INPUT = ".github/workflows/build-research-image.yml"
 CONTRACT_STEP = "Verify the caller contract"
 PREFLIGHT_STEP = "Look for an already published image"
+DECREDENTIAL_STEP = "Remove the source checkout credentials"
 JOB_WORKFLOW_REF = f"{PLATFORM_REPOSITORY}/{WORKFLOW_PATH_INPUT}@refs/heads/main"
 
 
@@ -139,6 +145,17 @@ def test_workflow_has_exactly_two_ordered_jobs_with_exact_permission_maps() -> N
     assert "needs" not in workflow["jobs"]["verify"]
 
 
+def test_nothing_lets_the_publish_job_run_after_the_gate_has_failed() -> None:
+    # `needs` alone only orders the jobs. A single `if: always()` on publish would keep
+    # the dependency and still run it after a rejected source identity.
+    publish = _job("publish")
+
+    assert "if" not in publish
+    assert publish["needs"] == "verify"
+    assert "continue-on-error" not in publish
+    assert "continue-on-error" not in str(_load())
+
+
 def test_verify_job_never_requests_an_oidc_token_by_any_spelling() -> None:
     verify = _job("verify")
 
@@ -177,7 +194,6 @@ def test_both_jobs_check_out_the_caller_and_the_pinned_reusable_workflow_commit(
         assert caller["uses"] == CHECKOUT_ACTION
         assert "repository" not in caller["with"]
         assert caller["with"]["ref"] == expected_ref
-        assert caller["with"]["fetch-depth"] == 0
         assert caller["with"]["path"] == "source"
 
         assert platform["uses"] == CHECKOUT_ACTION
@@ -186,6 +202,17 @@ def test_both_jobs_check_out_the_caller_and_the_pinned_reusable_workflow_commit(
         assert platform["with"]["path"] == "platform"
         assert platform["with"]["persist-credentials"] is False
         assert platform["with"]["path"] != caller["with"]["path"]
+        assert "fetch-depth" not in platform["with"]
+
+
+def test_only_the_checkout_handed_to_the_caller_s_own_tests_carries_history() -> None:
+    # Verification needs `git status`, `git rev-parse HEAD`, and `git ls-remote`, none of
+    # which need history. The gate keeps it anyway because that checkout is also where the
+    # caller's test command runs, and version derivation from `git describe` is ordinary.
+    # The publish checkout is only re-verified and then handed to `docker build` with a
+    # `.` context, where a full .git is weight a layer can copy.
+    assert step(_job("verify"), "Check out research repository")["with"]["fetch-depth"] == 0
+    assert "fetch-depth" not in step(_job("publish"), "Check out research repository")["with"]
 
 
 def test_every_expression_names_something_that_actually_exists() -> None:
@@ -230,6 +257,8 @@ def test_both_jobs_check_the_caller_contract_before_anything_else() -> None:
         assert contract["env"]["WORKFLOW_SHA"] == "${{ job.workflow_sha }}"
         assert contract["env"]["WORKFLOW_REF"] == "${{ job.workflow_ref }}"
         assert contract["env"]["WORKFLOW_FILE_PATH"] == "${{ job.workflow_file_path }}"
+        assert contract["env"]["EVENT_NAME"] == "${{ github.event_name }}"
+        assert contract["env"]["AWS_REGION"] == "${{ inputs.aws_region }}"
         scripts.add(contract["run"])
 
     assert len(scripts) == 1, "both jobs must enforce the identical caller contract"
@@ -241,6 +270,8 @@ def _contract_environment(**overrides: str) -> dict[str, str]:
         "WORKFLOW_SHA": "c" * 40,
         "WORKFLOW_REF": JOB_WORKFLOW_REF,
         "WORKFLOW_FILE_PATH": WORKFLOW_PATH_INPUT,
+        "EVENT_NAME": "push",
+        "AWS_REGION": "us-east-1",
     }
     environment.update(overrides)
     return environment
@@ -284,6 +315,83 @@ def test_a_job_workflow_ref_without_a_ref_suffix_fails_closed(tmp_path: Path) ->
     assert "owner/repo/path@ref" in result.stderr
 
 
+@pytest.mark.parametrize("event_name", ["push", "workflow_dispatch"])
+def test_the_two_events_that_name_a_reviewed_commit_are_accepted(
+    tmp_path: Path,
+    event_name: str,
+) -> None:
+    contract = step(_job("publish"), CONTRACT_STEP)
+
+    result = run_step_script(
+        contract["run"],
+        cwd=tmp_path,
+        env=_contract_environment(EVENT_NAME=event_name),
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("event_name", ["schedule", "issue_comment", "issues", "release"])
+def test_events_whose_github_ref_is_merely_the_default_branch_are_rejected(
+    tmp_path: Path,
+    event_name: str,
+) -> None:
+    # On these events github.ref is the default branch rather than a reviewed push, so
+    # they would pass the branch gate and mint a `sub` the trust policy accepts.
+    contract = step(_job("publish"), CONTRACT_STEP)
+
+    result = run_step_script(
+        contract["run"],
+        cwd=tmp_path,
+        env=_contract_environment(EVENT_NAME=event_name),
+    )
+
+    assert result.returncode == 1
+    assert "unsupported_caller_event" in result.stderr
+    assert event_name in result.stderr
+
+
+@pytest.mark.parametrize("region", sorted(SANDBOX_REGIONS))
+def test_the_allowed_sandbox_regions_are_accepted(tmp_path: Path, region: str) -> None:
+    contract = step(_job("publish"), CONTRACT_STEP)
+
+    result = run_step_script(
+        contract["run"],
+        cwd=tmp_path,
+        env=_contract_environment(AWS_REGION=region),
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_a_region_outside_the_sandbox_fails_before_it_becomes_an_access_denied(
+    tmp_path: Path,
+) -> None:
+    contract = step(_job("publish"), CONTRACT_STEP)
+
+    result = run_step_script(
+        contract["run"],
+        cwd=tmp_path,
+        env=_contract_environment(AWS_REGION="eu-west-1"),
+    )
+
+    assert result.returncode == 1
+    assert "unsupported_aws_region" in result.stderr
+    assert "eu-west-1" in result.stderr
+
+
+def test_the_workflow_and_the_contract_model_agree_on_the_allowed_regions() -> None:
+    # resolve_image_reference rejects anything outside SANDBOX_REGIONS, so a workflow that
+    # accepted a third region would build an image whose reference cannot be composed.
+    script = step(_job("publish"), CONTRACT_STEP)["run"]
+    allowed = re.search(
+        r"^\s*([a-z0-9|-]+)\)\s*;;\s*# allowed sandbox regions$", script, re.MULTILINE
+    )
+
+    assert allowed is not None, script
+    assert set(allowed.group(1).split("|")) == set(SANDBOX_REGIONS)
+
+
 def test_verify_job_runs_caller_tests_only_when_requested_and_only_through_env() -> None:
     tests = step(_job("verify"), "Run research repository tests")
 
@@ -292,6 +400,100 @@ def test_verify_job_runs_caller_tests_only_when_requested_and_only_through_env()
     assert tests["env"] == {"TEST_COMMAND": "${{ inputs.test_command }}"}
     assert "${{" not in tests["run"]
     assert "${TEST_COMMAND}" in tests["run"]
+
+
+@pytest.mark.parametrize(
+    ("test_command", "expected_status"),
+    [
+        ("true; true", 0),
+        ("false; true", 1),
+        ("true; false", 1),
+        ("false | cat", 1),
+        ("echo one && echo two", 0),
+    ],
+)
+def test_a_compound_test_command_reports_the_first_failure_not_the_last_status(
+    tmp_path: Path,
+    test_command: str,
+    expected_status: int,
+) -> None:
+    # The step body runs under `set -euo pipefail`, but the child shell that runs the
+    # caller's command is a fresh bash and inherits none of it, so `false; true` would
+    # have been reported as a pass.
+    script = step(_job("verify"), "Run research repository tests")["run"]
+
+    result = run_step_script(script, cwd=tmp_path, env={"TEST_COMMAND": test_command})
+
+    assert result.returncode == expected_status, result.stderr
+
+
+def test_the_source_checkout_keeps_its_token_only_until_the_remote_check_is_done() -> None:
+    # The re-verification step's `git ls-remote` needs the checkout credentials, so they
+    # cannot simply be turned off. build_context is `.`, so a Dockerfile with `COPY . .`
+    # would otherwise bake source/.git/config, and the token in it, into a published layer.
+    publish = _job("publish")
+    names = [candidate.get("name") for candidate in publish["steps"]]
+    removal = step(publish, DECREDENTIAL_STEP)
+
+    assert names.index("Re-verify source identity") < names.index(DECREDENTIAL_STEP)
+    assert names.index(DECREDENTIAL_STEP) < names.index("Build and push image")
+    assert removal["working-directory"] == "source"
+
+    for job_name in ("verify", "publish"):
+        caller = step(_job(job_name), "Check out research repository")
+        platform = step(_job(job_name), "Check out platform tooling")
+
+        assert "persist-credentials" not in caller["with"]
+        assert platform["with"]["persist-credentials"] is False
+
+
+def _git(repository: Path, *arguments: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repository), *arguments],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    ).stdout
+
+
+def _checkout_with_extraheader(tmp_path: Path, *extra_hosts: str) -> Path:
+    repository = tmp_path / "source"
+    repository.mkdir()
+    _git(repository, "init", "--quiet")
+    for host in ("https://github.com/", *extra_hosts):
+        _git(repository, "config", "--local", f"http.{host}.extraheader", "AUTHORIZATION: basic X")
+    return repository
+
+
+def test_the_checkout_token_is_gone_before_anything_can_copy_it(tmp_path: Path) -> None:
+    repository = _checkout_with_extraheader(tmp_path)
+    script = step(_job("publish"), DECREDENTIAL_STEP)["run"]
+
+    result = run_step_script(
+        script,
+        cwd=repository,
+        env={"RUNNER_TEMP": str(tmp_path), "HOME": str(tmp_path)},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "extraheader" not in (repository / ".git" / "config").read_text(encoding="utf-8")
+
+
+def test_an_extraheader_this_step_does_not_know_how_to_remove_fails_closed(
+    tmp_path: Path,
+) -> None:
+    repository = _checkout_with_extraheader(tmp_path, "https://ghe.example.invalid/")
+    script = step(_job("publish"), DECREDENTIAL_STEP)["run"]
+
+    result = run_step_script(
+        script,
+        cwd=repository,
+        env={"RUNNER_TEMP": str(tmp_path), "HOME": str(tmp_path)},
+    )
+
+    assert result.returncode == 1
+    assert "source_credentials_remain" in result.stderr
 
 
 def test_verify_job_exposes_the_verified_commit_and_ecr_repository() -> None:
@@ -305,6 +507,11 @@ def test_verify_job_exposes_the_verified_commit_and_ecr_repository() -> None:
     assert identity["id"] == "identity"
     assert "verify_source_identity.py" in identity["run"]
     assert '--github-output "${GITHUB_OUTPUT}"' in identity["run"]
+
+    # The gate does not write a SourceIdentity document. It runs on its own runner and the
+    # publish job re-derives the document there, so a file written here is never read.
+    assert "--output" not in identity["run"]
+    assert "--output" in step(_job("publish"), "Re-verify source identity")["run"]
 
 
 def test_publish_job_logs_in_to_ecr_without_a_third_party_login_action() -> None:
@@ -467,8 +674,16 @@ def test_publish_job_takes_the_digest_from_an_ecr_read_back_not_the_local_build(
 
     # `describe-images --output text` prints "None" for a missing image, so the read-back
     # has to reject anything that is not a digest before it becomes a workflow output.
-    assert "^sha256:[0-9a-f]{64}$" in script
+    # The negation is asserted with the guard: dropping the `!` inverts the meaning while
+    # leaving both the pattern and the `exit 1` in place.
+    assert 'if [[ ! "${image_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then' in script
     assert "exit 1" in script
+
+    # The push has to have happened first, or the read-back describes the previous image.
+    names = [candidate.get("name") for candidate in _job("publish")["steps"]]
+    assert names.index("Build and push image") < names.index(
+        "Read published digest from the registry"
+    )
 
     # The digest that leaves this workflow must be the registry's, never docker's.
     assert "docker inspect" not in script
@@ -490,7 +705,8 @@ def test_platform_tooling_is_installed_from_the_lockfile_under_a_pinned_uv() -> 
         install = step(_job(job_name), "Install platform tooling")
 
         assert install["working-directory"] == "platform"
-        assert re.search(r"^pipx install uv==\d+\.\d+\.\d+$", install["run"], re.MULTILINE)
+        assert re.fullmatch(r"\d+\.\d+\.\d+", install["env"]["UV_VERSION"])
+        assert 'pipx install "uv==${UV_VERSION}"' in install["run"]
         assert "uv sync --locked" in install["run"]
 
     # Every Python invocation must come from that locked environment.
@@ -499,16 +715,53 @@ def test_platform_tooling_is_installed_from_the_lockfile_under_a_pinned_uv() -> 
             assert "uv run --frozen python" in script, name
 
 
+def _run_install(tmp_path: Path, reported_version: str) -> Any:
+    install = step(_job("publish"), "Install platform tooling")
+    stub_bin = tmp_path / "bin"
+    write_stub(stub_bin, "pipx", "exit 0\n")
+    write_stub(
+        stub_bin,
+        "uv",
+        f'if [[ "${{1-}}" == "--version" ]]; then echo "{reported_version}"; fi\nexit 0\n',
+    )
+    return run_step_script(
+        install["run"],
+        cwd=tmp_path,
+        env={"UV_VERSION": install["env"]["UV_VERSION"]},
+        stub_bin=stub_bin,
+    )
+
+
+def test_the_uv_that_answers_on_path_must_be_the_one_that_was_pinned(tmp_path: Path) -> None:
+    # pipx installs the pin, but an earlier uv already on PATH keeps answering, so the
+    # lockfile would be resolved by a version nobody chose.
+    pinned = step(_job("publish"), "Install platform tooling")["env"]["UV_VERSION"]
+
+    assert _run_install(tmp_path, f"uv {pinned} (abc1234 2026-01-01)").returncode == 0
+    assert _run_install(tmp_path, f"uv {pinned}").returncode == 0
+
+    mismatched = _run_install(tmp_path, "uv 0.4.30 (abc1234 2024-01-01)")
+    assert mismatched.returncode == 1
+    assert "unexpected_uv_version" in mismatched.stderr
+    assert pinned in mismatched.stderr
+
+    # A prefix match would let 0.11.320 pass for 0.11.32.
+    assert _run_install(tmp_path, f"uv {pinned}0").returncode == 1
+
+
 def test_publish_job_assumes_the_publisher_role_and_writes_provenance() -> None:
     publish = _job("publish")
     credentials = step(publish, "Configure AWS credentials")
     provenance = step(publish, "Write image provenance")
 
     assert credentials["id"] == "credentials"
+    # mask-aws-account-id defaults to false in v6, and `docker push` prints the registry
+    # host, so without this the account id lands in a world-readable log.
     assert credentials["with"] == {
         "role-to-assume": "${{ inputs.publisher_role_arn }}",
         "aws-region": "${{ inputs.aws_region }}",
         "role-duration-seconds": 3600,
+        "mask-aws-account-id": True,
     }
     assert "write_image_provenance.py" in provenance["run"]
     assert provenance["env"]["WORKFLOW_REPOSITORY"] == "${{ job.workflow_repository }}"
@@ -562,6 +815,56 @@ def test_provenance_records_the_branch_ref_that_the_trust_policy_asserts(
         f"{passed['--workflow-repository']}/{passed['--workflow-path']}@{passed['--workflow-ref']}"
     )
     assert reconstructed == JOB_WORKFLOW_REF
+
+
+def test_the_workflow_makes_exactly_these_aws_calls_in_exactly_this_order() -> None:
+    # The publisher role permits nine ECR actions, so an added call is not necessarily an
+    # AccessDenied. Enumerating them means a new one has to be argued for in review.
+    calls = [
+        (name, tuple(command[:3]))
+        for name, script in _run_bodies(_load())
+        for command in aws_commands(script)
+    ]
+
+    assert calls == [
+        ("publish:Look for an already published image", ("aws", "ecr", "describe-images")),
+        ("publish:Log in to Amazon ECR", ("aws", "ecr", "get-login-password")),
+        (
+            "publish:Read published digest from the registry",
+            ("aws", "ecr", "describe-images"),
+        ),
+    ]
+
+
+def test_every_run_step_declares_the_directory_its_tooling_lives_in() -> None:
+    # Platform tooling resolves config/repositories.yaml relative to the working
+    # directory, and `docker build` resolves the Dockerfile and the context relative to
+    # it. A missing or wrong entry here is a run that reads the caller's files as if they
+    # were the platform's, or the reverse.
+    actual = {
+        name: candidate.get("working-directory")
+        for job_name, job in _load()["jobs"].items()
+        for candidate in job["steps"]
+        if "run" in candidate
+        for name in [f"{job_name}:{candidate['name']}"]
+    }
+
+    assert actual == {
+        "verify:Verify the caller contract": None,
+        "verify:Install platform tooling": "platform",
+        "verify:Verify source identity": "platform",
+        "verify:Run research repository tests": "source",
+        "publish:Verify the caller contract": None,
+        "publish:Install platform tooling": "platform",
+        "publish:Re-verify source identity": "platform",
+        f"publish:{DECREDENTIAL_STEP}": "source",
+        "publish:Resolve build inputs": "platform",
+        f"publish:{PREFLIGHT_STEP}": None,
+        "publish:Log in to Amazon ECR": None,
+        "publish:Build and push image": "source",
+        "publish:Read published digest from the registry": None,
+        "publish:Write image provenance": "platform",
+    }
 
 
 def test_no_run_body_interpolates_a_github_expression() -> None:

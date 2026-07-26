@@ -26,15 +26,36 @@ def argv(tmp_path: Path, **overrides: str) -> list[str]:
     return [token for pair in arguments.items() for token in pair]
 
 
-def test_registered_repository_emits_exactly_the_four_build_inputs(tmp_path: Path) -> None:
+def test_registered_repository_emits_exactly_the_build_inputs_the_workflow_consumes(
+    tmp_path: Path,
+) -> None:
+    # The ECR repository name is not among them. The publish job takes it from the gate
+    # job's output, so a copy emitted here was only ever a second way to be wrong.
     assert main(argv(tmp_path)) == 0
 
     assert (tmp_path / "step-output.txt").read_text(encoding="utf-8") == (
-        "ecr_repository=sbsandbox-intern-edullm-olmo-core\n"
         f"base_reference=docker.io/library/python@{BASE_DIGEST}\n"
         "dockerfile_path=.edullm/Dockerfile\n"
         "build_context=.\n"
     )
+
+
+def test_a_registry_file_that_is_not_utf_8_fails_closed_without_a_traceback(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # UnicodeDecodeError is a ValueError, so it slipped past the ValidationError branch
+    # and reached the runner log as a traceback naming the full path.
+    registry = tmp_path / "repositories.yaml"
+    registry.write_bytes(b"repositories:\n  - repository: \xff\xfe\n")
+
+    exit_code = main(argv(tmp_path, **{"--registry": str(registry)}))
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert captured.err.strip() == "registry_unreadable"
+    assert captured.out == ""
+    assert str(tmp_path) not in captured.err
 
 
 def test_step_outputs_are_appended_rather_than_truncated(tmp_path: Path) -> None:

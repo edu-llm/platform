@@ -34,7 +34,9 @@ class UnsafeStepOutputError(ValueError):
 def load_registry(path: Path) -> RepositoryRegistry:
     try:
         return load_yaml(path, RepositoryRegistry)
-    except OSError as exc:
+    # UnicodeDecodeError is a ValueError, so it would otherwise fall through every branch
+    # below and reach the runner log as a traceback naming the full path.
+    except (OSError, UnicodeDecodeError) as exc:
         raise RegistryUnreadableError("registry_unreadable") from exc
     except (yaml.YAMLError, TypeError, ValidationError) as exc:
         raise RegistryUnreadableError("registry_invalid") from exc
