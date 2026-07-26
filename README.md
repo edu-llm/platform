@@ -100,12 +100,23 @@ refuses to overwrite a recorded digest that has drifted; re-recording takes
 `--regenerate-goldens` and is meant to be reviewed alongside whatever caused the drift.
 The bundle is committed because a tripwire nobody can diff is not a tripwire.
 
-## Capacity evidence
+## Captured evidence
 
-`fixtures/evidence/` holds sanitized, read-only observations of the GitHub
-organization plan and applied AWS service quotas. Records expire after 30 days so a
-stale reading cannot pass as current; when that happens the gate reports
-`evidence_stale` and the capture tool must be re-run by a maintainer with credentials.
+`fixtures/evidence/` holds sanitized, read-only observations of the account: the GitHub
+organization plan, applied AWS service quotas, and under `phase-1/roles/` the two IAM
+roles Phase 1 depends on, as IAM returned them. Account IDs are masked, and this account
+is masked differently from any other so that a grant pointing somewhere else cannot be
+mistaken for a local one.
+
+Records expire after 30 days so a stale reading cannot pass as current. When that
+happens the Phase 0 gate reports `evidence_stale`, and in Phase 1 the tests that read the
+committed role captures fail, which takes the criteria citing them back to gaps and the
+gate to exit 1. Either way the remedy is a maintainer with credentials re-running the
+capture tool; nothing renews on its own.
+
+The role captures are worth committing because something compares them: the deployed role
+is checked against the CloudFormation template that claims to describe it, in both
+directions, by `edullm_platform.role_drift`. See `proof/phase-1/deployed-role-drift.md`.
 
 Evidence is captured from a sandbox account and is labelled as such. A sandbox
 observation never attests production capacity.

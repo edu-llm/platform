@@ -22,16 +22,35 @@ from pathlib import Path
 import pytest
 
 from edullm_platform.canonical import canonical_json_bytes
-from edullm_platform.criteria import REENTRANT_TEST_MODULES, CriterionSpec, CriterionStatus
-from edullm_platform.criteria_runner import NESTED_GATE_ENV
-from edullm_platform.phase1_criteria import PHASE1_CRITERION_COUNT, phase1_criteria
+from edullm_platform.criteria import (
+    REENTRANT_TEST_MODULES,
+    CriterionSpec,
+    CriterionStatus,
+    cited_node_ids,
+    evaluate_criteria,
+)
+from edullm_platform.criteria_runner import NESTED_GATE_ENV, SelectionOutcome
+from edullm_platform.phase1_criteria import (
+    DEPLOYED_ROLES_MATCH_THEIR_TEMPLATES,
+    PHASE1_CRITERION_COUNT,
+    phase1_criteria,
+)
 from edullm_platform.phase1_gate import Phase1GateReport, evaluate_repository
 from tests.gate_support import copy_gate_repo, run_validate_phase1
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-#: A path a criterion's prose points at, as a reader would type it.
-REFERENCED_PATH = re.compile(r"\b(?:tools|src|infra|fixtures|config)/[\w./-]*[\w]")
+#: A path a criterion's prose points at, as a reader would type it. ``tests`` is here
+#: because a gap that names the test standing in for it is a direction to nowhere once
+#: that test is renamed.
+REFERENCED_PATH = re.compile(r"\b(?:tests|tools|src|infra|fixtures|config)/[\w./-]*[\w]")
+
+#: The citation that expires. Named here so the case below cannot drift from the one the
+#: criteria carry: this is the node id whose failure is what thirty days looks like.
+CAPTURE_IS_FRESH = (
+    "tests/test_phase1_deployed_roles.py"
+    "::test_every_committed_capture_is_inside_its_freshness_window"
+)
 
 #: The eight Phase 1 checks as the master plan states them.
 PHASE1_STATEMENTS = (
@@ -170,21 +189,67 @@ def test_every_path_a_criterion_names_is_one_that_exists(
     assert {path for _number, path in named} >= {
         "tools/capture_phase1_evidence.py",
         "tools/verify_publisher_denials.py",
-        "fixtures/evidence",
+        "fixtures/evidence/phase-1/roles",
+        "tests/test_phase1_deployed_roles.py",
     }
 
 
-def test_the_gap_that_the_drift_comparison_bears_on_says_what_is_still_missing(
+def test_the_gap_the_comparison_bears_on_says_which_half_of_it_moved(
     criteria: tuple[CriterionSpec, ...],
 ) -> None:
-    # Criterion 6 is the one the comparison was built for, and it is still a gap. The
-    # risk is that building the machinery reads later as having closed it, so the gap
-    # text has to name both halves: the comparison exists, and nobody has run it.
+    # Criterion 6 is the one the comparison was built for, and it is still a gap. Half of
+    # it moved: the deployed role has now been compared to the template and matches, so
+    # the template's silence about Batch, S3 and IAM is a fact about the account. The
+    # other half did not, and the risk is that the first reads later as having closed the
+    # second, so the gap text has to be explicit about both.
     gaps = " ".join(by_number(criteria, "6").gaps)
 
     assert "role_drift" in gaps
     assert "tools/capture_phase1_evidence.py" in gaps
-    assert "no capture" in gaps.lower() or "no run against the account" in gaps.lower()
+    assert "fixtures/evidence/phase-1/roles" in gaps
+    assert "denial" in gaps.lower()
+    assert "CloudTrail" in gaps
+    assert by_number(criteria, "6").status is CriterionStatus.GAP
+
+
+def test_the_criteria_that_rest_on_the_capture_cite_every_part_of_the_claim(
+    criteria: tuple[CriterionSpec, ...],
+) -> None:
+    # Three separate facts make a committed capture worth citing: one exists for each
+    # role, it is inside its window, and it matches the template. Citing the third alone
+    # would let a deleted or expired record pass as agreement.
+    for number in ("4", "5"):
+        check = by_number(criteria, number)
+
+        assert set(DEPLOYED_ROLES_MATCH_THEIR_TEMPLATES) <= set(check.supporting_node_ids), number
+        assert not set(DEPLOYED_ROLES_MATCH_THEIR_TEMPLATES) & set(check.proving_node_ids), number
+    assert CAPTURE_IS_FRESH in DEPLOYED_ROLES_MATCH_THEIR_TEMPLATES
+
+
+def test_an_expired_capture_takes_the_criteria_resting_on_it_back_to_a_gap(
+    criteria: tuple[CriterionSpec, ...],
+) -> None:
+    # What thirty days does, without waiting thirty days. That the reader reports an aged
+    # record as stale is proved in tests/test_phase1_deployed_roles.py; that the citation
+    # fails when it does is the assertion above it. This is the consequence: the criteria
+    # resting on that citation stop reading as covered, and the gate is red.
+    cited = cited_node_ids(criteria)
+    expired = SelectionOutcome(
+        requested=cited,
+        collected=cited,
+        passed=cited - {CAPTURE_IS_FRESH},
+        exit_code=1,
+    )
+
+    results = {result.number: result for result in evaluate_criteria(criteria, expired)}
+
+    for number in ("4", "5"):
+        assert results[number].status is CriterionStatus.GAP, number
+        assert results[number].reason_code == "cited_test_failed", number
+        assert results[number].failed_node_ids == (CAPTURE_IS_FRESH,), number
+    # A criterion that does not rest on the capture is untouched by its expiry.
+    assert results["3"].passed is True
+    assert results["8"].passed is True
 
 
 def test_no_criterion_cites_a_module_that_starts_a_gate(
