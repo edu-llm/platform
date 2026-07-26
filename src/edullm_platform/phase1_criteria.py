@@ -314,11 +314,24 @@ def phase1_criteria() -> tuple[CriterionSpec, ...]:
                     "capture supplies it. A policy that grants no Batch action is a policy; a "
                     "session that tried to submit a Batch job and was refused is the claim. "
                     "Closing this needs a session issued to the publisher role attempting a "
-                    "Batch submit, an S3 read and an IAM change, and the CloudTrail records of "
+                    "Batch submit, an S3 call and an IAM change, and the CloudTrail records of "
                     "those three refusals. edullm_platform.publisher_denials attempts exactly "
-                    "that matrix and tools/verify_publisher_denials.py runs it, and no session "
-                    "has run it. Until one has, this stays a gap and citing the capture here "
-                    "would put a green tick beside the half that is missing."
+                    "that matrix and tools/verify_publisher_denials.py runs it. One session has "
+                    "run it and none has completed it: the S3 probe read an object from a "
+                    "bucket chosen not to exist, and S3 answers NoSuchBucket before it "
+                    "authorizes anybody, so the run recorded nothing and refused the publish. "
+                    "Until a session completes the matrix this stays a gap, and citing the "
+                    "capture here would put a green tick beside the half that is missing."
+                ),
+                (
+                    "The S3 half of this will stay narrower than the words above even once a "
+                    "session completes the matrix. The probe is now ListBuckets, an "
+                    "account-level call with no bucket to be absent, so a refusal proves the "
+                    "role holds no account-wide S3 permission rather than that it cannot read "
+                    "a dataset: a policy granting only s3:GetObject on one bucket would be "
+                    "refused ListBuckets just the same. Closing that difference needs an object "
+                    "read that reaches authorization, which needs a bucket this project owns "
+                    "and an object in it that exists, and no such bucket is deployed."
                 ),
                 (
                     "The half that did move expires. The records under "

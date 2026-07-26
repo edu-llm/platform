@@ -308,12 +308,15 @@ jobs:
           mask-aws-account-id: true
 
       # Every call is aimed so that being permitted changes nothing: at a resource that
-      # is not there, or at a role name IAM already holds and so cannot create twice.
-      # Deciding whether a failure was a refusal or merely a not-found needs the error
-      # text, and reading that in a run body would leave it one echo away from a
-      # world-readable log, so the attempts are made by the tool rather than by this
-      # shell. The record it writes is masked field by field by the contract that holds
-      # it; the raw text never leaves the process.
+      # is not there, at a role name IAM already holds and so cannot create twice, or at
+      # an account-level listing that only reads. Deciding whether a failure was a
+      # refusal or merely a not-found needs the error text, and reading that in a run
+      # body would leave it one echo away from a world-readable log, so the attempts are
+      # made by the tool rather than by this shell. The record it writes is masked field
+      # by field by the contract that holds it; the raw text never leaves the process.
+      # A run that could not prove the matrix prints one line per action, because
+      # reaching this account costs a workflow run and the first run of this job spent
+      # one to learn about one probe.
       - name: Attempt the actions the publisher must not have
         working-directory: platform
         env:

@@ -212,6 +212,22 @@ def test_the_gap_the_comparison_bears_on_says_which_half_of_it_moved(
     assert by_number(criteria, "6").status is CriterionStatus.GAP
 
 
+def test_the_denial_gap_says_less_than_the_criterion_where_the_matrix_proves_less(
+    criteria: tuple[CriterionSpec, ...],
+) -> None:
+    # The criterion says "read datasets" and the S3 probe is an account-level
+    # ListBuckets, because a read aimed at a bucket that does not exist is answered
+    # NoSuchBucket before anybody is authorized -- which is what the first session to run
+    # the matrix found. A refusal of ListBuckets is weaker than a refusal to read one
+    # object, and the risk is that the criterion's wording is later read as the thing
+    # that was attempted, so the gap has to hold the difference open.
+    gaps = " ".join(by_number(criteria, "6").gaps)
+
+    assert "NoSuchBucket" in gaps
+    assert "ListBuckets" in gaps
+    assert "s3:GetObject" in gaps
+
+
 def test_the_criteria_that_rest_on_the_capture_cite_every_part_of_the_claim(
     criteria: tuple[CriterionSpec, ...],
 ) -> None:
