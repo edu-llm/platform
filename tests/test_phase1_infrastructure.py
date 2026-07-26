@@ -269,8 +269,10 @@ def test_ecr_lifecycle_expires_old_untagged_and_caps_all_tagged_images() -> None
 
 def test_ecr_template_has_no_iam_policy_principal_or_account_literal() -> None:
     template = _load_template(ECR_TEMPLATE_PATH)
+    _, repository = _resource_of_type(template, "AWS::ECR::Repository")
     strings = list(_walk_strings(template))
 
+    assert "RepositoryPolicyText" not in repository["Properties"]
     assert not any(value.startswith("AWS::IAM::") for value in strings)
     assert "AWS::ECR::RepositoryPolicy" not in strings
     assert "Principal" not in strings
