@@ -204,10 +204,135 @@ jobs:
           set -euo pipefail
           bash -euo pipefail -c "${TEST_COMMAND}"
 
+  # The publisher role is meant to hold nine ECR actions on one repository and nothing
+  # else. That is a fact about a committed template: the role was deployed once from a
+  # laptop and is not redeployed by CI, so a policy widened in the console would leave
+  # every test in this repository green. This job is the other half of that claim, and it
+  # runs before publish so a widened role stops a publish rather than being found once an
+  # image is already in the registry.
+  #
+  # It is a job here rather than a workflow of its own, and it has to be. The trust policy
+  # pins job_workflow_ref to this file with StringEquals, so no other workflow file can
+  # assume the role at all, and widening the trust to a second file would let that file
+  # push images while bypassing the gate job, the clean-tree check and the registered-base
+  # enforcement. job_workflow_ref names the file rather than the job, so a job costs
+  # nothing. The separation that would have bought is not worth the gate it would open.
+  deny:
+    name: Verify the publisher role is still narrow
+    runs-on: ubuntu-latest
+    needs: verify
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      # Identical to the other two jobs' guard, and repeated for the same reason: this
+      # job runs on its own runner and must fail before it can reach AWS with an identity
+      # it cannot describe.
+      - name: Verify the caller contract
+        env:
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+          WORKFLOW_REF: ${{ job.workflow_ref }}
+          WORKFLOW_FILE_PATH: ${{ job.workflow_file_path }}
+          EVENT_NAME: ${{ github.event_name }}
+          AWS_REGION: ${{ inputs.aws_region }}
+        run: |
+          set -euo pipefail
+          missing=""
+          for name in WORKFLOW_REPOSITORY WORKFLOW_SHA WORKFLOW_REF WORKFLOW_FILE_PATH; do
+            if [[ -z "${!name-}" ]]; then
+              missing="${missing} ${name}"
+            fi
+          done
+          if [[ -n "${missing}" ]]; then
+            echo "job_workflow_context_unavailable:${missing}" >&2
+            echo "This workflow pins its own tooling and its provenance record to the job context workflow identity, which GitHub Enterprise Server does not provide." >&2
+            exit 1
+          fi
+          if [[ "${WORKFLOW_REF}" != */*@* ]]; then
+            echo "job_workflow_ref_malformed" >&2
+            echo "job.workflow_ref must read owner/repo/path@ref so provenance can record the claim the publisher role trust policy asserts." >&2
+            exit 1
+          fi
+          case "${EVENT_NAME}" in
+            push|workflow_dispatch) ;; # events whose github.ref names a reviewed commit
+            *)
+              echo "unsupported_caller_event:${EVENT_NAME}" >&2
+              echo "This workflow publishes the commit named by github.ref, which on every other event is the default branch rather than the commit the caller meant." >&2
+              exit 1
+              ;;
+          esac
+          case "${AWS_REGION}" in
+            us-east-1|us-east-2) ;; # allowed sandbox regions
+            *)
+              echo "unsupported_aws_region:${AWS_REGION}" >&2
+              echo "The publisher role and the registered ECR repository exist only in the allowed sandbox regions." >&2
+              exit 1
+              ;;
+          esac
+
+      # No checkout of the caller. This job holds a publisher session, and the caller's
+      # code has no part in deciding what that session is allowed to do.
+      - name: Check out platform tooling
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: platform
+          persist-credentials: false
+
+      - name: Install platform tooling
+        working-directory: platform
+        env:
+          UV_VERSION: "0.11.32"
+        run: |
+          set -euo pipefail
+          pipx install "uv==${UV_VERSION}"
+          installed="$(uv --version)"
+          if [[ "${installed}" != "uv ${UV_VERSION}" && "${installed}" != "uv ${UV_VERSION} "* ]]; then
+            echo "unexpected_uv_version" >&2
+            echo "Expected uv ${UV_VERSION} but PATH answers with: ${installed}" >&2
+            exit 1
+          fi
+          uv sync --locked
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ inputs.publisher_role_arn }}
+          aws-region: ${{ inputs.aws_region }}
+          # Six calls and a lockfile install. The role's maximum is an hour and this job
+          # has no use for one, so it asks for the shortest session STS issues.
+          role-duration-seconds: 900
+          mask-aws-account-id: true
+
+      # Every call is aimed so that being permitted changes nothing: at a resource that
+      # is not there, or at a role name IAM already holds and so cannot create twice.
+      # Deciding whether a failure was a refusal or merely a not-found needs the error
+      # text, and reading that in a run body would leave it one echo away from a
+      # world-readable log, so the attempts are made by the tool rather than by this
+      # shell. The record it writes is masked field by field by the contract that holds
+      # it; the raw text never leaves the process.
+      - name: Attempt the actions the publisher must not have
+        working-directory: platform
+        env:
+          RESEARCH_REPOSITORY: ${{ inputs.repository }}
+          AWS_REGION: ${{ inputs.aws_region }}
+        run: |
+          set -euo pipefail
+          denials_file="${RUNNER_TEMP}/publisher-denials.json"
+          uv run --frozen python tools/verify_publisher_denials.py \
+            --registry config/repositories.yaml \
+            --repository "${RESEARCH_REPOSITORY}" \
+            --region "${AWS_REGION}" \
+            --output "${denials_file}"
+          cat "${denials_file}"
+
   publish:
     name: Build and publish image
     runs-on: ubuntu-latest
-    needs: verify
+    needs: [verify, deny]
     timeout-minutes: 60
     permissions:
       contents: read

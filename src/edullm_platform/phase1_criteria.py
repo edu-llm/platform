@@ -193,9 +193,9 @@ def phase1_criteria() -> tuple[CriterionSpec, ...]:
             statement="A pull-request test job cannot request AWS credentials.",
             status=CriterionStatus.COVERED,
             proving_node_ids=(
-                "tests/test_build_research_image_workflow.py::test_workflow_has_exactly_two_ordered_jobs_with_exact_permission_maps",
+                "tests/test_build_research_image_workflow.py::test_workflow_has_exactly_three_ordered_jobs_with_exact_permission_maps",
                 "tests/test_build_research_image_workflow.py::test_verify_job_never_requests_an_oidc_token_by_any_spelling",
-                "tests/test_build_research_image_workflow.py::test_nothing_lets_the_publish_job_run_after_the_gate_has_failed",
+                "tests/test_build_research_image_workflow.py::test_nothing_lets_the_publish_job_run_after_a_gate_has_failed",
                 "tests/test_build_research_image_workflow.py::test_workflow_is_reusable_with_exact_inputs_and_no_secrets",
             ),
             supporting_node_ids=(PUBLISHER_TRUST_POLICY,),

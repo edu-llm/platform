@@ -32,6 +32,9 @@ CREDENTIALS_ACTION = (
 PLATFORM_REPOSITORY = "edu-llm/platform"
 WORKFLOW_PATH_INPUT = ".github/workflows/build-research-image.yml"
 CONTRACT_STEP = "Verify the caller contract"
+DENIAL_STEP = "Attempt the actions the publisher must not have"
+DENIAL_TOOL = "verify_publisher_denials.py"
+DENIAL_RECORD_FILE = "publisher-denials.json"
 PREFLIGHT_STEP = "Look for an already published image"
 RESUME_STEP = "Verify the published image is the one this run would have built"
 DECREDENTIAL_STEP = "Remove the source checkout credentials"
@@ -157,27 +160,34 @@ def test_workflow_emits_the_published_image_digest_as_its_only_output() -> None:
     }
 
 
-def test_workflow_has_exactly_two_ordered_jobs_with_exact_permission_maps() -> None:
+def test_workflow_has_exactly_three_ordered_jobs_with_exact_permission_maps() -> None:
     workflow = _load()
 
-    assert list(workflow["jobs"]) == ["verify", "publish"]
+    assert list(workflow["jobs"]) == ["verify", "deny", "publish"]
     assert workflow["permissions"] == {"contents": "read"}
     assert workflow["jobs"]["verify"]["permissions"] == {"contents": "read"}
+    assert workflow["jobs"]["deny"]["permissions"] == {
+        "contents": "read",
+        "id-token": "write",
+    }
     assert workflow["jobs"]["publish"]["permissions"] == {
         "contents": "read",
         "id-token": "write",
     }
-    assert workflow["jobs"]["publish"]["needs"] == "verify"
+    assert workflow["jobs"]["deny"]["needs"] == "verify"
+    assert workflow["jobs"]["publish"]["needs"] == ["verify", "deny"]
     assert "needs" not in workflow["jobs"]["verify"]
 
 
-def test_nothing_lets_the_publish_job_run_after_the_gate_has_failed() -> None:
+def test_nothing_lets_the_publish_job_run_after_a_gate_has_failed() -> None:
     # `needs` alone only orders the jobs. A single `if: always()` on publish would keep
-    # the dependency and still run it after a rejected source identity.
+    # both dependencies and still run it after a rejected source identity or a publisher
+    # role that turned out to be wider than its template.
     publish = _job("publish")
 
     assert "if" not in publish
-    assert publish["needs"] == "verify"
+    assert "if" not in _job("deny")
+    assert publish["needs"] == ["verify", "deny"]
     assert "continue-on-error" not in publish
     assert "continue-on-error" not in str(_load())
 
@@ -203,7 +213,9 @@ def test_workflow_uses_only_the_two_approved_commit_pinned_actions() -> None:
     ]
 
     assert set(used) == {CHECKOUT_ACTION, CREDENTIALS_ACTION}
-    assert used.count(CREDENTIALS_ACTION) == 1
+    # Twice: the denial matrix and the publish job each assume the publisher role on
+    # their own runner, because neither can hand a session to the other.
+    assert used.count(CREDENTIALS_ACTION) == 2
     for reference in used:
         assert re.fullmatch(r"[^@]+@[0-9a-f]{40}", reference), reference
 
@@ -268,13 +280,13 @@ def test_the_workflow_never_reaches_for_a_job_workflow_property_of_the_github_co
     assert "github.workflow_ref" not in text
 
 
-def test_both_jobs_check_the_caller_contract_before_anything_else() -> None:
+def test_every_job_checks_the_caller_contract_before_anything_else() -> None:
     # The four job-context workflow identity properties are documented as unavailable on
     # GitHub Enterprise Server, where they resolve to the empty string instead of failing.
     # Empty is the exact silent-degradation mode this guard exists to stop, so it runs
     # before the tooling checkout that consumes them and before any AWS call.
     scripts = set()
-    for job_name in ("verify", "publish"):
+    for job_name in ("verify", "deny", "publish"):
         steps = _job(job_name)["steps"]
 
         assert steps[0]["name"] == CONTRACT_STEP
@@ -287,7 +299,7 @@ def test_both_jobs_check_the_caller_contract_before_anything_else() -> None:
         assert contract["env"]["AWS_REGION"] == "${{ inputs.aws_region }}"
         scripts.add(contract["run"])
 
-    assert len(scripts) == 1, "both jobs must enforce the identical caller contract"
+    assert len(scripts) == 1, "every job must enforce the identical caller contract"
 
 
 def _contract_environment(**overrides: str) -> dict[str, str]:
@@ -538,6 +550,144 @@ def test_verify_job_exposes_the_verified_commit_and_ecr_repository() -> None:
     # publish job re-derives the document there, so a file written here is never read.
     assert "--output" not in identity["run"]
     assert "--output" in step(_job("publish"), "Re-verify source identity")["run"]
+
+
+def test_the_denial_matrix_stands_between_the_gate_and_the_publish() -> None:
+    # The plan called for a workflow of its own, and it cannot be one: the publisher role
+    # trust policy pins job_workflow_ref to this file with StringEquals, so no other
+    # workflow file can assume the role, and widening the trust to a second file would
+    # let that file push images without the gate, the clean-tree check, or the
+    # registered-base enforcement. job_workflow_ref names the file rather than the job,
+    # so a job here needs no trust change at all.
+    #
+    # It runs before publish rather than after it because a role that has been widened
+    # should stop a publish, not be discovered once an image is already in the registry.
+    workflow = _load()
+
+    assert list(workflow["jobs"]).index("deny") < list(workflow["jobs"]).index("publish")
+    assert _job("deny")["needs"] == "verify"
+    assert "deny" in _job("publish")["needs"]
+
+
+def test_the_denial_matrix_is_a_session_a_tool_and_nothing_else() -> None:
+    # The token is the only permission it gains, and the five steps are the whole job:
+    # anything else added here would run beside a publisher session.
+    deny = _job("deny")
+
+    assert deny["permissions"] == {"contents": "read", "id-token": "write"}
+    assert "outputs" not in deny
+    assert [candidate["name"] for candidate in deny["steps"]] == [
+        CONTRACT_STEP,
+        "Check out platform tooling",
+        "Install platform tooling",
+        "Configure AWS credentials",
+        DENIAL_STEP,
+    ]
+
+
+def test_the_denial_matrix_never_checks_out_the_code_it_holds_credentials_beside() -> None:
+    # This job assumes the publisher role and has no reason to read the caller's
+    # repository, so it does not. The publish job needs a build context; this one needs
+    # the platform tooling and a session.
+    deny = _job("deny")
+    checkouts = [
+        candidate for candidate in deny["steps"] if candidate.get("uses") == CHECKOUT_ACTION
+    ]
+
+    assert len(checkouts) == 1
+    assert checkouts[0]["with"] == {
+        "repository": "${{ job.workflow_repository }}",
+        "ref": "${{ job.workflow_sha }}",
+        "path": "platform",
+        "persist-credentials": False,
+    }
+
+
+def test_the_denial_matrix_assumes_the_publisher_role_for_no_longer_than_it_needs() -> None:
+    credentials = step(_job("deny"), "Configure AWS credentials")
+
+    assert credentials["uses"] == CREDENTIALS_ACTION
+    assert credentials["with"] == {
+        "role-to-assume": "${{ inputs.publisher_role_arn }}",
+        "aws-region": "${{ inputs.aws_region }}",
+        # Six calls and a lockfile install. The publisher role's maximum is an hour and
+        # this job has no use for one, so it asks for the shortest session STS issues.
+        "role-duration-seconds": 900,
+        "mask-aws-account-id": True,
+    }
+
+
+def test_the_denial_matrix_reaches_aws_only_through_the_tool_that_can_judge_a_refusal() -> None:
+    # A run body can make the call but cannot tell a refusal from a not-found without
+    # reading the error, and reading it in the shell means it is one `echo` away from a
+    # world-readable log. So there is no `aws` word in this job at all.
+    deny = _job("deny")
+    attempt = step(deny, DENIAL_STEP)
+
+    assert aws_commands(attempt["run"]) == []
+    assert [name for name, script in _run_bodies(_load()) if aws_commands(script)] == [
+        "publish:Look for an already published image",
+        f"publish:{RESUME_STEP}",
+        "publish:Log in to Amazon ECR",
+        "publish:Read published digest from the registry",
+    ]
+    assert DENIAL_TOOL in attempt["run"]
+    assert attempt["env"] == {
+        "RESEARCH_REPOSITORY": "${{ inputs.repository }}",
+        "AWS_REGION": "${{ inputs.aws_region }}",
+    }
+
+
+def _run_denial_step(
+    tmp_path: Path,
+    *,
+    uv_body: str,
+) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    stub_bin = tmp_path / "bin"
+    recorded = tmp_path / "argv.txt"
+    write_stub(stub_bin, "uv", f'printf "%s\\n" "$@" > "{recorded}"\n{uv_body}')
+    result = run_step_script(
+        step(_job("deny"), DENIAL_STEP)["run"],
+        cwd=tmp_path,
+        env={
+            "RUNNER_TEMP": str(tmp_path),
+            "RESEARCH_REPOSITORY": "OLMo-core",
+            "AWS_REGION": "us-east-1",
+        },
+        stub_bin=stub_bin,
+    )
+    arguments = recorded.read_text(encoding="utf-8").splitlines() if recorded.exists() else []
+    return result, arguments
+
+
+def test_a_matrix_that_refused_everything_prints_the_record_it_wrote(tmp_path: Path) -> None:
+    result, arguments = _run_denial_step(
+        tmp_path,
+        uv_body=f'printf \'{{"schema_version":1}}\' > "${{RUNNER_TEMP}}/{DENIAL_RECORD_FILE}"\n',
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert '{"schema_version":1}' in result.stdout
+    passed = dict(itertools.pairwise(arguments))
+    assert passed["--registry"] == "config/repositories.yaml"
+    assert passed["--repository"] == "OLMo-core"
+    assert passed["--region"] == "us-east-1"
+    assert passed["--output"] == str(tmp_path / DENIAL_RECORD_FILE)
+
+
+def test_a_matrix_that_could_not_prove_a_denial_prints_no_record(tmp_path: Path) -> None:
+    # The tool writes nothing when an attempt establishes nothing, and the step must not
+    # print a record left over from an earlier attempt on the same runner either.
+    (tmp_path / DENIAL_RECORD_FILE).write_text("stale-record-canary", encoding="utf-8")
+
+    result, _ = _run_denial_step(
+        tmp_path,
+        uv_body='echo "attempt_permitted:iam:CreateRole" >&2\nexit 1\n',
+    )
+
+    assert result.returncode == 1
+    assert "attempt_permitted:iam:CreateRole" in result.stderr
+    assert "stale-record-canary" not in result.stdout
 
 
 def test_publish_job_logs_in_to_ecr_without_a_third_party_login_action() -> None:
@@ -1060,7 +1210,7 @@ def test_publish_job_reverifies_the_source_before_it_holds_aws_credentials() -> 
 
 
 def test_platform_tooling_is_installed_from_the_lockfile_under_a_pinned_uv() -> None:
-    for job_name in ("verify", "publish"):
+    for job_name in ("verify", "deny", "publish"):
         install = step(_job(job_name), "Install platform tooling")
 
         assert install["working-directory"] == "platform"
@@ -1180,6 +1330,11 @@ def test_provenance_records_the_branch_ref_that_the_trust_policy_asserts(
 def test_the_workflow_makes_exactly_these_aws_calls_in_exactly_this_order() -> None:
     # The publisher role permits nine ECR actions, so an added call is not necessarily an
     # AccessDenied. Enumerating them means a new one has to be argued for in review.
+    #
+    # The denial matrix contributes nothing here, and deliberately: its calls are made by
+    # a tool rather than by a shell, because deciding whether a failure was a refusal is
+    # not something a run body can do without printing what it read. Those calls are
+    # enumerated the same way one file over, in the tool's own test module.
     calls = [
         (name, tuple(command[:3]))
         for name, script in _run_bodies(_load())
@@ -1216,6 +1371,9 @@ def test_every_run_step_declares_the_directory_its_tooling_lives_in() -> None:
         "verify:Install platform tooling": "platform",
         "verify:Verify source identity": "platform",
         "verify:Run research repository tests": "source",
+        "deny:Verify the caller contract": None,
+        "deny:Install platform tooling": "platform",
+        f"deny:{DENIAL_STEP}": "platform",
         "publish:Verify the caller contract": None,
         "publish:Install platform tooling": "platform",
         "publish:Re-verify source identity": "platform",
@@ -1262,4 +1420,5 @@ def test_concurrency_is_keyed_per_caller_commit_and_never_cancels() -> None:
 
 def test_job_runtimes_are_bounded() -> None:
     assert _job("verify")["timeout-minutes"] == 30
+    assert _job("deny")["timeout-minutes"] == 15
     assert _job("publish")["timeout-minutes"] == 60
