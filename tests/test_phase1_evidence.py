@@ -18,6 +18,7 @@ from edullm_platform.evidence import (
 from edullm_platform.phase1_evidence import (
     BuildProvenanceEvidence,
     DenialEvidence,
+    DeployedRoleEvidence,
     EcrImageEvidence,
     ImageScanEvidence,
     OidcSessionEvidence,
@@ -48,6 +49,12 @@ RAW_DENIAL_MESSAGE = (
     "identity-based policy allows the batch:SubmitJob action"
 )
 REDACTED_DENIAL_MESSAGE = redact_aws_account_ids(RAW_DENIAL_MESSAGE)
+
+#: A policy resource is an ARN and has no name that identifies it on its own, so this
+#: is the one place an ARN is recorded. Redacted, it lines up with the template's
+#: ${AWS::AccountId} without either side naming the account.
+RAW_REPOSITORY_ARN = f"arn:aws:ecr:us-east-1:{AWS_EXAMPLE_ACCOUNT_ID}:repository/{ECR_REPOSITORY}"
+REDACTED_REPOSITORY_ARN = redact_aws_account_ids(RAW_REPOSITORY_ARN)
 
 PayloadBuilder = Callable[..., dict[str, object]]
 
@@ -224,12 +231,94 @@ def denial_payload(**overrides: object) -> dict[str, object]:
     return payload
 
 
+def condition_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "operator": "StringEquals",
+        "condition_key": "token.actions.githubusercontent.com:aud",
+        "values": ["sts.amazonaws.com"],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def trust_statement_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "sid": None,
+        "effect": "Allow",
+        "actions": ["sts:AssumeRoleWithWebIdentity"],
+        "principals": [
+            {
+                "principal_type": "Federated",
+                "identifier": "token.actions.githubusercontent.com",
+            }
+        ],
+        "conditions": [
+            condition_payload(),
+            condition_payload(
+                condition_key="token.actions.githubusercontent.com:repository_id",
+                values=["1306868157"],
+            ),
+            condition_payload(
+                operator="StringLike",
+                condition_key="token.actions.githubusercontent.com:sub",
+                values=["repo:edu-llm@306859726/OLMo-core@1306868157:ref:refs/heads/*"],
+            ),
+        ],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def permission_statement_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "sid": None,
+        "effect": "Allow",
+        "actions": ["ecr:PutImage", "ecr:UploadLayerPart"],
+        "resources": [REDACTED_REPOSITORY_ARN],
+        "conditions": [],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def inline_policy_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "policy_name": "publish-olmo-core-images",
+        "policy_version": "2012-10-17",
+        "statements": [
+            permission_statement_payload(actions=["ecr:GetAuthorizationToken"], resources=["*"]),
+            permission_statement_payload(),
+        ],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def deployed_role_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "source": "aws",
+        "environment": "sandbox",
+        "observed_at": recent_observed_at(),
+        "status": "ok",
+        "role_name": PUBLISHER_ROLE_NAME,
+        "permissions_boundary_policy_name": "InternSandboxBoundary",
+        "max_session_duration_seconds": 3600,
+        "trust_policy_version": "2012-10-17",
+        "trust_statements": [trust_statement_payload()],
+        "inline_policies": [inline_policy_payload()],
+        "attached_managed_policy_names": [],
+    }
+    payload.update(overrides)
+    return payload
+
+
 EVIDENCE_MODELS: tuple[tuple[type[ContractModel], PayloadBuilder], ...] = (
     (BuildProvenanceEvidence, build_provenance_payload),
     (EcrImageEvidence, ecr_image_payload),
     (ImageScanEvidence, image_scan_payload),
     (OidcSessionEvidence, oidc_session_payload),
     (DenialEvidence, denial_payload),
+    (DeployedRoleEvidence, deployed_role_payload),
 )
 
 EVIDENCE_MODEL_IDS = [model_type.__name__ for model_type, _builder in EVIDENCE_MODELS]
@@ -264,6 +353,13 @@ ACCOUNT_ID_PROBES: tuple[tuple[type[ContractModel], PayloadBuilder, str, str], .
         denial_payload,
         "attempted_resource",
         f"arn:aws:batch:us-east-1:{AWS_EXAMPLE_ACCOUNT_ID}:job-queue/gpu",
+    ),
+    (DeployedRoleEvidence, deployed_role_payload, "role_name", AWS_EXAMPLE_ACCOUNT_ID),
+    (
+        DeployedRoleEvidence,
+        deployed_role_payload,
+        "permissions_boundary_policy_name",
+        AWS_EXAMPLE_ACCOUNT_ID,
     ),
 )
 
@@ -688,6 +784,265 @@ def test_denial_refuses_an_action_that_is_not_one_concrete_api_call(action: str)
         loc_suffix=("attempted_action",),
         error_type="string_pattern_mismatch",
     )
+
+
+def test_the_deployed_role_carries_what_a_template_comparison_needs() -> None:
+    evidence = DeployedRoleEvidence.model_validate(deployed_role_payload())
+    assert evidence.role_name == PUBLISHER_ROLE_NAME
+    assert evidence.permissions_boundary_policy_name == "InternSandboxBoundary"
+    assert evidence.max_session_duration_seconds == 3600
+    assert evidence.attached_managed_policy_names == ()
+    trust = evidence.trust_statements[0]
+    assert trust.principals[0].identifier == "token.actions.githubusercontent.com"
+    assert [condition.condition_key for condition in trust.conditions] == [
+        "token.actions.githubusercontent.com:aud",
+        "token.actions.githubusercontent.com:repository_id",
+        "token.actions.githubusercontent.com:sub",
+    ]
+    policy = evidence.inline_policies[0]
+    assert policy.policy_name == "publish-olmo-core-images"
+    assert policy.statements[1].resources == (REDACTED_REPOSITORY_ARN,)
+
+
+def test_the_deployed_role_records_names_rather_than_its_own_arn() -> None:
+    fields = set(DeployedRoleEvidence.model_fields)
+    assert "role_arn" not in fields
+    assert "account_id" not in fields
+    # IAM is global. A region on this record would be a fact about the API call rather
+    # than about the role, and would invite a comparison that means nothing.
+    assert "region" not in fields
+
+
+@pytest.mark.parametrize("field", sorted(deployed_role_payload()))
+def test_a_partially_captured_role_cannot_validate(field: str) -> None:
+    payload = deployed_role_payload()
+    del payload[field]
+    with pytest.raises(ValidationError) as exc_info:
+        DeployedRoleEvidence.model_validate(payload)
+    assert_validation_error(exc_info.value, loc_suffix=(field,), error_type="missing")
+
+
+def test_a_detached_permissions_boundary_is_recordable_and_not_the_same_as_uncaptured() -> None:
+    detached = DeployedRoleEvidence.model_validate(
+        deployed_role_payload(permissions_boundary_policy_name=None)
+    )
+    assert detached.permissions_boundary_policy_name is None
+
+
+def test_an_attached_managed_policy_is_recorded_because_no_template_would_show_it() -> None:
+    # The committed template attaches nothing, so a managed policy attached in the
+    # console is drift the template cannot express. A record that could not hold it
+    # would be blind to the easiest way to widen this role.
+    widened = DeployedRoleEvidence.model_validate(
+        deployed_role_payload(attached_managed_policy_names=["AdministratorAccess"])
+    )
+    assert widened.attached_managed_policy_names == ("AdministratorAccess",)
+
+
+def test_the_role_record_holds_a_policy_widened_in_the_console() -> None:
+    widened = DeployedRoleEvidence.model_validate(
+        deployed_role_payload(
+            max_session_duration_seconds=43200,
+            inline_policies=[
+                inline_policy_payload(
+                    policy_name="added-by-hand",
+                    statements=[permission_statement_payload(actions=["*"], resources=["*"])],
+                )
+            ],
+            trust_statements=[trust_statement_payload(conditions=[])],
+        )
+    )
+    assert widened.inline_policies[0].statements[0].actions == ("*",)
+    assert widened.trust_statements[0].conditions == ()
+
+
+@pytest.mark.parametrize("duration", [1800, 43201])
+def test_the_role_record_refuses_a_session_duration_iam_cannot_return(duration: int) -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        DeployedRoleEvidence.model_validate(
+            deployed_role_payload(max_session_duration_seconds=duration)
+        )
+    error_type = "greater_than_equal" if duration < 3600 else "less_than_equal"
+    assert_validation_error(
+        exc_info.value,
+        loc_suffix=("max_session_duration_seconds",),
+        error_type=error_type,
+    )
+
+
+def test_the_role_record_refuses_a_duplicate_inline_policy_name() -> None:
+    payload = deployed_role_payload(
+        inline_policies=[inline_policy_payload(), inline_policy_payload()]
+    )
+    with pytest.raises(ValidationError) as exc_info:
+        DeployedRoleEvidence.model_validate(payload)
+    assert_validation_error(
+        exc_info.value,
+        loc_suffix=(),
+        error_type="value_error",
+        message_fragment="inline policy names must be unique",
+    )
+
+
+def test_the_role_record_refuses_a_duplicate_attached_policy_name() -> None:
+    payload = deployed_role_payload(
+        attached_managed_policy_names=["ReadOnlyAccess", "ReadOnlyAccess"]
+    )
+    with pytest.raises(ValidationError) as exc_info:
+        DeployedRoleEvidence.model_validate(payload)
+    assert_validation_error(
+        exc_info.value,
+        loc_suffix=(),
+        error_type="value_error",
+        message_fragment="attached managed policy names must be unique",
+    )
+
+
+@pytest.mark.parametrize("field", ["actions", "resources"])
+def test_a_permission_statement_with_nothing_in_it_cannot_validate(field: str) -> None:
+    # A statement written with NotAction or NotResource lands here as an empty tuple,
+    # because this record has no way to spell the negated form. It is refused rather
+    # than narrowed, so a role using one fails capture instead of being understated.
+    payload = deployed_role_payload(
+        inline_policies=[
+            inline_policy_payload(statements=[permission_statement_payload(**{field: []})])
+        ]
+    )
+    with pytest.raises(ValidationError) as exc_info:
+        DeployedRoleEvidence.model_validate(payload)
+    assert_validation_error(
+        exc_info.value,
+        loc_suffix=("statements", 0, field),
+        error_type="too_short",
+    )
+
+
+@pytest.mark.parametrize("action", ["ecr:*", "*", "ecr:PutImage"])
+def test_a_policy_action_may_be_a_wildcard_because_a_widened_role_has_one(action: str) -> None:
+    evidence = DeployedRoleEvidence.model_validate(
+        deployed_role_payload(
+            inline_policies=[
+                inline_policy_payload(statements=[permission_statement_payload(actions=[action])])
+            ]
+        )
+    )
+    assert evidence.inline_policies[0].statements[0].actions == (action,)
+
+
+@pytest.mark.parametrize("action", ["submit a job", "Ecr:PutImage", "ecr:", ":PutImage"])
+def test_a_policy_action_that_is_not_an_action_cannot_validate(action: str) -> None:
+    payload = deployed_role_payload(
+        inline_policies=[
+            inline_policy_payload(statements=[permission_statement_payload(actions=[action])])
+        ]
+    )
+    with pytest.raises(ValidationError) as exc_info:
+        DeployedRoleEvidence.model_validate(payload)
+    assert_validation_error(
+        exc_info.value,
+        loc_suffix=("actions", 0),
+        error_type="value_error",
+        message_fragment="a policy action must be a service action or a wildcard",
+    )
+
+
+def test_an_inline_policy_with_no_statements_cannot_validate() -> None:
+    payload = deployed_role_payload(inline_policies=[inline_policy_payload(statements=[])])
+    with pytest.raises(ValidationError) as exc_info:
+        DeployedRoleEvidence.model_validate(payload)
+    assert_validation_error(
+        exc_info.value,
+        loc_suffix=("inline_policies", 0, "statements"),
+        error_type="too_short",
+    )
+
+
+def test_a_trust_statement_with_no_principals_cannot_validate() -> None:
+    payload = deployed_role_payload(trust_statements=[trust_statement_payload(principals=[])])
+    with pytest.raises(ValidationError) as exc_info:
+        DeployedRoleEvidence.model_validate(payload)
+    assert_validation_error(
+        exc_info.value,
+        loc_suffix=("trust_statements", 0, "principals"),
+        error_type="too_short",
+    )
+
+
+def test_a_role_with_no_trust_policy_cannot_validate() -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        DeployedRoleEvidence.model_validate(deployed_role_payload(trust_statements=[]))
+    assert_validation_error(
+        exc_info.value,
+        loc_suffix=("trust_statements",),
+        error_type="too_short",
+    )
+
+
+def test_a_condition_with_no_values_cannot_validate() -> None:
+    payload = deployed_role_payload(
+        trust_statements=[trust_statement_payload(conditions=[condition_payload(values=[])])]
+    )
+    with pytest.raises(ValidationError) as exc_info:
+        DeployedRoleEvidence.model_validate(payload)
+    assert_validation_error(
+        exc_info.value,
+        loc_suffix=("conditions", 0, "values"),
+        error_type="too_short",
+    )
+
+
+def test_a_policy_resource_arn_must_arrive_with_its_account_id_redacted() -> None:
+    payload = deployed_role_payload(
+        inline_policies=[
+            inline_policy_payload(
+                statements=[permission_statement_payload(resources=[RAW_REPOSITORY_ARN])]
+            )
+        ]
+    )
+    with pytest.raises(ValidationError) as exc_info:
+        DeployedRoleEvidence.model_validate(payload)
+    assert_validation_error(
+        exc_info.value,
+        loc_suffix=("resources", 0),
+        error_type="value_error",
+        message_fragment="must not contain credentials or raw AWS account IDs",
+    )
+    accepted = DeployedRoleEvidence.model_validate(deployed_role_payload())
+    assert AWS_EXAMPLE_ACCOUNT_ID not in accepted.inline_policies[0].statements[1].resources[0]
+    assert ECR_REPOSITORY in accepted.inline_policies[0].statements[1].resources[0]
+
+
+def test_a_trust_principal_refuses_an_unredacted_credential() -> None:
+    payload = deployed_role_payload(
+        trust_statements=[
+            trust_statement_payload(
+                principals=[
+                    {"principal_type": "AWS", "identifier": AWS_EXAMPLE_ACCESS_KEY_ID},
+                ]
+            )
+        ]
+    )
+    with pytest.raises(ValidationError) as exc_info:
+        DeployedRoleEvidence.model_validate(payload)
+    assert_validation_error(
+        exc_info.value,
+        loc_suffix=("principals", 0, "identifier"),
+        error_type="value_error",
+        message_fragment="must not contain credentials or raw AWS account IDs",
+    )
+
+
+def test_a_trust_statement_can_record_a_deny_that_the_template_does_not_have() -> None:
+    denying = DeployedRoleEvidence.model_validate(
+        deployed_role_payload(
+            trust_statements=[
+                trust_statement_payload(),
+                trust_statement_payload(sid="AddedByHand", effect="Deny"),
+            ]
+        )
+    )
+    assert [statement.effect for statement in denying.trust_statements] == ["Allow", "Deny"]
+    assert denying.trust_statements[1].sid == "AddedByHand"
 
 
 def test_denial_requires_the_resource_key_even_when_the_call_has_no_resource() -> None:
