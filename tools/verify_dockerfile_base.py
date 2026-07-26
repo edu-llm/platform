@@ -14,8 +14,10 @@ promise is anything about the *contents* of the registered base, so the guarante
 at "every image this build reads was registered", not at "this image contains only
 registered bytes".
 
-Like its siblings it prints only a machine-readable reason: the runner log is world
-readable for any public caller repository.
+Like its siblings the first line it prints is a machine-readable reason, and nothing it
+prints is derived from the file it read: the runner log is world readable for any public
+caller repository. One rejection adds a second line, because the mistake behind it is one
+BuildKit actively recommends; see ``REJECTION_GUIDANCE``.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ import re
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Final
 
 from edullm_platform.build_tooling import RegistryUnreadableError, load_registry
 from edullm_platform.contracts.repository_registry import UnknownRepositoryError
@@ -38,7 +41,22 @@ STAGE_INDEX_PATTERN = re.compile(r"0|[1-9][0-9]*")
 BASE_IMAGE_ARG = "BASE_IMAGE"
 BASE_IMAGE_REFERENCES = frozenset({"${BASE_IMAGE}", "$BASE_IMAGE"})
 
+#: Fixed sentences for rejections a contributor is likely to read as a broken gate. Kept
+#: as constants keyed by reason, rather than composed at the raise site, so that no
+#: guidance can carry a fragment of the Dockerfile into a world-readable runner log.
+REJECTION_GUIDANCE: Final = {
+    "base_image_arg_has_default": (
+        "Every build of a compliant Dockerfile emits the BuildKit check "
+        "InvalidDefaultArgInFrom, because a bare `ARG BASE_IMAGE` is exactly what "
+        "triggers it. That warning is expected here, and adding a default is the wrong "
+        "response to it: the platform passes the registered base digest as "
+        "--build-arg BASE_IMAGE, so a default is a base image nobody registered, sitting "
+        "there ready to stand in silently the day the build argument is not passed."
+    ),
+}
+
 __all__ = [
+    "REJECTION_GUIDANCE",
     "DockerfileBaseError",
     "build_parser",
     "main",
@@ -50,6 +68,10 @@ class DockerfileBaseError(ValueError):
     def __init__(self, reason: str) -> None:
         self.reason = reason
         super().__init__(reason)
+
+    @property
+    def guidance(self) -> str | None:
+        return REJECTION_GUIDANCE.get(self.reason)
 
 
 def _logical_lines(text: str) -> list[str]:
@@ -214,6 +236,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         require_base_image_contract(dockerfile)
     except DockerfileBaseError as exc:
         print(exc.reason, file=sys.stderr)
+        if exc.guidance is not None:
+            print(exc.guidance, file=sys.stderr)
         return 1
     return 0
 

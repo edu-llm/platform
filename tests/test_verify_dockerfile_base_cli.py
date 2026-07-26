@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from tools.verify_dockerfile_base import (
+    REJECTION_GUIDANCE,
     DockerfileBaseError,
     main,
     require_base_image_contract,
@@ -251,6 +252,61 @@ def test_a_rejected_dockerfile_stops_the_run_with_only_a_machine_readable_reason
     assert captured.err.strip() == "unregistered_base_image"
     assert captured.out == ""
     assert str(tmp_path) not in captured.err
+
+
+def test_the_arg_default_rejection_names_the_warning_that_provokes_it(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Every build of a compliant Dockerfile emits InvalidDefaultArgInFrom, because a bare
+    # `ARG BASE_IMAGE` is what triggers it, and Docker documents adding a default as the
+    # fix. Here that fix is the rejection, so the message has to say so or a contributor
+    # will read the gate as broken and keep reaching for the same wrong answer.
+    write_dockerfile(tmp_path, "ARG BASE_IMAGE=python:3.12\nFROM ${BASE_IMAGE}\n")
+
+    exit_code = main(argv(tmp_path))
+    captured = capsys.readouterr()
+    lines = captured.err.splitlines()
+
+    assert exit_code == 1
+    assert captured.out == ""
+    assert lines[0] == "base_image_arg_has_default"
+    assert "InvalidDefaultArgInFrom" in captured.err
+    assert "--build-arg" in captured.err
+
+
+def test_the_guidance_never_repeats_anything_the_dockerfile_said(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The runner log is world readable for any public caller, so the sentence is a fixed
+    # one looked up by reason rather than composed from the file that was rejected.
+    write_dockerfile(
+        tmp_path,
+        "ARG BASE_IMAGE=registry.invalid/private/leaked:v1\nFROM $BASE_IMAGE\n",
+    )
+
+    exit_code = main(argv(tmp_path))
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "registry.invalid" not in captured.err
+    assert "leaked" not in captured.err
+    assert str(tmp_path) not in captured.err
+
+
+@pytest.mark.parametrize(
+    "reason",
+    sorted({reason for _body, reason in REJECTED.values()} - set(REJECTION_GUIDANCE)),
+)
+def test_every_other_rejection_still_prints_the_token_and_nothing_else(reason: str) -> None:
+    assert DockerfileBaseError(reason).guidance is None
+
+
+def test_no_guidance_is_written_for_a_rejection_that_cannot_be_raised() -> None:
+    # A sentence keyed to a reason nobody raises is a sentence nobody reads, and it goes
+    # stale where nothing points at it.
+    assert set(REJECTION_GUIDANCE) <= {reason for _body, reason in REJECTED.values()}
 
 
 def test_a_missing_dockerfile_fails_closed(
