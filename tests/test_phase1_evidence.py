@@ -1104,6 +1104,44 @@ def test_a_role_with_no_trust_policy_cannot_validate() -> None:
     )
 
 
+def role_with_one_condition(**condition_overrides: object) -> dict[str, object]:
+    """A role whose single trust statement carries one condition, built from overrides."""
+    return deployed_role_payload(
+        trust_statements=[
+            trust_statement_payload(conditions=[condition_payload(**condition_overrides)])
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    ("captured", "recorded"),
+    [(True, "true"), (False, "false"), (10, "10"), (1.5, "1.5"), ("true", "true")],
+)
+def test_a_condition_value_iam_returned_unquoted_is_recorded_quoted(
+    captured: object,
+    recorded: str,
+) -> None:
+    # IAM's grammar makes quotation marks optional around numbers and booleans, so a
+    # policy can hold aws:SecureTransport as true rather than "true" and the API returns
+    # what was stored. Both spellings mean the same thing, and refusing the unquoted one
+    # would have failed capture on a policy IAM accepted.
+    evidence = DeployedRoleEvidence.model_validate(
+        role_with_one_condition(
+            operator="Bool",
+            condition_key="aws:SecureTransport",
+            values=[captured],
+        )
+    )
+    assert evidence.trust_statements[0].conditions[0].values == (recorded,)
+
+
+@pytest.mark.parametrize("value", [None, ["nested"], {"key": "value"}])
+def test_a_condition_value_that_is_not_a_json_scalar_cannot_validate(value: object) -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        DeployedRoleEvidence.model_validate(role_with_one_condition(values=[value]))
+    assert_validation_error(exc_info.value, loc_suffix=("values", 0), error_type="string_type")
+
+
 def test_a_condition_with_no_values_cannot_validate() -> None:
     payload = deployed_role_payload(
         trust_statements=[trust_statement_payload(conditions=[condition_payload(values=[])])]

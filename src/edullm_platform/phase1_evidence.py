@@ -31,6 +31,7 @@ agree still fails.
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Final, Literal, Self
@@ -405,18 +406,43 @@ class DenialEvidence(FreshEvidenceModel):
     event_source: SecretFreeStr = Field(pattern=AWS_SERVICE_PRINCIPAL_PATTERN)
 
 
+def parse_condition_value(value: object) -> object:
+    """Spell a condition value the way a JSON policy document does.
+
+    IAM's grammar makes quotation marks optional around numbers and booleans, so
+    ``{"Bool": {"aws:SecureTransport": true}}`` is a policy IAM accepts and returns
+    unquoted. The quoted and unquoted spellings mean the same thing to IAM, so the
+    unquoted one is normalised rather than refused: refusing it would fail capture on a
+    valid policy, and comparing punctuation against the template would report drift that
+    is not there. A value that is not a JSON scalar is left alone for the field to refuse.
+    """
+    if isinstance(value, bool | int | float):
+        return json.dumps(value, allow_nan=False)
+    return value
+
+
+#: One value of one condition, as the document spells it once numbers and booleans are
+#: quoted. Scanned, because a condition value can hold anything a policy author typed.
+IamConditionValue = Annotated[SecretFreeStr, BeforeValidator(parse_condition_value)]
+
+
 class IamConditionEntry(ContractModel):
     """One condition an IAM statement carries, flattened to operator, key and values.
 
     IAM writes conditions as a map of maps. Flattened they compare element by element,
     so a comparison against the template can say which condition went missing rather
     than that two nested dictionaries differ.
+
+    The operator is patterned, not enumerated. IAM has around thirty operators, each with
+    an optional ``IfExists`` suffix and an optional ``ForAllValues:`` or ``ForAnyValue:``
+    prefix, and a list of the ones these templates use would refuse the rest. IAM will
+    not store an operator it does not recognise, so the pattern is the useful bound.
     """
 
     operator: SecretFreeStr = Field(pattern=IAM_CONDITION_OPERATOR_PATTERN)
     condition_key: SecretFreeStr = Field(min_length=1, max_length=256)
-    values: Annotated[tuple[SecretFreeStr, ...], BeforeValidator(require_ordered_sequence)] = Field(
-        min_length=1, strict=False
+    values: Annotated[tuple[IamConditionValue, ...], BeforeValidator(require_ordered_sequence)] = (
+        Field(min_length=1, strict=False)
     )
 
 
