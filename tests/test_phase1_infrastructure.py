@@ -13,7 +13,7 @@ PUBLISHER_TEMPLATE_PATH = IAM_ROOT / "ecr-publisher-role.yaml"
 ECR_TEMPLATE_PATH = INFRA_ROOT / "ecr-repositories.yaml"
 
 ROLE_NAME = "sbsandbox-intern-edullm-ecr-publisher"
-MANAGED_POLICY_NAME = "sbsandbox-intern-edullm-ecr-publisher"
+INLINE_POLICY_NAME = "publish-olmo-core-images"
 OLMO_CORE_REPOSITORY_NAME = "sbsandbox-intern-edullm-olmo-core"
 BOUNDARY = {
     "Fn::Sub": ("arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/InternSandboxBoundary")
@@ -94,27 +94,36 @@ def _resource_of_type(template: dict[str, Any], resource_type: str) -> tuple[str
     return matching[0]
 
 
-def test_publisher_template_creates_only_the_role_and_managed_policy() -> None:
+def test_publisher_template_creates_only_the_inline_scoped_role() -> None:
     template = _load_template(PUBLISHER_TEMPLATE_PATH)
 
     resources = template["Resources"]
-    assert len(resources) == 2
-    assert [resource["Type"] for resource in resources.values()] == [
-        "AWS::IAM::Role",
-        "AWS::IAM::ManagedPolicy",
-    ]
-
-    role_logical_id, role = _resource_of_type(template, "AWS::IAM::Role")
+    assert len(resources) == 1
+    _, role = _resource_of_type(template, "AWS::IAM::Role")
     role_properties = role["Properties"]
     assert role_properties["RoleName"] == ROLE_NAME
     assert role_properties["PermissionsBoundary"] == BOUNDARY
     assert role_properties["MaxSessionDuration"] <= 3600
-    assert "Policies" not in role_properties
 
-    _, managed_policy = _resource_of_type(template, "AWS::IAM::ManagedPolicy")
-    policy_properties = managed_policy["Properties"]
-    assert policy_properties["ManagedPolicyName"] == MANAGED_POLICY_NAME
-    assert policy_properties["Roles"] == [{"Ref": role_logical_id}]
+    policies = role_properties["Policies"]
+    assert len(policies) == 1
+    assert policies[0]["PolicyName"] == INLINE_POLICY_NAME
+
+
+def test_no_laptop_template_uses_a_managed_policy_it_could_never_update() -> None:
+    # InternSandboxBoundary explicitly denies iam:CreatePolicyVersion,
+    # iam:SetDefaultPolicyVersion and iam:DeletePolicyVersion on every policy, verified by
+    # simulation against boundary v5. A customer managed policy is therefore write-once in
+    # this account: the first permission change would fail the stack update. Inline role
+    # policies use iam:PutRolePolicy, which the boundary permits on sbsandbox-intern-* names.
+    # Generic "prefer managed policies" advice does not survive this constraint.
+    for path in sorted((*IAM_ROOT.rglob("*.yaml"), *IAM_ROOT.rglob("*.yml"))):
+        template = _load_template(path)
+        for resource in template.get("Resources", {}).values():
+            assert resource.get("Type") != "AWS::IAM::ManagedPolicy", (
+                f"managed policy cannot be updated under this boundary: "
+                f"{path.relative_to(PROJECT_ROOT)}"
+            )
 
 
 def test_publisher_trusts_only_the_existing_github_oidc_provider() -> None:
@@ -148,8 +157,8 @@ def test_publisher_trusts_only_the_existing_github_oidc_provider() -> None:
 
 def test_publisher_permissions_are_the_exact_phase1_ecr_permissions() -> None:
     template = _load_template(PUBLISHER_TEMPLATE_PATH)
-    _, managed_policy = _resource_of_type(template, "AWS::IAM::ManagedPolicy")
-    document = managed_policy["Properties"]["PolicyDocument"]
+    _, role = _resource_of_type(template, "AWS::IAM::Role")
+    document = role["Properties"]["Policies"][0]["PolicyDocument"]
     assert document["Version"] == "2012-10-17"
     statements = document["Statement"]
     assert len(statements) == 2
@@ -225,9 +234,7 @@ def test_ecr_repository_is_encrypted_scanned_immutable_and_retained() -> None:
 
     assert repository["DeletionPolicy"] == "Retain"
     assert repository["UpdateReplacePolicy"] == "Retain"
-    assert repository["Properties"]["EncryptionConfiguration"] == {
-        "EncryptionType": "AES256"
-    }
+    assert repository["Properties"]["EncryptionConfiguration"] == {"EncryptionType": "AES256"}
     assert repository["Properties"]["ImageScanningConfiguration"] == {"ScanOnPush": True}
     assert repository["Properties"]["ImageTagMutability"] == "IMMUTABLE"
 
