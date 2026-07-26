@@ -27,9 +27,7 @@ from pathlib import Path
 
 BASE_NAME_LABEL = "org.opencontainers.image.base.name"
 REVISION_LABEL = "org.opencontainers.image.revision"
-RFC3339_INSTANT = re.compile(
-    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})"
-)
+RFC3339_INSTANT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})")
 
 __all__ = [
     "BASE_NAME_LABEL",
