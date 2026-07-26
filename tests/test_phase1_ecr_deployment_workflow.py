@@ -53,6 +53,33 @@ def _step(job: dict[str, Any], name: str) -> dict[str, Any]:
     return matching[0]
 
 
+def _shell_syntax_without_heredoc_bodies(script: str) -> str:
+    heredoc_pattern = re.compile(
+        r"<<-?\s*(?:'([^']+)'|\"([^\"]+)\"|([a-zA-Z_][a-zA-Z0-9_]*))"
+    )
+    shell_lines = []
+    delimiter: str | None = None
+
+    for line in script.splitlines():
+        if delimiter is not None:
+            if line.strip() == delimiter:
+                delimiter = None
+            continue
+
+        shell_lines.append(line)
+        match = heredoc_pattern.search(line)
+        if match is not None:
+            delimiter = next(group for group in match.groups() if group is not None)
+
+    assert delimiter is None, "unterminated shell heredoc"
+    return "\n".join(shell_lines)
+
+
+def _aws_word_count(script: str) -> int:
+    shell_syntax = _shell_syntax_without_heredoc_bodies(script)
+    return len(re.findall(r"(?<![a-zA-Z0-9_-])aws(?=\s)", shell_syntax))
+
+
 def _aws_commands(script: str) -> list[list[str]]:
     normalized = re.sub(r"\\\s*\n", " ", script)
     commands = []
@@ -60,6 +87,9 @@ def _aws_commands(script: str) -> list[list[str]]:
         tokens = shlex.split(line)
         if tokens[:1] == ["aws"]:
             commands.append(tokens)
+    assert _aws_word_count(normalized) == len(commands), (
+        "every aws invocation must be an explicit top-level command"
+    )
     return commands
 
 
