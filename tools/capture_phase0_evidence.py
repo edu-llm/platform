@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -21,10 +20,10 @@ from edullm_platform.evidence import (
     EvidenceEnvironment,
     GitHubPlanEvidence,
     QuotaRecord,
+    profiles_requiring_capacity_evidence,
     quota_capacity_issues,
 )
 
-INSTANCE_TYPE_PATTERN = re.compile(r"\b([a-z0-9]+\.[a-z0-9]+)\b")
 ALLOWED_OUTPUT_SUFFIX = Path("docs-frank/working/phase-0-evidence")
 
 
@@ -58,26 +57,20 @@ def resolve_output_dir(output_dir: Path, *, base_dir: Path | None = None) -> Pat
     return resolved
 
 
-def instance_type_from_pricing_source(pricing_source: str) -> str:
-    match = INSTANCE_TYPE_PATTERN.search(pricing_source)
-    if match is None:
-        raise ValueError(f"pricing_source missing instance type: {pricing_source!r}")
-    return match.group(1)
-
-
 def ec2_quota_targets_from_catalog(catalog: WorkloadCatalog) -> tuple[Ec2QuotaTarget, ...]:
     targets: list[Ec2QuotaTarget] = []
-    for profile in catalog.compute_profiles:
-        instance_type = instance_type_from_pricing_source(profile.pricing_source)
-        metadata = INSTANCE_EVIDENCE.get(instance_type)
+    for profile in profiles_requiring_capacity_evidence(catalog):
+        metadata = INSTANCE_EVIDENCE.get(profile.instance_type)
         if metadata is None:
-            raise ValueError(f"unsupported instance type for evidence capture: {instance_type}")
+            raise ValueError(
+                f"unsupported instance type for evidence capture: {profile.instance_type}"
+            )
         targets.append(
             {
                 "quota_code": metadata["quota_code"],
                 "workload_profile": profile.name,
                 "required_vcpus": metadata["required_vcpus"],
-                "instance_type": instance_type,
+                "instance_type": profile.instance_type,
             }
         )
     return tuple(targets)

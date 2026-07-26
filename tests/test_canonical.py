@@ -27,7 +27,7 @@ def manifest_payload() -> dict[str, object]:
         "maximum_attempts": 2,
         "checkpoint": {
             "interval_minutes": 30,
-            "destination_prefix": "s3://edullm-checkpoints/runs/",
+            "destination_prefix": "s3://sbsandbox-intern-edullm-checkpoints/runs/",
             "resume_required": True,
         },
     }
@@ -122,6 +122,7 @@ def test_manifest_decimal_scientific_notation_serializes_as_integer() -> None:
 
 def request_facts_payload(**overrides: object) -> dict[str, object]:
     payload = {
+        "claimed_team": "modeling",
         "repository_registered": True,
         "dataset_registered": True,
         "compute_profile_registered": True,
@@ -206,7 +207,7 @@ def test_manifest_digest_changes_when_single_field_differs(field: str) -> None:
     elif field == "checkpoint":
         mutated_payload[field] = {
             "interval_minutes": 45,
-            "destination_prefix": "s3://edullm-checkpoints/runs/",
+            "destination_prefix": "s3://sbsandbox-intern-edullm-checkpoints/runs/",
             "resume_required": True,
         }
     else:

@@ -14,7 +14,7 @@ from pydantic import (
 )
 
 from edullm_platform.contracts.base import ContractModel, require_ordered_sequence
-from edullm_platform.contracts.workload import WorkloadCatalog
+from edullm_platform.contracts.workload import ComputeProfile, WorkloadCatalog
 
 AWS_ACCOUNT_ID_PATTERN = re.compile(r"(?<![0-9])\d{12}(?![0-9])")
 AWS_ACCESS_KEY_ID_PATTERN = re.compile(r"(?i)(?<![A-Z0-9])(?:AKIA|ASIA)[0-9A-Z]{16}(?![A-Z0-9])")
@@ -199,18 +199,34 @@ def quota_capacity_issues(
     return incomplete, insufficient
 
 
+def profiles_requiring_capacity_evidence(
+    catalog: WorkloadCatalog,
+) -> tuple[ComputeProfile, ...]:
+    representative_profiles = {workload.compute_profile for workload in catalog.workloads}
+    return tuple(
+        profile
+        for profile in catalog.compute_profiles
+        if profile.provisioned or profile.name in representative_profiles
+    )
+
+
 def ec2_quota_coverage_issues(
     *,
     catalog: WorkloadCatalog,
     quotas: tuple[QuotaRecord, ...],
 ) -> tuple[str | None, str | None]:
-    required_profiles = {profile.name for profile in catalog.compute_profiles}
+    required_profiles = {
+        profile.name for profile in profiles_requiring_capacity_evidence(catalog)
+    }
     covered_profiles = {quota.workload_profile for quota in quotas if quota.workload_profile is not None}
     missing_profiles = sorted(required_profiles - covered_profiles)
     if missing_profiles:
         return (
             "capacity_blocked",
-            f"Missing EC2 quota records for representative profiles: {', '.join(missing_profiles)}.",
+            (
+                "Missing EC2 quota records for representative or provisioned profiles: "
+                f"{', '.join(missing_profiles)}."
+            ),
         )
     incomplete, insufficient = quota_capacity_issues(quotas, catalog=catalog)
     if incomplete:

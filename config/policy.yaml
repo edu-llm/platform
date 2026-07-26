@@ -2,6 +2,9 @@ thresholds:
   routine_maximum_cost_usd: "500"
   routine_maximum_runtime_hours: "12"
   routine_maximum_attempts: 2
+  routine_maximum_fanout_size: 64
+  routine_maximum_parallelism: 8
+approval_scope: organization
 routine_approver_role: team_lead
 exception_approver_roles:
   - platform_admin

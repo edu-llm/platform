@@ -21,6 +21,7 @@ from edullm_platform.evidence import (
     QuotaRecord,
     ServiceQuotasEvidence,
     evidence_load_reason_code,
+    profiles_requiring_capacity_evidence,
     quota_capacity_issues,
     scan_for_secrets,
 )
@@ -766,7 +767,9 @@ def test_ec2_quota_targets_derive_from_workload_catalog() -> None:
     catalog = workload_catalog()
     targets = ec2_quota_targets_from_catalog(catalog)
     profiles = {target["workload_profile"] for target in targets}
-    assert profiles == {profile.name for profile in catalog.compute_profiles}
+    assert profiles == {
+        profile.name for profile in profiles_requiring_capacity_evidence(catalog)
+    }
     gpu_target = next(target for target in targets if target["workload_profile"] == "gpu-4xa10g")
     cpu_target = next(target for target in targets if target["workload_profile"] == "cpu-32vcpu")
     assert gpu_target["instance_type"] == "g5.12xlarge"

@@ -1,0 +1,27 @@
+schema_version: 1
+repository: OLMo-core
+# NON-RUNNABLE FIXTURE IDENTITY — do not execute
+commit_sha: "0000000000000000000000000000000000000005"
+image_digest: "sha256:0000000000000000000000000000000000000000000000000000000000000005"
+dataset_release: dolma-2026-07
+command:
+  - python
+  - -m
+  - olmo_core.train
+  - --config
+  - configs/memory-split.yaml
+  - --seed
+team: memory-split
+wandb_project: olmo-core-memory-split
+workload_profile: olmo-core-train-smoke
+compute_profile: gpu-1xa10g
+maximum_runtime_hours: "4"
+maximum_attempts: 1
+checkpoint:
+  interval_minutes: 30
+  destination_prefix: s3://sbsandbox-intern-edullm-checkpoints/runs/
+  resume_required: false
+fanout:
+  size: 5
+  max_parallel: 5
+  index_parameter: seed

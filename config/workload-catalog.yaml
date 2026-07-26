@@ -1,16 +1,100 @@
 compute_profiles:
   - name: cpu-32vcpu
+    instance_type: c7i.8xlarge
     accelerator: cpu
     nodes: 1
     hourly_rate_usd: "1.428"
     pricing_source: "AWS Price List API get-products AmazonEC2 c7i.8xlarge us-east-1 Linux/Shared/NA/Used"
     pricing_observed_at: "2026-07-24"
+    provisioned: false
+  - name: gpu-1xt4
+    instance_type: g4dn.xlarge
+    accelerator: gpu
+    nodes: 1
+    hourly_rate_usd: "0.5260"
+    pricing_source: "AWS Price List API get-products AmazonEC2 g4dn.xlarge us-east-1 Linux/Shared/NA/Used"
+    pricing_observed_at: "2026-07-25"
+    provisioned: false
+  - name: gpu-4xt4
+    instance_type: g4dn.12xlarge
+    accelerator: gpu
+    nodes: 1
+    hourly_rate_usd: "3.9120"
+    pricing_source: "AWS Price List API get-products AmazonEC2 g4dn.12xlarge us-east-1 Linux/Shared/NA/Used"
+    pricing_observed_at: "2026-07-25"
+    provisioned: false
+  - name: gpu-1xa10g
+    instance_type: g5.xlarge
+    accelerator: gpu
+    nodes: 1
+    hourly_rate_usd: "1.0060"
+    pricing_source: "AWS Price List API get-products AmazonEC2 g5.xlarge us-east-1 Linux/Shared/NA/Used"
+    pricing_observed_at: "2026-07-25"
+    provisioned: false
+  - name: gpu-1xa10g-sagemaker
+    instance_type: g5.2xlarge
+    accelerator: gpu
+    nodes: 1
+    hourly_rate_usd: "1.5150"
+    pricing_source: "AWS Price List API get-products AmazonSageMaker ml.g5.2xlarge us-east-1 Training/USE1-Train/RunInstance/OnDemand"
+    pricing_observed_at: "2026-07-25"
+    provisioned: false
   - name: gpu-4xa10g
+    instance_type: g5.12xlarge
     accelerator: gpu
     nodes: 1
     hourly_rate_usd: "5.672"
     pricing_source: "AWS Price List API get-products AmazonEC2 g5.12xlarge us-east-1 Linux/Shared/NA/Used"
     pricing_observed_at: "2026-07-24"
+    provisioned: false
+  - name: gpu-1xl4
+    instance_type: g6.xlarge
+    accelerator: gpu
+    nodes: 1
+    hourly_rate_usd: "0.8048"
+    pricing_source: "AWS Price List API get-products AmazonEC2 g6.xlarge us-east-1 Linux/Shared/NA/Used"
+    pricing_observed_at: "2026-07-25"
+    provisioned: false
+  - name: gpu-4xl4
+    instance_type: g6.12xlarge
+    accelerator: gpu
+    nodes: 1
+    hourly_rate_usd: "4.6016"
+    pricing_source: "AWS Price List API get-products AmazonEC2 g6.12xlarge us-east-1 Linux/Shared/NA/Used"
+    pricing_observed_at: "2026-07-25"
+    provisioned: false
+  - name: gpu-1xl40s
+    instance_type: g6e.xlarge
+    accelerator: gpu
+    nodes: 1
+    hourly_rate_usd: "1.8610"
+    pricing_source: "AWS Price List API get-products AmazonEC2 g6e.xlarge us-east-1 Linux/Shared/NA/Used"
+    pricing_observed_at: "2026-07-25"
+    provisioned: false
+  - name: gpu-4xl40s
+    instance_type: g6e.12xlarge
+    accelerator: gpu
+    nodes: 1
+    hourly_rate_usd: "10.4926"
+    pricing_source: "AWS Price List API get-products AmazonEC2 g6e.12xlarge us-east-1 Linux/Shared/NA/Used"
+    pricing_observed_at: "2026-07-25"
+    provisioned: false
+  - name: gpu-8xa100
+    instance_type: p4d.24xlarge
+    accelerator: gpu
+    nodes: 1
+    hourly_rate_usd: "21.9576"
+    pricing_source: "AWS Price List API get-products AmazonEC2 p4d.24xlarge us-east-1 Linux/Shared/NA/Used"
+    pricing_observed_at: "2026-07-25"
+    provisioned: false
+  - name: gpu-8xh100
+    instance_type: p5.48xlarge
+    accelerator: gpu
+    nodes: 1
+    hourly_rate_usd: "55.0400"
+    pricing_source: "AWS Price List API get-products AmazonEC2 p5.48xlarge us-east-1 Linux/Shared/NA/Used"
+    pricing_observed_at: "2026-07-25"
+    provisioned: false
 workloads:
   - name: dolma-tokenize-smoke
     repository: dolma
@@ -25,5 +109,5 @@ workloads:
     maximum_attempts: 1
     checkpoint:
       interval_minutes: 30
-      destination_prefix: "s3://edullm-checkpoints/runs/"
+      destination_prefix: "s3://sbsandbox-intern-edullm-checkpoints/runs/"
       resume_required: false

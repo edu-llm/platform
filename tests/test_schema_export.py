@@ -42,15 +42,19 @@ POLICY_THRESHOLDS_PAYLOAD: dict[str, object] = {
     "routine_maximum_cost_usd": "500",
     "routine_maximum_runtime_hours": "24",
     "routine_maximum_attempts": 2,
+    "routine_maximum_fanout_size": 64,
+    "routine_maximum_parallelism": 8,
 }
 
 COMPUTE_PROFILE_PAYLOAD: dict[str, object] = {
     "name": "cpu-test",
+    "instance_type": "c7i.8xlarge",
     "accelerator": "cpu",
     "nodes": 1,
     "hourly_rate_usd": "1.428",
     "pricing_source": "test",
     "pricing_observed_at": "2026-07-24",
+    "provisioned": False,
 }
 
 WORKLOAD_PROFILE_PAYLOAD: dict[str, object] = {
@@ -77,7 +81,7 @@ RUN_MANIFEST_PAYLOAD: dict[str, object] = {
     "maximum_attempts": 2,
     "checkpoint": {
         "interval_minutes": 30,
-        "destination_prefix": "s3://edullm-checkpoints/runs/",
+        "destination_prefix": "s3://sbsandbox-intern-edullm-checkpoints/runs/",
         "resume_required": True,
     },
 }

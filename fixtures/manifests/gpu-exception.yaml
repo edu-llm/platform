@@ -23,5 +23,5 @@ maximum_runtime_hours: "13"
 maximum_attempts: 1
 checkpoint:
   interval_minutes: 30
-  destination_prefix: s3://edullm-checkpoints/runs/
+  destination_prefix: s3://sbsandbox-intern-edullm-checkpoints/runs/
   resume_required: false

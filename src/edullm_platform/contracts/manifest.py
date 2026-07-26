@@ -2,12 +2,29 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BeforeValidator, Field, model_validator
 
-from .base import ContractModel, PositiveStrictDecimal, require_ordered_sequence
+from .base import (
+    SHA256_DIGEST_PATTERN,
+    ContractModel,
+    PositiveStrictDecimal,
+    require_ordered_sequence,
+)
 from .validation import require_checkpoint_for_retries
 from .workload import CheckpointContract
 
 COMMIT_SHA_PATTERN = r"^[0-9a-f]{40}$"
-IMAGE_DIGEST_PATTERN = r"^sha256:[0-9a-f]{64}$"
+IMAGE_DIGEST_PATTERN = SHA256_DIGEST_PATTERN
+
+
+class FanOut(ContractModel):
+    size: int = Field(ge=2)
+    max_parallel: int = Field(ge=1)
+    index_parameter: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_parallelism_within_size(self) -> Self:
+        if self.max_parallel > self.size:
+            raise ValueError("fan-out parallelism must not exceed fan-out size")
+        return self
 
 
 class RunManifest(ContractModel):
@@ -26,6 +43,7 @@ class RunManifest(ContractModel):
     maximum_runtime_hours: PositiveStrictDecimal = Field(gt=0)
     maximum_attempts: int = Field(ge=1)
     checkpoint: CheckpointContract | None
+    fanout: FanOut | None = None
 
     @model_validator(mode="after")
     def validate_retry_checkpoint(self) -> Self:
