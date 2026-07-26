@@ -16,7 +16,7 @@ concurrency:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     env:
       STACK_NAME: sbsandbox-intern-edullm-phase1-ecr-probe-${{ github.run_id }}
       REPOSITORY_NAME: sbsandbox-intern-edullm-phase1-ecr-probe-${{ github.run_id }}
@@ -53,8 +53,23 @@ jobs:
           aws ecr describe-repositories \
             --repository-names "$REPOSITORY_NAME"
 
+  cleanup:
+    needs: probe
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      STACK_NAME: sbsandbox-intern-edullm-phase1-ecr-probe-${{ github.run_id }}
+      REPOSITORY_NAME: sbsandbox-intern-edullm-phase1-ecr-probe-${{ github.run_id }}
+    steps:
+      - name: Assume shared deploy role
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-duration-seconds: 900
+
       - name: Delete probe stack
-        if: ${{ always() }}
         shell: bash
         run: |
           set -uo pipefail

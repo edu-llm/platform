@@ -25,6 +25,14 @@ def _load_workflow() -> tuple[str, dict[str, Any]]:
     return text, document
 
 
+def _credentials_step(job: dict[str, Any]) -> dict[str, Any]:
+    return next(
+        step
+        for step in job["steps"]
+        if step.get("uses", "").startswith("aws-actions/configure-aws-credentials@")
+    )
+
+
 def test_codeowners_protects_phase1_infrastructure_surfaces() -> None:
     lines = {
         line.strip()
@@ -48,15 +56,11 @@ def test_probe_workflow_has_restricted_trigger_permissions_and_execution() -> No
     assert workflow["concurrency"]["cancel-in-progress"] == "false"
 
     jobs = workflow["jobs"]
-    assert list(jobs) == ["probe"]
+    assert list(jobs) == ["probe", "cleanup"]
     probe = jobs["probe"]
-    assert probe["timeout-minutes"] == "15"
+    assert probe["timeout-minutes"] == "10"
 
-    configure_step = next(
-        step
-        for step in probe["steps"]
-        if step.get("uses", "").startswith("aws-actions/configure-aws-credentials@")
-    )
+    configure_step = _credentials_step(probe)
     assert configure_step["with"]["role-to-assume"] == "${{ vars.AWS_DEPLOY_ROLE_ARN }}"
     assert configure_step["with"]["aws-region"] == "${{ vars.AWS_REGION }}"
     assert configure_step["with"]["role-duration-seconds"] == "900"
@@ -79,17 +83,53 @@ def test_probe_workflow_pins_actions_and_excludes_account_ids_and_iam() -> None:
 
 def test_probe_workflow_creates_verifies_and_always_deletes_stack() -> None:
     _, workflow = _load_workflow()
-    steps = workflow["jobs"]["probe"]["steps"]
-    run_scripts = "\n".join(step.get("run", "") for step in steps)
+    probe_scripts = "\n".join(
+        step.get("run", "") for step in workflow["jobs"]["probe"]["steps"]
+    )
 
-    assert "aws cloudformation create-stack" in run_scripts
-    assert "aws cloudformation wait stack-create-complete" in run_scripts
-    assert "aws ecr describe-repositories" in run_scripts
+    assert "aws cloudformation create-stack" in probe_scripts
+    assert "aws cloudformation wait stack-create-complete" in probe_scripts
+    assert "aws ecr describe-repositories" in probe_scripts
 
-    cleanup_step = next(step for step in steps if step.get("name") == "Delete probe stack")
-    assert cleanup_step["if"] == "${{ always() }}"
+    cleanup = workflow["jobs"]["cleanup"]
+    assert cleanup["needs"] == "probe"
+    assert cleanup["if"] == "${{ always() }}"
+    assert cleanup["timeout-minutes"] == "5"
+    assert cleanup["env"] == workflow["jobs"]["probe"]["env"]
+
+    cleanup_credentials = _credentials_step(cleanup)
+    assert cleanup_credentials["with"]["role-to-assume"] == "${{ vars.AWS_DEPLOY_ROLE_ARN }}"
+    assert cleanup_credentials["with"]["aws-region"] == "${{ vars.AWS_REGION }}"
+    assert cleanup_credentials["with"]["role-duration-seconds"] == "900"
+
+    cleanup_step = next(
+        step for step in cleanup["steps"] if step.get("name") == "Delete probe stack"
+    )
     assert "aws cloudformation delete-stack" in cleanup_step["run"]
     assert "aws cloudformation wait stack-delete-complete" in cleanup_step["run"]
+    assert "cleanup_failed=0" in cleanup_step["run"]
+    assert cleanup_step["run"].count("|| cleanup_failed=1") == 2
+    assert 'exit "$cleanup_failed"' in cleanup_step["run"]
+
+
+def test_probe_inline_template_declares_named_ecr_repository() -> None:
+    _, workflow = _load_workflow()
+    create_step = next(
+        step
+        for step in workflow["jobs"]["probe"]["steps"]
+        if step.get("name") == "Create probe stack"
+    )
+    template_match = re.search(
+        r"cat > probe-template\.yml <<EOF\n(?P<template>.*?)\nEOF",
+        create_step["run"],
+        flags=re.DOTALL,
+    )
+    assert template_match is not None
+
+    template = yaml.safe_load(template_match.group("template"))
+    repository = template["Resources"]["ProbeRepository"]
+    assert repository["Type"] == "AWS::ECR::Repository"
+    assert repository["Properties"]["RepositoryName"] == "${REPOSITORY_NAME}"
 
 
 def test_probe_resource_names_use_sandbox_prefix() -> None:
