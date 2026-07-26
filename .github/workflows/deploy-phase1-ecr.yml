@@ -1,12 +1,13 @@
 name: Deploy Phase 1 ECR repository
 
+# The deployer role trust policy pins job_workflow_ref to
+# edu-llm/platform/.github/workflows/deploy-phase1-ecr.yml@refs/heads/main.
+# Renaming or moving this file silently revokes every deployment. Do not rename it.
 on:
   workflow_dispatch:
   push:
     branches:
       - main
-      # Bootstrap only: remove after the first successful deployment.
-      - feature/phase-1-branch-to-image
     paths:
       - .github/workflows/deploy-phase1-ecr.yml
       - infra/ecr-repositories.yaml
@@ -33,7 +34,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_INFRA_DEPLOYER_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
           role-duration-seconds: 900
 

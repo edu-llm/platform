@@ -11,6 +11,7 @@ from workflow_support import (
     step,
 )
 
+WORKFLOW_FILE = ".github/workflows/deploy-phase1-ecr.yml"
 WORKFLOW_PATH = WORKFLOWS_ROOT / "deploy-phase1-ecr.yml"
 TEMPLATE_PATH = "infra/ecr-repositories.yaml"
 STACK_NAME = "sbsandbox-intern-edullm-phase1-ecr"
@@ -21,15 +22,19 @@ def _load_workflow() -> dict[str, Any]:
     return load_workflow(WORKFLOW_PATH)
 
 
-def test_workflow_has_only_the_approved_dispatch_and_bootstrap_push_triggers() -> None:
+def test_workflow_runs_only_on_dispatch_and_pushes_to_main() -> None:
+    # The deployer role trusts job_workflow_ref @refs/heads/main only, so a branch
+    # trigger could not reach AWS anyway. Keeping the branch list at main means the
+    # workflow fails at the trigger instead of at a confusing AssumeRole denial.
     workflow = _load_workflow()
 
     assert set(workflow["on"]) == {"workflow_dispatch", "push"}
     assert workflow["on"]["workflow_dispatch"] is None
     assert workflow["on"]["push"] == {
-        "branches": ["main", "feature/phase-1-branch-to-image"],
-        "paths": [".github/workflows/deploy-phase1-ecr.yml", TEMPLATE_PATH],
+        "branches": ["main"],
+        "paths": [WORKFLOW_FILE, TEMPLATE_PATH],
     }
+    assert "feature/" not in WORKFLOW_PATH.read_text(encoding="utf-8")
 
 
 def test_workflow_permissions_concurrency_and_runtime_are_minimal_and_bounded() -> None:
@@ -56,10 +61,22 @@ def test_workflow_pins_checkout_and_aws_credentials_to_approved_commits() -> Non
         "e6de054238d6b7531b4efff3b6587d9aade6a06c"
     )
     assert credentials["with"] == {
-        "role-to-assume": "${{ vars.AWS_DEPLOY_ROLE_ARN }}",
+        "role-to-assume": "${{ vars.AWS_INFRA_DEPLOYER_ROLE_ARN }}",
         "aws-region": "${{ vars.AWS_REGION }}",
         "role-duration-seconds": 900,
     }
+
+
+def test_workflow_no_longer_assumes_the_retired_shared_deploy_role() -> None:
+    # InternGitHubActionsDeploy-sbsandbox is assumable by any repository in the
+    # organization and cannot put ECR lifecycle policies. AWS_INFRA_DEPLOYER_ROLE_ARN is
+    # a separate repository variable so that flipping one role back cannot silently
+    # restore the other.
+    workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    assert "vars.AWS_DEPLOY_ROLE_ARN" not in workflow_text
+    assert "InternGitHubActionsDeploy" not in workflow_text
+    assert workflow_text.count("vars.AWS_INFRA_DEPLOYER_ROLE_ARN") == 1
 
 
 def test_workflow_validates_and_deploys_only_the_approved_non_iam_template() -> None:
