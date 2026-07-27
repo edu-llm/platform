@@ -1,6 +1,6 @@
 # Phase 0 schema compatibility report
 
-70 contract models. The structural digest is `sha256` over the model's JSON schema with sorted keys, so it changes when a field is added, removed, retyped, or reconstrained, and does not change when unrelated code moves. Comparing this table between phases answers whether a schema changed.
+74 contract models. The structural digest is `sha256` over the model's JSON schema with sorted keys, so it changes when a field is added, removed, retyped, or reconstrained, and does not change when unrelated code moves. Comparing this table between phases answers whether a schema changed.
 
 The kind column separates a `record`, which some payload is validated against, from a `base`, which exists only for other models to inherit from and which no payload names directly.
 
@@ -29,7 +29,7 @@ The kind column separates a `record`, which some payload is validated against, f
 
 ## Runtime records
 
-54 models are not exported to `schemas/`. These are produced while work runs or while a decision is made: lineage, results, datasets, authorization outcomes, operational evidence, and gate results. They carry a `schema_version` field where they are persisted, and they are deliberately not published as repository configuration, because no human authors them by hand.
+58 models are not exported to `schemas/`. These are produced while work runs or while a decision is made: lineage, results, datasets, authorization outcomes, operational evidence, and gate results. They carry a `schema_version` field where they are persisted, and they are deliberately not published as repository configuration, because no human authors them by hand.
 
 | model | module | kind | schema_version | structural digest |
 | --- | --- | --- | --- | --- |
@@ -80,10 +80,14 @@ The kind column separates a `record`, which some payload is validated against, f
 | IamTrustStatement | edullm_platform.phase1_evidence | record | unversioned | sha256:c980d45a581830325ab30cc75fe332c79315db0b62acefb48e121bd3db3dea23 |
 | ImageScanEvidence | edullm_platform.phase1_evidence | record | unversioned | sha256:fe319ebea128d53ad24f38b5a6ba1cb9a1d7113e2517e2be4f4e1fc1ccaa9adc |
 | ImageScanFindingCounts | edullm_platform.phase1_evidence | record | unversioned | sha256:3ecbfd6c0d498de0074f167970f5124624b7821b7270d2d049d48bd6e182d07c |
+| ImmutableTagRefusalEvidence | edullm_platform.phase1_evidence | record | unversioned | sha256:94005586a8fd7f73ecb15f07702063229cb43518cd9dbee032210b79d330eb70 |
 | OidcSessionEvidence | edullm_platform.phase1_evidence | record | unversioned | sha256:ac5da5197bfab87802a8940e85cef7c2a98b22bba5fa1603e9e3d4b157f47856 |
 | Phase1GateReport | edullm_platform.phase1_gate | record | unversioned | sha256:272f0f0197f14c273859796b1e7c563015d86233b0e15870c9de39618ef1de44 |
 | AttemptedDenial | edullm_platform.publisher_denials | record | unversioned | sha256:f0b497787467fde6f343ddec8552ead542f393a7ed111e59cc7b74041107fe69 |
 | PublisherDenialMatrix | edullm_platform.publisher_denials | record | 1 | sha256:66bcc2645e9e044e23cd10338e2041e7a236528989f5ad2013f0d1d292d354da |
+| ConfigurationField | edullm_platform.rebuild_comparison | record | unversioned | sha256:04c684f0cfe10bf5d4afbc0a8885fc89150cf49966d76690a30f104c132478c1 |
+| LocalRebuildComparison | edullm_platform.rebuild_comparison | record | 1 | sha256:8585e161aa3a3b8608869b06434ae517694bf094d196b8fb7da55dda51dd2c6b |
+| RebuiltImage | edullm_platform.rebuild_comparison | record | unversioned | sha256:ba0d657955630da264698dfbb7b85dc6dd70cc0401cbaf3d8f23db75cba16d4e |
 | RoleDriftFinding | edullm_platform.role_drift | record | unversioned | sha256:4572586fb60d4c8b381ac0680119aa19c5b3009343767fb6d3c1b301a35cb5d0 |
 | RoleDriftReport | edullm_platform.role_drift | record | unversioned | sha256:f0e5b2e3ec53486f5dfa7a880c32d594f002bba71f1b1ff71285673a6cf5fe27 |
 | TemplateRole | edullm_platform.role_drift | record | unversioned | sha256:5e12a30b611a50e621b89faa4c18987f91b429d710bd748f4342fae2821a8e9a |
@@ -111,6 +115,7 @@ Regenerate with `uv run python tools/export_schemas.py`. Verify a file by hand w
 | DatasetRelease | 1 |
 | ImageProvenance | 1 |
 | LifecycleEvent | 1 |
+| LocalRebuildComparison | 1 |
 | LogicalRun | 1 |
 | PublisherDenialMatrix | 1 |
 | ResultManifest | 1 |
