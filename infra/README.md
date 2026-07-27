@@ -217,7 +217,7 @@ will strand again.
 | # | Stack | Template | Roles or resources | Applied from |
 | --- | --- | --- | --- | --- |
 | 1 | `sbsandbox-intern-edullm-phase2-admission-service-roles` | `infra/iam/admission-service-roles.yaml` | `…-admission-states`, `…-admission-lambda` | laptop |
-| 2 | the Phase 1 deployer stack — name unrecorded, see below | `infra/iam/infra-deployer-role.yaml` (amended) | `…-infra-deployer` | laptop |
+| 2 | `sbsandbox-intern-edullm-infra-deployer-iam` | `infra/iam/infra-deployer-role.yaml` (amended) | `…-infra-deployer` | laptop |
 | 3 | `sbsandbox-intern-edullm-phase2-admission-iam` | `infra/iam/admission-role.yaml` | `…-admission` | laptop |
 | 4 | `sbsandbox-intern-edullm-phase2-lineage` | `infra/lineage-bucket.yaml` | lineage bucket | CI |
 | 5 | `sbsandbox-intern-edullm-phase2-artifacts` | `infra/artifacts-bucket.yaml` | artifacts bucket | CI |
@@ -249,11 +249,14 @@ Two notes on the names in that table:
   file is where the name is decided. Use the one above and do not vary it: a second name
   produces a second stack that tries to create the same two role names and fails.
 - **The Phase 1 deployer stack (2).** The role
-  `sbsandbox-intern-edullm-infra-deployer` was created from a laptop during Phase 1 and
-  the stack name it was created under is not committed anywhere — not in `README.md`, not
-  in `infra/`, not in `tools/`, not in `proof/phase-1/`, and not in any commit message.
-  Recover it from the account rather than guessing, because deploying the amended template
-  under a new name fails on the role name already existing:
+  `sbsandbox-intern-edullm-infra-deployer` was created from a laptop during Phase 1 under
+  a stack name that was committed nowhere — not in `README.md`, not in `infra/`, not in
+  `tools/`, not in `proof/phase-1/`, and not in any commit message. It was recovered from
+  the account on 2026-07-27 and is now in the table above:
+  `sbsandbox-intern-edullm-infra-deployer-iam`. Guessing was not an option, because
+  deploying the amended template under a new name fails on the role name already
+  existing. The command that recovered it, kept for the next resource whose stack nobody
+  wrote down:
 
 ```bash
 aws cloudformation describe-stack-resources \
@@ -261,9 +264,6 @@ aws cloudformation describe-stack-resources \
   --query 'StackResources[].StackName' \
   --profile sbsandbox --region us-east-1
 ```
-
-Record the answer in this table once it is known. It is one line, and not having it is
-what made this paragraph necessary.
 
 Anything under `infra/` that is not under `infra/iam/` is deployed by CI. `--capabilities`
 is not needed for those, and they must never be applied from a laptop: a stack applied by

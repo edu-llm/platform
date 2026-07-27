@@ -128,11 +128,11 @@ DRIFT_COMPARISON_RAN: Final = (
     "committed under fixtures/evidence/phase-1/roles/ and "
     "tests/test_phase1_deployed_roles.py re-runs the comparison on every test run, so a "
     "policy widened in the console would now be caught the next time either is executed "
-    "rather than leaving every test green. Phase 2 has since amended the deployer template "
-    "to reach the admission stacks, so the comparison currently reports the deployed role "
-    "as narrower than the template it is measured against. That difference is recorded as a "
-    "pending amendment with the deploy that clears it, and it does not weaken this "
-    "criterion: any divergence other than the recorded one still fails."
+    "rather than leaving every test green. Phase 2 amended the deployer template to reach "
+    "the admission stacks, which put the account behind the template until somebody "
+    "applied the stack by hand; that amendment was deployed and re-captured on 2026-07-27, "
+    "the comparison reports no findings, and the pending record that carried the "
+    "difference has been removed rather than left to become an exemption."
 )
 
 #: The CLI the workflow actually invokes, parametrised over one rejection reason each.

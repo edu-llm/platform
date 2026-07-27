@@ -141,52 +141,11 @@ class PendingAmendment:
 
 def pending_amendments() -> tuple[PendingAmendment, ...]:
     """Every committed template amendment the account has not caught up with yet."""
-    amendments = (
-        PendingAmendment(
-            role_name=DEPLOYER_ROLE,
-            reason=(
-                "infra/iam/infra-deployer-role.yaml was amended for Phase 2, which needs "
-                "CI to deploy the S3, Step Functions, Lambda and CloudWatch Logs stacks: "
-                "the trust gained a second job_workflow_ref for "
-                ".github/workflows/deploy-phase2-admission.yml, and the role gained a "
-                "second inline policy, deploy-phase2-admission-stacks. The stack that "
-                "creates this role is applied from a laptop, with credentials CI does "
-                "not hold and this repository cannot obtain, so the template moves first "
-                "and the account follows. Until it does, the deployed role is behind the "
-                "template, which is the direction that fails a deploy rather than the "
-                "direction that grants one."
-            ),
-            cleared_by=(
-                "Applying the amended stack. Re-run tools/capture_phase1_evidence.py "
-                "against the sandbox, commit the sanitized record, and delete this entry: "
-                "once the account carries the second workflow reference and the second "
-                "inline policy the comparison reports nothing, and the cases below fail "
-                "while this is still here. Nothing else clears it. Editing the findings "
-                "to match a difference that turned up later is how a pending amendment "
-                "becomes a permanent exemption."
-            ),
-            findings=(
-                RoleDriftFinding(
-                    direction=DriftDirection.NARROWER,
-                    element="trust policy statement 1 conditions",
-                    detail=(
-                        "StringEquals token.actions.githubusercontent.com:job_workflow_ref "
-                        "does not accept values the template does: "
-                        "edu-llm/platform/.github/workflows/"
-                        "deploy-phase2-admission.yml@refs/heads/main"
-                    ),
-                ),
-                RoleDriftFinding(
-                    direction=DriftDirection.NARROWER,
-                    element="inline policy 'deploy-phase2-admission-stacks'",
-                    detail=(
-                        "the template declares an inline policy the deployed role does "
-                        "not carry"
-                    ),
-                ),
-            ),
-        ),
-    )
+    # Empty, and that is the ordinary state. The Phase 2 deployer amendment was recorded
+    # here while the template was ahead of the account, and was removed on 2026-07-27
+    # when the stack was applied from a laptop and the re-capture reported no findings.
+    # An entry lives here only between those two moments.
+    amendments: tuple[PendingAmendment, ...] = ()
     declared = dict(COMMITTED_ROLE_TEMPLATES)
     for amendment in amendments:
         if amendment.role_name not in declared:

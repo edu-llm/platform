@@ -7,7 +7,7 @@ Both Phase 1 roles were created once from a laptop and neither is redeployed by 
 | role | template | inline policies | max session (s) |
 | --- | --- | --- | --- |
 | sbsandbox-intern-edullm-ecr-publisher | `infra/iam/ecr-publisher-role.yaml` | 1 | 3600 |
-| sbsandbox-intern-edullm-infra-deployer | `infra/iam/infra-deployer-role.yaml` | 1 | 3600 |
+| sbsandbox-intern-edullm-infra-deployer | `infra/iam/infra-deployer-role.yaml` | 2 | 3600 |
 
 ## What is reported, and in which direction
 
@@ -41,7 +41,7 @@ One capture per role, taken against the sandbox and committed after review. The 
 
 | role | observed | matches its template | findings | expires |
 | --- | --- | --- | --- | --- |
-| sbsandbox-intern-edullm-ecr-publisher | 2026-07-26 | yes | 0 | 2026-08-25 |
-| sbsandbox-intern-edullm-infra-deployer | 2026-07-26 | yes | 0 | 2026-08-25 |
+| sbsandbox-intern-edullm-ecr-publisher | 2026-07-27 | yes | 0 | 2026-08-26 |
+| sbsandbox-intern-edullm-infra-deployer | 2026-07-27 | yes | 0 | 2026-08-26 |
 
 **Expires** is thirty days after the observation, and it is not a formality. Every Phase 1 evidence record refuses to load past it, so on that date `tests/test_phase1_deployed_roles.py` goes red, every criterion resting on it reverts with reason `cited_test_failed`, `tools/validate_phase1.py` exits 1, and this bundle stops building. Nothing about the roles will have changed; what will have lapsed is anybody's knowledge of them. The two honest responses are to re-capture, or to delete the records and remove the citations resting on them, which is a decision somebody takes in writing.

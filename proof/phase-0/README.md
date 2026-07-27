@@ -2,8 +2,8 @@
 
 Phase: phase-0
 Bundle schema version: 1
-Source commit: 7ddd38f696167ea85b05537f8a68b03fe7e8ff27
-Generated: 2026-07-26T20:33:20+00:00
+Source commit: 782b4ea69339407acfd4281dd9a00206ae35459b
+Generated: 2026-07-27T05:09:00+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 0 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase0_proof.py` at generation time.
 
@@ -18,9 +18,9 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 2023 |
-| suite tests executed | 1953 |
-| suite passed | 1953 |
+| suite tests collected | 2705 |
+| suite tests executed | 2620 |
+| suite passed | 2620 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
@@ -33,18 +33,23 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 | criteria GAP (each one fails the gate) | 0 |
 | related recorded deferrals | 1 (D1) |
 | fixtures with recorded digests | 9 |
-| contract models inventoried | 70 |
-| JSON Schema files exported | 5 |
+| contract models inventoried | 80 |
+| JSON Schema files exported | 9 |
 
 ## Contract versions
 
 | contract | schema_version |
 | --- | --- |
+| AdmissionDenialMatrix | 1 |
 | AuthorizationScenario | 1 |
 | CheckpointManifest | 1 |
+| DatasetRegistry | 1 |
 | DatasetRelease | 1 |
+| DecisionRecord | 1 |
 | ImageProvenance | 1 |
+| IntentRecord | 1 |
 | LifecycleEvent | 1 |
+| LocalRebuildComparison | 1 |
 | LogicalRun | 1 |
 | PublisherDenialMatrix | 1 |
 | ResultManifest | 1 |
@@ -76,7 +81,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | file | digest |
 | --- | --- |
 | config/organization.yaml | sha256:6236a7d673c3c2a534229e81a77c4fa25f2d93ef820239afd6b705b7896326bf |
-| config/policy.yaml | sha256:ee55d3af327fff82ddce4694861e0c74053f77a247183a339aac6d3b1461b0a4 |
+| config/policy.yaml | sha256:92eaa1184e11dfce0bbd7e9aaddd168f8bc15a7075f2d9270b5ad8f32ff0148d |
 | config/workload-catalog.yaml | sha256:31eacaa510964426782f8e5f8c7be431880538739ea3c5c7a94cc66340621ca9 |
 | fixtures/authorization/admin-exception.yaml | sha256:b7e70ff952819e51c4c033e7655db488fee51b0f0ea08c8a7a3b478c7b3efece |
 | fixtures/authorization/lead-self-authorization.yaml | sha256:2571d0f48577986f6bf7c7e0491ca791ff6e9eb7bac0444fbee2751bc1959ad2 |
@@ -87,10 +92,14 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | fixtures/manifests/multiseed-routine.yaml | sha256:0241fc78bc6e165b4f06c0e0223607f39f4f1a4fee4700f56348b488619743bd |
 | fixtures/manifests/olmo-branch-routine.yaml | sha256:111be4025328f27d4f9d6d4a8b204bc5c26322cf2e4b66f4207a4ecc70d3db86 |
 | fixtures/manifests/sagemaker-routine.yaml | sha256:3a7277b614e990f9e1a827f272ff917603b8059f831abae1d4342d15be12956a |
+| schemas/datasets.schema.json | sha256:3f175ffd729d92eaba728bc459ca455a538bb5b5131840c11986f1548579ef9b |
+| schemas/decision-record.schema.json | sha256:344b5620a7dfda70671857e64e578895edaabc4f1f3556c84eb0432d2b7e449c |
+| schemas/intent-record.schema.json | sha256:39b40c1375c470efe47179c52e898562a7623c1a79f429de8f078f46cf3ddc8d |
 | schemas/organization.schema.json | sha256:5caadb560ced32562f2673591717ce836f1831292cab16a4f9c3a22ba3c0c1f1 |
-| schemas/policy.schema.json | sha256:1ddace2bcdeac29fb6bc686756fac59ecac93f318637b76d0dcc7d28bc394341 |
+| schemas/policy.schema.json | sha256:29cc11db46a87f328c77f113179765c6aa2a873f10cb9922f2a28b9a1dc29f61 |
 | schemas/repositories.schema.json | sha256:ee5ef9172b9ab89aa0965cefda9d86fda855c4cd3f0eeda41ab50551327ff68e |
 | schemas/run-manifest.schema.json | sha256:62851f48df41a1dc270a525b44a8ef01eab660af9d5b60030d6c0a8776e196f2 |
+| schemas/submission-inputs.schema.json | sha256:0cbe9a1bc42474266c0d217cf4dab4031fb3720408f1fe347a12e62e4abc1578 |
 | schemas/workload-catalog.schema.json | sha256:4039ead3f77c0949db2a701dae90461788ed6856838075a1f223f3d4b853fa06 |
 
 ## Known limitations

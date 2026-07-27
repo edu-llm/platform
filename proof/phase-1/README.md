@@ -2,8 +2,8 @@
 
 Phase: phase-1
 Bundle schema version: 1
-Source commit: e8eb76ec88738c3dec1ae7c9285b551586d6c01d
-Generated: 2026-07-26T23:42:43+00:00
+Source commit: 782b4ea69339407acfd4281dd9a00206ae35459b
+Generated: 2026-07-27T05:07:51+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 1 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase1_proof.py` at generation time. Every criterion is covered and the gate is green, which is the state in which a bundle is most worth reading carefully: the Known limitations below say what each criterion does not cover, and `open-decisions.md` says what this phase surfaced and did not settle.
 
@@ -22,14 +22,14 @@ This bundle exists so that a reviewer can decide whether Phase 1 is done without
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 2177 |
-| suite tests executed | 2093 |
-| suite passed | 2093 |
+| suite tests collected | 2705 |
+| suite tests executed | 2620 |
+| suite passed | 2620 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
-| matrix node ids executed | 405 |
-| matrix node ids passed | 405 |
+| matrix node ids executed | 414 |
+| matrix node ids passed | 414 |
 | matrix node ids failed | 0 |
 | phase criteria | 8 |
 | criteria COVERED | 8 (1, 2, 3, 4, 5, 6, 7, 8) |
@@ -69,8 +69,8 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | .github/workflows/deploy-phase1-ecr.yml | sha256:8320eda8dcf143695ffbed148efadf9aceb8052d5e4b2c3578aeb92fb97cdf4a |
 | config/repositories.yaml | sha256:607b4e0db31f0f9e119f233ba019896b8ff3866bca50a048ea7d44d9d10e23d4 |
 | fixtures/evidence/phase-1/rebuild/local-rebuild-comparison.json | sha256:91966d61ec214e5c66a6ed801ed9a3271b834ff10a110afa600cf66981d7a33d |
-| fixtures/evidence/phase-1/roles/sbsandbox-intern-edullm-ecr-publisher.sanitized.json | sha256:9705f3eb935a2f86171142d4268a77c6b0a0be89c02f7bae66b6181a9502eb56 |
-| fixtures/evidence/phase-1/roles/sbsandbox-intern-edullm-infra-deployer.sanitized.json | sha256:86affd607e2ab42a751de397e8060192c99c143303f8719d93e1c2c3ef2fe875 |
+| fixtures/evidence/phase-1/roles/sbsandbox-intern-edullm-ecr-publisher.sanitized.json | sha256:9cb3d8595f68f6736ec2bb84882015bae5ea454704db77c1839a8751d726d122 |
+| fixtures/evidence/phase-1/roles/sbsandbox-intern-edullm-infra-deployer.sanitized.json | sha256:6ec169a5c42ff96fa829b5441d47990655fc143cf6c2ce89a5ac336b14e96e62 |
 | fixtures/evidence/phase-1/run/denials/batch-SubmitJob.sanitized.json | sha256:795febb8aa042ec85ab966e734c075ca2764f7d54da2da12819436dea4829654 |
 | fixtures/evidence/phase-1/run/denials/batch-UpdateComputeEnvironment.sanitized.json | sha256:b2af615431c6913856a402dd99961aacee2925fd3d1ed484e216d86cf2126e0d |
 | fixtures/evidence/phase-1/run/denials/ecr-DeleteRepository.sanitized.json | sha256:049d2fa4daeb7fdcfe1aae751d7f9c7829a9a9e256eae28d5605843430159481 |
@@ -83,7 +83,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | fixtures/evidence/phase-1/run/publisher-session.sanitized.json | sha256:dac2929a79f4712fdb6536e1ba50eddf38083263eb095161d061dfa9949ea095 |
 | infra/ecr-repositories.yaml | sha256:e376f3c0be68510e2c195c410738125cf67165d18b4a5e4289d0205bbb2547d9 |
 | infra/iam/ecr-publisher-role.yaml | sha256:9f117cb0262e2da221bacfce14251add3bc80596aac8fd36145355aacf72b5cb |
-| infra/iam/infra-deployer-role.yaml | sha256:17b8cf8656dee8b9a3c961c81db7a59cfa21b6faed7423992436cff69fc40552 |
+| infra/iam/infra-deployer-role.yaml | sha256:b6e9074a89486ede906021bc9f70c92e2f3d7e3b8401aeab91857ae2814a6910 |
 
 ## Known limitations
 
@@ -92,7 +92,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 - The second push that ECR refused was made by hand from a laptop, under an identity that is not the publisher role, which is why check 7 is covered on a narrower observation than a reader might assume. Tag immutability belongs to the repository rather than to the caller, so the refusal stands; what was not observed is the publisher role meeting it, and the publish workflow deliberately cannot produce that, because its pre-flight lookup resumes rather than pushing again.
 - The S3 half of check 6 is narrower than the criterion's words. The probe is ListBuckets, an account-level call with no bucket to be absent, so a refusal proves the role holds no account-wide S3 permission rather than that it cannot read a dataset. Closing that difference needs a bucket this project owns and an object in it that exists, and no such bucket is deployed.
 - The rebuild comparison behind check 2 was made locally rather than by the workflow, on one builder and one platform, both recorded in the record it reads. The workflow cannot produce it: a re-run of the same commit resumes to the published digest instead of building. A different BuildKit could produce a different answer.
-- A capture is a statement about one moment. The records under `fixtures/evidence/phase-1/roles/` stop loading thirty days after they were observed — sbsandbox-intern-edullm-ecr-publisher on 2026-08-25, sbsandbox-intern-edullm-infra-deployer on 2026-08-25 — and every claim resting on them is a gap again from that date. Nothing renews it, and nothing should.
+- A capture is a statement about one moment. The records under `fixtures/evidence/phase-1/roles/` stop loading thirty days after they were observed — sbsandbox-intern-edullm-ecr-publisher on 2026-08-26, sbsandbox-intern-edullm-infra-deployer on 2026-08-26 — and every claim resting on them is a gap again from that date. Nothing renews it, and nothing should.
 - The records of the publish run under `fixtures/evidence/phase-1/run/` expire the same way and it means something different. They stop loading on 2026-08-25, and checks 1, 6 and 7 revert to gaps on that date. Nothing about the run will have changed — the image, its scan, the session and the five refusals are all still in the registry and in CloudTrail — but nobody will have confirmed lately that the repository is still immutable, the role is still refused, and the tag still resolves to this digest. Re-capturing costs a read of the account rather than another publish.
 - The drift comparison does not reason about IAM wildcards. A deployed resource of `repository/*` against a template's `repository/x` is reported as one resource gained and one lost, not as one being wider than the other.
 - The secret scan applied to this bundle masks its own content digests before scanning. A 64-character hexadecimal sha256 digest and a 40-character hexadecimal commit SHA both match the generic long-credential patterns in evidence.py, so the two exact token shapes this bundle emits are replaced with placeholders and everything else is scanned unchanged. No other exemption is applied.

@@ -79,10 +79,176 @@
           "sid": null
         }
       ]
+    },
+    {
+      "policy_name": "deploy-phase2-admission-stacks",
+      "policy_version": "2012-10-17",
+      "statements": [
+        {
+          "action_match": {
+            "actions": [
+              "s3:CreateBucket",
+              "s3:DeleteBucket",
+              "s3:PutBucketVersioning",
+              "s3:PutBucketObjectLockConfiguration",
+              "s3:PutBucketPublicAccessBlock",
+              "s3:PutEncryptionConfiguration",
+              "s3:PutBucketTagging",
+              "s3:PutBucketPolicy",
+              "s3:DeleteBucketPolicy",
+              "s3:ListBucket",
+              "s3:GetBucketLocation",
+              "s3:GetBucketVersioning",
+              "s3:GetBucketObjectLockConfiguration",
+              "s3:GetBucketPublicAccessBlock",
+              "s3:GetEncryptionConfiguration",
+              "s3:GetBucketTagging",
+              "s3:GetBucketPolicy",
+              "s3:GetBucketOwnershipControls",
+              "s3:GetBucketLogging",
+              "s3:GetBucketNotification",
+              "s3:GetBucketCORS",
+              "s3:GetBucketWebsite",
+              "s3:GetAccelerateConfiguration",
+              "s3:GetLifecycleConfiguration",
+              "s3:GetReplicationConfiguration",
+              "s3:GetAnalyticsConfiguration",
+              "s3:GetInventoryConfiguration",
+              "s3:GetMetricsConfiguration",
+              "s3:GetIntelligentTieringConfiguration"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:s3:::sbsandbox-intern-edullm-*"
+            ]
+          },
+          "sid": null
+        },
+        {
+          "action_match": {
+            "actions": [
+              "s3:GetObject",
+              "s3:GetObjectVersion",
+              "s3:PutObject",
+              "s3:DeleteObject",
+              "s3:DeleteObjectVersion",
+              "s3:AbortMultipartUpload"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:s3:::sbsandbox-intern-edullm-artifacts/*"
+            ]
+          },
+          "sid": null
+        },
+        {
+          "action_match": {
+            "actions": [
+              "states:CreateStateMachine",
+              "states:DeleteStateMachine",
+              "states:UpdateStateMachine",
+              "states:DescribeStateMachine",
+              "states:TagResource",
+              "states:UntagResource",
+              "states:ListTagsForResource"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:states:us-east-1:<aws-account-id>:stateMachine:sbsandbox-intern-edullm-*"
+            ]
+          },
+          "sid": null
+        },
+        {
+          "action_match": {
+            "actions": [
+              "lambda:CreateFunction",
+              "lambda:DeleteFunction",
+              "lambda:UpdateFunctionCode",
+              "lambda:UpdateFunctionConfiguration",
+              "lambda:GetFunction",
+              "lambda:GetFunctionConfiguration",
+              "lambda:GetFunctionCodeSigningConfig",
+              "lambda:GetRuntimeManagementConfig",
+              "lambda:ListVersionsByFunction",
+              "lambda:TagResource",
+              "lambda:UntagResource",
+              "lambda:ListTags"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:lambda:us-east-1:<aws-account-id>:function:sbsandbox-intern-edullm-*"
+            ]
+          },
+          "sid": null
+        },
+        {
+          "action_match": {
+            "actions": [
+              "logs:CreateLogGroup",
+              "logs:DeleteLogGroup",
+              "logs:DescribeLogGroups",
+              "logs:PutRetentionPolicy",
+              "logs:DeleteRetentionPolicy",
+              "logs:TagResource",
+              "logs:UntagResource",
+              "logs:ListTagsForResource"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:logs:us-east-1:<aws-account-id>:log-group:/aws/vendedlogs/states/sbsandbox-intern-edullm-*"
+            ]
+          },
+          "sid": null
+        },
+        {
+          "action_match": {
+            "actions": [
+              "iam:PassRole"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:iam::<aws-account-id>:role/sbsandbox-intern-edullm-admission-states",
+              "arn:aws:iam::<aws-account-id>:role/sbsandbox-intern-edullm-admission-lambda"
+            ]
+          },
+          "sid": null
+        }
+      ]
     }
   ],
   "max_session_duration_seconds": 3600,
-  "observed_at": "2026-07-26T20:38:54Z",
+  "observed_at": "2026-07-27T05:05:00Z",
   "permissions_boundary_policy_name": "InternSandboxBoundary",
   "role_name": "sbsandbox-intern-edullm-infra-deployer",
   "source": "aws",
@@ -108,7 +274,8 @@
           "condition_key": "token.actions.githubusercontent.com:job_workflow_ref",
           "operator": "StringEquals",
           "values": [
-            "edu-llm/platform/.github/workflows/deploy-phase1-ecr.yml@refs/heads/main"
+            "edu-llm/platform/.github/workflows/deploy-phase1-ecr.yml@refs/heads/main",
+            "edu-llm/platform/.github/workflows/deploy-phase2-admission.yml@refs/heads/main"
           ]
         },
         {
