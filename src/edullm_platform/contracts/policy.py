@@ -11,6 +11,7 @@ from .base import (
     require_ordered_sequence,
 )
 from .bindings import TeamId
+from .image_scan import ImageScanPolicy
 
 DeniedOutrightCondition = Literal[
     "unregistered_repository",
@@ -18,6 +19,7 @@ DeniedOutrightCondition = Literal[
     "unregistered_compute_profile",
     "mutable_repository_revision",
     "mutable_image_reference",
+    "image_scan_findings_unreviewed",
 ]
 
 
@@ -49,6 +51,12 @@ class RequestFacts(ContractModel):
     compute_profile_registered: bool
     immutable_revision: bool
     immutable_image: bool
+    #: Whether this image's scan findings have been seen: clean of the severities policy
+    #: blocks on, or carrying a recorded exception. Required rather than defaulted, and
+    #: deliberately so -- a security fact with a default is a security fact that is true
+    #: whenever somebody forgets, and there are only three places in the tree that build
+    #: one of these. See ``contracts/image_scan.py`` for what the answer means.
+    image_scan_reviewed: bool
     estimated_cost_usd: StrictDecimal = Field(ge=0)
     maximum_runtime_hours: StrictDecimal = Field(gt=0)
     maximum_attempts: int = Field(ge=1)
@@ -67,6 +75,11 @@ class ApprovalPolicy(ContractModel):
     #: one day are ordinary and two dates that collide are not orderable.
     policy_version: str = Field(pattern=POLICY_VERSION_PATTERN)
     thresholds: PolicyThresholds
+    #: Which scan severities require a recorded exception before a digest may run. Part of
+    #: the policy rather than of the build, because the answer to "may this image run" is
+    #: a policy question and the enforcement point is admission. See
+    #: ``contracts/image_scan.py`` for why it is not enforced at publish.
+    image_scan: ImageScanPolicy
     approval_scope: ApprovalScopeValue
     routine_approver_role: str = Field(min_length=1)
     exception_approver_roles: Annotated[
@@ -95,6 +108,7 @@ def classify_request(
         and facts.compute_profile_registered
         and facts.immutable_revision
         and facts.immutable_image
+        and facts.image_scan_reviewed
         and facts.estimated_cost_usd <= thresholds.routine_maximum_cost_usd
         and facts.maximum_runtime_hours <= thresholds.routine_maximum_runtime_hours
         and facts.maximum_attempts <= thresholds.routine_maximum_attempts

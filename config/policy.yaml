@@ -1,10 +1,23 @@
-policy_version: v1
+# v2 adds the image-scan gate: the image_scan block below, and the
+# image_scan_findings_unreviewed condition in denied_outright. Bumped rather than edited in
+# place because a decision record naming only its outcome would otherwise be
+# uninterpretable -- a later reader could not tell a v1 approval, taken when no scan was
+# consulted, from a v2 one taken when the findings had been read.
+policy_version: v2
 thresholds:
   routine_maximum_cost_usd: "500"
   routine_maximum_runtime_hours: "12"
   routine_maximum_attempts: 2
   routine_maximum_fanout_size: 64
   routine_maximum_parallelism: 8
+# Which registry-scan severities require a recorded exception before a digest may run.
+# Enforced at admission, not at publish: ECR scans after the push, Phase 1 tags are
+# immutable, and a publish-time block would leave that commit unpublishable for good.
+# See src/edullm_platform/contracts/image_scan.py for the full reasoning and for why a
+# bare threshold was rejected.
+image_scan:
+  blocking_severities:
+    - CRITICAL
 approval_scope: organization
 routine_approver_role: team_lead
 exception_approver_roles:
@@ -15,3 +28,8 @@ denied_outright:
   - unregistered_compute_profile
   - mutable_repository_revision
   - mutable_image_reference
+  # A digest whose registry scan carries a severity in image_scan.blocking_severities and
+  # which no entry in config/image-exceptions.yaml covers. Denied outright rather than
+  # classified as an exception on purpose: the point is that somebody read the findings
+  # before the run was submitted, not that an admin waved it through while it waited.
+  - image_scan_findings_unreviewed

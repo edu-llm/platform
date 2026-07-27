@@ -162,6 +162,9 @@ def test_rendered_schemas_cover_all_root_contract_models() -> None:
         "submission-inputs.schema.json",
         "intent-record.schema.json",
         "decision-record.schema.json",
+        # Reviewed configuration a human edits: which published digests somebody has read
+        # the scan findings for and accepted.
+        "image-exceptions.schema.json",
     }
 
 

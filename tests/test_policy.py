@@ -6,6 +6,7 @@ from pydantic import ValidationError
 
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
+from edullm_platform.contracts.image_scan import ImageScanSeverity
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.policy import (
     ApprovalClass,
@@ -95,6 +96,7 @@ def request_facts_payload(**overrides: object) -> dict[str, object]:
         "compute_profile_registered": True,
         "immutable_revision": True,
         "immutable_image": True,
+        "image_scan_reviewed": True,
         "estimated_cost_usd": "499.99",
         "maximum_runtime_hours": "24",
         "maximum_attempts": 2,
@@ -127,6 +129,7 @@ def policy_payload() -> dict[str, object]:
             "routine_maximum_fanout_size": 64,
             "routine_maximum_parallelism": 8,
         },
+        "image_scan": {"blocking_severities": ["CRITICAL"]},
         "approval_scope": "organization",
         "routine_approver_role": "team_lead",
         "exception_approver_roles": ["platform_admin"],
@@ -152,6 +155,7 @@ def test_any_policy_violation_is_exception() -> None:
         compute_profile_registered=True,
         immutable_revision=True,
         immutable_image=False,
+        image_scan_reviewed=True,
         estimated_cost_usd=Decimal(1),
         maximum_runtime_hours=Decimal(1),
         maximum_attempts=1,
@@ -224,7 +228,11 @@ def test_policy_yaml_validates_against_contract() -> None:
     project_root = Path(__file__).resolve().parents[1]
     config_path = project_root / "config" / "policy.yaml"
     policy = load_yaml(config_path, ApprovalPolicy)
-    assert policy.policy_version == "v1"
+    # v2 since the image-scan gate landed: the image_scan block and the
+    # image_scan_findings_unreviewed denial condition. Pinned rather than merely
+    # pattern-checked so that a policy change without a version bump fails here, which is
+    # the whole reason a decision record carries the version.
+    assert policy.policy_version == "v2"
     assert policy.thresholds.routine_maximum_cost_usd == Decimal(500)
     assert policy.thresholds.routine_maximum_runtime_hours == Decimal(12)
     assert policy.thresholds.routine_maximum_attempts == 2
@@ -232,12 +240,14 @@ def test_policy_yaml_validates_against_contract() -> None:
     assert policy.thresholds.routine_maximum_parallelism == 8
     assert policy.routine_approver_role == "team_lead"
     assert policy.exception_approver_roles == ("platform_admin",)
+    assert policy.image_scan.blocking_severities == (ImageScanSeverity.CRITICAL,)
     assert policy.denied_outright == (
         "unregistered_repository",
         "unregistered_dataset",
         "unregistered_compute_profile",
         "mutable_repository_revision",
         "mutable_image_reference",
+        "image_scan_findings_unreviewed",
     )
 
 
@@ -312,6 +322,7 @@ def test_request_facts_reject_non_decimal_runtime() -> None:
                 "compute_profile_registered": True,
                 "immutable_revision": True,
                 "immutable_image": True,
+                "image_scan_reviewed": True,
                 "estimated_cost_usd": "1",
                 "maximum_runtime_hours": 24,
                 "maximum_attempts": 1,

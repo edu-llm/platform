@@ -15,6 +15,7 @@ request:
   compute_profile_registered: true
   immutable_revision: true
   immutable_image: true
+  image_scan_reviewed: true
   estimated_cost_usd: "73.74"
   maximum_runtime_hours: "13"
   maximum_attempts: 1

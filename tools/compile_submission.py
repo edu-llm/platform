@@ -23,6 +23,8 @@ from edullm_platform.canonical import canonical_json_bytes
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
 from edullm_platform.contracts.identity import new_run_id
+from edullm_platform.contracts.image import ImageProvenance
+from edullm_platform.contracts.image_scan import ImageScanExceptionRegistry
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.policy import ApprovalPolicy
 from edullm_platform.contracts.workload import WorkloadCatalog
@@ -47,6 +49,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--summary", type=Path)
     parser.add_argument("--github-output", type=Path)
+    parser.add_argument(
+        "--image-provenance",
+        type=Path,
+        default=None,
+        help=(
+            "the provenance record for the image this submission names, which carries the "
+            "registry scan summary. Optional, and its absence fails closed: without it the "
+            "scan is unknown, and an unknown scan is not a reviewed one."
+        ),
+    )
     parser.add_argument(
         "--run-id",
         help=(
@@ -78,8 +90,26 @@ def main(argv: list[str] | None = None) -> int:
         inventory = load_yaml(args.config_dir / "organization.yaml", OrganizationInventory)
         catalog = load_yaml(args.config_dir / "workload-catalog.yaml", WorkloadCatalog)
         registry = load_yaml(args.config_dir / "datasets.yaml", DatasetRegistry)
+        image_scan_registry = load_yaml(
+            args.config_dir / "image-exceptions.yaml", ImageScanExceptionRegistry
+        )
     except (OSError, ValidationError, TypeError) as exc:
         print(f"reviewed configuration is unreadable: {exc}", file=sys.stderr)
+        return EXIT_UNUSABLE
+
+    # The scan comes from the provenance record because this job holds no AWS credentials
+    # and cannot ask ECR. It chooses the approval environment and nothing else: admission
+    # re-derives the findings from the registry and fails closed if they disagree, so a
+    # provenance record that understated them buys a submitter a gate they still cannot
+    # pass. Absent provenance means no summary, which fails closed here too.
+    try:
+        image_scan_summary = (
+            load_yaml(args.image_provenance, ImageProvenance).image_scan
+            if args.image_provenance is not None
+            else None
+        )
+    except (OSError, ValidationError, TypeError) as exc:
+        print(f"the image provenance record is unreadable: {exc}", file=sys.stderr)
         return EXIT_UNUSABLE
 
     try:
@@ -90,6 +120,8 @@ def main(argv: list[str] | None = None) -> int:
             inventory=inventory,
             catalog=catalog,
             dataset_registry=registry,
+            image_scan_registry=image_scan_registry,
+            image_scan_summary=image_scan_summary,
         )
     except SubmissionRefusedError as exc:
         print(f"submission refused: {exc}", file=sys.stderr)

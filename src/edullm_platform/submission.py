@@ -31,6 +31,10 @@ from edullm_platform.contracts.base import (
     serialize_decimal,
 )
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
+from edullm_platform.contracts.image_scan import (
+    ImageScanExceptionRegistry,
+    ImageScanSummary,
+)
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.manifest import (
     COMMIT_SHA_PATTERN,
@@ -151,6 +155,8 @@ def compile_submission(
     inventory: OrganizationInventory,
     catalog: WorkloadCatalog,
     dataset_registry: DatasetRegistry,
+    image_scan_registry: ImageScanExceptionRegistry,
+    image_scan_summary: ImageScanSummary | None = None,
 ) -> CompiledSubmission:
     workload = _resolve_workload(catalog, inputs.workload_profile)
 
@@ -214,6 +220,13 @@ def compile_submission(
         catalog=catalog,
         dataset_registry=dataset_registry,
         estimated_cost_usd=cost.maximum_compute_cost_usd,
+        # The scan summary comes from the provenance record here, because the compile job
+        # holds no AWS credentials and cannot ask ECR. Admission asks ECR itself and fails
+        # closed on disagreement, so this value chooses the approval environment and is
+        # never what the decision rests on -- the same split as the manifest hash.
+        image_scan_policy=policy.image_scan,
+        image_scan_registry=image_scan_registry,
+        image_scan_summary=image_scan_summary,
     )
 
     # Imported here rather than at module scope: admission owns this rule, and importing

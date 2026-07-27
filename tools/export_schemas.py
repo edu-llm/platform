@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from edullm_platform.contracts.admission import DecisionRecord, IntentRecord
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
+from edullm_platform.contracts.image_scan import ImageScanExceptionRegistry
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.manifest import RunManifest
 from edullm_platform.contracts.policy import ApprovalPolicy
@@ -26,6 +27,11 @@ SCHEMA_MODELS: dict[str, type[BaseModel]] = {
     "intent-record.schema.json": IntentRecord,
     "decision-record.schema.json": DecisionRecord,
     "submission-inputs.schema.json": SubmissionInputs,
+    # Reviewed configuration, like the four above it: which published digests somebody has
+    # read the scan findings for and accepted. Exported because it is a file a human edits
+    # and a published shape is what makes a malformed entry fail at load rather than at
+    # admission.
+    "image-exceptions.schema.json": ImageScanExceptionRegistry,
 }
 
 

@@ -7,6 +7,12 @@ from typing import Final
 
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
+from edullm_platform.contracts.image_scan import (
+    ImageScanExceptionRegistry,
+    ImageScanPolicy,
+    ImageScanSummary,
+    image_scan_is_reviewed,
+)
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.manifest import (
     COMMIT_SHA_PATTERN,
@@ -97,6 +103,9 @@ def build_request_facts(
     catalog: WorkloadCatalog,
     dataset_registry: DatasetRegistry,
     estimated_cost_usd: Decimal,
+    image_scan_policy: ImageScanPolicy | None = None,
+    image_scan_registry: ImageScanExceptionRegistry | None = None,
+    image_scan_summary: ImageScanSummary | None = None,
 ) -> RequestFacts:
     """Derive the facts policy classifies, from the manifest and reviewed configuration.
 
@@ -108,7 +117,35 @@ def build_request_facts(
     no input that says "this is routine". That asymmetry is what makes classification a
     boundary rather than a formality, and it is why this function takes the registry as an
     argument instead of reading a set defined next to a caller.
+
+    **The three image-scan arguments and what their absence means.**
+    ``image_scan_summary=None`` means "no scan result is in hand", which resolves to
+    ``image_scan_reviewed=False`` unless a recorded exception covers the digest. That is the
+    fail-closed direction: an image nobody has scanned is not an image somebody has cleared.
+    The summary is an argument rather than something read here because the two production
+    callers get it from different places -- the compile step from the provenance record,
+    admission from ECR -- and admission re-deriving it is what stops the compile step's
+    answer from being taken on trust.
+
+    ``image_scan_policy=None`` is different and is a deliberate opt-out: it means this
+    caller is not evaluating the scan gate at all, and the fact is reported as reviewed.
+    That exists for the Phase 0 fixture path, which compiles manifests naming digests that
+    were never published and so can have no scan. It is a fail-open default, which is why
+    it has to be asked for by omission rather than arrived at: both production callers pass
+    ``policy.image_scan``, and
+    ``tests/test_phase3_image_scan.py::test_both_production_callers_evaluate_the_scan_gate``
+    fails if either stops. Without that test this argument would be the quiet way to turn
+    the gate off.
     """
+    if image_scan_policy is None:
+        image_scan_reviewed = True
+    else:
+        image_scan_reviewed = image_scan_is_reviewed(
+            image_digest=manifest.image_digest,
+            summary=image_scan_summary,
+            policy=image_scan_policy,
+            registry=image_scan_registry or ImageScanExceptionRegistry(schema_version=1),
+        )
     return RequestFacts(
         claimed_team=manifest.team,
         repository_registered=manifest.repository in inventory.pilot_repositories,
@@ -116,6 +153,7 @@ def build_request_facts(
         compute_profile_registered=is_compute_profile_registered(manifest, catalog),
         immutable_revision=manifest_has_immutable_revision(manifest),
         immutable_image=manifest_has_immutable_image(manifest),
+        image_scan_reviewed=image_scan_reviewed,
         estimated_cost_usd=estimated_cost_usd,
         maximum_runtime_hours=manifest.maximum_runtime_hours,
         maximum_attempts=manifest.maximum_attempts,

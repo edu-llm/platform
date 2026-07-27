@@ -12,6 +12,10 @@ from edullm_platform.contracts.admission import AdmissionReason, ApprovalEnviron
 from edullm_platform.contracts.authorization import AuthorizationReason
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
 from edullm_platform.contracts.image import GitHubWorkflowRunReference
+from edullm_platform.contracts.image_scan import (
+    ImageScanExceptionRegistry,
+    ImageScanSummary,
+)
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.manifest import RunManifest
 from edullm_platform.contracts.policy import ApprovalClass, ApprovalPolicy
@@ -53,6 +57,24 @@ def load_workload_catalog() -> WorkloadCatalog:
 
 def load_dataset_registry() -> DatasetRegistry:
     return load_yaml(PROJECT_ROOT / "config" / "datasets.yaml", DatasetRegistry)
+
+
+#: A scan with nothing in it, for the tests that are about admission rather than about
+#: scanning. Passing a clean summary rather than omitting the arguments keeps these tests
+#: on the same code path production uses; omitting them would take the opt-out branch and
+#: quietly stop exercising the gate at all.
+def clean_image_scan() -> ImageScanSummary:
+    return ImageScanSummary(
+        schema_version=1,
+        status="COMPLETE",
+        scanned_at=datetime(2026, 7, 26, 22, 5, 49, tzinfo=UTC),
+    )
+
+
+def load_image_scan_registry() -> ImageScanExceptionRegistry:
+    return load_yaml(
+        PROJECT_ROOT / "config" / "image-exceptions.yaml", ImageScanExceptionRegistry
+    )
 
 
 class TripwireDatasetRegistry(DatasetRegistry):
@@ -107,6 +129,8 @@ def admit_submission(
     approving_environment: ApprovalEnvironment = ApprovalEnvironment.LEAD,
     policy: ApprovalPolicy | None = None,
     dataset_registry: DatasetRegistry | None = None,
+    image_scan_registry: ImageScanExceptionRegistry | None = None,
+    image_scan_summary: ImageScanSummary | None = None,
 ) -> AdmissionOutcome:
     submitted = (
         payload
@@ -130,6 +154,14 @@ def admit_submission(
         catalog=load_workload_catalog(),
         dataset_registry=(
             dataset_registry if dataset_registry is not None else load_dataset_registry()
+        ),
+        image_scan_registry=(
+            image_scan_registry
+            if image_scan_registry is not None
+            else ImageScanExceptionRegistry(schema_version=1)
+        ),
+        image_scan_summary=(
+            image_scan_summary if image_scan_summary is not None else clean_image_scan()
         ),
         recorded_at=RECORDED_AT,
     )
@@ -483,7 +515,7 @@ def test_a_refusal_earns_records_where_an_unreadable_payload_earns_none() -> Non
     [
         ("commit_sha", "main"),
         ("commit_sha", "v1.0.0"),
-        ("commit_sha", "0000000000000000000000000000000000000001 "),
+        ("commit_sha", "1234567890121234567890121234567890120001 "),
         ("image_digest", "latest"),
         ("image_digest", "ghcr.io/edu-llm/olmo-core:latest"),
     ],

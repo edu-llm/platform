@@ -35,6 +35,10 @@ from edullm_platform.config import load_yaml
 from edullm_platform.contracts.admission import ApprovalEnvironment
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
 from edullm_platform.contracts.image import GitHubWorkflowRunReference
+from edullm_platform.contracts.image_scan import (
+    ImageScanExceptionRegistry,
+    image_scan_summary_from_ecr,
+)
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.policy import ApprovalPolicy
 from edullm_platform.contracts.workload import WorkloadCatalog
@@ -86,6 +90,9 @@ def handler(event: Mapping[str, Any], context: object = None) -> dict[str, Any]:
     inventory = load_yaml(config / "organization.yaml", OrganizationInventory)
     catalog = load_yaml(config / "workload-catalog.yaml", WorkloadCatalog)
     dataset_registry = load_yaml(config / "datasets.yaml", DatasetRegistry)
+    image_scan_registry = load_yaml(
+        config / "image-exceptions.yaml", ImageScanExceptionRegistry
+    )
 
     try:
         approving_environment = ApprovalEnvironment(_require(event, "approving_environment"))
@@ -113,6 +120,13 @@ def handler(event: Mapping[str, Any], context: object = None) -> dict[str, Any]:
         inventory=inventory,
         catalog=catalog,
         dataset_registry=dataset_registry,
+        image_scan_registry=image_scan_registry,
+        # The state machine puts the ECR describe result here, from a task it ran itself.
+        # It is deliberately not passed through from the execution input: the caller
+        # supplies the manifest, and letting it also supply the scan findings would let it
+        # declare its own image clean. The ASL builds this key from the ReadImageScan
+        # state's Result and from nowhere else.
+        image_scan_summary=image_scan_summary_from_ecr(event.get("image_scan")),
         recorded_at=datetime.now(tz=UTC),
     )
 
