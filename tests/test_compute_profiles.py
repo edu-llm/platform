@@ -149,8 +149,19 @@ def test_shipped_catalog_instance_types_are_unique() -> None:
     assert len(set(instance_types)) == len(instance_types)
 
 
-def test_shipped_catalog_declares_no_provisioned_capacity_yet() -> None:
-    assert [profile.name for profile in SHIPPED_PROFILES if profile.provisioned] == []
+def test_exactly_one_profile_is_provisioned() -> None:
+    """Phase 3 promotes one, on purpose, and the count is the assertion.
+
+    This test used to say no profile was provisioned. It is the tripwire for the specific
+    Phase 4 mistake of flipping a second flag before deploying anything to back it: the
+    catalog would then claim capacity that does not exist, and every submission naming that
+    profile would reach Batch and sit in RUNNABLE forever rather than being refused at
+    admission. Whether the promoted one is actually backed is a separate question, asserted
+    against config/execution-targets.yaml in tests/test_phase3_execution.py.
+    """
+    assert [profile.name for profile in SHIPPED_PROFILES if profile.provisioned] == [
+        "cpu-32vcpu"
+    ]
 
 
 def test_unprovisioned_profile_classifies_as_routine_within_policy_thresholds() -> None:
@@ -169,13 +180,31 @@ def test_unprovisioned_profile_classifies_as_exception_above_policy_thresholds()
     assert classify_request(facts, shipped_policy().thresholds) == ApprovalClass.EXCEPTION
 
 
-@pytest.mark.parametrize("profile", SHIPPED_PROFILES, ids=PROFILE_IDS)
-def test_shipped_profile_is_refused_at_execution_until_provisioned(
+@pytest.mark.parametrize(
+    "profile",
+    [profile for profile in SHIPPED_PROFILES if not profile.provisioned],
+    ids=[profile.name for profile in SHIPPED_PROFILES if not profile.provisioned],
+)
+def test_an_unprovisioned_profile_is_refused_at_execution(
     profile: ComputeProfile,
 ) -> None:
+    """Eleven of the twelve, and the list is derived rather than written down.
+
+    Deriving it means promoting a profile moves it out of this parametrisation
+    automatically, which is what stops the promotion from failing here for the wrong
+    reason. What catches an unbacked promotion is the count above and the target check in
+    tests/test_phase3_execution.py, not this.
+    """
     with pytest.raises(UnprovisionedComputeProfileError) as exc_info:
         resolve_compute_profile_for_execution(shipped_catalog(), profile.name)
     assert exc_info.value.reason_code == "unprovisioned_compute_profile"
+
+
+def test_the_provisioned_profile_resolves_for_execution() -> None:
+    """The other half of the pair above, and the half that was impossible until Phase 3."""
+    profile = resolve_compute_profile_for_execution(shipped_catalog(), "cpu-32vcpu")
+    assert profile.provisioned
+    assert profile.instance_type == "c7i.8xlarge"
 
 
 def test_unpriced_profile_is_refused_as_unregistered() -> None:

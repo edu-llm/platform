@@ -1,0 +1,96 @@
+{
+  "additionalProperties": false,
+  "description": "The instant Batch accepted a submission, and what it called the job.\n\nWritten write-once to the lineage store immediately after the submit succeeds, before\nanything has started. That ordering is the point: a job that is submitted and then\nvanishes leaves this record behind, and a run whose binding is missing is a run the\nstate machine never got as far as submitting.\n\n``batch_job_name`` is the run id. Batch does not enforce unique job names, so this is\nnot deduplication -- ``ExecutionAlreadyExists`` and the conditional write already refuse\na duplicate before Batch is reached. It is join-ability: the run id is the S3 key, the\nexecution name and the job name, and any two of the three disagreeing is visible.",
+  "properties": {
+    "array_size": {
+      "anyOf": [
+        {
+          "minimum": 2,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Array Size"
+    },
+    "attempt_duration_seconds": {
+      "exclusiveMinimum": 0,
+      "title": "Attempt Duration Seconds",
+      "type": "integer"
+    },
+    "attempts": {
+      "minimum": 1,
+      "title": "Attempts",
+      "type": "integer"
+    },
+    "batch_job_arn": {
+      "pattern": "^arn:aws[a-z0-9-]*:batch:[a-z0-9-]+:[0-9]{12}:job/[A-Za-z0-9][A-Za-z0-9:_-]{0,255}$",
+      "title": "Batch Job Arn",
+      "type": "string"
+    },
+    "batch_job_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9:/_.-]{0,511}$",
+      "title": "Batch Job Id",
+      "type": "string"
+    },
+    "batch_job_name": {
+      "pattern": "^run_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "title": "Batch Job Name",
+      "type": "string"
+    },
+    "compute_profile": {
+      "minLength": 1,
+      "title": "Compute Profile",
+      "type": "string"
+    },
+    "job_definition_arn": {
+      "pattern": "^arn:aws[a-z0-9-]*:batch:[a-z0-9-]+:[0-9]{12}:job-definition/[A-Za-z0-9][A-Za-z0-9_-]{0,127}(:[0-9]{1,10})?$",
+      "title": "Job Definition Arn",
+      "type": "string"
+    },
+    "job_queue_arn": {
+      "pattern": "^arn:aws[a-z0-9-]*:batch:[a-z0-9-]+:[0-9]{12}:job-queue/[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+      "title": "Job Queue Arn",
+      "type": "string"
+    },
+    "log_group": {
+      "pattern": "^/[A-Za-z0-9_./#-]{1,511}$",
+      "title": "Log Group",
+      "type": "string"
+    },
+    "run_id": {
+      "pattern": "^run_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "submitted_at": {
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$",
+      "title": "Submitted At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "run_id",
+    "batch_job_id",
+    "batch_job_arn",
+    "batch_job_name",
+    "job_queue_arn",
+    "job_definition_arn",
+    "compute_profile",
+    "log_group",
+    "attempt_duration_seconds",
+    "attempts",
+    "submitted_at"
+  ],
+  "title": "BatchJobBinding",
+  "type": "object"
+}

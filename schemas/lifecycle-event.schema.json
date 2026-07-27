@@ -1,0 +1,79 @@
+{
+  "$defs": {
+    "EventSource": {
+      "enum": [
+        "scheduler",
+        "platform",
+        "workload",
+        "operator"
+      ],
+      "title": "EventSource",
+      "type": "string"
+    },
+    "RunState": {
+      "enum": [
+        "submitted",
+        "runnable",
+        "running",
+        "succeeded",
+        "failed",
+        "cancelled"
+      ],
+      "title": "RunState",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "attempt_id": {
+      "anyOf": [
+        {
+          "pattern": "^att_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Attempt Id"
+    },
+    "event_id": {
+      "pattern": "^evt_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "title": "Event Id",
+      "type": "string"
+    },
+    "occurred_at": {
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$",
+      "title": "Occurred At",
+      "type": "string"
+    },
+    "run_id": {
+      "pattern": "^run_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "source": {
+      "$ref": "#/$defs/EventSource"
+    },
+    "state": {
+      "$ref": "#/$defs/RunState"
+    }
+  },
+  "required": [
+    "schema_version",
+    "event_id",
+    "run_id",
+    "attempt_id",
+    "source",
+    "state",
+    "occurred_at"
+  ],
+  "title": "LifecycleEvent",
+  "type": "object"
+}

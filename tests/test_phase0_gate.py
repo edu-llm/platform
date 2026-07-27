@@ -135,8 +135,22 @@ def test_pilots_fails_for_single_pilot_repository() -> None:
 
 def test_workload_coverage_fails_without_gpu_representative() -> None:
     inputs = loaded_inputs()
-    workloads = list(inputs.catalog.workloads)
-    workloads[1] = workloads[1].model_copy(update={"compute_profile": "cpu-32vcpu"})
+    # Every GPU workload is moved onto a CPU profile, rather than one at a fixed index.
+    # Phase 3 added a third workload and the index silently stopped naming the GPU one,
+    # which left this test asserting that a catalog with a GPU representative has no GPU
+    # representative -- it failed loudly, but a differently ordered catalog would have
+    # made it pass while checking nothing.
+    gpu_profiles = {
+        profile.name
+        for profile in inputs.catalog.compute_profiles
+        if profile.accelerator == "gpu"
+    }
+    workloads = [
+        workload.model_copy(update={"compute_profile": "cpu-32vcpu"})
+        if workload.compute_profile in gpu_profiles
+        else workload
+        for workload in inputs.catalog.workloads
+    ]
     catalog = inputs.catalog.model_copy(update={"workloads": tuple(workloads)})
     result = evaluate_phase0(replace(inputs, catalog=catalog))
     check = get_check(result, "inventory_workload_coverage")
