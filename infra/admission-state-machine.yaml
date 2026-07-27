@@ -109,6 +109,20 @@ Resources:
       # the measurement says no such name exists. Retrying S3.S3Exception would retry
       # every genuine duplicate three times before reaching the conflict record it was
       # always going to reach.
+      # The two lineage writes pass the handler's strings through untouched, rather than
+      # States.JsonToString of a structure. The handler already produced the canonical
+      # bytes whose digest the manifest hash quotes, and re-serialising them here would
+      # put a second JSON encoder between what was hashed and what S3 stores. The object
+      # keys come from the handler too, so a run id is spelled into a prefix in one place.
+      #
+      # The first live execution failed at States.Runtime because ValidateAndDecide read
+      # $.Payload.intent from a handler that returns intent_body. Both halves were
+      # asserted and neither was compared to the other, which is the whole shape of the
+      # defect. tests/test_phase2_admission_handler.py runs the handler and reads the
+      # JSONPaths out of this file, so a rename on either side fails there instead.
+      #
+      # Comments live out here because everything below DefinitionString is inside a
+      # literal block that is parsed as JSON, where a "#" line is a syntax error.
       DefinitionString:
         Fn::Sub: |
           {
@@ -123,8 +137,11 @@ Resources:
                   "Payload.$": "$"
                 },
                 "ResultSelector": {
-                  "intent.$": "$.Payload.intent",
-                  "decision.$": "$.Payload.decision"
+                  "accepted.$": "$.Payload.accepted",
+                  "intent_key.$": "$.Payload.intent_key",
+                  "decision_key.$": "$.Payload.decision_key",
+                  "intent_body.$": "$.Payload.intent_body",
+                  "decision_body.$": "$.Payload.decision_body"
                 },
                 "ResultPath": "$.admission",
                 "Retry": [
@@ -147,8 +164,8 @@ Resources:
                 "Resource": "arn:${AWS::Partition}:states:::aws-sdk:s3:putObject",
                 "Parameters": {
                   "Bucket": "sbsandbox-intern-edullm-lineage",
-                  "Key.$": "States.Format('intent/{}.json', $.run_id)",
-                  "Body.$": "States.JsonToString($.admission.intent)",
+                  "Key.$": "$.admission.intent_key",
+                  "Body.$": "$.admission.intent_body",
                   "ContentType": "application/json",
                   "ChecksumAlgorithm": "SHA256",
                   "IfNoneMatch": "*"
@@ -168,8 +185,8 @@ Resources:
                 "Resource": "arn:${AWS::Partition}:states:::aws-sdk:s3:putObject",
                 "Parameters": {
                   "Bucket": "sbsandbox-intern-edullm-lineage",
-                  "Key.$": "States.Format('decision/{}.json', $.run_id)",
-                  "Body.$": "States.JsonToString($.admission.decision)",
+                  "Key.$": "$.admission.decision_key",
+                  "Body.$": "$.admission.decision_body",
                   "ContentType": "application/json",
                   "ChecksumAlgorithm": "SHA256",
                   "IfNoneMatch": "*"
@@ -209,7 +226,7 @@ Resources:
                 "Type": "Choice",
                 "Choices": [
                   {
-                    "Variable": "$.admission.decision.accepted",
+                    "Variable": "$.admission.accepted",
                     "BooleanEquals": true,
                     "Next": "Admitted"
                   }
