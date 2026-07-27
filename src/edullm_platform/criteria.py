@@ -73,6 +73,8 @@ REENTRANT_TEST_MODULES: Final = (
     "tests/test_phase0_proof.py",
     "tests/test_phase1_criteria.py",
     "tests/test_phase1_proof.py",
+    "tests/test_phase2_criteria.py",
+    "tests/test_phase2_proof.py",
     "tests/test_verification_reuse.py",
 )
 
