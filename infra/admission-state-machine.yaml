@@ -109,17 +109,22 @@ Resources:
       # the measurement says no such name exists. Retrying S3.S3Exception would retry
       # every genuine duplicate three times before reaching the conflict record it was
       # always going to reach.
-      # The two lineage writes pass the handler's strings through untouched, rather than
-      # States.JsonToString of a structure. The handler already produced the canonical
-      # bytes whose digest the manifest hash quotes, and re-serialising them here would
-      # put a second JSON encoder between what was hashed and what S3 stores. The object
-      # keys come from the handler too, so a run id is spelled into a prefix in one place.
+      # The two lineage writes hand S3 the handler's mappings, never a string and never
+      # States.JsonToString of one. The SDK integration JSON-encodes whatever the Body
+      # path yields, so a string arrives quoted and escaped and every reader parses the
+      # record twice; an object arrives as ordinary JSON with compact separators and the
+      # key order it was given. The handler returns keys already in canonical order, so
+      # what S3 stores is byte-identical to what was hashed. Both halves of that were
+      # measured against a throwaway bucket rather than assumed. The object keys come
+      # from the handler too, so a run id is spelled into a prefix in one place.
       #
-      # The first live execution failed at States.Runtime because ValidateAndDecide read
-      # $.Payload.intent from a handler that returns intent_body. Both halves were
-      # asserted and neither was compared to the other, which is the whole shape of the
-      # defect. tests/test_phase2_admission_handler.py runs the handler and reads the
-      # JSONPaths out of this file, so a rename on either side fails there instead.
+      # These paths were right the first time and the handler was not. The first live
+      # execution failed at States.Runtime reading $.Payload.intent from a handler that
+      # returned intent_body; renaming the paths to match cleared the error and stored
+      # every record quoted, which is the same mistake wearing a passing execution. Both
+      # halves were asserted and neither was compared to the other, which is the whole
+      # shape of the defect. tests/test_phase2_admission_handler.py runs the handler and
+      # reads these paths out of this file, so a rename on either side fails there.
       #
       # Comments live out here because everything below DefinitionString is inside a
       # literal block that is parsed as JSON, where a "#" line is a syntax error.
@@ -140,8 +145,8 @@ Resources:
                   "accepted.$": "$.Payload.accepted",
                   "intent_key.$": "$.Payload.intent_key",
                   "decision_key.$": "$.Payload.decision_key",
-                  "intent_body.$": "$.Payload.intent_body",
-                  "decision_body.$": "$.Payload.decision_body"
+                  "intent.$": "$.Payload.intent",
+                  "decision.$": "$.Payload.decision"
                 },
                 "ResultPath": "$.admission",
                 "Retry": [
@@ -165,7 +170,7 @@ Resources:
                 "Parameters": {
                   "Bucket": "sbsandbox-intern-edullm-lineage",
                   "Key.$": "$.admission.intent_key",
-                  "Body.$": "$.admission.intent_body",
+                  "Body.$": "$.admission.intent",
                   "ContentType": "application/json",
                   "ChecksumAlgorithm": "SHA256",
                   "IfNoneMatch": "*"
@@ -186,7 +191,7 @@ Resources:
                 "Parameters": {
                   "Bucket": "sbsandbox-intern-edullm-lineage",
                   "Key.$": "$.admission.decision_key",
-                  "Body.$": "$.admission.decision_body",
+                  "Body.$": "$.admission.decision",
                   "ContentType": "application/json",
                   "ChecksumAlgorithm": "SHA256",
                   "IfNoneMatch": "*"

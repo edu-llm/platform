@@ -6,11 +6,13 @@ event into its arguments and its result into a payload, and to decide where conf
 comes from.
 
 **It decides, and it does not record.** The handler holds no S3 permission and makes no AWS
-call. It returns the two records as canonical JSON strings and the state machine writes
-them, which buys three things: the write appears as a first-class event in the execution
-history rather than inside an opaque function, the component that parses an untrusted
-manifest cannot write anything at all, and the bytes S3 stores are exactly the canonical
-serialization whose digest the rest of the system quotes.
+call. It returns the two records and the state machine writes them, which buys three
+things: the write appears as a first-class event in the execution history rather than
+inside an opaque function, the component that parses an untrusted manifest cannot write
+anything at all, and the bytes S3 stores are the canonical serialization rather than a
+re-encoding of it. The last of those depends on returning mappings round-tripped through
+the canonical bytes; the note on the return value says why, and it was learned from a
+live run that stored every record quoted and escaped.
 
 **Configuration is what was deployed, not what was sent.** The policy, roster, catalog and
 dataset registry are packaged into the deployment artifact and read from disk. Nothing in
@@ -20,6 +22,7 @@ record a fact about the platform rather than a claim by the caller.
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Mapping
 from datetime import UTC, datetime
@@ -122,9 +125,23 @@ def handler(event: Mapping[str, Any], context: object = None) -> dict[str, Any]:
         "intent_key": f"intent/{run_id}.json",
         "decision_key": f"decision/{run_id}.json",
         "conflict_key": f"conflicts/{run_id}.json",
-        # Canonical bytes, decoded. The state machine writes these verbatim, so what S3
-        # stores is byte-identical to what was hashed rather than a re-serialization of a
-        # structure that passed through another JSON encoder on the way.
-        "intent_body": canonical_json_bytes(outcome.intent).decode("utf-8"),
-        "decision_body": canonical_json_bytes(outcome.decision).decode("utf-8"),
+        # Objects, and objects parsed back out of the canonical bytes rather than built
+        # any other way. Both halves of that matter, and the first live run of this phase
+        # is why.
+        #
+        # Returning the canonical *string* is the obvious thing and it is wrong: the S3
+        # SDK integration JSON-encodes whatever the Body path yields, so a string is
+        # stored quoted and escaped -- `"{\"run_id\":...}"` -- and every reader has to
+        # parse the object twice. Measured against us-east-1 on 2026-07-27 with a
+        # throwaway bucket and state machine, writing the same record both ways.
+        #
+        # An object is stored as ordinary JSON, and the same measurement pinned how:
+        # compact separators, non-ASCII left unescaped, nulls kept, and keys in the order
+        # they arrive rather than sorted. That agrees with canonical_json_bytes on every
+        # axis except ordering, and ordering is ours: round-tripping through the canonical
+        # bytes yields a mapping whose keys are already sorted, so what S3 stores is
+        # byte-identical to what was hashed. Building the mapping with model_dump instead
+        # would hand Step Functions field-definition order and quietly lose that.
+        "intent": json.loads(canonical_json_bytes(outcome.intent)),
+        "decision": json.loads(canonical_json_bytes(outcome.decision)),
     }

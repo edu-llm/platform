@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -127,22 +128,36 @@ def test_the_handler_admits_a_routine_submission_a_lead_released(
     assert result["run_id"] == ACCEPTED_EVENT["run_id"]
 
 
-def test_the_records_are_canonical_json_strings_rather_than_structures(
-    _packaged_config: None,
-) -> None:
-    # The state machine writes these verbatim, so they have to arrive as the bytes that
-    # were hashed. A structure here would be re-serialised on the way to S3 by an encoder
-    # nobody chose, and the stored object would stop matching its own digest.
+def test_the_records_are_mappings_rather_than_strings(_packaged_config: None) -> None:
+    # A string here is stored by S3 quoted and escaped, because the SDK integration
+    # JSON-encodes whatever the Body path yields. That went live once and every record
+    # written that day has to be parsed twice to read.
     result = handler(ACCEPTED_EVENT)
 
-    for field in ("intent_body", "decision_body"):
-        assert isinstance(result[field], str)
-        json.loads(result[field])
+    for field in ("intent", "decision"):
+        assert isinstance(result[field], Mapping), f"{field} must not be a string"
 
-    intent = json.loads(result["intent_body"])
-    decision = json.loads(result["decision_body"])
-    assert intent["manifest_sha256"] == ACCEPTED_EVENT["approved_manifest_sha256"]
-    assert decision["run_id"] == intent["run_id"]
+    assert result["intent"]["manifest_sha256"] == ACCEPTED_EVENT["approved_manifest_sha256"]
+    assert result["decision"]["run_id"] == result["intent"]["run_id"]
+
+
+def test_the_records_serialize_back_to_the_bytes_they_were_hashed_from(
+    _packaged_config: None,
+) -> None:
+    # What makes the mapping safe to hand to Step Functions. Its keys are already in
+    # canonical order, so an encoder that keeps insertion order and compact separators --
+    # which is what the S3 integration was measured to do -- reproduces the canonical
+    # bytes exactly. Building the mapping any other way loses this silently.
+    result = handler(ACCEPTED_EVENT)
+
+    for field in ("intent", "decision"):
+        record = result[field]
+        assert list(record) == sorted(record), f"{field} keys are not in canonical order"
+        without_sorting = json.dumps(record, ensure_ascii=False, separators=(",", ":"))
+        with_sorting = json.dumps(
+            record, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        )
+        assert without_sorting == with_sorting
 
 
 def test_the_decision_cites_the_policy_on_disk_not_anything_in_the_event(
@@ -151,7 +166,7 @@ def test_the_decision_cites_the_policy_on_disk_not_anything_in_the_event(
     deployed = yaml.safe_load((PROJECT_ROOT / "config" / "policy.yaml").read_text())
     tampered = {**ACCEPTED_EVENT, "policy": {"policy_version": "attacker-supplied"}}
 
-    decision = json.loads(handler(tampered)["decision_body"])
+    decision = handler(tampered)["decision"]
 
     assert decision["policy_version"] == deployed["policy_version"]
     assert decision["policy_version"] != "attacker-supplied"
@@ -225,13 +240,14 @@ def test_every_admission_path_the_definition_reads_is_one_the_result_selector_ma
     assert read <= produced, f"states read fields the selector does not make: {read - produced}"
 
 
-def test_the_lineage_bodies_are_written_without_being_re_encoded(
+def test_the_lineage_bodies_are_written_as_objects_and_never_re_encoded(
     definition: dict[str, Any],
 ) -> None:
-    # States.JsonToString here would defeat the reason the handler returns strings.
+    # States.JsonToString would turn the mapping back into the string this design just
+    # stopped producing, and S3 would store it quoted again.
     states = definition["States"]
 
-    for state, field in (("WriteIntent", "intent_body"), ("WriteDecision", "decision_body")):
+    for state, field in (("WriteIntent", "intent"), ("WriteDecision", "decision")):
         parameters = states[state]["Parameters"]
         assert parameters["Body.$"] == f"$.admission.{field}"
         assert "JsonToString" not in parameters["Body.$"]
