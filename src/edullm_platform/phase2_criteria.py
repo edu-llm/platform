@@ -67,6 +67,7 @@ WORKFLOW = "tests/test_phase2_submit_run_workflow.py"
 INFRA = "tests/test_phase2_infrastructure.py"
 DENIALS = "tests/test_phase2_admission_denials.py"
 GITHUB = "tests/test_phase2_github_evidence.py"
+LINEAGE = "tests/test_phase2_lineage_evidence.py"
 PACKAGE = "tests/test_phase2_lambda_package.py"
 AUTHZ = "tests/test_authorization.py"
 
@@ -116,22 +117,26 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
         CriterionSpec(
             number="1",
             statement="Lead self-authorization succeeds.",
-            status=CriterionStatus.GAP,
+            status=CriterionStatus.COVERED,
+            proving_node_ids=(
+                *_ids(LINEAGE, "test_an_accepted_routine_run_was_released_by_the_lead_gate"),
+            ),
             supporting_node_ids=(
                 *_ids(ADMISSION, "test_a_correct_submission_through_the_right_gate_is_admitted"),
                 *_ids(HANDLER, "test_the_handler_admits_a_routine_submission_a_lead_released"),
+                *_ids(LINEAGE, "test_the_manifest_in_every_intent_still_hashes_to_its_recorded_value"),
             ),
-            gaps=(
+            scope_limits=(
                 (
-                    "The authorization half is proved: evaluate_authorization returns "
-                    "routine_self_authorized for a lead releasing their own routine "
-                    "submission, and the admission core admits it. What is unproved is the "
-                    "end-to-end half the phase plan requires. A lead did submit and release "
-                    "their own run on 2026-07-27, through the browser rather than the API, "
-                    "and the decision record in the account reads routine_self_authorized "
-                    "under policy v1."
+                    "A lead submitted and released their own run through the browser on "
+                    "2026-07-27, and the captured decision record reads routine_self_authorized "
+                    "under policy v1 with the authorization granted. The core tests prove the same "
+                    "outcome from the same inputs; the capture proves a run happened."
                 ),
-                NEEDS_A_COMMITTED_CAPTURE,
+                (
+                    "Rests on a capture, so it expires with the freshness window and is a statement "
+                    "about one run rather than about the next one."
+                ),
             ),
         ),
         CriterionSpec(
@@ -218,32 +223,28 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
         CriterionSpec(
             number="5",
             statement="Admin exception succeeds only through the admin path.",
-            status=CriterionStatus.GAP,
-            supporting_node_ids=(
-                *_ids(
-                    ADMISSION,
-                    "test_an_exception_released_by_an_admin_through_the_admin_gate_is_admitted",
-                ),
+            status=CriterionStatus.COVERED,
+            proving_node_ids=(
+                *_ids(LINEAGE, "test_an_accepted_exception_was_released_by_the_admin_gate_and_priced"),
                 *_ids(ADMISSION, "test_an_exception_released_by_the_lead_gate_is_refused"),
-                *_ids(
-                    ADMISSION,
-                    "test_a_routine_submission_released_by_the_admin_gate_is_refused",
-                ),
-                *_ids(
-                    INFRA,
-                    "test_admission_subject_condition_is_a_two_element_array_of_environment_subjects",
-                ),
+                *_ids(ADMISSION, "test_a_routine_submission_released_by_the_admin_gate_is_refused"),
             ),
-            gaps=(
+            supporting_node_ids=(
+                *_ids(INFRA, "test_admission_subject_condition_is_a_two_element_array_of_environment_subjects"),
+                *_ids(GITHUB, "test_the_admin_gate_is_reviewed_by_the_roster_admins_and_nobody_else"),
+            ),
+            scope_limits=(
                 (
-                    "Both directions are proved in the core: an exception released by the "
-                    "lead gate is refused, and a routine submission released by the admin "
-                    "gate is refused. The live half was observed. A submission overridden to "
-                    "100 hours, priced at 567.20 dollars, classified as an exception and "
-                    "routed to run-approval-admin, whose reviewers are the two roster admins "
-                    "and not the leads team."
+                    "An exception priced at 567.20 dollars was observed classifying as an exception "
+                    "and routing to run-approval-admin, whose reviewers are the two roster admins and "
+                    "not the leads team, and the captured decision records that gate."
                 ),
-                NEEDS_A_COMMITTED_CAPTURE,
+                (
+                    "Both directions are proved in the core rather than only the one that happened: an "
+                    "exception released by the lead gate is refused, and a routine submission released "
+                    "by the admin gate is refused. Without the second, a gate that released everything "
+                    "would still pass the first."
+                ),
             ),
         ),
         CriterionSpec(
@@ -531,38 +532,28 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
         CriterionSpec(
             number="13",
             statement="Edited manifests invalidate prior approvals.",
-            status=CriterionStatus.GAP,
-            supporting_node_ids=(
-                *_ids(
-                    ADMISSION,
-                    "test_a_manifest_that_does_not_hash_to_what_was_approved_is_refused",
-                ),
-                *_ids(ADMISSION, "test_a_manifest_swapped_for_another_after_approval_is_refused"),
-                *_ids(
-                    ADMISSION,
-                    "test_the_hash_is_checked_before_any_fact_is_derived_from_the_manifest",
-                ),
-                *_ids(
-                    HANDLER,
-                    "test_a_manifest_that_does_not_hash_to_the_approved_value_is_refused",
-                ),
+            status=CriterionStatus.COVERED,
+            proving_node_ids=(
+                *_ids(LINEAGE, "test_a_refused_submission_still_earns_an_attributable_decision"),
             ),
-            gaps=(
+            supporting_node_ids=(
+                *_ids(ADMISSION, "test_a_manifest_that_does_not_hash_to_what_was_approved_is_refused"),
+                *_ids(ADMISSION, "test_the_hash_is_checked_before_any_fact_is_derived_from_the_manifest"),
+                *_ids(HANDLER, "test_a_manifest_that_does_not_hash_to_the_approved_value_is_refused"),
+            ),
+            scope_limits=(
                 (
-                    "The core is proved thoroughly, ordering included. The hash is compared "
-                    "before any fact is derived from the manifest, because an environment "
-                    "gate releases a job rather than its content, and until the hash matches "
-                    "the manifest is a document of unknown provenance. A mismatch outranks "
-                    "every other finding the manifest would have produced."
+                    "Two probe executions carrying a deliberately mismatched hash reached a terminal "
+                    "FAILED state with error AdmissionRejected, and each wrote a decision record reading "
+                    "manifest_hash_mismatch with accepted false. A refusal that left no record would "
+                    "make a rejected submission indistinguishable from one nobody made."
                 ),
                 (
-                    "The live half was observed. A probe execution carrying a deliberately "
-                    "mismatched hash reached a terminal FAILED state with error "
-                    "AdmissionRejected, and wrote a decision record reading "
-                    "manifest_hash_mismatch with accepted false, so even the refusal is "
-                    "attributable."
+                    "The ordering is what the core tests add. The hash is compared before any fact is "
+                    "derived from the manifest, because an environment gate releases a job rather than "
+                    "its content, so until the hash matches the manifest is a document of unknown "
+                    "provenance and a mismatch outranks every other finding."
                 ),
-                NEEDS_A_COMMITTED_CAPTURE,
             ),
         ),
         CriterionSpec(
@@ -698,30 +689,32 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
             statement=(
                 "The intent and decision records are schema-valid and join by run ID."
             ),
-            status=CriterionStatus.GAP,
-            supporting_node_ids=(
-                *_ids(ADMISSION, "test_the_two_records_of_one_submission_are_keyed_the_same"),
-                *_ids(HANDLER, "test_the_records_are_mappings_rather_than_strings"),
+            status=CriterionStatus.COVERED,
+            proving_node_ids=(
+                *_ids(LINEAGE, "test_every_intent_and_decision_join_by_run_id"),
+                *_ids(LINEAGE, "test_the_manifest_in_every_intent_still_hashes_to_its_recorded_value"),
             ),
-            gaps=(
+            supporting_node_ids=(
+                *_ids(LINEAGE, "test_records_written_after_the_encoding_fix_are_the_canonical_bytes"),
+                *_ids(LINEAGE, "test_the_older_shape_is_recorded_rather_than_hidden"),
+            ),
+            scope_limits=(
                 (
-                    "One of the three criteria with no live component, and still a gap, "
-                    "because what it asks is that the committed captures validate against the "
-                    "same models the Lambda uses. The models and their invariants are tested; "
-                    "the captures do not exist. Four intent and decision pairs are in the "
-                    "lineage bucket today, from an accepted routine run, an accepted admin "
-                    "exception, a refused tampered hash, and an earlier accepted run."
+                    "Validated against the same models the Lambda used to write them, which is what "
+                    "makes this more than a shape check: a record the writing model cannot read back is "
+                    "an audit trail nobody can audit."
                 ),
-                NEEDS_A_COMMITTED_CAPTURE,
                 (
-                    "That earlier run is worth capturing rather than quietly skipping. "
-                    "Records written before the encoding fix are stored double-encoded, as a "
-                    "JSON string rather than an object, because the S3 SDK integration "
-                    "JSON-encodes whatever the Body path yields and the handler was returning "
-                    "canonical strings. Records written after are byte-identical to "
-                    "canonical_json_bytes, verified by reading one back. A capture that "
-                    "silently omitted the older shape would make the store look more uniform "
-                    "than it is."
+                    "Reading the real records found exactly that. maximum_compute_cost_usd is a computed "
+                    "field, so pydantic wrote it out and refused it on the way back in, and every "
+                    "decision record in the store failed to load. CostInputs now accepts a recorded "
+                    "total and refuses one that disagrees with the inputs beside it."
+                ),
+                (
+                    "The store holds two shapes and both are captured. Records written before the "
+                    "encoding fix are a JSON string containing the object; records after are the "
+                    "canonical bytes. Hiding the older shape would make the store look uniform and "
+                    "leave the next reader meeting a surprise nobody wrote down."
                 ),
             ),
         ),
@@ -730,26 +723,24 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
             statement=(
                 "Each written object carries an S3-attested ChecksumSHA256 and a VersionId."
             ),
-            status=CriterionStatus.GAP,
-            supporting_node_ids=(
-                *_ids(
-                    INFRA,
-                    "test_every_lineage_write_is_conditional_and_lands_on_its_documented_key",
-                ),
+            status=CriterionStatus.COVERED,
+            proving_node_ids=(
+                *_ids(LINEAGE, "test_every_stored_object_carries_a_checksum_and_a_version"),
             ),
-            gaps=(
+            supporting_node_ids=(
+                *_ids(LINEAGE, "test_the_object_checksum_is_not_the_manifest_hash"),
+                *_ids(INFRA, "test_every_lineage_write_is_conditional_and_lands_on_its_documented_key"),
+            ),
+            scope_limits=(
                 (
-                    "The write parameters are pinned in the template, with ChecksumAlgorithm "
-                    "SHA256 and IfNoneMatch on every lineage write, and HeadObject with "
-                    "checksum mode enabled returned both a ChecksumSHA256 and a VersionId for "
-                    "every object in the bucket on 2026-07-27."
+                    "S3-attested rather than computed here. Every object in the store returned both a "
+                    "ChecksumSHA256 and a VersionId from HeadObject with checksum mode enabled."
                 ),
-                NEEDS_A_COMMITTED_CAPTURE,
                 (
-                    "The capture must keep the two digests apart and say which is which. "
-                    "ChecksumSHA256 attests the object's bytes; manifest_sha256 attests the "
-                    "manifest's canonical serialization. They answer different questions, and "
-                    "conflating them would be a lineage error rather than a wording slip."
+                    "The two digests are asserted distinct. ChecksumSHA256 attests the object's bytes; "
+                    "manifest_sha256 attests the manifest's canonical serialization and is the value an "
+                    "approval was taken against. Conflating them would be a lineage error rather than a "
+                    "wording slip, so a test asserts they differ."
                 ),
             ),
         ),
@@ -841,35 +832,25 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 "The decision record carries the GitHub actor, the manifest hash, the "
                 "policy version, the decision and the run ID."
             ),
-            status=CriterionStatus.GAP,
-            supporting_node_ids=(
-                *_ids(
-                    RECORDS,
-                    "test_an_accepted_decision_must_carry_a_granted_authorization",
-                    "no-authorization",
-                    "refused-authorization",
-                ),
-                *_ids(
-                    ADMISSION,
-                    "test_the_decision_cites_the_policy_version_aws_deployed",
-                    "v1",
-                ),
+            status=CriterionStatus.COVERED,
+            proving_node_ids=(
+                *_ids(LINEAGE, "test_every_decision_carries_the_five_fields_the_master_plan_names"),
             ),
-            gaps=(
+            supporting_node_ids=(
+                *_ids(RECORDS, "test_an_accepted_decision_must_carry_a_granted_authorization", "no-authorization", "refused-authorization"),
+                *_ids(ADMISSION, "test_the_decision_cites_the_policy_version_aws_deployed", "v1"),
+            ),
+            scope_limits=(
                 (
-                    "The master plan names these five explicitly, so a record missing one is "
-                    "a gate failure rather than a cosmetic gap. The model enforces the shape "
-                    "and the core populates it. What no test does is open a committed capture "
-                    "and assert each of the five is present and non-empty."
+                    "Read from committed records rather than from the model's declaration, because the "
+                    "master plan names these five explicitly and a record missing one is a gate failure."
                 ),
-                NEEDS_A_COMMITTED_CAPTURE,
                 (
-                    "The actor is the field to read carefully. The decision record's approver "
-                    "reaches AWS because the submitting job read it from the GitHub approvals "
-                    "API and passed it along; no OIDC claim names who approved. The gate "
-                    "cannot be skipped, and the approver can be misreported by a compromised "
-                    "runner. This criterion asserts the field is recorded, not that AWS "
-                    "verified it."
+                    "The actor is the field to read carefully. The approver reaches AWS because the "
+                    "submitting job read it from the GitHub approvals API and passed it along; no OIDC "
+                    "claim names who approved. The gate cannot be skipped, and a compromised runner "
+                    "could still misreport who released it. This asserts the field is recorded, not "
+                    "that AWS verified it."
                 ),
             ),
         ),
