@@ -1,0 +1,34 @@
+{
+  "fixtures": [
+    {
+      "canonical_json_bytes": 1417,
+      "contract": "TemplateRole",
+      "digest": "sha256:36454731c540afb361dbbb15c8f615b22f15af1af4e89d45aa541880df4a5460",
+      "fixture": "sbsandbox-intern-edullm-batch-execution",
+      "relative_path": "infra/iam/batch-roles.yaml"
+    },
+    {
+      "canonical_json_bytes": 1167,
+      "contract": "TemplateRole",
+      "digest": "sha256:e1cab4af087e1f9531947e2af0a79463ed6ec93815c8dce5a15d1344fcb7d3a5",
+      "fixture": "sbsandbox-intern-edullm-batch-workload",
+      "relative_path": "infra/iam/batch-roles.yaml"
+    },
+    {
+      "canonical_json_bytes": 1942,
+      "contract": "TemplateRole",
+      "digest": "sha256:e9eb886361d48c844ba027eebe0562fcc54a7afe9c5462cf539f21dab3190cf5",
+      "fixture": "sbsandbox-intern-edullm-batch-instance",
+      "relative_path": "infra/iam/batch-roles.yaml"
+    },
+    {
+      "canonical_json_bytes": 1684,
+      "contract": "TemplateRole",
+      "digest": "sha256:818390fae8b9ff8160acf7b7611a1be49355a66ce5ac888ee7d43f9083953be1",
+      "fixture": "sbsandbox-intern-edullm-lifecycle-lambda",
+      "relative_path": "infra/iam/lifecycle-lambda-role.yaml"
+    }
+  ],
+  "phase": "phase-3",
+  "schema_version": 1
+}

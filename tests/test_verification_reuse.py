@@ -32,7 +32,12 @@ from edullm_platform.proof_bundle import (
     pytest_environment,
     run_full_suite,
 )
-from tools import build_phase0_proof, build_phase1_proof, build_phase2_proof
+from tools import (
+    build_phase0_proof,
+    build_phase1_proof,
+    build_phase2_proof,
+    build_phase3_proof,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 NESTED_ENV = "EDULLM_TEST_NESTED"
@@ -199,7 +204,12 @@ def test_every_nested_run_carries_every_generators_guard() -> None:
 def test_every_generator_asks_for_the_same_environment() -> None:
     asked = [
         pytest_environment(generator.NESTED_RUN_ENV)
-        for generator in (build_phase0_proof, build_phase1_proof, build_phase2_proof)
+        for generator in (
+            build_phase0_proof,
+            build_phase1_proof,
+            build_phase2_proof,
+            build_phase3_proof,
+        )
     ]
 
     assert len(asked) == len(GENERATOR_NESTED_ENV_VARS)
@@ -214,6 +224,7 @@ def test_every_generators_guard_is_one_of_the_variables_that_gets_set() -> None:
         build_phase0_proof.NESTED_RUN_ENV,
         build_phase1_proof.NESTED_RUN_ENV,
         build_phase2_proof.NESTED_RUN_ENV,
+        build_phase3_proof.NESTED_RUN_ENV,
     }
 
     assert guards == set(GENERATOR_NESTED_ENV_VARS)
@@ -227,6 +238,7 @@ def test_every_generator_module_is_listed_as_one() -> None:
         build_phase0_proof.GENERATOR_TEST_PATH,
         build_phase1_proof.GENERATOR_TEST_PATH,
         build_phase2_proof.GENERATOR_TEST_PATH,
+        build_phase3_proof.GENERATOR_TEST_PATH,
     }
 
     assert generators == set(proof_bundle.GENERATOR_TEST_PATHS)

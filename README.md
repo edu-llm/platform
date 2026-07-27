@@ -47,6 +47,21 @@ That is a convenience and not a default. The exclusion belongs on the command li
 nowhere else: written into `addopts` it would make the standard command quietly run less
 than it claims, and `tests/test_suite_budget.py` fails if anyone tries.
 
+`ruff check .` respects `.gitignore`, so a file listed there is never linted by the
+standard command. Three Phase 3 files were ignored for a while — `phase3_evidence.py`,
+`tools/capture_phase3_evidence.py` and `tests/test_phase3_ec2_authorization.py` — and one
+of them was found holding an `ISC004` that nothing in CI would have reported until its
+`.gitignore` line came out. `mypy` reads an ignored file regardless, so lint is the only
+blind one.
+
+If a work-in-progress file is ever ignored again, lint it by explicit path while working
+on it, and lint it **before** the `.gitignore` line comes out rather than after. Naming a
+path is enough; ruff reads a file it is handed:
+
+```bash
+uv run ruff check src/edullm_platform/some_ignored_file.py
+```
+
 Regenerate the published schemas after changing any contract. The output is
 byte-reproducible, so a second run should produce no diff:
 
@@ -96,6 +111,29 @@ The criterion-to-test mapping lives in exactly one place,
 `src/edullm_platform/phase0_criteria.py`. The gate and the proof-bundle generator both
 import it, so the matrix in the bundle and the gate's verdict cannot disagree.
 
+### The later phases
+
+Each phase has a gate of its own, reading a definition of its own and applying the same
+three statuses through the same shared machinery in `src/edullm_platform/criteria.py`.
+
+```bash
+uv run python tools/validate_phase1.py
+uv run python tools/validate_phase2.py
+uv run python tools/validate_phase3.py
+```
+
+All three exit `0` on a pass, `1` when the gate ran and a criterion failed, and `2` when the
+inputs could not be read. They report criteria only; the `operational_inventory_checks`
+group is Phase 0's and exists because that phase predates the current definition.
+
+**Phase 2 and Phase 3 exit 1 today, and that is the report working rather than a broken
+gate.** Phase 2's path ran and almost nothing about those runs is committed, so no test
+reads them. Phase 3 has not been deployed at all: no compute environment exists and no Batch
+job has ever run in this account, so twenty of its twenty-two criteria are gaps. Both sets
+of gap texts say what was observed, what is missing, and what would close it. Recording them
+as deferrals instead would turn either gate green without anything changing in the account,
+which is exactly the move the three-status rule exists to make visible.
+
 ## Proof bundle
 
 ```bash
@@ -112,6 +150,27 @@ pytest cannot collect, so the matrix cannot claim coverage it does not have. It 
 refuses to overwrite a recorded digest that has drifted; re-recording takes
 `--regenerate-goldens` and is meant to be reviewed alongside whatever caused the drift.
 The bundle is committed because a tripwire nobody can diff is not a tripwire.
+
+Phases 1, 2 and 3 have generators of the same shape, writing `proof/phase-1/`,
+`proof/phase-2/` and `proof/phase-3/`:
+
+```bash
+uv run python tools/build_phase1_proof.py
+uv run python tools/build_phase2_proof.py
+uv run python tools/build_phase3_proof.py
+```
+
+Each records the canonical digest of what a committed IAM role template *grants* rather
+than of the file, so a reordered key does not fire and a widened statement does.
+
+All four count the suite the same way and each excludes all four generator test modules
+from its own verification run, so adding a generator moves a cell in every bundle. Any
+bundle recording three generator modules was written before Phase 2 had one and is stale.
+
+Most of the Phase 3 bundle is empty, deliberately. Seven of its documents hold live evidence
+and there is none, so each is generated saying why it is empty, what would fill it, and
+which criteria are waiting on it. A document omitted because there was nothing to put in it
+would make the phase look like it has fewer claims than it has.
 
 ## Captured evidence
 
