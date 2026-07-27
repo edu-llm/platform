@@ -528,10 +528,84 @@ jobs:
           # One StartExecution and a bounded poll. The role's maximum is an hour and this
           # job has no use for one, so it asks for the shortest session STS issues.
           role-duration-seconds: 900
-          # Defaults to false in v6. The two ARNs below are composed from the assumed
+          # Defaults to false in v6. Every ARN below is composed from the assumed
           # identity, so without this the account id reaches a world-readable log the
           # first time a call reports an error against one of them.
           mask-aws-account-id: true
+
+      # Here, and nowhere else. The probes run under the real, environment-scoped
+      # admission session and immediately before the one call that session is allowed to
+      # make, which is the only moment where "this role can do nothing but start the
+      # admission state machine" is a statement about the credentials actually in hand
+      # rather than about a committed template. infra/iam/admission-role.yaml says the
+      # grant is one StartExecution and two read-only execution actions, but the role is
+      # created from a laptop and is not redeployed by CI, so a policy widened in the
+      # console leaves every test in this repository green. Attempted from this session, a
+      # role that has been widened stops a submission rather than being found out later.
+      #
+      # One probe is not inert, and it is the entry that matters most. s3:PutObject has no
+      # dry run and must be aimed at the real lineage bucket, because a made-up name is
+      # answered NoSuchBucket before anybody is authorized. It writes one empty object
+      # under denial-probe/ -- never under intent/, decision/ or conflicts/, which are the
+      # lineage record itself -- and sends --if-none-match '*', so it can create an object
+      # once and can never overwrite one. If the role ever is permitted, that first object
+      # exists, and the bucket's thirty-day GOVERNANCE retention means nobody in this
+      # account can delete it until the window expires. That is a real and accepted cost
+      # of proving the entry that makes a lineage record a statement by the platform
+      # rather than by its caller.
+      - name: Attempt the actions the admission session must not have
+        env:
+          ADMISSION_ACCOUNT_ID: ${{ steps.credentials.outputs.aws-account-id }}
+          ADMISSION_REGION: ${{ vars.AWS_REGION }}
+          # The deployed name, as infra/lineage-bucket.yaml spells it. A bucket that is
+          # not there is answered NoSuchBucket before authorization is reached, so a name
+          # invented here would report an absent bucket as a refusal by this role.
+          LINEAGE_BUCKET: sbsandbox-intern-edullm-lineage
+        run: |
+          set -euo pipefail
+          # Composed from the assumed identity, exactly as the two calls below are, so no
+          # account identifier is written down in this repository. The tool takes the ARN
+          # whole and derives the probe targets by extending it.
+          state_machine_arn="arn:aws:states:${ADMISSION_REGION}:${ADMISSION_ACCOUNT_ID}:stateMachine:sbsandbox-intern-edullm-admission"
+          denials_status=0
+          uv run --frozen python tools/verify_admission_denials.py \
+            --region "${ADMISSION_REGION}" \
+            --state-machine-arn "${state_machine_arn}" \
+            --lineage-bucket "${LINEAGE_BUCKET}" \
+            --output "${RUNNER_TEMP}/admission-denials.json" || denials_status=$?
+          # Two different answers that must not read alike, the way the compile step
+          # separates a refusal on the merits from a form it could not read. Exit 1 says
+          # the matrix was not proved: something the admission role must not be able to do
+          # was permitted, or a probe failed in a way that establishes nothing. That is a
+          # security finding and never a warning. Exit 2 says the run could not be set up,
+          # so nothing was attempted and nothing was learned about how wide the role is.
+          # Both stop the submission, because a submission is the thing a widened role
+          # would be used for.
+          if [[ "${denials_status}" -eq 1 ]]; then
+            echo "admission_denial_matrix_not_proved" >&2
+            echo "The session in hand was not shown to be refused everything but starting the admission state machine, so this run must not submit. One line per action is printed above; read the deployed role against infra/iam/admission-role.yaml before re-running." >&2
+            exit 1
+          fi
+          if [[ "${denials_status}" -ne 0 ]]; then
+            echo "admission_denial_matrix_not_attempted" >&2
+            echo "The probes could not be set up against the deployed admission state machine, so none of them was attempted. This is not a finding about how wide the role is." >&2
+            exit 1
+          fi
+
+      # Phase 2 counterpart of Phase 1's publisher denial matrix, and it reaches the proof
+      # bundle the same way: a refusal nobody kept a copy of is a claim rather than
+      # evidence. Every field of the record was masked by the contract that holds it and
+      # the whole document was scanned again before it was written, because an artifact is
+      # the copy that gets kept. Deliberately no `if:` -- the tool writes the record only
+      # when every action was refused, so a run that failed above has nothing to upload
+      # and its one line per action is in the log instead.
+      - name: Upload the admission denial matrix
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: admission-denials
+          path: ${{ runner.temp }}/admission-denials.json
+          if-no-files-found: error
+          retention-days: 30
 
       # ExecutionAlreadyExists is a success here. That is counter-intuitive enough to be
       # worth writing down before somebody corrects it. Step Functions treats a

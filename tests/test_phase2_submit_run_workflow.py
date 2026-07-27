@@ -35,6 +35,11 @@ from workflow_support import (
 )
 
 from edullm_platform import admission_handler
+from edullm_platform.admission_denials import (
+    ADMISSION_DENIED_ACTIONS,
+    LINEAGE_BUCKET,
+    read_state_machine_arn,
+)
 from edullm_platform.contracts.admission import ApprovalEnvironment
 from edullm_platform.contracts.image import GitHubWorkflowRunReference
 from edullm_platform.submission import SubmissionInputs
@@ -43,6 +48,7 @@ WORKFLOW_FILE = ".github/workflows/submit-run.yml"
 WORKFLOW_PATH = WORKFLOWS_ROOT / "submit-run.yml"
 BUILD_WORKFLOW_PATH = WORKFLOWS_ROOT / "build-research-image.yml"
 TRUST_POLICY_PATH = PROJECT_ROOT / "infra" / "iam" / "admission-role.yaml"
+LINEAGE_TEMPLATE_PATH = PROJECT_ROOT / "infra" / "lineage-bucket.yaml"
 
 CHECKOUT_ACTION = "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
 CREDENTIALS_ACTION = (
@@ -71,9 +77,13 @@ APPROVAL_STEP = "Read who released the gate"
 VERIFY_STEP = "Recompute the manifest hash after approval"
 REQUEST_STEP = "Assemble the admission request"
 CREDENTIALS_STEP = "Configure AWS credentials"
+DENIALS_STEP = "Attempt the actions the admission session must not have"
+DENIALS_UPLOAD_STEP = "Upload the admission denial matrix"
 START_STEP = "Start the admission execution"
 WAIT_STEP = "Wait for the admission decision"
 DENY_STEP = "Attempt the admission role without an approval"
+
+DENIALS_TOOL = "tools/verify_admission_denials.py"
 
 # Outputs no run body can be read for. The compile job's four come out of
 # tools/compile_submission.py, and the test below re-derives them from that tool rather
@@ -402,7 +412,11 @@ def test_nothing_lets_the_submit_job_run_after_a_gate_has_failed() -> None:
 def test_the_tools_the_run_bodies_reach_for_exist_on_disk() -> None:
     referenced = sorted({match for _name, script in _run_bodies() for match in TOOL_PATH_PATTERN.findall(script)})
 
-    assert referenced == ["tools/compile_submission.py", "tools/verify_approved_manifest.py"]
+    assert referenced == [
+        "tools/compile_submission.py",
+        DENIALS_TOOL,
+        "tools/verify_approved_manifest.py",
+    ]
     for relative in referenced:
         assert (PROJECT_ROOT / relative).is_file(), relative
 
@@ -419,9 +433,9 @@ def test_the_workflow_never_embeds_an_account_identifier_or_a_registry_host() ->
     assert not re.search(r"(?<!\d)\d{12}(?!\d)", text)
     assert not re.search(r"\d\.dkr\.ecr\.", text)
     assert "get-caller-identity" not in text
-    # Both ARNs are composed from the assumed identity, which is why the account id never
-    # has to be written down anywhere in this repository.
-    assert text.count("${ADMISSION_ACCOUNT_ID}") == 2
+    # All three ARNs are composed from the assumed identity, which is why the account id
+    # never has to be written down anywhere in this repository.
+    assert text.count("${ADMISSION_ACCOUNT_ID}") == 3
     assert "steps.credentials.outputs.aws-account-id" in text
 
 
@@ -434,28 +448,86 @@ def test_no_run_body_interpolates_a_github_expression() -> None:
 def test_every_run_body_enables_strict_bash() -> None:
     bodies = list(_run_bodies())
 
-    assert len(bodies) == 11
+    assert len(bodies) == 12
     for name, script in bodies:
         assert script.startswith("set -euo pipefail\n"), name
 
 
-def test_the_workflow_makes_exactly_these_aws_calls_in_exactly_this_order() -> None:
-    # Three calls against a role that holds four actions. Enumerating them means a new
-    # one has to be argued for in review rather than appearing.
-    calls = [
-        (name, tuple(command[:3]))
-        for name, script in _run_bodies()
-        for command in aws_commands(script)
-    ]
+def _aws_reaching_calls() -> list[tuple[str, tuple[str, ...]]]:
+    """Everything this workflow makes AWS answer, in the order the runner reaches it.
 
-    assert calls == [
+    A run body that calls the CLI directly contributes the call it makes. The denial
+    matrix contributes the six actions it attempts, because they are made by a tool
+    rather than by a shell and a reader of this file would otherwise see the submit job
+    reach AWS twice when it reaches it eight times. The matrix's own
+    ``sts:get-caller-identity`` is left out: it requires no permission and cannot be
+    denied by a policy, so it is not part of the surface this enumeration is about.
+    """
+    calls: list[tuple[str, tuple[str, ...]]] = []
+    for name, script in _run_bodies():
+        if DENIALS_TOOL in script:
+            calls.extend((name, ("denial-probe", action)) for action in ADMISSION_DENIED_ACTIONS)
+        calls.extend((name, tuple(command[:3])) for command in aws_commands(script))
+    return calls
+
+
+def test_the_workflow_makes_exactly_these_aws_calls_in_exactly_this_order() -> None:
+    # Enumerated so that a new call has to be argued for in review rather than appearing.
+    # The six refused attempts are read out of the matrix the tool defines, so adding a
+    # probe or renaming an action changes this list rather than slipping past it.
+    assert _aws_reaching_calls() == [
         (
             f"deny-unapproved:{DENY_STEP}",
             ("aws", "sts", "assume-role-with-web-identity"),
         ),
+        *[(f"submit:{DENIALS_STEP}", ("denial-probe", action)) for action in ADMISSION_DENIED_ACTIONS],
         (f"submit:{START_STEP}", ("aws", "stepfunctions", "start-execution")),
         (f"submit:{WAIT_STEP}", ("aws", "stepfunctions", "describe-execution")),
     ]
+
+
+def test_the_denial_matrix_is_attempted_before_the_state_machine_is_started() -> None:
+    # The ordering is the property, so it is computed from the step list rather than
+    # assumed of it. Attempted after StartExecution the matrix would report on a role
+    # that had already been used; attempted before the credentials step it would run
+    # under no session at all. What it has to sit between is the moment the session is
+    # issued and the moment it is spent.
+    names = [candidate.get("name") for candidate in _job("submit")["steps"]]
+
+    assert names.index(CREDENTIALS_STEP) < names.index(DENIALS_STEP) < names.index(START_STEP)
+    # And nothing reaches AWS in between: the probes are the first thing this session
+    # does and StartExecution is the next, which is what makes them a statement about
+    # these credentials rather than about the template they were issued from.
+    reaching = [name for name, _call in _aws_reaching_calls()]
+    assert reaching.index(f"submit:{START_STEP}") == len(reaching) - 2
+    assert reaching[reaching.index(f"submit:{START_STEP}") - 1] == f"submit:{DENIALS_STEP}"
+
+
+def test_the_write_probe_names_the_lineage_bucket_the_template_deploys() -> None:
+    # A bucket that is not there is answered NoSuchBucket before anybody is authorized,
+    # so a name invented here would report an absent bucket as a refusal by this role --
+    # and the write probe is the entry in the matrix that matters most.
+    declared = step(_job("submit"), DENIALS_STEP)["env"]["LINEAGE_BUCKET"]
+    template = load_workflow(LINEAGE_TEMPLATE_PATH)
+
+    assert declared == template["Resources"]["LineageBucket"]["Properties"]["BucketName"]
+    assert declared == LINEAGE_BUCKET
+
+
+def test_the_denial_matrix_reaches_the_proof_bundle() -> None:
+    # Phase 2's counterpart to Phase 1's publisher denial matrix, which is uploaded from
+    # the build workflow for the same reason: a refusal nobody kept is a claim.
+    upload = step(_job("submit"), DENIALS_UPLOAD_STEP)
+    names = [candidate.get("name") for candidate in _job("submit")["steps"]]
+
+    assert upload["uses"] == UPLOAD_ACTION
+    assert upload["with"]["name"] == "admission-denials"
+    assert upload["with"]["if-no-files-found"] == "error"
+    assert names.index(DENIALS_STEP) < names.index(DENIALS_UPLOAD_STEP)
+    # No `if:`, because the tool writes the record only when every action was refused.
+    # An upload that ran anyway would fail on a missing file and bury the finding under
+    # a second, unrelated failure.
+    assert "if" not in upload
 
 
 def test_the_file_documents_the_three_things_a_reader_will_otherwise_undo() -> None:
@@ -473,6 +545,41 @@ def test_the_file_documents_the_three_things_a_reader_will_otherwise_undo() -> N
     assert "ninety days" in text
     assert "idempotent" in text
     assert "ExecutionAlreadyExists" in already_exists["run"]
+
+
+def _comment_block_above(step_name: str) -> str:
+    """The comment paragraph a step is introduced by, as one line of prose.
+
+    Unwrapped, because where a sentence happens to break is not a property worth pinning
+    and a phrase that spans two lines is still a phrase the reader met.
+    """
+    text = WORKFLOW_PATH.read_text(encoding="utf-8")
+    block = text.split(f"      - name: {step_name}", 1)[0].rsplit("\n\n", 1)[-1]
+    return " ".join(line.strip().removeprefix("#").strip() for line in block.splitlines())
+
+
+def test_the_probe_that_cannot_be_made_inert_says_so_where_it_runs() -> None:
+    # The write probe leaves an object behind if the role is ever permitted to write one,
+    # and the bucket's retention means it cannot be deleted. A cost that is only written
+    # down in the tool is a cost the person reading this workflow does not know they are
+    # accepting. The placement is here for the same reason: it looks arbitrary until the
+    # reason is read, and moving it after StartExecution would cost nothing visible.
+    rationale = _comment_block_above(DENIALS_STEP)
+
+    assert "denial-probe/" in rationale
+    assert "--if-none-match" in rationale
+    assert "GOVERNANCE" in rationale
+    assert "thirty-day" in rationale
+    assert "nobody in this account can delete it" in rationale
+    assert "credentials actually in hand" in rationale
+    assert "template" in rationale
+
+
+def test_the_upload_names_the_phase_one_matrix_it_is_the_counterpart_of() -> None:
+    rationale = _comment_block_above(DENIALS_UPLOAD_STEP)
+
+    assert "publisher denial matrix" in rationale
+    assert "Phase 1" in rationale
 
 
 # --------------------------------------------------------------------------------------
@@ -964,6 +1071,106 @@ def test_an_empty_job_workflow_identity_fails_closed(tmp_path: Path, variable: s
     assert result.returncode != 0
     assert variable in result.stderr
     assert request == {}
+
+
+def _run_denial_matrix(
+    tmp_path: Path,
+    *,
+    uv_body: str,
+) -> tuple[subprocess.CompletedProcess[str], dict[str, str]]:
+    denials_step = step(_job("submit"), DENIALS_STEP)
+    stub_bin = tmp_path / "bin"
+    recorded = tmp_path / "argv.txt"
+    write_stub(stub_bin, "uv", f'printf "%s\\n" "$@" > "{recorded}"\n{uv_body}')
+    result = run_step_script(
+        denials_step["run"],
+        cwd=tmp_path,
+        env={
+            "RUNNER_TEMP": str(tmp_path),
+            "ADMISSION_ACCOUNT_ID": EXAMPLE_ACCOUNT_ID,
+            "ADMISSION_REGION": "us-east-1",
+            # Read off the step rather than restated, so the bucket the probe is aimed at
+            # is the one the workflow names.
+            "LINEAGE_BUCKET": denials_step["env"]["LINEAGE_BUCKET"],
+        },
+        stub_bin=stub_bin,
+    )
+    arguments = recorded.read_text(encoding="utf-8").splitlines() if recorded.exists() else []
+    return result, dict(itertools.pairwise(arguments))
+
+
+def test_the_probes_are_aimed_at_the_deployed_admission_machine_and_bucket(
+    tmp_path: Path,
+) -> None:
+    result, passed = _run_denial_matrix(tmp_path, uv_body="exit 0\n")
+
+    assert result.returncode == 0, result.stderr
+    assert passed["--region"] == "us-east-1"
+    assert passed["--lineage-bucket"] == LINEAGE_BUCKET
+    assert passed["--output"] == str(tmp_path / "admission-denials.json")
+    # The ARN is composed here and validated there, so the two agreeing is the property
+    # rather than the spelling. An ARN the tool cannot read is exit 2, which would report
+    # a typo in this workflow as though nothing could be established about the role.
+    machine = read_state_machine_arn(passed["--state-machine-arn"], region="us-east-1")
+    assert machine.arn == (
+        f"arn:aws:states:us-east-1:{EXAMPLE_ACCOUNT_ID}:stateMachine:{STATE_MACHINE_NAME}"
+    )
+
+
+def test_the_uploaded_record_is_the_file_the_probes_were_told_to_write(
+    tmp_path: Path,
+) -> None:
+    _result, passed = _run_denial_matrix(tmp_path, uv_body="exit 0\n")
+    upload = step(_job("submit"), DENIALS_UPLOAD_STEP)
+
+    written = Path(passed["--output"]).name
+    assert upload["with"]["path"] == f"${{{{ runner.temp }}}}/{written}"
+
+
+def test_a_role_wider_than_its_grant_stops_the_submission(tmp_path: Path) -> None:
+    # Exit 1 says something the admission role must not be able to do was permitted, or
+    # that a probe established nothing. Either way the session in hand was not shown to
+    # be the narrow one, and a submission is exactly what a widened role would be used
+    # for, so this must never be a warning.
+    result, _passed = _run_denial_matrix(
+        tmp_path,
+        uv_body='echo "s3:PutObject: permitted" >&2\nexit 1\n',
+    )
+
+    assert result.returncode == 1
+    assert "s3:PutObject: permitted" in result.stderr
+    assert "admission_denial_matrix_not_proved" in result.stderr
+    assert "must not submit" in result.stderr
+
+
+def test_probes_that_could_not_be_set_up_are_not_reported_as_a_finding(
+    tmp_path: Path,
+) -> None:
+    # Exit 2 is the tool saying it attempted nothing. It still fails the job, and it must
+    # not read like the security finding above, the same way the compile step separates a
+    # refusal on the merits from a form it could not read.
+    result, _passed = _run_denial_matrix(
+        tmp_path,
+        uv_body='echo "state_machine_arn_unusable" >&2\nexit 2\n',
+    )
+
+    assert result.returncode == 1
+    assert "admission_denial_matrix_not_attempted" in result.stderr
+    assert "not a finding about how wide the role is" in result.stderr
+    assert "admission_denial_matrix_not_proved" not in result.stderr
+
+
+def test_no_denial_matrix_failure_echoes_the_account_id(tmp_path: Path) -> None:
+    # A refusal names the account, and the state machine ARN this step composes carries
+    # it. Neither reaches the log on any path out of this step.
+    for status in ("1", "2"):
+        result, _passed = _run_denial_matrix(
+            tmp_path,
+            uv_body=f'echo "denial probe failed" >&2\nexit {status}\n',
+        )
+
+        assert result.returncode == 1, status
+        assert EXAMPLE_ACCOUNT_ID not in result.stdout + result.stderr, status
 
 
 def _run_start_execution(
