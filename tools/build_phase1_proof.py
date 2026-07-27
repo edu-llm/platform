@@ -1100,10 +1100,10 @@ def known_limitations(
         raise ProofBundleError("a completed scan must record its finding counts")
     limitations.append(
         "Whether an image scan result should be able to block a publish is an open question "
-        f"and this bundle does not answer it. The published image scanned {counts.critical} "
-        f"critical and {counts.high} high findings, all of them inherited from the base image "
-        "this repository pins, and blocked nothing, because nothing is wired to the scan. "
-        "That is harmless while "
+        "and this bundle does not answer it. The published image scanned "
+        f"{spell(counts.critical)} critical and {spell(counts.high)} high findings, all of them "
+        "inherited from the base image this repository pins, and blocked nothing, because "
+        "nothing is wired to the scan. That is harmless while "
         "nothing runs a Phase 1 image and stops being harmless the day something does. See "
         "`open-decisions.md`; it is recorded there rather than settled here."
     )
