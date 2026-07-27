@@ -22,10 +22,13 @@ import pytest
 
 from edullm_platform.criteria import CriterionSpec, CriterionStatus
 from edullm_platform.evidence import FRESHNESS_WINDOW
+from edullm_platform.open_decisions import open_decisions
 from edullm_platform.phase1_capture import (
     CAPTURE_SUFFIX,
     ROLE_CAPTURE_DIR,
+    RUN_CAPTURE_DIR,
     read_committed_role_captures,
+    read_committed_run_evidence,
 )
 from edullm_platform.proof_bundle import (
     GoldenDigestDriftError,
@@ -34,6 +37,8 @@ from edullm_platform.proof_bundle import (
     contradicting_status_claims,
     load_recorded_goldens,
 )
+from edullm_platform.publisher_denials import PROBE_SELECTION_LESSONS
+from edullm_platform.rebuild_comparison import NONDETERMINISM_CAUSES
 from edullm_platform.role_drift import COMMITTED_ROLE_TEMPLATES
 from tools.build_phase1_proof import (
     BUNDLE_FILENAMES,
@@ -170,11 +175,11 @@ def test_no_prose_in_the_bundle_contradicts_a_recorded_check_status(
 @pytest.mark.parametrize(
     ("prose", "expected"),
     [
-        ("Check 6 is covered by the drift comparison.", "covered"),
+        ("Check 6 remains a gap.", "gap"),
         ("Criterion 3 remains a gap.", "gap"),
         ("Check 12 is covered.", "covered"),
     ],
-    ids=["gap called covered", "covered called gap", "criterion that does not exist"],
+    ids=["covered called a gap", "another covered called a gap", "criterion that does not exist"],
 )
 def test_a_sentence_that_disagrees_with_the_definition_is_caught(
     prose: str,
@@ -195,7 +200,7 @@ def test_the_generator_refuses_to_write_a_bundle_whose_prose_contradicts_the_gat
     # suite would come away believing a gap was closed.
     monkeypatch.setattr(
         "tools.build_phase1_proof.known_limitations",
-        lambda repo_root, checks, reports: ("Check 6 is covered by the role comparison.",),
+        lambda repo_root, checks, reports, run: ("Check 6 remains a gap.",),
     )
 
     with pytest.raises(ProofBundleError, match="did not reach"):
@@ -207,14 +212,22 @@ def test_the_generator_refuses_to_write_a_bundle_whose_prose_contradicts_the_gat
 def test_a_limitation_that_names_a_check_takes_its_status_from_the_definition() -> None:
     # The limitations are the one place prose and status meet, so the status word is read
     # off the checks rather than typed. This is what makes the guard above never fire.
-    limitations = known_limitations(PROJECT_ROOT, shipped_checks(), ())
+    limitations = known_limitations(
+        PROJECT_ROOT, shipped_checks(), (), read_committed_run_evidence(PROJECT_ROOT)
+    )
 
-    assert any("check 6 is a gap" in text for text in limitations)
+    assert any("check 1 is covered" in text for text in limitations)
+    assert any("check 7 is covered" in text for text in limitations)
 
 
 def test_a_limitation_naming_a_check_the_phase_does_not_have_is_refused() -> None:
     with pytest.raises(ProofBundleError, match="does not record"):
-        known_limitations(PROJECT_ROOT, shipped_checks()[:2], ())
+        known_limitations(
+            PROJECT_ROOT,
+            shipped_checks()[:0],
+            (),
+            read_committed_run_evidence(PROJECT_ROOT),
+        )
 
 
 # --------------------------------------------------------------------------------------
@@ -440,18 +453,43 @@ def test_the_matrix_reports_the_gaps_before_the_per_check_detail(
     matrix = first_bundle["negative-case-matrix.md"]
     gaps = [check.number for check in shipped_checks() if check.status is CriterionStatus.GAP]
 
-    assert matrix.index("## Gaps") < matrix.index("## Checks")
+    if gaps:
+        assert matrix.index("## Gaps") < matrix.index("## Checks")
+    else:
+        # No gaps, so no Gaps section. The section is generated from the criteria rather
+        # than always printed, which is what stops it becoming an empty heading a reader
+        # skims past on the day it stops being empty again.
+        assert "## Gaps" not in matrix
     for number in gaps:
         assert f"### Check {number} (GAP)" in matrix
 
 
 def test_the_index_reports_the_verdict_the_gate_reaches(first_bundle: dict[str, str]) -> None:
     gaps = [check.number for check in shipped_checks() if check.status is CriterionStatus.GAP]
+    index = first_bundle["README.md"]
 
-    assert (
-        f"`tools/validate_phase1.py` exits 1 against this tree. Phase 1 is not accepted: "
-        f"criteria {', '.join(gaps)} are GAPs." in first_bundle["README.md"]
-    )
+    if gaps:
+        assert (
+            "`tools/validate_phase1.py` exits 1 against this tree. Phase 1 is not accepted: "
+            f"criteria {', '.join(gaps)} are GAPs." in index
+        )
+    else:
+        assert "`tools/validate_phase1.py` exits 0 against this tree" in index
+
+
+def test_the_index_does_not_open_by_calling_a_finished_phase_unfinished(
+    first_bundle: dict[str, str],
+) -> None:
+    # The opening sentence used to say "It is not done" unconditionally, which was true
+    # when it was written and would have gone on being printed after it stopped being.
+    gaps = [check.number for check in shipped_checks() if check.status is CriterionStatus.GAP]
+    opening = first_bundle["README.md"]
+
+    if gaps:
+        assert "It is not done" in opening
+    else:
+        assert "It is not done" not in opening
+        assert "Every criterion is covered and the gate is green" in opening
 
 
 def test_the_goldens_document_names_the_regeneration_command(
@@ -462,3 +500,114 @@ def test_the_goldens_document_names_the_regeneration_command(
     assert "--regenerate-goldens" in goldens
     assert GOLDENS_FILENAME in goldens
     assert "tests/test_phase1_golden.py" in goldens
+
+
+# --------------------------------------------------------------------------------------
+# The run, the rebuild comparison and the open decisions
+# --------------------------------------------------------------------------------------
+
+
+def test_the_bundle_refuses_a_run_record_that_no_longer_holds(
+    tmp_path: Path,
+    verification: Verification,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Criteria 1, 6 and 7 are recorded as covered on the strength of these records, so a
+    # bundle that printed them covered after the records expired would be stating a
+    # status the gate does not reach. Refusing is also what makes the expiry visible.
+    monkeypatch.setattr(
+        "tools.build_phase1_proof.read_committed_run_evidence",
+        lambda repo_root: read_committed_run_evidence(repo_root, directory=tmp_path / "empty"),
+    )
+    (tmp_path / "empty").mkdir()
+
+    with pytest.raises(ProofBundleError, match="no longer holds"):
+        build_bundle(PROJECT_ROOT, tmp_path, generated_at=FIRST_INSTANT, verification=verification)
+
+    assert not (tmp_path / "README.md").exists()
+
+
+def test_the_denial_matrix_document_names_every_refusal_and_its_event(
+    first_bundle: dict[str, str],
+) -> None:
+    document = first_bundle["publisher-denial-matrix.md"]
+    run = read_committed_run_evidence(PROJECT_ROOT)
+
+    for denial in run.denials:
+        assert denial.attempted_action in document
+        assert denial.event_id in document
+
+
+def test_the_denial_matrix_document_carries_the_probe_lessons(
+    first_bundle: dict[str, str],
+) -> None:
+    # The register of what choosing a probe has cost lives in the library; the bundle
+    # renders it so that a reviewer who never opens the source still meets it.
+    document = first_bundle["publisher-denial-matrix.md"]
+
+    for lesson in PROBE_SELECTION_LESSONS:
+        assert lesson.rule in document
+        assert lesson.learned_from in document
+
+
+def test_the_rebuild_document_names_every_cause_and_no_unexplained_field(
+    first_bundle: dict[str, str],
+) -> None:
+    document = first_bundle["image-rebuild-comparison.md"]
+
+    for cause in NONDETERMINISM_CAUSES:
+        assert cause.name in document
+    assert "resumes to the digest already in the registry" in document
+
+
+def test_a_rebuild_difference_nothing_explains_refuses_the_bundle(
+    tmp_path: Path,
+    verification: Verification,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The phase's account of its own nondeterminism has to stay complete. A build that
+    # started differing somewhere nobody has explained is exactly what criterion 2 exists
+    # to surface, so the bundle stops rather than printing it as a row.
+    monkeypatch.setattr(
+        "tools.build_phase1_proof.unexplained", lambda differences: ("config.User",)
+    )
+
+    with pytest.raises(ProofBundleError, match="no cause explains"):
+        build_bundle(PROJECT_ROOT, tmp_path, generated_at=FIRST_INSTANT, verification=verification)
+
+
+def test_the_open_decisions_document_records_the_question_without_answering_it(
+    first_bundle: dict[str, str],
+) -> None:
+    document = first_bundle["open-decisions.md"]
+    decision = open_decisions()[0]
+
+    assert decision.question in document
+    for option in decision.options:
+        assert option in document
+    assert decision.lands_in in document
+
+
+def test_the_index_sends_a_reviewer_to_the_open_decisions(
+    first_bundle: dict[str, str],
+) -> None:
+    # A limitation that says a question is open and does not say where to read it is a
+    # limitation nobody follows up.
+    index = first_bundle["README.md"]
+
+    assert "`open-decisions.md`" in index
+    assert "scan" in index
+
+
+def test_the_index_measures_every_committed_run_record(first_bundle: dict[str, str]) -> None:
+    # Read off the tree rather than listed, so a record added to the run directory is
+    # measured without a second edit to the generator.
+    index = first_bundle["README.md"]
+    committed = sorted(
+        str(path.relative_to(PROJECT_ROOT))
+        for path in (PROJECT_ROOT / RUN_CAPTURE_DIR).rglob("*.json")
+    )
+
+    assert committed
+    for path in committed:
+        assert path in index

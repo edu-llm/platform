@@ -20,6 +20,8 @@ from edullm_platform.criteria import (
     CriterionSpec,
     CriterionStatus,
 )
+from edullm_platform.evidence import FRESHNESS_WINDOW
+from edullm_platform.open_decisions import OpenDecision, open_decisions
 
 # The criterion-to-test mapping is defined once, in the library, and imported here and by
 # the acceptance gate. This module must never grow its own copy: the matrix below and
@@ -28,9 +30,12 @@ from edullm_platform.phase1_capture import (
     CAPTURE_PARTITION,
     CAPTURE_REGION,
     ROLE_CAPTURE_DIR,
+    RUN_CAPTURE_DIR,
     CommittedRoleCapture,
+    CommittedRunEvidence,
     captures_that_do_not_hold,
     read_committed_role_captures,
+    read_committed_run_evidence,
 )
 from edullm_platform.phase1_criteria import phase1_criteria
 from edullm_platform.proof_bundle import (
@@ -65,6 +70,17 @@ from edullm_platform.proof_bundle import (
     status_label,
     table,
 )
+from edullm_platform.publisher_denials import (
+    PROBE_SELECTION_LESSONS,
+    PUBLISHER_DENIED_ACTIONS,
+    denial_probes,
+)
+from edullm_platform.rebuild_comparison import (
+    NONDETERMINISM_CAUSES,
+    LocalRebuildComparison,
+    compare_builds,
+    unexplained,
+)
 from edullm_platform.role_drift import (
     COMMITTED_ROLE_TEMPLATES,
     DriftDirection,
@@ -79,7 +95,10 @@ GOLDENS_FILENAME: Final = "serialization-goldens.json"
 BUNDLE_FILENAMES: Final = (
     "README.md",
     "deployed-role-drift.md",
+    "image-rebuild-comparison.md",
     "negative-case-matrix.md",
+    "open-decisions.md",
+    "publisher-denial-matrix.md",
     "schema-compatibility.md",
     GOLDENS_FILENAME,
     "serialization-goldens.md",
@@ -91,6 +110,8 @@ GENERATOR_COMMAND: Final = "uv run python tools/build_phase1_proof.py"
 
 #: The committed artifacts Phase 1 owns, whose digests this bundle records so a reviewer
 #: can confirm it describes the tree in front of them.
+REBUILD_COMPARISON_PATH: Final = "fixtures/evidence/phase-1/rebuild/local-rebuild-comparison.json"
+
 PHASE1_INPUTS: Final = (
     "infra/ecr-repositories.yaml",
     "infra/iam/ecr-publisher-role.yaml",
@@ -106,6 +127,7 @@ PHASE1_CONTRACT_MODULES: Final = (
     "edullm_platform.phase1_evidence",
     "edullm_platform.phase1_gate",
     "edullm_platform.publisher_denials",
+    "edullm_platform.rebuild_comparison",
     "edullm_platform.role_drift",
 )
 
@@ -274,6 +296,339 @@ def refuse_a_capture_that_no_longer_holds(captures: Sequence[CommittedRoleCaptur
         "does not reach:\n  "
         + "\n  ".join(f"{capture.verdict.value}: {capture.detail}" for capture in broken)
     )
+
+
+def refuse_a_run_record_that_no_longer_holds(run: CommittedRunEvidence) -> None:
+    """Stop rather than describe a run whose records have stopped establishing it.
+
+    Criteria 1, 6 and 7 are recorded as covered on the strength of these records, so once
+    one expires, drifts off the image or fails to load, the gate fails those criteria and
+    this bundle would still print them covered. Refusing is also what makes the expiry
+    visible.
+    """
+    if run.holds:
+        return
+    raise ProofBundleError(
+        "the committed record of the publish run no longer holds, and three criteria rest "
+        "on it, so this bundle would state a status the acceptance gate does not reach:\n  "
+        + "\n  ".join(f"{problem.reason}: {problem.detail}" for problem in run.problems)
+    )
+
+
+def render_run_evidence(run: CommittedRunEvidence) -> str:
+    """What one publish run produced, and how each record is tied to the others."""
+    image = run.image
+    scan = run.scan
+    session = run.session
+    refusal = run.refusal
+    repository = run.repository
+    if image is None or scan is None or session is None or refusal is None or repository is None:
+        raise ProofBundleError("the run records must all hold before this section is rendered")
+    counts = scan.finding_counts
+    if counts is None:
+        raise ProofBundleError("a completed scan must record its finding counts")
+    probes = {
+        probe.action: probe
+        for probe in denial_probes(
+            region=image.region,
+            ecr_repository=image.repository_name,
+            role_name=session.role_name,
+        )
+    }
+    sections = [
+        "# Phase 1 publisher denial matrix and the run it came from",
+        "",
+        (
+            "The publisher role is meant to hold nine ECR actions on one repository and "
+            "nothing else. Everything else in this repository that says so reads a template "
+            "or a capture, which is an argument from a policy. This is the other kind of "
+            "evidence: a session issued to that role through OIDC attempted five things it "
+            "must not be able to do, and was refused all five. The records are committed "
+            f"under `{RUN_CAPTURE_DIR}/denials/` and each carries the CloudTrail event id of "
+            "the refusal, so a reviewer can look up any of them in the account."
+        ),
+        "",
+        "## The run",
+        "",
+        table(
+            ["fact", "value"],
+            [
+                ["commit", f"`{image.source_commit_sha}`"],
+                ["image tag", f"`{image.image_tag}`"],
+                ["image digest", f"`{image.image_digest}`"],
+                ["base image digest", f"`{image.base_image_digest}`"],
+                ["pushed at", image.image_pushed_at.isoformat()],
+                ["publisher session assumed at", session.assumed_at.isoformat()],
+                ["publisher session expires at", session.expires_at.isoformat()],
+                ["OIDC issuer", f"`{session.oidc_issuer}`"],
+                ["OIDC subject", f"`{session.oidc_subject}`"],
+                ["scan status", scan.scan_status],
+                [
+                    "scan findings",
+                    (
+                        f"{counts.critical} critical, {counts.high} high, "
+                        f"{counts.medium} medium, {counts.low} low"
+                    ),
+                ],
+                ["repository tag mutability", repository.image_tag_mutability],
+            ],
+        ),
+        "",
+        (
+            "The session is the one that made the push rather than the most recent one the "
+            "role held, and it is not found by proximity: two publisher sessions exist in "
+            "every run, twenty-five seconds apart and overlapping. The `PutImage` event "
+            "carries the creation instant of the session that made it, and exactly one "
+            "`AssumeRoleWithWebIdentity` event has that instant."
+        ),
+        "",
+        "## What the session was refused",
+        "",
+        table(
+            ["action", "the call attempted", "error code", "CloudTrail event"],
+            [
+                [
+                    f"`{denial.attempted_action}`",
+                    f"`{denial.event_source.split('.')[0]} {denial.event_name}`",
+                    denial.error_code,
+                    f"`{denial.event_id}`",
+                ]
+                for denial in run.denials
+            ],
+        ),
+        "",
+        (
+            "The record must hold one denial per matrix action, in matrix order. A run that "
+            "refused four of the five proved the criterion for four of them, and a file able "
+            "to hold the four would be read later as though it had proved all five."
+        ),
+        "",
+        "## How each probe is aimed, and what a permitted call would have done",
+        "",
+        table(
+            ["action", "resource", "why a permitted call changes nothing"],
+            [
+                [
+                    f"`{action}`",
+                    f"`{probes[action].resource_name}`" if probes[action].resource_name else "—",
+                    PROBE_INERTNESS[action],
+                ]
+                for action in PUBLISHER_DENIED_ACTIONS
+            ],
+        ),
+        "",
+        "## What choosing a probe has cost",
+        "",
+        (
+            "Read this before adding one. Each entry is a rule some probe in this matrix "
+            "broke, with the run that broke it, because a rule with no incident attached "
+            "reads as caution and gets skipped. The source of truth is "
+            "`edullm_platform.publisher_denials.PROBE_SELECTION_LESSONS`."
+        ),
+        "",
+    ]
+    for lesson in PROBE_SELECTION_LESSONS:
+        sections.extend(
+            [
+                f"### {lesson.rule}",
+                "",
+                f"**Learned from.** {lesson.learned_from}",
+                "",
+                lesson.detail,
+                "",
+            ]
+        )
+    return "\n".join(sections).rstrip() + "\n"
+
+
+#: Why being permitted would have changed nothing, one line per probe. Written here
+#: rather than on the probe because it is prose for a reviewer, and the probe definition
+#: is read by the job that makes the call.
+PROBE_INERTNESS: Final = {
+    "batch:SubmitJob": "the queue and the job definition do not exist",
+    "s3:ListAllMyBuckets": "the call only lists and names no bucket",
+    "iam:CreateRole": "the role name is the caller's own, which IAM already holds",
+    "batch:UpdateComputeEnvironment": "the compute environment does not exist",
+    "ecr:DeleteRepository": "the repository name is one beside the registered one, and absent",
+}
+
+
+def recorded_rebuilds(repo_root: Path) -> tuple[str, ...]:
+    """The labels of the builds recorded for the rebuild comparison."""
+    path = repo_root / REBUILD_COMPARISON_PATH
+    comparison = LocalRebuildComparison.model_validate_json(path.read_text(encoding="utf-8"))
+    return tuple(build.build for build in comparison.builds)
+
+
+def render_rebuild_comparison(repo_root: Path) -> str:
+    """Where a second build of one commit diverges from the first, and why."""
+    path = repo_root / REBUILD_COMPARISON_PATH
+    comparison = LocalRebuildComparison.model_validate_json(path.read_text(encoding="utf-8"))
+    reference = comparison.builds[0]
+    others = comparison.builds[1:]
+    rows = []
+    for build in others:
+        differences = compare_builds(reference, build)
+        missing = unexplained(differences)
+        if missing:
+            raise ProofBundleError(
+                "two recorded builds differ in a field no cause explains, so the phase's "
+                "account of its own nondeterminism is incomplete: " + ", ".join(missing)
+            )
+        rows.append(
+            [
+                f"`{reference.build}` vs `{build.build}`",
+                build.description,
+                str(len(differences)),
+                ", ".join(f"`{difference.path}`" for difference in differences),
+            ]
+        )
+    sections = [
+        "# Phase 1 image rebuild comparison",
+        "",
+        (
+            "Criterion 2 asks that rebuilding identical inputs be *explainable*, and is "
+            "careful not to ask that it be reproducible. This is the explanation."
+        ),
+        "",
+        (
+            "The comparison could not come from the publish workflow and was never going to. "
+            "That job looks the tag up before it builds, so a re-run of the same commit "
+            "resumes to the digest already in the registry rather than building again — "
+            "correct behaviour, because ECR tags are immutable and the run-URL label "
+            "guarantees a second build would carry a different digest that the tag could "
+            "never be moved to. So the builds below were made deliberately on one laptop, "
+            "and the image the workflow published was fetched from the registry to compare "
+            "against. Both the builder and the platform are recorded, because the answer "
+            "depends on both."
+        ),
+        "",
+        table(
+            ["fact", "value"],
+            [
+                ["commit", f"`{comparison.source_commit_sha}`"],
+                ["base image", f"`{comparison.base_image_digest}`"],
+                ["dockerfile", f"`{comparison.dockerfile_path}`"],
+                ["platform", f"`{comparison.platform}`"],
+                ["builder", comparison.builder],
+                ["configuration fields compared", str(len(reference.fields))],
+                ["record", f"`{REBUILD_COMPARISON_PATH}`"],
+            ],
+        ),
+        "",
+        "## What differs, against the first build",
+        "",
+        table(["comparison", "what was varied", "fields differing", "which"], rows),
+        "",
+        (
+            f"Every one of the {len(reference.fields)} fields not named above is identical in "
+            "every build, and the ones derived from a pinned input are checked to be "
+            "identical rather than merely observed to be: the environment, the command, the "
+            "working directory, the architecture, the three content labels, every recorded "
+            "build step, and all four layers inherited from the base image. Without that "
+            "check the account below could be satisfied by widening the list of causes until "
+            "it covered anything."
+        ),
+        "",
+        "## Why each field differs",
+        "",
+        table(
+            ["cause", "fields", "deliberate"],
+            [
+                [cause.name, f"`{cause.pattern.pattern}`", "yes" if cause.deliberate else "no"]
+                for cause in NONDETERMINISM_CAUSES
+            ],
+        ),
+        "",
+    ]
+    for cause in NONDETERMINISM_CAUSES:
+        sections.extend([f"### {cause.name}", "", cause.detail, ""])
+    sections.extend(
+        [
+            "## What this does and does not establish",
+            "",
+            bullets(
+                [
+                    (
+                        "Two independent builds of identical inputs produce an image whose "
+                        "filesystem is identical layer for layer, and whose identity is not. "
+                        "Only two fields move, and both are clock readings."
+                    ),
+                    (
+                        "One of the four causes is deliberate. The per-run label is what lets "
+                        "somebody holding a digest find the run that produced it, and it is "
+                        "also why no re-run of the workflow could ever reproduce a digest even "
+                        "if every clock were pinned."
+                    ),
+                    (
+                        "The other three are clocks, and `SOURCE_DATE_EPOCH` would pin them. "
+                        "Nobody has asked for byte-level reproducibility and this criterion "
+                        "does not, so nothing here proposes it."
+                    ),
+                    (
+                        "This says nothing about a different builder. A BuildKit that wrote "
+                        "layer metadata differently would produce a different answer, which is "
+                        "why the builder is recorded in the file rather than assumed."
+                    ),
+                ]
+            ),
+        ]
+    )
+    return "\n".join(sections).rstrip() + "\n"
+
+
+def render_open_decisions(decisions: Sequence[OpenDecision]) -> str:
+    """Questions this phase surfaced and deliberately did not answer."""
+    sections = [
+        "# Phase 1 open decisions",
+        "",
+        (
+            "A criterion records something that must be true and whether it is. This records "
+            "something nobody has decided. A gap means unfinished work and a deferral means a "
+            "postponement with a trigger; neither fits a question whose answer is a policy "
+            "choice, and a question like that has two fates if it is not written down. It is "
+            "settled by accident by whoever first trips over it, or silently by whoever "
+            "happens to be implementing near it."
+        ),
+        "",
+        (
+            "None of these has a recommendation, and none may have one. The source is "
+            "`src/edullm_platform/open_decisions.py`, which refuses an entry with fewer than "
+            "two options, so an entry cannot become a decision by having its alternatives "
+            "deleted. Answering one means removing it from there and putting the answer where "
+            "it is enforced."
+        ),
+        "",
+        table(
+            ["#", "question", "has to be answered"],
+            [[decision.number, decision.question, decision.lands_in] for decision in decisions],
+        ),
+        "",
+    ]
+    for decision in decisions:
+        sections.extend(
+            [
+                f"## Decision {decision.number} — {decision.question}",
+                "",
+                f"**Raised by.** {decision.raised_by}",
+                "",
+                "**Why it matters.**",
+                "",
+                bullets(decision.why_it_matters),
+                "",
+                "**What is known.**",
+                "",
+                bullets(decision.what_is_known),
+                "",
+                "**The options, none of them chosen.**",
+                "",
+                bullets(decision.options),
+                "",
+                f"**Has to be answered.** {decision.lands_in}",
+                "",
+            ]
+        )
+    return "\n".join(sections).rstrip() + "\n"
 
 
 def render_role_drift(
@@ -709,10 +1064,23 @@ def render_matrix(criteria: Sequence[CriterionSpec], verification: Verification)
     return "\n".join(sections).rstrip() + "\n"
 
 
+def run_expiry(run: CommittedRunEvidence) -> str:
+    """When the earliest of the run's records stops loading."""
+    observed = [
+        record.observed_at
+        for record in (run.image, run.scan, run.session, run.refusal, run.repository, *run.denials)
+        if record is not None
+    ]
+    if not observed:
+        raise ProofBundleError("a run with no records has no expiry to report")
+    return (min(observed) + FRESHNESS_WINDOW).date().isoformat()
+
+
 def known_limitations(
     repo_root: Path,
     checks: Sequence[CriterionSpec],
     captures: Sequence[CommittedRoleCapture],
+    run: CommittedRunEvidence,
 ) -> tuple[str, ...]:
     """What this bundle does not establish, read off the tree rather than remembered.
 
@@ -726,16 +1094,39 @@ def known_limitations(
 
     limitations: list[str] = []
     limitations.append(
-        "The role comparison says the deployed roles are what their templates declare. It does "
-        "not say what either role was refused: no session has been issued to the publisher "
-        f"role and nothing it attempted has been denied, which is why check 6 is "
-        f"{status_of('6')} even though the account half of it now holds."
+        "Whether an image scan result should be able to block a publish is an open question "
+        "and this bundle does not answer it. The published image scanned four critical and "
+        "eight high findings, all of them inherited from the base image this repository pins, "
+        "and blocked nothing, because nothing is wired to the scan. That is harmless while "
+        "nothing runs a Phase 1 image and stops being harmless the day something does. See "
+        "`open-decisions.md`; it is recorded there rather than settled here."
     )
-    gap_numbers = [check.number for check in checks if check.status is CriterionStatus.GAP]
     limitations.append(
-        "Nothing else in Phase 1 has run against the account. No image has been built, no "
-        "digest returned, no session issued and no call refused, which is why "
-        f"{len(gap_numbers)} of the {len(checks)} criteria fail the gate; the matrix names them."
+        "One run, one commit, one repository. Everything the live half of this phase claims "
+        f"comes from a single publish of one branch commit, and check 1 is {status_of('1')} on "
+        "the strength of it. Nothing here says the next commit will publish, and nothing here "
+        "is a claim about any repository other than the one config/repositories.yaml registers."
+    )
+    limitations.append(
+        "The second push that ECR refused was made by hand from a laptop, under an identity "
+        f"that is not the publisher role, which is why check 7 is {status_of('7')} on a "
+        "narrower observation than a reader might assume. Tag immutability belongs to the "
+        "repository rather than to the caller, so the refusal stands; what was not observed "
+        "is the publisher role meeting it, and the publish workflow deliberately cannot "
+        "produce that, because its pre-flight lookup resumes rather than pushing again."
+    )
+    limitations.append(
+        "The S3 half of check 6 is narrower than the criterion's words. The probe is "
+        "ListBuckets, an account-level call with no bucket to be absent, so a refusal proves "
+        "the role holds no account-wide S3 permission rather than that it cannot read a "
+        "dataset. Closing that difference needs a bucket this project owns and an object in "
+        "it that exists, and no such bucket is deployed."
+    )
+    limitations.append(
+        "The rebuild comparison behind check 2 was made locally rather than by the workflow, "
+        "on one builder and one platform, both recorded in the record it reads. The workflow "
+        "cannot produce it: a re-run of the same commit resumes to the published digest "
+        "instead of building. A different BuildKit could produce a different answer."
     )
     limitations.append(
         "A capture is a statement about one moment. The records under "
@@ -743,6 +1134,15 @@ def known_limitations(
         + ", ".join(f"{capture.role_name} on {expiry_date(capture)}" for capture in captures)
         + " — and every claim resting on them is a gap again from that date. Nothing renews it, "
         "and nothing should."
+    )
+    limitations.append(
+        f"The records of the publish run under `{RUN_CAPTURE_DIR}/` expire the same way and it "
+        f"means something different. They stop loading on {run_expiry(run)}, and checks 1, 6 "
+        "and 7 revert to gaps on that date. Nothing about the run will have changed — the "
+        "image, its scan, the session and the five refusals are all still in the registry and "
+        "in CloudTrail — but nobody will have confirmed lately that the repository is still "
+        "immutable, the role is still refused, and the tag still resolves to this digest. "
+        "Re-capturing costs a read of the account rather than another publish."
     )
     limitations.append(
         "The drift comparison does not reason about IAM wildcards. A deployed resource of "
@@ -775,6 +1175,23 @@ def known_limitations(
     return tuple(limitations)
 
 
+def standing(gap_numbers: Sequence[str]) -> str:
+    """How the bundle opens, which cannot be a fixed sentence about being unfinished.
+
+    The first version of this said "It is not done", which was true when it was written
+    and would have gone on being printed after it stopped being true. A reviewer who
+    trusts the bundle would have been told the opposite of what the table below says.
+    """
+    if gap_numbers:
+        return "It is not done, and the Result table below says by how much."
+    return (
+        "Every criterion is covered and the gate is green, which is the state in which a "
+        "bundle is most worth reading carefully: the Known limitations below say what each "
+        "criterion does not cover, and `open-decisions.md` says what this phase surfaced "
+        "and did not settle."
+    )
+
+
 def gate_verdict(gap_numbers: Sequence[str]) -> str:
     if not gap_numbers:
         return (
@@ -796,9 +1213,20 @@ def input_digest_table(
     repo_root: Path,
     captures: Sequence[CommittedRoleCapture],
 ) -> tuple[tuple[str, str], ...]:
+    """Everything this bundle was generated from, including every committed record.
+
+    Read off the tree for the run records rather than listed, so a record added to the
+    run directory is measured without a second edit here — and so one deleted stops
+    appearing rather than being reported at a digest nobody can reproduce.
+    """
+    run_records = sorted(
+        str(path.relative_to(repo_root)) for path in (repo_root / RUN_CAPTURE_DIR).rglob("*.json")
+    )
     paths = [
         *PHASE1_INPUTS,
         *(capture.capture_path for capture in captures if capture.capture_path is not None),
+        *run_records,
+        REBUILD_COMPARISON_PATH,
     ]
     return tuple((path, file_digest(repo_root / path)) for path in sorted(paths))
 
@@ -812,6 +1240,9 @@ def render_index(
     goldens: Sequence[RecordedGolden],
     models: Sequence[ModelRecord],
     captures: Sequence[CommittedRoleCapture],
+    run: CommittedRunEvidence,
+    rebuilds: Sequence[str],
+    decisions: Sequence[OpenDecision],
     input_digests: Sequence[tuple[str, str]],
     limitations: Sequence[str],
 ) -> str:
@@ -838,8 +1269,7 @@ def render_index(
                 (
                     "This bundle exists so that a reviewer can decide whether Phase 1 is done "
                     "without reading the test suite. Everything it claims was executed by "
-                    f"`{GENERATOR_COMMAND}` at generation time. It is not done, and the "
-                    "Result table below says by how much."
+                    f"`{GENERATOR_COMMAND}` at generation time. {standing(gap_numbers)}"
                 ),
                 "",
                 "## Contents",
@@ -850,6 +1280,21 @@ def render_index(
                             "`negative-case-matrix.md` — each of the eight Phase 1 acceptance "
                             "criteria mapped to the tests cited for it, by node id, with every "
                             "gap stated. Read this one first."
+                        ),
+                        (
+                            "`publisher-denial-matrix.md` — the run this phase turns on, the "
+                            "five refusals the publisher session met with the CloudTrail event "
+                            "id of each, how every probe is aimed so that being permitted "
+                            "would change nothing, and what choosing a probe has cost so far."
+                        ),
+                        (
+                            "`image-rebuild-comparison.md` — the same commit built four times "
+                            "from the same pinned base, field by field, and the four causes "
+                            "that account for every difference."
+                        ),
+                        (
+                            "`open-decisions.md` — questions this phase surfaced and did not "
+                            "answer. One so far: whether a scan result may block a publish."
                         ),
                         (
                             "`deployed-role-drift.md` — how a role in the account is compared "
@@ -896,6 +1341,10 @@ def render_index(
                         ["roles compared to their template", str(len(captures))],
                         ["role drift findings", str(findings)],
                         ["role templates with recorded digests", str(len(goldens))],
+                        ["publish runs captured", "1"],
+                        ["actions the publisher session was refused", str(len(run.denials))],
+                        ["image configurations compared", str(len(rebuilds))],
+                        ["open decisions recorded", str(len(decisions))],
                         ["contract models added by this phase", str(len(models))],
                     ],
                 ),
@@ -960,9 +1409,16 @@ def build_bundle(
     models = phase1_models(repo_root)
     captures = read_committed_role_captures(repo_root)
     refuse_a_capture_that_no_longer_holds(captures)
+    run = read_committed_run_evidence(repo_root)
+    refuse_a_run_record_that_no_longer_holds(run)
+    decisions = open_decisions()
+    rebuild_document = render_rebuild_comparison(repo_root)
     documents = {
         "unit-test-report.md": render_unit_test_report(resolved),
         "negative-case-matrix.md": render_matrix(criteria, resolved),
+        "publisher-denial-matrix.md": render_run_evidence(run),
+        "image-rebuild-comparison.md": rebuild_document,
+        "open-decisions.md": render_open_decisions(decisions),
         "deployed-role-drift.md": render_role_drift(repo_root, captures),
         "serialization-goldens.md": render_goldens_report(goldens),
         "schema-compatibility.md": render_schema_report(models),
@@ -974,8 +1430,11 @@ def build_bundle(
             goldens=goldens,
             models=models,
             captures=captures,
+            run=run,
+            rebuilds=recorded_rebuilds(repo_root),
+            decisions=decisions,
             input_digests=input_digest_table(repo_root, captures),
-            limitations=known_limitations(repo_root, criteria, captures),
+            limitations=known_limitations(repo_root, criteria, captures, run),
         ),
     }
     if set(documents) | {GOLDENS_FILENAME} != set(BUNDLE_FILENAMES):

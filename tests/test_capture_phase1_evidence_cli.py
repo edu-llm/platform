@@ -30,6 +30,7 @@ from edullm_platform.role_drift import (
 )
 from tools.capture_phase1_evidence import (
     CAPTURE_TARGET_NAMES,
+    DEFAULT_CAPTURE_TARGET_NAMES,
     OutputDirectoryRefusedError,
     allowed_output_root,
     capture_phase1_evidence,
@@ -635,10 +636,12 @@ def test_capturing_one_target_makes_only_that_target_s_calls(
     assert set(written(tmp_path)) == {"sanitized/ecr-repository.sanitized.json"}
 
 
-def test_every_target_the_command_offers_is_one_the_registry_knows_how_to_capture() -> None:
-    # The registry is the extension point: an image, a scan and a session are captured by
-    # adding an entry to it rather than by reworking the command around them.
-    assert CAPTURE_TARGET_NAMES == ("roles", "repository")
+def test_the_standing_fact_targets_come_first_and_are_the_ones_a_template_describes() -> None:
+    # Order is the contract this asserts. These two read standing facts and each is
+    # compared to a committed template; the four after them read one publish run and
+    # have no template, so they establish what they establish by being joined to the
+    # image instead. tests/test_capture_phase1_run_evidence.py owns those four.
+    assert CAPTURE_TARGET_NAMES[:2] == ("roles", "repository")
 
 
 @pytest.mark.parametrize(
@@ -771,7 +774,7 @@ def test_a_capture_function_returns_the_records_it_wrote(
         aws_region=REGION,
         environment="sandbox",
         ecr_repository=ECR_REPOSITORY,
-        targets=CAPTURE_TARGET_NAMES,
+        targets=DEFAULT_CAPTURE_TARGET_NAMES,
         output_dir=output_dir(tmp_path),
         base_dir=tmp_path,
     )

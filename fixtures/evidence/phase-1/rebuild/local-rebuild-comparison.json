@@ -1,0 +1,1447 @@
+{
+  "base_image_digest": "sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de",
+  "build_context": ".",
+  "builder": "docker 29.6.1 with buildkit, on darwin/arm64 building linux/amd64",
+  "builds": [
+    {
+      "build": "a",
+      "config_digest": "sha256:791198e7feff6ad4f1e0e840f9073149f805c3dfef2cb89571e9f7cc33efa9fb",
+      "description": "first build, no cache, the run URL of the run that published the image",
+      "fields": [
+        {
+          "path": "architecture",
+          "value": "\"amd64\""
+        },
+        {
+          "path": "config.Cmd[0]",
+          "value": "\"python3\""
+        },
+        {
+          "path": "config.Env[0]",
+          "value": "\"PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\""
+        },
+        {
+          "path": "config.Env[1]",
+          "value": "\"LANG=C.UTF-8\""
+        },
+        {
+          "path": "config.Env[2]",
+          "value": "\"GPG_KEY=7169605F62C751356D054A26A821E680E5FA6305\""
+        },
+        {
+          "path": "config.Env[3]",
+          "value": "\"PYTHON_VERSION=3.12.13\""
+        },
+        {
+          "path": "config.Env[4]",
+          "value": "\"PYTHON_SHA256=c08bc65a81971c1dd5783182826503369466c7e67374d1646519adf05207b684\""
+        },
+        {
+          "path": "config.Env[5]",
+          "value": "\"PYTHONPATH=/opt/olmo-core/src\""
+        },
+        {
+          "path": "config.Env[6]",
+          "value": "\"PYTHONDONTWRITEBYTECODE=1\""
+        },
+        {
+          "path": "config.Env[7]",
+          "value": "\"PYTHONUNBUFFERED=1\""
+        },
+        {
+          "path": "config.Labels.edullm.workflow.run.url",
+          "value": "\"https://github.com/edu-llm/OLMo-core/actions/runs/30222389133/attempts/1\""
+        },
+        {
+          "path": "config.Labels.org.opencontainers.image.base.name",
+          "value": "\"docker.io/library/python@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de\""
+        },
+        {
+          "path": "config.Labels.org.opencontainers.image.revision",
+          "value": "\"4204375e6db85abc244ec7f626de8d3cc3511402\""
+        },
+        {
+          "path": "config.Labels.org.opencontainers.image.source",
+          "value": "\"https://github.com/edu-llm/OLMo-core\""
+        },
+        {
+          "path": "config.WorkingDir",
+          "value": "\"/opt/olmo-core\""
+        },
+        {
+          "path": "created",
+          "value": "\"2026-07-26T23:09:32.254225793Z\""
+        },
+        {
+          "path": "history[0].comment",
+          "value": "\"debuerreotype 0.17\""
+        },
+        {
+          "path": "history[0].created",
+          "value": "\"2026-07-13T00:00:00Z\""
+        },
+        {
+          "path": "history[0].created_by",
+          "value": "\"# debian.sh --arch 'amd64' out/ 'trixie' '@1783900800'\""
+        },
+        {
+          "path": "history[1].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[1].created",
+          "value": "\"2026-07-14T02:02:10.365721224Z\""
+        },
+        {
+          "path": "history[1].created_by",
+          "value": "\"ENV PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\""
+        },
+        {
+          "path": "history[1].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[2].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[2].created",
+          "value": "\"2026-07-14T02:02:10.365721224Z\""
+        },
+        {
+          "path": "history[2].created_by",
+          "value": "\"ENV LANG=C.UTF-8\""
+        },
+        {
+          "path": "history[2].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[3].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[3].created",
+          "value": "\"2026-07-14T02:02:10.365721224Z\""
+        },
+        {
+          "path": "history[3].created_by",
+          "value": "\"RUN /bin/sh -c set -eux; \\tapt-get update; \\tapt-get install -y --no-install-recommends \\t\\tca-certificates \\t\\tnetbase \\t\\ttzdata \\t; \\tapt-get dist-clean # buildkit\""
+        },
+        {
+          "path": "history[4].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[4].created",
+          "value": "\"2026-07-14T02:02:10.365721224Z\""
+        },
+        {
+          "path": "history[4].created_by",
+          "value": "\"ENV GPG_KEY=7169605F62C751356D054A26A821E680E5FA6305\""
+        },
+        {
+          "path": "history[4].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[5].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[5].created",
+          "value": "\"2026-07-14T02:02:10.365721224Z\""
+        },
+        {
+          "path": "history[5].created_by",
+          "value": "\"ENV PYTHON_VERSION=3.12.13\""
+        },
+        {
+          "path": "history[5].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[6].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[6].created",
+          "value": "\"2026-07-14T02:02:10.365721224Z\""
+        },
+        {
+          "path": "history[6].created_by",
+          "value": "\"ENV PYTHON_SHA256=c08bc65a81971c1dd5783182826503369466c7e67374d1646519adf05207b684\""
+        },
+        {
+          "path": "history[6].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[7].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[7].created",
+          "value": "\"2026-07-14T02:11:29.10254015Z\""
+        },
+        {
+          "path": "history[7].created_by",
+          "value": "\"RUN /bin/sh -c set -eux; \\t\\tsavedAptMark=\\\"$(apt-mark showmanual)\\\"; \\tapt-get update; \\tapt-get install -y --no-install-recommends \\t\\tdpkg-dev \\t\\tgcc \\t\\tgnupg \\t\\tlibbluetooth-dev \\t\\tlibbz2-dev \\t\\tlibc6-dev \\t\\tlibdb-dev \\t\\tlibffi-dev \\t\\tlibgdbm-dev \\t\\tliblzma-dev \\t\\tlibncursesw5-dev \\t\\tlibreadline-dev \\t\\tlibsqlite3-dev \\t\\tlibssl-dev \\t\\tmake \\t\\ttk-dev \\t\\tuuid-dev \\t\\twget \\t\\txz-utils \\t\\tzlib1g-dev \\t; \\t\\twget -O python.tar.xz \\\"https://www.python.org/ftp/python/${PYTHON_VERSION%%[a-z]*}/Python-$PYTHON_VERSION.tar.xz\\\"; \\techo \\\"$PYTHON_SHA256 *python.tar.xz\\\" | sha256sum -c -; \\twget -O python.tar.xz.asc \\\"https://www.python.org/ftp/python/${PYTHON_VERSION%%[a-z]*}/Python-$PYTHON_VERSION.tar.xz.asc\\\"; \\tGNUPGHOME=\\\"$(mktemp -d)\\\"; export GNUPGHOME; \\tgpg --batch --keyserver hkps://keys.openpgp.org --recv-keys \\\"$GPG_KEY\\\"; \\tgpg --batch --verify python.tar.xz.asc python.tar.xz; \\tgpgconf --kill all; \\trm -rf \\\"$GNUPGHOME\\\" python.tar.xz.asc; \\tmkdir -p /usr/src/python; \\ttar --extract --directory /usr/src/python --strip-components=1 --file python.tar.xz; \\trm python.tar.xz; \\t\\tcd /usr/src/python; \\tgnuArch=\\\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\\\"; \\t./configure \\t\\t--build=\\\"$gnuArch\\\" \\t\\t--enable-loadable-sqlite-extensions \\t\\t--enable-optimizations \\t\\t--enable-option-checking=fatal \\t\\t--enable-shared \\t\\t$(test \\\"${gnuArch%%-*}\\\" != 'riscv64' && echo '--with-lto') \\t\\t--with-ensurepip \\t; \\tnproc=\\\"$(nproc)\\\"; \\tEXTRA_CFLAGS=\\\"$(dpkg-buildflags --get CFLAGS)\\\"; \\tLDFLAGS=\\\"$(dpkg-buildflags --get LDFLAGS)\\\"; \\tLDFLAGS=\\\"${LDFLAGS:-} -Wl,--strip-all\\\"; \\tarch=\\\"$(dpkg --print-architecture)\\\"; arch=\\\"${arch##*-}\\\"; \\tcase \\\"$arch\\\" in \\t\\tamd64|arm64) \\t\\t\\tEXTRA_CFLAGS=\\\"${EXTRA_CFLAGS:-} -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer\\\"; \\t\\t\\t;; \\t\\ti386) \\t\\t\\t;; \\t\\t*) \\t\\t\\tEXTRA_CFLAGS=\\\"${EXTRA_CFLAGS:-} -fno-omit-frame-pointer\\\"; \\t\\t\\t;; \\tesac; \\tmake -j \\\"$nproc\\\" \\t\\t\\\"EXTRA_CFLAGS=${EXTRA_CFLAGS:-}\\\" \\t\\t\\\"LDFLAGS=${LDFLAGS:-}\\\" \\t; \\trm python; \\tmake -j \\\"$nproc\\\" \\t\\t\\\"EXTRA_CFLAGS=${EXTRA_CFLAGS:-}\\\" \\t\\t\\\"LDFLAGS=${LDFLAGS:-} -Wl,-rpath='\\\\$\\\\$ORIGIN/../lib'\\\" \\t\\tpython \\t; \\tmake install; \\t\\tcd /; \\trm -rf /usr/src/python; \\t\\tfind /usr/local -depth \\t\\t\\\\( \\t\\t\\t\\\\( -type d -a \\\\( -name test -o -name tests -o -name idle_test \\\\) \\\\) \\t\\t\\t-o \\\\( -type f -a \\\\( -name '*.pyc' -o -name '*.pyo' -o -name 'libpython*.a' \\\\) \\\\) \\t\\t\\\\) -exec rm -rf '{}' + \\t; \\t\\tldconfig; \\t\\tapt-mark auto '.*' > /dev/null; \\tapt-mark manual $savedAptMark; \\tfind /usr/local -type f -executable -not \\\\( -name '*tkinter*' \\\\) -exec ldd '{}' ';' \\t\\t| awk '/=>/ { so = $(NF-1); if (index(so, \\\"/usr/local/\\\") == 1) { next }; gsub(\\\"^/(usr/)?\\\", \\\"\\\", so); printf \\\"*%s\\\\n\\\", so }' \\t\\t| sort -u \\t\\t| xargs -rt dpkg-query --search \\t\\t| awk 'sub(\\\":$\\\", \\\"\\\", $1) { print $1 }' \\t\\t| sort -u \\t\\t| xargs -r apt-mark manual \\t; \\tapt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false; \\tapt-get dist-clean; \\t\\texport PYTHONDONTWRITEBYTECODE=1; \\tpython3 --version; \\tpip3 --version # buildkit\""
+        },
+        {
+          "path": "history[8].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[8].created",
+          "value": "\"2026-07-14T02:11:29.203658501Z\""
+        },
+        {
+          "path": "history[8].created_by",
+          "value": "\"RUN /bin/sh -c set -eux; \\tfor src in idle3 pip3 pydoc3 python3 python3-config; do \\t\\tdst=\\\"$(echo \\\"$src\\\" | tr -d 3)\\\"; \\t\\t[ -s \\\"/usr/local/bin/$src\\\" ]; \\t\\t[ ! -e \\\"/usr/local/bin/$dst\\\" ]; \\t\\tln -svT \\\"$src\\\" \\\"/usr/local/bin/$dst\\\"; \\tdone # buildkit\""
+        },
+        {
+          "path": "history[9].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[9].created",
+          "value": "\"2026-07-14T02:11:29.203658501Z\""
+        },
+        {
+          "path": "history[9].created_by",
+          "value": "\"CMD [\\\"python3\\\"]\""
+        },
+        {
+          "path": "history[9].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[10].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[10].created",
+          "value": "\"2026-07-26T23:09:32.207861085Z\""
+        },
+        {
+          "path": "history[10].created_by",
+          "value": "\"ENV PYTHONPATH=/opt/olmo-core/src PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1\""
+        },
+        {
+          "path": "history[10].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[11].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[11].created",
+          "value": "\"2026-07-26T23:09:32.207861085Z\""
+        },
+        {
+          "path": "history[11].created_by",
+          "value": "\"WORKDIR /opt/olmo-core\""
+        },
+        {
+          "path": "history[12].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[12].created",
+          "value": "\"2026-07-26T23:09:32.254225793Z\""
+        },
+        {
+          "path": "history[12].created_by",
+          "value": "\"COPY . . # buildkit\""
+        },
+        {
+          "path": "os",
+          "value": "\"linux\""
+        },
+        {
+          "path": "rootfs.diff_ids[0]",
+          "value": "\"sha256:f2ec4de84f559f5c7be4233b589cdbdbb5507807e05621b77320edd55a1f2a0f\""
+        },
+        {
+          "path": "rootfs.diff_ids[1]",
+          "value": "\"sha256:ccbaccfc0388284959cf106031557105fad2067d6c4435937b3414ce90760167\""
+        },
+        {
+          "path": "rootfs.diff_ids[2]",
+          "value": "\"sha256:83fdf57f71f28b640f11d5072c284c81eadefc5ea538050fedcedba6149879bd\""
+        },
+        {
+          "path": "rootfs.diff_ids[3]",
+          "value": "\"sha256:b80f3ed1ee6de85c788d9ae7203207c44724eab4baac8697390ca1412954ad2f\""
+        },
+        {
+          "path": "rootfs.diff_ids[4]",
+          "value": "\"sha256:1a9b52c4f0db9b6bcedc1bf556e98d957a52d80f411c90c31f3a85aff0b9357a\""
+        },
+        {
+          "path": "rootfs.diff_ids[5]",
+          "value": "\"sha256:a94981162afafd02349fc1e5a23ecae28af4ead0f6c9e4ebfc2de815e94ec3c5\""
+        },
+        {
+          "path": "rootfs.type",
+          "value": "\"layers\""
+        }
+      ]
+    },
+    {
+      "build": "b",
+      "config_digest": "sha256:87f05ea57b3144f1d01618616ee424affd30430a37535e3f8dc3bbe6d585c143",
+      "description": "second build, no cache, byte-for-byte the same inputs as a",
+      "fields": [
+        {
+          "path": "architecture",
+          "value": "\"amd64\""
+        },
+        {
+          "path": "config.Cmd[0]",
+          "value": "\"python3\""
+        },
+        {
+          "path": "config.Env[0]",
+          "value": "\"PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\""
+        },
+        {
+          "path": "config.Env[1]",
+          "value": "\"LANG=C.UTF-8\""
+        },
+        {
+          "path": "config.Env[2]",
+          "value": "\"GPG_KEY=7169605F62C751356D054A26A821E680E5FA6305\""
+        },
+        {
+          "path": "config.Env[3]",
+          "value": "\"PYTHON_VERSION=3.12.13\""
+        },
+        {
+          "path": "config.Env[4]",
+          "value": "\"PYTHON_SHA256=c08bc65a81971c1dd5783182826503369466c7e67374d1646519adf05207b684\""
+        },
+        {
+          "path": "config.Env[5]",
+          "value": "\"PYTHONPATH=/opt/olmo-core/src\""
+        },
+        {
+          "path": "config.Env[6]",
+          "value": "\"PYTHONDONTWRITEBYTECODE=1\""
+        },
+        {
+          "path": "config.Env[7]",
+          "value": "\"PYTHONUNBUFFERED=1\""
+        },
+        {
+          "path": "config.Labels.edullm.workflow.run.url",
+          "value": "\"https://github.com/edu-llm/OLMo-core/actions/runs/30222389133/attempts/1\""
+        },
+        {
+          "path": "config.Labels.org.opencontainers.image.base.name",
+          "value": "\"docker.io/library/python@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de\""
+        },
+        {
+          "path": "config.Labels.org.opencontainers.image.revision",
+          "value": "\"4204375e6db85abc244ec7f626de8d3cc3511402\""
+        },
+        {
+          "path": "config.Labels.org.opencontainers.image.source",
+          "value": "\"https://github.com/edu-llm/OLMo-core\""
+        },
+        {
+          "path": "config.WorkingDir",
+          "value": "\"/opt/olmo-core\""
+        },
+        {
+          "path": "created",
+          "value": "\"2026-07-26T23:09:33.103364502Z\""
+        },
+        {
+          "path": "history[0].comment",
+          "value": "\"debuerreotype 0.17\""
+        },
+        {
+          "path": "history[0].created",
+          "value": "\"2026-07-13T00:00:00Z\""
+        },
+        {
+          "path": "history[0].created_by",
+          "value": "\"# debian.sh --arch 'amd64' out/ 'trixie' '@1783900800'\""
+        },
+        {
+          "path": "history[1].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[1].created",
+          "value": "\"2026-07-14T02:02:10.365721224Z\""
+        },
+        {
+          "path": "history[1].created_by",
+          "value": "\"ENV PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\""
+        },
+        {
+          "path": "history[1].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[2].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[2].created",
+          "value": "\"2026-07-14T02:02:10.365721224Z\""
+        },
+        {
+          "path": "history[2].created_by",
+          "value": "\"ENV LANG=C.UTF-8\""
+        },
+        {
+          "path": "history[2].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[3].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[3].created",
+          "value": "\"2026-07-14T02:02:10.365721224Z\""
+        },
+        {
+          "path": "history[3].created_by",
+          "value": "\"RUN /bin/sh -c set -eux; \\tapt-get update; \\tapt-get install -y --no-install-recommends \\t\\tca-certificates \\t\\tnetbase \\t\\ttzdata \\t; \\tapt-get dist-clean # buildkit\""
+        },
+        {
+          "path": "history[4].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[4].created",
+          "value": "\"2026-07-14T02:02:10.365721224Z\""
+        },
+        {
+          "path": "history[4].created_by",
+          "value": "\"ENV GPG_KEY=7169605F62C751356D054A26A821E680E5FA6305\""
+        },
+        {
+          "path": "history[4].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[5].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[5].created",
+          "value": "\"2026-07-14T02:02:10.365721224Z\""
+        },
+        {
+          "path": "history[5].created_by",
+          "value": "\"ENV PYTHON_VERSION=3.12.13\""
+        },
+        {
+          "path": "history[5].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[6].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[6].created",
+          "value": "\"2026-07-14T02:02:10.365721224Z\""
+        },
+        {
+          "path": "history[6].created_by",
+          "value": "\"ENV PYTHON_SHA256=c08bc65a81971c1dd5783182826503369466c7e67374d1646519adf05207b684\""
+        },
+        {
+          "path": "history[6].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[7].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[7].created",
+          "value": "\"2026-07-14T02:11:29.10254015Z\""
+        },
+        {
+          "path": "history[7].created_by",
+          "value": "\"RUN /bin/sh -c set -eux; \\t\\tsavedAptMark=\\\"$(apt-mark showmanual)\\\"; \\tapt-get update; \\tapt-get install -y --no-install-recommends \\t\\tdpkg-dev \\t\\tgcc \\t\\tgnupg \\t\\tlibbluetooth-dev \\t\\tlibbz2-dev \\t\\tlibc6-dev \\t\\tlibdb-dev \\t\\tlibffi-dev \\t\\tlibgdbm-dev \\t\\tliblzma-dev \\t\\tlibncursesw5-dev \\t\\tlibreadline-dev \\t\\tlibsqlite3-dev \\t\\tlibssl-dev \\t\\tmake \\t\\ttk-dev \\t\\tuuid-dev \\t\\twget \\t\\txz-utils \\t\\tzlib1g-dev \\t; \\t\\twget -O python.tar.xz \\\"https://www.python.org/ftp/python/${PYTHON_VERSION%%[a-z]*}/Python-$PYTHON_VERSION.tar.xz\\\"; \\techo \\\"$PYTHON_SHA256 *python.tar.xz\\\" | sha256sum -c -; \\twget -O python.tar.xz.asc \\\"https://www.python.org/ftp/python/${PYTHON_VERSION%%[a-z]*}/Python-$PYTHON_VERSION.tar.xz.asc\\\"; \\tGNUPGHOME=\\\"$(mktemp -d)\\\"; export GNUPGHOME; \\tgpg --batch --keyserver hkps://keys.openpgp.org --recv-keys \\\"$GPG_KEY\\\"; \\tgpg --batch --verify python.tar.xz.asc python.tar.xz; \\tgpgconf --kill all; \\trm -rf \\\"$GNUPGHOME\\\" python.tar.xz.asc; \\tmkdir -p /usr/src/python; \\ttar --extract --directory /usr/src/python --strip-components=1 --file python.tar.xz; \\trm python.tar.xz; \\t\\tcd /usr/src/python; \\tgnuArch=\\\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\\\"; \\t./configure \\t\\t--build=\\\"$gnuArch\\\" \\t\\t--enable-loadable-sqlite-extensions \\t\\t--enable-optimizations \\t\\t--enable-option-checking=fatal \\t\\t--enable-shared \\t\\t$(test \\\"${gnuArch%%-*}\\\" != 'riscv64' && echo '--with-lto') \\t\\t--with-ensurepip \\t; \\tnproc=\\\"$(nproc)\\\"; \\tEXTRA_CFLAGS=\\\"$(dpkg-buildflags --get CFLAGS)\\\"; \\tLDFLAGS=\\\"$(dpkg-buildflags --get LDFLAGS)\\\"; \\tLDFLAGS=\\\"${LDFLAGS:-} -Wl,--strip-all\\\"; \\tarch=\\\"$(dpkg --print-architecture)\\\"; arch=\\\"${arch##*-}\\\"; \\tcase \\\"$arch\\\" in \\t\\tamd64|arm64) \\t\\t\\tEXTRA_CFLAGS=\\\"${EXTRA_CFLAGS:-} -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer\\\"; \\t\\t\\t;; \\t\\ti386) \\t\\t\\t;; \\t\\t*) \\t\\t\\tEXTRA_CFLAGS=\\\"${EXTRA_CFLAGS:-} -fno-omit-frame-pointer\\\"; \\t\\t\\t;; \\tesac; \\tmake -j \\\"$nproc\\\" \\t\\t\\\"EXTRA_CFLAGS=${EXTRA_CFLAGS:-}\\\" \\t\\t\\\"LDFLAGS=${LDFLAGS:-}\\\" \\t; \\trm python; \\tmake -j \\\"$nproc\\\" \\t\\t\\\"EXTRA_CFLAGS=${EXTRA_CFLAGS:-}\\\" \\t\\t\\\"LDFLAGS=${LDFLAGS:-} -Wl,-rpath='\\\\$\\\\$ORIGIN/../lib'\\\" \\t\\tpython \\t; \\tmake install; \\t\\tcd /; \\trm -rf /usr/src/python; \\t\\tfind /usr/local -depth \\t\\t\\\\( \\t\\t\\t\\\\( -type d -a \\\\( -name test -o -name tests -o -name idle_test \\\\) \\\\) \\t\\t\\t-o \\\\( -type f -a \\\\( -name '*.pyc' -o -name '*.pyo' -o -name 'libpython*.a' \\\\) \\\\) \\t\\t\\\\) -exec rm -rf '{}' + \\t; \\t\\tldconfig; \\t\\tapt-mark auto '.*' > /dev/null; \\tapt-mark manual $savedAptMark; \\tfind /usr/local -type f -executable -not \\\\( -name '*tkinter*' \\\\) -exec ldd '{}' ';' \\t\\t| awk '/=>/ { so = $(NF-1); if (index(so, \\\"/usr/local/\\\") == 1) { next }; gsub(\\\"^/(usr/)?\\\", \\\"\\\", so); printf \\\"*%s\\\\n\\\", so }' \\t\\t| sort -u \\t\\t| xargs -rt dpkg-query --search \\t\\t| awk 'sub(\\\":$\\\", \\\"\\\", $1) { print $1 }' \\t\\t| sort -u \\t\\t| xargs -r apt-mark manual \\t; \\tapt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false; \\tapt-get dist-clean; \\t\\texport PYTHONDONTWRITEBYTECODE=1; \\tpython3 --version; \\tpip3 --version # buildkit\""
+        },
+        {
+          "path": "history[8].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[8].created",
+          "value": "\"2026-07-14T02:11:29.203658501Z\""
+        },
+        {
+          "path": "history[8].created_by",
+          "value": "\"RUN /bin/sh -c set -eux; \\tfor src in idle3 pip3 pydoc3 python3 python3-config; do \\t\\tdst=\\\"$(echo \\\"$src\\\" | tr -d 3)\\\"; \\t\\t[ -s \\\"/usr/local/bin/$src\\\" ]; \\t\\t[ ! -e \\\"/usr/local/bin/$dst\\\" ]; \\t\\tln -svT \\\"$src\\\" \\\"/usr/local/bin/$dst\\\"; \\tdone # buildkit\""
+        },
+        {
+          "path": "history[9].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[9].created",
+          "value": "\"2026-07-14T02:11:29.203658501Z\""
+        },
+        {
+          "path": "history[9].created_by",
+          "value": "\"CMD [\\\"python3\\\"]\""
+        },
+        {
+          "path": "history[9].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[10].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[10].created",
+          "value": "\"2026-07-26T23:09:32.207861085Z\""
+        },
+        {
+          "path": "history[10].created_by",
+          "value": "\"ENV PYTHONPATH=/opt/olmo-core/src PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1\""
+        },
+        {
+          "path": "history[10].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[11].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[11].created",
+          "value": "\"2026-07-26T23:09:32.207861085Z\""
+        },
+        {
+          "path": "history[11].created_by",
+          "value": "\"WORKDIR /opt/olmo-core\""
+        },
+        {
+          "path": "history[12].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[12].created",
+          "value": "\"2026-07-26T23:09:33.103364502Z\""
+        },
+        {
+          "path": "history[12].created_by",
+          "value": "\"COPY . . # buildkit\""
+        },
+        {
+          "path": "os",
+          "value": "\"linux\""
+        },
+        {
+          "path": "rootfs.diff_ids[0]",
+          "value": "\"sha256:f2ec4de84f559f5c7be4233b589cdbdbb5507807e05621b77320edd55a1f2a0f\""
+        },
+        {
+          "path": "rootfs.diff_ids[1]",
+          "value": "\"sha256:ccbaccfc0388284959cf106031557105fad2067d6c4435937b3414ce90760167\""
+        },
+        {
+          "path": "rootfs.diff_ids[2]",
+          "value": "\"sha256:83fdf57f71f28b640f11d5072c284c81eadefc5ea538050fedcedba6149879bd\""
+        },
+        {
+          "path": "rootfs.diff_ids[3]",
+          "value": "\"sha256:b80f3ed1ee6de85c788d9ae7203207c44724eab4baac8697390ca1412954ad2f\""
+        },
+        {
+          "path": "rootfs.diff_ids[4]",
+          "value": "\"sha256:1a9b52c4f0db9b6bcedc1bf556e98d957a52d80f411c90c31f3a85aff0b9357a\""
+        },
+        {
+          "path": "rootfs.diff_ids[5]",
+          "value": "\"sha256:a94981162afafd02349fc1e5a23ecae28af4ead0f6c9e4ebfc2de815e94ec3c5\""
+        },
+        {
+          "path": "rootfs.type",
+          "value": "\"layers\""
+        }
+      ]
+    },
+    {
+      "build": "c",
+      "config_digest": "sha256:76a4b759457380048921cd3c12b13f73c229549b908b6ea4d1106255f63662a6",
+      "description": "as a, varying only the per-run label to a second run URL",
+      "fields": [
+        {
+          "path": "architecture",
+          "value": "\"amd64\""
+        },
+        {
+          "path": "config.Cmd[0]",
+          "value": "\"python3\""
+        },
+        {
+          "path": "config.Env[0]",
+          "value": "\"PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\""
+        },
+        {
+          "path": "config.Env[1]",
+          "value": "\"LANG=C.UTF-8\""
+        },
+        {
+          "path": "config.Env[2]",
+          "value": "\"GPG_KEY=7169605F62C751356D054A26A821E680E5FA6305\""
+        },
+        {
+          "path": "config.Env[3]",
+          "value": "\"PYTHON_VERSION=3.12.13\""
+        },
+        {
+          "path": "config.Env[4]",
+          "value": "\"PYTHON_SHA256=c08bc65a81971c1dd5783182826503369466c7e67374d1646519adf05207b684\""
+        },
+        {
+          "path": "config.Env[5]",
+          "value": "\"PYTHONPATH=/opt/olmo-core/src\""
+        },
+        {
+          "path": "config.Env[6]",
+          "value": "\"PYTHONDONTWRITEBYTECODE=1\""
+        },
+        {
+          "path": "config.Env[7]",
+          "value": "\"PYTHONUNBUFFERED=1\""
+        },
+        {
+          "path": "config.Labels.edullm.workflow.run.url",
+          "value": "\"https://github.com/edu-llm/OLMo-core/actions/runs/30224268571/attempts/1\""
+        },
+        {
+          "path": "config.Labels.org.opencontainers.image.base.name",
+          "value": "\"docker.io/library/python@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de\""
+        },
+        {
+          "path": "config.Labels.org.opencontainers.image.revision",
+          "value": "\"4204375e6db85abc244ec7f626de8d3cc3511402\""
+        },
+        {
+          "path": "config.Labels.org.opencontainers.image.source",
+          "value": "\"https://github.com/edu-llm/OLMo-core\""
+        },
+        {
+          "path": "config.WorkingDir",
+          "value": "\"/opt/olmo-core\""
+        },
+        {
+          "path": "created",
+          "value": "\"2026-07-26T23:09:33.947218669Z\""
+        },
+        {
+          "path": "history[0].comment",
+          "value": "\"debuerreotype 0.17\""
+        },
+        {
+          "path": "history[0].created",
+          "value": "\"2026-07-13T00:00:00Z\""
+        },
+        {
+          "path": "history[0].created_by",
+          "value": "\"# debian.sh --arch 'amd64' out/ 'trixie' '@1783900800'\""
+        },
+        {
+          "path": "history[1].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[1].created",
+          "value": "\"2026-07-14T02:02:10.365721224Z\""
+        },
+        {
+          "path": "history[1].created_by",
+          "value": "\"ENV PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\""
+        },
+        {
+          "path": "history[1].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[2].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[2].created",
+          "value": "\"2026-07-14T02:02:10.365721224Z\""
+        },
+        {
+          "path": "history[2].created_by",
+          "value": "\"ENV LANG=C.UTF-8\""
+        },
+        {
+          "path": "history[2].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[3].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[3].created",
+          "value": "\"2026-07-14T02:02:10.365721224Z\""
+        },
+        {
+          "path": "history[3].created_by",
+          "value": "\"RUN /bin/sh -c set -eux; \\tapt-get update; \\tapt-get install -y --no-install-recommends \\t\\tca-certificates \\t\\tnetbase \\t\\ttzdata \\t; \\tapt-get dist-clean # buildkit\""
+        },
+        {
+          "path": "history[4].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[4].created",
+          "value": "\"2026-07-14T02:02:10.365721224Z\""
+        },
+        {
+          "path": "history[4].created_by",
+          "value": "\"ENV GPG_KEY=7169605F62C751356D054A26A821E680E5FA6305\""
+        },
+        {
+          "path": "history[4].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[5].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[5].created",
+          "value": "\"2026-07-14T02:02:10.365721224Z\""
+        },
+        {
+          "path": "history[5].created_by",
+          "value": "\"ENV PYTHON_VERSION=3.12.13\""
+        },
+        {
+          "path": "history[5].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[6].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[6].created",
+          "value": "\"2026-07-14T02:02:10.365721224Z\""
+        },
+        {
+          "path": "history[6].created_by",
+          "value": "\"ENV PYTHON_SHA256=c08bc65a81971c1dd5783182826503369466c7e67374d1646519adf05207b684\""
+        },
+        {
+          "path": "history[6].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[7].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[7].created",
+          "value": "\"2026-07-14T02:11:29.10254015Z\""
+        },
+        {
+          "path": "history[7].created_by",
+          "value": "\"RUN /bin/sh -c set -eux; \\t\\tsavedAptMark=\\\"$(apt-mark showmanual)\\\"; \\tapt-get update; \\tapt-get install -y --no-install-recommends \\t\\tdpkg-dev \\t\\tgcc \\t\\tgnupg \\t\\tlibbluetooth-dev \\t\\tlibbz2-dev \\t\\tlibc6-dev \\t\\tlibdb-dev \\t\\tlibffi-dev \\t\\tlibgdbm-dev \\t\\tliblzma-dev \\t\\tlibncursesw5-dev \\t\\tlibreadline-dev \\t\\tlibsqlite3-dev \\t\\tlibssl-dev \\t\\tmake \\t\\ttk-dev \\t\\tuuid-dev \\t\\twget \\t\\txz-utils \\t\\tzlib1g-dev \\t; \\t\\twget -O python.tar.xz \\\"https://www.python.org/ftp/python/${PYTHON_VERSION%%[a-z]*}/Python-$PYTHON_VERSION.tar.xz\\\"; \\techo \\\"$PYTHON_SHA256 *python.tar.xz\\\" | sha256sum -c -; \\twget -O python.tar.xz.asc \\\"https://www.python.org/ftp/python/${PYTHON_VERSION%%[a-z]*}/Python-$PYTHON_VERSION.tar.xz.asc\\\"; \\tGNUPGHOME=\\\"$(mktemp -d)\\\"; export GNUPGHOME; \\tgpg --batch --keyserver hkps://keys.openpgp.org --recv-keys \\\"$GPG_KEY\\\"; \\tgpg --batch --verify python.tar.xz.asc python.tar.xz; \\tgpgconf --kill all; \\trm -rf \\\"$GNUPGHOME\\\" python.tar.xz.asc; \\tmkdir -p /usr/src/python; \\ttar --extract --directory /usr/src/python --strip-components=1 --file python.tar.xz; \\trm python.tar.xz; \\t\\tcd /usr/src/python; \\tgnuArch=\\\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\\\"; \\t./configure \\t\\t--build=\\\"$gnuArch\\\" \\t\\t--enable-loadable-sqlite-extensions \\t\\t--enable-optimizations \\t\\t--enable-option-checking=fatal \\t\\t--enable-shared \\t\\t$(test \\\"${gnuArch%%-*}\\\" != 'riscv64' && echo '--with-lto') \\t\\t--with-ensurepip \\t; \\tnproc=\\\"$(nproc)\\\"; \\tEXTRA_CFLAGS=\\\"$(dpkg-buildflags --get CFLAGS)\\\"; \\tLDFLAGS=\\\"$(dpkg-buildflags --get LDFLAGS)\\\"; \\tLDFLAGS=\\\"${LDFLAGS:-} -Wl,--strip-all\\\"; \\tarch=\\\"$(dpkg --print-architecture)\\\"; arch=\\\"${arch##*-}\\\"; \\tcase \\\"$arch\\\" in \\t\\tamd64|arm64) \\t\\t\\tEXTRA_CFLAGS=\\\"${EXTRA_CFLAGS:-} -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer\\\"; \\t\\t\\t;; \\t\\ti386) \\t\\t\\t;; \\t\\t*) \\t\\t\\tEXTRA_CFLAGS=\\\"${EXTRA_CFLAGS:-} -fno-omit-frame-pointer\\\"; \\t\\t\\t;; \\tesac; \\tmake -j \\\"$nproc\\\" \\t\\t\\\"EXTRA_CFLAGS=${EXTRA_CFLAGS:-}\\\" \\t\\t\\\"LDFLAGS=${LDFLAGS:-}\\\" \\t; \\trm python; \\tmake -j \\\"$nproc\\\" \\t\\t\\\"EXTRA_CFLAGS=${EXTRA_CFLAGS:-}\\\" \\t\\t\\\"LDFLAGS=${LDFLAGS:-} -Wl,-rpath='\\\\$\\\\$ORIGIN/../lib'\\\" \\t\\tpython \\t; \\tmake install; \\t\\tcd /; \\trm -rf /usr/src/python; \\t\\tfind /usr/local -depth \\t\\t\\\\( \\t\\t\\t\\\\( -type d -a \\\\( -name test -o -name tests -o -name idle_test \\\\) \\\\) \\t\\t\\t-o \\\\( -type f -a \\\\( -name '*.pyc' -o -name '*.pyo' -o -name 'libpython*.a' \\\\) \\\\) \\t\\t\\\\) -exec rm -rf '{}' + \\t; \\t\\tldconfig; \\t\\tapt-mark auto '.*' > /dev/null; \\tapt-mark manual $savedAptMark; \\tfind /usr/local -type f -executable -not \\\\( -name '*tkinter*' \\\\) -exec ldd '{}' ';' \\t\\t| awk '/=>/ { so = $(NF-1); if (index(so, \\\"/usr/local/\\\") == 1) { next }; gsub(\\\"^/(usr/)?\\\", \\\"\\\", so); printf \\\"*%s\\\\n\\\", so }' \\t\\t| sort -u \\t\\t| xargs -rt dpkg-query --search \\t\\t| awk 'sub(\\\":$\\\", \\\"\\\", $1) { print $1 }' \\t\\t| sort -u \\t\\t| xargs -r apt-mark manual \\t; \\tapt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false; \\tapt-get dist-clean; \\t\\texport PYTHONDONTWRITEBYTECODE=1; \\tpython3 --version; \\tpip3 --version # buildkit\""
+        },
+        {
+          "path": "history[8].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[8].created",
+          "value": "\"2026-07-14T02:11:29.203658501Z\""
+        },
+        {
+          "path": "history[8].created_by",
+          "value": "\"RUN /bin/sh -c set -eux; \\tfor src in idle3 pip3 pydoc3 python3 python3-config; do \\t\\tdst=\\\"$(echo \\\"$src\\\" | tr -d 3)\\\"; \\t\\t[ -s \\\"/usr/local/bin/$src\\\" ]; \\t\\t[ ! -e \\\"/usr/local/bin/$dst\\\" ]; \\t\\tln -svT \\\"$src\\\" \\\"/usr/local/bin/$dst\\\"; \\tdone # buildkit\""
+        },
+        {
+          "path": "history[9].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[9].created",
+          "value": "\"2026-07-14T02:11:29.203658501Z\""
+        },
+        {
+          "path": "history[9].created_by",
+          "value": "\"CMD [\\\"python3\\\"]\""
+        },
+        {
+          "path": "history[9].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[10].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[10].created",
+          "value": "\"2026-07-26T23:09:32.207861085Z\""
+        },
+        {
+          "path": "history[10].created_by",
+          "value": "\"ENV PYTHONPATH=/opt/olmo-core/src PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1\""
+        },
+        {
+          "path": "history[10].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[11].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[11].created",
+          "value": "\"2026-07-26T23:09:32.207861085Z\""
+        },
+        {
+          "path": "history[11].created_by",
+          "value": "\"WORKDIR /opt/olmo-core\""
+        },
+        {
+          "path": "history[12].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[12].created",
+          "value": "\"2026-07-26T23:09:33.947218669Z\""
+        },
+        {
+          "path": "history[12].created_by",
+          "value": "\"COPY . . # buildkit\""
+        },
+        {
+          "path": "os",
+          "value": "\"linux\""
+        },
+        {
+          "path": "rootfs.diff_ids[0]",
+          "value": "\"sha256:f2ec4de84f559f5c7be4233b589cdbdbb5507807e05621b77320edd55a1f2a0f\""
+        },
+        {
+          "path": "rootfs.diff_ids[1]",
+          "value": "\"sha256:ccbaccfc0388284959cf106031557105fad2067d6c4435937b3414ce90760167\""
+        },
+        {
+          "path": "rootfs.diff_ids[2]",
+          "value": "\"sha256:83fdf57f71f28b640f11d5072c284c81eadefc5ea538050fedcedba6149879bd\""
+        },
+        {
+          "path": "rootfs.diff_ids[3]",
+          "value": "\"sha256:b80f3ed1ee6de85c788d9ae7203207c44724eab4baac8697390ca1412954ad2f\""
+        },
+        {
+          "path": "rootfs.diff_ids[4]",
+          "value": "\"sha256:1a9b52c4f0db9b6bcedc1bf556e98d957a52d80f411c90c31f3a85aff0b9357a\""
+        },
+        {
+          "path": "rootfs.diff_ids[5]",
+          "value": "\"sha256:a94981162afafd02349fc1e5a23ecae28af4ead0f6c9e4ebfc2de815e94ec3c5\""
+        },
+        {
+          "path": "rootfs.type",
+          "value": "\"layers\""
+        }
+      ]
+    },
+    {
+      "build": "d",
+      "config_digest": "sha256:49221559eb967a02654135f7c58973121344e58ad89bcc36eb064517683095f1",
+      "description": "as a, from a copy of the same source whose file modification times were rewritten",
+      "fields": [
+        {
+          "path": "architecture",
+          "value": "\"amd64\""
+        },
+        {
+          "path": "config.Cmd[0]",
+          "value": "\"python3\""
+        },
+        {
+          "path": "config.Env[0]",
+          "value": "\"PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\""
+        },
+        {
+          "path": "config.Env[1]",
+          "value": "\"LANG=C.UTF-8\""
+        },
+        {
+          "path": "config.Env[2]",
+          "value": "\"GPG_KEY=7169605F62C751356D054A26A821E680E5FA6305\""
+        },
+        {
+          "path": "config.Env[3]",
+          "value": "\"PYTHON_VERSION=3.12.13\""
+        },
+        {
+          "path": "config.Env[4]",
+          "value": "\"PYTHON_SHA256=c08bc65a81971c1dd5783182826503369466c7e67374d1646519adf05207b684\""
+        },
+        {
+          "path": "config.Env[5]",
+          "value": "\"PYTHONPATH=/opt/olmo-core/src\""
+        },
+        {
+          "path": "config.Env[6]",
+          "value": "\"PYTHONDONTWRITEBYTECODE=1\""
+        },
+        {
+          "path": "config.Env[7]",
+          "value": "\"PYTHONUNBUFFERED=1\""
+        },
+        {
+          "path": "config.Labels.edullm.workflow.run.url",
+          "value": "\"https://github.com/edu-llm/OLMo-core/actions/runs/30222389133/attempts/1\""
+        },
+        {
+          "path": "config.Labels.org.opencontainers.image.base.name",
+          "value": "\"docker.io/library/python@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de\""
+        },
+        {
+          "path": "config.Labels.org.opencontainers.image.revision",
+          "value": "\"4204375e6db85abc244ec7f626de8d3cc3511402\""
+        },
+        {
+          "path": "config.Labels.org.opencontainers.image.source",
+          "value": "\"https://github.com/edu-llm/OLMo-core\""
+        },
+        {
+          "path": "config.WorkingDir",
+          "value": "\"/opt/olmo-core\""
+        },
+        {
+          "path": "created",
+          "value": "\"2026-07-26T23:10:41.895308798Z\""
+        },
+        {
+          "path": "history[0].comment",
+          "value": "\"debuerreotype 0.17\""
+        },
+        {
+          "path": "history[0].created",
+          "value": "\"2026-07-13T00:00:00Z\""
+        },
+        {
+          "path": "history[0].created_by",
+          "value": "\"# debian.sh --arch 'amd64' out/ 'trixie' '@1783900800'\""
+        },
+        {
+          "path": "history[1].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[1].created",
+          "value": "\"2026-07-14T02:02:10.365721224Z\""
+        },
+        {
+          "path": "history[1].created_by",
+          "value": "\"ENV PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\""
+        },
+        {
+          "path": "history[1].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[2].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[2].created",
+          "value": "\"2026-07-14T02:02:10.365721224Z\""
+        },
+        {
+          "path": "history[2].created_by",
+          "value": "\"ENV LANG=C.UTF-8\""
+        },
+        {
+          "path": "history[2].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[3].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[3].created",
+          "value": "\"2026-07-14T02:02:10.365721224Z\""
+        },
+        {
+          "path": "history[3].created_by",
+          "value": "\"RUN /bin/sh -c set -eux; \\tapt-get update; \\tapt-get install -y --no-install-recommends \\t\\tca-certificates \\t\\tnetbase \\t\\ttzdata \\t; \\tapt-get dist-clean # buildkit\""
+        },
+        {
+          "path": "history[4].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[4].created",
+          "value": "\"2026-07-14T02:02:10.365721224Z\""
+        },
+        {
+          "path": "history[4].created_by",
+          "value": "\"ENV GPG_KEY=7169605F62C751356D054A26A821E680E5FA6305\""
+        },
+        {
+          "path": "history[4].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[5].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[5].created",
+          "value": "\"2026-07-14T02:02:10.365721224Z\""
+        },
+        {
+          "path": "history[5].created_by",
+          "value": "\"ENV PYTHON_VERSION=3.12.13\""
+        },
+        {
+          "path": "history[5].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[6].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[6].created",
+          "value": "\"2026-07-14T02:02:10.365721224Z\""
+        },
+        {
+          "path": "history[6].created_by",
+          "value": "\"ENV PYTHON_SHA256=c08bc65a81971c1dd5783182826503369466c7e67374d1646519adf05207b684\""
+        },
+        {
+          "path": "history[6].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[7].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[7].created",
+          "value": "\"2026-07-14T02:11:29.10254015Z\""
+        },
+        {
+          "path": "history[7].created_by",
+          "value": "\"RUN /bin/sh -c set -eux; \\t\\tsavedAptMark=\\\"$(apt-mark showmanual)\\\"; \\tapt-get update; \\tapt-get install -y --no-install-recommends \\t\\tdpkg-dev \\t\\tgcc \\t\\tgnupg \\t\\tlibbluetooth-dev \\t\\tlibbz2-dev \\t\\tlibc6-dev \\t\\tlibdb-dev \\t\\tlibffi-dev \\t\\tlibgdbm-dev \\t\\tliblzma-dev \\t\\tlibncursesw5-dev \\t\\tlibreadline-dev \\t\\tlibsqlite3-dev \\t\\tlibssl-dev \\t\\tmake \\t\\ttk-dev \\t\\tuuid-dev \\t\\twget \\t\\txz-utils \\t\\tzlib1g-dev \\t; \\t\\twget -O python.tar.xz \\\"https://www.python.org/ftp/python/${PYTHON_VERSION%%[a-z]*}/Python-$PYTHON_VERSION.tar.xz\\\"; \\techo \\\"$PYTHON_SHA256 *python.tar.xz\\\" | sha256sum -c -; \\twget -O python.tar.xz.asc \\\"https://www.python.org/ftp/python/${PYTHON_VERSION%%[a-z]*}/Python-$PYTHON_VERSION.tar.xz.asc\\\"; \\tGNUPGHOME=\\\"$(mktemp -d)\\\"; export GNUPGHOME; \\tgpg --batch --keyserver hkps://keys.openpgp.org --recv-keys \\\"$GPG_KEY\\\"; \\tgpg --batch --verify python.tar.xz.asc python.tar.xz; \\tgpgconf --kill all; \\trm -rf \\\"$GNUPGHOME\\\" python.tar.xz.asc; \\tmkdir -p /usr/src/python; \\ttar --extract --directory /usr/src/python --strip-components=1 --file python.tar.xz; \\trm python.tar.xz; \\t\\tcd /usr/src/python; \\tgnuArch=\\\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\\\"; \\t./configure \\t\\t--build=\\\"$gnuArch\\\" \\t\\t--enable-loadable-sqlite-extensions \\t\\t--enable-optimizations \\t\\t--enable-option-checking=fatal \\t\\t--enable-shared \\t\\t$(test \\\"${gnuArch%%-*}\\\" != 'riscv64' && echo '--with-lto') \\t\\t--with-ensurepip \\t; \\tnproc=\\\"$(nproc)\\\"; \\tEXTRA_CFLAGS=\\\"$(dpkg-buildflags --get CFLAGS)\\\"; \\tLDFLAGS=\\\"$(dpkg-buildflags --get LDFLAGS)\\\"; \\tLDFLAGS=\\\"${LDFLAGS:-} -Wl,--strip-all\\\"; \\tarch=\\\"$(dpkg --print-architecture)\\\"; arch=\\\"${arch##*-}\\\"; \\tcase \\\"$arch\\\" in \\t\\tamd64|arm64) \\t\\t\\tEXTRA_CFLAGS=\\\"${EXTRA_CFLAGS:-} -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer\\\"; \\t\\t\\t;; \\t\\ti386) \\t\\t\\t;; \\t\\t*) \\t\\t\\tEXTRA_CFLAGS=\\\"${EXTRA_CFLAGS:-} -fno-omit-frame-pointer\\\"; \\t\\t\\t;; \\tesac; \\tmake -j \\\"$nproc\\\" \\t\\t\\\"EXTRA_CFLAGS=${EXTRA_CFLAGS:-}\\\" \\t\\t\\\"LDFLAGS=${LDFLAGS:-}\\\" \\t; \\trm python; \\tmake -j \\\"$nproc\\\" \\t\\t\\\"EXTRA_CFLAGS=${EXTRA_CFLAGS:-}\\\" \\t\\t\\\"LDFLAGS=${LDFLAGS:-} -Wl,-rpath='\\\\$\\\\$ORIGIN/../lib'\\\" \\t\\tpython \\t; \\tmake install; \\t\\tcd /; \\trm -rf /usr/src/python; \\t\\tfind /usr/local -depth \\t\\t\\\\( \\t\\t\\t\\\\( -type d -a \\\\( -name test -o -name tests -o -name idle_test \\\\) \\\\) \\t\\t\\t-o \\\\( -type f -a \\\\( -name '*.pyc' -o -name '*.pyo' -o -name 'libpython*.a' \\\\) \\\\) \\t\\t\\\\) -exec rm -rf '{}' + \\t; \\t\\tldconfig; \\t\\tapt-mark auto '.*' > /dev/null; \\tapt-mark manual $savedAptMark; \\tfind /usr/local -type f -executable -not \\\\( -name '*tkinter*' \\\\) -exec ldd '{}' ';' \\t\\t| awk '/=>/ { so = $(NF-1); if (index(so, \\\"/usr/local/\\\") == 1) { next }; gsub(\\\"^/(usr/)?\\\", \\\"\\\", so); printf \\\"*%s\\\\n\\\", so }' \\t\\t| sort -u \\t\\t| xargs -rt dpkg-query --search \\t\\t| awk 'sub(\\\":$\\\", \\\"\\\", $1) { print $1 }' \\t\\t| sort -u \\t\\t| xargs -r apt-mark manual \\t; \\tapt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false; \\tapt-get dist-clean; \\t\\texport PYTHONDONTWRITEBYTECODE=1; \\tpython3 --version; \\tpip3 --version # buildkit\""
+        },
+        {
+          "path": "history[8].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[8].created",
+          "value": "\"2026-07-14T02:11:29.203658501Z\""
+        },
+        {
+          "path": "history[8].created_by",
+          "value": "\"RUN /bin/sh -c set -eux; \\tfor src in idle3 pip3 pydoc3 python3 python3-config; do \\t\\tdst=\\\"$(echo \\\"$src\\\" | tr -d 3)\\\"; \\t\\t[ -s \\\"/usr/local/bin/$src\\\" ]; \\t\\t[ ! -e \\\"/usr/local/bin/$dst\\\" ]; \\t\\tln -svT \\\"$src\\\" \\\"/usr/local/bin/$dst\\\"; \\tdone # buildkit\""
+        },
+        {
+          "path": "history[9].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[9].created",
+          "value": "\"2026-07-14T02:11:29.203658501Z\""
+        },
+        {
+          "path": "history[9].created_by",
+          "value": "\"CMD [\\\"python3\\\"]\""
+        },
+        {
+          "path": "history[9].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[10].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[10].created",
+          "value": "\"2026-07-26T23:09:32.207861085Z\""
+        },
+        {
+          "path": "history[10].created_by",
+          "value": "\"ENV PYTHONPATH=/opt/olmo-core/src PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1\""
+        },
+        {
+          "path": "history[10].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[11].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[11].created",
+          "value": "\"2026-07-26T23:09:32.207861085Z\""
+        },
+        {
+          "path": "history[11].created_by",
+          "value": "\"WORKDIR /opt/olmo-core\""
+        },
+        {
+          "path": "history[12].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[12].created",
+          "value": "\"2026-07-26T23:10:41.895308798Z\""
+        },
+        {
+          "path": "history[12].created_by",
+          "value": "\"COPY . . # buildkit\""
+        },
+        {
+          "path": "os",
+          "value": "\"linux\""
+        },
+        {
+          "path": "rootfs.diff_ids[0]",
+          "value": "\"sha256:f2ec4de84f559f5c7be4233b589cdbdbb5507807e05621b77320edd55a1f2a0f\""
+        },
+        {
+          "path": "rootfs.diff_ids[1]",
+          "value": "\"sha256:ccbaccfc0388284959cf106031557105fad2067d6c4435937b3414ce90760167\""
+        },
+        {
+          "path": "rootfs.diff_ids[2]",
+          "value": "\"sha256:83fdf57f71f28b640f11d5072c284c81eadefc5ea538050fedcedba6149879bd\""
+        },
+        {
+          "path": "rootfs.diff_ids[3]",
+          "value": "\"sha256:b80f3ed1ee6de85c788d9ae7203207c44724eab4baac8697390ca1412954ad2f\""
+        },
+        {
+          "path": "rootfs.diff_ids[4]",
+          "value": "\"sha256:1a9b52c4f0db9b6bcedc1bf556e98d957a52d80f411c90c31f3a85aff0b9357a\""
+        },
+        {
+          "path": "rootfs.diff_ids[5]",
+          "value": "\"sha256:c31ad1162a44ae7cb16d89b4c3088534cb836c693155aa8c5ec60e2acafce68f\""
+        },
+        {
+          "path": "rootfs.type",
+          "value": "\"layers\""
+        }
+      ]
+    },
+    {
+      "build": "published",
+      "config_digest": "sha256:8ae7bb5ff10ed0f2576d3df24e8890a255eba7602aee831184e7f3336b217b15",
+      "description": "the image the workflow published, its configuration fetched from the registry",
+      "fields": [
+        {
+          "path": "architecture",
+          "value": "\"amd64\""
+        },
+        {
+          "path": "config.Cmd[0]",
+          "value": "\"python3\""
+        },
+        {
+          "path": "config.Env[0]",
+          "value": "\"PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\""
+        },
+        {
+          "path": "config.Env[1]",
+          "value": "\"LANG=C.UTF-8\""
+        },
+        {
+          "path": "config.Env[2]",
+          "value": "\"GPG_KEY=7169605F62C751356D054A26A821E680E5FA6305\""
+        },
+        {
+          "path": "config.Env[3]",
+          "value": "\"PYTHON_VERSION=3.12.13\""
+        },
+        {
+          "path": "config.Env[4]",
+          "value": "\"PYTHON_SHA256=c08bc65a81971c1dd5783182826503369466c7e67374d1646519adf05207b684\""
+        },
+        {
+          "path": "config.Env[5]",
+          "value": "\"PYTHONPATH=/opt/olmo-core/src\""
+        },
+        {
+          "path": "config.Env[6]",
+          "value": "\"PYTHONDONTWRITEBYTECODE=1\""
+        },
+        {
+          "path": "config.Env[7]",
+          "value": "\"PYTHONUNBUFFERED=1\""
+        },
+        {
+          "path": "config.Labels.edullm.workflow.run.url",
+          "value": "\"https://github.com/edu-llm/OLMo-core/actions/runs/30222389133/attempts/1\""
+        },
+        {
+          "path": "config.Labels.org.opencontainers.image.base.name",
+          "value": "\"docker.io/library/python@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de\""
+        },
+        {
+          "path": "config.Labels.org.opencontainers.image.revision",
+          "value": "\"4204375e6db85abc244ec7f626de8d3cc3511402\""
+        },
+        {
+          "path": "config.Labels.org.opencontainers.image.source",
+          "value": "\"https://github.com/edu-llm/OLMo-core\""
+        },
+        {
+          "path": "config.WorkingDir",
+          "value": "\"/opt/olmo-core\""
+        },
+        {
+          "path": "created",
+          "value": "\"2026-07-26T22:05:31.607088799Z\""
+        },
+        {
+          "path": "history[0].comment",
+          "value": "\"debuerreotype 0.17\""
+        },
+        {
+          "path": "history[0].created",
+          "value": "\"2026-07-13T00:00:00Z\""
+        },
+        {
+          "path": "history[0].created_by",
+          "value": "\"# debian.sh --arch 'amd64' out/ 'trixie' '@1783900800'\""
+        },
+        {
+          "path": "history[1].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[1].created",
+          "value": "\"2026-07-14T02:02:10.365721224Z\""
+        },
+        {
+          "path": "history[1].created_by",
+          "value": "\"ENV PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\""
+        },
+        {
+          "path": "history[1].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[2].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[2].created",
+          "value": "\"2026-07-14T02:02:10.365721224Z\""
+        },
+        {
+          "path": "history[2].created_by",
+          "value": "\"ENV LANG=C.UTF-8\""
+        },
+        {
+          "path": "history[2].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[3].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[3].created",
+          "value": "\"2026-07-14T02:02:10.365721224Z\""
+        },
+        {
+          "path": "history[3].created_by",
+          "value": "\"RUN /bin/sh -c set -eux; \\tapt-get update; \\tapt-get install -y --no-install-recommends \\t\\tca-certificates \\t\\tnetbase \\t\\ttzdata \\t; \\tapt-get dist-clean # buildkit\""
+        },
+        {
+          "path": "history[4].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[4].created",
+          "value": "\"2026-07-14T02:02:10.365721224Z\""
+        },
+        {
+          "path": "history[4].created_by",
+          "value": "\"ENV GPG_KEY=7169605F62C751356D054A26A821E680E5FA6305\""
+        },
+        {
+          "path": "history[4].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[5].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[5].created",
+          "value": "\"2026-07-14T02:02:10.365721224Z\""
+        },
+        {
+          "path": "history[5].created_by",
+          "value": "\"ENV PYTHON_VERSION=3.12.13\""
+        },
+        {
+          "path": "history[5].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[6].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[6].created",
+          "value": "\"2026-07-14T02:02:10.365721224Z\""
+        },
+        {
+          "path": "history[6].created_by",
+          "value": "\"ENV PYTHON_SHA256=c08bc65a81971c1dd5783182826503369466c7e67374d1646519adf05207b684\""
+        },
+        {
+          "path": "history[6].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[7].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[7].created",
+          "value": "\"2026-07-14T02:11:29.10254015Z\""
+        },
+        {
+          "path": "history[7].created_by",
+          "value": "\"RUN /bin/sh -c set -eux; \\t\\tsavedAptMark=\\\"$(apt-mark showmanual)\\\"; \\tapt-get update; \\tapt-get install -y --no-install-recommends \\t\\tdpkg-dev \\t\\tgcc \\t\\tgnupg \\t\\tlibbluetooth-dev \\t\\tlibbz2-dev \\t\\tlibc6-dev \\t\\tlibdb-dev \\t\\tlibffi-dev \\t\\tlibgdbm-dev \\t\\tliblzma-dev \\t\\tlibncursesw5-dev \\t\\tlibreadline-dev \\t\\tlibsqlite3-dev \\t\\tlibssl-dev \\t\\tmake \\t\\ttk-dev \\t\\tuuid-dev \\t\\twget \\t\\txz-utils \\t\\tzlib1g-dev \\t; \\t\\twget -O python.tar.xz \\\"https://www.python.org/ftp/python/${PYTHON_VERSION%%[a-z]*}/Python-$PYTHON_VERSION.tar.xz\\\"; \\techo \\\"$PYTHON_SHA256 *python.tar.xz\\\" | sha256sum -c -; \\twget -O python.tar.xz.asc \\\"https://www.python.org/ftp/python/${PYTHON_VERSION%%[a-z]*}/Python-$PYTHON_VERSION.tar.xz.asc\\\"; \\tGNUPGHOME=\\\"$(mktemp -d)\\\"; export GNUPGHOME; \\tgpg --batch --keyserver hkps://keys.openpgp.org --recv-keys \\\"$GPG_KEY\\\"; \\tgpg --batch --verify python.tar.xz.asc python.tar.xz; \\tgpgconf --kill all; \\trm -rf \\\"$GNUPGHOME\\\" python.tar.xz.asc; \\tmkdir -p /usr/src/python; \\ttar --extract --directory /usr/src/python --strip-components=1 --file python.tar.xz; \\trm python.tar.xz; \\t\\tcd /usr/src/python; \\tgnuArch=\\\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\\\"; \\t./configure \\t\\t--build=\\\"$gnuArch\\\" \\t\\t--enable-loadable-sqlite-extensions \\t\\t--enable-optimizations \\t\\t--enable-option-checking=fatal \\t\\t--enable-shared \\t\\t$(test \\\"${gnuArch%%-*}\\\" != 'riscv64' && echo '--with-lto') \\t\\t--with-ensurepip \\t; \\tnproc=\\\"$(nproc)\\\"; \\tEXTRA_CFLAGS=\\\"$(dpkg-buildflags --get CFLAGS)\\\"; \\tLDFLAGS=\\\"$(dpkg-buildflags --get LDFLAGS)\\\"; \\tLDFLAGS=\\\"${LDFLAGS:-} -Wl,--strip-all\\\"; \\tarch=\\\"$(dpkg --print-architecture)\\\"; arch=\\\"${arch##*-}\\\"; \\tcase \\\"$arch\\\" in \\t\\tamd64|arm64) \\t\\t\\tEXTRA_CFLAGS=\\\"${EXTRA_CFLAGS:-} -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer\\\"; \\t\\t\\t;; \\t\\ti386) \\t\\t\\t;; \\t\\t*) \\t\\t\\tEXTRA_CFLAGS=\\\"${EXTRA_CFLAGS:-} -fno-omit-frame-pointer\\\"; \\t\\t\\t;; \\tesac; \\tmake -j \\\"$nproc\\\" \\t\\t\\\"EXTRA_CFLAGS=${EXTRA_CFLAGS:-}\\\" \\t\\t\\\"LDFLAGS=${LDFLAGS:-}\\\" \\t; \\trm python; \\tmake -j \\\"$nproc\\\" \\t\\t\\\"EXTRA_CFLAGS=${EXTRA_CFLAGS:-}\\\" \\t\\t\\\"LDFLAGS=${LDFLAGS:-} -Wl,-rpath='\\\\$\\\\$ORIGIN/../lib'\\\" \\t\\tpython \\t; \\tmake install; \\t\\tcd /; \\trm -rf /usr/src/python; \\t\\tfind /usr/local -depth \\t\\t\\\\( \\t\\t\\t\\\\( -type d -a \\\\( -name test -o -name tests -o -name idle_test \\\\) \\\\) \\t\\t\\t-o \\\\( -type f -a \\\\( -name '*.pyc' -o -name '*.pyo' -o -name 'libpython*.a' \\\\) \\\\) \\t\\t\\\\) -exec rm -rf '{}' + \\t; \\t\\tldconfig; \\t\\tapt-mark auto '.*' > /dev/null; \\tapt-mark manual $savedAptMark; \\tfind /usr/local -type f -executable -not \\\\( -name '*tkinter*' \\\\) -exec ldd '{}' ';' \\t\\t| awk '/=>/ { so = $(NF-1); if (index(so, \\\"/usr/local/\\\") == 1) { next }; gsub(\\\"^/(usr/)?\\\", \\\"\\\", so); printf \\\"*%s\\\\n\\\", so }' \\t\\t| sort -u \\t\\t| xargs -rt dpkg-query --search \\t\\t| awk 'sub(\\\":$\\\", \\\"\\\", $1) { print $1 }' \\t\\t| sort -u \\t\\t| xargs -r apt-mark manual \\t; \\tapt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false; \\tapt-get dist-clean; \\t\\texport PYTHONDONTWRITEBYTECODE=1; \\tpython3 --version; \\tpip3 --version # buildkit\""
+        },
+        {
+          "path": "history[8].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[8].created",
+          "value": "\"2026-07-14T02:11:29.203658501Z\""
+        },
+        {
+          "path": "history[8].created_by",
+          "value": "\"RUN /bin/sh -c set -eux; \\tfor src in idle3 pip3 pydoc3 python3 python3-config; do \\t\\tdst=\\\"$(echo \\\"$src\\\" | tr -d 3)\\\"; \\t\\t[ -s \\\"/usr/local/bin/$src\\\" ]; \\t\\t[ ! -e \\\"/usr/local/bin/$dst\\\" ]; \\t\\tln -svT \\\"$src\\\" \\\"/usr/local/bin/$dst\\\"; \\tdone # buildkit\""
+        },
+        {
+          "path": "history[9].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[9].created",
+          "value": "\"2026-07-14T02:11:29.203658501Z\""
+        },
+        {
+          "path": "history[9].created_by",
+          "value": "\"CMD [\\\"python3\\\"]\""
+        },
+        {
+          "path": "history[9].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[10].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[10].created",
+          "value": "\"2026-07-26T22:05:31.508148222Z\""
+        },
+        {
+          "path": "history[10].created_by",
+          "value": "\"ENV PYTHONPATH=/opt/olmo-core/src PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1\""
+        },
+        {
+          "path": "history[10].empty_layer",
+          "value": "true"
+        },
+        {
+          "path": "history[11].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[11].created",
+          "value": "\"2026-07-26T22:05:31.508148222Z\""
+        },
+        {
+          "path": "history[11].created_by",
+          "value": "\"WORKDIR /opt/olmo-core\""
+        },
+        {
+          "path": "history[12].comment",
+          "value": "\"buildkit.dockerfile.v0\""
+        },
+        {
+          "path": "history[12].created",
+          "value": "\"2026-07-26T22:05:31.607088799Z\""
+        },
+        {
+          "path": "history[12].created_by",
+          "value": "\"COPY . . # buildkit\""
+        },
+        {
+          "path": "os",
+          "value": "\"linux\""
+        },
+        {
+          "path": "rootfs.diff_ids[0]",
+          "value": "\"sha256:f2ec4de84f559f5c7be4233b589cdbdbb5507807e05621b77320edd55a1f2a0f\""
+        },
+        {
+          "path": "rootfs.diff_ids[1]",
+          "value": "\"sha256:ccbaccfc0388284959cf106031557105fad2067d6c4435937b3414ce90760167\""
+        },
+        {
+          "path": "rootfs.diff_ids[2]",
+          "value": "\"sha256:83fdf57f71f28b640f11d5072c284c81eadefc5ea538050fedcedba6149879bd\""
+        },
+        {
+          "path": "rootfs.diff_ids[3]",
+          "value": "\"sha256:b80f3ed1ee6de85c788d9ae7203207c44724eab4baac8697390ca1412954ad2f\""
+        },
+        {
+          "path": "rootfs.diff_ids[4]",
+          "value": "\"sha256:6a7013bc831dc2969d40a7ec10700336010358c78b896c72ca4d57e7ab890ff0\""
+        },
+        {
+          "path": "rootfs.diff_ids[5]",
+          "value": "\"sha256:d62416c0f04d3972e1d1bfe5f9599c24062df85831b9419133e9abc913e02d51\""
+        },
+        {
+          "path": "rootfs.type",
+          "value": "\"layers\""
+        }
+      ]
+    }
+  ],
+  "dockerfile_path": ".edullm/Dockerfile",
+  "performed_at": "2026-07-26T23:10:00Z",
+  "platform": "linux/amd64",
+  "schema_version": 1,
+  "source_commit_sha": "4204375e6db85abc244ec7f626de8d3cc3511402"
+}

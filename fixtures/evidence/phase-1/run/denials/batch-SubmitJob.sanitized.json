@@ -1,0 +1,18 @@
+{
+  "attempted_action": "batch:SubmitJob",
+  "attempted_at": "2026-07-26T22:04:58.045409Z",
+  "attempted_resource": "edullm-denial-probe-absent-queue",
+  "environment": "sandbox",
+  "error_code": "AccessDeniedException",
+  "error_message": "User: arn:aws:sts::<aws-account-id>:assumed-role/sbsandbox-intern-edullm-ecr-publisher/GitHubActions is not authorized to perform: batch:SubmitJob on resource: arn:aws:batch:us-east-1:<aws-account-id>:job-definition/edullm-denial-probe-absent-job-definition because no identity-based policy allows the batch:SubmitJob action",
+  "event_id": "21bd62b9-4797-494c-9255-b9c8dc84647e",
+  "event_name": "SubmitJob",
+  "event_source": "batch.amazonaws.com",
+  "observed_at": "2026-07-26T23:17:34Z",
+  "outcome": "denied",
+  "region": "us-east-1",
+  "role_name": "sbsandbox-intern-edullm-ecr-publisher",
+  "session_name": "GitHubActions",
+  "source": "aws",
+  "status": "ok"
+}

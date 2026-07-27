@@ -74,6 +74,7 @@ __all__ = [
     "IamTrustStatement",
     "ImageScanEvidence",
     "ImageScanFindingCounts",
+    "ImmutableTagRefusalEvidence",
     "OidcSessionEvidence",
 ]
 
@@ -96,6 +97,11 @@ AWS_SERVICE_PRINCIPAL_PATTERN: Final = r"^[a-z0-9.-]{2,64}\.amazonaws\.com$"
 IAM_POLICY_ACTION_PATTERN: Final = r"^(?:\*|[a-z0-9-]{2,64}:[A-Za-z0-9*?]{1,128})$"
 IAM_POLICY_VERSION_PATTERN: Final = r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
 IAM_CONDITION_OPERATOR_PATTERN: Final = r"^(?:ForAllValues:|ForAnyValue:)?[A-Za-z]{2,48}$"
+
+#: What stands in for an identity this repository does not declare. The sandbox account
+#: is shared with other teams and its per-person roles carry personal names, which an
+#: evidence record committed to a public repository has no business carrying.
+UNDECLARED_IDENTITY_PLACEHOLDER: Final = "<another-identity-in-this-account>"
 
 #: IAM's floor and ceiling for MaxSessionDuration. The committed template asks for the
 #: floor; the ceiling is here so a role widened to twelve hours can be written down.
@@ -448,6 +454,63 @@ class OidcSessionEvidence(FreshEvidenceModel):
     def validate_the_session_window(self) -> Self:
         if self.expires_at <= self.assumed_at:
             raise ValueError("a session must expire after it was assumed")
+        return self
+
+
+class ImmutableTagRefusalEvidence(FreshEvidenceModel):
+    """A second push under a tag the registry already holds, and the refusal it met.
+
+    ``EcrRepositoryEvidence`` records that the repository is configured ``IMMUTABLE``.
+    That is a setting read back from a describe call, and this is the other thing: a push
+    that happened and was turned away. The two are not the same claim, and only this one
+    is what criterion 7 asserts.
+
+    ``image_digest`` is the digest the tag still resolves to *after* the refusal, which
+    is the half of the claim a refusal alone does not make. A push could be refused and
+    the tag repointed by some other path; recording what the registry holds afterwards is
+    what says the original image survived.
+
+    Who met the refusal is recorded in two fields and neither is optional.
+    ``attempted_by_publisher_role`` is the question a reader actually has, and it is a
+    field rather than something inferred from a name so that a record cannot be silently
+    read as the publisher's when it was not. ``attempted_by`` names the role only when
+    the role is one this repository declares; every other identity in a shared sandbox
+    account is a person, and their name is not this project's to publish, so it folds to
+    :data:`UNDECLARED_IDENTITY_PLACEHOLDER`. Nothing is lost by that: ECR's refusal is a
+    property of the repository rather than of the caller — a tag that cannot be
+    overwritten cannot be overwritten by anybody — and the field that carries the claim
+    worth checking is the boolean beside it.
+
+    ``source_commit_sha`` licenses ``image_tag`` here for the reason
+    :class:`EcrImageEvidence` gives: twelve characters that may all be digits need a
+    cross-check rather than a scan.
+    """
+
+    source: Literal["aws"]
+    environment: EvidenceEnvironment
+    status: EvidenceStatus
+    region: AwsRegion
+    repository_name: EcrRepositoryName
+    image_tag: ImageTag
+    source_commit_sha: GitCommitSha
+    image_digest: Sha256Digest
+    attempted_by: SecretFreeStr = Field(min_length=1, max_length=128)
+    attempted_by_publisher_role: bool
+    attempted_at: EvidenceInstant
+    outcome: Literal["refused"]
+    error_code: SecretFreeStr = Field(pattern=AWS_ERROR_CODE_PATTERN)
+    error_message: SecretFreeStr = Field(min_length=1, max_length=4096)
+    event_id: CloudTrailEventId
+    event_name: Literal["PutImage"]
+    event_source: Literal["ecr.amazonaws.com"]
+
+    @model_validator(mode="after")
+    def validate_the_tag_is_this_commit_prefix(self) -> Self:
+        tag_length = len(self.image_tag)
+        if self.image_tag != self.source_commit_sha[:tag_length]:
+            raise ValueError(
+                f"the image tag must be the first {tag_length} characters of the commit SHA"
+            )
         return self
 
 

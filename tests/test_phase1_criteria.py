@@ -4,9 +4,12 @@ The eight statements below are transcribed from the master plan. They are the
 specification; ``edullm_platform.phase1_criteria`` is the implementation. Comparing them
 verbatim stops the definition quietly rewriting the criterion it claims to satisfy.
 
-Phase 1 has produced no live run, so half of it is honestly unproved. The tests here
-exist mostly to hold that line: they pin which criteria are gaps, that a gap cites
-nothing, and that nothing was relabelled ``DEFERRED`` to make the count look better.
+Every criterion is now covered, and four of them were gaps until the build path ran. That
+makes this module's job harder rather than easier: a green gate is the state in which a
+softened definition is invisible, so the tests here pin what each criterion is allowed to
+rest on. Four of them rest on captured evidence, and the cases at the end show what
+happens on the day it expires — the gate goes red, and it goes red for the four that rest
+on a capture and for nothing else.
 
 The gate cases at the end of this module start ``tools/validate_phase1.py`` and
 ``evaluate_repository``, which is why the module is listed in ``REENTRANT_TEST_MODULES``:
@@ -33,6 +36,7 @@ from edullm_platform.criteria_runner import NESTED_GATE_ENV, SelectionOutcome
 from edullm_platform.phase1_criteria import (
     DEPLOYED_ROLES_MATCH_THEIR_TEMPLATES,
     PHASE1_CRITERION_COUNT,
+    RUN_EVIDENCE_HOLDS,
     phase1_criteria,
 )
 from edullm_platform.phase1_gate import Phase1GateReport, evaluate_repository
@@ -69,20 +73,20 @@ PHASE1_STATEMENTS = (
 
 #: What each criterion is recorded as, stated here rather than read from the definition
 #: so that promoting a gap to covered has to be done twice and reviewed once.
-EXPECTED_STATUSES = {
-    "1": CriterionStatus.GAP,
-    "2": CriterionStatus.GAP,
-    "3": CriterionStatus.COVERED,
-    "4": CriterionStatus.COVERED,
-    "5": CriterionStatus.COVERED,
-    "6": CriterionStatus.GAP,
-    "7": CriterionStatus.GAP,
-    "8": CriterionStatus.COVERED,
-}
+EXPECTED_STATUSES = dict.fromkeys((str(number) for number in range(1, 9)), CriterionStatus.COVERED)
 
-#: The criteria that describe what the live path did. Nothing has run it, so no test in
-#: this repository can prove them and none of them may cite one.
-AWAITING_A_LIVE_RUN = ("1", "2", "6", "7")
+#: The criteria that describe what the live path did, and therefore rest on the committed
+#: records of one run. Each cites RUN_EVIDENCE_HOLDS and each is a gap again when it
+#: expires.
+RESTING_ON_THE_LIVE_RUN = ("1", "6", "7")
+
+#: The criteria that rest on the deployed-role capture, as a second mechanism rather than
+#: as what proves them.
+RESTING_ON_THE_ROLE_CAPTURE = ("4", "5", "6")
+
+#: The one criterion that rests on builds made outside the shipped path, because the
+#: shipped path cannot make them.
+RESTING_ON_LOCAL_REBUILDS = "2"
 
 
 @pytest.fixture(scope="module")
@@ -120,31 +124,45 @@ def test_nothing_is_deferred_because_no_deferral_was_decided(
     assert [check.number for check in criteria if check.status is CriterionStatus.DEFERRED] == []
 
 
-@pytest.mark.parametrize("number", AWAITING_A_LIVE_RUN)
-def test_a_criterion_awaiting_a_live_run_is_a_gap_that_cites_nothing(
+@pytest.mark.parametrize("number", RESTING_ON_THE_LIVE_RUN)
+def test_a_criterion_about_the_live_path_rests_on_the_records_of_a_run(
     criteria: tuple[CriterionSpec, ...],
     number: str,
 ) -> None:
-    # A citation on one of these would say a test proves something about a path that has
-    # never executed. Naming the nearest test instead of nothing is how a matrix starts
-    # gesturing at coverage it does not have.
+    # These three assert something that happened rather than something a test can make
+    # happen: a digest was produced, a session was refused, a tag was not overwritten.
+    # Each has to cite the one test that says the committed records of that run are
+    # present, fresh and about the same image, so that none of them can outlive it.
     check = by_number(criteria, number)
 
-    assert check.status is CriterionStatus.GAP
-    assert check.cited_node_ids == ()
-    assert check.gaps
-    assert all(text.strip() for text in check.gaps)
+    assert check.status is CriterionStatus.COVERED
+    assert RUN_EVIDENCE_HOLDS in check.proving_node_ids, number
+    assert not check.gaps, number
 
 
-def test_every_covered_criterion_cites_a_proving_test(
-    criteria: tuple[CriterionSpec, ...],
-) -> None:
-    covered = [check for check in criteria if check.status is CriterionStatus.COVERED]
-
-    assert [check.number for check in covered] == ["3", "4", "5", "8"]
-    for check in covered:
+def test_every_criterion_cites_a_proving_test(criteria: tuple[CriterionSpec, ...]) -> None:
+    assert [check.number for check in criteria] == sorted(EXPECTED_STATUSES)
+    for check in criteria:
+        assert check.status is CriterionStatus.COVERED, check.number
         assert check.proving_node_ids, check.number
         assert not check.gaps, check.number
+
+
+def test_the_rebuild_criterion_says_the_builds_were_not_workflow_runs(
+    criteria: tuple[CriterionSpec, ...],
+) -> None:
+    # The one place a reader could be misled into thinking the shipped path produced the
+    # comparison. It cannot, deliberately, and the criterion has to say so where the
+    # claim is made rather than somewhere else.
+    check = by_number(criteria, RESTING_ON_LOCAL_REBUILDS)
+    limits = " ".join(check.scope_limits)
+
+    assert "local" in limits
+    assert "not workflow runs" in limits
+    assert "resumes" in limits
+    assert "fixtures/evidence/phase-1/rebuild" in limits
+    # And it does not claim reproducibility, which is not what the criterion says.
+    assert "Byte-level reproducibility is not claimed" in limits
 
 
 def test_the_pull_request_case_cites_both_mechanisms_that_close_it(
@@ -188,31 +206,30 @@ def test_every_path_a_criterion_names_is_one_that_exists(
     # Anchors the assertion above, which would pass on prose that names nothing at all.
     assert {path for _number, path in named} >= {
         "tools/capture_phase1_evidence.py",
-        "tools/verify_publisher_denials.py",
         "fixtures/evidence/phase-1/roles",
-        "tests/test_phase1_deployed_roles.py",
+        "fixtures/evidence/phase-1/run",
+        "fixtures/evidence/phase-1/rebuild",
+        "config/repositories.yaml",
     }
 
 
-def test_the_gap_the_comparison_bears_on_says_which_half_of_it_moved(
+def test_the_denial_criterion_separates_the_policy_from_the_refusal(
     criteria: tuple[CriterionSpec, ...],
 ) -> None:
-    # Criterion 6 is the one the comparison was built for, and it is still a gap. Half of
-    # it moved: the deployed role has now been compared to the template and matches, so
-    # the template's silence about Batch, S3 and IAM is a fact about the account. The
-    # other half did not, and the risk is that the first reads later as having closed the
-    # second, so the gap text has to be explicit about both.
-    gaps = " ".join(by_number(criteria, "6").gaps)
+    # Two mechanisms close criterion 6 and they are different in kind. The role capture
+    # says the account grants nothing outside ECR; the denial records say a session tried
+    # and was told no. The risk is that the first reads later as having established the
+    # second, so both have to be named and told apart.
+    limits = " ".join(by_number(criteria, "6").scope_limits)
 
-    assert "role_drift" in gaps
-    assert "tools/capture_phase1_evidence.py" in gaps
-    assert "fixtures/evidence/phase-1/roles" in gaps
-    assert "denial" in gaps.lower()
-    assert "CloudTrail" in gaps
-    assert by_number(criteria, "6").status is CriterionStatus.GAP
+    assert "role_drift" in limits
+    assert "fixtures/evidence/phase-1/roles" in limits
+    assert "fixtures/evidence/phase-1/run/denials" in limits
+    assert "observed rather than argued" in limits
+    assert "CloudTrail event id" in limits
 
 
-def test_the_denial_gap_says_less_than_the_criterion_where_the_matrix_proves_less(
+def test_the_denial_criterion_says_less_than_itself_where_the_matrix_proves_less(
     criteria: tuple[CriterionSpec, ...],
 ) -> None:
     # The criterion says "read datasets" and the S3 probe is an account-level
@@ -220,12 +237,25 @@ def test_the_denial_gap_says_less_than_the_criterion_where_the_matrix_proves_les
     # NoSuchBucket before anybody is authorized -- which is what the first session to run
     # the matrix found. A refusal of ListBuckets is weaker than a refusal to read one
     # object, and the risk is that the criterion's wording is later read as the thing
-    # that was attempted, so the gap has to hold the difference open.
-    gaps = " ".join(by_number(criteria, "6").gaps)
+    # that was attempted, so the scope limits have to hold the difference open.
+    limits = " ".join(by_number(criteria, "6").scope_limits)
 
-    assert "NoSuchBucket" in gaps
-    assert "ListBuckets" in gaps
-    assert "s3:GetObject" in gaps
+    assert "NoSuchBucket" in limits
+    assert "ListBuckets" in limits
+    assert "s3:GetObject" in limits
+    assert "PROBE_SELECTION_LESSONS" in limits
+
+
+def test_the_immutable_tag_criterion_says_who_met_the_refusal(
+    criteria: tuple[CriterionSpec, ...],
+) -> None:
+    # The second push was made by hand under an identity that is not the publisher role.
+    # That is the one thing about criterion 7 a reader would otherwise assume wrongly.
+    limits = " ".join(by_number(criteria, "7").scope_limits)
+
+    assert "not the publisher role" in limits
+    assert "ImageTagAlreadyExistsException" in limits
+    assert "pre-flight tag lookup" in limits
 
 
 def test_the_criteria_that_rest_on_the_capture_cite_every_part_of_the_claim(
@@ -234,7 +264,7 @@ def test_the_criteria_that_rest_on_the_capture_cite_every_part_of_the_claim(
     # Three separate facts make a committed capture worth citing: one exists for each
     # role, it is inside its window, and it matches the template. Citing the third alone
     # would let a deleted or expired record pass as agreement.
-    for number in ("4", "5"):
+    for number in RESTING_ON_THE_ROLE_CAPTURE:
         check = by_number(criteria, number)
 
         assert set(DEPLOYED_ROLES_MATCH_THEIR_TEMPLATES) <= set(check.supporting_node_ids), number
@@ -314,31 +344,51 @@ def test_the_gate_executed_every_node_id_the_criteria_cite(
     }
 
 
-def test_the_gate_fails_and_names_the_four_criteria_no_run_has_established(
+def test_the_gate_passes_because_every_cited_test_ran_and_passed(
     report: Phase1GateReport,
 ) -> None:
-    # This is the honest state of the phase rather than a broken gate. A green Phase 1
-    # gate today would mean the definition had been softened, not that the phase was done.
+    # Green, and green for a stated reason. Every criterion is covered and every citation
+    # was executed; the two cases after this one are what stops that from being a claim
+    # the definition can make about itself.
     failing = [result.number for result in report.phase_criteria if not result.passed]
 
-    assert failing == list(AWAITING_A_LIVE_RUN)
-    assert report.passed is False
-    for result in report.phase_criteria:
-        if result.number in AWAITING_A_LIVE_RUN:
-            assert result.reason_code == "recorded_gap"
-            assert result.status is CriterionStatus.GAP
-        else:
-            assert result.reason_code == "ok"
+    assert failing == []
+    assert report.passed is True
+    assert {result.reason_code for result in report.phase_criteria} == {"ok"}
 
 
-def test_the_command_exits_one_and_prints_the_verdict_the_gate_reached(
+def test_an_expired_run_capture_takes_the_criteria_resting_on_it_back_to_a_gap(
+    criteria: tuple[CriterionSpec, ...],
+) -> None:
+    # What thirty days does to the four criteria that rest on a run, without waiting
+    # thirty days. That the reader reports an aged record as stale is proved in
+    # tests/test_phase1_run_evidence.py; this is the consequence for the gate.
+    cited = cited_node_ids(criteria)
+    expired = SelectionOutcome(
+        requested=cited,
+        collected=cited,
+        passed=cited - {RUN_EVIDENCE_HOLDS},
+        exit_code=1,
+    )
+
+    results = {result.number: result for result in evaluate_criteria(criteria, expired)}
+
+    for number in RESTING_ON_THE_LIVE_RUN:
+        assert results[number].status is CriterionStatus.GAP, number
+        assert results[number].reason_code == "cited_test_failed", number
+    # And a criterion that does not rest on the run is untouched.
+    assert results["3"].passed is True
+    assert results["8"].passed is True
+
+
+def test_the_command_exits_zero_and_prints_the_verdict_the_gate_reached(
     report: Phase1GateReport,
 ) -> None:
     completed = run_validate_phase1(PROJECT_ROOT)
 
-    assert completed.returncode == 1
+    assert completed.returncode == 0
     printed = json.loads(completed.stdout)
-    assert printed["passed"] is False
+    assert printed["passed"] is True
     assert [result["number"] for result in printed["phase_criteria"]] == [
         result.number for result in report.phase_criteria
     ]
@@ -363,5 +413,4 @@ def test_a_tree_with_no_tests_proves_no_criterion(tmp_path: Path) -> None:
     results = evaluate_repository(repo_root).phase_criteria
 
     assert [result.passed for result in results] == [False] * PHASE1_CRITERION_COUNT
-    covered = [result for result in results if result.number not in AWAITING_A_LIVE_RUN]
-    assert {result.reason_code for result in covered} == {"cited_test_missing"}
+    assert {result.reason_code for result in results} == {"cited_test_missing"}

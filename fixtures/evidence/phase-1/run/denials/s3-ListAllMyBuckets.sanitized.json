@@ -1,0 +1,18 @@
+{
+  "attempted_action": "s3:ListAllMyBuckets",
+  "attempted_at": "2026-07-26T22:04:58.865917Z",
+  "attempted_resource": null,
+  "environment": "sandbox",
+  "error_code": "AccessDenied",
+  "error_message": "User: arn:aws:sts::<aws-account-id>:assumed-role/sbsandbox-intern-edullm-ecr-publisher/GitHubActions is not authorized to perform: s3:ListAllMyBuckets because no identity-based policy allows the s3:ListAllMyBuckets action",
+  "event_id": "8fded737-d906-44ad-a74f-e3b4ead75f06",
+  "event_name": "ListBuckets",
+  "event_source": "s3.amazonaws.com",
+  "observed_at": "2026-07-26T23:17:34Z",
+  "outcome": "denied",
+  "region": "us-east-1",
+  "role_name": "sbsandbox-intern-edullm-ecr-publisher",
+  "session_name": "GitHubActions",
+  "source": "aws",
+  "status": "ok"
+}

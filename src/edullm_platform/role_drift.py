@@ -86,6 +86,8 @@ __all__ = [
     "COMMITTED_ROLE_TEMPLATES",
     "EVIDENCE_ONLY_ROLE_FIELDS",
     "FOREIGN_ACCOUNT_PLACEHOLDER",
+    "INFRA_DEPLOYER_ROLE_NAME",
+    "PUBLISHER_ROLE_NAME",
     "DriftDirection",
     "PolicyNotComparableError",
     "RoleDriftFinding",
@@ -103,12 +105,18 @@ __all__ = [
     "split_arn_fields",
 ]
 
+#: The two roles by name. Named separately from the table below because several callers
+#: ask whether some identity is one of them, and an index into a tuple is a different
+#: bug every time the tuple is reordered.
+PUBLISHER_ROLE_NAME: Final = "sbsandbox-intern-edullm-ecr-publisher"
+INFRA_DEPLOYER_ROLE_NAME: Final = "sbsandbox-intern-edullm-infra-deployer"
+
 #: Every role this repository commits a template for, and the template that declares it.
 #: The capture tool and the drift report iterate over this, so a role added to
 #: ``infra/iam/`` and not added here would be captured and never compared to anything.
 COMMITTED_ROLE_TEMPLATES: Final[tuple[tuple[str, str], ...]] = (
-    ("sbsandbox-intern-edullm-ecr-publisher", "infra/iam/ecr-publisher-role.yaml"),
-    ("sbsandbox-intern-edullm-infra-deployer", "infra/iam/infra-deployer-role.yaml"),
+    (PUBLISHER_ROLE_NAME, "infra/iam/ecr-publisher-role.yaml"),
+    (INFRA_DEPLOYER_ROLE_NAME, "infra/iam/infra-deployer-role.yaml"),
 )
 
 #: What ``DeployedRoleEvidence`` carries that a template projection cannot: the evidence

@@ -68,6 +68,7 @@ __all__ = [
 #: only effect is to refuse citations nobody wanted, and it means the guard is already in
 #: place on the day the module lands rather than one review later.
 REENTRANT_TEST_MODULES: Final = (
+    "tests/test_ci_workflow.py",
     "tests/test_phase0_criteria.py",
     "tests/test_phase0_proof.py",
     "tests/test_phase1_criteria.py",

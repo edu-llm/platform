@@ -1,0 +1,18 @@
+{
+  "attempted_action": "batch:UpdateComputeEnvironment",
+  "attempted_at": "2026-07-26T22:05:00.340253Z",
+  "attempted_resource": "edullm-denial-probe-absent-compute-environment",
+  "environment": "sandbox",
+  "error_code": "AccessDeniedException",
+  "error_message": "User: arn:aws:sts::<aws-account-id>:assumed-role/sbsandbox-intern-edullm-ecr-publisher/GitHubActions is not authorized to perform: batch:UpdateComputeEnvironment on resource: arn:aws:batch:us-east-1:<aws-account-id>:compute-environment/edullm-denial-probe-absent-compute-environment because no identity-based policy allows the batch:UpdateComputeEnvironment action",
+  "event_id": "34af3061-53d8-418b-9700-407457d31d2a",
+  "event_name": "UpdateComputeEnvironment",
+  "event_source": "batch.amazonaws.com",
+  "observed_at": "2026-07-26T23:17:34Z",
+  "outcome": "denied",
+  "region": "us-east-1",
+  "role_name": "sbsandbox-intern-edullm-ecr-publisher",
+  "session_name": "GitHubActions",
+  "source": "aws",
+  "status": "ok"
+}

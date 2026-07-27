@@ -1,0 +1,17 @@
+{
+  "assumed_at": "2026-07-26T22:05:19Z",
+  "environment": "sandbox",
+  "event_id": "d5e06ba1-30a8-4b3c-8143-de9bcd95071d",
+  "event_name": "AssumeRoleWithWebIdentity",
+  "event_source": "sts.amazonaws.com",
+  "expires_at": "2026-07-26T23:05:19Z",
+  "observed_at": "2026-07-26T23:17:34Z",
+  "oidc_audience": "sts.amazonaws.com",
+  "oidc_issuer": "token.actions.githubusercontent.com",
+  "oidc_subject": "repo:edu-llm@306859726/OLMo-core@1306868157:ref:refs/heads/edullm/platform-build-image",
+  "region": "us-east-1",
+  "role_name": "sbsandbox-intern-edullm-ecr-publisher",
+  "session_name": "GitHubActions",
+  "source": "aws",
+  "status": "ok"
+}

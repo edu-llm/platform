@@ -1,0 +1,37 @@
+{
+  "encryption_type": "AES256",
+  "environment": "sandbox",
+  "image_tag_mutability": "IMMUTABLE",
+  "lifecycle_rules": [
+    {
+      "action_type": "expire",
+      "count_number": 7,
+      "count_type": "sinceImagePushed",
+      "count_unit": "days",
+      "description": "Expire untagged images older than 7 days",
+      "rule_priority": 1,
+      "tag_patterns": [],
+      "tag_prefixes": [],
+      "tag_status": "untagged"
+    },
+    {
+      "action_type": "expire",
+      "count_number": 50,
+      "count_type": "imageCountMoreThan",
+      "count_unit": null,
+      "description": "Retain at most 50 tagged images",
+      "rule_priority": 2,
+      "tag_patterns": [
+        "*"
+      ],
+      "tag_prefixes": [],
+      "tag_status": "tagged"
+    }
+  ],
+  "observed_at": "2026-07-26T23:19:02Z",
+  "region": "us-east-1",
+  "repository_name": "sbsandbox-intern-edullm-olmo-core",
+  "scan_on_push": true,
+  "source": "aws",
+  "status": "ok"
+}

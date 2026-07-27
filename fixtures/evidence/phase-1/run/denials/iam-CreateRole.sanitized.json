@@ -1,0 +1,18 @@
+{
+  "attempted_action": "iam:CreateRole",
+  "attempted_at": "2026-07-26T22:04:59.576065Z",
+  "attempted_resource": "sbsandbox-intern-edullm-ecr-publisher",
+  "environment": "sandbox",
+  "error_code": "AccessDenied",
+  "error_message": "User: arn:aws:sts::<aws-account-id>:assumed-role/sbsandbox-intern-edullm-ecr-publisher/GitHubActions is not authorized to perform: iam:CreateRole on resource: arn:aws:iam::<aws-account-id>:role/sbsandbox-intern-edullm-ecr-publisher with an explicit deny in a permissions boundary: arn:aws:iam::<aws-account-id>:policy/InternSandboxBoundary",
+  "event_id": "e4ed1062-27d4-456b-ae91-91e18816be72",
+  "event_name": "CreateRole",
+  "event_source": "iam.amazonaws.com",
+  "observed_at": "2026-07-26T23:17:34Z",
+  "outcome": "denied",
+  "region": "us-east-1",
+  "role_name": "sbsandbox-intern-edullm-ecr-publisher",
+  "session_name": "GitHubActions",
+  "source": "aws",
+  "status": "ok"
+}
