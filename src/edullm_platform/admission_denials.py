@@ -34,24 +34,28 @@ that can say no. This is the entry in the matrix that matters most: the lineage 
 a statement by the platform rather than by its caller precisely because only the state
 machine can write one.
 
-**EC2 has its own vocabulary for both answers.** A refused ``ec2:RunInstances`` is
+**EC2 has its own vocabulary for both answers.** A refused EC2 mutation is
 ``UnauthorizedOperation``, not ``AccessDenied``, so Phase 1's two-code set would have filed
-the probe that stops CI launching compute directly as "failed for another reason" — a
-failure that proves nothing, forever. And a *permitted* dry run also exits non-zero, with
+the probe that stops this session touching EC2 as "failed for another reason" — a failure
+that proves nothing, forever. And a *permitted* dry run also exits non-zero, with
 ``DryRunOperation``: the one probe whose success does not look like success. A matrix that
 recognised a permitted call only by ``returncode == 0`` would have reported the worst
 outcome in the matrix as an inconclusive probe. Both are per-probe facts about a service,
 so :class:`AdmissionDenialProbe` carries the codes rather than the module holding one set.
 
-**And EC2 decides some things before it authorizes.** The first live run of this matrix
-reported the ``ec2:RunInstances`` probe as ``attempt_failed_for_another_reason`` with
-``InvalidAMIID.Malformed``: the identifier's *format* is checked ahead of authorization, so
-a malformed one never reaches the question the probe is asking. The image is looked *up*
-after authorization, which is why a permitted caller naming an absent image sees
-``InvalidAMIID.NotFound`` rather than ``DryRunOperation``. Both codes are recorded against
-``ABSENT_IMAGE_ID`` and ``EC2_PERMITTED_ERROR_CODES`` with the measurement that produced
-them. The matrix refusing to submit on that inconclusive probe, rather than counting five
-denials as good enough, is the behaviour that surfaced it.
+**And a service that validates before it authorizes cannot be probed with an absent
+resource.** This entry was ``ec2:RunInstances`` and could not be made to answer. Its first
+live run came back ``attempt_failed_for_another_reason: InvalidAMIID.Malformed``, and
+every attempt to fix it moved the complaint rather than removing it — format, then
+``InvalidAMIID.NotFound``, then ``VPCIdNotSpecified``. What settled it is that IAM reports
+``ec2:RunInstances`` as ``implicitDeny`` for this role while the role's own probe answered
+``NotFound``: the lookup runs first, so no absent image can reach authorization.
+``ec2:CreateKeyPair`` has no resource preconditions and answers from authorization alone.
+The entry now claims something narrower and provable — this session is refused EC2
+mutation — and the compute path the platform actually uses is covered by
+``batch:SubmitJob``, which is conclusively denied. The matrix refusing to submit the run
+on one inconclusive probe, rather than counting five denials as good enough, is the
+behaviour that surfaced all of this.
 
 **One probe is not inert, and says so.** S3 has no dry run, and the bucket has to be the
 real one — a made-up name is answered ``NoSuchBucket`` before anybody is authorized, which
@@ -154,7 +158,7 @@ LINEAGE_BUCKET: Final = "sbsandbox-intern-edullm-lineage"
 #: and these are the six ways that grant could have been wider than it reads.
 ADMISSION_DENIED_ACTIONS: Final = (
     "batch:SubmitJob",
-    "ec2:RunInstances",
+    "ec2:CreateKeyPair",
     "s3:PutObject",
     "states:StartExecution",
     "states:StopExecution",
@@ -167,20 +171,15 @@ ADMISSION_DENIED_ACTIONS: Final = (
 #: later should widen what is recognised rather than break the probe.
 EC2_AUTHORIZATION_ERROR_CODES: Final = AUTHORIZATION_ERROR_CODES | {"UnauthorizedOperation"}
 
-#: What EC2 says when a dry run was *allowed*. Two codes, not one, because this probe
-#: names an image that does not exist.
+#: What EC2 says when a dry run was *allowed*: "Request would have succeeded, but DryRun
+#: flag is set". It arrives as an error with a non-zero exit status, and it is the worst
+#: outcome this matrix can meet — the role can mutate EC2 — so it is classified as the
+#: permission being present rather than as a call that failed for some other reason.
 #:
-#: ``DryRunOperation`` is the documented one: "Request would have succeeded, but DryRun
-#: flag is set". ``InvalidAMIID.NotFound`` means the same thing here and is what this
-#: probe will actually meet, because EC2 looks an image up only after it has authorized
-#: the call -- so reaching the lookup at all proves the caller was permitted. Both arrive
-#: as an error with a non-zero exit status, and both are the worst outcome this matrix can
-#: meet: the role can launch instances.
-#:
-#: Leaving ``NotFound`` out would not have been the safe direction it looks like. The
-#: probe would report the role as inconclusive on the day it gained the permission, which
-#: is the day this matrix exists to notice.
-EC2_PERMITTED_ERROR_CODES: Final = frozenset({"DryRunOperation", "InvalidAMIID.NotFound"})
+#: One code and not two, and that is worth pinning. A not-found answer looks like the same
+#: thing and is not: it means the permission is present only if the service looks the
+#: resource up *after* authorizing, and EC2 does not. See DENIAL_PROBE_KEY_PAIR_NAME.
+EC2_PERMITTED_ERROR_CODES: Final = frozenset({"DryRunOperation"})
 
 #: What S3 says when a conditional write was *allowed* and the key was already there.
 #: ``If-None-Match: *`` is evaluated after the request is authorized, so a 412 is a caller
@@ -190,22 +189,30 @@ EC2_PERMITTED_ERROR_CODES: Final = frozenset({"DryRunOperation", "InvalidAMIID.N
 #: answered 412 and changes nothing.
 S3_PERMITTED_ERROR_CODES: Final = frozenset({"PreconditionFailed"})
 
-#: An AMI that cannot exist, in the *eight* character form. The seventeen-character form
-#: was here first and it broke the probe: measured against us-east-1 on 2026-07-27,
-#: ``ami-00000000000000000`` and ``ami-0123456789abcdef0`` are both answered
-#: ``InvalidAMIID.Malformed`` while ``ami-00000000`` is answered ``InvalidAMIID.NotFound``.
-#: The long form is the current AMI identifier format and is what documentation shows, so
-#: the wrong choice is the one that looks right.
+#: The key pair the EC2 probe names. Nothing creates it and ``--dry-run`` means nothing
+#: would, so the name only ever appears in a refusal.
 #:
-#: What that measurement settles is the ordering, and the ordering is the whole point.
-#: EC2 checks the *format* of an identifier before it authorizes, so a malformed one is
-#: refused before authorization is ever reached and the probe establishes nothing about
-#: the role -- which is exactly what the first live run reported. It looks the image *up*
-#: only after authorizing, which is why a permitted caller sees ``NotFound``. A well
-#: formed identifier that cannot exist therefore reaches authorization and stops there,
-#: which is the only position from which this probe can answer the question it asks.
-ABSENT_IMAGE_ID: Final = "ami-00000000"
-DENIAL_PROBE_INSTANCE_TYPE: Final = "t3.nano"
+#: ``ec2:CreateKeyPair`` is here because ``ec2:RunInstances`` could not be made to answer
+#: the question. RunInstances validates its parameters ahead of authorization, in at least
+#: three stages, each of which hides the answer behind a different complaint. Measured
+#: against us-east-1 on 2026-07-27: ``ami-00000000000000000`` and ``ami-0123456789abcdef0``
+#: are refused ``InvalidAMIID.Malformed`` on format alone; ``ami-00000000`` passes format
+#: and is refused ``InvalidAMIID.NotFound``; and a real, current AMI gets past the lookup
+#: only to be refused ``VPCIdNotSpecified``, because this account has no default VPC.
+#:
+#: The lookup runs before authorization, which the first live matrix proved rather than
+#: inferred: IAM reports ``ec2:RunInstances`` as ``implicitDeny`` for the admission role,
+#: and the role's probe still came back ``InvalidAMIID.NotFound`` instead of
+#: ``UnauthorizedOperation``. Making it conclusive would mean hardcoding a real AMI and a
+#: subnet borrowed from another team's VPC, and would still rest on an unmeasured guess
+#: about where authorization sits among the remaining validations.
+#:
+#: CreateKeyPair has no resource preconditions at all, so authorization is the only gate:
+#: verified ``DryRunOperation`` from a permitted identity, and ``implicitDeny`` for the
+#: admission role. What the entry claims is therefore narrower and true -- this session is
+#: refused EC2 mutation -- rather than wider and unprovable. The compute path this
+#: platform actually uses is Batch, and ``batch:SubmitJob`` is proved separately above.
+DENIAL_PROBE_KEY_PAIR_NAME: Final = "sbsandbox-intern-edullm-admission-denial-probe"
 
 #: Appended to the admission state machine's ARN, which puts the probe beside the one
 #: machine the role may start rather than somewhere unrelated, on a name nothing creates.
@@ -301,10 +308,10 @@ ADMISSION_PROBE_LESSONS: Final[tuple[ProbeLesson, ...]] = (
             "'refused' and 'allowed' belong to the probe rather than to the matrix."
         ),
         learned_from=(
-            "Writing the ec2:RunInstances probe against Phase 1's classifier. EC2 answers "
-            "a refusal with UnauthorizedOperation rather than AccessDenied, and answers a "
-            "permitted dry run with DryRunOperation -- an error, with a non-zero exit "
-            "status, that means the role can launch instances."
+            "Writing the EC2 probe against Phase 1's classifier. EC2 answers a refusal "
+            "with UnauthorizedOperation rather than AccessDenied, and answers a permitted "
+            "dry run with DryRunOperation -- an error, with a non-zero exit status, that "
+            "means the role can mutate EC2."
         ),
         detail=(
             "Two failures, in opposite directions, from one assumption that every service "
@@ -507,22 +514,18 @@ def admission_denial_probes(
         # what makes the probe inert, and it is also why a permitted call arrives here as
         # an error code rather than as a zero exit status.
         AdmissionDenialProbe(
-            action="ec2:RunInstances",
-            operation="RunInstances",
+            action="ec2:CreateKeyPair",
+            operation="CreateKeyPair",
             event_source="ec2.amazonaws.com",
-            resource_name=ABSENT_IMAGE_ID,
+            resource_name=DENIAL_PROBE_KEY_PAIR_NAME,
             arguments=(
                 "ec2",
-                "run-instances",
+                "create-key-pair",
                 "--dry-run",
                 "--region",
                 region,
-                "--image-id",
-                ABSENT_IMAGE_ID,
-                "--instance-type",
-                DENIAL_PROBE_INSTANCE_TYPE,
-                "--count",
-                "1",
+                "--key-name",
+                DENIAL_PROBE_KEY_PAIR_NAME,
             ),
             authorization_error_codes=EC2_AUTHORIZATION_ERROR_CODES,
             permitted_error_codes=EC2_PERMITTED_ERROR_CODES,
