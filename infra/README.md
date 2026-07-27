@@ -270,6 +270,51 @@ is not needed for those, and they must never be applied from a laptop: a stack a
 hand and then re-applied by CI reconciles against whatever the laptop left, and the run
 log stops describing the account.
 
+## Releasing the admission validator
+
+`infra/admission-state-machine.yaml` declares the function as
+`Code: {S3Bucket, S3Key, S3ObjectVersion}`. Pinning the version is what makes a code
+change a CloudFormation change: without it, a new zip under the same key leaves the
+resource's properties byte-identical, the change set comes back empty, and
+`deploy --no-fail-on-empty-changeset` reports success while the old code keeps running.
+
+The cost is that a release is three steps and the third is a template edit. That edit is
+deliberate — it is the diff a reviewer sees. CI does not do this, and giving CI the
+ability to would remove the review.
+
+The zip must be built for the runtime rather than for the machine building it. Pydantic
+v2 ships a compiled `pydantic-core`, so a zip assembled from a macOS environment carries a
+`.dylib`, and Lambda reports the result as a missing module rather than as an architecture
+mismatch. `tools/build_admission_lambda.py` pins `x86_64-manylinux_2_28`, CPython 3.12 and
+`--only-binary=:all:`, which is why it is used instead of `zip -r`.
+
+```bash
+uv run python tools/build_admission_lambda.py --output /tmp/admission-validator.zip
+
+aws s3api put-object \
+  --bucket sbsandbox-intern-edullm-artifacts \
+  --key admission-validator/admission-validator.zip \
+  --body /tmp/admission-validator.zip \
+  --content-type application/zip \
+  --profile sbsandbox --region us-east-1 \
+  --query VersionId --output text
+```
+
+Paste the version id it prints into `S3ObjectVersion` in
+`infra/admission-state-machine.yaml`, commit it, and let CI deploy. The build is
+deterministic, so re-running it on an unchanged tree produces the same bytes — if the
+`sha256` it reports has not moved, there is nothing to release and the template does not
+need editing.
+
+Uploading an object is not applying a stack, so this one S3 write is a laptop step
+without contradicting the rule above.
+
+The deployer role needs `s3:ListBucketVersions` on the artifacts bucket for this to work,
+and that is not obvious: Lambda fetches the versioned code object as the deploying
+principal, and needs a bucket-level action as well as `s3:GetObjectVersion` on the object.
+The first deploy failed on exactly that, with the stack rolling back and the retained log
+group then blocking the retry until it was deleted by hand.
+
 ## The one-off role the conditional-write probe needs
 
 `infra/admission-state-machine.yaml` catches `States.ALL` around each lineage write and

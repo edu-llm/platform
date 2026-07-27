@@ -2,8 +2,8 @@
 
 Phase: phase-1
 Bundle schema version: 1
-Source commit: 0e2f3fe0974a8193776c6ba325aff905ffdcc8ad
-Generated: 2026-07-27T05:11:36+00:00
+Source commit: 93fb8332dbf0a7118d38c0c86f038dcf2d3cc6a9
+Generated: 2026-07-27T05:29:16+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 1 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase1_proof.py` at generation time. Every criterion is covered and the gate is green, which is the state in which a bundle is most worth reading carefully: the Known limitations below say what each criterion does not cover, and `open-decisions.md` says what this phase surfaced and did not settle.
 
@@ -22,14 +22,14 @@ This bundle exists so that a reviewer can decide whether Phase 1 is done without
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 2753 |
-| suite tests executed | 2667 |
-| suite passed | 2667 |
+| suite tests collected | 2763 |
+| suite tests executed | 2677 |
+| suite passed | 2677 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
-| matrix node ids executed | 414 |
-| matrix node ids passed | 414 |
+| matrix node ids executed | 415 |
+| matrix node ids passed | 415 |
 | matrix node ids failed | 0 |
 | phase criteria | 8 |
 | criteria COVERED | 8 (1, 2, 3, 4, 5, 6, 7, 8) |
@@ -69,8 +69,8 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | .github/workflows/deploy-phase1-ecr.yml | sha256:8320eda8dcf143695ffbed148efadf9aceb8052d5e4b2c3578aeb92fb97cdf4a |
 | config/repositories.yaml | sha256:607b4e0db31f0f9e119f233ba019896b8ff3866bca50a048ea7d44d9d10e23d4 |
 | fixtures/evidence/phase-1/rebuild/local-rebuild-comparison.json | sha256:91966d61ec214e5c66a6ed801ed9a3271b834ff10a110afa600cf66981d7a33d |
-| fixtures/evidence/phase-1/roles/sbsandbox-intern-edullm-ecr-publisher.sanitized.json | sha256:9cb3d8595f68f6736ec2bb84882015bae5ea454704db77c1839a8751d726d122 |
-| fixtures/evidence/phase-1/roles/sbsandbox-intern-edullm-infra-deployer.sanitized.json | sha256:6ec169a5c42ff96fa829b5441d47990655fc143cf6c2ce89a5ac336b14e96e62 |
+| fixtures/evidence/phase-1/roles/sbsandbox-intern-edullm-ecr-publisher.sanitized.json | sha256:efacc7c4563e1ebdc09a8aab7a8ce6e5554469dcbcd28d435dfe49c0376bc4b7 |
+| fixtures/evidence/phase-1/roles/sbsandbox-intern-edullm-infra-deployer.sanitized.json | sha256:1678ee87b7eecd1a9cb2b1ba2c226eb4f671c8f21dd2cadcacfc718bf85a73f7 |
 | fixtures/evidence/phase-1/run/denials/batch-SubmitJob.sanitized.json | sha256:795febb8aa042ec85ab966e734c075ca2764f7d54da2da12819436dea4829654 |
 | fixtures/evidence/phase-1/run/denials/batch-UpdateComputeEnvironment.sanitized.json | sha256:b2af615431c6913856a402dd99961aacee2925fd3d1ed484e216d86cf2126e0d |
 | fixtures/evidence/phase-1/run/denials/ecr-DeleteRepository.sanitized.json | sha256:049d2fa4daeb7fdcfe1aae751d7f9c7829a9a9e256eae28d5605843430159481 |
@@ -83,7 +83,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | fixtures/evidence/phase-1/run/publisher-session.sanitized.json | sha256:dac2929a79f4712fdb6536e1ba50eddf38083263eb095161d061dfa9949ea095 |
 | infra/ecr-repositories.yaml | sha256:e376f3c0be68510e2c195c410738125cf67165d18b4a5e4289d0205bbb2547d9 |
 | infra/iam/ecr-publisher-role.yaml | sha256:9f117cb0262e2da221bacfce14251add3bc80596aac8fd36145355aacf72b5cb |
-| infra/iam/infra-deployer-role.yaml | sha256:b6e9074a89486ede906021bc9f70c92e2f3d7e3b8401aeab91857ae2814a6910 |
+| infra/iam/infra-deployer-role.yaml | sha256:7d39fab6b7acc0503a2311ba060c41c2627a99ebb7215bac56474010e562810f |
 
 ## Known limitations
 

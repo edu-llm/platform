@@ -154,6 +154,23 @@
         {
           "action_match": {
             "actions": [
+              "s3:ListBucketVersions"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:s3:::sbsandbox-intern-edullm-artifacts"
+            ]
+          },
+          "sid": null
+        },
+        {
+          "action_match": {
+            "actions": [
               "states:CreateStateMachine",
               "states:DeleteStateMachine",
               "states:UpdateStateMachine",
@@ -248,7 +265,7 @@
     }
   ],
   "max_session_duration_seconds": 3600,
-  "observed_at": "2026-07-27T05:05:00Z",
+  "observed_at": "2026-07-27T05:25:23Z",
   "permissions_boundary_policy_name": "InternSandboxBoundary",
   "role_name": "sbsandbox-intern-edullm-infra-deployer",
   "source": "aws",

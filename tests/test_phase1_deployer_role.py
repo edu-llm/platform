@@ -49,6 +49,10 @@ STACK_RESOURCE = {"Fn::Sub": REGIONAL_ARN % ("cloudformation", f"stack/{RESOURCE
 REPOSITORY_RESOURCE = {"Fn::Sub": REGIONAL_ARN % ("ecr", f"repository/{RESOURCE_PREFIX}*")}
 BUCKET_RESOURCE = {"Fn::Sub": BUCKET_ARN % f"{RESOURCE_PREFIX}*"}
 ARTIFACT_OBJECT_RESOURCE = {"Fn::Sub": BUCKET_ARN % f"{RESOURCE_PREFIX}artifacts/*"}
+#: The artifacts bucket itself, not its objects. Lambda's fetch of a versioned code
+#: object needs a bucket-level action, and it is scoped here rather than folded into the
+#: prefix-wide bucket statement so it cannot reach the lineage store.
+ARTIFACT_BUCKET_RESOURCE = {"Fn::Sub": BUCKET_ARN % f"{RESOURCE_PREFIX}artifacts"}
 STATE_MACHINE_RESOURCE = {"Fn::Sub": REGIONAL_ARN % ("states", f"stateMachine:{RESOURCE_PREFIX}*")}
 FUNCTION_RESOURCE = {"Fn::Sub": REGIONAL_ARN % ("lambda", f"function:{RESOURCE_PREFIX}*")}
 LOG_GROUP_RESOURCE = {
@@ -69,6 +73,7 @@ SCOPED_RESOURCES = [
     REPOSITORY_RESOURCE,
     BUCKET_RESOURCE,
     ARTIFACT_OBJECT_RESOURCE,
+    ARTIFACT_BUCKET_RESOURCE,
     STATE_MACHINE_RESOURCE,
     FUNCTION_RESOURCE,
     LOG_GROUP_RESOURCE,
@@ -146,6 +151,10 @@ EXPECTED_OBJECT_ACTIONS = {
     "s3:GetObjectVersion",
     "s3:PutObject",
 }
+#: Exactly one. Lambda fetches a versioned code object as the deploying principal and
+#: needs to enumerate versions on the bucket to do it; the first deploy of the state
+#: machine stack failed on precisely this and rolled back.
+EXPECTED_ARTIFACT_BUCKET_ACTIONS = {"s3:ListBucketVersions"}
 EXPECTED_STATE_MACHINE_ACTIONS = {
     "states:CreateStateMachine",
     "states:DeleteStateMachine",
@@ -388,11 +397,19 @@ def test_deployer_can_only_touch_ecr_repositories_carrying_our_own_prefix() -> N
     [
         (BUCKET_RESOURCE, EXPECTED_BUCKET_ACTIONS),
         (ARTIFACT_OBJECT_RESOURCE, EXPECTED_OBJECT_ACTIONS),
+        (ARTIFACT_BUCKET_RESOURCE, EXPECTED_ARTIFACT_BUCKET_ACTIONS),
         (STATE_MACHINE_RESOURCE, EXPECTED_STATE_MACHINE_ACTIONS),
         (FUNCTION_RESOURCE, EXPECTED_FUNCTION_ACTIONS),
         (LOG_GROUP_RESOURCE, EXPECTED_LOG_GROUP_ACTIONS),
     ],
-    ids=["buckets", "artifact objects", "state machines", "functions", "log groups"],
+    ids=[
+        "buckets",
+        "artifact objects",
+        "artifact bucket",
+        "state machines",
+        "functions",
+        "log groups",
+    ],
 )
 def test_each_admission_scope_grants_exactly_the_actions_it_was_reviewed_with(
     resource: dict[str, str],
@@ -426,7 +443,12 @@ def test_objects_are_reachable_only_inside_the_artifacts_bucket() -> None:
     objects = [name for name in buckets if "/" in name]
 
     assert objects == [f"{RESOURCE_PREFIX}artifacts/*"]
-    assert buckets == [f"{RESOURCE_PREFIX}*", *objects]
+    # Three S3 ARNs: every bucket for the configuration surfaces the bucket handler
+    # reads, the artifacts objects, and the artifacts bucket itself for the one
+    # bucket-level action Lambda needs to fetch a versioned code object. The last is
+    # named rather than folded into the first so that enumerating versions stops at the
+    # bucket holding deployment zips.
+    assert buckets == [f"{RESOURCE_PREFIX}*", *objects, f"{RESOURCE_PREFIX}artifacts"]
 
 
 def test_deployer_resource_scopes_never_widen_to_the_shared_intern_prefix() -> None:
