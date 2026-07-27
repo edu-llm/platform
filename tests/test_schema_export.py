@@ -154,6 +154,14 @@ def test_rendered_schemas_cover_all_root_contract_models() -> None:
         "policy.schema.json",
         "repositories.schema.json",
         "run-manifest.schema.json",
+        "datasets.schema.json",
+        # The submission form and the two records the lineage store holds. Exported for a
+        # reason the configuration schemas do not share: an immutable store is read by
+        # things that were not built alongside it, so a published shape is how a later
+        # reader tells a record this platform wrote from one it did not.
+        "submission-inputs.schema.json",
+        "intent-record.schema.json",
+        "decision-record.schema.json",
     }
 
 
