@@ -215,6 +215,25 @@ def test_the_generator_refuses_to_write_a_bundle_whose_prose_contradicts_the_gat
     assert not (tmp_path / "README.md").exists()
 
 
+@pytest.mark.slow
+def test_the_generator_refuses_a_bundle_that_miscounts_the_criteria_in_the_aggregate(
+    tmp_path: Path,
+    verification: Verification,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The shape the Phase 1 gate note went stale in: no check is named, so the numbered
+    # reader sees nothing, and the sentence is still a status claim about this phase.
+    monkeypatch.setattr(
+        "tools.build_phase1_proof.known_limitations",
+        lambda repo_root, checks, reports, run: ("Four criteria are gaps today.",),
+    )
+
+    with pytest.raises(ProofBundleError, match="four criteria are gap"):
+        build_bundle(PROJECT_ROOT, tmp_path, generated_at=FIRST_INSTANT, verification=verification)
+
+    assert not (tmp_path / "README.md").exists()
+
+
 def test_a_limitation_that_names_a_check_takes_its_status_from_the_definition() -> None:
     # The limitations are the one place prose and status meet, so the status word is read
     # off the checks rather than typed. This is what makes the guard above never fire.

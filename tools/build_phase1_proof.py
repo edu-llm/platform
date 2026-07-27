@@ -87,6 +87,7 @@ from edullm_platform.role_drift import (
     TemplateRole,
     load_template_roles,
 )
+from edullm_platform.status_prose import spell
 
 PHASE: Final = "phase-1"
 BUNDLE_SCHEMA_VERSION: Final = 1
@@ -342,8 +343,9 @@ def render_run_evidence(run: CommittedRunEvidence) -> str:
             "The publisher role is meant to hold nine ECR actions on one repository and "
             "nothing else. Everything else in this repository that says so reads a template "
             "or a capture, which is an argument from a policy. This is the other kind of "
-            "evidence: a session issued to that role through OIDC attempted five things it "
-            "must not be able to do, and was refused all five. The records are committed "
+            "evidence: a session issued to that role through OIDC attempted "
+            f"{spell(len(PUBLISHER_DENIED_ACTIONS))} things it must not be able to do, and was "
+            f"refused all {spell(len(PUBLISHER_DENIED_ACTIONS))}. The records are committed "
             f"under `{RUN_CAPTURE_DIR}/denials/` and each carries the CloudTrail event id of "
             "the refusal, so a reviewer can look up any of them in the account."
         ),
@@ -1093,11 +1095,15 @@ def known_limitations(
         return STATUS_PROSE[recorded_status(checks, number)]
 
     limitations: list[str] = []
+    counts = run.scan.finding_counts if run.scan is not None else None
+    if counts is None:
+        raise ProofBundleError("a completed scan must record its finding counts")
     limitations.append(
         "Whether an image scan result should be able to block a publish is an open question "
-        "and this bundle does not answer it. The published image scanned four critical and "
-        "eight high findings, all of them inherited from the base image this repository pins, "
-        "and blocked nothing, because nothing is wired to the scan. That is harmless while "
+        f"and this bundle does not answer it. The published image scanned {counts.critical} "
+        f"critical and {counts.high} high findings, all of them inherited from the base image "
+        "this repository pins, and blocked nothing, because nothing is wired to the scan. "
+        "That is harmless while "
         "nothing runs a Phase 1 image and stops being harmless the day something does. See "
         "`open-decisions.md`; it is recorded there rather than settled here."
     )
@@ -1277,13 +1283,14 @@ def render_index(
                 bullets(
                     [
                         (
-                            "`negative-case-matrix.md` — each of the eight Phase 1 acceptance "
-                            "criteria mapped to the tests cited for it, by node id, with every "
-                            "gap stated. Read this one first."
+                            f"`negative-case-matrix.md` — each of the {spell(len(criteria))} "
+                            "Phase 1 acceptance criteria mapped to the tests cited for it, by "
+                            "node id, with every gap stated. Read this one first."
                         ),
                         (
                             "`publisher-denial-matrix.md` — the run this phase turns on, the "
-                            "five refusals the publisher session met with the CloudTrail event "
+                            f"{spell(len(PUBLISHER_DENIED_ACTIONS))} refusals the publisher "
+                            "session met with the CloudTrail event "
                             "id of each, how every probe is aimed so that being permitted "
                             "would change nothing, and what choosing a probe has cost so far."
                         ),
