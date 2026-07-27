@@ -468,6 +468,28 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                     "carries none of this content, so what can be checked is that the summary "
                     "exists and is complete, not that the reviewer read it."
                 ),
+                (
+                    "One field this criterion asks for is not there and cannot be. Reading a "
+                    "real rendered context on 2026-07-27 accounts for every item in the "
+                    "statement except the branch: submitter, team, linked repository, linked "
+                    "short SHA, image digest, dataset release, compute profile with its "
+                    "hourly rate, the arithmetic shown as rate times nodes times hours times "
+                    "attempts times cells, and the classification as the first line of the "
+                    "document. For an exception the renderer also names each ceiling that was "
+                    "exceeded, in words, with the value beside the limit."
+                ),
+                (
+                    "The branch is absent because RunManifest has no branch field and the "
+                    "dispatch form never collects one. That follows from the global "
+                    "constraint that every source revision uses a full commit SHA: a branch "
+                    "is mutable and a commit is not, so the branch is not part of run "
+                    "identity. It is still context an approver would use, and this criterion "
+                    "inherited its wording from a draft written before the manifest settled. "
+                    "Closing it means either carrying the branch as advisory metadata that "
+                    "nothing authorizes on, or amending the criterion with that reason "
+                    "written down. It is a decision rather than an omission, and until "
+                    "somebody takes it this criterion cannot be honestly marked covered."
+                ),
             ),
         ),
         CriterionSpec(
