@@ -13,6 +13,7 @@ from edullm_platform.contracts.base import (
     ContractModel,
     require_ordered_sequence,
 )
+from edullm_platform.contracts.dataset_registry import DatasetRegistry
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.manifest import RunManifest
 from edullm_platform.contracts.policy import (
@@ -33,14 +34,11 @@ from edullm_platform.evidence import (
 )
 from edullm_platform.manifest_helpers import (
     REPRESENTATIVE_MANIFEST_COSTS,
+    build_request_facts,
     compute_manifest_maximum_cost,
     is_compute_profile_registered,
     is_workload_profile_registered,
     load_manifests_from_directory,
-    manifest_fanout_parallelism,
-    manifest_fanout_size,
-    manifest_has_immutable_image,
-    manifest_has_immutable_revision,
 )
 from edullm_platform.phase0_criteria import discover_fixtures, phase0_criteria
 
@@ -61,7 +59,6 @@ EXPECTED_PILOTS: Final = ("OLMo-core", "dolma")
 EXPECTED_GITHUB_ORG: Final = "edu-llm"
 EXPECTED_GITHUB_REPOSITORY: Final = "platform"
 EXPECTED_AWS_REGION: Final = "us-east-1"
-REGISTERED_DATASET_RELEASES: Final = frozenset({"dolma-2026-07"})
 PROGRAM_MAXIMUM_COST_USD: Final = Decimal(500)
 
 REQUIRED_DENIED_OUTRIGHT: Final = (
@@ -176,6 +173,7 @@ class Phase0Inputs:
     inventory: OrganizationInventory
     catalog: WorkloadCatalog
     policy: ApprovalPolicy
+    dataset_registry: DatasetRegistry
     github_plan: GitHubPlanEvidence | None
     github_plan_load_error: str | None
     aws_capacity: ServiceQuotasEvidence | None
@@ -236,6 +234,7 @@ def load_phase0_inputs(repo_root: Path) -> Phase0Inputs:
         inventory=load_yaml(repo_root / "config" / "organization.yaml", OrganizationInventory),
         catalog=load_yaml(repo_root / "config" / "workload-catalog.yaml", WorkloadCatalog),
         policy=load_yaml(repo_root / "config" / "policy.yaml", ApprovalPolicy),
+        dataset_registry=load_yaml(repo_root / "config" / "datasets.yaml", DatasetRegistry),
         github_plan=github_plan,
         github_plan_load_error=github_plan_load_error,
         aws_capacity=aws_capacity,
@@ -257,20 +256,25 @@ def request_facts_from_manifest(
     *,
     inventory: OrganizationInventory,
     catalog: WorkloadCatalog,
+    dataset_registry: DatasetRegistry,
     estimated_cost_usd: Decimal,
 ) -> RequestFacts:
-    return RequestFacts(
-        claimed_team=manifest.team,
-        repository_registered=manifest.repository in inventory.pilot_repositories,
-        dataset_registered=manifest.dataset_release in REGISTERED_DATASET_RELEASES,
-        compute_profile_registered=is_compute_profile_registered(manifest, catalog),
-        immutable_revision=manifest_has_immutable_revision(manifest),
-        immutable_image=manifest_has_immutable_image(manifest),
+    """Retained as this module's entry point; the derivation itself lives in
+    :func:`~edullm_platform.manifest_helpers.build_request_facts`.
+
+    Admission evaluates the same facts inside AWS and must not import a gate module to do
+    it, so the one implementation lives somewhere both callers can reach. The registry is
+    an argument for the same reason the inventory and catalog already were: the set of
+    registered datasets is reviewed configuration, and it used to be a literal defined here
+    — which made the verification tooling, rather than the configuration, the authority on
+    what admission would accept.
+    """
+    return build_request_facts(
+        manifest,
+        inventory=inventory,
+        catalog=catalog,
+        dataset_registry=dataset_registry,
         estimated_cost_usd=estimated_cost_usd,
-        maximum_runtime_hours=manifest.maximum_runtime_hours,
-        maximum_attempts=manifest.maximum_attempts,
-        fanout_size=manifest_fanout_size(manifest),
-        fanout_parallelism=manifest_fanout_parallelism(manifest),
     )
 
 
@@ -494,6 +498,7 @@ def check_representative_manifests(
     inventory: OrganizationInventory,
     catalog: WorkloadCatalog,
     policy: ApprovalPolicy,
+    dataset_registry: DatasetRegistry,
     manifests: tuple[tuple[str, RunManifest], ...],
 ) -> GateCheck:
     manifest_names = {filename for filename, _manifest in manifests}
@@ -533,7 +538,7 @@ def check_representative_manifests(
                     f"{manifest.workload_profile!r}."
                 ),
             )
-        if manifest.dataset_release not in REGISTERED_DATASET_RELEASES:
+        if not dataset_registry.is_registered(manifest.dataset_release):
             return fail_check(
                 "inventory_representative_manifests",
                 "unregistered_dataset",
@@ -547,6 +552,7 @@ def check_representative_manifests(
             manifest,
             inventory=inventory,
             catalog=catalog,
+            dataset_registry=dataset_registry,
             estimated_cost_usd=estimated_cost,
         )
         expected = expected_manifest_classification(filename)
@@ -633,6 +639,7 @@ def evaluate_phase0(inputs: Phase0Inputs) -> Phase0GateResult:
             inventory=inputs.inventory,
             catalog=inputs.catalog,
             policy=inputs.policy,
+            dataset_registry=inputs.dataset_registry,
             manifests=inputs.manifests,
         ),
         check_cost_estimates(
