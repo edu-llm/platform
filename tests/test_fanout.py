@@ -28,6 +28,7 @@ from tests.test_manifest import (
 )
 from tests.test_policy import (
     load_approval_policy,
+    load_dataset_registry,
     load_organization_inventory,
     numeric_bound_violations,
 )
@@ -85,6 +86,7 @@ def facts_for(manifest: RunManifest) -> RequestFacts:
         manifest,
         inventory=load_organization_inventory(),
         catalog=catalog,
+        dataset_registry=load_dataset_registry(),
         estimated_cost_usd=compute_manifest_maximum_cost(manifest, catalog),
     )
 

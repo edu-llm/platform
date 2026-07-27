@@ -10,6 +10,10 @@ import pytest
 from pydantic import ValidationError
 
 from edullm_platform.canonical import canonical_json_bytes
+from edullm_platform.contracts.dataset_registry import (
+    DatasetRegistry,
+    RegisteredDatasetRelease,
+)
 from edullm_platform.contracts.policy import classify_request
 from edullm_platform.manifest_helpers import (
     REPRESENTATIVE_MANIFEST_COSTS,
@@ -368,6 +372,22 @@ def test_representative_manifests_fails_for_unregistered_dataset() -> None:
     assert check.reason_code == "unregistered_dataset"
 
 
+def test_representative_manifests_fails_when_the_registry_stops_listing_their_dataset() -> None:
+    inputs = loaded_inputs()
+    assert inputs.dataset_registry.is_registered("dolma-2026-07")
+    successor_only = DatasetRegistry(
+        schema_version=1,
+        releases=(RegisteredDatasetRelease(release_id="dolma-2026-08"),),
+    )
+    result = evaluate_phase0(replace(inputs, dataset_registry=successor_only))
+    check = get_check(result, "inventory_representative_manifests")
+    assert check.passed is False
+    assert check.reason_code == "unregistered_dataset", (
+        "the registered set is reviewed configuration the gate is handed, so withdrawing a "
+        "release there has to fail the manifests that name it"
+    )
+
+
 def test_representative_manifests_fails_on_classification_mismatch() -> None:
     inputs = loaded_inputs()
     manifest = load_manifest(PROJECT_ROOT / "fixtures" / "manifests" / "gpu-exception.yaml")
@@ -605,6 +625,7 @@ def test_representative_manifest_classifications_match_policy_expectations() -> 
             manifest,
             inventory=inventory,
             catalog=catalog,
+            dataset_registry=inputs.dataset_registry,
             estimated_cost_usd=estimated_cost,
         )
         assert classify_request(facts, policy.thresholds) == expected_manifest_classification(filename)
