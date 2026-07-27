@@ -1247,7 +1247,11 @@ def test_any_other_start_execution_error_fails_without_echoing_the_account_id(
 
 
 # Successive calls answer successive statuses, so a poll can be shown to poll rather than
-# to read once. The last status repeats once the list runs out.
+# to read once. The last status repeats once the list runs out. That repeat is spelled as
+# arithmetic rather than as ${statuses[-1]}: negative subscripts need bash 4.2, and macOS
+# ships 3.2, where the expansion yields an empty string instead of failing. The poll would
+# then read "" as a terminal status and break after one iteration -- green on a runner,
+# failing here, and for a reason that looks like a bug in the workflow rather than the stub.
 POLLING_AWS_STUB = """
 counter_file="${RUNNER_TEMP}/poll-count.txt"
 index=0
@@ -1259,7 +1263,7 @@ read -r -a statuses <<< "${EXECUTION_STATUSES}"
 if [[ "${index}" -lt "${#statuses[@]}" ]]; then
   echo "${statuses[${index}]}"
 else
-  echo "${statuses[-1]}"
+  echo "${statuses[$((${#statuses[@]} - 1))]}"
 fi
 """
 
