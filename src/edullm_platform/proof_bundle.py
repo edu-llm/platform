@@ -59,6 +59,7 @@ __all__ = [
     "assert_secret_free",
     "bullets",
     "collect_node_ids",
+    "collection_child_runs",
     "command_block",
     "contradicting_status_claims",
     "count_naming",
@@ -349,9 +350,20 @@ def run_pytest(
 #: only, for the reason given in :func:`run_full_suite`.
 _COLLECTION_CACHE: dict[Path, tuple[str, ...]] = {}
 
+#: How many collection children this process has actually started; see
+#: :func:`full_suite_child_runs` for what reads the pair of these.
+_collection_child_runs = 0
+
+
+def collection_child_runs() -> int:
+    """The number of collection pytest children started in this process so far."""
+    return _collection_child_runs
+
 
 def execute_collection(repo_root: Path, *, nested_env: str) -> tuple[str, ...]:
     """Ask a pytest child what it can collect in this tree. No reuse, no memory."""
+    global _collection_child_runs
+    _collection_child_runs += 1
     completed = run_pytest(
         repo_root, ["--collect-only", "-q", "--no-header"], nested_env=nested_env
     )

@@ -26,6 +26,9 @@ packages = ["src/edullm_platform"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+  "session_budget: measures what the whole session did, so conftest.py runs it last",
+]
 
 [tool.ruff]
 line-length = 100

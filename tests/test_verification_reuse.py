@@ -43,6 +43,7 @@ PROBE = (
     "from edullm_platform import proof_bundle\n"
     "print(\n"
     "    proof_bundle.full_suite_child_runs(),\n"
+    "    proof_bundle.collection_child_runs(),\n"
     "    len(proof_bundle._FULL_SUITE_CACHE),\n"
     "    len(proof_bundle._COLLECTION_CACHE),\n"
     ")\n"
@@ -102,6 +103,7 @@ def spawns(monkeypatch: pytest.MonkeyPatch) -> SpawnRecorder:
     monkeypatch.setattr(proof_bundle, "_FULL_SUITE_CACHE", {})
     monkeypatch.setattr(proof_bundle, "_COLLECTION_CACHE", {})
     monkeypatch.setattr(proof_bundle, "_full_suite_child_runs", 0)
+    monkeypatch.setattr(proof_bundle, "_collection_child_runs", 0)
     recorder = SpawnRecorder()
     monkeypatch.setattr(proof_bundle, "run_pytest", recorder)
     return recorder
@@ -255,4 +257,4 @@ def test_a_new_process_has_verified_nothing() -> None:
         shell=False,
     )
 
-    assert completed.stdout.strip() == "0 0 0"
+    assert completed.stdout.strip() == "0 0 0 0"
