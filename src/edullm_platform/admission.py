@@ -102,7 +102,17 @@ class AdmissionOutcome:
 def denied_outright_conditions(
     facts: RequestFacts, policy: ApprovalPolicy
 ) -> tuple[str, ...]:
-    """Which of policy's denied-outright conditions this request trips, in policy order."""
+    """Which of policy's denied-outright conditions this request trips, in policy order.
+
+    Two of the five are unreachable from here, and deliberately so.
+    ``mutable_repository_revision`` and ``mutable_image_reference`` are enforced by
+    :class:`~edullm_platform.contracts.manifest.RunManifest` itself, whose patterns admit
+    only a full commit SHA and a ``sha256:`` digest — so a submission naming a tag is
+    refused as an unreadable manifest before any fact is derived, and never reaches a
+    decision record. They stay listed in policy because policy states what is forbidden
+    rather than which layer forbids it, and moving the enforcement earlier made it
+    stronger, not weaker: a mutable reference cannot be represented, let alone approved.
+    """
     tripped = {
         condition
         for fact_name, condition in _CONDITION_FOR_FALSE_FACT.items()

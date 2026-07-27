@@ -28,6 +28,7 @@ from edullm_platform.contracts.base import (
     ContractModel,
     PositiveStrictDecimal,
     require_ordered_sequence,
+    serialize_decimal,
 )
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
 from edullm_platform.contracts.inventory import OrganizationInventory
@@ -58,6 +59,18 @@ __all__ = [
 ]
 
 
+def _plain(value: Decimal) -> str:
+    """Render a decimal the way a person writes it.
+
+    ``StrictDecimal`` normalizes on the way in, so the reviewed ceiling ``"500"`` is held as
+    ``Decimal("5E+2")`` and a ten-hour bound as ``Decimal("1E+1")``. Interpolating either
+    directly puts ``$5E+2`` in front of an approver, which defeats the reason the factors
+    are shown at all. The contract layer already settled the presentation question for
+    serialization; this is the same answer, applied where a human reads it.
+    """
+    return serialize_decimal(value)
+
+
 class SubmissionRefusedError(ValueError):
     """The form describes something that cannot be resolved into a manifest.
 
@@ -72,8 +85,9 @@ class SubmissionRefusedError(ValueError):
 class SubmissionInputs(ContractModel):
     """The ``workflow_dispatch`` form.
 
-    Thirteen properties against a ceiling of twenty-five, so the count is a usability
-    question rather than a platform constraint.
+    Fourteen properties against a ceiling of twenty-five, so the count is a usability
+    question rather than a platform constraint. Eight are required and six are overrides a
+    submitter can leave alone.
     """
 
     repository: str = Field(min_length=1)
@@ -152,6 +166,19 @@ def compile_submission(
         else None
     )
 
+    attempts = (
+        inputs.maximum_attempts
+        if inputs.maximum_attempts is not None
+        else workload.maximum_attempts
+    )
+    if attempts > 1 and workload.checkpoint is None:
+        raise SubmissionRefusedError(
+            f"workload profile {workload.name!r} declares no checkpoint contract, so it "
+            f"cannot be retried; asking for {attempts} attempts would produce a run that "
+            "restarts from nothing. Raise the attempt bound on a workload that checkpoints, "
+            "or add a checkpoint contract to this one."
+        )
+
     manifest = RunManifest(
         schema_version=1,
         repository=inputs.repository,
@@ -168,11 +195,7 @@ def compile_submission(
             if inputs.maximum_runtime_hours is not None
             else workload.maximum_runtime_hours
         ),
-        maximum_attempts=(
-            inputs.maximum_attempts
-            if inputs.maximum_attempts is not None
-            else workload.maximum_attempts
-        ),
+        maximum_attempts=attempts,
         checkpoint=workload.checkpoint,
         fanout=fanout,
     )
@@ -228,13 +251,13 @@ def _exceeded_bounds(submission: CompiledSubmission, policy: ApprovalPolicy) -> 
     exceeded: list[str] = []
     if facts.estimated_cost_usd > limits.routine_maximum_cost_usd:
         exceeded.append(
-            f"worst-case cost ${facts.estimated_cost_usd} exceeds the routine ceiling of "
-            f"${limits.routine_maximum_cost_usd}"
+            f"worst-case cost ${_plain(facts.estimated_cost_usd)} exceeds the routine "
+            f"ceiling of ${_plain(limits.routine_maximum_cost_usd)}"
         )
     if facts.maximum_runtime_hours > limits.routine_maximum_runtime_hours:
         exceeded.append(
-            f"runtime bound of {facts.maximum_runtime_hours}h exceeds the routine ceiling of "
-            f"{limits.routine_maximum_runtime_hours}h"
+            f"runtime bound of {_plain(facts.maximum_runtime_hours)}h exceeds the routine "
+            f"ceiling of {_plain(limits.routine_maximum_runtime_hours)}h"
         )
     if facts.maximum_attempts > limits.routine_maximum_attempts:
         exceeded.append(
@@ -287,15 +310,18 @@ def render_approver_context(
         f"| Image digest | `{manifest.image_digest}` |",
         f"| Dataset release | `{manifest.dataset_release}` |",
         f"| Workload profile | `{manifest.workload_profile}` |",
-        f"| Compute profile | `{manifest.compute_profile}` at ${cost.hourly_rate_usd}/hour |",
+        (
+            f"| Compute profile | `{manifest.compute_profile}` at "
+            f"${_plain(cost.hourly_rate_usd)}/hour |"
+        ),
         f"| Policy version | `{policy.policy_version}` |",
         "",
         "## Worst-case cost",
         "",
         (
-            f"`${cost.hourly_rate_usd}/hour x {cost.nodes} node(s) x "
-            f"{cost.maximum_runtime_hours}h x {cost.maximum_attempts} attempt(s) x "
-            f"{cost.cells} cell(s)` = **${cost.maximum_compute_cost_usd}**"
+            f"`${_plain(cost.hourly_rate_usd)}/hour x {cost.nodes} node(s) x "
+            f"{_plain(cost.maximum_runtime_hours)}h x {cost.maximum_attempts} attempt(s) x "
+            f"{cost.cells} cell(s)` = **${_plain(cost.maximum_compute_cost_usd)}**"
         ),
         "",
         (
