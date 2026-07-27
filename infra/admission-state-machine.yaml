@@ -79,25 +79,35 @@ Resources:
       # `$$.` for paths and `{}` for States.Format placeholders, none of which Fn::Sub
       # touches -- only `${...}` is substituted.
       #
-      # The two lineage writes catch States.ALL, which is deliberately too broad, and it
-      # is too broad because the exact error has not been observed yet. Every write here
-      # carries `IfNoneMatch: "*"`, so S3 answers 412 PreconditionFailed when the key
-      # already exists -- but what Step Functions surfaces to the Catch for that 412 is a
-      # different question. PreconditionFailed is not a modelled exception on the S3
-      # PutObject API shape, so the SDK integration most likely reports the generic
-      # S3.S3Exception rather than an S3.PreconditionFailedException, and guessing the
-      # name would produce a Catch that silently never fires. There are no AWS
-      # credentials in the environment this was written in, so the guess could not be
-      # settled by observation.
+      # The two lineage writes catch S3.S3Exception, measured rather than guessed.
+      # tools/probe_conditional_write.py ran against this account on 2026-07-27: a
+      # throwaway state machine wrote one object with `IfNoneMatch: "*"` and then wrote it
+      # again, and the second execution failed with the error name `S3.S3Exception`. The
+      # earlier guess that PreconditionFailed is not a modelled PutObject exception, and
+      # so would arrive generic, was right -- but it was a guess, and a wrong one would
+      # have produced a Catch that silently never fires.
       #
-      # Consequence, stated plainly: a transient 500 from S3 is currently recorded as an
-      # admission conflict, which is wrong. Run tools/probe_conditional_write.py against
-      # the real account, read the error name it reports, and narrow both ErrorEquals
-      # lists to that name so that only a genuine already-exists lands in RecordConflict.
+      # What the probe did NOT settle, and this is the part worth reading. `S3.S3Exception`
+      # is the generic bucket for every unmodelled S3 error, so a transient 500 or a 503
+      # SlowDown arrives under the same name as the 412. The status code and the message
+      # "At least one of the pre-conditions you specified did not hold" appear only in the
+      # Cause, and ErrorEquals cannot match on a Cause. Narrowing from States.ALL is
+      # therefore a real improvement -- a Lambda failure, a States.Timeout, a
+      # States.DataLimitExceeded and a modelled error such as access denied no longer land
+      # in RecordConflict -- but it does not separate a duplicate from a blip.
       #
-      # There is no Retry on either write for the same reason. A retry of a conditional
-      # PUT that lost the race can never succeed, so retrying is only correct for the
-      # transient case -- and separating the two cases is exactly what the probe unblocks.
+      # So RecordConflict means "the conditional write was refused", not "the key already
+      # existed". It writes $.write_failure, which carries both the Error and the Cause,
+      # so the distinction the routing cannot make is preserved in the record a reader
+      # opens. Duplicate suppression does not rest on this either way: the same guarantee
+      # is enforced independently by StartExecution refusing a repeated execution name.
+      #
+      # There is still no Retry on either write, and the probe is why rather than despite
+      # it. A retry would have to be scoped to the transient case to be correct, that
+      # scoping needs an error name the transient case does not share with the 412, and
+      # the measurement says no such name exists. Retrying S3.S3Exception would retry
+      # every genuine duplicate three times before reaching the conflict record it was
+      # always going to reach.
       DefinitionString:
         Fn::Sub: |
           {
@@ -145,7 +155,7 @@ Resources:
                 "ResultPath": null,
                 "Catch": [
                   {
-                    "ErrorEquals": ["States.ALL"],
+                    "ErrorEquals": ["S3.S3Exception"],
                     "ResultPath": "$.write_failure",
                     "Next": "RecordConflict"
                   }
@@ -166,7 +176,7 @@ Resources:
                 "ResultPath": null,
                 "Catch": [
                   {
-                    "ErrorEquals": ["States.ALL"],
+                    "ErrorEquals": ["S3.S3Exception"],
                     "ResultPath": "$.write_failure",
                     "Next": "RecordConflict"
                   }

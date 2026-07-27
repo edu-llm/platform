@@ -543,25 +543,45 @@ def test_every_lineage_write_is_conditional_and_lands_on_its_documented_key() ->
         )
 
 
-def test_both_lineage_writes_catch_broadly_and_route_to_the_conflict_record() -> None:
-    # States.ALL is deliberately too broad. What Step Functions surfaces to a Catch for
-    # S3's 412 has not been observed -- PreconditionFailed is not a modelled PutObject
-    # exception, so it is most likely the generic S3.S3Exception -- and a guessed error
-    # name produces a Catch that silently never fires. Narrow it once
-    # tools/probe_conditional_write.py has been run against the real account.
+def test_both_lineage_writes_catch_the_error_the_probe_measured() -> None:
+    # S3.S3Exception, observed rather than guessed: tools/probe_conditional_write.py
+    # wrote one object with IfNoneMatch "*", wrote it again, and read that name off the
+    # failed execution. A guessed name here produces a Catch that silently never fires,
+    # which is why this waited on a measurement.
     states = state_machine_definition()["States"]
 
     for name in ("WriteIntent", "WriteDecision"):
         assert states[name]["Catch"] == [
             {
-                "ErrorEquals": ["States.ALL"],
+                "ErrorEquals": ["S3.S3Exception"],
                 "ResultPath": "$.write_failure",
                 "Next": "RecordConflict",
             }
         ]
+        # No Retry, and the measurement is the reason rather than an obstacle to it. A
+        # retry is only correct for the transient case, scoping it there needs an error
+        # name the transient case does not share with the 412, and S3.S3Exception is
+        # exactly such a shared name.
         assert "Retry" not in states[name]
+    # The last-resort catch stays broad on purpose: whatever stops the conflict record
+    # being written, the execution still has to reach a terminal state that says so.
+    assert states["RecordConflict"]["Catch"][0]["ErrorEquals"] == ["States.ALL"]
     assert states["RecordConflict"]["Catch"][0]["Next"] == "AdmissionConflict"
     assert states["RecordConflict"]["Next"] == "AdmissionConflict"
+
+
+def test_the_conflict_record_carries_what_the_error_name_could_not_distinguish() -> None:
+    # S3.S3Exception is the generic bucket for every unmodelled S3 error, so a 412 and a
+    # transient 500 arrive under one name and the routing cannot tell them apart. The
+    # status code lives in the Cause, which ErrorEquals cannot match on. What makes that
+    # survivable is that the conflict record preserves the failure rather than only the
+    # fact of one, so a reader can still tell a duplicate from a blip.
+    states = state_machine_definition()["States"]
+
+    for name in ("WriteIntent", "WriteDecision"):
+        assert states[name]["Catch"][0]["ResultPath"] == "$.write_failure"
+    # RecordConflict serialises the whole execution state, $.write_failure included.
+    assert states["RecordConflict"]["Parameters"]["Body.$"] == "States.JsonToString($)"
 
 
 def test_every_state_is_reachable_and_every_transition_names_a_real_state() -> None:
