@@ -530,6 +530,29 @@ def test_the_denial_matrix_reaches_the_proof_bundle() -> None:
     assert "if" not in upload
 
 
+def test_the_approver_context_survives_the_run_that_showed_it() -> None:
+    # A step summary is rendered in the run page and exposed by no REST endpoint, and the
+    # public page hides it behind sign-in. Without this upload the only check about what a
+    # reviewer was actually shown could be answered only by somebody describing it from
+    # memory, which is the kind of evidence this phase exists not to accept.
+    #
+    # The upload has to come from the same file the summary was written from, or the
+    # artifact becomes a re-render that can drift from what the human saw.
+    compile_job = _job("compile")
+    publish = step(compile_job, "Publish the approver context")
+    upload = step(compile_job, "Upload the approver context")
+    names = [candidate.get("name") for candidate in compile_job["steps"]]
+
+    assert upload["uses"] == UPLOAD_ACTION
+    assert upload["with"]["name"] == "approver-context"
+    assert upload["with"]["if-no-files-found"] == "error"
+    assert "approver-context.md" in upload["with"]["path"]
+    assert "approver-context.md" in publish["run"]
+    assert names.index("Publish the approver context") < names.index(
+        "Upload the approver context"
+    )
+
+
 def test_the_file_documents_the_three_things_a_reader_will_otherwise_undo() -> None:
     # Each of these is a decision that looks like a mistake until the reason is read: a
     # probe job that belongs in a file of its own, an environment name that could be
