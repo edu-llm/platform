@@ -1,0 +1,183 @@
+name: Deploy Phase 2 admission control plane
+
+# The deployer role trust policy pins job_workflow_ref to
+# edu-llm/platform/.github/workflows/deploy-phase2-admission.yml@refs/heads/main.
+# Renaming or moving this file silently revokes every deployment. Do not rename it.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/deploy-phase2-admission.yml
+      - infra/lineage-bucket.yaml
+      - infra/artifacts-bucket.yaml
+      - infra/admission-state-machine.yaml
+
+permissions:
+  contents: read
+
+# One group across all three stacks rather than one per stack. They are deployed in
+# dependency order by a single job, so two concurrent runs would interleave a bucket
+# create with an admission update rather than queue behind each other.
+concurrency:
+  group: cloudformation-sbsandbox-intern-edullm-phase2
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Validate, deploy, and verify Phase 2 admission
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ vars.AWS_INFRA_DEPLOYER_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-duration-seconds: 900
+          # Account IDs are not secret, but the verification step below reads a state
+          # machine ARN out of a stack output, and masking keeps that ARN from turning a
+          # public log into a free lookup of the sandbox account number.
+          mask-aws-account-id: true
+
+      - name: Validate CloudFormation templates
+        run: |
+          set -euo pipefail
+          aws cloudformation validate-template --template-body file://infra/lineage-bucket.yaml
+          aws cloudformation validate-template --template-body file://infra/artifacts-bucket.yaml
+          aws cloudformation validate-template --template-body file://infra/admission-state-machine.yaml
+
+      # No --capabilities on any of the three deploys, and that is a checked claim rather
+      # than an omission. CloudFormation demands CAPABILITY_IAM or CAPABILITY_NAMED_IAM
+      # only for templates containing AWS::IAM::AccessKey, Group, InstanceProfile,
+      # ManagedPolicy, Policy, Role, User or UserToGroupAddition. None of these three
+      # templates contains any of them: the two bucket stacks carry an S3 bucket and an
+      # AWS::S3::BucketPolicy, which is a resource policy and not an IAM entity, and the
+      # admission stack carries a log group, a function and a state machine.
+      #
+      # Passing an existing role to a new state machine or function is a different thing
+      # from creating one. It needs iam:PassRole on the deployer -- granted, by ARN, in
+      # infra/iam/infra-deployer-role.yaml -- and no stack capability at all.
+      #
+      # Leaving the acknowledgement off is worth more than it costs. The IAM stacks in
+      # infra/iam/ are applied from a laptop and this role has no iam:CreateRole, so a
+      # template that grew an IAM resource would fail either way; without the capability
+      # it fails at InsufficientCapabilities, naming the reason, instead of at an
+      # AccessDenied several minutes into a rollback.
+      - name: Deploy Phase 2 lineage bucket stack
+        run: |
+          set -euo pipefail
+          aws cloudformation deploy \
+            --stack-name sbsandbox-intern-edullm-phase2-lineage \
+            --template-file infra/lineage-bucket.yaml \
+            --no-fail-on-empty-changeset
+
+      - name: Deploy Phase 2 artifacts bucket stack
+        run: |
+          set -euo pipefail
+          aws cloudformation deploy \
+            --stack-name sbsandbox-intern-edullm-phase2-artifacts \
+            --template-file infra/artifacts-bucket.yaml \
+            --no-fail-on-empty-changeset
+
+      # Last, and it has to be last. The function reads its code from a versioned object
+      # in the artifacts bucket, and the state machine writes its records into the lineage
+      # bucket, so both buckets have to exist first. Nothing links the stacks -- no
+      # exports, no imports -- so CloudFormation will not enforce that ordering; this step
+      # order is the only thing that does.
+      - name: Deploy Phase 2 admission stack
+        run: |
+          set -euo pipefail
+          aws cloudformation deploy \
+            --stack-name sbsandbox-intern-edullm-phase2-admission \
+            --template-file infra/admission-state-machine.yaml \
+            --no-fail-on-empty-changeset
+
+      - name: Verify Phase 2 admission control plane
+        run: |
+          set -euo pipefail
+          state_machine_arn_file="${RUNNER_TEMP}/phase2-state-machine-arn.txt"
+          state_machine_json="${RUNNER_TEMP}/phase2-state-machine.json"
+          function_json="${RUNNER_TEMP}/phase2-validator-function.json"
+          lineage_json="${RUNNER_TEMP}/phase2-lineage-object-lock.json"
+          artifacts_json="${RUNNER_TEMP}/phase2-artifacts-versioning.json"
+
+          aws cloudformation describe-stacks \
+            --stack-name sbsandbox-intern-edullm-phase2-admission \
+            --query "Stacks[0].Outputs[?OutputKey=='StateMachineArn'].OutputValue" \
+            --output text > "${state_machine_arn_file}"
+
+          read -r state_machine_arn < "${state_machine_arn_file}"
+
+          aws stepfunctions describe-state-machine \
+            --state-machine-arn "${state_machine_arn}" \
+            --query '{name:name,status:status,type:type,loggingLevel:loggingConfiguration.level,includeExecutionData:loggingConfiguration.includeExecutionData}' \
+            --output json > "${state_machine_json}"
+
+          aws lambda get-function-configuration \
+            --function-name sbsandbox-intern-edullm-admission-validator \
+            --query '{functionName:FunctionName,runtime:Runtime,handler:Handler,packageType:PackageType}' \
+            --output json > "${function_json}"
+
+          aws s3api get-object-lock-configuration \
+            --bucket sbsandbox-intern-edullm-lineage \
+            --query '{objectLockEnabled:ObjectLockConfiguration.ObjectLockEnabled,retentionMode:ObjectLockConfiguration.Rule.DefaultRetention.Mode}' \
+            --output json > "${lineage_json}"
+
+          aws s3api get-bucket-versioning \
+            --bucket sbsandbox-intern-edullm-artifacts \
+            --query '{status:Status}' \
+            --output json > "${artifacts_json}"
+
+          python - "${state_machine_json}" "${function_json}" "${lineage_json}" "${artifacts_json}" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          expected_state_machine = {
+              "name": "sbsandbox-intern-edullm-admission",
+              "status": "ACTIVE",
+              "type": "STANDARD",
+              "loggingLevel": "ALL",
+              "includeExecutionData": True,
+          }
+          expected_function = {
+              "functionName": "sbsandbox-intern-edullm-admission-validator",
+              "runtime": "python3.12",
+              "handler": "edullm_platform.admission_handler.handler",
+              "packageType": "Zip",
+          }
+          expected_lineage_object_lock = {
+              "objectLockEnabled": "Enabled",
+              "retentionMode": "GOVERNANCE",
+          }
+          expected_artifacts_versioning = {"status": "Enabled"}
+
+          expectations = [
+              ("state machine", expected_state_machine),
+              ("validator function", expected_function),
+              ("lineage bucket object lock", expected_lineage_object_lock),
+              ("artifacts bucket versioning", expected_artifacts_versioning),
+          ]
+          arguments = sys.argv[1:]
+          if len(arguments) != len(expectations):
+              raise SystemExit("phase 2 verification was handed the wrong number of files")
+
+          failures = []
+          for (label, expected), argument in zip(expectations, arguments):
+              observed = json.loads(Path(argument).read_text(encoding="utf-8"))
+              if observed != expected:
+                  failures.append(f"{label}: expected {expected}, observed {observed}")
+
+          if failures:
+              raise SystemExit("phase 2 admission verification failed:\n" + "\n".join(failures))
+
+          print("PHASE2_ADMISSION_VERIFICATION_PASSED")
+          PY

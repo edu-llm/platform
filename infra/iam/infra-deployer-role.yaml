@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: GitHub Actions role that deploys the Phase 1 CloudFormation stacks this repository owns.
+Description: GitHub Actions role that deploys the CloudFormation stacks this repository owns.
 
 Resources:
   InfraDeployerRole:
@@ -13,6 +13,13 @@ Resources:
       # that creates it is applied from a laptop, so no branch ever needs to reach AWS
       # through it. A branch wildcard here would hand every feature branch the ability to
       # rewrite the account's ECR stacks.
+      #
+      # job_workflow_ref is a list because two workflow files deploy through this role,
+      # one per phase. An array under a single StringEquals key is an OR across its
+      # elements, so either file's job is accepted and nothing else is; a StringLike over
+      # .github/workflows/* would have accepted any workflow anyone adds. Each entry names
+      # a file that must keep its exact path: renaming one revokes its deployments
+      # silently, and the run fails at AssumeRole with nothing pointing at the rename.
       #
       # The sub value carries owner and repository ids because this organization issues
       # immutable subject claims. Verified against the live repository settings:
@@ -31,7 +38,9 @@ Resources:
             Condition:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
-                token.actions.githubusercontent.com:job_workflow_ref: edu-llm/platform/.github/workflows/deploy-phase1-ecr.yml@refs/heads/main
+                token.actions.githubusercontent.com:job_workflow_ref:
+                  - edu-llm/platform/.github/workflows/deploy-phase1-ecr.yml@refs/heads/main
+                  - edu-llm/platform/.github/workflows/deploy-phase2-admission.yml@refs/heads/main
                 token.actions.githubusercontent.com:repository_owner_id: "306859726"
                 token.actions.githubusercontent.com:repository_id: "1311508598"
               StringLike:
@@ -97,6 +106,151 @@ Resources:
                 # Narrowed after the edullm segment for the same reason as the stack scope.
                 Resource:
                   Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-*
+        # A second inline policy rather than more statements in the first. Inline policies
+        # are unioned, so the effective permissions are identical either way, and keeping
+        # them apart means deploy-phase1-stacks still says exactly what it said when it
+        # was reviewed: a Phase 2 edit cannot quietly change the Phase 1 scope, and
+        # `aws iam list-role-policies` shows the phase boundary. It also keeps the policy
+        # names honest -- deploy-phase1-stacks would be a lie once it deployed Phase 2.
+        - PolicyName: deploy-phase2-admission-stacks
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # The read half of this list is not a list of things the templates use. The
+              # AWS::S3::Bucket resource handler reads every configuration surface a
+              # bucket has on each Read -- CORS, replication, analytics, website and the
+              # rest -- whether or not the template sets them, and an AccessDenied on any
+              # one of them fails the stack update rather than being skipped. The write
+              # half is only what infra/lineage-bucket.yaml and infra/artifacts-bucket.yaml
+              # actually set, so adding a new bucket property fails the deploy until this
+              # is amended, which is the direction that fails closed.
+              - Effect: Allow
+                Action:
+                  - s3:CreateBucket
+                  - s3:DeleteBucket
+                  - s3:PutBucketVersioning
+                  - s3:PutBucketObjectLockConfiguration
+                  - s3:PutBucketPublicAccessBlock
+                  - s3:PutEncryptionConfiguration
+                  - s3:PutBucketTagging
+                  - s3:PutBucketPolicy
+                  - s3:DeleteBucketPolicy
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                  - s3:GetBucketVersioning
+                  - s3:GetBucketObjectLockConfiguration
+                  - s3:GetBucketPublicAccessBlock
+                  - s3:GetEncryptionConfiguration
+                  - s3:GetBucketTagging
+                  - s3:GetBucketPolicy
+                  - s3:GetBucketOwnershipControls
+                  - s3:GetBucketLogging
+                  - s3:GetBucketNotification
+                  - s3:GetBucketCORS
+                  - s3:GetBucketWebsite
+                  - s3:GetAccelerateConfiguration
+                  - s3:GetLifecycleConfiguration
+                  - s3:GetReplicationConfiguration
+                  - s3:GetAnalyticsConfiguration
+                  - s3:GetInventoryConfiguration
+                  - s3:GetMetricsConfiguration
+                  - s3:GetIntelligentTieringConfiguration
+                # Narrowed after the edullm segment for the same reason as the stack
+                # scope above: sbsandbox-intern- alone is every intern's prefix.
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-*
+              # Objects in the artifacts bucket only, not in every bucket carrying our
+              # prefix. CloudFormation needs to read the packaged zip to create the
+              # function, and the release procedure needs to upload it. Neither reason
+              # reaches the lineage bucket, and the deployer holding PutObject or
+              # DeleteObject over a write-once lineage store would undo the property that
+              # store exists to have -- Object Lock would refuse the delete, but a role
+              # that has to be stopped by Object Lock should not have been granted it.
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:DeleteObjectVersion
+                  - s3:AbortMultipartUpload
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-artifacts/*
+              # Deliberately absent: states:StartExecution and states:StopExecution. This
+              # role builds the admission state machine and never runs one; starting an
+              # execution is the submission role's single permission, and keeping the two
+              # apart is what stops a deploy credential from admitting a run.
+              - Effect: Allow
+                Action:
+                  - states:CreateStateMachine
+                  - states:DeleteStateMachine
+                  - states:UpdateStateMachine
+                  - states:DescribeStateMachine
+                  - states:TagResource
+                  - states:UntagResource
+                  - states:ListTagsForResource
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:sbsandbox-intern-edullm-*
+              # Deliberately absent: lambda:InvokeFunction, lambda:AddPermission and
+              # lambda:RemovePermission. The deployer creates the validator but may
+              # neither run it nor change who may run it.
+              - Effect: Allow
+                Action:
+                  - lambda:CreateFunction
+                  - lambda:DeleteFunction
+                  - lambda:UpdateFunctionCode
+                  - lambda:UpdateFunctionConfiguration
+                  - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
+                  - lambda:GetFunctionCodeSigningConfig
+                  - lambda:GetRuntimeManagementConfig
+                  - lambda:ListVersionsByFunction
+                  - lambda:TagResource
+                  - lambda:UntagResource
+                  - lambda:ListTags
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:sbsandbox-intern-edullm-*
+              # Deliberately absent: logs:PutLogEvents and logs:DeleteLogStream. The
+              # deployer creates the group the admission executions are recorded into and
+              # must not be able to write into that record or remove part of it.
+              #
+              # The scope is the vendedlogs path, so this cannot reach the Lambda's own
+              # /aws/lambda/ group either. A trailing wildcard is unnecessary: an IAM
+              # wildcard matches ':' too, so log-group:/aws/vendedlogs/states/
+              # sbsandbox-intern-edullm-* already covers the ':*' ARN form.
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:DeleteLogGroup
+                  - logs:DescribeLogGroups
+                  - logs:PutRetentionPolicy
+                  - logs:DeleteRetentionPolicy
+                  - logs:TagResource
+                  - logs:UntagResource
+                  - logs:ListTagsForResource
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/vendedlogs/states/sbsandbox-intern-edullm-*
+              # This is the one grant here that meaningfully widens the deployer, so it is
+              # the one worth arguing about. CloudFormation acts as this role, and both
+              # states:CreateStateMachine and lambda:CreateFunction take a roleArn, which
+              # the calling principal must hold iam:PassRole for. Without it the admission
+              # stack cannot be created at all.
+              #
+              # The two role ARNs are written out in full and must stay that way. A prefix
+              # -- sbsandbox-intern-edullm-* -- would let this role pass any role that
+              # ever gets that name, including one created later with permissions nobody
+              # weighed against a deploy credential; passing a role is how a principal
+              # lends its own limits away. Naming both roles means adding a third is a
+              # visible edit to this file rather than something a new role name inherits.
+              #
+              # The blast radius is bounded on the other side as well: each of these two
+              # roles is trusted only by the single AWS service named in its own trust
+              # policy, so passing one anywhere else yields a role that cannot be assumed.
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-admission-states
+                  - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-admission-lambda
 
 Outputs:
   RoleName:
