@@ -1,0 +1,243 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: The CPU compute environment, its job queue, the digest-pinned job definition and the log group jobs write to.
+
+# Nothing in this stack is retained on delete, and that is deliberate rather than an
+# oversight carried over from the lineage bucket. Every resource here is meant to be
+# removable: §8's rollback is "disable the queue, drain the environment", and the step
+# after it is a deploy rather than a rescue. A DeletionPolicy: Retain anywhere in this file
+# would turn a stack delete into a set of orphans that block the next create on a name that
+# already exists, which is exactly what stranded the Phase 1 ECR stack.
+#
+# The log group is the one to argue about, because a result manifest references a log
+# stream inside it and deleting the group breaks that reference. It is still not retained.
+# The rollback in §8 disables the queue and the compute environment and leaves this stack
+# deployed for precisely this reason -- retention keeps the logs of jobs that already ran --
+# so the case where the group is deleted is the case where somebody has decided to remove
+# Phase 3 entirely, and a dangling reference is then the correct outcome rather than a
+# surprising one.
+
+Resources:
+  BatchLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/batch/sbsandbox-intern-edullm-cpu
+      # Ninety days, matching the admission execution log group. The two have to be read
+      # together -- an execution record says a job was submitted and this group says what it
+      # printed -- and a shorter retention here would mean a run that is still fully
+      # traceable through admission and only half traceable through execution.
+      #
+      # What is deliberately not done: copying any of this into the lineage store. A
+      # workload's stdout is the least predictable text this platform handles and the
+      # lineage store is immutable, so anything copied there cannot be removed. The result
+      # manifest records the stream reference and the reader follows it, which is the
+      # conservative reading of "reference durable evidence rather than copying large logs".
+      RetentionInDays: 90
+
+  BatchComputeEnvironment:
+    Type: AWS::Batch::ComputeEnvironment
+    Properties:
+      ComputeEnvironmentName: sbsandbox-intern-edullm-cpu
+      Type: MANAGED
+      State: ENABLED
+      # No ServiceRole. Omitting it makes Batch use AWSServiceRoleForBatch, which does not
+      # exist in this account until a person creates it -- see infra/README.md, and D5 for
+      # why a person rather than this pipeline. Naming a service role here instead would
+      # mean writing and passing a fifth IAM role whose policy AWS already publishes.
+      #
+      # ReplaceComputeEnvironment is false so that a change to the subnets, the security
+      # group or the instance type updates this environment in place. Left at its default
+      # of true, CloudFormation creates a replacement environment and deletes the original,
+      # and the job queue below -- which references it by name -- is briefly attached to
+      # neither. The phase plan's migration story depends on this being an update: a
+      # managed environment's subnets and security groups are changeable through
+      # UpdateComputeEnvironment, which is a stack update and not a rebuild.
+      ReplaceComputeEnvironment: false
+      UpdatePolicy:
+        # A running job is not something a template edit gets to kill. With this false,
+        # Batch drains the environment instead: existing jobs finish on the old instances
+        # and new ones land on the new ones. The timeout below is the bound on that drain,
+        # after which Batch stops waiting -- thirty minutes is longer than the CPU smoke and
+        # shorter than anybody's patience with a stuck deploy.
+        TerminateJobsOnUpdate: false
+        JobExecutionTimeoutMinutes: 30
+      ComputeResources:
+        Type: EC2
+        # BEST_FIT_PROGRESSIVE rather than BEST_FIT. With one instance type in the list the
+        # two behave identically today, and they stop behaving identically the moment
+        # Phase 4 adds a second: BEST_FIT will wait for the cheapest type rather than use
+        # an available one, which is the same "job sits in RUNNABLE and nothing is wrong"
+        # failure the 1e subnet produces. Choosing it now costs nothing.
+        AllocationStrategy: BEST_FIT_PROGRESSIVE
+        # Zero, and this is the number to defend. A minimum above zero holds instances
+        # whether or not anything is queued, which bills continuously from the day it
+        # merges and shows up as a monthly figure nobody can attribute to a change. It buys
+        # faster job start -- roughly the two to three minutes an instance takes to boot and
+        # join the cluster -- and that is a real trade Phase 7 may want to make for an
+        # interactive workload. It is not a trade to make by accident here, so
+        # tests/test_phase3_infrastructure.py pins it at 0.
+        MinvCpus: 0
+        # Four c7i.8xlarge at 32 vCPU each. The account's Standard on-demand vCPU quota is
+        # 1152, so this ceiling is ours rather than AWS's: it is the most this environment
+        # can spend at once, and it is set where a fan-out of a few cells fits and a runaway
+        # does not. Raising it is a deliberate edit with a cost attached.
+        MaxvCpus: 128
+        # DesiredvCpus is deliberately absent. Batch owns it -- it moves every time the
+        # scheduler scales -- so a value here would be a value CloudFormation tries to
+        # restore on the next deploy, fighting the scheduler and reporting drift forever.
+        # The idle-capacity claim this phase makes is about MinvCpus, which is above, and
+        # it is checked live by reading DesiredvCpus back after the matrix rather than by
+        # asserting it here.
+        InstanceTypes:
+          - c7i.8xlarge
+        InstanceRole:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:instance-profile/sbsandbox-intern-edullm-batch-instance
+        # Five subnets, imported rather than parameterised, and five and not six. See
+        # infra/batch-network.yaml: c7i.8xlarge is offered in us-east-1a, 1b, 1c, 1d and 1f
+        # and not in 1e, and a subnet Batch can never place into produces a job that waits
+        # rather than a job that errors.
+        #
+        # Fn::ImportValue rather than a parameter, because a subnet ID is one of the very
+        # few values in this repository that no committed file can spell -- the service
+        # assigns it. The import also makes CloudFormation refuse to delete the network
+        # stack while this one exists, which is the ordering a rollback needs.
+        Subnets:
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1a
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1b
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1c
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1d
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1f
+        SecurityGroupIds:
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-security-group-id
+        # Batch bakes the ECS-optimised AMI choice into the environment when it is created.
+        # With this true, an in-place update moves to the current AMI, which is how a
+        # security fix in the host image reaches these instances at all -- without it the
+        # environment runs whatever AMI was current on the day it was created, indefinitely.
+        UpdateToLatestImageVersion: true
+        Tags:
+          Name: sbsandbox-intern-edullm-batch-cpu
+          Project: edullm
+
+  BatchJobQueue:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      # THE NAME THAT BREAKS THREE FILES AT ONCE. sbsandbox-intern-edullm-cpu appears here,
+      # in infra/batch-events.yaml's event pattern, and in the admission states role's
+      # batch:SubmitJob scope, and no CloudFormation reference connects the three.
+      #
+      # Renaming it here alone is worse than a broken deploy, because it half-works:
+      # submission keeps succeeding against the new queue while the EventBridge rule matches
+      # nothing, so jobs run to completion and no lifecycle event, attempt or result record
+      # is ever written. The run looks fine in the Batch console and vanishes from lineage.
+      # infra/README.md records it as the one seam in this phase whose failure produces no
+      # error anywhere, and tests/test_phase3_infrastructure.py compares all three files.
+      JobQueueName: sbsandbox-intern-edullm-cpu
+      State: ENABLED
+      Priority: 1
+      ComputeEnvironmentOrder:
+        - Order: 1
+          ComputeEnvironment:
+            Ref: BatchComputeEnvironment
+
+  BatchJobDefinition:
+    Type: AWS::Batch::JobDefinition
+    # The awslogs driver below names a log group and does not create one. Nothing in the
+    # job definition's properties refers to the group resource, so CloudFormation infers no
+    # ordering; without this the stack can register a definition whose first job fails to
+    # start on a group that does not exist yet.
+    DependsOn: BatchLogGroup
+    Properties:
+      JobDefinitionName: sbsandbox-intern-edullm-cpu-run
+      Type: container
+      PlatformCapabilities:
+        - EC2
+      # Job tags reach the underlying ECS task only when asked, and the tags carrying the
+      # run id and the team are what Phase 5's cost attribution reads. Set here as well as
+      # on the submit request so a job submitted by hand during an incident still carries
+      # them.
+      PropagateTags: true
+      # Both of these are floors that every real submission overrides.
+      # src/edullm_platform/execution.py derives the attempt duration from the manifest's
+      # maximum_runtime_hours and the retry count from maximum_attempts, and sends both on
+      # every SubmitJob. They are here so that a job submitted without overrides -- by hand,
+      # during an incident -- still cannot run unbounded. One attempt, because a retry is
+      # something a manifest asks for rather than something the platform does on its behalf.
+      RetryStrategy:
+        Attempts: 1
+      Timeout:
+        AttemptDurationSeconds: 3600
+      ContainerProperties:
+        # Pinned by digest, never by tag. A tag is a mutable pointer: :latest, or even a
+        # commit-shaped tag in a repository whose ImageTagMutability was relaxed, means the
+        # bytes that run are not the bytes anybody approved, and the decision record would
+        # name an image that no longer is what it was. The digest below is the only image
+        # this platform has published -- sha256:4ebdba1b... under tag 4204375e6db8 -- and
+        # its findings are recorded as reviewed in config/image-exceptions.yaml.
+        #
+        # Releasing a new image means editing this line, and that edit is the diff a
+        # reviewer sees, exactly as the Lambda's S3ObjectVersion is.
+        Image:
+          Fn::Sub: ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/sbsandbox-intern-edullm-olmo-core@sha256:4ebdba1ba3b57096efb4f4647ed41ed5ded4ac9e77e8c9038b7ff24db0bc6db8
+        # Two roles, and the difference between them is the point. ExecutionRoleArn is
+        # ECS's identity while it starts the task -- it pulls the image and opens the log
+        # stream, and the container never sees those credentials. JobRoleArn is what the
+        # container's own process runs as, and it is the one an untrusted training command
+        # can reach. infra/iam/batch-roles.yaml refuses to let them be the same role.
+        ExecutionRoleArn:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-execution
+        JobRoleArn:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-workload
+        # 32 vCPU and 60 GiB against a c7i.8xlarge's 32 vCPU and 64 GiB. The gap is not
+        # rounding: the ECS agent and the host's own processes need memory, and a container
+        # asking for all 65536 MiB never fits on the instance it was sized for -- which
+        # Batch expresses as a job that stays in RUNNABLE rather than as an error.
+        ResourceRequirements:
+          - Type: VCPU
+            Value: "32"
+          - Type: MEMORY
+            Value: "61440"
+        # The default command and environment, both of which every real submission
+        # overrides. They are declared rather than omitted because ContainerOverrides can
+        # only override a key the definition declares in the first place, and because the
+        # key names here and in src/edullm_platform/execution.py's submit request have to
+        # match exactly -- a Command here against a Commands there is a silently dropped
+        # override, which tests/test_phase3_infrastructure.py compares the two sides to
+        # catch.
+        #
+        # The default prints and exits 0 rather than doing nothing, so a job submitted with
+        # no overrides proves the image, the pull path and the log stream and changes
+        # nothing.
+        Command:
+          - python
+          - -c
+          - print("sbsandbox-intern-edullm-cpu-run: no command override was supplied")
+        Environment:
+          - Name: EDULLM_OUTPUT_BUCKET
+            Value: sbsandbox-intern-edullm-outputs
+          - Name: EDULLM_OUTPUT_PREFIX
+            Value: teams/data-prep/runs/
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group: /aws/batch/sbsandbox-intern-edullm-cpu
+            awslogs-stream-prefix: cpu-run
+            awslogs-region:
+              Ref: AWS::Region
+        # Explicit rather than left to the default, because the default is the answer that
+        # matters and a reader should not have to know it. A privileged container shares
+        # the host's kernel capabilities, which on a shared container host means reaching
+        # the ECS agent's credentials -- and those are the instance role.
+        Privileged: false
+
+Outputs:
+  ComputeEnvironmentArn:
+    Value:
+      Ref: BatchComputeEnvironment
+  JobQueueArn:
+    Value:
+      Ref: BatchJobQueue
+  JobDefinitionArn:
+    Value:
+      Ref: BatchJobDefinition
+  LogGroupName:
+    Value:
+      Ref: BatchLogGroup

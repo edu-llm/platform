@@ -270,7 +270,138 @@ is not needed for those, and they must never be applied from a laptop: a stack a
 hand and then re-applied by CI reconciles against whatever the laptop left, and the run
 log stops describing the account.
 
-## Releasing the admission validator
+## The Phase 3 stacks, in dependency order
+
+| # | Stack | Template | Roles or resources | Applied from |
+| --- | --- | --- | --- | --- |
+| 1 | `sbsandbox-intern-edullm-phase3-batch-iam` | `infra/iam/batch-roles.yaml` | `…-batch-execution`, `…-batch-workload`, `…-batch-instance` and its instance profile | laptop |
+| 2 | `sbsandbox-intern-edullm-phase3-lifecycle-iam` | `infra/iam/lifecycle-lambda-role.yaml` | `…-lifecycle-lambda` | laptop |
+| 3 | `sbsandbox-intern-edullm-phase2-admission-service-roles` | `infra/iam/admission-service-roles.yaml` (amended) | `…-admission-states` gains `batch:SubmitJob` | laptop |
+| 4 | `sbsandbox-intern-edullm-infra-deployer-iam` | `infra/iam/infra-deployer-role.yaml` (amended) | `…-infra-deployer` gains `deploy-phase3-batch-stacks` | laptop |
+| 5 | `sbsandbox-intern-edullm-phase3-outputs` | `infra/outputs-bucket.yaml` | workload output bucket | CI |
+| 6 | `sbsandbox-intern-edullm-phase3-network` | `infra/batch-network.yaml` | VPC, subnets, route table, internet gateway, security group | CI |
+| 7 | `sbsandbox-intern-edullm-phase3-batch` | `infra/batch-compute.yaml` | compute environment, queue, job definition, log group | CI |
+| 8 | `sbsandbox-intern-edullm-phase3-events` | `infra/batch-events.yaml` | rule, SQS, DLQ, recorder function, alarms | CI |
+| 9 | `sbsandbox-intern-edullm-phase2-admission` | `infra/admission-state-machine.yaml` (amended) | the submit and binding states | CI |
+
+Same rule as Phase 2: **every laptop stack goes before every CI stack**, and within the
+laptop group the order above is the one that works.
+
+- Stacks 1 and 2 come first because stack 4 grants `iam:PassRole` on their role ARNs by
+  full ARN. IAM does not require the resource of a grant to exist, so this is not strictly
+  forced, but creating the target first costs nothing and getting it wrong is hard to see.
+- Stack 3 is what lets the admission state machine submit a job at all. It is the only
+  principal in the account that may start compute, and it is reachable only through an
+  execution the admission role started.
+- Stack 4 has to precede everything CI does. Until the deployer carries
+  `deploy-phase3-batch-stacks`, the third `job_workflow_ref` entry and the `iam:PassRole`
+  grant, the Phase 3 workflow cannot assume the role, and if it could it would be denied on
+  the first bucket.
+- Stacks 6, 7 and 8 are ordered by what references what: the compute environment needs the
+  subnets and the security group, and the events rule needs the job queue ARN. Nothing links
+  the stacks, so CloudFormation will not enforce that; the step order in
+  `.github/workflows/deploy-phase3-batch.yml` is what does.
+- Stack 9 is last because the state machine's submit state names the job queue and job
+  definition that stack 7 creates.
+
+**Stack 1 takes about three minutes. The other three laptop stacks take under one.** That
+is long enough to read as a hang, and it is not one: stack 1 is the only one that creates
+an instance profile, and CloudFormation waits on it before reporting `CREATE_COMPLETE`.
+Wait rather than interrupting — a create interrupted part-way is how a stack ends up in the
+`DELETE_FAILED` recovery above, and here it would strand a role name and a profile name
+rather than one name.
+
+### The service-linked role Batch needs, and why a human creates it
+
+`AWSServiceRoleForBatch` does not exist in this account. Batch will create it on the first
+`CreateComputeEnvironment` if the caller holds `iam:CreateServiceLinkedRole` — which would
+put a role-creation path into the deploy pipeline, and the first section of this file is
+about why that does not happen here.
+
+The argument is weaker than usual and worth stating rather than glossing: a service-linked
+role is not a role we author, its policy is AWS's, and we cannot widen it. What survives is
+that it is still a role creation made by a pipeline, and the rule is worth more than the one
+command it saves.
+
+```bash
+aws iam create-service-linked-role \
+  --aws-service-name batch.amazonaws.com \
+  --profile sbsandbox --region us-east-1
+
+aws iam get-role \
+  --role-name AWSServiceRoleForBatch \
+  --profile sbsandbox --region us-east-1 \
+  --query 'Role.{Name:RoleName,Created:CreateDate}'
+```
+
+`InvalidInput ... has been taken in this account` means it already exists, which is a
+success for this purpose. Run it before stack 7; a compute environment created without it
+fails in a way that names the role and not the reason.
+
+### Networking is ours, and it was nearly not
+
+`infra/batch-network.yaml` creates a VPC. That was not possible on the morning of
+2026-07-27: `us-east-1` held five VPCs against a quota of five, and `CreateVpc` returned
+`VpcLimitExceeded`. The `L-F678F1CE` increase to 10 was filed and applied the same day, and
+confirmed by creating a VPC and deleting it again.
+
+Two things worth keeping from that, because both nearly sent this phase somewhere else.
+
+**`VpcLimitExceeded` is not an authorization failure.** A quota is a support request; a
+denial is not fixable by us. Anything that reports "CreateVpc failed" without telling the
+two apart is throwing away the actionable half.
+
+**`us-east-2` is not a fallback, and looks like one.** The region lock permits both, so the
+obvious response to a full `us-east-1` is to move. `ec2:CreateVpc`, `ec2:CreateSubnet`,
+`ec2:CreateSecurityGroup` and `ec2:RunInstances` are all `UnauthorizedOperation` there. An
+EC2 compute environment in `us-east-2` is not possible at all. `tools/probe_ec2_authorization.py`
+re-measures this without creating anything; run it before believing otherwise.
+
+### Stopping a job a cancelled workflow left running
+
+Cancelling a `submit-run.yml` run stops the workflow and nothing in AWS. Its `if: cancelled()`
+step says so and sends the reader here, because this is the only place a laptop procedure
+belongs and because no identity that workflow can obtain is permitted to terminate a job:
+the admission role holds one `states:StartExecution` and two read-only execution actions,
+and `batch:TerminateJob` is deliberately absent from it, from the deployer, and from the
+lifecycle recorder.
+
+That leaves a real window. GitHub cancels a job in seconds; a submitted Batch job runs until
+its `attemptDurationSeconds` unless somebody stops it. The job name is the run id, which is
+what makes it findable.
+
+```bash
+aws batch list-jobs \
+  --job-queue sbsandbox-intern-edullm-cpu \
+  --job-status RUNNING \
+  --profile sbsandbox --region us-east-1 \
+  --query 'jobSummaryList[].{Id:jobId,Name:jobName,Started:startedAt}'
+
+aws batch terminate-job \
+  --job-id <the job id whose name is the run id> \
+  --reason cancelled-by-operator \
+  --profile sbsandbox --region us-east-1
+```
+
+`list-jobs` takes one status at a time, so a job still waiting for capacity needs
+`--job-status RUNNABLE` as well — and that is the more likely state for a run cancelled
+early, because a job that never got capacity is exactly the case somebody gives up on.
+
+Terminating is recorded rather than silent: Batch emits a state change, the rule delivers it,
+and the recorder writes a lifecycle event with state `cancelled` — `lifecycle_projection.py`
+reads the termination reason to distinguish an operator's cancellation from a failure. So the
+lineage record of a cancelled run is complete in the same way a successful one is.
+
+## Releasing a Lambda
+
+Two functions now ship this way, and the procedure is the same for both.
+
+| Function | Template | Builder | Artifact key |
+| --- | --- | --- | --- |
+| `…-admission-validator` | `infra/admission-state-machine.yaml` | `tools/build_admission_lambda.py` | `admission-validator/admission-validator.zip` |
+| `…-lifecycle-recorder` | `infra/batch-events.yaml` | `tools/build_lifecycle_lambda.py` | `lifecycle-recorder/lifecycle-recorder.zip` |
+
+### Releasing the admission validator
 
 `infra/admission-state-machine.yaml` declares the function as
 `Code: {S3Bucket, S3Key, S3ObjectVersion}`. Pinning the version is what makes a code
@@ -314,6 +445,32 @@ and that is not obvious: Lambda fetches the versioned code object as the deployi
 principal, and needs a bucket-level action as well as `s3:GetObjectVersion` on the object.
 The first deploy failed on exactly that, with the stack rolling back and the retained log
 group then blocking the retry until it was deleted by hand.
+
+### Releasing the lifecycle recorder
+
+Identical in shape, and the two are released independently — a change to the projection
+logic does not require re-releasing the validator, and vice versa.
+
+```bash
+uv run python tools/build_lifecycle_lambda.py --output /tmp/lifecycle-recorder.zip
+
+aws s3api put-object \
+  --bucket sbsandbox-intern-edullm-artifacts \
+  --key lifecycle-recorder/lifecycle-recorder.zip \
+  --body /tmp/lifecycle-recorder.zip \
+  --content-type application/zip \
+  --profile sbsandbox --region us-east-1 \
+  --query VersionId --output text
+```
+
+Paste the version id into `S3ObjectVersion` in `infra/batch-events.yaml`, commit it, and let
+CI deploy. Same reason as the validator: without the version pinned, a new zip under the
+same key leaves the resource's properties byte-identical, the change set comes back empty,
+and `deploy --no-fail-on-empty-changeset` reports success while the old code keeps running.
+
+Both functions package the same `src/edullm_platform` tree, so a contract change reaches
+both and both need releasing. `tools/build_lifecycle_lambda.py` prints the `sha256` of what
+it built for exactly this reason: if neither digest moved, there is nothing to release.
 
 ## The one-off role the conditional-write probe needs
 
@@ -394,8 +551,9 @@ elements, so several exact values are allowed and nothing outside the list is.
 
 - **The workflow file path.** `token.actions.githubusercontent.com:job_workflow_ref`
   carries a full path and ref. `infra/iam/infra-deployer-role.yaml` lists
-  `deploy-phase1-ecr.yml@refs/heads/main` and
-  `deploy-phase2-admission.yml@refs/heads/main`; `infra/iam/ecr-publisher-role.yaml` pins
+  `deploy-phase1-ecr.yml@refs/heads/main`,
+  `deploy-phase2-admission.yml@refs/heads/main` and
+  `deploy-phase3-batch.yml@refs/heads/main`; `infra/iam/ecr-publisher-role.yaml` pins
   `build-research-image.yml@refs/heads/main`; `infra/iam/admission-role.yaml` pins
   `submit-run.yml@refs/heads/main`. Renaming or moving any of those files revokes that
   role's deployments.
@@ -417,3 +575,16 @@ GitHub does not know the string is in a trust policy.
 If you rename either, change the trust policy in the same change and re-deploy the IAM
 stack from a laptop first. A rename merged on its own leaves `main` broken until somebody
 with SSO credentials is available.
+
+### One more name with the same silence, which is not about trust
+
+**The Batch job queue.** `sbsandbox-intern-edullm-cpu` appears in three places that no
+CloudFormation reference connects: the state machine's `SubmitToBatch` parameters, the
+EventBridge rule's `detail.jobQueue` pattern, and the states role's `batch:SubmitJob`
+resource scope. Renaming the queue in `infra/batch-compute.yaml` without the other two is
+worse than a trust rename, because it half-works: submission keeps succeeding against the
+new queue while the rule matches nothing, so jobs run and no lifecycle event, attempt or
+result record is ever written. The run looks fine in Batch and vanishes from lineage.
+
+`tests/test_phase3_infrastructure.py` compares the three against each other for this
+reason. It is the one seam in this phase whose failure produces no error anywhere.

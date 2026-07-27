@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 from workflow_support import (
     EXPRESSION_PATTERN,
     PROJECT_ROOT,
@@ -40,6 +41,8 @@ from edullm_platform.admission_denials import (
     LINEAGE_BUCKET,
     read_state_machine_arn,
 )
+from edullm_platform.batch_denials import ADMISSION_BATCH_DENIED_ACTIONS
+from edullm_platform.build_tooling import load_registry
 from edullm_platform.contracts.admission import ApprovalEnvironment
 from edullm_platform.contracts.image import GitHubWorkflowRunReference
 from edullm_platform.submission import SubmissionInputs
@@ -79,11 +82,16 @@ REQUEST_STEP = "Assemble the admission request"
 CREDENTIALS_STEP = "Configure AWS credentials"
 DENIALS_STEP = "Attempt the actions the admission session must not have"
 DENIALS_UPLOAD_STEP = "Upload the admission denial matrix"
+REGISTRY_STEP = "Resolve the registered image repository"
+BATCH_DENIALS_STEP = "Attempt the Batch actions the admission session must not have"
+BATCH_DENIALS_UPLOAD_STEP = "Upload the Batch denial matrix"
 START_STEP = "Start the admission execution"
 WAIT_STEP = "Wait for the admission decision"
 DENY_STEP = "Attempt the admission role without an approval"
+CANCELLED_STEP = "Record that a cancelled workflow stopped no compute"
 
 DENIALS_TOOL = "tools/verify_admission_denials.py"
+BATCH_DENIALS_TOOL = "tools/verify_batch_denials.py"
 
 # Outputs no run body can be read for. The compile job's four come out of
 # tools/compile_submission.py, and the test below re-derives them from that tool rather
@@ -416,6 +424,7 @@ def test_the_tools_the_run_bodies_reach_for_exist_on_disk() -> None:
         "tools/compile_submission.py",
         DENIALS_TOOL,
         "tools/verify_approved_manifest.py",
+        BATCH_DENIALS_TOOL,
     ]
     for relative in referenced:
         assert (PROJECT_ROOT / relative).is_file(), relative
@@ -433,9 +442,9 @@ def test_the_workflow_never_embeds_an_account_identifier_or_a_registry_host() ->
     assert not re.search(r"(?<!\d)\d{12}(?!\d)", text)
     assert not re.search(r"\d\.dkr\.ecr\.", text)
     assert "get-caller-identity" not in text
-    # All three ARNs are composed from the assumed identity, which is why the account id
+    # All four ARNs are composed from the assumed identity, which is why the account id
     # never has to be written down anywhere in this repository.
-    assert text.count("${ADMISSION_ACCOUNT_ID}") == 3
+    assert text.count("${ADMISSION_ACCOUNT_ID}") == 4
     assert "steps.credentials.outputs.aws-account-id" in text
 
 
@@ -448,7 +457,7 @@ def test_no_run_body_interpolates_a_github_expression() -> None:
 def test_every_run_body_enables_strict_bash() -> None:
     bodies = list(_run_bodies())
 
-    assert len(bodies) == 12
+    assert len(bodies) == 15
     for name, script in bodies:
         assert script.startswith("set -euo pipefail\n"), name
 
@@ -456,10 +465,10 @@ def test_every_run_body_enables_strict_bash() -> None:
 def _aws_reaching_calls() -> list[tuple[str, tuple[str, ...]]]:
     """Everything this workflow makes AWS answer, in the order the runner reaches it.
 
-    A run body that calls the CLI directly contributes the call it makes. The denial
-    matrix contributes the six actions it attempts, because they are made by a tool
-    rather than by a shell and a reader of this file would otherwise see the submit job
-    reach AWS twice when it reaches it eight times. The matrix's own
+    A run body that calls the CLI directly contributes the call it makes. Each denial
+    matrix contributes the actions it attempts, because they are made by a tool rather
+    than by a shell and a reader of this file would otherwise see the submit job reach
+    AWS twice when it reaches it a dozen times. Each matrix's own
     ``sts:get-caller-identity`` is left out: it requires no permission and cannot be
     denied by a policy, so it is not part of the surface this enumeration is about.
     """
@@ -467,40 +476,50 @@ def _aws_reaching_calls() -> list[tuple[str, tuple[str, ...]]]:
     for name, script in _run_bodies():
         if DENIALS_TOOL in script:
             calls.extend((name, ("denial-probe", action)) for action in ADMISSION_DENIED_ACTIONS)
+        if BATCH_DENIALS_TOOL in script:
+            calls.extend(
+                (name, ("denial-probe", action)) for action in ADMISSION_BATCH_DENIED_ACTIONS
+            )
         calls.extend((name, tuple(command[:3])) for command in aws_commands(script))
     return calls
 
 
 def test_the_workflow_makes_exactly_these_aws_calls_in_exactly_this_order() -> None:
     # Enumerated so that a new call has to be argued for in review rather than appearing.
-    # The six refused attempts are read out of the matrix the tool defines, so adding a
-    # probe or renaming an action changes this list rather than slipping past it.
+    # Both sets of refused attempts are read out of the matrices the tools define, so
+    # adding a probe or renaming an action changes this list rather than slipping past it.
     assert _aws_reaching_calls() == [
         (
             f"deny-unapproved:{DENY_STEP}",
             ("aws", "sts", "assume-role-with-web-identity"),
         ),
         *[(f"submit:{DENIALS_STEP}", ("denial-probe", action)) for action in ADMISSION_DENIED_ACTIONS],
+        *[
+            (f"submit:{BATCH_DENIALS_STEP}", ("denial-probe", action))
+            for action in ADMISSION_BATCH_DENIED_ACTIONS
+        ],
         (f"submit:{START_STEP}", ("aws", "stepfunctions", "start-execution")),
         (f"submit:{WAIT_STEP}", ("aws", "stepfunctions", "describe-execution")),
     ]
 
 
-def test_the_denial_matrix_is_attempted_before_the_state_machine_is_started() -> None:
+def test_both_denial_matrices_are_attempted_before_the_state_machine_is_started() -> None:
     # The ordering is the property, so it is computed from the step list rather than
-    # assumed of it. Attempted after StartExecution the matrix would report on a role
-    # that had already been used; attempted before the credentials step it would run
-    # under no session at all. What it has to sit between is the moment the session is
-    # issued and the moment it is spent.
+    # assumed of it. Attempted after StartExecution a matrix would report on a role that
+    # had already been used; attempted before the credentials step it would run under no
+    # session at all. What they have to sit between is the moment the session is issued
+    # and the moment it is spent.
     names = [candidate.get("name") for candidate in _job("submit")["steps"]]
 
     assert names.index(CREDENTIALS_STEP) < names.index(DENIALS_STEP) < names.index(START_STEP)
-    # And nothing reaches AWS in between: the probes are the first thing this session
-    # does and StartExecution is the next, which is what makes them a statement about
-    # these credentials rather than about the template they were issued from.
+    assert names.index(DENIALS_STEP) < names.index(BATCH_DENIALS_STEP) < names.index(START_STEP)
+    # And nothing else reaches AWS in between: the probes are the only thing this session
+    # does before StartExecution, which is what makes them a statement about these
+    # credentials rather than about the template they were issued from.
     reaching = [name for name, _call in _aws_reaching_calls()]
     assert reaching.index(f"submit:{START_STEP}") == len(reaching) - 2
-    assert reaching[reaching.index(f"submit:{START_STEP}") - 1] == f"submit:{DENIALS_STEP}"
+    assert reaching[reaching.index(f"submit:{START_STEP}") - 1] == f"submit:{BATCH_DENIALS_STEP}"
+    assert set(reaching[1:-2]) == {f"submit:{DENIALS_STEP}", f"submit:{BATCH_DENIALS_STEP}"}
 
 
 def test_the_write_probe_names_the_lineage_bucket_the_template_deploys() -> None:
@@ -602,6 +621,224 @@ def test_the_upload_names_the_phase_one_matrix_it_is_the_counterpart_of() -> Non
 
     assert "publisher denial matrix" in rationale
     assert "Phase 1" in rationale
+
+
+# --------------------------------------------------------------------------------------
+# What Phase 3 added, and the one thing it was not allowed to add
+# --------------------------------------------------------------------------------------
+
+
+def test_the_submit_job_gained_no_aws_capability_when_phase_three_arrived() -> None:
+    """Mutation: add anything to the submit job's permission map.
+
+    Phase 3 gives the account a queue to submit to and jobs to terminate, and the whole
+    architecture rests on the GitHub-facing side reaching none of it. The submit job's map
+    is therefore a fixed set rather than a floor, and it is the same three entries Phase 2
+    shipped: ``contents: read`` to check out, ``id-token: write`` to mint the OIDC token
+    the admission role is assumed with, and ``actions: read`` for the approvals endpoint.
+
+    ``id-token: write`` is the one that matters, and it is not an AWS capability by itself:
+    what a token can reach is decided by the trust policies that accept it, and the only
+    role that accepts one from this file is the admission role. So the way this job could
+    gain AWS reach is a wider role rather than a wider permission map -- which is what the
+    two denial matrices, attempted from the real session, are for.
+    """
+    submit = _job("submit")
+
+    assert submit["permissions"] == {
+        "contents": "read",
+        "id-token": "write",
+        "actions": "read",
+    }
+    # Nothing here may name a second role, and every ARN is composed from the assumed
+    # identity, so a new AWS target would have to arrive as a new repository variable.
+    assumed = {
+        text
+        for text in _strings(submit)
+        for reference in _references(text)
+        if reference.startswith("vars.")
+        for text in [reference]
+    }
+    assert assumed == {"vars.AWS_ADMISSION_ROLE_ARN", "vars.AWS_REGION"}
+
+
+def test_the_batch_matrix_attempts_every_action_phase_three_makes_meaningful() -> None:
+    """Reads the workflow and the matrix. Mutation: drop an action from either.
+
+    ``batch:SubmitJob`` was probed in Phase 1 against a queue that did not exist. The other
+    three were not probed at all, because until there was a queue, a job definition and
+    jobs to describe they were hypothetical. The step runs the tool for the admission role,
+    so which actions it attempts is decided in ``batch_denials`` rather than here.
+    """
+    script = step(_job("submit"), BATCH_DENIALS_STEP)["run"]
+
+    assert BATCH_DENIALS_TOOL in script
+    assert "--role admission" in script
+    assert set(ADMISSION_BATCH_DENIED_ACTIONS) == {
+        "batch:SubmitJob",
+        "batch:TerminateJob",
+        "batch:RegisterJobDefinition",
+        "batch:DescribeJobs",
+    }
+
+
+def test_the_batch_matrix_is_aimed_at_the_registered_repository_and_not_a_placeholder() -> None:
+    """Reads the workflow and the registry. Mutation: hardcode a repository name.
+
+    The admission matrix carries no image probe, so this value is validated and never used
+    -- which is exactly the situation in which somebody writes down whatever satisfies the
+    validator. A probe aimed at something that is not there is the mistake this repository
+    has now made in three phases, and a placeholder here would be the seed of the next one.
+    """
+    resolved = step(_job("submit"), REGISTRY_STEP)
+    attempt = step(_job("submit"), BATCH_DENIALS_STEP)
+    names = [candidate.get("name") for candidate in _job("submit")["steps"]]
+    registered = {
+        entry.ecr_repository
+        for entry in load_registry(PROJECT_ROOT / "config" / "repositories.yaml").repositories
+    }
+
+    assert list(_references(attempt["env"]["ECR_REPOSITORY"])) == [
+        "steps.registry.outputs.ecr_repository"
+    ]
+    assert resolved["id"] == "registry"
+    assert "config/repositories.yaml" in resolved["run"]
+    assert names.index(REGISTRY_STEP) < names.index(BATCH_DENIALS_STEP)
+    # And no registered name appears anywhere in the file, so the value can only have come
+    # from the lookup.
+    text = WORKFLOW_PATH.read_text(encoding="utf-8")
+    assert registered
+    for name in registered:
+        assert name not in text, name
+
+
+def test_the_batch_denial_matrix_reaches_the_proof_bundle() -> None:
+    upload = step(_job("submit"), BATCH_DENIALS_UPLOAD_STEP)
+    names = [candidate.get("name") for candidate in _job("submit")["steps"]]
+
+    assert upload["uses"] == UPLOAD_ACTION
+    assert upload["with"]["name"] == "batch-denials"
+    assert upload["with"]["if-no-files-found"] == "error"
+    assert names.index(BATCH_DENIALS_STEP) < names.index(BATCH_DENIALS_UPLOAD_STEP)
+    # No `if:`, for the reason the Phase 2 upload has none: the tool writes the record only
+    # when every action was refused, so a run that failed above has nothing to upload.
+    assert "if" not in upload
+
+
+def test_the_cancellation_step_runs_only_on_a_cancellation_and_last() -> None:
+    """Mutation: change the condition to ``always()``, or move the step earlier.
+
+    ``always()`` would also run after a failure, where the message is wrong: a failed
+    submission is not a job somebody walked away from. ``success()`` never runs on a
+    cancellation at all. And the step has to be last, because everything before it is what
+    decides whether there is a job to warn about.
+    """
+    submit = _job("submit")
+    names = [candidate.get("name") for candidate in submit["steps"]]
+    cancelled = step(submit, CANCELLED_STEP)
+
+    assert cancelled["if"] == "cancelled()"
+    assert names[-1] == CANCELLED_STEP
+    assert [candidate.get("name") for candidate in submit["steps"] if "if" in candidate] == [
+        CANCELLED_STEP
+    ]
+
+
+def test_the_cancellation_step_neither_claims_to_stop_a_job_nor_can() -> None:
+    """Reads the workflow and the admission role. Mutation: give the role TerminateJob.
+
+    The honest content of this step depends on a fact about the deployed role, so it is
+    read rather than restated: the admission role holds no Batch action at all, which is
+    why a cancelled workflow can record what is still running and cannot stop it. The day
+    somebody grants ``batch:TerminateJob`` -- to build the cancellation path the plan
+    describes -- this fails, and the prose has to be rewritten in the same change.
+    """
+    cancelled = step(_job("submit"), CANCELLED_STEP)
+    trust = yaml.safe_load(TRUST_POLICY_PATH.read_text(encoding="utf-8"))
+    granted = [
+        action
+        for resource in trust["Resources"].values()
+        if resource.get("Type") == "AWS::IAM::Role"
+        for policy in resource["Properties"].get("Policies", [])
+        for statement in policy["PolicyDocument"]["Statement"]
+        for action in (
+            [statement["Action"]]
+            if isinstance(statement["Action"], str)
+            else statement["Action"]
+        )
+    ]
+
+    assert [action for action in granted if action.startswith("batch:")] == []
+    assert "batch:TerminateJob" in cancelled["run"]
+    assert "does not stop AWS compute" in cancelled["run"]
+    assert "infra/README.md" in cancelled["run"]
+    # And nothing about this step can fail the job. A cancelled job is already cancelled.
+    assert "exit 1" not in cancelled["run"]
+
+
+def test_the_cancellation_step_says_what_the_grace_period_does_not_guarantee() -> None:
+    """The comment is the deliverable here, so it is checked like one.
+
+    A reader who takes `if: cancelled()` for a guarantee will build something on top of it.
+    GitHub gives a cancelled job a bounded, non-configurable window and then kills the
+    runner; a cancellation issued while the job is queued, or while the runner is already
+    being torn down, may never reach this step at all.
+    """
+    rationale = _comment_block_above(CANCELLED_STEP)
+
+    assert "grace period" in rationale
+    assert "five minutes" in rationale
+    assert "not configurable" in rationale
+    assert "best-effort" in rationale
+    assert "may never reach this step" in rationale
+    assert "cancelled workflow is not a cancelled run" in rationale
+
+
+def test_the_cancellation_notice_is_written_where_a_person_will_find_it(
+    tmp_path: Path,
+) -> None:
+    """Executed rather than read, because a heredoc is easy to get wrong and quiet about it.
+
+    A terminator that does not land in column 0 makes the shell read the rest of the script
+    as more notice, and the step still exits 0. Running it is the only way to know the text
+    reached the summary at all.
+    """
+    summary = tmp_path / "summary.md"
+    summary.touch()
+
+    result = run_step_script(
+        step(_job("submit"), CANCELLED_STEP)["run"],
+        cwd=tmp_path,
+        env={"RUN_ID": RUN_ID, "GITHUB_STEP_SUMMARY": str(summary)},
+    )
+
+    written = summary.read_text(encoding="utf-8")
+    assert result.returncode == 0, result.stderr
+    assert RUN_ID in written
+    assert "does not stop AWS compute" in written
+    assert "Stopping a job a cancelled workflow left running" in written
+    # The prose is prose. A shell that expanded something here would have swallowed the
+    # backticks around the action name, which is how it would first be noticed.
+    assert "`batch:TerminateJob`" in written
+
+
+def test_the_runbook_documents_the_procedure_the_cancellation_step_points_at() -> None:
+    """Reads BOTH files. Mutation: rename the section, or delete it.
+
+    A notice that sends an operator to a heading nobody wrote is worse than no notice: it
+    reads as though the procedure exists. The commands live there rather than in the
+    workflow because every laptop procedure in this repository lives there, and because a
+    literal ``aws`` line in a run body is indistinguishable from a call the job makes.
+    """
+    heading = "Stopping a job a cancelled workflow left running"
+    runbook = (PROJECT_ROOT / "infra" / "README.md").read_text(encoding="utf-8")
+
+    assert f"### {heading}" in runbook
+    assert heading in step(_job("submit"), CANCELLED_STEP)["run"]
+    procedure = runbook.split(f"### {heading}", 1)[1].split("\n## ", 1)[0]
+    assert "aws batch terminate-job" in procedure
+    assert "aws batch list-jobs" in procedure
+    assert "RUNNABLE" in procedure
 
 
 # --------------------------------------------------------------------------------------

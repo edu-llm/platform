@@ -1,0 +1,82 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Where a Batch workload writes its own output, kept apart from the lineage store.
+
+Resources:
+  # A third bucket, and the reason is the property the second one has. The lineage store is
+  # write-once by bucket policy and holds admission intents and decisions; putting job
+  # output there would mean granting s3:PutObject on it to the workload role, which is the
+  # one identity an untrusted training command runs as. That would undo the single property
+  # the lineage store exists to have, and it would do it for a convenience -- one fewer
+  # bucket -- rather than for a reason.
+  #
+  # So this bucket is deliberately the opposite kind of store. No Object Lock, no
+  # conditional-write policy, no claim of immutability: a workload may overwrite its own
+  # output, because a workload that cannot is a workload that fails on retry. Nothing in
+  # here is evidence. What is evidence -- which run wrote what, and when -- lives in the
+  # lineage store, and a result manifest references this bucket rather than being copied
+  # into it.
+  OutputsBucket:
+    Type: AWS::S3::Bucket
+    # Retained for a smaller reason than the lineage bucket's, and it is still the right
+    # trade. This holds a team's job output; a stack delete that also deleted it would turn
+    # a rollback -- which §8 of the phase plan describes as a deploy -- into data loss for
+    # somebody who was not party to the rollback. The cost is that deleting and recreating
+    # this stack fails at CreateBucket until the orphan is removed by hand.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: sbsandbox-intern-edullm-outputs
+      # Versioning, even though nothing here is immutable, for one specific failure: a
+      # retried attempt of the same job writes the same keys, and without versioning the
+      # first attempt's partial output is gone with no way to tell it ever existed. The
+      # lifecycle rule below is what keeps that from becoming a bill.
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-superseded-output-after-thirty-days
+            Status: Enabled
+            NoncurrentVersionExpirationInDays: 30
+          # An incomplete multipart upload is invisible in a bucket listing and is billed.
+          # A workload killed by the attempt timeout is exactly how one gets left behind,
+          # and this phase deliberately runs jobs into their timeout to prove the timeout
+          # works, so this is not hypothetical here.
+          - Id: abort-incomplete-multipart-uploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  # No bucket policy. That is a decision rather than an omission, and it is the direction
+  # this bucket differs from the lineage store in.
+  #
+  # The lineage bucket carries an explicit Deny because its guarantee -- first write wins
+  # -- must survive any identity policy anyone adds later. This bucket has no such
+  # guarantee to protect. What it does have is a per-team prefix, and that is enforced on
+  # the identity side, in infra/iam/batch-roles.yaml, where the workload role may write
+  # only under teams/data-prep/runs/*.
+  #
+  # Enforcing the prefix here as well would be defence in depth and is not free: a Deny on
+  # everything outside a team prefix has to enumerate every team, so adding a team would
+  # mean editing a bucket policy that every running job is evaluated against. Open decision
+  # 2 in src/edullm_platform/open_decisions.py is where the scope is settled; when it is
+  # answered per team rather than per run, a bucket policy here is the second half of the
+  # answer and belongs in the same change.
+
+Outputs:
+  BucketName:
+    Value:
+      Ref: OutputsBucket
+  BucketArn:
+    Value:
+      Fn::GetAtt:
+        - OutputsBucket
+        - Arn

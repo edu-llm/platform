@@ -1,0 +1,1461 @@
+"""The Phase 3 templates, and the seams between them that no reference connects.
+
+Phase 1 shipped a green suite over a workflow that could not complete a run. Phase 2
+shipped one over a state machine that could not complete an execution. Both times the cause
+was the same shape: both sides of a seam were asserted, and neither was compared to the
+other. Phase 3 has more seams than either, because a job queue name appears in three files,
+a subnet list in two, and a set of resource names in a configuration file the Lambda reads
+at run time.
+
+So the tests below divide in two. The first kind pins one template against a value a person
+decided -- ``minvCpus`` is zero, the image is pinned by digest -- and each names the
+mutation it exists to catch. The second kind reads *two or three files* and compares them,
+and those are the ones this module exists for. A test asserting only one side of a seam is
+worse than no test, because it reports an agreement it never checked.
+
+Everything here parses YAML and asserts against structure. Never against the literal text of
+an expression: that is Phase 1's lesson, and it is the specific way a suite goes green over
+a path that cannot work.
+
+Two of the seams below cross out of YAML entirely and into Python, which is where the
+remaining Phase 3 disagreements were found. The recorder's IAM role is compared against
+what ``lifecycle_projection`` actually reads out of an event, because a grant argued for on
+a false premise reads exactly like one argued for on a true one. And the event source
+mapping's ``FunctionResponseTypes`` is compared against the key ``lifecycle_handler``
+actually answers under, because those two files were written independently and agree today
+only because the batch size happens to be one.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+import yaml
+from infrastructure_support import (
+    ACCOUNT_LITERAL,
+    BOUNDARY,
+    IAM_ROOT,
+    INFRA_ROOT,
+    PROJECT_ROOT,
+    iam_roles,
+    load_template,
+    resource_of_type,
+    statement_actions,
+    walk_strings,
+)
+
+from edullm_platform.contracts.execution import BatchJobBinding, ExecutionTarget
+from edullm_platform.contracts.lifecycle import SchedulerAttempt
+from edullm_platform.contracts.manifest import RunManifest
+from edullm_platform.execution import batch_submit_request
+from edullm_platform.lifecycle_handler import (
+    BATCH_ITEM_FAILURES_KEY,
+    BATCH_ITEM_FAILURES_RESPONSE_TYPE,
+    handler,
+)
+from edullm_platform.lifecycle_projection import project_batch_event
+
+NETWORK_PATH = INFRA_ROOT / "batch-network.yaml"
+COMPUTE_PATH = INFRA_ROOT / "batch-compute.yaml"
+EVENTS_PATH = INFRA_ROOT / "batch-events.yaml"
+OUTPUTS_PATH = INFRA_ROOT / "outputs-bucket.yaml"
+STATE_MACHINE_PATH = INFRA_ROOT / "admission-state-machine.yaml"
+BATCH_ROLES_PATH = IAM_ROOT / "batch-roles.yaml"
+LIFECYCLE_ROLE_PATH = IAM_ROOT / "lifecycle-lambda-role.yaml"
+SERVICE_ROLES_PATH = IAM_ROOT / "admission-service-roles.yaml"
+EXECUTION_TARGETS_PATH = PROJECT_ROOT / "config" / "execution-targets.yaml"
+CPU_MANIFEST_PATH = PROJECT_ROOT / "fixtures" / "manifests" / "cpu-routine.yaml"
+
+#: Every template this phase adds or amends, whoever applies it.
+PHASE3_TEMPLATE_PATHS = (
+    NETWORK_PATH,
+    COMPUTE_PATH,
+    EVENTS_PATH,
+    OUTPUTS_PATH,
+    STATE_MACHINE_PATH,
+    BATCH_ROLES_PATH,
+    LIFECYCLE_ROLE_PATH,
+)
+#: The subset CI deploys. infra/iam/ is applied from a laptop because the deployer has no
+#: iam:CreateRole, so an IAM resource appearing in one of these would fail at deploy time.
+CI_DEPLOYED_TEMPLATE_PATHS = (NETWORK_PATH, COMPUTE_PATH, EVENTS_PATH, OUTPUTS_PATH)
+
+COMPUTE_ENVIRONMENT_NAME = "sbsandbox-intern-edullm-cpu"
+JOB_QUEUE_NAME = "sbsandbox-intern-edullm-cpu"
+JOB_DEFINITION_NAME = "sbsandbox-intern-edullm-cpu-run"
+BATCH_LOG_GROUP = "/aws/batch/sbsandbox-intern-edullm-cpu"
+EXECUTION_ROLE_NAME = "sbsandbox-intern-edullm-batch-execution"
+WORKLOAD_ROLE_NAME = "sbsandbox-intern-edullm-batch-workload"
+INSTANCE_ROLE_NAME = "sbsandbox-intern-edullm-batch-instance"
+LIFECYCLE_ROLE_NAME = "sbsandbox-intern-edullm-lifecycle-lambda"
+RULE_NAME = "sbsandbox-intern-edullm-batch-lifecycle"
+LIFECYCLE_QUEUE_NAME = "sbsandbox-intern-edullm-batch-lifecycle"
+DEAD_LETTER_QUEUE_NAME = "sbsandbox-intern-edullm-batch-lifecycle-dlq"
+RECORDER_FUNCTION_NAME = "sbsandbox-intern-edullm-lifecycle-recorder"
+OUTPUTS_BUCKET = "sbsandbox-intern-edullm-outputs"
+LINEAGE_BUCKET = "sbsandbox-intern-edullm-lineage"
+TEAM_PREFIX = "teams/data-prep/runs/"
+
+#: c7i.8xlarge is offered in these five and not in us-east-1e. Measured against the account
+#: on 2026-07-27; the consequence of getting it wrong is a job that waits rather than errors.
+INSTANCE_CAPABLE_ZONES = ("us-east-1a", "us-east-1b", "us-east-1c", "us-east-1d", "us-east-1f")
+ZONE_WITHOUT_THE_INSTANCE_TYPE = "us-east-1e"
+
+CONDITIONAL_WRITE_PARAMETERS = {"ChecksumAlgorithm": "SHA256", "IfNoneMatch": "*"}
+
+#: The keys a submit request carries. Named here so the SubmitToBatch test can assert that
+#: the state machine mentions none of them -- the whole point of passing the request through
+#: rather than rebuilding it is that this file is the only place they appear.
+SUBMIT_REQUEST_FIELDS = (
+    "JobName",
+    "JobQueue",
+    "JobDefinition",
+    "ContainerOverrides",
+    "Timeout",
+    "RetryStrategy",
+    "Tags",
+    "PropagateTags",
+    "ArrayProperties",
+)
+
+#: AWS's own documented example account, which tests/test_evidence.py allows as a literal.
+EXAMPLE_ACCOUNT = "123456789012"
+
+#: One run id, used wherever a seam test needs a delivery that projects. Reused rather than
+#: reinvented per test, so a projection that started depending on the shape of the id would
+#: fail in one place.
+SEAM_RUN_ID = "run_019fa439-203e-70c7-bf8a-9ce33bc71f20"
+
+
+def terminal_envelope() -> dict[str, Any]:
+    """One ``Batch Job State Change`` for a job that finished, as EventBridge delivers it.
+
+    Carries the ``attempts`` array, which is the fact two of the tests below turn on: the
+    recorder reads the attempt window and the container exit code out of the event, so the
+    ``batch:DescribeJobs`` grant the plan argued for has nothing to fetch.
+    """
+    return {
+        "version": "0",
+        "id": "5f2c1b7e-9a34-4d61-8f0b-72c3e5a91d48",
+        "detail-type": "Batch Job State Change",
+        "source": "aws.batch",
+        "account": EXAMPLE_ACCOUNT,
+        "time": "2026-07-27T20:15:30Z",
+        "region": "us-east-1",
+        "resources": [],
+        "detail": {
+            "jobArn": (
+                f"arn:aws:batch:us-east-1:{EXAMPLE_ACCOUNT}:job/"
+                "3f9d1f1e-6b18-4a63-9c0d-2f6d4a1b8c70"
+            ),
+            "jobId": "3f9d1f1e-6b18-4a63-9c0d-2f6d4a1b8c70",
+            "jobName": SEAM_RUN_ID,
+            "jobQueue": (
+                f"arn:aws:batch:us-east-1:{EXAMPLE_ACCOUNT}:job-queue/{JOB_QUEUE_NAME}"
+            ),
+            "status": "SUCCEEDED",
+            "createdAt": 1_785_182_695_000,
+            "attempts": [
+                {
+                    "container": {"exitCode": 0},
+                    "startedAt": 1_785_182_700_000,
+                    "stoppedAt": 1_785_183_060_000,
+                }
+            ],
+        },
+    }
+
+
+class AcceptingStore:
+    """An object store that accepts every write, for the one test that needs a working one."""
+
+    def put_object(self, **arguments: Any) -> Any:
+        del arguments
+        return {}
+
+
+def resources_of_type(path: Path, resource_type: str) -> dict[str, dict[str, Any]]:
+    """Every resource of one type, by logical id. Unlike ``resource_of_type``, many."""
+    template = load_template(path)
+    return {
+        logical_id: resource
+        for logical_id, resource in template["Resources"].items()
+        if isinstance(resource, dict) and resource.get("Type") == resource_type
+    }
+
+
+def properties_of(path: Path, resource_type: str) -> dict[str, Any]:
+    _logical_id, resource = resource_of_type(load_template(path), resource_type)
+    properties = resource["Properties"]
+    assert isinstance(properties, dict)
+    return properties
+
+
+def role_named(path: Path, name: str) -> dict[str, Any]:
+    matching = [role for role in iam_roles(load_template(path)) if role["RoleName"] == name]
+    assert len(matching) == 1, f"expected exactly one role named {name}"
+    return matching[0]
+
+
+def role_actions(path: Path, name: str) -> list[str]:
+    return [
+        action
+        for policy in role_named(path, name)["Policies"]
+        for statement in policy["PolicyDocument"]["Statement"]
+        for action in statement_actions(statement)
+    ]
+
+
+def resource_arns(resource: object) -> list[str]:
+    """The ARN strings a statement's Resource names, with the Fn::Sub wrappers unwrapped."""
+    if isinstance(resource, str):
+        return [resource]
+    if isinstance(resource, list):
+        return [arn for item in resource for arn in resource_arns(item)]
+    assert isinstance(resource, dict), f"unexpected Resource shape: {resource}"
+    assert list(resource) == ["Fn::Sub"], f"unexpected Resource shape: {resource}"
+    return [resource["Fn::Sub"]]
+
+
+def named_after(arn: str, resource_type: str) -> str | None:
+    """The name in ``.../<resource_type>/<name>``, with any Batch revision suffix removed."""
+    marker = f":{resource_type}/"
+    if marker not in arn:
+        return None
+    return arn.split(marker, 1)[1].removesuffix(":*")
+
+
+def state_machine_definition() -> dict[str, Any]:
+    template = load_template(STATE_MACHINE_PATH)
+    _logical_id, machine = resource_of_type(template, "AWS::StepFunctions::StateMachine")
+    definition = machine["Properties"]["DefinitionString"]["Fn::Sub"]
+    assert isinstance(definition, str)
+    parsed = json.loads(definition)
+    assert isinstance(parsed, dict)
+    return parsed
+
+
+def execution_targets() -> dict[str, Any]:
+    loaded = yaml.safe_load(EXECUTION_TARGETS_PATH.read_text(encoding="utf-8"))
+    assert isinstance(loaded, dict)
+    targets = loaded["targets"]
+    assert isinstance(targets, list) and len(targets) == 1, (
+        "Phase 3 backs exactly one compute profile; a second entry needs its own queue"
+    )
+    binding = targets[0]
+    assert isinstance(binding, dict)
+    return binding
+
+
+def seam_target(manifest: RunManifest) -> ExecutionTarget:
+    return ExecutionTarget(
+        compute_profile=manifest.compute_profile,
+        region="us-east-1",
+        job_queue_arn=f"arn:aws:batch:us-east-1:{EXAMPLE_ACCOUNT}:job-queue/{JOB_QUEUE_NAME}",
+        job_definition_arn=(
+            f"arn:aws:batch:us-east-1:{EXAMPLE_ACCOUNT}:job-definition/{JOB_DEFINITION_NAME}"
+        ),
+        execution_role_arn=f"arn:aws:iam::{EXAMPLE_ACCOUNT}:role/{EXECUTION_ROLE_NAME}",
+        workload_role_arn=f"arn:aws:iam::{EXAMPLE_ACCOUNT}:role/{WORKLOAD_ROLE_NAME}",
+        log_group=BATCH_LOG_GROUP,
+    )
+
+
+def cpu_manifest(**overrides: Any) -> RunManifest:
+    payload = yaml.safe_load(CPU_MANIFEST_PATH.read_text(encoding="utf-8"))
+    assert isinstance(payload, dict)
+    payload.update(overrides)
+    return RunManifest.model_validate(payload)
+
+
+@pytest.fixture(scope="module")
+def submit_request() -> dict[str, Any]:
+    """The request Python builds, so the seam tests can compare it to what AWS declares."""
+    manifest = cpu_manifest()
+    return batch_submit_request(
+        manifest=manifest,
+        target=seam_target(manifest),
+        run_id=SEAM_RUN_ID,
+    )
+
+
+@pytest.fixture(scope="module")
+def every_submit_request_field() -> frozenset[str]:
+    """Every key ``batch_submit_request`` can put in a request, across both its shapes.
+
+    Derived rather than listed. ``SUBMIT_REQUEST_FIELDS`` is what the seam test below
+    searches the ASL for, and a hand-written list is a third copy of a key set that already
+    exists in two places -- a tenth field added to the Python and not to the list would be
+    a field the ASL was never checked for, which is the failure the seam test exists to
+    prevent, reintroduced one level up.
+
+    Both shapes, because ``ArrayProperties`` is absent for a single container on purpose:
+    reading one shape would leave the fan-out key unsearched.
+    """
+    single = cpu_manifest()
+    fanned = cpu_manifest(fanout={"size": 2, "max_parallel": 2, "index_parameter": "SEED"})
+    return frozenset(
+        key
+        for manifest in (single, fanned)
+        for key in batch_submit_request(
+            manifest=manifest, target=seam_target(manifest), run_id=SEAM_RUN_ID
+        )
+    )
+
+
+# --------------------------------------------------------------------------------------
+# The compute environment, the queue and the job definition
+# --------------------------------------------------------------------------------------
+
+
+def test_the_compute_environment_holds_no_capacity_when_it_is_idle() -> None:
+    """Mutation: set ``MinvCpus`` to 1.
+
+    That is the held floor Phase 7 has to decide about, and setting it here would bill
+    continuously from the day it merged -- a monthly figure nobody could attribute to a
+    change, because nothing else in the repository would look different.
+    """
+    resources = properties_of(COMPUTE_PATH, "AWS::Batch::ComputeEnvironment")["ComputeResources"]
+
+    assert resources["MinvCpus"] == 0
+    assert resources["MaxvCpus"] > 0
+    # Batch owns DesiredvCpus and moves it on every scaling decision. A value in the
+    # template is one CloudFormation tries to restore on the next deploy.
+    assert "DesiredvCpus" not in resources
+
+
+def test_the_job_definition_pins_the_image_by_digest_and_never_by_a_tag() -> None:
+    """Mutation: replace the digest with ``:latest``, or with any tag at all.
+
+    A tag is a mutable pointer, so the bytes that run stop being the bytes the decision
+    record names. The assertion is on the shape rather than on the exact digest, because
+    releasing a new image is meant to be an edit somebody reviews and not a test failure.
+    """
+    container = properties_of(COMPUTE_PATH, "AWS::Batch::JobDefinition")["ContainerProperties"]
+    image = container["Image"]["Fn::Sub"]
+    repository_and_reference = image.rsplit("/", 1)[1]
+
+    assert "@sha256:" in repository_and_reference
+    digest = repository_and_reference.split("@", 1)[1]
+    assert len(digest) == len("sha256:") + 64
+    # A reference may carry a tag and a digest at once, and only the digest decides which
+    # bytes run -- so a tag here would be decoration that reads as the source of truth.
+    assert ":" not in repository_and_reference.split("@", 1)[0]
+
+
+def test_the_job_definition_names_two_different_roles_for_two_different_jobs() -> None:
+    """Mutation: point ``JobRoleArn`` and ``ExecutionRoleArn`` at the same role.
+
+    The execution role pulls the image and opens the log stream; the workload role is what
+    the container's own command runs as. One role doing both hands the workload the registry
+    credentials, which is the separation ECS task roles exist to provide.
+    """
+    container = properties_of(COMPUTE_PATH, "AWS::Batch::JobDefinition")["ContainerProperties"]
+
+    execution_role = container["ExecutionRoleArn"]["Fn::Sub"]
+    workload_role = container["JobRoleArn"]["Fn::Sub"]
+    assert execution_role != workload_role
+    assert execution_role.endswith(f"role/{EXECUTION_ROLE_NAME}")
+    assert workload_role.endswith(f"role/{WORKLOAD_ROLE_NAME}")
+
+
+def test_the_job_definition_carries_a_timeout_and_a_retry_floor_of_its_own() -> None:
+    """Mutation: drop the ``Timeout`` block.
+
+    Every real submission overrides both of these, so removing them changes nothing that any
+    fixture would notice -- and a job submitted by hand during an incident would then run
+    unbounded. The floor is the point.
+    """
+    properties = properties_of(COMPUTE_PATH, "AWS::Batch::JobDefinition")
+
+    assert properties["Timeout"]["AttemptDurationSeconds"] > 0
+    assert properties["RetryStrategy"]["Attempts"] == 1
+    assert properties["PlatformCapabilities"] == ["EC2"]
+    assert properties["Type"] == "container"
+
+
+def test_nothing_in_the_batch_stack_survives_a_stack_delete() -> None:
+    """Mutation: add ``DeletionPolicy: Retain`` to any resource here.
+
+    Unlike the lineage bucket, every resource in this stack is meant to be removable, and
+    that is what makes the rollback a deploy rather than a rescue. A retained resource
+    blocks the next create on a name that already exists, which is exactly what stranded the
+    Phase 1 ECR stack.
+    """
+    for logical_id, resource in load_template(COMPUTE_PATH)["Resources"].items():
+        assert "DeletionPolicy" not in resource, logical_id
+        assert "UpdateReplacePolicy" not in resource, logical_id
+
+
+# --------------------------------------------------------------------------------------
+# Networking
+# --------------------------------------------------------------------------------------
+
+
+def test_the_subnets_exclude_the_zone_that_cannot_hold_the_instance_type() -> None:
+    """Mutation: add a us-east-1e subnet, or drop one of the other five.
+
+    c7i.8xlarge is not offered in us-east-1e. A subnet there is one Batch will consider and
+    can never place into, and Batch does not fail a job it cannot place -- it waits. The
+    symptom is a job in ``RUNNABLE`` with no error, which is the hardest failure in this
+    phase to diagnose and the cheapest to prevent.
+    """
+    subnets = resources_of_type(NETWORK_PATH, "AWS::EC2::Subnet")
+    zones = [resource["Properties"]["AvailabilityZone"] for resource in subnets.values()]
+
+    assert sorted(zones) == sorted(INSTANCE_CAPABLE_ZONES)
+    assert ZONE_WITHOUT_THE_INSTANCE_TYPE not in zones
+    assert len(set(zones)) == len(zones), "two subnets in one zone is not five zones"
+
+
+def test_the_vpc_is_created_unconditionally_because_the_quota_landed() -> None:
+    """Mutation: put the VPC behind a ``Condition``, as the phase plan originally said to.
+
+    That instruction is stale and this test is where it stays stale. The plan was written
+    while us-east-1 held five VPCs against a quota of five; the L-F678F1CE increase to 10
+    was filed and applied on 2026-07-27 and confirmed by creating a VPC and deleting it. A
+    condition would mean a compute environment placed in somebody else's ephemeral VPC, which
+    is the dependency the increase removed.
+    """
+    template = load_template(NETWORK_PATH)
+
+    assert "Conditions" not in template
+    for logical_id, resource in template["Resources"].items():
+        assert "Condition" not in resource, logical_id
+    assert properties_of(NETWORK_PATH, "AWS::EC2::VPC")["CidrBlock"] == "10.20.0.0/16"
+
+
+def test_the_subnets_are_public_and_routed_without_paying_for_a_nat_gateway() -> None:
+    """Mutation: drop ``MapPublicIpOnLaunch``, or drop the default route.
+
+    Either one produces instances that boot, join nothing, and pull nothing, which Batch
+    again reports as a job that waits. A NAT gateway would carry the same traffic in the same
+    direction for about thirty dollars a month, and the security group's absent ingress is
+    what actually keeps these hosts unreachable.
+    """
+    template = load_template(NETWORK_PATH)
+    subnets = resources_of_type(NETWORK_PATH, "AWS::EC2::Subnet")
+    _route_id, route = resource_of_type(template, "AWS::EC2::Route")
+    associations = resources_of_type(NETWORK_PATH, "AWS::EC2::SubnetRouteTableAssociation")
+
+    assert all(
+        resource["Properties"]["MapPublicIpOnLaunch"] is True for resource in subnets.values()
+    )
+    assert route["Properties"]["DestinationCidrBlock"] == "0.0.0.0/0"
+    assert "GatewayId" in route["Properties"]
+    # A route to an internet gateway is refused until the gateway is attached, and
+    # CloudFormation infers no ordering from a Ref to the gateway itself.
+    assert route["DependsOn"]
+    assert len(associations) == len(subnets)
+    assert not resources_of_type(NETWORK_PATH, "AWS::EC2::NatGateway")
+
+
+def test_the_security_group_allows_egress_and_no_ingress_at_all() -> None:
+    """Mutation: add any ``SecurityGroupIngress`` rule, SSH first among them.
+
+    These hosts are created and destroyed by the scheduler, so a session on one is a session
+    on something about to stop existing. Nothing reaches a Batch container host: the ECS
+    agent opens outbound connections, and there is no inbound path anybody needs.
+    """
+    properties = properties_of(NETWORK_PATH, "AWS::EC2::SecurityGroup")
+
+    assert properties["GroupName"] == "sbsandbox-intern-edullm-batch"
+    assert "SecurityGroupIngress" not in properties
+    # Egress is written out rather than left to the implicit allow-all, so the rule set is
+    # visible; omitting it would leave the same access with nothing to read.
+    assert properties["SecurityGroupEgress"]
+    assert all(rule["IpProtocol"] == "tcp" for rule in properties["SecurityGroupEgress"])
+
+
+# --------------------------------------------------------------------------------------
+# Seam: the compute environment against the network stack
+# --------------------------------------------------------------------------------------
+
+
+def test_the_compute_environment_places_into_exactly_the_subnets_the_network_exports() -> None:
+    """Reads BOTH files. Mutation: export a sixth subnet, or import one that is not exported.
+
+    The two templates are separate stacks and the only thing joining them is an export name
+    spelled identically in both. An import of an export that does not exist fails the
+    deploy, which is the safe half; the unsafe half is a network stack that exports a subnet
+    the compute environment never uses, which deploys clean and quietly halves the zones
+    Batch can place into.
+    """
+    subnets = resources_of_type(NETWORK_PATH, "AWS::EC2::Subnet")
+    exported = {
+        output["Export"]["Name"]: output["Value"]["Ref"]
+        for output in load_template(NETWORK_PATH)["Outputs"].values()
+        if "Export" in output and "-subnet-" in output["Export"]["Name"]
+    }
+    imported = [
+        entry["Fn::ImportValue"]
+        for entry in properties_of(COMPUTE_PATH, "AWS::Batch::ComputeEnvironment")[
+            "ComputeResources"
+        ]["Subnets"]
+    ]
+
+    assert sorted(imported) == sorted(exported)
+    assert len(imported) == len(set(imported)) == len(subnets)
+    for export_name, logical_id in exported.items():
+        zone = subnets[logical_id]["Properties"]["AvailabilityZone"]
+        assert zone in INSTANCE_CAPABLE_ZONES, f"{export_name} is in {zone}"
+
+
+def test_the_compute_environment_uses_the_security_group_the_network_stack_exports() -> None:
+    """Reads BOTH files. Mutation: import a name the network stack does not export.
+
+    Borrowing a security group somebody else owns would be a rule set that can be edited
+    under us, which is the reason this one is created rather than reused.
+    """
+    exported = {
+        output["Export"]["Name"]
+        for output in load_template(NETWORK_PATH)["Outputs"].values()
+        if "Export" in output
+    }
+    imported = [
+        entry["Fn::ImportValue"]
+        for entry in properties_of(COMPUTE_PATH, "AWS::Batch::ComputeEnvironment")[
+            "ComputeResources"
+        ]["SecurityGroupIds"]
+    ]
+
+    assert len(imported) == 1
+    assert imported[0] in exported
+
+
+# --------------------------------------------------------------------------------------
+# Seam: the job queue name, in the three files that spell it
+# --------------------------------------------------------------------------------------
+
+
+def rule_queue_arns() -> list[str]:
+    pattern = properties_of(EVENTS_PATH, "AWS::Events::Rule")["EventPattern"]
+    return [entry["Fn::Sub"] for entry in pattern["detail"]["jobQueue"]]
+
+
+def states_role_submit_arns() -> list[str]:
+    statements = [
+        statement
+        for policy in role_named(SERVICE_ROLES_PATH, "sbsandbox-intern-edullm-admission-states")[
+            "Policies"
+        ]
+        for statement in policy["PolicyDocument"]["Statement"]
+        if "batch:SubmitJob" in statement_actions(statement)
+    ]
+    assert len(statements) == 1, "batch:SubmitJob belongs in exactly one statement"
+    assert statement_actions(statements[0]) == ["batch:SubmitJob"]
+    return resource_arns(statements[0]["Resource"])
+
+
+def test_the_event_rule_matches_the_job_queue_the_compute_stack_creates() -> None:
+    """Reads BOTH files. Mutation: rename the queue in one of them.
+
+    This is the worst rename in the phase because it half-works. Submission keeps succeeding
+    against the new queue while the rule matches nothing, so jobs run to completion and no
+    lifecycle event, attempt or result record is ever written. The run looks fine in Batch
+    and vanishes from lineage; nothing errors anywhere.
+    """
+    created = properties_of(COMPUTE_PATH, "AWS::Batch::JobQueue")["JobQueueName"]
+    matched = rule_queue_arns()
+
+    assert created == JOB_QUEUE_NAME
+    assert len(matched) == 1
+    assert named_after(matched[0], "job-queue") == created
+    # An account-wide aws.batch pattern would deliver other teams' job state changes to our
+    # recorder, which would then read a foreign job name as one of our run ids.
+    pattern = properties_of(EVENTS_PATH, "AWS::Events::Rule")["EventPattern"]
+    assert pattern["source"] == ["aws.batch"]
+    assert pattern["detail-type"] == ["Batch Job State Change"]
+
+
+def test_the_queue_the_states_role_may_submit_to_is_the_queue_that_exists() -> None:
+    """Reads THREE files. Mutation: rename the queue in any one of them.
+
+    The queue name appears in infra/batch-compute.yaml, in the event pattern, and in the
+    admission states role's ``batch:SubmitJob`` scope, and no CloudFormation reference
+    connects them. Renaming it without the role fails every submission closed, which is
+    survivable; renaming it without the pattern is the silent half above. This compares all
+    three against each other rather than each against a constant.
+    """
+    created = properties_of(COMPUTE_PATH, "AWS::Batch::JobQueue")["JobQueueName"]
+    from_the_rule = named_after(rule_queue_arns()[0], "job-queue")
+    granted = states_role_submit_arns()
+    from_the_role = [
+        name for name in (named_after(arn, "job-queue") for arn in granted) if name is not None
+    ]
+
+    assert from_the_role == [created]
+    assert from_the_rule == created
+
+
+def test_the_job_definition_the_states_role_may_submit_is_the_one_that_is_registered() -> None:
+    """Reads BOTH files. Mutation: rename the job definition in either.
+
+    ``SubmitJob`` authorizes against the queue and the job definition together, so a rename
+    on one side denies every submission -- which fails closed and still costs a live run to
+    diagnose. Both ARN forms are required because RegisterJobDefinition mints a revision on
+    every deploy and the revision is part of the ARN.
+    """
+    registered = properties_of(COMPUTE_PATH, "AWS::Batch::JobDefinition")["JobDefinitionName"]
+    from_the_role = [
+        name
+        for name in (named_after(arn, "job-definition") for arn in states_role_submit_arns())
+        if name is not None
+    ]
+    revisions = [arn for arn in states_role_submit_arns() if arn.endswith(":*")]
+
+    assert registered == JOB_DEFINITION_NAME
+    assert set(from_the_role) == {registered}
+    assert len(revisions) == 1, (
+        "a grant on the bare definition name authorizes nothing once a second revision exists"
+    )
+
+
+# --------------------------------------------------------------------------------------
+# Seam: the deployed configuration the validator reads, against what the templates create
+# --------------------------------------------------------------------------------------
+
+
+def test_execution_targets_config_names_exactly_what_the_templates_create() -> None:
+    """Reads FIVE files. Mutation: rename anything in config/execution-targets.yaml.
+
+    That file is deployed policy: the validator loads it inside the Lambda and resolves a
+    queue, a job definition, two roles and a log group from it. Every one of those names is
+    created by a template in this repository, and nothing checks that the two agree at
+    deploy time -- a mismatch is an accepted decision whose submission is refused, or worse,
+    a binding record naming a log group nobody can read.
+    """
+    binding = execution_targets()
+    execution_role = role_named(BATCH_ROLES_PATH, EXECUTION_ROLE_NAME)
+    workload_role = role_named(BATCH_ROLES_PATH, WORKLOAD_ROLE_NAME)
+
+    assert binding["region"] == "us-east-1"
+    assert binding["job_queue"] == properties_of(COMPUTE_PATH, "AWS::Batch::JobQueue")[
+        "JobQueueName"
+    ]
+    assert binding["job_definition"] == properties_of(COMPUTE_PATH, "AWS::Batch::JobDefinition")[
+        "JobDefinitionName"
+    ]
+    assert binding["execution_role"] == execution_role["RoleName"]
+    assert binding["workload_role"] == workload_role["RoleName"]
+    assert binding["log_group"] == properties_of(COMPUTE_PATH, "AWS::Logs::LogGroup")[
+        "LogGroupName"
+    ]
+
+
+def test_the_log_group_the_config_names_is_the_one_the_container_writes_to() -> None:
+    """Reads BOTH halves of one file plus the config. Mutation: change one and not the other.
+
+    The awslogs driver names a group as a string and creates nothing, so a group name that
+    does not match the one the log group resource declares means a container that starts and
+    logs nowhere -- and a binding record pointing at a group that holds nothing.
+    """
+    declared = properties_of(COMPUTE_PATH, "AWS::Logs::LogGroup")["LogGroupName"]
+    container = properties_of(COMPUTE_PATH, "AWS::Batch::JobDefinition")["ContainerProperties"]
+    driven = container["LogConfiguration"]["Options"]["awslogs-group"]
+
+    assert declared == BATCH_LOG_GROUP
+    assert driven == declared
+    assert execution_targets()["log_group"] == declared
+    assert container["LogConfiguration"]["LogDriver"] == "awslogs"
+
+
+# --------------------------------------------------------------------------------------
+# Seam: the submit request Python builds, against what the state machine sends
+# --------------------------------------------------------------------------------------
+
+
+def test_the_searched_field_list_is_every_field_the_python_can_actually_send(
+    every_submit_request_field: frozenset[str],
+) -> None:
+    """The seam test below is only worth the list it searches for.
+
+    Mutation: add a tenth key to ``batch_submit_request`` and not to
+    ``SUBMIT_REQUEST_FIELDS``. Without this case the ASL would never be searched for the
+    new key, and the pass-through property would be reported for a field nobody checked --
+    the same defect the seam test exists to catch, moved one level up into the test's own
+    constant.
+    """
+    assert every_submit_request_field == set(SUBMIT_REQUEST_FIELDS)
+
+
+def test_submit_to_batch_passes_the_request_through_and_names_no_field_of_it(
+    submit_request: dict[str, Any],
+    every_submit_request_field: frozenset[str],
+) -> None:
+    """Reads the ASL and the Python. Mutation: replace it with a ``Parameters`` block.
+
+    A Parameters block reconstructs, in a template nobody unit-tests, a structure
+    ``batch_submit_request`` already builds -- and the way it fails is by silently dropping a
+    key added on one side and not the other. The mandatory attempt timeout is precisely such
+    a key. Passing the whole request through means there is nothing here to fall out of step,
+    so the assertion is that this state mentions none of the request's field names at all.
+
+    The planned spelling was ``InputPath`` with no ``Parameters``, which the Step Functions
+    validator refuses: "Parameters field is required for resource ARN
+    arn:aws:states:::aws-sdk:batch:submitJob". JSONata ``Arguments`` is the shape that both
+    validates and enumerates nothing.
+    """
+    state = state_machine_definition()["States"]["SubmitToBatch"]
+    text = json.dumps(state)
+
+    assert "Parameters" not in state
+    assert state["Resource"].endswith(":aws-sdk:batch:submitJob")
+    # One reference and nothing else, so the request arrives as Python built it. Asserted as
+    # the whole value rather than as a substring: a reference wrapped in an expression that
+    # reshaped it would satisfy "contains the path" and defeat the point.
+    assert state["Arguments"] == "{% $states.input.execution.submit_request %}"
+    assert submit_request  # the Python side builds something to be passed through
+    # Searched over the union of the recorded list and what the Python actually produced,
+    # so a key added on one side alone is still searched for rather than skipped.
+    for field in sorted(every_submit_request_field | set(SUBMIT_REQUEST_FIELDS)):
+        assert field not in text, f"SubmitToBatch names {field}, so it can drop {field}"
+
+
+def test_the_container_override_keys_are_keys_the_job_definition_declares(
+    submit_request: dict[str, Any],
+) -> None:
+    """Reads the job definition and the Python. Mutation: rename ``Command`` on either side.
+
+    ``ContainerOverrides`` can only override a key the definition declares. A ``Commands``
+    against a ``Command`` is not an error anywhere: Batch takes the override it recognises,
+    ignores the one it does not, and runs the definition's default command instead -- so the
+    job succeeds while running something nobody asked for.
+    """
+    container = properties_of(COMPUTE_PATH, "AWS::Batch::JobDefinition")["ContainerProperties"]
+    overridden = set(submit_request["ContainerOverrides"])
+
+    assert overridden
+    assert overridden <= set(container), (
+        f"overrides name keys the job definition does not declare: {overridden - set(container)}"
+    )
+
+
+def test_the_binding_record_the_state_machine_writes_is_the_contract_it_claims_to_be() -> None:
+    """Reads the ASL and the contract. Mutation: add a field to ``BatchJobBinding``.
+
+    This is the one lineage record whose bytes the template decides, because the Batch job id
+    does not exist until the submit has run. Nothing validates it at run time, so a field
+    added to the contract and not here is a record that fails validation only when somebody
+    reads it back -- long after the job it describes has gone.
+    """
+    body = state_machine_definition()["States"]["WriteBinding"]["Parameters"]["Body"]
+    written = {key.removesuffix(".$") for key in body}
+
+    assert written == set(BatchJobBinding.model_fields)
+    assert body["schema_version"] == 1
+    # The job name is the run id, so the S3 key, the execution name and the Batch job name
+    # all carry one identifier and any two disagreeing is visible.
+    assert body["batch_job_name.$"] == "$.submission.JobName"
+    assert body["run_id.$"] == "$.admission.run_id"
+
+
+# --------------------------------------------------------------------------------------
+# The amended state machine
+# --------------------------------------------------------------------------------------
+
+
+def test_the_validator_payload_is_built_field_by_field_and_never_forwarded() -> None:
+    """Mutation: restore ``"Payload.$": "$"``.
+
+    That is what the state said before Phase 3 and it was correct while every field in the
+    input was the caller's own claim. It stops being correct once one field is not: the image
+    scan findings are read from ECR by this state machine, and a forwarded payload would let
+    a caller supply an ``image_scan`` key of its own and declare its own image clean.
+    """
+    states = state_machine_definition()["States"]
+    payload = states["ValidateAndDecide"]["Parameters"]["Payload"]
+
+    assert "Payload.$" not in states["ValidateAndDecide"]["Parameters"]
+    assert payload["image_scan.$"] == "$.image_scan"
+    assert states["ReadImageScan"]["ResultPath"] == "$.image_scan"
+    # Every other field is the caller's and is read from the execution input, one at a time,
+    # so a missing one fails here rather than reaching a handler that defaults it.
+    assert {key.removesuffix(".$") for key in payload} == {
+        "run_id",
+        "submitter",
+        "approver",
+        "approving_environment",
+        "approved_manifest_sha256",
+        "manifest",
+        "workflow_run",
+        "image_scan",
+    }
+
+
+def test_the_execution_block_is_carried_through_the_selector_and_never_selected() -> None:
+    """Mutation: add ``"execution.$": "$.Payload.execution"`` to the ResultSelector.
+
+    That is the natural spelling and it fails every rejected run. The handler returns
+    ``execution`` only when the run is accepted and omits the key otherwise -- which is the
+    right shape, because a rejected submission carrying a submit request would be one
+    InputPath away from being submitted anyway. A payload template resolves every ``.$``
+    reference before the state completes, an unresolvable one is a States.Runtime failure,
+    and there is no defaulting form; so selecting it directly breaks the common case in a
+    state machine whose whole job is to refuse things, and breaks it after the Lambda has
+    already decided correctly.
+
+    The carrier is the answer: ResultSelector keeps the whole payload under a key that
+    always exists, and the lift happens on the accepted branch where ``execution`` is
+    guaranteed to be there.
+    """
+    states = state_machine_definition()["States"]
+    selector = states["ValidateAndDecide"]["ResultSelector"]
+    lift = states["ResolveExecutionTarget"]
+
+    assert "execution.$" not in selector
+    assert selector["payload.$"] == "$.Payload"
+    assert lift["Type"] == "Pass"
+    assert lift["InputPath"] == "$.admission.payload.execution"
+    assert lift["ResultPath"] == "$.execution"
+    assert lift["Next"] == "SubmitToBatch"
+    # Only reachable from the accepted branch of the Choice, which is what makes the key
+    # guaranteed rather than hoped for.
+    assert states["AdmissionAccepted"]["Choices"][0]["Next"] == "ResolveExecutionTarget"
+    assert states["AdmissionAccepted"]["Default"] == "Rejected"
+    # And nothing else reads out of the carrier: the six named keys beside it are the
+    # interface, and a second reader of $.admission.payload would be a path that works today
+    # and stops working the moment the selector is narrowed.
+    carried = [
+        value
+        for name, state in states.items()
+        if name != "ResolveExecutionTarget"
+        for value in walk_strings(state)
+        if "$.admission.payload" in value
+    ]
+    assert carried == []
+
+
+def test_the_image_scan_is_read_before_anything_is_judged_and_fails_open_to_closed() -> None:
+    """Mutation: remove the ``Catch``, or route it somewhere other than ValidateAndDecide.
+
+    An image with no scan yet returns ``ScanNotFoundException``. Failing the execution there
+    would refuse the run with an error rather than with a decision, and no decision record
+    would be written -- so the refusal would exist only in an execution history. Catching to
+    the validator puts the error object where the findings would have been, which
+    ``image_scan_summary_from_ecr`` reads as None and the policy reads as nobody having
+    looked.
+    """
+    definition = state_machine_definition()
+    read = definition["States"]["ReadImageScan"]
+
+    assert definition["StartAt"] == "ReadImageScan"
+    assert read["Resource"].endswith(":aws-sdk:ecr:describeImageScanFindings")
+    assert read["Parameters"]["ImageId"]["ImageDigest.$"] == "$.manifest.image_digest"
+    assert read["Next"] == "ValidateAndDecide"
+    assert read["Catch"] == [
+        {
+            "ErrorEquals": ["States.ALL"],
+            "ResultPath": "$.image_scan",
+            "Next": "ValidateAndDecide",
+        }
+    ]
+
+
+def test_the_binding_write_is_conditional_and_checksummed_like_every_lineage_write() -> None:
+    """Mutation: drop ``IfNoneMatch``.
+
+    The lineage bucket denies any write that does not carry it, so dropping it does not
+    produce an overwrite -- it produces a refusal on the happy path, and the conflict record
+    then says a duplicate was refused when nothing was duplicated.
+    """
+    states = state_machine_definition()["States"]
+
+    for name in ("WriteIntent", "WriteDecision", "WriteBinding", "RecordSubmissionFailure"):
+        parameters = states[name]["Parameters"]
+        assert parameters["Bucket"] == LINEAGE_BUCKET
+        assert {key: parameters[key] for key in CONDITIONAL_WRITE_PARAMETERS} == (
+            CONDITIONAL_WRITE_PARAMETERS
+        )
+    assert states["WriteBinding"]["Parameters"]["Key.$"] == (
+        "States.Format('binding/{}.json', $.admission.run_id)"
+    )
+    assert states["WriteBinding"]["Catch"] == [
+        {
+            "ErrorEquals": ["S3.S3Exception"],
+            "ResultPath": "$.write_failure",
+            "Next": "RecordConflict",
+        }
+    ]
+
+
+def test_a_fan_out_binding_records_its_size_and_a_single_container_records_none() -> None:
+    """Mutation: delete the Choice and always read ``ArrayProperties.Size``.
+
+    ``batch_submit_request`` omits ``ArrayProperties`` for a single container, because Batch
+    rejects an array job of size one. A Parameters path to an absent field is a run-time
+    error, so an unconditional read fails every non-fan-out run -- and no fan-out fixture
+    would catch it.
+    """
+    states = state_machine_definition()["States"]
+    choice = states["BindingIsFanOut"]
+
+    assert choice["Choices"] == [
+        {
+            "Variable": "$.execution.submit_request.ArrayProperties",
+            "IsPresent": True,
+            "Next": "RecordFanOutSize",
+        }
+    ]
+    assert choice["Default"] == "RecordSingleContainer"
+    assert states["RecordFanOutSize"]["InputPath"] == (
+        "$.execution.submit_request.ArrayProperties.Size"
+    )
+    assert states["RecordSingleContainer"]["Result"] is None
+    for name in ("RecordFanOutSize", "RecordSingleContainer"):
+        assert states[name]["ResultPath"] == "$.binding_array_size"
+        assert states[name]["Next"] == "WriteBinding"
+
+
+def test_a_refused_submission_is_recorded_and_the_execution_fails_saying_so() -> None:
+    """Mutation: delete the ``Catch`` on SubmitToBatch.
+
+    Without it a refused submission fails the execution with whatever Batch said and writes
+    nothing, so a run that was admitted and never launched leaves a decision record saying
+    accepted and no trace of what happened next.
+    """
+    states = state_machine_definition()["States"]
+
+    assert states["SubmitToBatch"]["Catch"][0]["ErrorEquals"] == ["States.ALL"]
+    assert states["SubmitToBatch"]["Catch"][0]["Next"] == "RecordSubmissionFailure"
+    assert states["RecordSubmissionFailure"]["Next"] == "SubmissionFailed"
+    assert states["SubmissionFailed"]["Type"] == "Fail"
+    assert states["SubmissionFailed"]["Error"] == "BatchSubmissionFailed"
+
+
+def test_every_state_is_reachable_and_every_transition_names_a_real_state() -> None:
+    """Mutation: leave the old ``Admitted`` Succeed state behind after rewiring the Choice.
+
+    Step Functions rejects a dangling transition at CreateStateMachine, and deploys an
+    unreachable state quietly. An orphaned Admitted would read as a terminal state meaning
+    "admitted and then nothing", which is exactly the state this amendment removes.
+    """
+    definition = state_machine_definition()
+    states = definition["States"]
+    reachable = {definition["StartAt"]}
+    for state in states.values():
+        reachable.update(state[key] for key in ("Next", "Default") if key in state)
+        reachable.update(choice["Next"] for choice in state.get("Choices", []))
+        reachable.update(catch["Next"] for catch in state.get("Catch", []))
+
+    assert sorted(reachable - set(states)) == []
+    assert sorted(set(states) - reachable) == []
+    assert "Admitted" not in states
+    assert states["AdmissionAccepted"]["Choices"][0]["Next"] == "ResolveExecutionTarget"
+    assert states["Submitted"] == {"Type": "Succeed"}
+
+
+# --------------------------------------------------------------------------------------
+# Events, the recorder and the alarms
+# --------------------------------------------------------------------------------------
+
+
+def test_the_recorder_is_attached_by_an_event_source_mapping_and_not_by_a_permission() -> None:
+    """Mutation: target the Lambda directly from the rule and add an AWS::Lambda::Permission.
+
+    That needs ``lambda:AddPermission`` on the deployer, which the Phase 2 policy excludes
+    deliberately: "the deployer creates the validator but may neither run it nor change who
+    may run it". Option 2 of D6 adds a capability instead of removing a restriction, and the
+    queue buys real retry and dead-letter semantics as a side effect.
+    """
+    template = load_template(EVENTS_PATH)
+    targets = properties_of(EVENTS_PATH, "AWS::Events::Rule")["Targets"]
+    mapping = properties_of(EVENTS_PATH, "AWS::Lambda::EventSourceMapping")
+
+    assert not [
+        logical_id
+        for logical_id, resource in template["Resources"].items()
+        if resource["Type"] == "AWS::Lambda::Permission"
+    ]
+    assert len(targets) == 1
+    assert targets[0]["Arn"] == {"Fn::GetAtt": ["LifecycleQueue", "Arn"]}
+    assert mapping["EventSourceArn"] == {"Fn::GetAtt": ["LifecycleQueue", "Arn"]}
+    assert mapping["Enabled"] is True
+    # One event per invocation, so the retry unit is the event -- which is the unit the
+    # conditional write and the derived event id deduplicate on.
+    assert mapping["BatchSize"] == 1
+
+
+def test_an_undeliverable_or_unprojectable_event_lands_somewhere_a_person_can_read() -> None:
+    """Mutation: remove the ``RedrivePolicy``, or the target's ``DeadLetterConfig``.
+
+    Those are two different failures with the same meaning -- something happened to a job and
+    no lineage record says so. Without them the event is retried until the queue's retention
+    expires and then disappears, leaving a gap nobody can date.
+    """
+    queues = resources_of_type(EVENTS_PATH, "AWS::SQS::Queue")
+    names = {resource["Properties"]["QueueName"] for resource in queues.values()}
+    main = next(
+        resource
+        for resource in queues.values()
+        if resource["Properties"]["QueueName"] == LIFECYCLE_QUEUE_NAME
+    )
+    target = properties_of(EVENTS_PATH, "AWS::Events::Rule")["Targets"][0]
+
+    assert names == {LIFECYCLE_QUEUE_NAME, DEAD_LETTER_QUEUE_NAME}
+    assert main["Properties"]["RedrivePolicy"]["maxReceiveCount"] >= 1
+    assert main["Properties"]["RedrivePolicy"]["deadLetterTargetArn"] == {
+        "Fn::GetAtt": ["LifecycleDeadLetterQueue", "Arn"]
+    }
+    assert target["DeadLetterConfig"]["Arn"] == {
+        "Fn::GetAtt": ["LifecycleDeadLetterQueue", "Arn"]
+    }
+
+
+def test_the_queue_accepts_deliveries_only_from_our_own_rule_in_our_own_account() -> None:
+    """Mutation: drop the ``aws:SourceArn`` or ``aws:SourceAccount`` condition.
+
+    Without the first, any rule in this shared account could feed our recorder foreign job
+    state changes. Without the second, a rule in somebody else's account could, which is the
+    confused-deputy shape a resource policy naming a service principal always has.
+    """
+    document = properties_of(EVENTS_PATH, "AWS::SQS::QueuePolicy")["PolicyDocument"]
+    statement = document["Statement"][0]
+
+    assert len(document["Statement"]) == 1
+    assert statement["Effect"] == "Allow"
+    assert statement["Principal"] == {"Service": "events.amazonaws.com"}
+    assert statement_actions(statement) == ["sqs:SendMessage"]
+    assert statement["Condition"]["ArnEquals"]["aws:SourceArn"] == {
+        "Fn::GetAtt": ["LifecycleRule", "Arn"]
+    }
+    assert statement["Condition"]["StringEquals"]["aws:SourceAccount"] == {"Ref": "AWS::AccountId"}
+
+
+def test_the_recorder_is_pinned_to_a_versioned_artifact_object() -> None:
+    """Mutation: remove ``S3ObjectVersion``.
+
+    Without it, re-uploading a new zip to the same key leaves this resource byte-identical,
+    the change set comes back empty, and a deploy that reports success keeps running the old
+    projection code.
+    """
+    properties = properties_of(EVENTS_PATH, "AWS::Lambda::Function")
+
+    assert properties["FunctionName"] == RECORDER_FUNCTION_NAME
+    assert properties["Runtime"] == "python3.12"
+    assert properties["Handler"] == "edullm_platform.lifecycle_handler.handler"
+    assert properties["Code"]["S3Key"].endswith(".zip")
+    assert properties["Code"]["S3ObjectVersion"]
+    # The visibility timeout has to clear the function timeout, or a message becomes visible
+    # again while the recorder is still working on it and the same event is projected twice.
+    queues = resources_of_type(EVENTS_PATH, "AWS::SQS::Queue")
+    main = next(
+        resource
+        for resource in queues.values()
+        if resource["Properties"]["QueueName"] == LIFECYCLE_QUEUE_NAME
+    )
+    assert main["Properties"]["VisibilityTimeout"] >= properties["Timeout"]
+
+
+def test_every_alarm_watches_a_metric_the_deployed_services_actually_publish() -> None:
+    """Mutation: add an alarm on an ``AWS/Batch`` metric.
+
+    The phase plan asks for a queue-wait alarm and AWS Batch publishes no CloudWatch metric
+    for queue depth or job state -- the documented ways to read RUNNABLE are
+    GetJobQueueSnapshot, ListJobs and the EventBridge stream, none of which an alarm can
+    reach. An alarm on a metric that is never published sits in INSUFFICIENT_DATA forever,
+    which reads as green, so this asserts every alarm names a namespace something here emits.
+    """
+    alarms = resources_of_type(EVENTS_PATH, "AWS::CloudWatch::Alarm")
+    namespaces = {resource["Properties"]["Namespace"] for resource in alarms.values()}
+
+    assert len(alarms) == 3
+    assert namespaces == {"AWS/SQS", "AWS/Lambda"}
+    for logical_id, resource in alarms.items():
+        properties = resource["Properties"]
+        assert properties["AlarmName"].startswith("sbsandbox-intern-edullm-batch-"), logical_id
+        assert properties["AlarmDescription"], logical_id
+        # An empty queue publishes no datapoints, and an alarm that read that as a breach
+        # would fire continuously while nothing was wrong.
+        assert properties["TreatMissingData"] == "notBreaching", logical_id
+
+
+# --------------------------------------------------------------------------------------
+# The four new roles
+# --------------------------------------------------------------------------------------
+
+
+def test_the_workload_role_writes_only_under_its_own_team_prefix() -> None:
+    """Mutation: widen the resource to the whole outputs bucket, or to ``teams/*``.
+
+    Phase 4 asserts that S3 receives outputs only under the authorized prefix and Phase 5
+    asserts that cross-team access fails closed. A bucket-wide grant satisfies neither and
+    would pass every test written before those phases. This scope is per-team rather than
+    per-run and that gap is recorded as open decision 2, not hidden.
+    """
+    role = role_named(BATCH_ROLES_PATH, WORKLOAD_ROLE_NAME)
+    statements = [
+        statement
+        for policy in role["Policies"]
+        for statement in policy["PolicyDocument"]["Statement"]
+    ]
+    written = [
+        arn
+        for statement in statements
+        if "s3:PutObject" in statement_actions(statement)
+        for arn in resource_arns(statement["Resource"])
+    ]
+
+    assert written == [f"arn:${{AWS::Partition}}:s3:::{OUTPUTS_BUCKET}/{TEAM_PREFIX}*"]
+    # Listing is a bucket-level action that no object ARN can scope, so the prefix condition
+    # is the only thing stopping it enumerating another team's output.
+    listing = [
+        statement for statement in statements if "s3:ListBucket" in statement_actions(statement)
+    ]
+    assert len(listing) == 1
+    assert listing[0]["Condition"]["StringLike"]["s3:prefix"] == f"{TEAM_PREFIX}*"
+
+
+def test_the_workload_role_can_neither_reach_lineage_nor_start_anything() -> None:
+    """Mutation: add ``s3:PutObject`` on the lineage bucket, or any ``batch:`` action.
+
+    The container is what an untrusted command runs inside. It may write its results and it
+    may not start anything, stop anything, publish anything, or put a byte into the store
+    whose entire property is that only the admission state machine writes to it.
+    """
+    role = role_named(BATCH_ROLES_PATH, WORKLOAD_ROLE_NAME)
+    actions = role_actions(BATCH_ROLES_PATH, WORKLOAD_ROLE_NAME)
+    reachable = list(walk_strings(role["Policies"]))
+
+    assert actions
+    assert all(action.startswith("s3:") for action in actions)
+    assert not [value for value in reachable if LINEAGE_BUCKET in value]
+    assert not [
+        action
+        for action in actions
+        if action.startswith(("batch:", "states:", "ecr:", "iam:", "logs:"))
+    ]
+
+
+def test_only_the_execution_and_instance_roles_may_pull_the_image() -> None:
+    """Mutation: give the workload role ``ecr:BatchGetImage``.
+
+    The registry credentials belong to the identity that starts the task and to the host that
+    runs it, never to the process inside the container. A workload that can pull can also
+    enumerate what else this project has published.
+    """
+    pulling = {
+        name
+        for name in (EXECUTION_ROLE_NAME, WORKLOAD_ROLE_NAME, INSTANCE_ROLE_NAME)
+        if [action for action in role_actions(BATCH_ROLES_PATH, name) if action.startswith("ecr:")]
+    }
+
+    assert pulling == {EXECUTION_ROLE_NAME, INSTANCE_ROLE_NAME}
+    for name in pulling:
+        actions = [
+            action for action in role_actions(BATCH_ROLES_PATH, name) if action.startswith("ecr:")
+        ]
+        # Read-only. ecr:PutImage and the rest of the push path belong to the publisher role
+        # and to no identity that runs a container.
+        assert set(actions) <= {
+            "ecr:BatchCheckLayerAvailability",
+            "ecr:BatchGetImage",
+            "ecr:GetAuthorizationToken",
+            "ecr:GetDownloadUrlForLayer",
+        }
+
+
+def test_the_recorder_role_writes_lineage_and_cannot_make_anything_happen() -> None:
+    """Mutation: add ``batch:SubmitJob`` or ``batch:TerminateJob``.
+
+    The recorder is reached by an EventBridge delivery rather than by an execution somebody
+    approved, so it is the component furthest from the gate. The only thing it may do with
+    that distance is append a record of something that already happened.
+    """
+    actions = role_actions(LIFECYCLE_ROLE_PATH, LIFECYCLE_ROLE_NAME)
+    s3_actions = [action for action in actions if action.startswith("s3:")]
+
+    assert s3_actions == ["s3:PutObject"]
+    assert "sqs:ReceiveMessage" in actions
+    assert "sqs:DeleteMessage" in actions
+
+
+def test_the_recorder_role_holds_no_batch_action_at_all() -> None:
+    """Mutation: re-add ``batch:DescribeJobs``, which the plan asked for and argued wrongly.
+
+    The plan justified the grant as "the recorder needs the job's attempt detail", on the
+    premise that a ``Batch Job State Change`` detail does not carry the attempts array. It
+    does, and it is where every instant the recorder writes comes from -- which the
+    companion assertion below checks, so this pair reads both the template and the code
+    rather than restating a claim about either.
+
+    Reading those from a describe would not merely be redundant. A describe answers with
+    the job as it is when asked, so a redelivered event would project from different inputs
+    than its first delivery, produce different bytes under the same derived key, and be
+    refused by the conditional write -- keeping whichever projection happened to arrive
+    first. Derived-key deduplication is the whole of "event duplicates do not create
+    conflicting terminal state", and that grant is how it would be lost.
+    """
+    actions = role_actions(LIFECYCLE_ROLE_PATH, LIFECYCLE_ROLE_NAME)
+
+    assert [action for action in actions if action.startswith("batch:")] == []
+    # The other side of it: the attempt really does come out of the event, so the grant is
+    # unnecessary rather than merely undesirable. A projection that started calling a
+    # describe would fail here before it failed in the account.
+    envelope = terminal_envelope()
+    attempts = envelope["detail"]["attempts"]
+    projection = project_batch_event(envelope)
+
+    assert projection.attempt is not None
+    assert projection.attempt.started_at.timestamp() * 1000 == attempts[0]["startedAt"]
+    assert projection.attempt.ended_at.timestamp() * 1000 == attempts[0]["stoppedAt"]
+    # The exit code the plan named is in the event too, and no Phase 0 contract has a field
+    # for it, so it is captured evidence rather than something a describe would supply.
+    assert "exitCode" in attempts[0]["container"]
+    assert "exit_code" not in SchedulerAttempt.model_fields
+
+
+def test_the_mapping_honours_the_partial_response_the_recorder_returns() -> None:
+    """Reads the handler and the template. Mutation: drop ``FunctionResponseTypes``.
+
+    The handler answers a partially-failed batch with a per-message verdict list. Lambda
+    discards that answer entirely unless the event source mapping declares the response
+    type: without it a returned list is an ordinary successful return, every message in the
+    batch is deleted, and the failed ones are lost with no retry and no dead-letter.
+
+    At the ``BatchSize: 1`` this mapping also sets, the two configurations behave
+    identically -- "some failed" and "all failed" are the same event, and the handler
+    raises. The two halves were designed apart and would agree only by that coincidence,
+    which is what makes this worth pinning: the next person to raise the batch size would
+    change one number and turn a lossless path into a lossy one, with nothing failing.
+
+    Both sides are read rather than asserted. The key comes off an invocation the handler
+    actually answers, and the response type off the property the template actually sets.
+    """
+    answered = handler(
+        {
+            "Records": [
+                {"messageId": "unreadable", "body": "not an EventBridge envelope"},
+                {"messageId": "projectable", "body": json.dumps(terminal_envelope())},
+            ]
+        },
+        store=AcceptingStore(),
+    )
+    mapping = properties_of(EVENTS_PATH, "AWS::Lambda::EventSourceMapping")
+
+    assert list(answered) == [BATCH_ITEM_FAILURES_KEY]
+    assert answered[BATCH_ITEM_FAILURES_KEY] == [{"itemIdentifier": "unreadable"}]
+    assert mapping["FunctionResponseTypes"] == [BATCH_ITEM_FAILURES_RESPONSE_TYPE]
+    assert mapping["BatchSize"] == 1
+
+
+def test_the_recorder_writes_only_the_four_prefixes_this_phase_records() -> None:
+    """Mutation: widen the resource to ``sbsandbox-intern-edullm-lineage/*``.
+
+    That would let the recorder write an intent or a decision record, which are the two
+    things the admission state machine writes and the recorder must never be able to forge.
+    """
+    statements = [
+        statement
+        for policy in role_named(LIFECYCLE_ROLE_PATH, LIFECYCLE_ROLE_NAME)["Policies"]
+        for statement in policy["PolicyDocument"]["Statement"]
+        if statement_actions(statement) == ["s3:PutObject"]
+    ]
+
+    assert len(statements) == 1
+    prefixes = {
+        arn.split(f"{LINEAGE_BUCKET}/", 1)[1] for arn in resource_arns(statements[0]["Resource"])
+    }
+    assert prefixes == {"binding/*", "events/*", "attempt/*", "result/*"}
+
+
+def test_the_recorder_cannot_drain_the_queue_that_records_its_own_failures() -> None:
+    """Mutation: add the dead-letter queue ARN to the SQS statement.
+
+    An event that failed projection is meant to sit in the dead-letter queue until a person
+    looks. A recorder that could receive and delete from it could erase the evidence that it
+    failed, which is the one thing the queue exists to preserve.
+    """
+    reachable = [
+        arn
+        for policy in role_named(LIFECYCLE_ROLE_PATH, LIFECYCLE_ROLE_NAME)["Policies"]
+        for statement in policy["PolicyDocument"]["Statement"]
+        if any(action.startswith("sqs:") for action in statement_actions(statement))
+        for arn in resource_arns(statement["Resource"])
+    ]
+
+    assert len(reachable) == 1
+    assert reachable[0].endswith(f":{LIFECYCLE_QUEUE_NAME}")
+    assert not [arn for arn in reachable if arn.endswith(DEAD_LETTER_QUEUE_NAME)]
+
+
+def test_the_instance_role_can_only_join_the_cluster_this_environment_creates() -> None:
+    """Reads BOTH files. Mutation: rename the compute environment in infra/batch-compute.yaml.
+
+    Batch names the ECS cluster it manages ``AWSBatch-<compute environment>-<id>``, so the
+    environment's name is what makes the cluster scope writable at all. A rename on one side
+    produces instances that register nowhere and a queue whose jobs sit in RUNNABLE -- the
+    same silent half-failure the job queue name has.
+    """
+    created = properties_of(COMPUTE_PATH, "AWS::Batch::ComputeEnvironment")[
+        "ComputeEnvironmentName"
+    ]
+    clusters = [
+        arn
+        for policy in role_named(BATCH_ROLES_PATH, INSTANCE_ROLE_NAME)["Policies"]
+        for statement in policy["PolicyDocument"]["Statement"]
+        for arn in resource_arns(statement["Resource"])
+        if ":cluster/" in arn
+    ]
+
+    assert created == COMPUTE_ENVIRONMENT_NAME
+    assert len(clusters) == 1
+    assert clusters[0].endswith(f":cluster/AWSBatch-{created}-*")
+
+
+def test_the_instance_profile_wraps_the_role_the_compute_environment_names() -> None:
+    """Reads BOTH files. Mutation: rename the instance profile in either.
+
+    An EC2 instance holds a role only through an instance profile, and Batch takes the
+    profile's ARN. A name that does not exist fails CreateComputeEnvironment with a message
+    about the profile and not about the rename.
+    """
+    profile = properties_of(BATCH_ROLES_PATH, "AWS::IAM::InstanceProfile")
+    named = properties_of(COMPUTE_PATH, "AWS::Batch::ComputeEnvironment")["ComputeResources"][
+        "InstanceRole"
+    ]["Fn::Sub"]
+
+    assert profile["InstanceProfileName"] == INSTANCE_ROLE_NAME
+    assert profile["Roles"] == [{"Ref": "BatchInstanceRole"}]
+    assert named.endswith(f":instance-profile/{profile['InstanceProfileName']}")
+
+
+def test_the_states_role_gains_batch_and_ecr_reads_and_no_way_to_stop_a_job() -> None:
+    """Mutation: add ``batch:TerminateJob`` to the admission states role.
+
+    Cancellation is its own path with its own principal. An admission execution that could
+    also stop a job could end a run whose decision it had just recorded as accepted, and
+    nothing in the lineage store would say why.
+    """
+    actions = [
+        action
+        for policy in role_named(SERVICE_ROLES_PATH, "sbsandbox-intern-edullm-admission-states")[
+            "Policies"
+        ]
+        for statement in policy["PolicyDocument"]["Statement"]
+        for action in statement_actions(statement)
+    ]
+
+    assert [action for action in actions if action.startswith("batch:")] == ["batch:SubmitJob"]
+    assert [action for action in actions if action.startswith("ecr:")] == [
+        "ecr:DescribeImageScanFindings"
+    ]
+    assert not {"batch:TerminateJob", "batch:CancelJob", "batch:RegisterJobDefinition"} & set(
+        actions
+    )
+
+
+# --------------------------------------------------------------------------------------
+# House rules that apply to every template in the phase
+# --------------------------------------------------------------------------------------
+
+
+def test_every_phase3_role_carries_the_permissions_boundary_and_a_capped_session() -> None:
+    """Mutation: drop the ``PermissionsBoundary``.
+
+    iam:CreateRole is denied outright unless the request carries this exact boundary, so a
+    template that omits it does not create a weaker role -- it fails. Asserting it here means
+    the failure is a red test rather than a laptop deploy that stops halfway.
+    """
+    roles = [
+        role
+        for path in (BATCH_ROLES_PATH, LIFECYCLE_ROLE_PATH)
+        for role in iam_roles(load_template(path))
+    ]
+
+    assert [role["RoleName"] for role in roles] == [
+        EXECUTION_ROLE_NAME,
+        WORKLOAD_ROLE_NAME,
+        INSTANCE_ROLE_NAME,
+        LIFECYCLE_ROLE_NAME,
+    ]
+    for role in roles:
+        assert role["PermissionsBoundary"] == BOUNDARY
+        assert role["MaxSessionDuration"] <= 3600
+        assert role["Policies"]
+        assert "ManagedPolicyArns" not in role
+
+
+def test_no_phase3_template_uses_a_managed_policy_it_could_never_amend() -> None:
+    """Mutation: replace an inline policy with an ``AWS::IAM::ManagedPolicy``.
+
+    InternSandboxBoundary denies ``iam:CreatePolicyVersion`` on every policy, so a customer
+    managed policy here is a one-way door: it can be created once and never amended, and the
+    first permission change fails the stack update permanently.
+    """
+    for path in PHASE3_TEMPLATE_PATHS:
+        for logical_id, resource in load_template(path).get("Resources", {}).items():
+            assert resource.get("Type") != "AWS::IAM::ManagedPolicy", (
+                f"{path.relative_to(PROJECT_ROOT)}: {logical_id}"
+            )
+
+
+def test_no_ci_deployed_phase3_template_creates_an_iam_resource() -> None:
+    """Mutation: move a role out of infra/iam/ into one of the CI templates.
+
+    The deployer holds no ``iam:CreateRole``, so this fails at deploy time either way -- but
+    it fails at InsufficientCapabilities or at an AccessDenied minutes into a rollback,
+    rather than here.
+    """
+    for path in CI_DEPLOYED_TEMPLATE_PATHS:
+        for logical_id, resource in load_template(path)["Resources"].items():
+            assert not str(resource["Type"]).startswith("AWS::IAM::"), (
+                f"{path.relative_to(PROJECT_ROOT)}: {logical_id}"
+            )
+    # A queue policy is a resource policy and not an IAM entity, which is what lets the
+    # events stack deploy with no capability acknowledgement at all.
+    assert resources_of_type(EVENTS_PATH, "AWS::SQS::QueuePolicy")
+
+
+def test_no_phase3_template_declares_a_cloudformation_parameter() -> None:
+    """Mutation: parameterise the subnet IDs instead of importing them.
+
+    Names in this repository are hardcoded literals. A parameter would let the same template
+    deploy against infrastructure no committed file describes, which is how a stack ends up
+    pointing at somebody else's VPC. The subnet and security group IDs are the one class of
+    value no file can spell, and they cross the boundary as exports rather than as arguments.
+    """
+    for path in PHASE3_TEMPLATE_PATHS:
+        assert "Parameters" not in load_template(path), path.relative_to(PROJECT_ROOT)
+
+
+def test_no_phase3_template_carries_an_aws_account_id_literal() -> None:
+    """Mutation: write the account into the image reference instead of using ``Fn::Sub``.
+
+    Every ARN written here reaches the account through the pseudo-parameter, which is what
+    keeps the account out of a public repository and lets the same template work in any
+    account that has the boundary.
+    """
+    for path in PHASE3_TEMPLATE_PATHS:
+        source = path.read_text(encoding="utf-8")
+        assert not ACCOUNT_LITERAL.search(source), path.relative_to(PROJECT_ROOT)
+
+
+def test_the_outputs_bucket_is_private_versioned_and_not_the_lineage_store() -> None:
+    """Mutation: point the workload role at the lineage bucket instead of this one.
+
+    The lineage store is write-once by bucket policy and holds admission records. Job output
+    goes somewhere a workload may overwrite it, because a workload that cannot overwrite its
+    own output is a workload that fails on retry.
+    """
+    template = load_template(OUTPUTS_PATH)
+    _logical_id, bucket = resource_of_type(template, "AWS::S3::Bucket")
+    properties = bucket["Properties"]
+
+    assert properties["BucketName"] == OUTPUTS_BUCKET
+    assert bucket["DeletionPolicy"] == "Retain"
+    assert properties["VersioningConfiguration"] == {"Status": "Enabled"}
+    assert properties["PublicAccessBlockConfiguration"] == {
+        "BlockPublicAcls": True,
+        "BlockPublicPolicy": True,
+        "IgnorePublicAcls": True,
+        "RestrictPublicBuckets": True,
+    }
+    # Deliberately not Object Lock and deliberately no conditional-write policy: this store
+    # has no immutability guarantee to protect, and claiming one it does not enforce would be
+    # worse than claiming none.
+    assert "ObjectLockEnabled" not in properties
+    assert LINEAGE_BUCKET not in list(walk_strings(template))

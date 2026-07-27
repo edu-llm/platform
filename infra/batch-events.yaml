@@ -1,0 +1,360 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: The path a Batch job state change takes to become a lineage record, and the alarms that fire when it does not.
+
+# EventBridge delivers to SQS, and an event source mapping attaches the recorder. That is
+# D6, option 2, and the reason is written in infra/iam/infra-deployer-role.yaml as well as
+# here because the two halves are in different files.
+#
+# The obvious wiring is an EventBridge rule targeting the Lambda directly. It needs an
+# AWS::Lambda::Permission, which needs lambda:AddPermission on the deploying principal, and
+# the Phase 2 deployer policy excludes that action deliberately with the comment "the
+# deployer creates the validator but may neither run it nor change who may run it".
+# Reversing a written decision to save one resource is the wrong trade, so the deployer
+# gains lambda:CreateEventSourceMapping and the SQS lifecycle instead -- a capability added
+# rather than a restriction removed.
+#
+# The queue is not merely a workaround. A direct Lambda target retries twice and then drops
+# the event; a queue retries on the recorder's own terms, holds what it could not process
+# where a person can read it, and gives the "events stopped being recorded" failure a depth
+# metric that an alarm can watch. Two of the three alarms below only exist because of it.
+
+Resources:
+  # ------------------------------------------------------------------------------------
+  # The two queues
+  # ------------------------------------------------------------------------------------
+  LifecycleQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: sbsandbox-intern-edullm-batch-lifecycle
+      # At least six times the function's timeout, which is what AWS recommends and what
+      # the event source mapping enforces a floor on. Set below the function timeout, a
+      # message becomes visible again while the recorder is still working on it, a second
+      # invocation projects the same event, and the conditional write refuses the second --
+      # so the symptom is a stream of write conflicts that look like duplicate events and
+      # are not.
+      VisibilityTimeout: 360
+      MessageRetentionPeriod: 345600
+      RedrivePolicy:
+        deadLetterTargetArn:
+          Fn::GetAtt:
+            - LifecycleDeadLetterQueue
+            - Arn
+        # Five, not one. A projection failure is usually transient -- a throttle, a cold
+        # start that timed out -- and a message that reaches the dead-letter queue is meant
+        # to be a message a person reads. One retry would fill the dead-letter queue with
+        # events that would have succeeded; twenty would delay the alarm past the point of
+        # being useful.
+        #
+        # A genuinely undeliverable event does not loop forever either way: the conditional
+        # write refuses a replay with S3's 412, which the recorder treats as success
+        # because the record already exists.
+        maxReceiveCount: 5
+
+  # One dead-letter queue for two different failures, which is deliberate. EventBridge
+  # writes here when it cannot deliver to the queue at all; the redrive policy above writes
+  # here when the recorder could not process a delivered event five times. Those have
+  # different causes and the same meaning -- something happened to a job and no lineage
+  # record says so -- and that is what the alarm below watches for.
+  LifecycleDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: sbsandbox-intern-edullm-batch-lifecycle-dlq
+      # Fourteen days, the maximum. A dead-lettered event is the only surviving trace of a
+      # state change that never became a record, and the whole point of it being here is
+      # that nobody is watching in real time.
+      MessageRetentionPeriod: 1209600
+
+  # A resource policy, not an IAM entity, so this template still needs no stack capability.
+  # Both queues are listed because EventBridge writes to both: the lifecycle queue as the
+  # rule's target and the dead-letter queue when it cannot.
+  #
+  # The two conditions are not redundant. aws:SourceArn pins which rule may write, so
+  # another rule in this account cannot feed our recorder; aws:SourceAccount pins the
+  # account, which is what closes the confused-deputy path where a rule in somebody else's
+  # account names our queue.
+  LifecycleQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - Ref: LifecycleQueue
+        - Ref: LifecycleDeadLetterQueue
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowOurBatchLifecycleRuleToDeliver
+            Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource:
+              - Fn::GetAtt:
+                  - LifecycleQueue
+                  - Arn
+              - Fn::GetAtt:
+                  - LifecycleDeadLetterQueue
+                  - Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn:
+                  Fn::GetAtt:
+                    - LifecycleRule
+                    - Arn
+              StringEquals:
+                aws:SourceAccount:
+                  Ref: AWS::AccountId
+
+  # ------------------------------------------------------------------------------------
+  # The rule
+  # ------------------------------------------------------------------------------------
+  LifecycleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: sbsandbox-intern-edullm-batch-lifecycle
+      Description: Batch job state changes for our CPU queue, delivered to the lifecycle recorder.
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.batch
+        detail-type:
+          - Batch Job State Change
+        detail:
+          # SCOPED TO OUR QUEUE, and this filter is not a tidiness measure. This is a shared
+          # account and other teams' Batch usage is plausible at any time. An account-wide
+          # aws.batch pattern would deliver foreign job state changes to our recorder, which
+          # would then try to read a foreign job name as one of our run ids -- and write, or
+          # fail to write, lineage records about somebody else's work. Filtering is cheaper
+          # than defending against it downstream.
+          #
+          # The queue is named here as a full ARN and the queue itself is created in
+          # infra/batch-compute.yaml, with nothing connecting the two. Renaming it there
+          # without changing this line is the worst failure in this phase because it
+          # half-works: jobs keep running and no lifecycle event, attempt or result record
+          # is ever written again. tests/test_phase3_infrastructure.py reads both files and
+          # compares them for exactly this reason.
+          jobQueue:
+            - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-cpu
+      Targets:
+        - Id: lifecycle-queue
+          Arn:
+            Fn::GetAtt:
+              - LifecycleQueue
+              - Arn
+          DeadLetterConfig:
+            Arn:
+              Fn::GetAtt:
+                - LifecycleDeadLetterQueue
+                - Arn
+          # No InputTransformer and no InputPath. The recorder is handed the whole event,
+          # including EventBridge's own `id` -- which is what the LifecycleEvent's event id
+          # is derived from, so that a redelivery computes the same S3 key and the
+          # conditional write refuses it. Reshaping the event here would move that
+          # derivation into a template nobody unit-tests.
+
+  # ------------------------------------------------------------------------------------
+  # The recorder
+  # ------------------------------------------------------------------------------------
+  LifecycleRecorderFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: sbsandbox-intern-edullm-lifecycle-recorder
+      Description: Projects one Batch job state change onto the lifecycle, attempt and result contracts.
+      Runtime: python3.12
+      Handler: edullm_platform.lifecycle_handler.handler
+      Role:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-lifecycle-lambda
+      # S3ObjectVersion is what makes a code change a CloudFormation change. Without it,
+      # re-uploading a new zip to the same key leaves this resource's properties
+      # byte-identical, the change set comes back empty, and `deploy
+      # --no-fail-on-empty-changeset` reports success while the old code keeps running.
+      #
+      # The value below is a placeholder and this stack will fail at CreateFunction until it
+      # is replaced. That is the same thing that happened to the admission validator on its
+      # first deploy and it did its job then: a placeholder fails loudly at a named step,
+      # where an omitted property would have deployed something. Build the zip with
+      # tools/build_lifecycle_lambda.py, upload it by the procedure in infra/README.md, and
+      # paste the version id it prints here. The edit is the diff a reviewer sees.
+      Code:
+        S3Bucket: sbsandbox-intern-edullm-artifacts
+        S3Key: lifecycle-recorder/lifecycle-recorder.zip
+        S3ObjectVersion: REPLACE-WITH-THE-VERSION-ID-FROM-THE-RELEASE-PROCEDURE
+      # Sixty seconds against a function that makes up to three conditional writes and no
+      # other AWS call. The queue's visibility timeout above is six times this and has to
+      # be changed with it.
+      Timeout: 60
+      MemorySize: 512
+
+  LifecycleEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn:
+        Fn::GetAtt:
+          - LifecycleQueue
+          - Arn
+      FunctionName:
+        Ref: LifecycleRecorderFunction
+      Enabled: true
+      # One event per invocation. A larger batch is cheaper and wrong here: a partial
+      # failure in a batch of ten either redelivers all ten -- nine of which then hit the
+      # conditional write as duplicates -- or needs ReportBatchItemFailures and a handler
+      # that returns per-message verdicts. Batch size one makes the retry unit the event,
+      # which is the unit the whole design deduplicates on.
+      BatchSize: 1
+      # Zero, so a state change is not held back waiting for a batch that will never fill.
+      # Batch job state changes arrive in ones and twos, minutes apart.
+      MaximumBatchingWindowInSeconds: 0
+      # THE HANDLER RETURNS A PARTIAL-FAILURE LIST, SO THE MAPPING HAS TO HONOUR ONE.
+      #
+      # lifecycle_handler.handler returns {"batchItemFailures": [...]} naming the records
+      # it could not write, and raises only when it could not write any of them. Lambda
+      # ignores that return value entirely unless the mapping declares this response type:
+      # without it, a returned list is an ordinary successful return, every message in the
+      # batch is deleted, and the ones that failed are lost with no retry and no
+      # dead-letter.
+      #
+      # At BatchSize 1 the two configurations happen to behave identically, because "some
+      # records failed" and "every record failed" are the same event and the handler
+      # raises. That coincidence is exactly why this is configured rather than argued away.
+      # The next person to raise the batch size -- to cut cold starts, or because state
+      # changes started arriving in bursts -- would change one number in this file and turn
+      # a lossless path into a lossy one, with nothing failing and no lineage record
+      # missing until the day a projection does. Declaring the response type makes the
+      # handler's partial answer mean what it says at every batch size, so the number above
+      # is a tuning decision rather than a correctness one.
+      #
+      # Mutation: delete this property. tests/test_phase3_infrastructure.py invokes the
+      # handler with a batch it partly fails, reads the key it answers under, and reads
+      # this list; a handler that reports per-message verdicts into a mapping that discards
+      # them is the drift the pair exists to prevent.
+      FunctionResponseTypes:
+        - ReportBatchItemFailures
+
+  # ------------------------------------------------------------------------------------
+  # Alarms
+  # ------------------------------------------------------------------------------------
+  #
+  # THREE ALARMS, AND THE PLAN ASKED FOR A DIFFERENT THREE. This is the one place where
+  # Phase 3's plan named a control that cannot be built as described, so the difference is
+  # recorded here rather than quietly resolved.
+  #
+  # The plan's §3.7 asks for job failures, dead-letter depth, and queue wait, and says the
+  # queue-wait alarm is not optional even on CPU because a job can sit in RUNNABLE
+  # indefinitely and the failure mode of that is silence. That reasoning is right and the
+  # mechanism does not exist: AWS Batch publishes no CloudWatch metric for queue depth or
+  # job state. The documented ways to see how many jobs are RUNNABLE are the
+  # GetJobQueueSnapshot and ListJobs APIs and the EventBridge stream -- neither of which a
+  # CloudWatch alarm can read. A "queue wait" alarm here would have to name a metric that
+  # is never published, and an alarm on a metric with no data sits in INSUFFICIENT_DATA
+  # forever, which reads as green.
+  #
+  # The same is true of "job failures": there is no AWS/Batch failure count to alarm on.
+  #
+  # So the three below are the three that watch real metrics, and each of them fires on a
+  # genuine "a job happened and lineage does not know" condition. What is not covered is a
+  # job that never starts, and the compensating controls for that are stated rather than
+  # implied: tools/probe_batch_compute.py exits 1 if no job leaves RUNNABLE within a hard
+  # timeout, and the Wave 5 live matrix observes a job in RUNNING rather than inferring it
+  # from a VALID compute environment. The real fix is a custom metric the recorder emits
+  # from the events it already receives, which needs cloudwatch:PutMetricData on the
+  # recorder's role and a decision about metric naming. That is a Phase 4 item, because
+  # Phase 4 is where a job waiting for capacity becomes the normal case rather than the
+  # pathological one.
+
+  # Anything at all in the dead-letter queue means at least one state change never became a
+  # record. There is no acceptable non-zero level, so the threshold is zero and the alarm
+  # treats missing data as not breaching -- an empty queue publishes no datapoints, and an
+  # alarm that read that as a breach would fire continuously while nothing was wrong.
+  DeadLetterDepthAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: sbsandbox-intern-edullm-batch-lifecycle-dead-letters
+      AlarmDescription: A Batch state change could not be delivered or could not be recorded, so lineage is missing an event.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value:
+            Fn::GetAtt:
+              - LifecycleDeadLetterQueue
+              - QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+  # The other half of the same failure, and the half that fires first. A recorder that has
+  # stopped consuming -- wrong permissions, a disabled event source mapping, a function that
+  # times out on every invocation -- leaves messages ageing in the lifecycle queue for
+  # twenty-five minutes before the fifth retry sends the first one to the dead-letter queue.
+  # Fifteen minutes of ageing is well past anything normal, since these are projected in
+  # seconds.
+  LifecycleBacklogAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: sbsandbox-intern-edullm-batch-lifecycle-backlog
+      AlarmDescription: Batch state changes are queued and not being recorded, so lineage is falling behind.
+      Namespace: AWS/SQS
+      MetricName: ApproximateAgeOfOldestMessage
+      Dimensions:
+        - Name: QueueName
+          Value:
+            Fn::GetAtt:
+              - LifecycleQueue
+              - QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 900
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+  # A recorder that raises is a recorder whose events go round the retry loop, so this
+  # overlaps the two above on purpose: it fires earlier and it names the cause. The other
+  # two say lineage is incomplete; this one says the projection is what broke.
+  RecorderErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: sbsandbox-intern-edullm-batch-lifecycle-recorder-errors
+      AlarmDescription: The lifecycle recorder is failing to project Batch state changes onto the lineage contracts.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value:
+            Ref: LifecycleRecorderFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+Outputs:
+  RuleName:
+    Value:
+      Ref: LifecycleRule
+  RuleArn:
+    Value:
+      Fn::GetAtt:
+        - LifecycleRule
+        - Arn
+  QueueUrl:
+    Value:
+      Ref: LifecycleQueue
+  QueueArn:
+    Value:
+      Fn::GetAtt:
+        - LifecycleQueue
+        - Arn
+  DeadLetterQueueUrl:
+    Value:
+      Ref: LifecycleDeadLetterQueue
+  DeadLetterQueueArn:
+    Value:
+      Fn::GetAtt:
+        - LifecycleDeadLetterQueue
+        - Arn
+  RecorderFunctionName:
+    Value:
+      Ref: LifecycleRecorderFunction

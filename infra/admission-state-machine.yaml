@@ -80,7 +80,8 @@ Resources:
       # `$$.` for paths and `{}` for States.Format placeholders, none of which Fn::Sub
       # touches -- only `${...}` is substituted.
       #
-      # The two lineage writes catch S3.S3Exception, measured rather than guessed.
+      # The three conditional lineage writes -- WriteIntent, WriteDecision and now
+      # WriteBinding -- catch S3.S3Exception, measured rather than guessed.
       # tools/probe_conditional_write.py ran against this account on 2026-07-27: a
       # throwaway state machine wrote one object with `IfNoneMatch: "*"` and then wrote it
       # again, and the second execution failed with the error name `S3.S3Exception`. The
@@ -126,27 +127,183 @@ Resources:
       # shape of the defect. tests/test_phase2_admission_handler.py runs the handler and
       # reads these paths out of this file, so a rename on either side fails there.
       #
+      # PHASE 3 ADDS THREE THINGS AND CHANGES ONE, AND THE CHANGE IS THE SECURITY-RELEVANT
+      # HALF. ValidateAndDecide used to send "Payload.$": "$" -- the caller's whole
+      # execution input, forwarded unread. That was correct while every field in the input
+      # was the caller's own claim and the validator judged all of them. It stops being
+      # correct the moment one field is not the caller's: the image scan findings are read
+      # from ECR by the state machine itself, and a pass-through payload would let a
+      # caller supply an `image_scan` key of its own and declare its own image clean.
+      #
+      # So the payload is now built field by field, and `image_scan` comes from the
+      # ReadImageScan task's result and from nowhere else. Enumerating the fields has a
+      # second effect worth having: an execution started by hand with a field missing
+      # fails at the parameter build, naming the field, rather than reaching a handler
+      # that treats absence as a default. `approver` is enumerated for exactly that
+      # reason -- the handler treats it as optional and the submitting workflow always
+      # sends it, so an execution without one is a hand-started execution that should stop
+      # here rather than record an approval nobody gave.
+      #
+      # The three new states, and what each is for:
+      #
+      #   ReadImageScan   reads the ECR scan findings for the digest the manifest names,
+      #                   before anything is judged. It catches States.ALL and continues to
+      #                   ValidateAndDecide with the error object where the findings would
+      #                   have been, which is the fail-closed direction and not a shrug:
+      #                   image_scan_summary_from_ecr returns None for anything that is not
+      #                   a well-formed describe result, and image_scan_is_reviewed reads a
+      #                   None summary as nobody having seen the findings. An image with no
+      #                   scan yet returns ScanNotFoundException and is refused for the same
+      #                   reason a failed scan is. The catch is broad rather than named
+      #                   because the error names this integration produces have not been
+      #                   measured -- the same discipline that kept States.ALL on the
+      #                   lineage writes until tools/probe_conditional_write.py measured
+      #                   S3.S3Exception -- and here a guessed name that never fires would
+      #                   fail the whole execution on an unscanned image instead of
+      #                   refusing the run with a reason.
+      #   SubmitToBatch   sends the request the validator built. It carries InputPath and
+      #                   no Parameters, which is deliberate; see the note on that state.
+      #   WriteBinding    records the Batch job id write-once, the instant Batch accepts
+      #                   the submission and before anything has started.
+      #
+      # And the Succeed state moved. AdmissionAccepted's true branch used to end at
+      # "Admitted"; it now continues into submission and ends at "Submitted". An execution
+      # that reaches Submitted has admitted a run AND launched it, and there is no longer
+      # a terminal state that means "admitted and then nothing", which is the state a
+      # reader would otherwise have had to interpret.
+      #
+      # THE EXECUTION BLOCK IS CARRIED, NOT SELECTED, AND THAT IS THE SUBTLEST THING IN THIS
+      # FILE. The handler returns "execution" only when the run is accepted, and omits the
+      # key entirely otherwise -- which is the right shape, because a rejected submission
+      # that carried a submit request would be one InputPath away from being submitted
+      # anyway. It is also a shape a ResultSelector cannot read: a payload template resolves
+      # every `.$` reference before the state completes, an unresolvable reference is a
+      # States.Runtime failure, and there is no defaulting form. So
+      # "execution.$": "$.Payload.execution" is the natural spelling and it fails every
+      # rejected run -- which is the common case, in a state machine whose whole job is to
+      # refuse things.
+      #
+      # ResultSelector therefore carries the whole payload under "payload", which always
+      # exists, and ResolveExecutionTarget lifts $.admission.payload.execution to
+      # $.execution on the accepted branch only, where the key is guaranteed to be there.
+      # Everything downstream reads $.execution.
+      #
+      # The cost is that intent and decision appear twice in the state: once at
+      # $.admission.intent and $.admission.decision, which the two lineage writes read, and
+      # once inside $.admission.payload. They are a few kilobytes against a 256 KiB limit, so
+      # the cost is a reader who writes to the wrong one rather than a cost in bytes.
+      # $.admission.payload is a carrier and nothing but ResolveExecutionTarget should ever
+      # read out of it; the six named keys beside it are the interface.
+      #
+      # SUBMITTOBATCH PASSES THE REQUEST THROUGH WHOLE AND NAMES NO FIELD OF IT. The
+      # obvious spelling is a Parameters block listing JobName, JobQueue, JobDefinition,
+      # ContainerOverrides, Timeout, RetryStrategy, Tags, PropagateTags and, for a fan-out,
+      # ArrayProperties. That spelling reconstructs, in a template nobody unit-tests, a
+      # structure that src/edullm_platform/execution.py::batch_submit_request already builds
+      # and that a test already checks field by field -- and the way it fails is by silently
+      # dropping a key that was added on the Python side and not here. The mandatory attempt
+      # timeout is precisely such a key, and "the timeout stopped being sent" is not a
+      # failure anything downstream would notice.
+      #
+      # This state was planned as InputPath with no Parameters, which is the natural way to
+      # say that in JSONPath and is not deployable. Measured against
+      # `aws stepfunctions validate-state-machine-definition --type STANDARD` on
+      # 2026-07-27, with four controls on the same definition so the verdicts mean
+      # something:
+      #
+      #   InputPath, no Parameters   FAIL  "Parameters field is required for resource ARN:
+      #                                     arn:aws:states:::aws-sdk:batch:submitJob"
+      #   "Parameters.$": "$..."     FAIL  "Field 'Parameters.$' is not supported"
+      #   JSONata Arguments          OK
+      #   control: Parameters block  FAIL  names the missing JobQueue and JobDefinition, so
+      #     with fields missing            the validator knows the SubmitJob request schema
+      #   control: a field SubmitJob FAIL  "The field \"ThisFieldDoesNotExist\" is not
+      #     does not have                  supported by Step Functions"
+      #   control: a JSONata         FAIL  "Field '$states.inputt' does not exist"
+      #     variable that is not real
+      #   control: broken JSONata    FAIL  "Expected \")\" before end of expression"
+      #
+      # So this one state runs in JSONata while the rest of the machine stays in JSONPath,
+      # which Step Functions allows per state. Arguments is a single reference to the
+      # request and enumerates nothing, which is the property the plan asked InputPath for:
+      # a key added on the Python side arrives here without this file being touched, and no
+      # key can be dropped by an omission here because there are no keys here to omit.
+      #
+      # The cost is that a JSONata state replaces its whole output rather than merging into
+      # it, so Output puts the submit response beside the raw input instead of ResultPath
+      # doing it -- $merge([$states.input, {'submission': ...}]) is the same shape
+      # "ResultPath": "$.submission" would have produced, and the Catch does the same for
+      # the failure. Everything downstream is JSONPath again and reads $.admission and
+      # $.submission as though nothing had changed.
+      #
+      # ArrayProperties is the reason for the small Choice before WriteBinding.
+      # batch_submit_request omits it for a single container -- Batch rejects an array job
+      # of size one, so emitting it unconditionally would fail every non-fan-out submission
+      # -- and Amazon States Language cannot include a Parameters key conditionally. Two
+      # Pass states set $.binding_array_size to the size or to null, and one WriteBinding
+      # reads it, so the conditional write, the key and the checksum are written once.
+      # Dropping array_size from the binding instead would have been simpler and would mean
+      # a fan-out's binding record says nothing about the fan-out.
+      #
+      # The binding body is assembled here rather than returned by the handler, which is the
+      # opposite of how the intent and the decision are handled, and the reason is that the
+      # Batch job id does not exist until SubmitToBatch has run. It is the one lineage
+      # record whose bytes this file decides, so the key set is compared against
+      # BatchJobBinding's own field names by tests/test_phase3_infrastructure.py -- a field
+      # added to the contract and not here would otherwise be a record that fails validation
+      # only when somebody reads it back.
+      #
       # Comments live out here because everything below DefinitionString is inside a
       # literal block that is parsed as JSON, where a "#" line is a syntax error.
       DefinitionString:
         Fn::Sub: |
           {
-            "Comment": "Validate a submitted run manifest, then record the intent and the decision as write-once lineage.",
-            "StartAt": "ValidateAndDecide",
+            "Comment": "Read the image scan, validate a submitted run manifest, record the intent and the decision as write-once lineage, submit the accepted run to Batch, and record the binding.",
+            "StartAt": "ReadImageScan",
             "States": {
+              "ReadImageScan": {
+                "Type": "Task",
+                "Resource": "arn:${AWS::Partition}:states:::aws-sdk:ecr:describeImageScanFindings",
+                "Parameters": {
+                  "RepositoryName": "sbsandbox-intern-edullm-olmo-core",
+                  "ImageId": {
+                    "ImageDigest.$": "$.manifest.image_digest"
+                  }
+                },
+                "ResultPath": "$.image_scan",
+                "Catch": [
+                  {
+                    "ErrorEquals": ["States.ALL"],
+                    "ResultPath": "$.image_scan",
+                    "Next": "ValidateAndDecide"
+                  }
+                ],
+                "Next": "ValidateAndDecide"
+              },
               "ValidateAndDecide": {
                 "Type": "Task",
                 "Resource": "arn:${AWS::Partition}:states:::lambda:invoke",
                 "Parameters": {
                   "FunctionName": "${AdmissionValidatorFunction.Arn}",
-                  "Payload.$": "$"
+                  "Payload": {
+                    "run_id.$": "$.run_id",
+                    "submitter.$": "$.submitter",
+                    "approver.$": "$.approver",
+                    "approving_environment.$": "$.approving_environment",
+                    "approved_manifest_sha256.$": "$.approved_manifest_sha256",
+                    "manifest.$": "$.manifest",
+                    "workflow_run.$": "$.workflow_run",
+                    "image_scan.$": "$.image_scan"
+                  }
                 },
                 "ResultSelector": {
                   "accepted.$": "$.Payload.accepted",
+                  "run_id.$": "$.Payload.run_id",
                   "intent_key.$": "$.Payload.intent_key",
                   "decision_key.$": "$.Payload.decision_key",
                   "intent.$": "$.Payload.intent",
-                  "decision.$": "$.Payload.decision"
+                  "decision.$": "$.Payload.decision",
+                  "payload.$": "$.Payload"
                 },
                 "ResultPath": "$.admission",
                 "Retry": [
@@ -233,13 +390,118 @@ Resources:
                   {
                     "Variable": "$.admission.accepted",
                     "BooleanEquals": true,
-                    "Next": "Admitted"
+                    "Next": "ResolveExecutionTarget"
                   }
                 ],
                 "Default": "Rejected"
               },
-              "Admitted": {
+              "ResolveExecutionTarget": {
+                "Type": "Pass",
+                "InputPath": "$.admission.payload.execution",
+                "ResultPath": "$.execution",
+                "Next": "SubmitToBatch"
+              },
+              "SubmitToBatch": {
+                "Type": "Task",
+                "QueryLanguage": "JSONata",
+                "Resource": "arn:${AWS::Partition}:states:::aws-sdk:batch:submitJob",
+                "Arguments": "{% $states.input.execution.submit_request %}",
+                "Output": "{% $merge([$states.input, {'submission': $states.result}]) %}",
+                "Catch": [
+                  {
+                    "ErrorEquals": ["States.ALL"],
+                    "Output": "{% $merge([$states.input, {'submission_failure': $states.errorOutput}]) %}",
+                    "Next": "RecordSubmissionFailure"
+                  }
+                ],
+                "Next": "BindingIsFanOut"
+              },
+              "RecordSubmissionFailure": {
+                "Type": "Task",
+                "Resource": "arn:${AWS::Partition}:states:::aws-sdk:s3:putObject",
+                "Parameters": {
+                  "Bucket": "sbsandbox-intern-edullm-lineage",
+                  "Key.$": "States.Format('submission-failure/{}.json', $.admission.run_id)",
+                  "Body.$": "States.JsonToString($)",
+                  "ContentType": "application/json",
+                  "ChecksumAlgorithm": "SHA256",
+                  "IfNoneMatch": "*"
+                },
+                "ResultPath": null,
+                "Catch": [
+                  {
+                    "ErrorEquals": ["States.ALL"],
+                    "ResultPath": "$.submission_failure_write_failure",
+                    "Next": "SubmissionFailed"
+                  }
+                ],
+                "Next": "SubmissionFailed"
+              },
+              "BindingIsFanOut": {
+                "Type": "Choice",
+                "Choices": [
+                  {
+                    "Variable": "$.execution.submit_request.ArrayProperties",
+                    "IsPresent": true,
+                    "Next": "RecordFanOutSize"
+                  }
+                ],
+                "Default": "RecordSingleContainer"
+              },
+              "RecordFanOutSize": {
+                "Type": "Pass",
+                "InputPath": "$.execution.submit_request.ArrayProperties.Size",
+                "ResultPath": "$.binding_array_size",
+                "Next": "WriteBinding"
+              },
+              "RecordSingleContainer": {
+                "Type": "Pass",
+                "Result": null,
+                "ResultPath": "$.binding_array_size",
+                "Next": "WriteBinding"
+              },
+              "WriteBinding": {
+                "Type": "Task",
+                "Resource": "arn:${AWS::Partition}:states:::aws-sdk:s3:putObject",
+                "Parameters": {
+                  "Bucket": "sbsandbox-intern-edullm-lineage",
+                  "Key.$": "States.Format('binding/{}.json', $.admission.run_id)",
+                  "Body": {
+                    "schema_version": 1,
+                    "run_id.$": "$.admission.run_id",
+                    "batch_job_id.$": "$.submission.JobId",
+                    "batch_job_arn.$": "$.submission.JobArn",
+                    "batch_job_name.$": "$.submission.JobName",
+                    "job_queue_arn.$": "$.execution.target.job_queue_arn",
+                    "job_definition_arn.$": "$.execution.target.job_definition_arn",
+                    "compute_profile.$": "$.execution.target.compute_profile",
+                    "log_group.$": "$.execution.target.log_group",
+                    "attempt_duration_seconds.$": "$.execution.submit_request.Timeout.AttemptDurationSeconds",
+                    "attempts.$": "$.execution.submit_request.RetryStrategy.Attempts",
+                    "array_size.$": "$.binding_array_size",
+                    "submitted_at.$": "$$.State.EnteredTime"
+                  },
+                  "ContentType": "application/json",
+                  "ChecksumAlgorithm": "SHA256",
+                  "IfNoneMatch": "*"
+                },
+                "ResultPath": null,
+                "Catch": [
+                  {
+                    "ErrorEquals": ["S3.S3Exception"],
+                    "ResultPath": "$.write_failure",
+                    "Next": "RecordConflict"
+                  }
+                ],
+                "Next": "Submitted"
+              },
+              "Submitted": {
                 "Type": "Succeed"
+              },
+              "SubmissionFailed": {
+                "Type": "Fail",
+                "Error": "BatchSubmissionFailed",
+                "Cause": "The run was admitted and Batch refused the submission. The decision is recorded under decision/ and the failure under submission-failure/ in the lineage bucket."
               },
               "Rejected": {
                 "Type": "Fail",
