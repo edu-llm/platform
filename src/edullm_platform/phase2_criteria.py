@@ -72,15 +72,27 @@ PACKAGE = "tests/test_phase2_lambda_package.py"
 AUTHZ = "tests/test_authorization.py"
 
 #: What closes a criterion resting on a run that happened and was never captured. Written
-#: once because it is the same sentence twelve times, and a reader who has met it once
-#: should not have to check whether the twelfth wording differs. ``gaps`` is a tuple the
+#: once because it is the same sentence five times, and a reader who has met it once
+#: should not have to check whether the fifth wording differs. ``gaps`` is a tuple the
 #: gate joins with a space, so this is a sibling element rather than a concatenation.
+#:
+#: It used to say that no Phase 2 capture existed at all, which was true when it was
+#: written and stopped being true the same day. The correction matters more than the
+#: wording: a criterion that reads "nothing is captured" beside eight criteria covered on
+#: captures tells a reader the opposite of what the definition records, and the artifact
+#: each of these is actually short of is narrower and harder to find than "a capture".
+#:
+#: Two criteria carried this and should not have. Criterion 3 waits on a second lead
+#: rather than on an artifact, and criterion 9 waits on a capture this tool could take but
+#: does not; both now say what they actually wait on, in their own words.
 NEEDS_A_COMMITTED_CAPTURE: Final = (
-    "Nothing reads any of this. tools/capture_phase2_evidence.py does not exist, nothing "
-    "is committed under fixtures/evidence/phase-2/, and no test in this repository opens "
-    "a Phase 2 capture. Closing this means capturing the named artifact, sanitizing it "
-    "through the existing SecretFreeStr and account-id redaction machinery, committing "
-    "it, and citing a test that reads it."
+    "The capture that exists does not reach this. tools/capture_phase2_evidence.py "
+    "records the GitHub environment and secret configuration, the Step Functions "
+    "execution list and the lineage store's objects, and tests read all three from "
+    "fixtures/evidence/phase-2/. None of them is the artifact named here, so no cited "
+    "test opens evidence of it. Closing this means capturing that artifact, sanitizing "
+    "it through the existing SecretFreeStr and account-id redaction machinery, "
+    "committing it beside the others, and citing a test that reads it."
 )
 
 #: Why a template citation is not a deployed-role citation. Phase 1 draws the same
@@ -192,7 +204,16 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                     "also a lead. Closing this needs a second member of the team-leads team "
                     "to approve one routine submission."
                 ),
-                NEEDS_A_COMMITTED_CAPTURE,
+                (
+                    "What this waits on is a second person rather than a missing capture, and "
+                    "it is the only criterion in the phase where that is true. The tooling is "
+                    "already there: tools/capture_phase2_evidence.py records the lineage "
+                    "store's objects, the decision record names the approver, and criterion 1 "
+                    "is covered on exactly that reading of a run the submitter released. So "
+                    "the day a lead other than the submitter releases one routine submission, "
+                    "closing this is the ordinary re-capture and a citation -- and no amount "
+                    "of work in this repository brings that day forward."
+                ),
             ),
         ),
         CriterionSpec(
@@ -272,11 +293,13 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 ),
                 TEMPLATE_NOT_CAPTURE,
                 (
-                    "Ref is proved live by criterion 7 and manifest hash by criterion 13, "
-                    "both of which are themselves gaps for want of a capture. Minting a token "
-                    "from another repository is not something this project can arrange, so "
-                    "the repository and audience conditions will close on a deployed-role "
-                    "comparison rather than on an attempt."
+                    "The manifest-hash half is settled: criterion 13 is covered, on the "
+                    "committed decision records of two runs whose tampered hash was refused. "
+                    "Ref is the live half, and criterion 7 carries it -- itself a gap, for "
+                    "want of a CloudTrail capture. Minting a token from another repository is "
+                    "not something this project can arrange, so the repository and audience "
+                    "conditions will close on a deployed-role comparison rather than on an "
+                    "attempt."
                 ),
             ),
         ),
@@ -371,14 +394,26 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                     "CaIiRiS-caIIris",
                 ),
                 *_ids(AUTHZ, "test_plain_member_routine_run_approved_by_another_plain_member_is_denied"),
+                *_ids(GITHUB, "test_no_member_who_is_not_a_lead_or_admin_reviews_either_gate"),
             ),
             gaps=(
                 (
                     "Enforced twice and proved once. evaluate_authorization returns "
-                    "self_approval_not_permitted_for_member, which is the mechanism that "
-                    "holds regardless of GitHub's configuration. The second mechanism, that "
-                    "members are not reviewers on either environment, rests on the "
-                    "environment configuration, and nothing in this repository reads it."
+                    "self_approval_not_permitted_for_member against the shipped roster, which "
+                    "is the mechanism that holds regardless of GitHub's configuration. The "
+                    "second mechanism is that members are not reviewers on either environment."
+                ),
+                (
+                    "The environment capture reaches part of that second mechanism and not the "
+                    "whole of it, and the difference is where this criterion still sits. "
+                    "test_no_member_who_is_not_a_lead_or_admin_reviews_either_gate reads the "
+                    "committed capture and establishes that every reviewer named as a user on "
+                    "either gate is a lead or an admin in config/organization.yaml. The lead "
+                    "gate names no users at all: its single reviewer is the team-leads team, "
+                    "because eight leads exceed the six reviewer slots and a team counts as "
+                    "one. No capture records who is in that team, so a member added to "
+                    "team-leads on GitHub becomes a reviewer on the lead gate and every test "
+                    "here goes on passing."
                 ),
                 (
                     "Note that prevent_self_review is deliberately false on both "
@@ -386,7 +421,15 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                     "own exceptions are both intended. The flag is not what enforces this, "
                     "and a reader must not be left thinking it is."
                 ),
-                NEEDS_A_COMMITTED_CAPTURE,
+                (
+                    "Closing this means capturing the team-leads team's membership, which "
+                    "tools/capture_phase2_evidence.py does not record today, comparing it "
+                    "against config/organization.yaml the way the reviewer lists already are, "
+                    "and citing the test that reads it. Until then the reviewer half is proved "
+                    "only for named users, and what stands behind it is evaluate_authorization, "
+                    "which refuses the submission after the gate has opened rather than "
+                    "stopping the approval."
+                ),
             ),
         ),
         CriterionSpec(

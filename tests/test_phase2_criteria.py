@@ -28,6 +28,7 @@ from edullm_platform.criteria import (
     cited_node_ids,
 )
 from edullm_platform.phase2_criteria import PHASE2_CRITERION_COUNT, phase2_criteria
+from tests.gate_support import evidence_not_in_the_tree, fixtures_backing
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -70,17 +71,35 @@ def test_every_gap_says_what_would_close_it() -> None:
 
 
 def test_a_covered_criterion_never_rests_on_evidence_that_is_not_committed() -> None:
-    # The line this definition walks. A criterion may be covered on committed artifacts --
-    # a workflow file GitHub reads as-is, the admission core the Lambda carries -- and may
-    # not be covered on a run somebody watched. Anything citing a Phase 2 capture must
-    # wait until such a capture exists, and none does.
-    covered = [spec for spec in phase2_criteria() if spec.status is CriterionStatus.COVERED]
+    """A criterion may be covered on a capture only while that capture is in the tree.
 
+    The line this definition walks. A criterion may be covered on committed artifacts -- a
+    workflow file GitHub reads as-is, the admission core the Lambda carries, a capture
+    committed beside the criterion that cites it -- and may not be covered on a run
+    somebody watched. Phase 2's covered criteria do rest on captures, which is allowed
+    exactly because ``fixtures/evidence/phase-2/`` holds them; what is refused is a
+    criterion marked covered on evidence that never left the laptop it was taken on.
+
+    Mutation: delete ``fixtures/evidence/phase-2/github/`` and leave criterion 15 covered.
+    Equivalently, mark a criterion covered on a capture before committing the capture.
+
+    Expressed against the tree rather than against module names, and that is the repair.
+    The previous version refused node ids containing ``phase2_evidence`` or
+    ``phase2_capture``; the two modules that read Phase 2 captures are
+    ``test_phase2_github_evidence.py`` and ``test_phase2_lineage_evidence.py``, so neither
+    substring ever matched and the assertion held over an empty loop body. Nothing below
+    reads the name of a module or of a capture, so no rename can empty it again.
+    """
+    covered = [spec for spec in phase2_criteria() if spec.status is CriterionStatus.COVERED]
     assert covered
-    for spec in covered:
-        for node_id in spec.cited_node_ids:
-            assert "phase2_evidence" not in node_id
-            assert "phase2_capture" not in node_id
+
+    assert evidence_not_in_the_tree(covered) == ()
+
+    # Anchors the assertion above, which a definition citing no capture at all would
+    # satisfy without checking anything -- which is the state it was in until now.
+    resting_on = frozenset().union(*fixtures_backing(covered, CriterionStatus.COVERED).values())
+    assert Path("fixtures/evidence/phase-2/github") in resting_on
+    assert Path("fixtures/evidence/phase-2/lineage/records") in resting_on
 
 
 def test_no_criterion_cites_a_module_that_would_re_enter_the_gate() -> None:

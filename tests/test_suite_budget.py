@@ -105,10 +105,10 @@ def test_the_grouping_is_applied_before_xdist_reads_it() -> None:
     assert options["trylast"] is False
 
 
-def test_the_two_generators_and_this_budget_share_one_worker() -> None:
-    # The two of them share one verification, which only exists to be shared inside a
-    # single process. The budget joins them so that it is reading a worker that verified
-    # something rather than one that happened to get none of the work it measures.
+def test_every_generator_and_this_budget_share_one_worker() -> None:
+    # They share one verification, which only exists to be shared inside a single process.
+    # The budget joins them so that it is reading a worker that verified something rather
+    # than one that happened to get none of the work it measures.
     groups = {
         conftest.group_for(f"{module}::test_x")
         for module in (*GENERATOR_TEST_PATHS, "tests/test_suite_budget.py")

@@ -32,7 +32,7 @@ from edullm_platform.proof_bundle import (
     pytest_environment,
     run_full_suite,
 )
-from tools import build_phase0_proof, build_phase1_proof
+from tools import build_phase0_proof, build_phase1_proof, build_phase2_proof
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 NESTED_ENV = "EDULLM_TEST_NESTED"
@@ -190,23 +190,46 @@ def test_every_nested_run_carries_every_generators_guard() -> None:
     # about which variable the child happened to be missing.
     environment = pytest_environment(build_phase0_proof.NESTED_RUN_ENV)
 
-    assert [environment[variable] for variable in GENERATOR_NESTED_ENV_VARS] == ["1", "1"]
+    assert GENERATOR_NESTED_ENV_VARS
+    assert [environment[variable] for variable in GENERATOR_NESTED_ENV_VARS] == ["1"] * len(
+        GENERATOR_NESTED_ENV_VARS
+    )
 
 
-def test_the_two_generators_ask_for_the_same_environment() -> None:
-    phase0 = pytest_environment(build_phase0_proof.NESTED_RUN_ENV)
-    phase1 = pytest_environment(build_phase1_proof.NESTED_RUN_ENV)
+def test_every_generator_asks_for_the_same_environment() -> None:
+    asked = [
+        pytest_environment(generator.NESTED_RUN_ENV)
+        for generator in (build_phase0_proof, build_phase1_proof, build_phase2_proof)
+    ]
 
-    assert phase0 == phase1
+    assert len(asked) == len(GENERATOR_NESTED_ENV_VARS)
+    assert all(environment == asked[0] for environment in asked)
 
 
 def test_every_generators_guard_is_one_of_the_variables_that_gets_set() -> None:
     # A generator whose guard is left out of the shared list would be the one difference
     # between two children that are otherwise identical, and it would not refuse inside
     # another generator's verification run.
-    guards = {build_phase0_proof.NESTED_RUN_ENV, build_phase1_proof.NESTED_RUN_ENV}
+    guards = {
+        build_phase0_proof.NESTED_RUN_ENV,
+        build_phase1_proof.NESTED_RUN_ENV,
+        build_phase2_proof.NESTED_RUN_ENV,
+    }
 
     assert guards == set(GENERATOR_NESTED_ENV_VARS)
+
+
+def test_every_generator_module_is_listed_as_one() -> None:
+    # The two registries have to name the same set of generators. A module in one and not
+    # the other is a generator whose tests run inside another generator's verification --
+    # bounded, because each build excludes its own tests, and quadratic in wall clock.
+    generators = {
+        build_phase0_proof.GENERATOR_TEST_PATH,
+        build_phase1_proof.GENERATOR_TEST_PATH,
+        build_phase2_proof.GENERATOR_TEST_PATH,
+    }
+
+    assert generators == set(proof_bundle.GENERATOR_TEST_PATHS)
 
 
 # --------------------------------------------------------------------------------------
