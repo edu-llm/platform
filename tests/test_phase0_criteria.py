@@ -316,6 +316,7 @@ def test_a_phase_criteria_module_exists_to_be_checked() -> None:
     assert criteria_definition_files() == [
         "src/edullm_platform/phase0_criteria.py",
         "src/edullm_platform/phase1_criteria.py",
+        "src/edullm_platform/phase2_criteria.py",
     ]
 
 
