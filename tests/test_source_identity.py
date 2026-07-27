@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -74,8 +75,7 @@ class GitFixture:
         return verify_source_identity(**arguments)  # type: ignore[arg-type]
 
 
-@pytest.fixture
-def git_fixture(tmp_path: Path) -> GitFixture:
+def build_git_fixture(tmp_path: Path) -> GitFixture:
     origin = tmp_path / "origin.git"
     checkout = tmp_path / "checkout"
     subprocess.run(
@@ -107,6 +107,36 @@ def git_fixture(tmp_path: Path) -> GitFixture:
     )
 
 
+@pytest.fixture
+def git_fixture(tmp_path: Path) -> GitFixture:
+    """A repository of this test's own, for a test that changes it.
+
+    Building one costs nine git subprocesses. A test that dirties the worktree, commits,
+    or pushes needs its own; take ``unchanging_repository`` instead if you only read.
+    """
+    return build_git_fixture(tmp_path)
+
+
+@pytest.fixture(scope="module")
+def unchanging_repository(tmp_path_factory: pytest.TempPathFactory) -> Iterator[GitFixture]:
+    """One clean repository, shared by every test in this module that only reads it.
+
+    Most of these cases verify a clean checkout and assert on the refusal they get for a
+    bad argument, which leaves the tree exactly as it was found. Rebuilding a repository
+    for each of them was twenty-two identical setups.
+
+    A test that changes the tree may not use this. The teardown says so out loud rather
+    than leaving the next test in the module to fail somewhere unrelated.
+    """
+    fixture = build_git_fixture(tmp_path_factory.mktemp("unchanging"))
+    yield fixture
+    assert run_git(fixture.checkout, "status", "--porcelain") == "", (
+        "a test changed the shared repository. Every later test in this module read a "
+        "tree that was not the one this fixture set up; use git_fixture instead."
+    )
+    assert run_git(fixture.checkout, "rev-parse", "HEAD") == fixture.commit_sha
+
+
 def assert_reason(
     expected: SourceIdentityReason,
     fixture: GitFixture,
@@ -134,12 +164,12 @@ def source_identity_payload(**overrides: object) -> dict[str, object]:
 
 
 def test_clean_pushed_branch_returns_frozen_verified_identity(
-    git_fixture: GitFixture,
+    unchanging_repository: GitFixture,
 ) -> None:
-    identity = git_fixture.verify()
+    identity = unchanging_repository.verify()
 
     assert identity.model_dump() == source_identity_payload(
-        commit_sha=git_fixture.commit_sha
+        commit_sha=unchanging_repository.commit_sha
     )
     with pytest.raises(ValidationError):
         identity.commit_sha = "b" * 40
@@ -224,18 +254,18 @@ def test_unpushed_commit_fails_branch_head_verification(
     )
 
 
-def test_wrong_repository_id_fails(git_fixture: GitFixture) -> None:
+def test_wrong_repository_id_fails(unchanging_repository: GitFixture) -> None:
     assert_reason(
         SourceIdentityReason.REPOSITORY_ID_MISMATCH,
-        git_fixture,
+        unchanging_repository,
         github_repository_id=999,
     )
 
 
-def test_unknown_repository_fails(git_fixture: GitFixture) -> None:
+def test_unknown_repository_fails(unchanging_repository: GitFixture) -> None:
     assert_reason(
         SourceIdentityReason.UNREGISTERED_REPOSITORY,
-        git_fixture,
+        unchanging_repository,
         repository="missing",
     )
 
@@ -254,12 +284,12 @@ def test_unknown_repository_fails(git_fixture: GitFixture) -> None:
     ],
 )
 def test_verifier_rejects_invalid_identity_inputs(
-    git_fixture: GitFixture,
+    unchanging_repository: GitFixture,
     field: str,
     value: str,
     reason: SourceIdentityReason,
 ) -> None:
-    assert_reason(reason, git_fixture, **{field: value})
+    assert_reason(reason, unchanging_repository, **{field: value})
 
 
 def test_checkout_head_mismatch_fails(git_fixture: GitFixture) -> None:
@@ -277,27 +307,27 @@ def test_checkout_head_mismatch_fails(git_fixture: GitFixture) -> None:
     assert second_sha != git_fixture.commit_sha
 
 
-def test_missing_remote_ref_fails(git_fixture: GitFixture) -> None:
+def test_missing_remote_ref_fails(unchanging_repository: GitFixture) -> None:
     assert_reason(
         SourceIdentityReason.REMOTE_REF_MISSING,
-        git_fixture,
+        unchanging_repository,
         ref="refs/heads/missing",
     )
 
 
-def test_non_git_root_fails(git_fixture: GitFixture, tmp_path: Path) -> None:
+def test_non_git_root_fails(unchanging_repository: GitFixture, tmp_path: Path) -> None:
     non_git_root = tmp_path / "not-git"
     non_git_root.mkdir()
 
     assert_reason(
         SourceIdentityReason.NOT_GIT_REPOSITORY,
-        git_fixture,
+        unchanging_repository,
         repository_root=non_git_root,
     )
 
 
 def test_initial_git_probe_failure_is_git_command_failure(
-    git_fixture: GitFixture,
+    unchanging_repository: GitFixture,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -308,17 +338,17 @@ def test_initial_git_probe_failure_is_git_command_failure(
     fake_git.chmod(0o755)
     monkeypatch.setenv("PATH", str(fake_bin))
 
-    error = assert_reason(SourceIdentityReason.GIT_COMMAND_FAILURE, git_fixture)
+    error = assert_reason(SourceIdentityReason.GIT_COMMAND_FAILURE, unchanging_repository)
 
     assert "exit code 42" in error.detail
 
 
 def test_missing_remote_is_sanitized_git_command_failure(
-    git_fixture: GitFixture,
+    unchanging_repository: GitFixture,
 ) -> None:
     error = assert_reason(
         SourceIdentityReason.GIT_COMMAND_FAILURE,
-        git_fixture,
+        unchanging_repository,
         remote_name="missing",
     )
 
@@ -328,7 +358,7 @@ def test_missing_remote_is_sanitized_git_command_failure(
 
 
 def test_upload_pack_option_is_rejected_without_executing_command(
-    git_fixture: GitFixture,
+    unchanging_repository: GitFixture,
     tmp_path: Path,
 ) -> None:
     marker = tmp_path / "option-injection-marker"
@@ -336,7 +366,7 @@ def test_upload_pack_option_is_rejected_without_executing_command(
 
     error = assert_reason(
         SourceIdentityReason.INVALID_REMOTE,
-        git_fixture,
+        unchanging_repository,
         remote_name=unsafe_remote,
     )
 
@@ -356,18 +386,18 @@ def test_upload_pack_option_is_rejected_without_executing_command(
     ],
 )
 def test_unsafe_remote_names_are_rejected(
-    git_fixture: GitFixture,
+    unchanging_repository: GitFixture,
     remote_name: str,
 ) -> None:
     assert_reason(
         SourceIdentityReason.INVALID_REMOTE,
-        git_fixture,
+        unchanging_repository,
         remote_name=remote_name,
     )
 
 
 def test_ls_remote_uses_option_terminator(
-    git_fixture: GitFixture,
+    unchanging_repository: GitFixture,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -386,10 +416,10 @@ def test_ls_remote_uses_option_terminator(
     wrapper.chmod(0o755)
     monkeypatch.setenv("PATH", str(wrapper_directory))
 
-    git_fixture.verify()
+    unchanging_repository.verify()
 
     assert (
         "<-C>"
-        f"<{git_fixture.checkout}>"
+        f"<{unchanging_repository.checkout}>"
         "<ls-remote><--exit-code><--><origin><refs/heads/main>"
     ) in invocation_log.read_text()

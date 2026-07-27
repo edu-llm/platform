@@ -718,7 +718,9 @@ def test_a_pytest_run_that_never_finishes_is_reported_as_an_execution_failure(
     tmp_path: Path,
 ) -> None:
     root = write_suite(tmp_path, SLOW_SUITE)
-    outcome = run_node_ids(root, ["tests/test_mini.py::test_mini_sleeps"], timeout=2.0)
+    # The child sleeps for two minutes, so any timeout at all expires against it. Two
+    # seconds spent proving that is two seconds of the suite spent watching a clock.
+    outcome = run_node_ids(root, ["tests/test_mini.py::test_mini_sleeps"], timeout=0.3)
     assert outcome.execution_error is not None
     assert "did not finish" in outcome.execution_error
     assert outcome.passed == frozenset()

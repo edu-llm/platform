@@ -192,7 +192,7 @@ def run_node_ids(
                 passed=frozenset(),
                 exit_code=-1,
                 execution_error=(
-                    f"pytest did not finish within {timeout:.0f}s while executing "
+                    f"pytest did not finish within {timeout:g}s while executing "
                     f"{len(selectable)} cited node ids"
                 ),
             )
