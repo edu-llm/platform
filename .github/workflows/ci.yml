@@ -42,14 +42,19 @@ jobs:
       - name: Type check
         run: uv run --frozen mypy
 
-      # loadfile, not the default per-test distribution. Session-scoped fixtures are
-      # instantiated once per worker, and the heaviest of them verifies the tree with a
-      # nested full-suite pytest; splitting a module across workers would rebuild that
-      # verification on several of them at once and cost more than it saved. The flags
-      # live here and not in pyproject.toml so that a local `uv run pytest -q` stays
-      # serial, ordered, and readable when something fails.
+      # loadgroup, not the default per-test distribution, and not loadfile either. A
+      # worker is a process and a session fixture is built once per process, so where a
+      # test runs decides what the run costs. tests/conftest.py puts each module in its
+      # own group, which is what loadfile would do anyway; it also puts the two proof
+      # generators in one group, which loadfile cannot, and they need it because they
+      # share a single nested full-suite verification that they each pay for separately
+      # once they are on separate workers. Measured over two interleaved pairs: loadfile
+      # 49.9s and 50.3s, loadgroup 47.0s and 47.4s, for 33s of CPU rather than 46s.
+      #
+      # The flags live here and not in pyproject.toml so that a local `uv run pytest -q`
+      # stays serial, ordered, and readable when something fails.
       - name: Tests
-        run: uv run --frozen pytest -q -n4 --dist loadfile
+        run: uv run --frozen pytest -q -n4 --dist loadgroup
 
       - name: Schemas reproduce from the models
         run: |

@@ -16,10 +16,18 @@ These run last. ``tests/conftest.py`` moves anything marked ``session_budget`` t
 of the session, because a budget read in the middle reports a number that is still
 going up.
 
-Under ``-n`` each worker is its own process with its own count, so the budget is per
-worker and reads at most one on each of them. That is the honest reading: the cost being
-bounded is a per-process cost. The reuse itself is proved directly, and without any
-dependence on session ordering, in ``tests/test_verification_reuse.py``.
+Under ``-n`` each worker is its own process with its own count, so what is bounded is a
+per-process cost. ``tests/conftest.py`` puts this module in the same worker group as both
+generators, so on a full parallel run the process reading the budget is the process that
+did the verifying and the number means something.
+
+It cannot mean something everywhere. A filtered run that selects no generator — ``-m 'not
+slow'``, or a ``-k`` on one module — leaves a process with nothing to verify, and the
+budget reads zero and passes. That is the correct answer for that process and there is no
+honest way to tell it apart from a regression without the test reimplementing the
+scheduler's knowledge of who ran what. The reuse itself is proved directly, and without
+any dependence on ordering or on which worker anything landed on, in
+``tests/test_verification_reuse.py``.
 """
 
 from __future__ import annotations
@@ -27,9 +35,14 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
+import conftest
 import pytest
 
-from edullm_platform.proof_bundle import collection_child_runs, full_suite_child_runs
+from edullm_platform.proof_bundle import (
+    GENERATOR_TEST_PATHS,
+    collection_child_runs,
+    full_suite_child_runs,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -60,6 +73,48 @@ def test_a_session_collects_the_tree_at_most_once() -> None:
         "Collection is the same question for every generator and its answer does not "
         "change between them."
     )
+
+
+def test_every_test_is_assigned_exactly_one_worker_group(request: pytest.FixtureRequest) -> None:
+    """Under ``--dist loadgroup``, a test with no group is distributed on its own.
+
+    That is the expensive default this suite must never fall back into: it rebuilds every
+    session fixture on every worker, including the nested full-suite verification, and it
+    measured 88s against 47s. It fails nothing while it happens, so it is asserted here.
+    """
+    ungrouped = [
+        item.nodeid
+        for item in request.session.items
+        if not list(item.iter_markers(conftest.GROUP_MARKER))
+    ]
+
+    assert ungrouped == []
+
+
+def test_the_grouping_is_applied_before_xdist_reads_it() -> None:
+    """The hook that assigns groups must run before the one that acts on them.
+
+    xdist encodes each test's group into its node id from a hook of its own and sees only
+    the marks that already exist when it runs. Losing ``tryfirst`` means the marks are
+    applied too late, every one of them is ignored, and the suite silently takes twice as
+    long. Nothing else notices, so this does.
+    """
+    options = conftest.pytest_collection_modifyitems.pytest_impl
+
+    assert options["tryfirst"] is True
+    assert options["trylast"] is False
+
+
+def test_the_two_generators_and_this_budget_share_one_worker() -> None:
+    # The two of them share one verification, which only exists to be shared inside a
+    # single process. The budget joins them so that it is reading a worker that verified
+    # something rather than one that happened to get none of the work it measures.
+    groups = {
+        conftest.group_for(f"{module}::test_x")
+        for module in (*GENERATOR_TEST_PATHS, "tests/test_suite_budget.py")
+    }
+
+    assert groups == {conftest.SHARED_VERIFICATION_GROUP}
 
 
 def test_no_configured_default_makes_the_standard_command_a_subset() -> None:
