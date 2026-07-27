@@ -14,11 +14,11 @@ Resources:
       # through it. A branch wildcard here would hand every feature branch the ability to
       # rewrite the account's ECR stacks.
       #
-      # job_workflow_ref is a list because two workflow files deploy through this role,
+      # job_workflow_ref is a list because three workflow files deploy through this role,
       # one per phase. An array under a single StringEquals key is an OR across its
-      # elements, so either file's job is accepted and nothing else is; a StringLike over
-      # .github/workflows/* would have accepted any workflow anyone adds. Each entry names
-      # a file that must keep its exact path: renaming one revokes its deployments
+      # elements, so any of those files' jobs is accepted and nothing else is; a StringLike
+      # over .github/workflows/* would have accepted any workflow anyone adds. Each entry
+      # names a file that must keep its exact path: renaming one revokes its deployments
       # silently, and the run fails at AssumeRole with nothing pointing at the rename.
       #
       # The sub value carries owner and repository ids because this organization issues
@@ -41,6 +41,7 @@ Resources:
                 token.actions.githubusercontent.com:job_workflow_ref:
                   - edu-llm/platform/.github/workflows/deploy-phase1-ecr.yml@refs/heads/main
                   - edu-llm/platform/.github/workflows/deploy-phase2-admission.yml@refs/heads/main
+                  - edu-llm/platform/.github/workflows/deploy-phase3-batch.yml@refs/heads/main
                 token.actions.githubusercontent.com:repository_owner_id: "306859726"
                 token.actions.githubusercontent.com:repository_id: "1311508598"
               StringLike:
@@ -287,6 +288,294 @@ Resources:
                 Resource:
                   - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-admission-states
                   - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-admission-lambda
+        # A third inline policy, for the reason the second one is separate from the first:
+        # the phase boundary stays visible in `aws iam list-role-policies`, and a Phase 3
+        # edit cannot quietly change what Phase 1 or Phase 2 was reviewed with. The three
+        # are unioned by IAM, so the effective permissions are the same either way and the
+        # only thing separation costs is a longer file.
+        #
+        # Nothing here lets this role run anything. batch:SubmitJob, batch:TerminateJob and
+        # batch:CancelJob are all absent, deliberately, and that is the whole separation
+        # this phase rests on: the deployer builds the queue and the admission state
+        # machine is the only principal in the account that may put work on it. The same
+        # argument already keeps states:StartExecution off this role.
+        #
+        # iam:CreateServiceLinkedRole is absent too, per D5. Batch creates
+        # AWSServiceRoleForBatch on the first CreateComputeEnvironment if the caller holds
+        # it, which would put a role-creation call into a pipeline -- the thing the first
+        # paragraph of infra/README.md exists to prevent. A person runs one command
+        # instead; the command is in that file.
+        #
+        # ec2:RunInstances is absent. This role creates a compute environment and Batch's
+        # own service-linked role launches the instances, so a deployer that could launch
+        # one directly would be a compute path outside admission.
+        - PolicyName: deploy-phase3-batch-stacks
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # MEASURED, CONTROL-VERIFIED, AND NOT TO BE SCOPED. Every action in this
+              # statement is listed in its service authorization reference with no resource
+              # type, so "*" is the narrowest grant that exists for it and an ARN-scoped
+              # grant denies it outright.
+              #
+              # The measurement, on 2026-07-27 against this account: grant the action on
+              # exactly one ARN in a custom policy, then iam:SimulateCustomPolicy that
+              # action with --resource-arns naming the same ARN. Resource-level support
+              # means the grant matches and the answer is `allowed`; no resource type means
+              # IAM evaluates against `*`, the grant never matches, and the answer is
+              # `implicitDeny`. Two controls ran on every invocation and both behaved:
+              # cloudformation:ValidateTemplate returned implicitDeny (known to have no
+              # resource type, from a live Phase 1 deploy failure) and
+              # cloudformation:DescribeStacks returned allowed (known scopable, and scoped
+              # in the Phase 1 policy above).
+              #
+              # It is a separate statement for the reason Phase 2 learned expensively with
+              # logs:DescribeLogGroups. Written into a scoped statement, an action like this
+              # reads as the careful choice and is the wrong one, and the deploy fails with
+              # a message naming the action and no hint that the scope is what refused it.
+              # Everything else Phase 3 needs is scopable and is scoped below, including
+              # batch:SubmitJob -- which this role does not hold for a different reason.
+              - Effect: Allow
+                Action:
+                  - batch:DescribeComputeEnvironments
+                  - batch:DescribeJobDefinitions
+                  - batch:DescribeJobQueues
+                  - batch:DescribeJobs
+                  - batch:ListJobs
+                  - events:ListRules
+                Resource: "*"
+              # The second unscoped statement, and it is unscoped for a different reason
+              # that is worth keeping apart from the one above. EC2's Describe actions are
+              # account-wide by design -- they enumerate, they do not address, and the EC2
+              # service authorization reference lists none of them with a resource type.
+              # This is not the §0.5 simulator measurement; it is EC2's documented model,
+              # and the CloudFormation resource handlers for VPC, Subnet, RouteTable,
+              # InternetGateway and SecurityGroup call these on every Read.
+              #
+              # Read-only, and that bounds it: this statement reveals the shape of the
+              # shared account's networking and changes none of it. The actions that change
+              # networking are below, and their scope is the problem recorded there.
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeAvailabilityZones
+                  - ec2:DescribeInternetGateways
+                  - ec2:DescribeNetworkAcls
+                  - ec2:DescribeRouteTables
+                  - ec2:DescribeSecurityGroupRules
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeTags
+                  - ec2:DescribeVpcAttribute
+                  - ec2:DescribeVpcs
+                Resource: "*"
+              # THE WIDEST GRANT IN THIS FILE, and the one to argue about rather than skim.
+              #
+              # An EC2 network resource is addressed by an ID the service assigns at
+              # creation -- vpc-08fdb401..., subnet-0a1b... -- and IAM has no name to scope
+              # on, so `vpc/*` is the narrowest ARN that can be written. That means this
+              # role can delete any VPC, subnet, route table, internet gateway or security
+              # group in a shared account that currently holds six VPCs belonging to other
+              # interns. Nothing about the sbsandbox-intern-edullm- convention helps here,
+              # because the convention lives in a tag and a Name, not in the ARN.
+              #
+              # What actually bounds it, in the order it bites:
+              #   - this role is assumable only by three named workflow files on main, and
+              #     each of those deploys only the templates committed in this repository;
+              #   - CloudFormation is what makes the calls, against a template a reviewer
+              #     read, so a delete happens only where a committed template says so;
+              #   - CloudTrail records every one of these calls against this role name.
+              #
+              # What does not bound it, and should: a condition on
+              # aws:RequestTag/aws:ResourceTag, so that the delete and modify verbs reach
+              # only resources this project created. That is the correct narrowing and it
+              # is deliberately not written here, because create-time tagging has ordering
+              # rules this repository has not measured and a condition that is subtly wrong
+              # produces a deploy that fails in the middle with half a network. It is the
+              # first thing Phase 4 should measure, before it adds a second subnet list.
+              #
+              # ec2:RunInstances is absent from this list and must stay absent.
+              - Effect: Allow
+                Action:
+                  - ec2:AssociateRouteTable
+                  - ec2:AttachInternetGateway
+                  - ec2:AuthorizeSecurityGroupEgress
+                  - ec2:CreateInternetGateway
+                  - ec2:CreateRoute
+                  - ec2:CreateRouteTable
+                  - ec2:CreateSecurityGroup
+                  - ec2:CreateSubnet
+                  - ec2:CreateTags
+                  - ec2:CreateVpc
+                  - ec2:DeleteInternetGateway
+                  - ec2:DeleteRoute
+                  - ec2:DeleteRouteTable
+                  - ec2:DeleteSecurityGroup
+                  - ec2:DeleteSubnet
+                  - ec2:DeleteTags
+                  - ec2:DeleteVpc
+                  - ec2:DetachInternetGateway
+                  - ec2:DisassociateRouteTable
+                  - ec2:ModifySubnetAttribute
+                  - ec2:ModifyVpcAttribute
+                  - ec2:RevokeSecurityGroupEgress
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:internet-gateway/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:route-table/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group-rule/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:subnet/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:vpc/*
+              - Effect: Allow
+                Action:
+                  - batch:CreateComputeEnvironment
+                  - batch:DeleteComputeEnvironment
+                  - batch:UpdateComputeEnvironment
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:compute-environment/sbsandbox-intern-edullm-*
+              - Effect: Allow
+                Action:
+                  - batch:CreateJobQueue
+                  - batch:DeleteJobQueue
+                  - batch:UpdateJobQueue
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-*
+              # RegisterJobDefinition mints a revision and the revision is part of the ARN,
+              # so the scope carries the :* the queue and compute-environment scopes do not
+              # need. Without it the first deploy registers revision 1 and the second is
+              # denied, which reads as a permissions change nobody made.
+              - Effect: Allow
+                Action:
+                  - batch:DeregisterJobDefinition
+                  - batch:RegisterJobDefinition
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-*
+              # One statement for the three tag verbs across all three Batch resource types,
+              # rather than the same three actions repeated in each scope above. Batch uses
+              # one set of tagging actions for every resource it owns, so splitting them by
+              # resource type would mean tagging a queue was denied by a policy that looks
+              # as though it covers tagging.
+              - Effect: Allow
+                Action:
+                  - batch:ListTagsForResource
+                  - batch:TagResource
+                  - batch:UntagResource
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:compute-environment/sbsandbox-intern-edullm-*
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-*
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-*
+              # events:ListRules is not here. It has no resource type and is granted
+              # unscoped above; everything else the rule lifecycle needs does take a rule
+              # ARN, and a rule ARN on the default event bus is rule/<name>.
+              - Effect: Allow
+                Action:
+                  - events:DeleteRule
+                  - events:DescribeRule
+                  - events:ListTagsForResource
+                  - events:ListTargetsByRule
+                  - events:PutRule
+                  - events:PutTargets
+                  - events:RemoveTargets
+                  - events:TagResource
+                  - events:UntagResource
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:rule/sbsandbox-intern-edullm-*
+              # The Batch job log group, on the /aws/batch/ path, which is a different tree
+              # from the /aws/vendedlogs/states/ path the Phase 2 policy scopes. Neither
+              # statement reaches the other's groups, so a Phase 3 deploy cannot touch the
+              # admission execution record and a Phase 2 deploy cannot touch the job logs.
+              #
+              # Deliberately absent, as in Phase 2: logs:PutLogEvents and
+              # logs:DeleteLogStream. The deployer creates the group a job's output is
+              # written into and must not be able to write into it or remove part of it.
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:DeleteLogGroup
+                  - logs:DeleteRetentionPolicy
+                  - logs:ListTagsForResource
+                  - logs:PutRetentionPolicy
+                  - logs:TagResource
+                  - logs:UntagResource
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/batch/sbsandbox-intern-edullm-*
+              - Effect: Allow
+                Action:
+                  - cloudwatch:DeleteAlarms
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:ListTagsForResource
+                  - cloudwatch:PutMetricAlarm
+                  - cloudwatch:TagResource
+                  - cloudwatch:UntagResource
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:sbsandbox-intern-edullm-*
+              # The queue half of D6. EventBridge delivers to SQS and an event source
+              # mapping attaches the recorder, which is what lets this role stay without
+              # lambda:AddPermission -- the grant the Phase 2 policy excludes with the
+              # comment "the deployer creates the validator but may neither run it nor
+              # change who may run it". That decision is not reversed here; it is routed
+              # around, and the routing buys real retry and dead-letter semantics as well.
+              #
+              # An SQS ARN has no path segment, so the queue and its dead-letter queue are
+              # both covered by the one prefix. sqs:SendMessage, sqs:ReceiveMessage,
+              # sqs:DeleteMessage and sqs:PurgeQueue are absent: the deployer builds the
+              # queue, and reading or draining it is the recorder's business and the
+              # operator's.
+              - Effect: Allow
+                Action:
+                  - sqs:CreateQueue
+                  - sqs:DeleteQueue
+                  - sqs:GetQueueAttributes
+                  - sqs:GetQueueUrl
+                  - sqs:ListQueueTags
+                  - sqs:SetQueueAttributes
+                  - sqs:TagQueue
+                  - sqs:UntagQueue
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:sbsandbox-intern-edullm-*
+              # The other half of D6. These four authorize against the *function* ARN
+              # rather than against a mapping, because a mapping is identified by a UUID
+              # that does not exist until it is created. The scope is the same function
+              # prefix the Phase 2 policy uses for the function lifecycle itself.
+              #
+              # This is a capability added rather than a restriction removed, which is the
+              # whole reason option 2 was taken. An event source mapping decides which
+              # queue a function reads; it does not decide who may invoke the function, and
+              # lambda:AddPermission -- which does -- stays absent from this role.
+              - Effect: Allow
+                Action:
+                  - lambda:CreateEventSourceMapping
+                  - lambda:DeleteEventSourceMapping
+                  - lambda:GetEventSourceMapping
+                  - lambda:UpdateEventSourceMapping
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:sbsandbox-intern-edullm-*
+              # Four whole role ARNs, and they must stay whole. A prefix --
+              # sbsandbox-intern-edullm-* -- would let this role pass any role that ever
+              # takes such a name, including one created in Phase 4 with permissions nobody
+              # weighed against a deploy credential; passing a role is how a principal
+              # lends its own limits away. Naming each one means a fifth is a visible edit
+              # to this file rather than something a new role name inherits.
+              #
+              # Which call needs which:
+              #   - batch:CreateComputeEnvironment passes the instance role, through the
+              #     instance profile that wraps it. The profile is not itself passed --
+              #     iam:PassRole authorizes on the role inside it -- which is why there are
+              #     four ARNs here and five new IAM resources in the phase;
+              #   - batch:RegisterJobDefinition passes the execution role and the workload
+              #     role, which is where the container's two identities are fixed;
+              #   - lambda:CreateFunction passes the lifecycle recorder's role. That verb
+              #     is granted by the Phase 2 policy above and is not repeated here.
+              #
+              # The blast radius is bounded on the other side too: each of these four is
+              # trusted only by the single AWS service its own trust policy names, so
+              # passing one anywhere else yields a role that cannot be assumed.
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-execution
+                  - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-workload
+                  - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-instance
+                  - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-lifecycle-lambda
 
 Outputs:
   RoleName:

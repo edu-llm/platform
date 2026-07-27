@@ -185,7 +185,7 @@ def test_the_deployer_projection_keeps_the_narrowed_wildcards_it_was_given(
     # account, and sbsandbox-intern- alone is every intern's prefix. A projection that
     # dropped the suffix would compare equal to a role scoped over their stacks too.
     #
-    # Both inline policies are read, because the projection is what the comparison
+    # Every inline policy is read, because the projection is what the comparison
     # against the account is made of: a resource the projection never carried is a
     # resource the deployed role could hold without any finding being reported.
     resources = {
@@ -197,6 +197,22 @@ def test_the_deployer_projection_keeps_the_narrowed_wildcards_it_was_given(
     template_arn = "arn:${AWS::Partition}:%s:${AWS::Region}:${AWS::AccountId}:%s"
     bucket_arn = "arn:${AWS::Partition}:s3:::%s"
     role_arn = "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/%s"
+    # The one exception to "wildcards only after the edullm segment", and it is not a
+    # slip. An EC2 network resource is addressed by an ID the service assigns at creation,
+    # so there is no name for IAM to match on and `vpc/*` is the narrowest ARN that can be
+    # written. The template says so in the open and names the tag-condition narrowing that
+    # was not taken; enumerating the six here means a seventh has to be a visible edit.
+    ec2_network = {
+        template_arn % ("ec2", f"{resource_type}/*")
+        for resource_type in (
+            "internet-gateway",
+            "route-table",
+            "security-group",
+            "security-group-rule",
+            "subnet",
+            "vpc",
+        )
+    }
     assert resources == {
         template_arn % ("cloudformation", "stack/sbsandbox-intern-edullm-*/*"),
         template_arn % ("ecr", "repository/sbsandbox-intern-edullm-*"),
@@ -212,6 +228,19 @@ def test_the_deployer_projection_keeps_the_narrowed_wildcards_it_was_given(
         role_arn % "sbsandbox-intern-edullm-admission-states",
         role_arn % "sbsandbox-intern-edullm-admission-lambda",
         "*",
+        # Phase 3.
+        template_arn % ("batch", "compute-environment/sbsandbox-intern-edullm-*"),
+        template_arn % ("batch", "job-queue/sbsandbox-intern-edullm-*"),
+        template_arn % ("batch", "job-definition/sbsandbox-intern-edullm-*"),
+        template_arn % ("events", "rule/sbsandbox-intern-edullm-*"),
+        template_arn % ("logs", "log-group:/aws/batch/sbsandbox-intern-edullm-*"),
+        template_arn % ("cloudwatch", "alarm:sbsandbox-intern-edullm-*"),
+        template_arn % ("sqs", "sbsandbox-intern-edullm-*"),
+        role_arn % "sbsandbox-intern-edullm-batch-execution",
+        role_arn % "sbsandbox-intern-edullm-batch-workload",
+        role_arn % "sbsandbox-intern-edullm-batch-instance",
+        role_arn % "sbsandbox-intern-edullm-lifecycle-lambda",
+        *ec2_network,
     }
     assert not [one for one in resources if "sbsandbox-intern-*" in one]
     # The roles iam:PassRole names are written out whole, and a projection that folded

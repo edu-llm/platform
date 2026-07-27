@@ -23,15 +23,30 @@ ROLE_NAME = "sbsandbox-intern-edullm-infra-deployer"
 #: `aws iam list-role-policies`.
 PHASE1_POLICY_NAME = "deploy-phase1-stacks"
 PHASE2_POLICY_NAME = "deploy-phase2-admission-stacks"
+PHASE3_POLICY_NAME = "deploy-phase3-batch-stacks"
+DECLARED_POLICY_NAMES = [PHASE1_POLICY_NAME, PHASE2_POLICY_NAME, PHASE3_POLICY_NAME]
+
+#: The two this module reads statements out of, which is deliberately not all three. Every
+#: resource inventory and action list below was written against the scopes Phase 1 and
+#: Phase 2 were reviewed with, and folding Phase 3's Batch, EC2, SQS and EventBridge grants
+#: into them would turn each of those pinned lists into a list that grows every phase --
+#: which is the shape of an inventory nobody reads.
+#:
+#: What must still be true of the *whole* role is asserted rather than dropped, in
+#: tests/test_phase3_deployer_role.py: that iam:PassRole is the only IAM action anywhere in
+#: it, that no role-mutating action appears in any policy, and that it can never run what it
+#: builds. Those three read all three policies, because a claim about them that stopped at a
+#: phase boundary would be a claim about a third of a role.
 POLICY_NAMES = [PHASE1_POLICY_NAME, PHASE2_POLICY_NAME]
 
 REPOSITORY = "edu-llm/platform"
 MAIN_BRANCH_REF = "refs/heads/main"
-#: One workflow file per phase deploys through this role. Both are pinned by exact path,
-#: so both have to keep the names spelled here.
+#: One workflow file per phase deploys through this role. Each is pinned by exact path, so
+#: each has to keep the name spelled here.
 DEPLOY_WORKFLOWS = (
     ".github/workflows/deploy-phase1-ecr.yml",
     ".github/workflows/deploy-phase2-admission.yml",
+    ".github/workflows/deploy-phase3-batch.yml",
 )
 JOB_WORKFLOW_REFS = [f"{REPOSITORY}/{workflow}@{MAIN_BRANCH_REF}" for workflow in DEPLOY_WORKFLOWS]
 SUBJECT = "repo:edu-llm@306859726/platform@1311508598:ref:refs/heads/main"
@@ -306,16 +321,17 @@ def test_deployer_template_creates_exactly_one_bounded_role() -> None:
     assert properties["PermissionsBoundary"] == BOUNDARY
     assert properties["MaxSessionDuration"] <= 3600
 
-    # Two inline policies, one per phase, and no third. A policy nobody named here is a
-    # grant nobody below asserts the shape of.
+    # One inline policy per phase, in order, and no fourth. A policy nobody named here is a
+    # grant nobody asserts the shape of -- in this module for the first two, and in
+    # tests/test_phase3_deployer_role.py for the third.
     policies = properties["Policies"]
-    assert [policy["PolicyName"] for policy in policies] == POLICY_NAMES
+    assert [policy["PolicyName"] for policy in policies] == DECLARED_POLICY_NAMES
 
 
 def test_deployer_trusts_only_the_main_branch_deploy_workflows_through_github_oidc() -> None:
     # job_workflow_ref is a list, and an array under a single StringEquals key is an OR
     # across its elements. That makes the list itself the boundary of who may assume this
-    # role, so the whole document is pinned: a third entry is a third workflow file that
+    # role, so the whole document is pinned: a fourth entry is a fourth workflow file that
     # can deploy, and it has to fail here rather than be noticed in the console.
     trust = _role()["AssumeRolePolicyDocument"]
 
@@ -555,6 +571,50 @@ def test_deployer_grants_nothing_outside_the_services_the_two_phases_deploy() ->
     assert not any("*" in action for action in actions)
 
 
+#: Every wildcard the Phase 3 policy adds, in the order the template writes them. An
+#: inventory rather than a pattern, for the reason the Phase 1 and Phase 2 entries are one:
+#: the widening worth catching is a `*` that looks like the ones around it.
+#:
+#: The six ec2: entries are the only scopes in this role that do not carry the project
+#: prefix, and they cannot. An EC2 network resource is addressed by an ID the service
+#: assigns at creation, so `vpc/*` is the narrowest ARN that exists and this role can
+#: therefore delete any VPC, subnet, route table, internet gateway or security group in a
+#: shared account. The template says so in the open and names the narrowing that was not
+#: taken; tests/test_phase3_deployer_role.py enumerates the six resource types so a seventh
+#: has to be a visible edit.
+PHASE3_WILDCARDS = [
+    # The measured no-resource-type actions, then EC2's account-wide describes. Two
+    # statements, two different reasons, kept apart on purpose.
+    "*",
+    "*",
+    *[
+        REGIONAL_ARN % ("ec2", f"{resource_type}/*")
+        for resource_type in (
+            "internet-gateway",
+            "route-table",
+            "security-group",
+            "security-group-rule",
+            "subnet",
+            "vpc",
+        )
+    ],
+    REGIONAL_ARN % ("batch", f"compute-environment/{RESOURCE_PREFIX}*"),
+    REGIONAL_ARN % ("batch", f"job-queue/{RESOURCE_PREFIX}*"),
+    REGIONAL_ARN % ("batch", f"job-definition/{RESOURCE_PREFIX}*"),
+    # The tagging statement names all three Batch resource types, because Batch uses one
+    # set of tagging actions for every resource it owns.
+    REGIONAL_ARN % ("batch", f"compute-environment/{RESOURCE_PREFIX}*"),
+    REGIONAL_ARN % ("batch", f"job-definition/{RESOURCE_PREFIX}*"),
+    REGIONAL_ARN % ("batch", f"job-queue/{RESOURCE_PREFIX}*"),
+    REGIONAL_ARN % ("events", f"rule/{RESOURCE_PREFIX}*"),
+    REGIONAL_ARN % ("logs", f"log-group:/aws/batch/{RESOURCE_PREFIX}*"),
+    REGIONAL_ARN % ("cloudwatch", f"alarm:{RESOURCE_PREFIX}*"),
+    REGIONAL_ARN % ("sqs", f"{RESOURCE_PREFIX}*"),
+    # The event source mapping actions authorize against the function, not the mapping.
+    REGIONAL_ARN % ("lambda", f"function:{RESOURCE_PREFIX}*"),
+]
+
+
 def test_deployer_template_wildcards_are_only_the_declared_scopes() -> None:
     strings = list(walk_strings(load_template(TEMPLATE_PATH)))
 
@@ -569,6 +629,7 @@ def test_deployer_template_wildcards_are_only_the_declared_scopes() -> None:
         STATE_MACHINE_RESOURCE["Fn::Sub"],
         FUNCTION_RESOURCE["Fn::Sub"],
         LOG_GROUP_RESOURCE["Fn::Sub"],
+        *PHASE3_WILDCARDS,
     ]
     assert not ACCOUNT_LITERAL.search(TEMPLATE_PATH.read_text(encoding="utf-8"))
 

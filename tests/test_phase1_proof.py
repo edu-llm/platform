@@ -27,11 +27,12 @@ from edullm_platform.phase1_capture import (
     CAPTURE_SUFFIX,
     ROLE_CAPTURE_DIR,
     RUN_CAPTURE_DIR,
-    captures_that_do_not_hold,
+    only_a_pending_deploy_stands_in_the_way,
     read_committed_role_captures,
     read_committed_run_evidence,
 )
 from edullm_platform.proof_bundle import (
+    BundleWaitingOnADeployError,
     GoldenDigestDriftError,
     MissingTestNodeError,
     ProofBundleError,
@@ -45,6 +46,7 @@ from tools.build_phase1_proof import (
     BUNDLE_FILENAMES,
     GENERATOR_TEST_PATH,
     GOLDENS_FILENAME,
+    GOLDENS_REPORT_FILENAME,
     NESTED_RUN_ENV,
     Verification,
     build_bundle,
@@ -121,7 +123,7 @@ def strip_generated_at(documents: dict[str, str]) -> dict[str, str]:
 
 
 def captures_waiting_on_a_deploy() -> tuple[str, ...]:
-    """Roles whose committed capture no longer holds, which stops a bundle being built.
+    """Roles whose committed capture is behind its template because of a pending deploy.
 
     A template amendment lands before the stack that carries it, because the stacks holding
     these roles are applied from a laptop and this repository cannot obtain those
@@ -130,15 +132,47 @@ def captures_waiting_on_a_deploy() -> tuple[str, ...]:
     a bundle records criteria 4 and 5 as covered on the strength of those captures, so
     building one now would print a status the gate does not reach.
 
-    That refusal is the behaviour under test rather than an obstacle to it, which is why the
-    cases that need a built bundle are skipped rather than weakened, and why
+    **This asks the precise question, and it used to ask a looser one.** It was every
+    capture that had stopped holding, for any reason, which meant an expired capture and an
+    undeployed amendment produced the same skip below — an expiry disappearing into a
+    "waiting on a deploy" message is exactly the substitution the freshness window exists to
+    prevent. It now reads
+    :func:`~edullm_platform.phase1_capture.only_a_pending_deploy_stands_in_the_way`, which
+    returns nothing at all if anything else has also stopped holding, so those cases fail
+    loudly instead of standing down for a reason that is not the recorded one.
+
+    The refusal is the behaviour under test rather than an obstacle to it, which is why the
+    cases that need a *complete* bundle are skipped rather than weakened, and why
     :func:`test_the_generator_refuses_exactly_while_a_capture_is_waiting_on_a_deploy` runs in
     every state. Skipping without that case would let the skip outlive the deploy.
     """
     return tuple(
         capture.role_name
-        for capture in captures_that_do_not_hold(read_committed_role_captures(PROJECT_ROOT))
+        for capture in only_a_pending_deploy_stands_in_the_way(
+            read_committed_role_captures(PROJECT_ROOT)
+        )
     )
+
+
+def build_as_far_as_the_pending_deploy_allows(
+    directory: Path,
+    verification: Verification,
+) -> None:
+    """Build, tolerating the one refusal a laptop deploy nobody has run would cause.
+
+    For the two cases below that need the recorded goldens to exist and do not need a
+    complete bundle. The goldens pair is written before that refusal, deliberately: it
+    describes the committed templates and says nothing about the account, so a deploy
+    nobody has run must not stop the digests being recorded.
+
+    Only :class:`BundleWaitingOnADeployError` is tolerated, so every other refusal still
+    fails these cases, and once the deploy lands nothing is suppressed at all and both
+    cases read exactly as they did before this state existed.
+    """
+    try:
+        build_bundle(PROJECT_ROOT, directory, generated_at=FIRST_INSTANT, verification=verification)
+    except BundleWaitingOnADeployError:
+        pass
 
 
 def test_the_generator_refuses_exactly_while_a_capture_is_waiting_on_a_deploy(
@@ -148,33 +182,52 @@ def test_the_generator_refuses_exactly_while_a_capture_is_waiting_on_a_deploy(
     """Whichever state the tree is in, the generator must be in the matching one.
 
     Runs in both directions on purpose. While a capture is behind its template the build has
-    to refuse and name the role; once the deploy lands it has to succeed. The second half is
-    what clears the skips below, because the day they become unnecessary this case is what
-    fails if nobody has removed them.
+    to refuse, with the class that names *this* reason rather than any refusal at all, and
+    name the role; once the deploy lands it has to succeed. The second half is what clears
+    the skip below, because the day it becomes unnecessary this case is what fails if
+    nobody has removed the record it is waiting on.
+
+    It also asserts the goldens pair either way. That is the part a reviewer should read
+    twice: the digests of what a role template grants are recorded even in the refusing
+    state, so the tripwire stays armed against the template as amended rather than against
+    the one that was committed before the amendment.
     """
     waiting = captures_waiting_on_a_deploy()
 
     if waiting:
-        with pytest.raises(ProofBundleError) as refusal:
+        with pytest.raises(BundleWaitingOnADeployError) as refusal:
             build_into(tmp_path, verification, FIRST_INSTANT)
         for role_name in waiting:
             assert role_name in str(refusal.value)
+        assert sorted(path.name for path in tmp_path.iterdir()) == sorted(
+            (GOLDENS_FILENAME, GOLDENS_REPORT_FILENAME)
+        )
         return
 
     documents = build_into(tmp_path, verification, FIRST_INSTANT)
     assert set(documents) == set(BUNDLE_FILENAMES)
 
 
-#: For cases that build a bundle to prove it refuses something *else*. While a capture is
-#: waiting on a deploy the generator refuses for that reason first, so those cases would
-#: pass on a refusal they did not cause — which is worse than not running them.
-needs_a_buildable_bundle = pytest.mark.skipif(
-    bool(captures_waiting_on_a_deploy()),
-    reason=(
-        "a committed role capture is waiting on a laptop deploy, so the generator refuses "
-        "before reaching the refusal this case is about"
-    ),
-)
+def test_the_recorded_goldens_are_written_even_while_a_deploy_is_outstanding(
+    tmp_path: Path,
+    verification: Verification,
+) -> None:
+    """A digest of a committed template does not depend on the account, so nothing about
+    the account may stop it being recorded.
+
+    This is the case that keeps the two mechanisms from fighting. The golden tripwire
+    reports that a role template changed; the pending-amendment record reports that the
+    account has not caught up with that change. They are the same event seen from two
+    sides, and the tripwire is the one with a remedy — re-record it. Before the goldens
+    were written ahead of this refusal, that remedy was unreachable until a deploy no test
+    can perform, so the suite carried a permanently red test restating what the pending
+    record already said.
+    """
+    build_as_far_as_the_pending_deploy_allows(tmp_path, verification)
+
+    assert load_recorded_goldens(goldens_path(tmp_path)) == compute_goldens(PROJECT_ROOT)
+    for record in compute_goldens(PROJECT_ROOT):
+        assert record.digest in (tmp_path / GOLDENS_REPORT_FILENAME).read_text(encoding="utf-8")
 
 
 @pytest.fixture(scope="session")
@@ -185,8 +238,8 @@ def first_bundle(
     waiting = captures_waiting_on_a_deploy()
     if waiting:
         pytest.skip(
-            "a committed role capture is waiting on a laptop deploy, so no bundle can be "
-            f"built: {', '.join(waiting)}. See "
+            "a committed role capture is waiting on a laptop deploy, so no complete bundle "
+            f"can be built: {', '.join(waiting)}. See "
             "test_the_generator_refuses_exactly_while_a_capture_is_waiting_on_a_deploy, "
             "which fails once the deploy lands and this skip stops being true."
         )
@@ -263,7 +316,6 @@ def test_a_sentence_that_disagrees_with_the_definition_is_caught(
 
 
 @pytest.mark.slow
-@needs_a_buildable_bundle
 def test_the_generator_refuses_to_write_a_bundle_whose_prose_contradicts_the_gate(
     tmp_path: Path,
     verification: Verification,
@@ -336,7 +388,6 @@ def test_the_recorded_goldens_cover_every_committed_role() -> None:
 
 
 @pytest.mark.slow
-@needs_a_buildable_bundle
 def test_a_widened_template_refuses_the_build_rather_than_being_re_recorded(
     tmp_path: Path,
     verification: Verification,
@@ -344,7 +395,7 @@ def test_a_widened_template_refuses_the_build_rather_than_being_re_recorded(
     # The digest is over what the role grants, so this is a template that gained an
     # action. Re-recording it has to be a deliberate act, because the account was last
     # compared against the projection this replaces.
-    build_bundle(PROJECT_ROOT, tmp_path, generated_at=FIRST_INSTANT, verification=verification)
+    build_as_far_as_the_pending_deploy_allows(tmp_path, verification)
     recorded = json.loads(goldens_path(tmp_path).read_text(encoding="utf-8"))
     recorded["fixtures"][0]["digest"] = "sha256:" + "0" * 64
     goldens_path(tmp_path).write_text(json.dumps(recorded, indent=2, sort_keys=True) + "\n")
@@ -354,20 +405,22 @@ def test_a_widened_template_refuses_the_build_rather_than_being_re_recorded(
 
 
 @pytest.mark.slow
-@needs_a_buildable_bundle
 def test_regenerating_records_the_live_digest(tmp_path: Path, verification: Verification) -> None:
-    build_bundle(PROJECT_ROOT, tmp_path, generated_at=FIRST_INSTANT, verification=verification)
+    build_as_far_as_the_pending_deploy_allows(tmp_path, verification)
     recorded = json.loads(goldens_path(tmp_path).read_text(encoding="utf-8"))
     recorded["fixtures"][0]["digest"] = "sha256:" + "0" * 64
     goldens_path(tmp_path).write_text(json.dumps(recorded, indent=2, sort_keys=True) + "\n")
 
-    build_bundle(
-        PROJECT_ROOT,
-        tmp_path,
-        generated_at=FIRST_INSTANT,
-        regenerate_goldens=True,
-        verification=verification,
-    )
+    try:
+        build_bundle(
+            PROJECT_ROOT,
+            tmp_path,
+            generated_at=FIRST_INSTANT,
+            regenerate_goldens=True,
+            verification=verification,
+        )
+    except BundleWaitingOnADeployError:
+        pass
 
     assert load_recorded_goldens(goldens_path(tmp_path)) == compute_goldens(PROJECT_ROOT)
 
@@ -600,9 +653,14 @@ def test_the_index_does_not_open_by_calling_a_finished_phase_unfinished(
 
 @pytest.mark.slow
 def test_the_goldens_document_names_the_regeneration_command(
-    first_bundle: dict[str, str],
+    tmp_path: Path,
+    verification: Verification,
 ) -> None:
-    goldens = first_bundle["serialization-goldens.md"]
+    # Read off a written file rather than off the renderer, and off one written in
+    # whatever state the tree is in: the guidance a reader needs in order to re-record a
+    # digest is least useful in exactly the state where the rest of the bundle refuses.
+    build_as_far_as_the_pending_deploy_allows(tmp_path, verification)
+    goldens = (tmp_path / GOLDENS_REPORT_FILENAME).read_text(encoding="utf-8")
 
     assert "--regenerate-goldens" in goldens
     assert GOLDENS_FILENAME in goldens
@@ -672,7 +730,6 @@ def test_the_rebuild_document_names_every_cause_and_no_unexplained_field(
 
 
 @pytest.mark.slow
-@needs_a_buildable_bundle
 def test_a_rebuild_difference_nothing_explains_refuses_the_bundle(
     tmp_path: Path,
     verification: Verification,

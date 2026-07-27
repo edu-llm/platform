@@ -1,0 +1,213 @@
+{
+  "batch": {
+    "compute_environment_count": 0,
+    "compute_environments_per_queue_quota": 3,
+    "job_definition_count": 0,
+    "job_queue_count": 0,
+    "region": "us-east-1",
+    "standard_on_demand_vcpu_quota": 1152
+  },
+  "controls": [
+    {
+      "action": "ec2:CreateSecurityGroup",
+      "agrees": true,
+      "classified": "authorized",
+      "established_by": "CloudTrail records CreateSecurityGroup succeeding for a peer Intern-*-sbsandbox role in us-east-1 on 2026-07-27, with no errorCode.",
+      "expected": "authorized",
+      "region": "us-east-1"
+    },
+    {
+      "action": "ec2:CreateVpc",
+      "agrees": true,
+      "classified": "denied",
+      "established_by": "The same probe in us-east-1 returns DryRunOperation, so the difference is the region rather than the credentials or the probe.",
+      "expected": "denied",
+      "region": "us-east-2"
+    },
+    {
+      "action": "ec2:CreateVpc",
+      "agrees": true,
+      "classified": "quota_blocked",
+      "established_by": "Observed by making the real call, not a dry run: five VPCs exist against a quota of five. Authorization passed and there was no room, which is the distinction a policy simulation cannot draw.",
+      "expected": "quota_blocked",
+      "region": "us-east-1"
+    },
+    {
+      "action": "ec2:RunInstances",
+      "agrees": true,
+      "classified": "inconclusive",
+      "established_by": "A request EC2 rejected before authorizing anybody. The same probe with a real AMI id returns DryRunOperation, so reading this as a denial would have reported an authorized action as refused.",
+      "expected": "inconclusive",
+      "region": "us-east-1"
+    }
+  ],
+  "environment": "sandbox",
+  "method": "EC2 authorization is read with --dry-run against the real API, never from iam:SimulatePrincipalPolicy. DryRunOperation means the request would have succeeded; UnauthorizedOperation means it would not; a *LimitExceeded code means authorization passed and there is no room; anything else means the request never reached authorization. The simulator's OrganizationsDecisionDetail reported ten of these actions as denied in both regions when seven are authorized in us-east-1, which is why the method is recorded here rather than assumed.",
+  "observed_at": "2026-07-27T18:19:00Z",
+  "placement": {
+    "borrowing_terms": "Not borrowed in the end. This VPC was the interim candidate while us-east-1 sat at 5/5 VPCs; the L-F678F1CE increase to 10 was filed and applied on 2026-07-27 and confirmed by creating and deleting a VPC, so Phase 3 builds its own in infra/batch-network.yaml. Recorded here because it is the VPC these probes named, and a probe needs a VPC that exists.",
+    "region": "us-east-1",
+    "subnets": [
+      {
+        "availability_zone": "us-east-1a",
+        "available_ip_address_count": 251,
+        "instance_type_offered": true,
+        "map_public_ip_on_launch": true,
+        "subnet_id": "subnet-0adc00bb90d24bdcf"
+      },
+      {
+        "availability_zone": "us-east-1b",
+        "available_ip_address_count": 251,
+        "instance_type_offered": true,
+        "map_public_ip_on_launch": true,
+        "subnet_id": "subnet-0d88e99ba10258ee0"
+      },
+      {
+        "availability_zone": "us-east-1c",
+        "available_ip_address_count": 251,
+        "instance_type_offered": true,
+        "map_public_ip_on_launch": true,
+        "subnet_id": "subnet-0d5fd5e1ad51b99de"
+      },
+      {
+        "availability_zone": "us-east-1d",
+        "available_ip_address_count": 251,
+        "instance_type_offered": true,
+        "map_public_ip_on_launch": true,
+        "subnet_id": "subnet-04dd46c921c40074f"
+      },
+      {
+        "availability_zone": "us-east-1e",
+        "available_ip_address_count": 251,
+        "instance_type_offered": false,
+        "map_public_ip_on_launch": true,
+        "subnet_id": "subnet-00dd340f8b5b10f6d"
+      },
+      {
+        "availability_zone": "us-east-1f",
+        "available_ip_address_count": 251,
+        "instance_type_offered": true,
+        "map_public_ip_on_launch": true,
+        "subnet_id": "subnet-0e330153617b75d4c"
+      }
+    ],
+    "vpc_id": "vpc-08fdb401672d10c74",
+    "vpc_is_ours": false
+  },
+  "regions": [
+    {
+      "instance_type": "c7i.8xlarge",
+      "region": "us-east-1",
+      "subnet_id": "subnet-0d88e99ba10258ee0",
+      "verdicts": [
+        {
+          "action": "ec2:CreateVpc",
+          "error_code": "DryRunOperation",
+          "verdict": "authorized"
+        },
+        {
+          "action": "ec2:CreateSubnet",
+          "error_code": "DryRunOperation",
+          "verdict": "authorized"
+        },
+        {
+          "action": "ec2:CreateSecurityGroup",
+          "error_code": "DryRunOperation",
+          "verdict": "authorized"
+        },
+        {
+          "action": "ec2:CreateRouteTable",
+          "error_code": "DryRunOperation",
+          "verdict": "authorized"
+        },
+        {
+          "action": "ec2:CreateInternetGateway",
+          "error_code": "DryRunOperation",
+          "verdict": "authorized"
+        },
+        {
+          "action": "ec2:RunInstances",
+          "error_code": "DryRunOperation",
+          "verdict": "authorized"
+        },
+        {
+          "action": "ec2:CreateLaunchTemplate",
+          "error_code": "DryRunOperation",
+          "verdict": "authorized"
+        }
+      ],
+      "vpc_id": "vpc-08fdb401672d10c74"
+    },
+    {
+      "instance_type": "c7i.8xlarge",
+      "region": "us-east-2",
+      "subnet_id": "subnet-09cb45b6b1f06d05b",
+      "verdicts": [
+        {
+          "action": "ec2:CreateVpc",
+          "error_code": "UnauthorizedOperation",
+          "verdict": "denied"
+        },
+        {
+          "action": "ec2:CreateSubnet",
+          "error_code": "UnauthorizedOperation",
+          "verdict": "denied"
+        },
+        {
+          "action": "ec2:CreateSecurityGroup",
+          "error_code": "UnauthorizedOperation",
+          "verdict": "denied"
+        },
+        {
+          "action": "ec2:CreateRouteTable",
+          "error_code": "UnauthorizedOperation",
+          "verdict": "denied"
+        },
+        {
+          "action": "ec2:CreateInternetGateway",
+          "error_code": "DryRunOperation",
+          "verdict": "authorized"
+        },
+        {
+          "action": "ec2:RunInstances",
+          "error_code": "UnauthorizedOperation",
+          "verdict": "denied"
+        },
+        {
+          "action": "ec2:CreateLaunchTemplate",
+          "error_code": "DryRunOperation",
+          "verdict": "authorized"
+        }
+      ],
+      "vpc_id": "vpc-0854c9e902a502b2c"
+    }
+  ],
+  "schema_version": 1,
+  "service_linked_roles": [
+    {
+      "exists": false,
+      "role_name": "AWSServiceRoleForBatch"
+    },
+    {
+      "exists": true,
+      "role_name": "AWSServiceRoleForEC2Spot"
+    },
+    {
+      "exists": true,
+      "role_name": "AWSServiceRoleForECS"
+    },
+    {
+      "exists": true,
+      "role_name": "AWSServiceRoleForAutoScaling"
+    }
+  ],
+  "vpc_quota": {
+    "adjustable": true,
+    "in_use": 5,
+    "increase_request_id": "eee630cb-39294a78-ad1ed881-8c9c0a84-cgsdUwmS",
+    "increase_request_status": "PENDING",
+    "quota_code": "L-F678F1CE",
+    "quota_value": 10,
+    "region": "us-east-1"
+  }
+}

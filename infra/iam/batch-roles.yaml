@@ -1,0 +1,309 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: The three roles a Batch CPU job runs under, and the instance profile the container hosts assume.
+
+# Three roles rather than one, because a Batch EC2 job has three identities and merging any
+# two of them hands somebody a capability they had no reason to hold.
+#
+#   - the execution role is ECS's identity while it starts the task: it pulls the image and
+#     creates the log stream, and the container never sees its credentials;
+#   - the workload role is what the container's own process runs as, and it is the only one
+#     of the three an untrusted training command can use;
+#   - the instance role is what the EC2 host runs as, joining the ECS cluster Batch manages.
+#
+# Collapsing the execution role into the workload role is the tempting simplification and
+# it is the one that matters: the workload would then hold ECR pull credentials, which is
+# precisely the separation ECS task roles exist to provide.
+
+Resources:
+  # ------------------------------------------------------------------------------------
+  # Execution role: what ECS uses to start the task
+  # ------------------------------------------------------------------------------------
+  BatchExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sbsandbox-intern-edullm-batch-execution
+      PermissionsBoundary:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/InternSandboxBoundary
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      # Inline rather than a customer managed policy. InternSandboxBoundary denies
+      # iam:CreatePolicyVersion on every policy, so a managed policy could be created once
+      # and never amended; the first permission change would fail the stack update. Inline
+      # policies go through iam:PutRolePolicy, which the boundary permits on this name.
+      Policies:
+        - PolicyName: pull-the-image-and-open-the-log-stream
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # ecr:GetAuthorizationToken has no resource type: it mints a registry-wide
+              # token and there is no ARN to attach it to, so "*" is the narrowest grant
+              # that exists for it. Sourced rather than measured -- AWS's own
+              # AmazonECSTaskExecutionRolePolicy grants exactly this action on "*" and
+              # scopes the other three ECR actions -- and it is in its own statement so
+              # nobody has to guess which of the four earned the wildcard.
+              #
+              # What it can do is bounded on the other side: the token it returns is
+              # evaluated against this role's other grants, so holding it does not widen
+              # what may be pulled. The statement below is what decides that.
+              - Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              # The one repository, spelled out, not the sbsandbox-intern-edullm-* prefix
+              # the deployer uses. This role exists to pull the image the job definition
+              # pins; a prefix would let it pull anything this project ever publishes,
+              # including an image no admission decision named. Registering a second
+              # repository means editing this line, which is the direction that fails
+              # closed.
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-olmo-core
+              # Deliberately absent: logs:CreateLogGroup. infra/batch-compute.yaml creates
+              # the group, so a role that could create it would only ever do so by
+              # creating one nobody declared -- under a name a typo chose, with no
+              # retention, invisible to the stack. The awslogs driver fails loudly on a
+              # missing group, which is the answer we want.
+              #
+              # Deliberately absent: logs:GetLogEvents and logs:FilterLogEvents. This
+              # identity writes the record of what a job printed and must not be able to
+              # read back what other jobs printed.
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/batch/sbsandbox-intern-edullm-cpu:*
+
+  # ------------------------------------------------------------------------------------
+  # Workload role: what the container's own command runs as
+  # ------------------------------------------------------------------------------------
+  BatchWorkloadRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sbsandbox-intern-edullm-batch-workload
+      PermissionsBoundary:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/InternSandboxBoundary
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      # Inline rather than a customer managed policy, for the same boundary reason as the
+      # execution role above.
+      Policies:
+        - PolicyName: write-team-outputs-only
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # Per-team, not per-run, and narrower than per-bucket. A static role cannot
+              # name a run id, so a per-run prefix needs either a session tag that travels
+              # from admission into the Batch job or a role minted per run, and neither
+              # exists yet. Per-team is reachable today: one prefix, one role, and
+              # TeamBinding.s3_namespace in contracts/bindings.py is where the mapping
+              # lands when config/organization.yaml grows team bindings in Phase 5.
+              #
+              # This is narrower than the widest option and wider than the narrowest, and
+              # the gap is recorded rather than argued here: open decision 2 in
+              # src/edullm_platform/open_decisions.py carries the question, its three
+              # options and what brings it back. Do not re-argue it in this file; answer
+              # it there and change this line to match.
+              #
+              # data-prep is the team on fixtures/manifests/cpu-routine.yaml, which is the
+              # only CPU manifest this repository carries and therefore the only team that
+              # can submit to this queue today. Nothing verifies the claim --
+              # team_bindings.teams is empty, so team_verified is false on every decision
+              # -- so this prefix bounds where a job may write and does not establish who
+              # asked for it. A second team is a second role and a second statement here;
+              # widening this to teams/* would make the Phase 5 cross-team isolation check
+              # unprovable rather than failing.
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:AbortMultipartUpload
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-outputs/teams/data-prep/runs/*
+              # Listing is a bucket-level action, so it cannot be scoped by an object ARN;
+              # the prefix condition is what keeps it from enumerating another team's
+              # output. Granted because a workload that cannot tell whether it already
+              # wrote a shard re-writes it, and because the alternative -- listing the
+              # whole bucket -- is what a reader would reach for when this is missing.
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-outputs
+                Condition:
+                  StringLike:
+                    s3:prefix: teams/data-prep/runs/*
+              # No s3:GetObject, no s3:DeleteObject, and no reach into
+              # sbsandbox-intern-edullm-lineage at all. The lineage store is write-once by
+              # bucket policy and only the admission state machine writes to it; a
+              # workload role holding PutObject there would undo the property that store
+              # exists to have. Object Lock would refuse the delete, and a role that has
+              # to be stopped by Object Lock should not have been granted it.
+              #
+              # No batch:SubmitJob, no batch:TerminateJob, no states:StartExecution and no
+              # ecr:PutImage either. The container is the thing an untrusted command runs
+              # inside; it may write its results and it may not start anything, stop
+              # anything, or publish anything. tests/test_phase3_batch_denials.py proves
+              # each of those live rather than by reading this comment.
+              #
+              # No logs: action of any kind, which looks like an omission and is not. The
+              # container's stdout and stderr are written by the awslogs driver under the
+              # execution role above, before the workload's own process starts; a logs
+              # grant here would let the command write directly into the record of what it
+              # printed, which is a different thing from printing.
+              #
+              # No s3:GetObject either, so this role cannot read the dataset bucket the
+              # dolma fixture's command names. That is correct for the workload Phase 3
+              # runs -- a CPU smoke against a published image that reads nothing -- and it
+              # is the first grant a real tokenizer job will need. It arrives as an edit
+              # here with a reason, not as a prefix somebody widened.
+
+  # ------------------------------------------------------------------------------------
+  # Instance role: what the EC2 container host runs as
+  # ------------------------------------------------------------------------------------
+  BatchInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sbsandbox-intern-edullm-batch-instance
+      PermissionsBoundary:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/InternSandboxBoundary
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      # Inline rather than a customer managed policy, for the same boundary reason as the
+      # two roles above. This one is also where the standard advice is loudest, because
+      # AWS publishes AmazonEC2ContainerServiceforEC2Role for exactly this job. Attaching
+      # it would be one line. It is not attached, for two reasons that both hold: a
+      # managed policy is amendable only through iam:CreatePolicyVersion, which this
+      # boundary denies, and an AWS-managed policy can be widened by AWS without a diff in
+      # this repository. The statements below are that policy's contents, scoped where the
+      # action admits a scope.
+      Policies:
+        - PolicyName: join-the-batch-managed-ecs-cluster
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # Every action here is listed in the ECS and ECR service authorization
+              # references with no resource type. ecs:DiscoverPollEndpoint, ecs:Poll and
+              # ecs:StartTelemetrySession are the agent's control channel and are not
+              # about any one cluster; ecr:GetAuthorizationToken mints a registry-wide
+              # token, as it does for the execution role above. "*" is the narrowest grant
+              # that exists for all four, and they are in their own statement so a reader
+              # can see which ones earned it rather than assuming the whole policy gave up.
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecs:DiscoverPollEndpoint
+                  - ecs:Poll
+                  - ecs:StartTelemetrySession
+                Resource: "*"
+              # Batch names the ECS cluster it manages AWSBatch-<compute environment>-<id>,
+              # so the compute environment's own name is what makes this scopable at all.
+              # Renaming the compute environment in infra/batch-compute.yaml without
+              # changing this prefix produces instances that register nowhere and a queue
+              # whose jobs sit in RUNNABLE -- the same silent half-failure the job queue
+              # name has, and the reason tests/test_phase3_infrastructure.py compares the
+              # two files rather than each on its own.
+              - Effect: Allow
+                Action:
+                  - ecs:DeregisterContainerInstance
+                  - ecs:RegisterContainerInstance
+                  - ecs:SubmitAttachmentStateChanges
+                  - ecs:SubmitContainerStateChange
+                  - ecs:SubmitTaskStateChange
+                  - ecs:UpdateContainerInstancesState
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:cluster/AWSBatch-sbsandbox-intern-edullm-cpu-*
+              # The image layers the agent pulls on the host's behalf. Same single
+              # repository as the execution role, and for the same reason.
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-olmo-core
+              # The ECS agent's own log group, which is not the job's. Scoped to the
+              # /aws/ecs/ path so an instance cannot write into the record of what a job
+              # printed.
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/ecs/sbsandbox-intern-edullm-*
+
+  # An instance profile is the only way an EC2 instance can hold a role, and Batch takes
+  # its ARN in the compute environment. It lives in the same stack as the role it wraps
+  # because the two have no independent lifetime: a profile with no role is inert and a
+  # role no profile references cannot reach an instance.
+  #
+  # This was the one resource in Phase 3 whose creation had not been measured against the
+  # boundary before it was written, and it now has been. InternSandboxBoundary permits
+  # iam:CreateInstanceProfile and iam:AddRoleToInstanceProfile, measured on 2026-07-27 by
+  # the deploy of this stack, which created the profile and attached the role. They are
+  # separate actions from iam:CreateRole and were recorded here as unmeasured until that
+  # run answered them.
+  #
+  # Worth keeping rather than deleting for one reason: this profile is why the stack takes
+  # about three minutes to deploy where the other Phase 3 stacks take under one. That is
+  # IAM propagation rather than a hang.
+  BatchInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: sbsandbox-intern-edullm-batch-instance
+      Roles:
+        - Ref: BatchInstanceRole
+
+Outputs:
+  ExecutionRoleName:
+    Value:
+      Ref: BatchExecutionRole
+  ExecutionRoleArn:
+    Value:
+      Fn::GetAtt:
+        - BatchExecutionRole
+        - Arn
+  WorkloadRoleName:
+    Value:
+      Ref: BatchWorkloadRole
+  WorkloadRoleArn:
+    Value:
+      Fn::GetAtt:
+        - BatchWorkloadRole
+        - Arn
+  InstanceRoleName:
+    Value:
+      Ref: BatchInstanceRole
+  InstanceRoleArn:
+    Value:
+      Fn::GetAtt:
+        - BatchInstanceRole
+        - Arn
+  InstanceProfileName:
+    Value:
+      Ref: BatchInstanceProfile
+  InstanceProfileArn:
+    Value:
+      Fn::GetAtt:
+        - BatchInstanceProfile
+        - Arn

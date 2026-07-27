@@ -105,11 +105,8 @@ from edullm_platform.role_drift import (
     PolicyNotComparableError,
     RoleDriftReport,
     compare_role_to_template,
-    iam_policy_from_arn,
     load_template_roles,
-    read_inline_policy,
-    read_trust_statements,
-    redact_account_ids_in_document,
+    project_deployed_role,
     split_arn_fields,
 )
 
@@ -367,68 +364,6 @@ def read_identity(*, aws_profile: str, aws_region: str) -> AccountIdentity:
 # --------------------------------------------------------------------------------------
 
 
-def project_deployed_role(
-    role: Mapping[str, Any],
-    inline_documents: Sequence[Mapping[str, Any]],
-    attached: Sequence[Mapping[str, Any]],
-    *,
-    context: CaptureContext,
-) -> DeployedRoleEvidence:
-    """One role as IAM described it, masked and narrowed to what a template can be
-    compared against.
-
-    Read and dropped on purpose: the role's own ARN, its path, its role ID, its tags, its
-    description, and its creation and last-used dates. None of them is comparable to
-    anything this repository commits, and the ARN is the account ID with a name attached.
-    """
-    masked = redact_account_ids_in_document(dict(role), own_account=context.identity.account_id)
-    boundary = masked.get("PermissionsBoundary")
-    boundary_name: str | None = None
-    if isinstance(boundary, dict):
-        boundary_name, _scope = iam_policy_from_arn(
-            str(boundary.get("PermissionsBoundaryArn")), what="PermissionsBoundary"
-        )
-    trust_document = masked.get("AssumeRolePolicyDocument")
-    attached_policies = redact_account_ids_in_document(
-        list(attached), own_account=context.identity.account_id
-    )
-    return DeployedRoleEvidence.model_validate(
-        {
-            "source": "aws",
-            "environment": context.environment,
-            "status": "ok",
-            "observed_at": context.observed_at,
-            "role_name": masked.get("RoleName"),
-            "permissions_boundary_policy_name": boundary_name,
-            "max_session_duration_seconds": masked.get("MaxSessionDuration"),
-            "trust_policy_version": (
-                trust_document.get("Version") if isinstance(trust_document, dict) else None
-            ),
-            "trust_statements": read_trust_statements(trust_document),
-            "inline_policies": [
-                read_inline_policy(
-                    redact_account_ids_in_document(
-                        dict(document), own_account=context.identity.account_id
-                    )
-                )
-                for document in inline_documents
-            ],
-            "attached_managed_policies": [
-                {
-                    "policy_name": policy.get("PolicyName"),
-                    # The name comes from IAM's own field and the scope from the ARN,
-                    # because the ARN's name may carry a path and its owner field is the
-                    # only thing that says who manages the policy.
-                    "scope": iam_policy_from_arn(
-                        str(policy.get("PolicyArn")), what="AttachedPolicies entry"
-                    )[1],
-                }
-                for policy in attached_policies
-            ],
-        }
-    )
-
-
 def project_lifecycle_rule(rule: Mapping[str, Any]) -> EcrLifecycleRule:
     selection = rule.get("selection")
     action = rule.get("action")
@@ -508,7 +443,9 @@ def capture_role(context: CaptureContext, *, role_name: str) -> DeployedRoleEvid
         role,
         inline_documents,
         attached.get("AttachedPolicies", []),
-        context=context,
+        own_account=context.identity.account_id,
+        environment=context.environment,
+        observed_at=context.observed_at,
     )
 
 
