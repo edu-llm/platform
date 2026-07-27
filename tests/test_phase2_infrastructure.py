@@ -525,9 +525,12 @@ def test_admission_definition_validates_then_records_intent_and_decision() -> No
 
 def test_every_lineage_write_is_conditional_and_lands_on_its_documented_key() -> None:
     states = state_machine_definition()["States"]
+    # The two lineage keys come from the handler, which is the only component that knows
+    # the run id and the prefix together; the conflict key is derived from the execution
+    # name because it must still be writable when the handler's answer is what failed.
     expected_keys = {
-        "WriteIntent": "States.Format('intent/{}.json', $.run_id)",
-        "WriteDecision": "States.Format('decision/{}.json', $.run_id)",
+        "WriteIntent": "$.admission.intent_key",
+        "WriteDecision": "$.admission.decision_key",
         "RecordConflict": "States.Format('conflicts/{}.json', $$.Execution.Name)",
     }
 
@@ -611,7 +614,7 @@ def test_admission_ends_in_a_succeed_or_a_named_rejection_failure() -> None:
 
     assert choice["Type"] == "Choice"
     assert choice["Choices"] == [
-        {"Variable": "$.admission.decision.accepted", "BooleanEquals": True, "Next": "Admitted"}
+        {"Variable": "$.admission.accepted", "BooleanEquals": True, "Next": "Admitted"}
     ]
     assert choice["Default"] == "Rejected"
     assert states["Admitted"] == {"Type": "Succeed"}
