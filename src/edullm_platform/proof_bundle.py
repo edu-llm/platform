@@ -5,13 +5,11 @@ the test suite. That only works if the bundle cannot say something the gate does
 the parts that decide what a bundle may claim live here rather than in a generator: a
 second phase with its own copy could relax its own copy.
 
-:func:`contradicting_status_claims` is the sharpest of them. Tables in a bundle are
-rendered from the recorded status and cannot disagree with it; a hand-written sentence
-can, and once did. This reads every status word a document ascribes to a numbered check
-and refuses the bundle when one disagrees with the criteria definition. It is a blunt
-reader by design — it does not understand negation, so ``Check 9 is not covered`` reads
-as a claim of ``covered`` and is meant to. A claim a machine cannot check does not belong
-in a document whose whole purpose is being trustworthy without verification.
+:func:`contradicting_status_claims` is the sharpest of them, and it is imported from
+``edullm_platform.status_prose`` rather than written here: the same reader is run over a
+gate's own note, which is where this class of defect survived once. Tables in a bundle are
+rendered from the recorded status and cannot disagree with it; a hand-written sentence can,
+and twice did.
 
 Everything else here is the shared plumbing: the golden-digest tripwire and its
 regeneration discipline, the nested pytest runs a generator uses to verify the tree it is
@@ -28,11 +26,10 @@ import importlib
 import json
 import os
 import pkgutil
-import re
 import subprocess
 import sys
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, get_args
@@ -42,6 +39,11 @@ import edullm_platform
 from edullm_platform.contracts.base import ContractModel
 from edullm_platform.criteria import CriterionSpec, CriterionStatus
 from edullm_platform.evidence import redact_content_digests, scan_for_secrets
+from edullm_platform.status_prose import (
+    contradicting_status_claims,
+    status_claims,
+    status_count_claims,
+)
 
 __all__ = [
     "CITATION_LEGEND",
@@ -79,6 +81,7 @@ __all__ = [
     "schema_file_records",
     "source_commit_sha",
     "status_claims",
+    "status_count_claims",
     "status_label",
     "table",
 ]
@@ -98,19 +101,6 @@ GENERATOR_NESTED_ENV_VARS: Final = (
     "EDULLM_PHASE1_PROOF_NESTED",
 )
 
-# Prose that names a check and gives it a status. A sentence is the unit, because a
-# status word further away than that is talking about something else.
-CHECK_REFERENCE: Final = re.compile(
-    r"\b(?:check|criterion|criteria)\s+(?P<number>D?[0-9]+)\b", re.IGNORECASE
-)
-STATUS_CLAIM: Final = re.compile(r"\b(?P<word>covered|deferred|gaps?)\b", re.IGNORECASE)
-CLAUSE_BREAK: Final = re.compile(r"[.;|\n]")
-STATUS_BY_WORD: Final = {
-    "covered": CriterionStatus.COVERED,
-    "deferred": CriterionStatus.DEFERRED,
-    "gap": CriterionStatus.GAP,
-    "gaps": CriterionStatus.GAP,
-}
 STATUS_PROSE: Final = {
     CriterionStatus.COVERED: "covered",
     CriterionStatus.DEFERRED: "deferred",
@@ -733,60 +723,6 @@ def render_check_detail(check: CriterionSpec) -> list[str]:
             ]
         )
     return sections
-
-
-def _clause_around(text: str, reference: re.Match[str]) -> tuple[str, str]:
-    return (
-        CLAUSE_BREAK.split(text[: reference.start()])[-1],
-        CLAUSE_BREAK.split(text[reference.end() :], maxsplit=1)[0],
-    )
-
-
-def status_claims(text: str) -> tuple[tuple[str, CriterionStatus], ...]:
-    """Every ``(check number, status)`` pair this prose asserts.
-
-    A status word after the reference wins over one before it, because that is how a
-    status is ascribed: ``Check 9 is deferred``. Only the first word in the clause counts,
-    so ``deferred rather than covered`` claims one status and not two. No attempt is made
-    to read a negation: ``Check 9 is not covered`` reads here as a claim of COVERED, and
-    is meant to, because a claim a machine cannot check does not belong in this bundle.
-    """
-    claims: list[tuple[str, CriterionStatus]] = []
-    for reference in CHECK_REFERENCE.finditer(text):
-        before, after = _clause_around(text, reference)
-        claimed = STATUS_CLAIM.search(after) or STATUS_CLAIM.search(before)
-        if claimed is None:
-            continue
-        claims.append((reference.group("number"), STATUS_BY_WORD[claimed.group().lower()]))
-    return tuple(claims)
-
-
-def contradicting_status_claims(
-    documents: Mapping[str, str],
-    checks: Sequence[CriterionSpec],
-) -> tuple[str, ...]:
-    """Prose in a bundle that gives a check a status the criteria definition does not.
-
-    The bundle exists so a reviewer can trust it without reading the suite, so a sentence
-    that disagrees with the gate is the one defect it cannot survive. Tables are rendered
-    from the computed status and cannot disagree; a hand-written sentence can, and did.
-    """
-    recorded = {check.number: check.status for check in checks}
-    problems: list[str] = []
-    for filename, text in sorted(documents.items()):
-        for number, claimed in status_claims(text):
-            actual = recorded.get(number)
-            if actual is None:
-                problems.append(
-                    f"{filename} calls check {number} {claimed.value}, and no criterion of "
-                    "this phase carries that number"
-                )
-            elif actual is not claimed:
-                problems.append(
-                    f"{filename} calls check {number} {claimed.value}; the criteria "
-                    f"definition records it {actual.value}"
-                )
-    return tuple(problems)
 
 
 def recorded_status(checks: Sequence[CriterionSpec], number: str) -> CriterionStatus:

@@ -934,8 +934,12 @@ def test_the_json_output_keeps_the_two_groups_apart() -> None:
         "operational_inventory_passed",
         "passed",
     }
-    assert "thirteen Phase 0 acceptance criteria" in payload["phase_criteria_note"]
+    # Both notes count the group they describe rather than a number somebody wrote once,
+    # so this one-criterion report says one; tests/test_gate_notes.py holds the derivation.
+    assert "Phase 0 acceptance criteria" in payload["phase_criteria_note"]
+    assert "one criterion is covered" in payload["phase_criteria_note"]
     assert "NOT Phase 0 acceptance criteria" in payload["operational_inventory_note"]
+    assert "All one of them passing" in payload["operational_inventory_note"]
 
 
 def test_the_report_round_trips_through_contract_json() -> None:
