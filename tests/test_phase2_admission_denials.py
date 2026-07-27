@@ -569,6 +569,43 @@ def test_a_dry_run_that_would_have_succeeded_is_the_permission_being_present() -
     assert str(failure) == "attempt_permitted:ec2:RunInstances:DryRunOperation"
 
 
+def test_an_absent_image_found_missing_is_permission_because_the_lookup_follows_authz(
+) -> None:
+    # The one not-found this matrix reads as a permitted call, and it is measured rather
+    # than assumed. Against us-east-1 on 2026-07-27, run-instances --dry-run answered
+    # InvalidAMIID.Malformed for the seventeen-character forms and InvalidAMIID.NotFound
+    # for ami-00000000, from an identity that holds the permission. EC2 checks an
+    # identifier's format before authorizing and looks the image up after, so reaching
+    # the lookup at all means authorization passed.
+    #
+    # This is why the probe names an eight-character identifier. The long form is the
+    # current AMI format and is what documentation shows, and it made the first live run
+    # of this matrix inconclusive.
+    run_instances = probe_for("ec2:RunInstances")
+    stderr = cli_error(
+        "RunInstances", "InvalidAMIID.NotFound", "The image id '[ami-00000000]' does not exist"
+    )
+
+    failure = refused(run_instances, stderr)
+
+    assert failure.reason is PublisherDenialReason.ATTEMPT_PERMITTED
+    assert failure.error_code == "InvalidAMIID.NotFound"
+
+
+def test_the_probe_names_an_image_id_ec2_will_parse() -> None:
+    # A malformed identifier is refused before authorization, so the probe would report
+    # "failed for another reason" forever and the entry that stops this role launching
+    # compute would never be provable. Asserted on the value rather than left to a live
+    # run to rediscover.
+    from edullm_platform.admission_denials import ABSENT_IMAGE_ID
+
+    suffix = ABSENT_IMAGE_ID.removeprefix("ami-")
+
+    assert ABSENT_IMAGE_ID.startswith("ami-")
+    assert len(suffix) == 8, "us-east-1 answers the seventeen-character form Malformed"
+    assert all(character in "0123456789abcdef" for character in suffix)
+
+
 def test_a_conditional_write_refused_by_the_object_already_existing_is_permission() -> None:
     # If-None-Match is evaluated after the request is authorized, so a 412 is a caller
     # who may write meeting an object that is already there. It is the same shape as the
@@ -594,12 +631,15 @@ def test_a_conditional_write_refused_by_the_object_already_existing_is_permissio
         # not there gives NoSuchBucket, and only the first proves anything.
         ("s3:PutObject", "NoSuchBucket", "The specified bucket does not exist"),
         ("s3:PutObject", "NoSuchKey", "The specified key does not exist"),
-        # Not-found, in each service's spelling. Every one of these is the answer a
-        # permitted call gets when it is pointed at something that is not there.
+        # Not-found, in each service's spelling. These stay inconclusive because nobody
+        # has measured whether the service answers them before or after it authorizes,
+        # and the two orderings mean opposite things: after authorization a not-found
+        # proves the caller was permitted, before it proves nothing at all.
+        # ec2:RunInstances is deliberately absent from this list -- it is the one case
+        # where the ordering has been measured. See the test below.
         ("batch:SubmitJob", "ClientException", "Job queue does not exist"),
         ("states:StartExecution", "StateMachineDoesNotExist", "State Machine Does Not Exist"),
         ("states:StopExecution", "ExecutionDoesNotExist", "Execution Does Not Exist"),
-        ("ec2:RunInstances", "InvalidAMIID.NotFound", "The image id does not exist"),
         # Malformed: the service never reached the question of who was asking.
         ("iam:CreateRole", "MalformedPolicyDocument", "Syntax errors in policy."),
         ("states:StartExecution", "ValidationException", "1 validation error detected"),

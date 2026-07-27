@@ -43,6 +43,16 @@ recognised a permitted call only by ``returncode == 0`` would have reported the 
 outcome in the matrix as an inconclusive probe. Both are per-probe facts about a service,
 so :class:`AdmissionDenialProbe` carries the codes rather than the module holding one set.
 
+**And EC2 decides some things before it authorizes.** The first live run of this matrix
+reported the ``ec2:RunInstances`` probe as ``attempt_failed_for_another_reason`` with
+``InvalidAMIID.Malformed``: the identifier's *format* is checked ahead of authorization, so
+a malformed one never reaches the question the probe is asking. The image is looked *up*
+after authorization, which is why a permitted caller naming an absent image sees
+``InvalidAMIID.NotFound`` rather than ``DryRunOperation``. Both codes are recorded against
+``ABSENT_IMAGE_ID`` and ``EC2_PERMITTED_ERROR_CODES`` with the measurement that produced
+them. The matrix refusing to submit on that inconclusive probe, rather than counting five
+denials as good enough, is the behaviour that surfaced it.
+
 **One probe is not inert, and says so.** S3 has no dry run, and the bucket has to be the
 real one — a made-up name is answered ``NoSuchBucket`` before anybody is authorized, which
 is Phase 1's first lesson. So a permitted ``PutObject`` writes an object, once: the header
@@ -157,11 +167,20 @@ ADMISSION_DENIED_ACTIONS: Final = (
 #: later should widen what is recognised rather than break the probe.
 EC2_AUTHORIZATION_ERROR_CODES: Final = AUTHORIZATION_ERROR_CODES | {"UnauthorizedOperation"}
 
-#: What EC2 says when a dry run was *allowed*: "Request would have succeeded, but DryRun
-#: flag is set". It arrives as an error with a non-zero exit status, and it is the worst
-#: outcome this matrix can meet — the role can launch instances — so it is classified as
-#: the permission being present rather than as a call that failed for some other reason.
-EC2_PERMITTED_ERROR_CODES: Final = frozenset({"DryRunOperation"})
+#: What EC2 says when a dry run was *allowed*. Two codes, not one, because this probe
+#: names an image that does not exist.
+#:
+#: ``DryRunOperation`` is the documented one: "Request would have succeeded, but DryRun
+#: flag is set". ``InvalidAMIID.NotFound`` means the same thing here and is what this
+#: probe will actually meet, because EC2 looks an image up only after it has authorized
+#: the call -- so reaching the lookup at all proves the caller was permitted. Both arrive
+#: as an error with a non-zero exit status, and both are the worst outcome this matrix can
+#: meet: the role can launch instances.
+#:
+#: Leaving ``NotFound`` out would not have been the safe direction it looks like. The
+#: probe would report the role as inconclusive on the day it gained the permission, which
+#: is the day this matrix exists to notice.
+EC2_PERMITTED_ERROR_CODES: Final = frozenset({"DryRunOperation", "InvalidAMIID.NotFound"})
 
 #: What S3 says when a conditional write was *allowed* and the key was already there.
 #: ``If-None-Match: *`` is evaluated after the request is authorized, so a 412 is a caller
@@ -171,10 +190,21 @@ EC2_PERMITTED_ERROR_CODES: Final = frozenset({"DryRunOperation"})
 #: answered 412 and changes nothing.
 S3_PERMITTED_ERROR_CODES: Final = frozenset({"PreconditionFailed"})
 
-#: An AMI that cannot exist: the identifier is well formed and every digit of it is zero.
-#: Under ``--dry-run`` EC2 answers from the authorization check and never looks an image
-#: up, so this is only ever read by a person checking that the call could do nothing.
-ABSENT_IMAGE_ID: Final = "ami-00000000000000000"
+#: An AMI that cannot exist, in the *eight* character form. The seventeen-character form
+#: was here first and it broke the probe: measured against us-east-1 on 2026-07-27,
+#: ``ami-00000000000000000`` and ``ami-0123456789abcdef0`` are both answered
+#: ``InvalidAMIID.Malformed`` while ``ami-00000000`` is answered ``InvalidAMIID.NotFound``.
+#: The long form is the current AMI identifier format and is what documentation shows, so
+#: the wrong choice is the one that looks right.
+#:
+#: What that measurement settles is the ordering, and the ordering is the whole point.
+#: EC2 checks the *format* of an identifier before it authorizes, so a malformed one is
+#: refused before authorization is ever reached and the probe establishes nothing about
+#: the role -- which is exactly what the first live run reported. It looks the image *up*
+#: only after authorizing, which is why a permitted caller sees ``NotFound``. A well
+#: formed identifier that cannot exist therefore reaches authorization and stops there,
+#: which is the only position from which this probe can answer the question it asks.
+ABSENT_IMAGE_ID: Final = "ami-00000000"
 DENIAL_PROBE_INSTANCE_TYPE: Final = "t3.nano"
 
 #: Appended to the admission state machine's ARN, which puts the probe beside the one
