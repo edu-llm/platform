@@ -26,15 +26,26 @@ from pathlib import Path
 import pytest
 
 from edullm_platform import proof_bundle
-from edullm_platform.proof_bundle import run_full_suite
+from edullm_platform.proof_bundle import (
+    GENERATOR_NESTED_ENV_VARS,
+    collect_node_ids,
+    pytest_environment,
+    run_full_suite,
+)
+from tools import build_phase0_proof, build_phase1_proof
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 NESTED_ENV = "EDULLM_TEST_NESTED"
+COLLECTED = "tests/test_mini.py::test_mini_passes\ntests/test_mini.py::test_mini_also_passes\n"
 
 #: What a process that has just started knows about any tree: nothing.
 PROBE = (
     "from edullm_platform import proof_bundle\n"
-    "print(proof_bundle.full_suite_child_runs(), len(proof_bundle._FULL_SUITE_CACHE))\n"
+    "print(\n"
+    "    proof_bundle.full_suite_child_runs(),\n"
+    "    len(proof_bundle._FULL_SUITE_CACHE),\n"
+    "    len(proof_bundle._COLLECTION_CACHE),\n"
+    ")\n"
 )
 
 REPORT = (
@@ -46,10 +57,11 @@ REPORT = (
 
 @dataclass
 class SpawnRecorder:
-    """Stands in for the pytest child and records which tree it was asked to measure."""
+    """Stands in for the pytest child and records which tree it was asked about."""
 
     failures: int = 0
     roots: list[Path] = field(default_factory=list)
+    collections: list[Path] = field(default_factory=list)
 
     def __call__(
         self,
@@ -58,6 +70,11 @@ class SpawnRecorder:
         *,
         nested_env: str,
     ) -> subprocess.CompletedProcess[str]:
+        if "--collect-only" in arguments:
+            self.collections.append(repo_root)
+            return subprocess.CompletedProcess(
+                args=["pytest"], returncode=0, stdout=COLLECTED, stderr=""
+            )
         self.roots.append(repo_root)
         report = next(
             argument.removeprefix("--junitxml=")
@@ -83,6 +100,7 @@ def spawns(monkeypatch: pytest.MonkeyPatch) -> SpawnRecorder:
     budget in ``tests/test_suite_budget.py``.
     """
     monkeypatch.setattr(proof_bundle, "_FULL_SUITE_CACHE", {})
+    monkeypatch.setattr(proof_bundle, "_COLLECTION_CACHE", {})
     monkeypatch.setattr(proof_bundle, "_full_suite_child_runs", 0)
     recorder = SpawnRecorder()
     monkeypatch.setattr(proof_bundle, "run_pytest", recorder)
@@ -160,6 +178,67 @@ def test_a_failing_suite_is_remembered_as_the_failure_it_was(
     assert proof_bundle.full_suite_child_runs() == 1
 
 
+# --------------------------------------------------------------------------------------
+# One nested environment, so the two children are the same child
+# --------------------------------------------------------------------------------------
+
+
+def test_every_nested_run_carries_every_generators_guard() -> None:
+    # This is what makes sharing a measurement trivially correct rather than an argument
+    # about which variable the child happened to be missing.
+    environment = pytest_environment(build_phase0_proof.NESTED_RUN_ENV)
+
+    assert [environment[variable] for variable in GENERATOR_NESTED_ENV_VARS] == ["1", "1"]
+
+
+def test_the_two_generators_ask_for_the_same_environment() -> None:
+    phase0 = pytest_environment(build_phase0_proof.NESTED_RUN_ENV)
+    phase1 = pytest_environment(build_phase1_proof.NESTED_RUN_ENV)
+
+    assert phase0 == phase1
+
+
+def test_every_generators_guard_is_one_of_the_variables_that_gets_set() -> None:
+    # A generator whose guard is left out of the shared list would be the one difference
+    # between two children that are otherwise identical, and it would not refuse inside
+    # another generator's verification run.
+    guards = {build_phase0_proof.NESTED_RUN_ENV, build_phase1_proof.NESTED_RUN_ENV}
+
+    assert guards == set(GENERATOR_NESTED_ENV_VARS)
+
+
+# --------------------------------------------------------------------------------------
+# Collection, on the same terms
+# --------------------------------------------------------------------------------------
+
+
+def test_a_second_collection_of_the_same_tree_starts_no_child(
+    spawns: SpawnRecorder,
+    tmp_path: Path,
+) -> None:
+    first = collect_node_ids(tmp_path, nested_env=NESTED_ENV)
+    second = collect_node_ids(tmp_path, nested_env=NESTED_ENV)
+
+    assert spawns.collections == [tmp_path]
+    assert second == first
+    assert first == tuple(COLLECTED.split())
+
+
+def test_collecting_a_different_tree_starts_its_own_child(
+    spawns: SpawnRecorder,
+    tmp_path: Path,
+) -> None:
+    one = tmp_path / "one"
+    another = tmp_path / "another"
+    one.mkdir()
+    another.mkdir()
+
+    collect_node_ids(one, nested_env=NESTED_ENV)
+    collect_node_ids(another, nested_env=NESTED_ENV)
+
+    assert spawns.collections == [one, another]
+
+
 def test_a_new_process_has_verified_nothing() -> None:
     """The memory dies with the process, so it can never validate a tree it never saw.
 
@@ -176,4 +255,4 @@ def test_a_new_process_has_verified_nothing() -> None:
         shell=False,
     )
 
-    assert completed.stdout.strip() == "0 0"
+    assert completed.stdout.strip() == "0 0 0"

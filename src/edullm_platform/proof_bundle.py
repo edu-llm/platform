@@ -45,6 +45,7 @@ from edullm_platform.evidence import redact_content_digests, scan_for_secrets
 
 __all__ = [
     "CITATION_LEGEND",
+    "GENERATOR_NESTED_ENV_VARS",
     "GENERATOR_TEST_PATHS",
     "STATUS_LEGEND",
     "GoldenDigestDriftError",
@@ -86,6 +87,15 @@ BUNDLE_SCHEMA_VERSION: Final = 1
 #: Every test module that builds a proof bundle. Each generator excludes all of them from
 #: its verification run rather than only its own; see :func:`run_full_suite`.
 GENERATOR_TEST_PATHS: Final = ("tests/test_phase0_proof.py", "tests/test_phase1_proof.py")
+
+#: Every generator's recursion guard, all of which are set on every nested run rather than
+#: only the one belonging to the generator that started it; see :func:`pytest_environment`.
+#: A generator that adds one adds it here, and ``test_verification_reuse.py`` fails until
+#: it does.
+GENERATOR_NESTED_ENV_VARS: Final = (
+    "EDULLM_PHASE0_PROOF_NESTED",
+    "EDULLM_PHASE1_PROOF_NESTED",
+)
 
 # Prose that names a check and gives it a status. A sentence is the unit, because a
 # status word further away than that is talking about something else.
@@ -300,8 +310,21 @@ class SuiteOutcome:
 
 
 def pytest_environment(nested_env: str) -> dict[str, str]:
+    """The child's environment, with every generator's guard set rather than just one.
+
+    Setting only the caller's own guard left a Phase 0 child and a Phase 1 child differing
+    in one variable while running the same command over the same tree, which is a
+    difference with no consequence and one cost: two children that cannot be recognised as
+    the same measurement. Setting all of them makes them byte-identical, which is what
+    lets :func:`run_full_suite` and :func:`collect_node_ids` answer both from one run.
+
+    It tightens the guard rather than loosening it. Every generator now refuses inside any
+    nested run, not only inside its own, which is the answer a generator should give
+    anywhere below a verification.
+    """
     environment = dict(os.environ)
-    environment[nested_env] = "1"
+    for variable in (*GENERATOR_NESTED_ENV_VARS, nested_env):
+        environment[variable] = "1"
     return environment
 
 
@@ -322,7 +345,13 @@ def run_pytest(
     )
 
 
-def collect_node_ids(repo_root: Path, *, nested_env: str) -> tuple[str, ...]:
+#: What this process has already collected, keyed by resolved repository root. Memory
+#: only, for the reason given in :func:`run_full_suite`.
+_COLLECTION_CACHE: dict[Path, tuple[str, ...]] = {}
+
+
+def execute_collection(repo_root: Path, *, nested_env: str) -> tuple[str, ...]:
+    """Ask a pytest child what it can collect in this tree. No reuse, no memory."""
     completed = run_pytest(
         repo_root, ["--collect-only", "-q", "--no-header"], nested_env=nested_env
     )
@@ -334,6 +363,23 @@ def collect_node_ids(repo_root: Path, *, nested_env: str) -> tuple[str, ...]:
     node_ids = tuple(line.strip() for line in completed.stdout.splitlines() if "::" in line)
     if not node_ids:
         raise ProofBundleError("pytest collected no test node ids")
+    return node_ids
+
+
+def collect_node_ids(repo_root: Path, *, nested_env: str) -> tuple[str, ...]:
+    """Every node id pytest collects in this tree, collected once per process.
+
+    Kept on the same terms as :func:`run_full_suite`, and safe for the same reasons: the
+    memory is process-local and never written to disk, and the key is the resolved
+    repository root, so a different tree collects for itself. What every generator gets
+    is one honest listing of the tree in front of them rather than three of it.
+    """
+    key = repo_root.resolve()
+    remembered = _COLLECTION_CACHE.get(key)
+    if remembered is not None:
+        return remembered
+    node_ids = execute_collection(repo_root, nested_env=nested_env)
+    _COLLECTION_CACHE[key] = node_ids
     return node_ids
 
 
