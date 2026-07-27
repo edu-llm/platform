@@ -63,6 +63,7 @@ __all__ = [
     "count_naming",
     "describe_drift",
     "file_digest",
+    "full_suite_child_runs",
     "golden_drift",
     "golden_drift_guidance",
     "load_recorded_goldens",
@@ -382,20 +383,32 @@ def run_test_selection(
         return read_junit_outcome(report, completed.returncode), failed_node_ids(report)
 
 
-def run_full_suite(
+#: What this process has already measured, keyed by resolved repository root and ignore
+#: list. Memory only, and deliberately: a verification written to disk would be found
+#: again after the tree it described had changed, and a bundle would report a pass for a
+#: suite that never ran against what it describes. See :func:`run_full_suite`.
+_FULL_SUITE_CACHE: dict[tuple[Path, tuple[str, ...]], SuiteOutcome] = {}
+
+#: How many full-suite children this process has actually started. Read by the session
+#: budget in ``tests/test_suite_budget.py``, which is what stops a later phase quietly
+#: reintroducing the multiplier this cache removed.
+_full_suite_child_runs = 0
+
+
+def full_suite_child_runs() -> int:
+    """The number of full-suite pytest children started in this process so far."""
+    return _full_suite_child_runs
+
+
+def execute_full_suite(
     repo_root: Path,
     *,
     nested_env: str,
-    ignore: Sequence[str] = GENERATOR_TEST_PATHS,
+    ignore: Sequence[str],
 ) -> SuiteOutcome:
-    """The whole suite, minus the modules that build a bundle.
-
-    Every generator's test module is excluded, not just this generator's own. A generator
-    test builds a bundle, which runs the suite, which would run the other generator's
-    tests, which build another bundle: bounded, because each build excludes its own tests,
-    and quadratic in wall-clock time for no added assurance. Those modules run in the
-    reviewer's own `uv run pytest -q`, which is the command every bundle asks for.
-    """
+    """Start a pytest child and measure the tree with it. No reuse, no memory."""
+    global _full_suite_child_runs
+    _full_suite_child_runs += 1
     with tempfile.TemporaryDirectory() as workspace:
         report = Path(workspace) / "suite.xml"
         completed = run_pytest(
@@ -415,6 +428,40 @@ def run_full_suite(
                 + (completed.stderr.strip() or completed.stdout.strip())
             )
         return read_junit_outcome(report, completed.returncode)
+
+
+def run_full_suite(
+    repo_root: Path,
+    *,
+    nested_env: str,
+    ignore: Sequence[str] = GENERATOR_TEST_PATHS,
+) -> SuiteOutcome:
+    """The whole suite, minus the modules that build a bundle, measured once per tree.
+
+    Every generator's test module is excluded, not just this generator's own. A generator
+    test builds a bundle, which runs the suite, which would run the other generator's
+    tests, which build another bundle: bounded, because each build excludes its own tests,
+    and quadratic in wall-clock time for no added assurance. Those modules run in the
+    reviewer's own `uv run pytest -q`, which is the command every bundle asks for.
+
+    Several generators verify the same unchanged tree in one session and every one of them
+    asks the same question, so the answer is kept against the tree it was measured on. A
+    bundle still reports a full suite that genuinely ran in this session; it reports the
+    run that happened rather than the third repetition of it.
+
+    Two properties stop that becoming a way to claim a verification nobody performed. The
+    memory is process-local and never written to disk, so a new process measures rather
+    than remembers and a pass recorded before a change cannot be found after it. And the
+    key is the resolved root with the ignore list, so a different tree — including every
+    temporary one a test builds — misses and measures for itself.
+    """
+    key = (repo_root.resolve(), tuple(ignore))
+    remembered = _FULL_SUITE_CACHE.get(key)
+    if remembered is not None:
+        return remembered
+    outcome = execute_full_suite(repo_root, nested_env=nested_env, ignore=ignore)
+    _FULL_SUITE_CACHE[key] = outcome
+    return outcome
 
 
 # --------------------------------------------------------------------------------------
