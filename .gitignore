@@ -15,3 +15,12 @@ build/
 dist/
 *.egg-info/
 .eggs/
+
+# Phase 3 work in progress, being written by a separate planning agent in this same
+# checkout. Ignored so that a `git add -A` from Phase 2 work cannot sweep half-written
+# files into a commit -- which is exactly how they reached main once, taking CI down on a
+# lint error in a file nobody had finished. Remove these lines when Phase 3 ships them
+# deliberately.
+/src/edullm_platform/phase3_evidence.py
+/tools/capture_phase3_evidence.py
+/tests/test_phase3_ec2_authorization.py
