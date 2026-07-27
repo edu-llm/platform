@@ -124,10 +124,15 @@ DRIFT_COMPARISON_RAN: Final = (
     "committed template and reports any divergence in trust conditions, permission "
     "statements, boundary, session duration or attached managed policies, in both "
     "directions. tools/capture_phase1_evidence.py ran it against the sandbox: two roles "
-    "compared, no findings. The sanitized records are committed under "
-    "fixtures/evidence/phase-1/roles/ and tests/test_phase1_deployed_roles.py re-runs the "
-    "comparison on every test run, so a policy widened in the console would now be caught "
-    "the next time either is executed rather than leaving every test green."
+    "compared, no findings against the templates as they stood. The sanitized records are "
+    "committed under fixtures/evidence/phase-1/roles/ and "
+    "tests/test_phase1_deployed_roles.py re-runs the comparison on every test run, so a "
+    "policy widened in the console would now be caught the next time either is executed "
+    "rather than leaving every test green. Phase 2 has since amended the deployer template "
+    "to reach the admission stacks, so the comparison currently reports the deployed role "
+    "as narrower than the template it is measured against. That difference is recorded as a "
+    "pending amendment with the deploy that clears it, and it does not weaken this "
+    "criterion: any divergence other than the recorded one still fails."
 )
 
 #: The CLI the workflow actually invokes, parametrised over one rejection reason each.

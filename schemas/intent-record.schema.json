@@ -1,0 +1,269 @@
+{
+  "$defs": {
+    "ApprovalEnvironment": {
+      "description": "The GitHub environment a job passed through to reach AWS.\n\nThese strings are load-bearing in three places at once and must agree in all of them:\nthe ``environment:`` key of the submission workflow, the GitHub environment names\nthemselves, and the ``sub`` condition of the admission role's trust policy, which\nenumerates them exactly rather than matching a wildcard. Renaming one here without\nrenaming it in the other two silently revokes the trust \u2014 and the failure surfaces as\nan ``AssumeRole`` denial that reads like a broken role ARN.",
+      "enum": [
+        "run-approval-lead",
+        "run-approval-admin"
+      ],
+      "title": "ApprovalEnvironment",
+      "type": "string"
+    },
+    "CheckpointContract": {
+      "additionalProperties": false,
+      "properties": {
+        "destination_prefix": {
+          "pattern": "^s3://sbsandbox-intern-[a-z0-9](?:[a-z0-9.-]{0,44}[a-z0-9])?/.+/$",
+          "title": "Destination Prefix",
+          "type": "string"
+        },
+        "interval_minutes": {
+          "exclusiveMinimum": 0,
+          "title": "Interval Minutes",
+          "type": "integer"
+        },
+        "resume_required": {
+          "title": "Resume Required",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "interval_minutes",
+        "destination_prefix",
+        "resume_required"
+      ],
+      "title": "CheckpointContract",
+      "type": "object"
+    },
+    "FanOut": {
+      "additionalProperties": false,
+      "properties": {
+        "index_parameter": {
+          "minLength": 1,
+          "title": "Index Parameter",
+          "type": "string"
+        },
+        "max_parallel": {
+          "minimum": 1,
+          "title": "Max Parallel",
+          "type": "integer"
+        },
+        "size": {
+          "minimum": 2,
+          "title": "Size",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "size",
+        "max_parallel",
+        "index_parameter"
+      ],
+      "title": "FanOut",
+      "type": "object"
+    },
+    "GitHubWorkflowRunReference": {
+      "additionalProperties": false,
+      "properties": {
+        "run_attempt": {
+          "exclusiveMinimum": 0,
+          "title": "Run Attempt",
+          "type": "integer"
+        },
+        "run_id": {
+          "exclusiveMinimum": 0,
+          "title": "Run Id",
+          "type": "integer"
+        },
+        "run_repository": {
+          "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?/[A-Za-z0-9_](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9_-])?$",
+          "title": "Run Repository",
+          "type": "string"
+        },
+        "workflow_path": {
+          "pattern": "^\\.github/workflows/[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?\\.ya?ml$",
+          "title": "Workflow Path",
+          "type": "string"
+        },
+        "workflow_ref": {
+          "pattern": "^(?:refs/(?:heads|tags)/[A-Za-z0-9][A-Za-z0-9._/-]*|[0-9a-f]{40})$",
+          "title": "Workflow Ref",
+          "type": "string"
+        },
+        "workflow_repository": {
+          "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?/[A-Za-z0-9_](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9_-])?$",
+          "title": "Workflow Repository",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_repository",
+        "workflow_repository",
+        "workflow_path",
+        "workflow_ref",
+        "run_id",
+        "run_attempt"
+      ],
+      "title": "GitHubWorkflowRunReference",
+      "type": "object"
+    },
+    "RunManifest": {
+      "additionalProperties": false,
+      "properties": {
+        "checkpoint": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CheckpointContract"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "command": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Command",
+          "type": "array"
+        },
+        "commit_sha": {
+          "pattern": "^[0-9a-f]{40}$",
+          "title": "Commit Sha",
+          "type": "string"
+        },
+        "compute_profile": {
+          "minLength": 1,
+          "title": "Compute Profile",
+          "type": "string"
+        },
+        "dataset_release": {
+          "minLength": 1,
+          "title": "Dataset Release",
+          "type": "string"
+        },
+        "fanout": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FanOut"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "image_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Image Digest",
+          "type": "string"
+        },
+        "maximum_attempts": {
+          "minimum": 1,
+          "title": "Maximum Attempts",
+          "type": "integer"
+        },
+        "maximum_runtime_hours": {
+          "pattern": "^(?:[1-9][0-9]*(?:\\.[0-9]+)?|0\\.[0-9]*[1-9][0-9]*)$",
+          "title": "Maximum Runtime Hours",
+          "type": "string"
+        },
+        "repository": {
+          "minLength": 1,
+          "title": "Repository",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "team": {
+          "minLength": 1,
+          "title": "Team",
+          "type": "string"
+        },
+        "wandb_project": {
+          "minLength": 1,
+          "title": "Wandb Project",
+          "type": "string"
+        },
+        "workload_profile": {
+          "minLength": 1,
+          "title": "Workload Profile",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "repository",
+        "commit_sha",
+        "image_digest",
+        "dataset_release",
+        "command",
+        "team",
+        "wandb_project",
+        "workload_profile",
+        "compute_profile",
+        "maximum_runtime_hours",
+        "maximum_attempts",
+        "checkpoint"
+      ],
+      "title": "RunManifest",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "What one submission asked for, recorded before it was judged.",
+  "properties": {
+    "approving_environment": {
+      "$ref": "#/$defs/ApprovalEnvironment"
+    },
+    "manifest": {
+      "$ref": "#/$defs/RunManifest"
+    },
+    "manifest_sha256": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Manifest Sha256",
+      "type": "string"
+    },
+    "recorded_at": {
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$",
+      "title": "Recorded At",
+      "type": "string"
+    },
+    "run_id": {
+      "pattern": "^run_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "submitter": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9-]+$",
+      "title": "Submitter",
+      "type": "string"
+    },
+    "workflow_run": {
+      "$ref": "#/$defs/GitHubWorkflowRunReference"
+    }
+  },
+  "required": [
+    "schema_version",
+    "run_id",
+    "submitter",
+    "manifest",
+    "manifest_sha256",
+    "approving_environment",
+    "workflow_run",
+    "recorded_at"
+  ],
+  "title": "IntentRecord",
+  "type": "object"
+}

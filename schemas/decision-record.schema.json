@@ -1,0 +1,240 @@
+{
+  "$defs": {
+    "AdmissionReason": {
+      "enum": [
+        "accepted",
+        "manifest_hash_mismatch",
+        "denied_outright",
+        "authorization_denied",
+        "approval_environment_mismatch"
+      ],
+      "title": "AdmissionReason",
+      "type": "string"
+    },
+    "ApprovalClass": {
+      "enum": [
+        "routine",
+        "exception"
+      ],
+      "title": "ApprovalClass",
+      "type": "string"
+    },
+    "ApprovalEnvironment": {
+      "description": "The GitHub environment a job passed through to reach AWS.\n\nThese strings are load-bearing in three places at once and must agree in all of them:\nthe ``environment:`` key of the submission workflow, the GitHub environment names\nthemselves, and the ``sub`` condition of the admission role's trust policy, which\nenumerates them exactly rather than matching a wildcard. Renaming one here without\nrenaming it in the other two silently revokes the trust \u2014 and the failure surfaces as\nan ``AssumeRole`` denial that reads like a broken role ARN.",
+      "enum": [
+        "run-approval-lead",
+        "run-approval-admin"
+      ],
+      "title": "ApprovalEnvironment",
+      "type": "string"
+    },
+    "ApprovalScope": {
+      "enum": [
+        "organization",
+        "team"
+      ],
+      "title": "ApprovalScope",
+      "type": "string"
+    },
+    "AuthorizationDecision": {
+      "additionalProperties": false,
+      "properties": {
+        "approval_class": {
+          "$ref": "#/$defs/ApprovalClass"
+        },
+        "approval_scope": {
+          "$ref": "#/$defs/ApprovalScope"
+        },
+        "approver": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Approver"
+        },
+        "claimed_team": {
+          "minLength": 1,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "title": "Claimed Team",
+          "type": "string"
+        },
+        "granted": {
+          "title": "Granted",
+          "type": "boolean"
+        },
+        "reason": {
+          "$ref": "#/$defs/AuthorizationReason"
+        },
+        "submitter": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9-]+$",
+          "title": "Submitter",
+          "type": "string"
+        },
+        "team_verified": {
+          "title": "Team Verified",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "submitter",
+        "approver",
+        "granted",
+        "approval_class",
+        "approval_scope",
+        "claimed_team",
+        "team_verified",
+        "reason"
+      ],
+      "title": "AuthorizationDecision",
+      "type": "object"
+    },
+    "AuthorizationReason": {
+      "enum": [
+        "routine_self_authorized",
+        "routine_approved_by_lead_or_admin",
+        "exception_approved_by_admin",
+        "exception_self_approved_by_admin",
+        "submitter_not_in_roster",
+        "approver_not_in_roster",
+        "self_approval_not_permitted_for_member",
+        "approver_lacks_lead_or_admin_role",
+        "approver_lacks_admin_role",
+        "approver_does_not_lead_submitter_team",
+        "team_scope_requires_team_bindings",
+        "submitter_not_in_claimed_team"
+      ],
+      "title": "AuthorizationReason",
+      "type": "string"
+    },
+    "CostInputs": {
+      "additionalProperties": false,
+      "properties": {
+        "cells": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Cells",
+          "type": "integer"
+        },
+        "hourly_rate_usd": {
+          "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]+)?$",
+          "title": "Hourly Rate Usd",
+          "type": "string"
+        },
+        "maximum_attempts": {
+          "minimum": 1,
+          "title": "Maximum Attempts",
+          "type": "integer"
+        },
+        "maximum_runtime_hours": {
+          "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]+)?$",
+          "title": "Maximum Runtime Hours",
+          "type": "string"
+        },
+        "nodes": {
+          "exclusiveMinimum": 0,
+          "title": "Nodes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "hourly_rate_usd",
+        "nodes",
+        "maximum_runtime_hours",
+        "maximum_attempts"
+      ],
+      "title": "CostInputs",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "How admission judged one submission.",
+  "properties": {
+    "accepted": {
+      "title": "Accepted",
+      "type": "boolean"
+    },
+    "approval_class": {
+      "$ref": "#/$defs/ApprovalClass"
+    },
+    "approving_environment": {
+      "$ref": "#/$defs/ApprovalEnvironment"
+    },
+    "authorization": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AuthorizationDecision"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "cost": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CostInputs"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "detail": {
+      "minLength": 1,
+      "title": "Detail",
+      "type": "string"
+    },
+    "manifest_sha256": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Manifest Sha256",
+      "type": "string"
+    },
+    "policy_version": {
+      "pattern": "^v[1-9][0-9]*$",
+      "title": "Policy Version",
+      "type": "string"
+    },
+    "reason": {
+      "$ref": "#/$defs/AdmissionReason"
+    },
+    "recorded_at": {
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$",
+      "title": "Recorded At",
+      "type": "string"
+    },
+    "run_id": {
+      "pattern": "^run_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "run_id",
+    "manifest_sha256",
+    "policy_version",
+    "approval_class",
+    "approving_environment",
+    "authorization",
+    "cost",
+    "accepted",
+    "reason",
+    "detail",
+    "recorded_at"
+  ],
+  "title": "DecisionRecord",
+  "type": "object"
+}

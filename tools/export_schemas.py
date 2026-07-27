@@ -3,11 +3,14 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from edullm_platform.contracts.admission import DecisionRecord, IntentRecord
+from edullm_platform.contracts.dataset_registry import DatasetRegistry
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.manifest import RunManifest
 from edullm_platform.contracts.policy import ApprovalPolicy
 from edullm_platform.contracts.repository_registry import RepositoryRegistry
 from edullm_platform.contracts.workload import WorkloadCatalog
+from edullm_platform.submission import SubmissionInputs
 
 SCHEMA_MODELS: dict[str, type[BaseModel]] = {
     "organization.schema.json": OrganizationInventory,
@@ -15,6 +18,14 @@ SCHEMA_MODELS: dict[str, type[BaseModel]] = {
     "policy.schema.json": ApprovalPolicy,
     "repositories.schema.json": RepositoryRegistry,
     "run-manifest.schema.json": RunManifest,
+    "datasets.schema.json": DatasetRegistry,
+    # The two records the lineage store holds. Exported for the same reason the
+    # configuration schemas are: an immutable store is read by things that were not built
+    # alongside it, and a published shape is the only way a later reader can tell a record
+    # this platform wrote from one it did not.
+    "intent-record.schema.json": IntentRecord,
+    "decision-record.schema.json": DecisionRecord,
+    "submission-inputs.schema.json": SubmissionInputs,
 }
 
 
