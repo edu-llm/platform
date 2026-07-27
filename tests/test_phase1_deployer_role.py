@@ -80,11 +80,21 @@ SCOPED_RESOURCES = [
     *PASS_ROLE_RESOURCES,
 ]
 
-UNSCOPED_STATEMENT = {
-    "Effect": "Allow",
-    "Action": "cloudformation:ValidateTemplate",
-    "Resource": "*",
-}
+#: The two actions whose service authorization reference lists no resource type at all,
+#: so that "*" is the narrowest grant that exists rather than a shortcut. Anything else
+#: appearing here is a scope somebody gave up on.
+UNSCOPED_STATEMENTS = [
+    {
+        "Effect": "Allow",
+        "Action": "cloudformation:ValidateTemplate",
+        "Resource": "*",
+    },
+    {
+        "Effect": "Allow",
+        "Action": "logs:DescribeLogGroups",
+        "Resource": "*",
+    },
+]
 EXPECTED_STACK_ACTIONS = {
     "cloudformation:CreateChangeSet",
     "cloudformation:CreateStack",
@@ -182,7 +192,6 @@ EXPECTED_LOG_GROUP_ACTIONS = {
     "logs:CreateLogGroup",
     "logs:DeleteLogGroup",
     "logs:DeleteRetentionPolicy",
-    "logs:DescribeLogGroups",
     "logs:ListTagsForResource",
     "logs:PutRetentionPolicy",
     "logs:TagResource",
@@ -365,20 +374,24 @@ def test_deployer_can_only_touch_stacks_carrying_our_own_prefix() -> None:
     assert len(actions) == len(EXPECTED_STACK_ACTIONS)
 
 
-def test_validate_template_is_the_only_action_granted_without_a_resource_scope() -> None:
-    # cloudformation:ValidateTemplate has no resource type at all in the CloudFormation
-    # service authorization reference, so "*" is the narrowest grant that exists for it.
-    # GetTemplateSummary does accept a stack ARN, and `aws cloudformation deploy` only
-    # ever calls it as get_template_summary(StackName=...), so it is scoped with the rest
-    # instead of being parked here. Nothing the Phase 2 policy grants belongs here at all.
+def test_only_the_two_actions_with_no_resource_type_are_granted_without_a_scope() -> None:
+    # Both are here because their service authorization reference lists no resource type,
+    # not because scoping them was awkward. cloudformation:GetTemplateSummary is the
+    # counter-example: it does accept a stack ARN, `aws cloudformation deploy` only ever
+    # calls it as get_template_summary(StackName=...), and it is scoped with the rest.
+    #
+    # logs:DescribeLogGroups earns its place the expensive way. It was written into the
+    # log-group-scoped statement first, which reads as the careful choice, and the deploy
+    # failed on it -- an action with no resource type cannot be granted on an ARN, and the
+    # denial names the action without hinting that the scope is what refused it.
     statements = _all_statements()
     unscoped = [statement for statement in statements if "*" in _resources(statement)]
 
-    assert unscoped == [UNSCOPED_STATEMENT]
+    assert unscoped == UNSCOPED_STATEMENTS
     assert all(
         isinstance(resource, dict)
         for statement in statements
-        if statement is not unscoped[0]
+        if statement not in unscoped
         for resource in _resources(statement)
     )
 
@@ -549,6 +562,8 @@ def test_deployer_template_wildcards_are_only_the_declared_scopes() -> None:
         STACK_RESOURCE["Fn::Sub"],
         "*",
         REPOSITORY_RESOURCE["Fn::Sub"],
+        # The Phase 2 policy opens with its own unscoped grant, before its scoped ones.
+        "*",
         BUCKET_RESOURCE["Fn::Sub"],
         ARTIFACT_OBJECT_RESOURCE["Fn::Sub"],
         STATE_MACHINE_RESOURCE["Fn::Sub"],

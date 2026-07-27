@@ -87,6 +87,23 @@
         {
           "action_match": {
             "actions": [
+              "logs:DescribeLogGroups"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "*"
+            ]
+          },
+          "sid": null
+        },
+        {
+          "action_match": {
+            "actions": [
               "s3:CreateBucket",
               "s3:DeleteBucket",
               "s3:PutBucketVersioning",
@@ -224,7 +241,6 @@
             "actions": [
               "logs:CreateLogGroup",
               "logs:DeleteLogGroup",
-              "logs:DescribeLogGroups",
               "logs:PutRetentionPolicy",
               "logs:DeleteRetentionPolicy",
               "logs:TagResource",
@@ -265,7 +281,7 @@
     }
   ],
   "max_session_duration_seconds": 3600,
-  "observed_at": "2026-07-27T05:25:23Z",
+  "observed_at": "2026-07-27T06:01:20Z",
   "permissions_boundary_policy_name": "InternSandboxBoundary",
   "role_name": "sbsandbox-intern-edullm-infra-deployer",
   "source": "aws",

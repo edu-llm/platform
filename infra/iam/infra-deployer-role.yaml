@@ -116,6 +116,23 @@ Resources:
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
+              # The only unscoped grant Phase 2 adds, and it sits beside the scoped
+              # log-group statement below rather than inside the Phase 1 policy: the
+              # CloudWatch Logs service authorization reference lists logs:DescribeLogGroups
+              # with an empty resource-types column, so "*" is the narrowest grant that
+              # exists for it. It was first written into the log-group-scoped statement
+              # below, which reads as the careful choice and is the wrong one -- the deploy
+              # failed with "Unable to retrieve Arn attribute for AWS::Logs::LogGroup, with
+              # error message Access denied for operation 'logs:DescribeLogGroups'", which
+              # names the action and gives no hint that the scope is what refused it.
+              #
+              # Widening is bounded by what the action can do: DescribeLogGroups lists
+              # group names, ARNs, retention and sizes. It reads no log content, and
+              # logs:GetLogEvents and logs:FilterLogEvents are absent from this role
+              # entirely, so this cannot become a way to read anybody's logs.
+              - Effect: Allow
+                Action: logs:DescribeLogGroups
+                Resource: "*"
               # The read half of this list is not a list of things the templates use. The
               # AWS::S3::Bucket resource handler reads every configuration surface a
               # bucket has on each Read -- CORS, replication, analytics, website and the
@@ -234,11 +251,14 @@ Resources:
               # /aws/lambda/ group either. A trailing wildcard is unnecessary: an IAM
               # wildcard matches ':' too, so log-group:/aws/vendedlogs/states/
               # sbsandbox-intern-edullm-* already covers the ':*' ARN form.
+              #
+              # logs:DescribeLogGroups is NOT in this list, and it was, and that is what
+              # broke the second deploy. It is granted unscoped below for the reason
+              # recorded there.
               - Effect: Allow
                 Action:
                   - logs:CreateLogGroup
                   - logs:DeleteLogGroup
-                  - logs:DescribeLogGroups
                   - logs:PutRetentionPolicy
                   - logs:DeleteRetentionPolicy
                   - logs:TagResource
