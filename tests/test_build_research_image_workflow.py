@@ -315,6 +315,7 @@ def _contract_environment(**overrides: str) -> dict[str, str]:
     return environment
 
 
+@pytest.mark.slow
 def test_the_caller_contract_admits_a_complete_job_workflow_identity(tmp_path: Path) -> None:
     contract = step(_job("publish"), CONTRACT_STEP)
 
@@ -323,6 +324,7 @@ def test_the_caller_contract_admits_a_complete_job_workflow_identity(tmp_path: P
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.slow
 def test_an_empty_job_workflow_identity_fails_closed_with_a_clear_message(
     tmp_path: Path,
 ) -> None:
@@ -340,6 +342,7 @@ def test_an_empty_job_workflow_identity_fails_closed_with_a_clear_message(
         assert "GitHub Enterprise Server" in result.stderr
 
 
+@pytest.mark.slow
 def test_a_job_workflow_ref_without_a_ref_suffix_fails_closed(tmp_path: Path) -> None:
     contract = step(_job("publish"), CONTRACT_STEP)
 
@@ -353,6 +356,7 @@ def test_a_job_workflow_ref_without_a_ref_suffix_fails_closed(tmp_path: Path) ->
     assert "owner/repo/path@ref" in result.stderr
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("event_name", ["push", "workflow_dispatch"])
 def test_the_two_events_that_name_a_reviewed_commit_are_accepted(
     tmp_path: Path,
@@ -369,6 +373,7 @@ def test_the_two_events_that_name_a_reviewed_commit_are_accepted(
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("event_name", ["schedule", "issue_comment", "issues", "release"])
 def test_events_whose_github_ref_is_merely_the_default_branch_are_rejected(
     tmp_path: Path,
@@ -389,6 +394,7 @@ def test_events_whose_github_ref_is_merely_the_default_branch_are_rejected(
     assert event_name in result.stderr
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("region", sorted(SANDBOX_REGIONS))
 def test_the_allowed_sandbox_regions_are_accepted(tmp_path: Path, region: str) -> None:
     contract = step(_job("publish"), CONTRACT_STEP)
@@ -402,6 +408,7 @@ def test_the_allowed_sandbox_regions_are_accepted(tmp_path: Path, region: str) -
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.slow
 def test_a_region_outside_the_sandbox_fails_before_it_becomes_an_access_denied(
     tmp_path: Path,
 ) -> None:
@@ -440,6 +447,7 @@ def test_verify_job_runs_caller_tests_only_when_requested_and_only_through_env()
     assert "${TEST_COMMAND}" in tests["run"]
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     ("test_command", "expected_status"),
     [
@@ -504,6 +512,7 @@ def _checkout_with_extraheader(tmp_path: Path, *extra_hosts: str) -> Path:
     return repository
 
 
+@pytest.mark.slow
 def test_the_checkout_token_is_gone_before_anything_can_copy_it(tmp_path: Path) -> None:
     repository = _checkout_with_extraheader(tmp_path)
     script = step(_job("publish"), DECREDENTIAL_STEP)["run"]
@@ -518,6 +527,7 @@ def test_the_checkout_token_is_gone_before_anything_can_copy_it(tmp_path: Path) 
     assert "extraheader" not in (repository / ".git" / "config").read_text(encoding="utf-8")
 
 
+@pytest.mark.slow
 def test_an_extraheader_this_step_does_not_know_how_to_remove_fails_closed(
     tmp_path: Path,
 ) -> None:
@@ -660,6 +670,7 @@ def _run_denial_step(
     return result, arguments
 
 
+@pytest.mark.slow
 def test_a_matrix_that_refused_everything_prints_the_record_it_wrote(tmp_path: Path) -> None:
     result, arguments = _run_denial_step(
         tmp_path,
@@ -675,6 +686,7 @@ def test_a_matrix_that_refused_everything_prints_the_record_it_wrote(tmp_path: P
     assert passed["--output"] == str(tmp_path / DENIAL_RECORD_FILE)
 
 
+@pytest.mark.slow
 def test_a_matrix_that_could_not_prove_a_denial_prints_no_record(tmp_path: Path) -> None:
     # The tool writes nothing when an attempt establishes nothing, and the step must not
     # print a record left over from an earlier attempt on the same runner either.
@@ -772,6 +784,7 @@ def _run_preflight(tmp_path: Path, aws_stub: str) -> tuple[Any, dict[str, str]]:
     return result, dict(line.split("=", 1) for line in lines)
 
 
+@pytest.mark.slow
 def test_a_missing_tag_leaves_the_build_to_run(tmp_path: Path) -> None:
     result, outputs = _run_preflight(
         tmp_path,
@@ -785,6 +798,7 @@ def test_a_missing_tag_leaves_the_build_to_run(tmp_path: Path) -> None:
     assert "not published yet" in result.stdout
 
 
+@pytest.mark.slow
 def test_a_published_tag_short_circuits_to_the_digest_the_registry_already_holds(
     tmp_path: Path,
 ) -> None:
@@ -797,6 +811,7 @@ def test_a_published_tag_short_circuits_to_the_digest_the_registry_already_holds
     assert "Skipping build and push" in result.stdout
 
 
+@pytest.mark.slow
 def test_a_lookup_that_fails_for_any_other_reason_fails_closed(tmp_path: Path) -> None:
     # DescribeImages names the registry id in its error text, so a failed lookup must not
     # be echoed and must not be mistaken for an absent image.
@@ -812,6 +827,7 @@ def test_a_lookup_that_fails_for_any_other_reason_fails_closed(tmp_path: Path) -
     assert "123456789012" not in result.stderr + result.stdout
 
 
+@pytest.mark.slow
 def test_a_lookup_that_answers_with_a_non_digest_fails_closed(tmp_path: Path) -> None:
     result, _ = _run_preflight(tmp_path, 'echo "None"\n')
 
@@ -931,6 +947,7 @@ def _run_resume_check(
     return result, recorded
 
 
+@pytest.mark.slow
 def test_a_published_image_that_matches_this_build_lets_the_run_resume(tmp_path: Path) -> None:
     result, calls = _run_resume_check(tmp_path)
 
@@ -945,6 +962,7 @@ def test_a_published_image_that_matches_this_build_lets_the_run_resume(tmp_path:
     )
 
 
+@pytest.mark.slow
 def test_a_resumed_run_takes_the_build_time_from_the_image_it_resumed_onto(
     tmp_path: Path,
 ) -> None:
@@ -958,6 +976,7 @@ def test_a_resumed_run_takes_the_build_time_from_the_image_it_resumed_onto(
     )
 
 
+@pytest.mark.slow
 def test_a_published_image_built_from_another_base_stops_the_run(tmp_path: Path) -> None:
     result, _ = _run_resume_check(
         tmp_path,
@@ -968,6 +987,7 @@ def test_a_published_image_built_from_another_base_stops_the_run(tmp_path: Path)
     assert "published_base_image_mismatch" in result.stderr
 
 
+@pytest.mark.slow
 def test_a_published_image_built_from_another_commit_stops_the_run(tmp_path: Path) -> None:
     # Twelve hex characters of a commit can collide. Before the resume path existed the
     # immutable push rejected a collision loudly; now only the revision label does.
@@ -977,6 +997,7 @@ def test_a_published_image_built_from_another_commit_stops_the_run(tmp_path: Pat
     assert "published_revision_mismatch" in result.stderr
 
 
+@pytest.mark.slow
 def test_a_config_blob_that_cannot_be_fetched_never_echoes_the_presigned_url(
     tmp_path: Path,
 ) -> None:
@@ -989,6 +1010,7 @@ def test_a_config_blob_that_cannot_be_fetched_never_echoes_the_presigned_url(
     assert "X-Amz-Signature" not in result.stderr + result.stdout
 
 
+@pytest.mark.slow
 def test_the_build_records_the_images_own_creation_time_before_it_pushes(
     tmp_path: Path,
 ) -> None:
@@ -1030,6 +1052,7 @@ def test_the_build_records_the_images_own_creation_time_before_it_pushes(
     assert script.index("docker image inspect") < script.index("docker push")
 
 
+@pytest.mark.slow
 def test_an_image_that_cannot_say_when_it_was_built_stops_before_the_push(
     tmp_path: Path,
 ) -> None:
@@ -1063,6 +1086,7 @@ def test_an_image_that_cannot_say_when_it_was_built_stops_before_the_push(
     assert "push" not in calls
 
 
+@pytest.mark.slow
 def test_provenance_is_told_when_the_image_was_built_by_whichever_path_ran(
     tmp_path: Path,
 ) -> None:
@@ -1100,6 +1124,7 @@ def test_provenance_is_told_when_the_image_was_built_by_whichever_path_ran(
     assert passed["--image-created"] == PUBLISHED_IMAGE_CREATED
 
 
+@pytest.mark.slow
 def test_provenance_refuses_to_run_when_no_path_recorded_a_creation_time(
     tmp_path: Path,
 ) -> None:
@@ -1241,6 +1266,7 @@ def _run_install(tmp_path: Path, reported_version: str) -> Any:
     )
 
 
+@pytest.mark.slow
 def test_the_uv_that_answers_on_path_must_be_the_one_that_was_pinned(tmp_path: Path) -> None:
     # pipx installs the pin, but an earlier uv already on PATH keeps answering, so the
     # lockfile would be resolved by a version nobody chose.
@@ -1280,6 +1306,7 @@ def test_publish_job_assumes_the_publisher_role_and_writes_provenance() -> None:
     assert provenance["env"]["IMAGE_DIGEST"] == "${{ steps.digest.outputs.image_digest }}"
 
 
+@pytest.mark.slow
 def test_provenance_records_the_branch_ref_that_the_trust_policy_asserts(
     tmp_path: Path,
 ) -> None:

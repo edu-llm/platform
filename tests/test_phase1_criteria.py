@@ -320,6 +320,7 @@ def report() -> Phase1GateReport:
     return evaluate_repository(PROJECT_ROOT)
 
 
+@pytest.mark.slow
 def test_the_gate_reports_one_result_for_every_criterion_in_order(
     report: Phase1GateReport,
     criteria: tuple[CriterionSpec, ...],
@@ -330,6 +331,7 @@ def test_the_gate_reports_one_result_for_every_criterion_in_order(
     assert [result.statement for result in report.phase_criteria] == list(PHASE1_STATEMENTS)
 
 
+@pytest.mark.slow
 def test_the_gate_executed_every_node_id_the_criteria_cite(
     report: Phase1GateReport,
     criteria: tuple[CriterionSpec, ...],
@@ -344,6 +346,7 @@ def test_the_gate_executed_every_node_id_the_criteria_cite(
     }
 
 
+@pytest.mark.slow
 def test_the_gate_passes_because_every_cited_test_ran_and_passed(
     report: Phase1GateReport,
 ) -> None:
@@ -381,6 +384,7 @@ def test_an_expired_run_capture_takes_the_criteria_resting_on_it_back_to_a_gap(
     assert results["8"].passed is True
 
 
+@pytest.mark.slow
 def test_the_command_exits_zero_and_prints_the_verdict_the_gate_reached(
     report: Phase1GateReport,
 ) -> None:
@@ -395,6 +399,7 @@ def test_the_command_exits_zero_and_prints_the_verdict_the_gate_reached(
     assert completed.stdout.encode("utf-8") == canonical_json_bytes(report) + b"\n"
 
 
+@pytest.mark.slow
 def test_the_command_refuses_to_run_from_inside_a_gate_run() -> None:
     # The gate runs pytest and pytest runs this module. Without the guard, a Phase 1 gate
     # started from inside a Phase 0 criteria run would spawn another level of both.
@@ -405,6 +410,7 @@ def test_the_command_refuses_to_run_from_inside_a_gate_run() -> None:
     assert "would recurse" in completed.stderr
 
 
+@pytest.mark.slow
 def test_a_tree_with_no_tests_proves_no_criterion(tmp_path: Path) -> None:
     # A checkout the cited tests cannot be collected from is not a checkout that passes
     # them, and the covered criteria have to fail closed on it.

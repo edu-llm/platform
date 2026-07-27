@@ -341,6 +341,7 @@ def test_sequence_fields_reject_unordered_containers(
     )
 
 
+@pytest.mark.slow
 def test_py_typed_is_present_in_built_wheel() -> None:
     project_root = Path(__file__).resolve().parents[1]
 

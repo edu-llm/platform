@@ -141,6 +141,7 @@ def recorded(recording: Path) -> list[str]:
     return recording.read_text(encoding="utf-8").splitlines()
 
 
+@pytest.mark.slow
 def test_a_session_refused_everything_writes_the_matrix_and_says_nothing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -166,6 +167,7 @@ def test_a_session_refused_everything_writes_the_matrix_and_says_nothing(
     assert recorded(recording) == list(EXPECTED_CALLS)
 
 
+@pytest.mark.slow
 def test_the_record_says_what_was_attempted_and_who_was_refused(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -187,6 +189,7 @@ def test_the_record_says_what_was_attempted_and_who_was_refused(
     assert submit["region"] == REGION
 
 
+@pytest.mark.slow
 def test_a_refusal_that_said_only_access_denied_is_recorded_as_the_refusal_it_is(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -207,6 +210,7 @@ def test_a_refusal_that_said_only_access_denied_is_recorded_as_the_refusal_it_is
     assert listing["event_source"] == "s3.amazonaws.com"
 
 
+@pytest.mark.slow
 def test_nothing_the_account_said_about_itself_survives_into_the_record(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -227,6 +231,7 @@ def test_nothing_the_account_said_about_itself_survives_into_the_record(
     assert scan_for_secrets(written) == written
 
 
+@pytest.mark.slow
 def test_an_action_that_was_allowed_stops_the_run_instead_of_being_recorded(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -252,6 +257,7 @@ def test_an_action_that_was_allowed_stops_the_run_instead_of_being_recorded(
     assert not (tmp_path / "publisher-denials.json").exists()
 
 
+@pytest.mark.slow
 def test_one_run_reports_every_probe_rather_than_the_first_that_went_wrong(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -285,6 +291,7 @@ def test_one_run_reports_every_probe_rather_than_the_first_that_went_wrong(
     assert not (tmp_path / "publisher-denials.json").exists()
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     ("code", "message", "reason"),
     [
@@ -332,6 +339,7 @@ def test_a_failure_for_the_wrong_reason_is_never_filed_as_a_denial(
     assert not (tmp_path / "publisher-denials.json").exists()
 
 
+@pytest.mark.slow
 def test_a_call_that_never_reached_aws_is_not_a_denial(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -358,6 +366,7 @@ def test_a_call_that_never_reached_aws_is_not_a_denial(
     assert not (tmp_path / "publisher-denials.json").exists()
 
 
+@pytest.mark.slow
 def test_a_probe_that_hangs_is_not_a_denial(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -387,6 +396,7 @@ def test_a_probe_that_hangs_is_not_a_denial(
     assert not (tmp_path / "publisher-denials.json").exists()
 
 
+@pytest.mark.slow
 def test_a_runner_without_the_aws_cli_proves_nothing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -404,6 +414,7 @@ def test_a_runner_without_the_aws_cli_proves_nothing(
     assert not (tmp_path / "publisher-denials.json").exists()
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     ("caller_arn", "caller_status", "reason"),
     [
@@ -439,6 +450,7 @@ def test_a_session_the_record_could_not_describe_never_attempts_anything(
     assert not (tmp_path / "publisher-denials.json").exists()
 
 
+@pytest.mark.slow
 def test_the_ecr_probe_never_names_the_repository_the_role_publishes_to(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -455,6 +467,7 @@ def test_the_ecr_probe_never_names_the_repository_the_role_publishes_to(
     assert "--force" not in delete
 
 
+@pytest.mark.slow
 def test_the_s3_probe_names_no_bucket_at_all(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -500,6 +513,7 @@ def test_a_missing_registry_file_fails_closed_without_a_traceback(
     assert capsys.readouterr().err.strip() == "registry_unreadable"
 
 
+@pytest.mark.slow
 def test_a_record_that_cannot_be_written_is_an_environment_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -99,10 +99,12 @@ def later_bundle(tmp_path_factory: pytest.TempPathFactory, verification: Verific
     return build_into(tmp_path_factory.mktemp("later"), verification, SECOND_INSTANT)
 
 
+@pytest.mark.slow
 def test_the_bundle_contains_every_expected_document(first_bundle: dict[str, str]) -> None:
     assert set(first_bundle) == set(BUNDLE_FILENAMES)
 
 
+@pytest.mark.slow
 def test_two_runs_at_the_same_instant_are_byte_identical(
     first_bundle: dict[str, str],
     second_bundle: dict[str, str],
@@ -110,6 +112,7 @@ def test_two_runs_at_the_same_instant_are_byte_identical(
     assert first_bundle == second_bundle
 
 
+@pytest.mark.slow
 def test_a_later_run_differs_only_in_its_generated_at_line(
     first_bundle: dict[str, str],
     later_bundle: dict[str, str],
@@ -118,6 +121,7 @@ def test_a_later_run_differs_only_in_its_generated_at_line(
     assert strip_generated_at(first_bundle) == strip_generated_at(later_bundle)
 
 
+@pytest.mark.slow
 def test_exactly_one_line_of_the_bundle_carries_a_timestamp(first_bundle: dict[str, str]) -> None:
     timestamped = [
         (name, line)
@@ -128,6 +132,7 @@ def test_exactly_one_line_of_the_bundle_carries_a_timestamp(first_bundle: dict[s
     assert timestamped == [("README.md", f"{GENERATED_AT_PREFIX}{FIRST_INSTANT.isoformat()}")]
 
 
+@pytest.mark.slow
 def test_every_bundle_document_passes_the_secret_scan(first_bundle: dict[str, str]) -> None:
     for name, text in first_bundle.items():
         assert_secret_free(name, text)
@@ -161,6 +166,7 @@ def test_the_digest_exemption_masks_only_digest_shaped_tokens() -> None:
     assert "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXA" in masked
 
 
+@pytest.mark.slow
 def test_the_recorded_goldens_cover_every_fixture(first_bundle: dict[str, str]) -> None:
     recorded = json.loads(first_bundle[GOLDENS_FILENAME])["fixtures"]
     assert [entry["relative_path"] for entry in recorded] == [
@@ -179,6 +185,7 @@ def tampered_bundle(directory: Path, source: dict[str, str]) -> tuple[Path, str]
     return directory, drifted["fixture"]
 
 
+@pytest.mark.slow
 def test_a_drifted_golden_digest_refuses_the_build(
     tmp_path: Path,
     first_bundle: dict[str, str],
@@ -199,6 +206,7 @@ def test_a_drifted_golden_digest_refuses_the_build(
     assert "regression" in message
 
 
+@pytest.mark.slow
 def test_a_drifted_golden_digest_is_not_silently_overwritten(
     tmp_path: Path,
     first_bundle: dict[str, str],
@@ -216,6 +224,7 @@ def test_a_drifted_golden_digest_is_not_silently_overwritten(
     assert goldens_path(directory).read_text(encoding="utf-8") == before
 
 
+@pytest.mark.slow
 def test_regenerating_goldens_records_the_live_digest(
     tmp_path: Path,
     first_bundle: dict[str, str],
@@ -257,6 +266,7 @@ def test_the_nested_guard_is_set_for_every_pytest_subprocess() -> None:
     assert pytest_environment(NESTED_RUN_ENV)[NESTED_RUN_ENV] == "1"
 
 
+@pytest.mark.slow
 def test_the_verification_run_never_selects_the_generators_own_tests(
     verification: Verification,
 ) -> None:
@@ -268,6 +278,7 @@ def test_the_verification_run_never_selects_the_generators_own_tests(
     )
 
 
+@pytest.mark.slow
 def test_the_verification_run_executed_every_cited_node_id(verification: Verification) -> None:
     cited = {
         node_id
@@ -281,12 +292,14 @@ def test_the_verification_run_executed_every_cited_node_id(verification: Verific
     assert verification.failed_node_ids == ()
 
 
+@pytest.mark.slow
 def test_the_full_suite_ran_green_inside_the_generator(verification: Verification) -> None:
     assert verification.full_suite.green
     assert verification.full_suite.failures == 0
     assert verification.full_suite.tests < len(verification.collected_node_ids)
 
 
+@pytest.mark.slow
 def test_a_citation_pytest_cannot_collect_aborts_generation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -301,6 +314,7 @@ def test_a_citation_pytest_cannot_collect_aborts_generation(
         verify_repository(PROJECT_ROOT)
 
 
+@pytest.mark.slow
 def test_the_generator_refuses_to_select_a_test_that_would_re_enter_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -351,6 +365,7 @@ def rendered_matrix(verification: Verification) -> str:
     return render_matrix(phase0_criteria(references), related_deferrals(references), verification)
 
 
+@pytest.mark.slow
 def test_the_matrix_reports_gaps_before_the_per_check_detail(
     verification: Verification,
 ) -> None:
@@ -366,6 +381,7 @@ def test_the_matrix_reports_gaps_before_the_per_check_detail(
         assert rendered.index(check.gaps[0]) < detail_headings
 
 
+@pytest.mark.slow
 def test_a_check_with_no_proving_test_says_so_in_the_matrix(
     verification: Verification,
 ) -> None:
@@ -376,6 +392,7 @@ def test_a_check_with_no_proving_test_says_so_in_the_matrix(
     assert rendered.count("No test proves this check.") == len(unproved)
 
 
+@pytest.mark.slow
 def test_every_deferral_shows_both_its_reason_and_its_trigger(
     verification: Verification,
 ) -> None:
@@ -391,6 +408,7 @@ def test_every_deferral_shows_both_its_reason_and_its_trigger(
         assert check.deferral_trigger in rendered
 
 
+@pytest.mark.slow
 def test_the_matrix_uses_only_the_three_statuses(verification: Verification) -> None:
     checks = recorded_checks(discover_fixtures(PROJECT_ROOT))
     rendered = rendered_matrix(verification)
@@ -404,12 +422,14 @@ def test_the_matrix_uses_only_the_three_statuses(verification: Verification) -> 
     assert "| D1 | DEFERRED |" in rendered
 
 
+@pytest.mark.slow
 def test_the_matrix_names_the_single_definition_it_was_rendered_from(
     verification: Verification,
 ) -> None:
     assert "src/edullm_platform/phase0_criteria.py" in rendered_matrix(verification)
 
 
+@pytest.mark.slow
 def test_the_index_reports_the_gate_verdict_that_matches_the_recorded_gaps(
     first_bundle: dict[str, str],
 ) -> None:
@@ -438,6 +458,7 @@ def test_known_limitations_name_the_unprovisioned_compute_and_empty_team_binding
     assert any("Team bindings are empty" in item for item in limitations)
 
 
+@pytest.mark.slow
 def test_no_prose_in_the_bundle_contradicts_a_computed_check_status(
     first_bundle: dict[str, str],
 ) -> None:
@@ -497,6 +518,7 @@ def test_prose_that_agrees_with_the_computed_status_is_not_reported() -> None:
     assert contradicting_status_claims(agreeing, shipped_checks()) == ()
 
 
+@pytest.mark.slow
 def test_the_generator_refuses_to_write_a_bundle_whose_prose_contradicts_the_gate(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -517,6 +539,7 @@ def test_the_generator_refuses_to_write_a_bundle_whose_prose_contradicts_the_gat
     assert not (output_dir / "README.md").exists()
 
 
+@pytest.mark.slow
 def test_main_writes_a_complete_bundle_to_a_chosen_directory(tmp_path: Path) -> None:
     output_dir = tmp_path / "bundle"
     exit_code = main(
@@ -534,6 +557,7 @@ def test_main_writes_a_complete_bundle_to_a_chosen_directory(tmp_path: Path) -> 
     )
 
 
+@pytest.mark.slow
 def test_main_reports_a_drifted_golden_digest_as_a_failure(
     tmp_path: Path,
     first_bundle: dict[str, str],

@@ -127,10 +127,12 @@ def first_bundle(
     return build_into(tmp_path_factory.mktemp("first"), verification, FIRST_INSTANT)
 
 
+@pytest.mark.slow
 def test_the_bundle_contains_every_document_it_declares(first_bundle: dict[str, str]) -> None:
     assert set(first_bundle) == set(BUNDLE_FILENAMES)
 
 
+@pytest.mark.slow
 def test_two_runs_at_the_same_instant_are_byte_identical(
     tmp_path_factory: pytest.TempPathFactory,
     verification: Verification,
@@ -141,6 +143,7 @@ def test_two_runs_at_the_same_instant_are_byte_identical(
     assert again == first_bundle
 
 
+@pytest.mark.slow
 def test_a_later_run_differs_only_in_its_generated_at_line(
     tmp_path_factory: pytest.TempPathFactory,
     verification: Verification,
@@ -152,6 +155,7 @@ def test_a_later_run_differs_only_in_its_generated_at_line(
     assert strip_generated_at(later) == strip_generated_at(first_bundle)
 
 
+@pytest.mark.slow
 def test_every_document_passes_the_evidence_secret_scan(first_bundle: dict[str, str]) -> None:
     # The bundle quotes IAM policy resources, which is where an account ID would arrive.
     # Nothing here should carry one, and the generator refuses to write if it does.
@@ -166,6 +170,7 @@ def test_every_document_passes_the_evidence_secret_scan(first_bundle: dict[str, 
 # --------------------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_no_prose_in_the_bundle_contradicts_a_recorded_check_status(
     first_bundle: dict[str, str],
 ) -> None:
@@ -191,6 +196,7 @@ def test_a_sentence_that_disagrees_with_the_definition_is_caught(
     assert expected in problems[0]
 
 
+@pytest.mark.slow
 def test_the_generator_refuses_to_write_a_bundle_whose_prose_contradicts_the_gate(
     tmp_path: Path,
     verification: Verification,
@@ -243,6 +249,7 @@ def test_the_recorded_goldens_cover_every_committed_role() -> None:
     assert {record.digest for record in recorded} == {record.digest for record in goldens}
 
 
+@pytest.mark.slow
 def test_a_widened_template_refuses_the_build_rather_than_being_re_recorded(
     tmp_path: Path,
     verification: Verification,
@@ -259,6 +266,7 @@ def test_a_widened_template_refuses_the_build_rather_than_being_re_recorded(
         build_bundle(PROJECT_ROOT, tmp_path, generated_at=FIRST_INSTANT, verification=verification)
 
 
+@pytest.mark.slow
 def test_regenerating_records_the_live_digest(tmp_path: Path, verification: Verification) -> None:
     build_bundle(PROJECT_ROOT, tmp_path, generated_at=FIRST_INSTANT, verification=verification)
     recorded = json.loads(goldens_path(tmp_path).read_text(encoding="utf-8"))
@@ -296,6 +304,7 @@ def test_main_reports_a_drifted_digest_as_a_failure(
 # --------------------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_the_verification_run_never_selects_a_module_that_would_recurse(
     verification: Verification,
 ) -> None:
@@ -311,6 +320,7 @@ def test_the_verification_run_never_selects_a_module_that_would_recurse(
     )
 
 
+@pytest.mark.slow
 def test_the_verification_run_executed_every_cited_node_id(verification: Verification) -> None:
     cited = {node_id for check in shipped_checks() for node_id in check.cited_node_ids}
 
@@ -319,6 +329,7 @@ def test_the_verification_run_executed_every_cited_node_id(verification: Verific
     assert verification.selected.green
 
 
+@pytest.mark.slow
 def test_the_full_suite_ran_green_inside_the_generator(verification: Verification) -> None:
     assert verification.full_suite.green
     assert verification.full_suite.tests > 0
@@ -353,6 +364,7 @@ def test_the_generator_refuses_to_run_from_inside_its_own_verification(
 # --------------------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_the_drift_document_reports_the_comparison_it_actually_ran(
     first_bundle: dict[str, str],
 ) -> None:
@@ -371,6 +383,7 @@ def test_the_drift_document_reports_the_comparison_it_actually_ran(
         assert capture.expires_at.date().isoformat() in drift
 
 
+@pytest.mark.slow
 def test_the_index_counts_the_roles_compared_and_what_the_comparison_found(
     first_bundle: dict[str, str],
 ) -> None:
@@ -380,6 +393,7 @@ def test_the_index_counts_the_roles_compared_and_what_the_comparison_found(
     assert "| role drift findings | 0 |" in readme
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     ("break_the_capture", "expected"),
     [
@@ -421,6 +435,7 @@ def test_the_generator_refuses_to_build_on_a_capture_that_no_longer_holds(
     assert not (tmp_path / "bundle" / "README.md").exists()
 
 
+@pytest.mark.slow
 def test_the_refusal_says_what_to_do_about_it(
     tmp_path: Path,
     verification: Verification,
@@ -447,6 +462,7 @@ def test_the_refusal_says_what_to_do_about_it(
     assert "phase1_criteria.py" in str(raised.value)
 
 
+@pytest.mark.slow
 def test_the_matrix_reports_the_gaps_before_the_per_check_detail(
     first_bundle: dict[str, str],
 ) -> None:
@@ -464,6 +480,7 @@ def test_the_matrix_reports_the_gaps_before_the_per_check_detail(
         assert f"### Check {number} (GAP)" in matrix
 
 
+@pytest.mark.slow
 def test_the_index_reports_the_verdict_the_gate_reaches(first_bundle: dict[str, str]) -> None:
     gaps = [check.number for check in shipped_checks() if check.status is CriterionStatus.GAP]
     index = first_bundle["README.md"]
@@ -477,6 +494,7 @@ def test_the_index_reports_the_verdict_the_gate_reaches(first_bundle: dict[str, 
         assert "`tools/validate_phase1.py` exits 0 against this tree" in index
 
 
+@pytest.mark.slow
 def test_the_index_does_not_open_by_calling_a_finished_phase_unfinished(
     first_bundle: dict[str, str],
 ) -> None:
@@ -492,6 +510,7 @@ def test_the_index_does_not_open_by_calling_a_finished_phase_unfinished(
         assert "Every criterion is covered and the gate is green" in opening
 
 
+@pytest.mark.slow
 def test_the_goldens_document_names_the_regeneration_command(
     first_bundle: dict[str, str],
 ) -> None:
@@ -507,6 +526,7 @@ def test_the_goldens_document_names_the_regeneration_command(
 # --------------------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_the_bundle_refuses_a_run_record_that_no_longer_holds(
     tmp_path: Path,
     verification: Verification,
@@ -527,6 +547,7 @@ def test_the_bundle_refuses_a_run_record_that_no_longer_holds(
     assert not (tmp_path / "README.md").exists()
 
 
+@pytest.mark.slow
 def test_the_denial_matrix_document_names_every_refusal_and_its_event(
     first_bundle: dict[str, str],
 ) -> None:
@@ -538,6 +559,7 @@ def test_the_denial_matrix_document_names_every_refusal_and_its_event(
         assert denial.event_id in document
 
 
+@pytest.mark.slow
 def test_the_denial_matrix_document_carries_the_probe_lessons(
     first_bundle: dict[str, str],
 ) -> None:
@@ -550,6 +572,7 @@ def test_the_denial_matrix_document_carries_the_probe_lessons(
         assert lesson.learned_from in document
 
 
+@pytest.mark.slow
 def test_the_rebuild_document_names_every_cause_and_no_unexplained_field(
     first_bundle: dict[str, str],
 ) -> None:
@@ -560,6 +583,7 @@ def test_the_rebuild_document_names_every_cause_and_no_unexplained_field(
     assert "resumes to the digest already in the registry" in document
 
 
+@pytest.mark.slow
 def test_a_rebuild_difference_nothing_explains_refuses_the_bundle(
     tmp_path: Path,
     verification: Verification,
@@ -576,6 +600,7 @@ def test_a_rebuild_difference_nothing_explains_refuses_the_bundle(
         build_bundle(PROJECT_ROOT, tmp_path, generated_at=FIRST_INSTANT, verification=verification)
 
 
+@pytest.mark.slow
 def test_the_open_decisions_document_records_the_question_without_answering_it(
     first_bundle: dict[str, str],
 ) -> None:
@@ -588,6 +613,7 @@ def test_the_open_decisions_document_records_the_question_without_answering_it(
     assert decision.lands_in in document
 
 
+@pytest.mark.slow
 def test_the_index_sends_a_reviewer_to_the_open_decisions(
     first_bundle: dict[str, str],
 ) -> None:
@@ -599,6 +625,7 @@ def test_the_index_sends_a_reviewer_to_the_open_decisions(
     assert "scan" in index
 
 
+@pytest.mark.slow
 def test_the_index_measures_every_committed_run_record(first_bundle: dict[str, str]) -> None:
     # Read off the tree rather than listed, so a record added to the run directory is
     # measured without a second edit to the generator.

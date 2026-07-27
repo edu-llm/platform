@@ -81,6 +81,7 @@ def argv(
     return [token for pair in arguments.items() for token in pair]
 
 
+@pytest.mark.slow
 def test_clean_pushed_branch_writes_canonical_identity_and_step_outputs(
     checkout: Checkout,
     tmp_path: Path,
@@ -107,6 +108,7 @@ def test_clean_pushed_branch_writes_canonical_identity_and_step_outputs(
     )
 
 
+@pytest.mark.slow
 def test_the_identity_document_is_optional_so_the_gate_need_not_write_one(
     checkout: Checkout,
     tmp_path: Path,
@@ -126,6 +128,7 @@ def test_the_identity_document_is_optional_so_the_gate_need_not_write_one(
     )
 
 
+@pytest.mark.slow
 def test_step_outputs_are_appended_so_earlier_outputs_survive(
     checkout: Checkout,
     tmp_path: Path,
@@ -137,6 +140,7 @@ def test_step_outputs_are_appended_so_earlier_outputs_survive(
     assert step_output.read_text(encoding="utf-8").startswith("previous=kept\n")
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     ("overrides", "reason"),
     [
@@ -164,6 +168,7 @@ def test_rejected_identities_exit_non_zero_with_only_a_machine_readable_reason(
     assert not (tmp_path / "step-output.txt").exists()
 
 
+@pytest.mark.slow
 def test_a_dirty_tree_is_rejected_without_leaking_paths_or_environment(
     checkout: Checkout,
     tmp_path: Path,
@@ -183,6 +188,7 @@ def test_a_dirty_tree_is_rejected_without_leaking_paths_or_environment(
     assert "git" not in captured.err
 
 
+@pytest.mark.slow
 def test_a_missing_registry_file_fails_closed_without_a_traceback(
     checkout: Checkout,
     tmp_path: Path,

@@ -12,6 +12,7 @@ dev = [
   "jsonschema",
   "mypy",
   "pytest",
+  "pytest-xdist",
   "ruff",
   "types-PyYAML",
 ]
@@ -26,6 +27,10 @@ packages = ["src/edullm_platform"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+  "session_budget: measures what the whole session did, so conftest.py runs it last",
+  "slow: starts a subprocess. Opt out with -m 'not slow' on the command line, never here",
+]
 
 [tool.ruff]
 line-length = 100
