@@ -1,0 +1,41 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Build artifact store holding the packaged admission validator deployment zip.
+
+Resources:
+  # Separate from the lineage bucket, and it has to stay that way. A deployment zip is
+  # rebuilt on every code change and is meant to be replaced; a lineage record is written
+  # once and must never be. The lineage bucket enforces that with Object Lock and a bucket
+  # policy that refuses any unconditional PutObject, so a build artifact placed there
+  # could not be re-uploaded under the same key, and each stale zip would sit under a
+  # retention lock until it expired. Putting mutable and immutable objects in one bucket
+  # forces the bucket's guarantees down to whichever is weaker.
+  ArtifactsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: sbsandbox-intern-edullm-artifacts
+      # Versioning is what lets the function template pin S3ObjectVersion, so a deployed
+      # function is tied to the exact bytes that were uploaded rather than to whatever is
+      # at the key today.
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+Outputs:
+  BucketName:
+    Value:
+      Ref: ArtifactsBucket
+  BucketArn:
+    Value:
+      Fn::GetAtt:
+        - ArtifactsBucket
+        - Arn

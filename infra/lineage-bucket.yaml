@@ -1,0 +1,86 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Write-once lineage store for admission intents, decisions and conflicts.
+
+Resources:
+  LineageBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: sbsandbox-intern-edullm-lineage
+      VersioningConfiguration:
+        Status: Enabled
+      # Object Lock can only be turned on at bucket creation through CloudFormation:
+      # there is no update path, and no API call this template could make later, that
+      # adds it to a bucket that already exists. Enabling S3 Object Lock on an existing
+      # bucket requires a support request. So if this property is ever dropped and the
+      # stack recreated, the replacement bucket is permanently mutable and the only fix
+      # is a new bucket under a new name. Object Lock also requires versioning, which is
+      # why the two are set together above.
+      #
+      # GOVERNANCE rather than COMPLIANCE. GOVERNANCE can be overridden by a principal
+      # holding s3:BypassGovernanceRetention, which nobody in this account is granted;
+      # COMPLIANCE cannot be overridden by anyone including the account root, and an
+      # unrecoverable mistake in a sandbox is worse than a recoverable one. The retention
+      # window is what makes an accidental delete visible rather than silent.
+      ObjectLockEnabled: true
+      ObjectLockConfiguration:
+        ObjectLockEnabled: Enabled
+        Rule:
+          DefaultRetention:
+            Mode: GOVERNANCE
+            Days: 30
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  LineageBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: LineageBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          # Every write to this bucket must be conditional. A caller that omits
+          # If-None-Match is refused; a caller that sends `If-None-Match: *` is refused by
+          # S3 itself, with 412, if the key already exists. Together those two make first
+          # write wins a property of the bucket rather than a habit of its callers.
+          #
+          # This is a Deny and not an Allow-with-condition on purpose. An Allow can be
+          # widened by any other Allow that reaches the same object -- an identity policy,
+          # a future statement here, a session policy -- and the unconditional write then
+          # succeeds through the other grant. An explicit Deny cannot be escaped by adding
+          # permissions anywhere, so the invariant survives changes made by people who
+          # have not read this file.
+          #
+          # The cost is real and accepted: CopyObject into this bucket cannot carry
+          # If-None-Match, so it is refused outright. Nothing may be copied, re-uploaded,
+          # or moved here; a lineage record is written once by the state machine at the
+          # moment the fact it records became true, or it is not written at all. Anything
+          # that needs to reshape these records writes the result somewhere else.
+          - Sid: DenyWritesThatAreNotConditional
+            Effect: Deny
+            Principal: "*"
+            Action: s3:PutObject
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-lineage/*
+            Condition:
+              "Null":
+                s3:if-none-match: "true"
+
+Outputs:
+  BucketName:
+    Value:
+      Ref: LineageBucket
+  BucketArn:
+    Value:
+      Fn::GetAtt:
+        - LineageBucket
+        - Arn
