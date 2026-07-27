@@ -76,6 +76,11 @@
       "title": "Exception Approver Roles",
       "type": "array"
     },
+    "policy_version": {
+      "pattern": "^v[1-9][0-9]*$",
+      "title": "Policy Version",
+      "type": "string"
+    },
     "routine_approver_role": {
       "minLength": 1,
       "title": "Routine Approver Role",
@@ -86,6 +91,7 @@
     }
   },
   "required": [
+    "policy_version",
     "thresholds",
     "approval_scope",
     "routine_approver_role",

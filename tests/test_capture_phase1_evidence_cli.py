@@ -621,6 +621,10 @@ def test_the_tool_asks_for_exactly_what_it_records_and_nothing_else(
         "iam list-attached-role-policies",
         "iam get-role",
         "iam list-role-policies",
+        # The deployer carries two inline policies since Phase 2 gave it the admission
+        # stacks, and the tool reads each one it was told the role has. One call per
+        # policy is the property; a fixed count would just be this role's shape.
+        "iam get-role-policy",
         "iam get-role-policy",
         "iam list-attached-role-policies",
         "ecr describe-repositories",

@@ -56,7 +56,16 @@ class RequestFacts(ContractModel):
     fanout_parallelism: int = Field(default=1, ge=1)
 
 
+POLICY_VERSION_PATTERN = r"^v[1-9][0-9]*$"
+
+
 class ApprovalPolicy(ContractModel):
+    #: Which reviewed policy produced a decision. A decision record that named only the
+    #: outcome would be uninterpretable once the thresholds moved: a later reader could not
+    #: tell an approval that was routine under the rules of its day from one that would be
+    #: an exception under today's. Monotonic rather than a date, because two amendments on
+    #: one day are ordinary and two dates that collide are not orderable.
+    policy_version: str = Field(pattern=POLICY_VERSION_PATTERN)
     thresholds: PolicyThresholds
     approval_scope: ApprovalScopeValue
     routine_approver_role: str = Field(min_length=1)

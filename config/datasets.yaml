@@ -1,0 +1,13 @@
+# Dataset releases admission will accept.
+#
+# A submission naming a release that is not listed here is denied outright, under the
+# `unregistered_dataset` condition in config/policy.yaml, rather than classified as an
+# exception. An unknown dataset is not an expensive request somebody may approve; it is a
+# request whose inputs cannot be resolved.
+#
+# Entries carry an identifier and nothing else. Binding each identifier to a full
+# DatasetRelease — checksums, S3 VersionIds, schema, lineage, licence, classification and
+# access policy — is the dataset-breadth phase's work, not admission's.
+schema_version: 1
+releases:
+  - release_id: dolma-2026-07

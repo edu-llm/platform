@@ -1,3 +1,4 @@
+policy_version: v1
 thresholds:
   routine_maximum_cost_usd: "500"
   routine_maximum_runtime_hours: "12"

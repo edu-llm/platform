@@ -1,0 +1,140 @@
+{
+  "additionalProperties": false,
+  "description": "The ``workflow_dispatch`` form.\n\nFourteen properties against a ceiling of twenty-five, so the count is a usability\nquestion rather than a platform constraint. Eight are required and six are overrides a\nsubmitter can leave alone.",
+  "properties": {
+    "command": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Command",
+      "type": "array"
+    },
+    "commit_sha": {
+      "pattern": "^[0-9a-f]{40}$",
+      "title": "Commit Sha",
+      "type": "string"
+    },
+    "compute_profile": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Compute Profile"
+    },
+    "dataset_release": {
+      "minLength": 1,
+      "title": "Dataset Release",
+      "type": "string"
+    },
+    "fanout_index_parameter": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fanout Index Parameter"
+    },
+    "fanout_parallelism": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fanout Parallelism"
+    },
+    "fanout_size": {
+      "anyOf": [
+        {
+          "minimum": 2,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fanout Size"
+    },
+    "image_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Image Digest",
+      "type": "string"
+    },
+    "maximum_attempts": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Maximum Attempts"
+    },
+    "maximum_runtime_hours": {
+      "anyOf": [
+        {
+          "gt": 0,
+          "pattern": "^(?:[1-9][0-9]*(?:\\.[0-9]+)?|0\\.[0-9]*[1-9][0-9]*)$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Maximum Runtime Hours"
+    },
+    "repository": {
+      "minLength": 1,
+      "title": "Repository",
+      "type": "string"
+    },
+    "team": {
+      "minLength": 1,
+      "title": "Team",
+      "type": "string"
+    },
+    "wandb_project": {
+      "minLength": 1,
+      "title": "Wandb Project",
+      "type": "string"
+    },
+    "workload_profile": {
+      "minLength": 1,
+      "title": "Workload Profile",
+      "type": "string"
+    }
+  },
+  "required": [
+    "repository",
+    "commit_sha",
+    "image_digest",
+    "workload_profile",
+    "dataset_release",
+    "team",
+    "wandb_project",
+    "command"
+  ],
+  "title": "SubmissionInputs",
+  "type": "object"
+}

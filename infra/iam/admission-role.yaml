@@ -1,0 +1,93 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: GitHub Actions role that starts an admission execution once a run has passed a protected environment gate.
+
+Resources:
+  AdmissionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sbsandbox-intern-edullm-admission
+      PermissionsBoundary:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/InternSandboxBoundary
+      MaxSessionDuration: 3600
+      # The whole point of this role is that the approval already happened. GitHub only
+      # puts `:environment:<name>` in the subject claim for a job that declared
+      # `environment:` and cleared its protection rules, so the subject is the evidence.
+      #
+      # The two environment names are therefore enumerated, never matched. Anyone who can
+      # edit a workflow file can bring a GitHub environment into existence simply by
+      # naming it in `environment:`; the environment is auto-created on first use and an
+      # auto-created environment carries no protection rules at all. A StringLike on
+      # `...:environment:*` would accept the subject minted for that brand new,
+      # ungated environment, which is a subject that never passed a gate. Enumerating the
+      # two names means a subject can only match if a human already approved it in one of
+      # the two environments we configured reviewers on.
+      #
+      # An array under a single StringEquals key is an OR across its elements, so this
+      # accepts either environment. Separate condition keys are ANDed, so aud,
+      # job_workflow_ref, repository_owner_id and repository_id must all match as well.
+      #
+      # Both environment names are load-bearing. Renaming `run-approval-lead` in the
+      # repository settings does not fail anything visibly: the workflow creates a fresh
+      # unprotected environment under the new name, the subject stops matching, and every
+      # submission is refused at AssumeRole. This is the same hazard as renaming a
+      # workflow file out from under a job_workflow_ref pin.
+      #
+      # The sub prefix carries owner and repository ids because this organization issues
+      # immutable subject claims, verified the same way the deployer role's was:
+      # `gh api repos/edu-llm/platform/actions/oidc/customization/sub` reports
+      # sub_claim_prefix repo:edu-llm@306859726/platform@1311508598.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated:
+                Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:job_workflow_ref: edu-llm/platform/.github/workflows/submit-run.yml@refs/heads/main
+                token.actions.githubusercontent.com:repository_owner_id: "306859726"
+                token.actions.githubusercontent.com:repository_id: "1311508598"
+                token.actions.githubusercontent.com:sub:
+                  - repo:edu-llm@306859726/platform@1311508598:environment:run-approval-lead
+                  - repo:edu-llm@306859726/platform@1311508598:environment:run-approval-admin
+      # Inline rather than a customer managed policy. InternSandboxBoundary denies
+      # iam:CreatePolicyVersion on every policy, so a managed policy could be created once
+      # and never amended; the first permission change would fail the stack update. Inline
+      # policies go through iam:PutRolePolicy, which the boundary permits on this name.
+      Policies:
+        - PolicyName: start-admission-only
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # Deliberately absent: states:StopExecution, so an approved submitter cannot
+              # abort an admission decision that is already being recorded; iam:PassRole,
+              # because the state machine already carries its own execution role and this
+              # role never names one; and every s3: action, because the lineage record is
+              # written by the state machine, not by the caller who asked for it.
+              - Effect: Allow
+                Action: states:StartExecution
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:sbsandbox-intern-edullm-admission
+              # Execution-level actions are authorized against the execution ARN, which is
+              # a different resource type from the state machine ARN above; scoping them
+              # to the state machine ARN would deny every read. The trailing segment is
+              # the execution name, which the caller chooses, so it cannot be pinned.
+              - Effect: Allow
+                Action:
+                  - states:DescribeExecution
+                  - states:GetExecutionHistory
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:execution:sbsandbox-intern-edullm-admission:*
+
+Outputs:
+  RoleName:
+    Value:
+      Ref: AdmissionRole
+  RoleArn:
+    Value:
+      Fn::GetAtt:
+        - AdmissionRole
+        - Arn

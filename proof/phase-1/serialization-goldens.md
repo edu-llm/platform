@@ -7,7 +7,7 @@ That is the difference worth understanding. A comment, a reordered key or a whit
 | role | template | canonical bytes | digest |
 | --- | --- | --- | --- |
 | sbsandbox-intern-edullm-ecr-publisher | infra/iam/ecr-publisher-role.yaml | 2034 | sha256:a25031110ebe139885faaa6aa1ca3479f699ab46a597439031fb8db203e85f5d |
-| sbsandbox-intern-edullm-infra-deployer | infra/iam/infra-deployer-role.yaml | 2739 | sha256:795164b7fbe22e53ae1ca52cb1e5f14c23368d502f59e443a99869d26fcca430 |
+| sbsandbox-intern-edullm-infra-deployer | infra/iam/infra-deployer-role.yaml | 6069 | sha256:195a00ec8d75c46d70e42ed13f8b68d969ffb6ddbbd91ecc6583713123a513ac |
 
 ## How this fails
 

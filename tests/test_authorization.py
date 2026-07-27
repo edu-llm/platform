@@ -13,6 +13,7 @@ from edullm_platform.contracts.authorization import (
     AuthorizationReason,
     evaluate_authorization,
 )
+from edullm_platform.contracts.dataset_registry import DatasetRegistry
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.policy import (
     ApprovalClass,
@@ -59,6 +60,10 @@ def load_organization_inventory() -> OrganizationInventory:
 
 def load_approval_policy() -> ApprovalPolicy:
     return load_yaml(PROJECT_ROOT / "config" / "policy.yaml", ApprovalPolicy)
+
+
+def load_dataset_registry() -> DatasetRegistry:
+    return load_yaml(PROJECT_ROOT / "config" / "datasets.yaml", DatasetRegistry)
 
 
 def approval_policy_payload(approval_scope: ApprovalScope) -> dict[str, object]:
@@ -913,6 +918,7 @@ def test_attribution_changes_no_classification_outcome(filename: str) -> None:
         manifest,
         inventory=load_organization_inventory(),
         catalog=catalog,
+        dataset_registry=load_dataset_registry(),
         estimated_cost_usd=compute_manifest_maximum_cost(manifest, catalog),
     )
     expected = expected_manifest_classification(filename)

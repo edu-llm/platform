@@ -181,9 +181,13 @@ def test_the_publisher_projection_is_the_role_the_template_declares(
 def test_the_deployer_projection_keeps_the_narrowed_wildcards_it_was_given(
     deployer_template: TemplateRole,
 ) -> None:
-    # The stack and repository scopes wildcard only after the edullm segment, on purpose:
-    # this is a shared account. A projection that dropped the suffix would compare equal
-    # to a role scoped over every intern's stacks.
+    # Every scope wildcards only after the edullm segment, on purpose: this is a shared
+    # account, and sbsandbox-intern- alone is every intern's prefix. A projection that
+    # dropped the suffix would compare equal to a role scoped over their stacks too.
+    #
+    # Both inline policies are read, because the projection is what the comparison
+    # against the account is made of: a resource the projection never carried is a
+    # resource the deployed role could hold without any finding being reported.
     resources = {
         resource
         for policy in deployer_template.inline_policies
@@ -191,11 +195,25 @@ def test_the_deployer_projection_keeps_the_narrowed_wildcards_it_was_given(
         for resource in statement.resource_match.resources
     }
     template_arn = "arn:${AWS::Partition}:%s:${AWS::Region}:${AWS::AccountId}:%s"
+    bucket_arn = "arn:${AWS::Partition}:s3:::%s"
+    role_arn = "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/%s"
     assert resources == {
         template_arn % ("cloudformation", "stack/sbsandbox-intern-edullm-*/*"),
         template_arn % ("ecr", "repository/sbsandbox-intern-edullm-*"),
+        template_arn % ("states", "stateMachine:sbsandbox-intern-edullm-*"),
+        template_arn % ("lambda", "function:sbsandbox-intern-edullm-*"),
+        template_arn % ("logs", "log-group:/aws/vendedlogs/states/sbsandbox-intern-edullm-*"),
+        bucket_arn % "sbsandbox-intern-edullm-*",
+        bucket_arn % "sbsandbox-intern-edullm-artifacts/*",
+        role_arn % "sbsandbox-intern-edullm-admission-states",
+        role_arn % "sbsandbox-intern-edullm-admission-lambda",
         "*",
     }
+    assert not [one for one in resources if "sbsandbox-intern-*" in one]
+    # The roles iam:PassRole names are written out whole, and a projection that folded
+    # either into a prefix would compare equal to a deployer that can pass any role the
+    # account ever gives that name to.
+    assert not [one for one in resources if one.startswith(role_arn % "") and "*" in one]
 
 
 def test_a_template_projection_carries_exactly_what_the_evidence_can_be_compared_on() -> None:

@@ -1,0 +1,41 @@
+{
+  "$defs": {
+    "RegisteredDatasetRelease": {
+      "additionalProperties": false,
+      "properties": {
+        "release_id": {
+          "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$",
+          "title": "Release Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "release_id"
+      ],
+      "title": "RegisteredDatasetRelease",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "releases": {
+      "items": {
+        "$ref": "#/$defs/RegisteredDatasetRelease"
+      },
+      "minItems": 1,
+      "title": "Releases",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "releases"
+  ],
+  "title": "DatasetRegistry",
+  "type": "object"
+}

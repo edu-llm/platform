@@ -5,6 +5,7 @@ import pytest
 from pydantic import ValidationError
 
 from edullm_platform.config import load_yaml
+from edullm_platform.contracts.dataset_registry import DatasetRegistry
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.policy import (
     ApprovalClass,
@@ -55,6 +56,10 @@ def load_organization_inventory() -> OrganizationInventory:
 
 def load_approval_policy() -> ApprovalPolicy:
     return load_yaml(PROJECT_ROOT / "config" / "policy.yaml", ApprovalPolicy)
+
+
+def load_dataset_registry() -> DatasetRegistry:
+    return load_yaml(PROJECT_ROOT / "config" / "datasets.yaml", DatasetRegistry)
 
 
 def assert_validation_error(
@@ -114,6 +119,7 @@ def routine_facts(**overrides: object) -> RequestFacts:
 
 def policy_payload() -> dict[str, object]:
     return {
+        "policy_version": "v1",
         "thresholds": {
             "routine_maximum_cost_usd": "500",
             "routine_maximum_runtime_hours": "12",
@@ -218,6 +224,7 @@ def test_policy_yaml_validates_against_contract() -> None:
     project_root = Path(__file__).resolve().parents[1]
     config_path = project_root / "config" / "policy.yaml"
     policy = load_yaml(config_path, ApprovalPolicy)
+    assert policy.policy_version == "v1"
     assert policy.thresholds.routine_maximum_cost_usd == Decimal(500)
     assert policy.thresholds.routine_maximum_runtime_hours == Decimal(12)
     assert policy.thresholds.routine_maximum_attempts == 2
@@ -232,6 +239,34 @@ def test_policy_yaml_validates_against_contract() -> None:
         "mutable_repository_revision",
         "mutable_image_reference",
     )
+
+
+def test_approval_policy_requires_the_version_that_produced_a_decision() -> None:
+    payload = policy_payload()
+    del payload["policy_version"]
+    with pytest.raises(ValidationError) as exc_info:
+        ApprovalPolicy.model_validate(payload)
+    assert_validation_error(exc_info.value, error_type="missing")
+    assert exc_info.value.errors()[0]["loc"] == ("policy_version",), (
+        "a decision record that named only the outcome could not be reread once the "
+        "thresholds moved, so the version cannot default"
+    )
+
+
+@pytest.mark.parametrize("policy_version", ["", "1", "v0", "v01", "v1.1", "V1", "v-1", "vnext"])
+def test_approval_policy_rejects_a_version_that_is_not_monotonic(policy_version: str) -> None:
+    payload = policy_payload()
+    payload["policy_version"] = policy_version
+    with pytest.raises(ValidationError) as exc_info:
+        ApprovalPolicy.model_validate(payload)
+    assert exc_info.value.errors()[0]["loc"] == ("policy_version",)
+
+
+@pytest.mark.parametrize("policy_version", ["v1", "v2", "v10", "v137"])
+def test_approval_policy_accepts_successive_monotonic_versions(policy_version: str) -> None:
+    payload = policy_payload()
+    payload["policy_version"] = policy_version
+    assert ApprovalPolicy.model_validate(payload).policy_version == policy_version
 
 
 def test_approval_policy_rejects_routine_role_satisfying_exception() -> None:
@@ -408,6 +443,7 @@ def test_representative_manifest_classifies_as_expected(filename: str) -> None:
         manifest,
         inventory=inventory,
         catalog=catalog,
+        dataset_registry=load_dataset_registry(),
         estimated_cost_usd=estimated_cost_usd,
     )
     expected = expected_classification(filename)
@@ -427,6 +463,7 @@ def test_gpu_exception_has_full_registration_and_only_runtime_violation() -> Non
         manifest,
         inventory=inventory,
         catalog=catalog,
+        dataset_registry=load_dataset_registry(),
         estimated_cost_usd=estimated_cost_usd,
     )
 
@@ -455,6 +492,7 @@ def test_routine_manifest_has_full_registration_and_no_bound_violations(
         manifest,
         inventory=inventory,
         catalog=catalog,
+        dataset_registry=load_dataset_registry(),
         estimated_cost_usd=estimated_cost_usd,
     )
 
@@ -476,6 +514,7 @@ def test_request_facts_from_manifest_rejects_unregistered_repository() -> None:
         broken_manifest,
         inventory=inventory,
         catalog=catalog,
+        dataset_registry=load_dataset_registry(),
         estimated_cost_usd=Decimal(1),
     )
     assert facts.repository_registered is False

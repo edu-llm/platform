@@ -27,6 +27,7 @@ from edullm_platform.phase1_capture import (
     CAPTURE_SUFFIX,
     ROLE_CAPTURE_DIR,
     RUN_CAPTURE_DIR,
+    captures_that_do_not_hold,
     read_committed_role_captures,
     read_committed_run_evidence,
 )
@@ -119,11 +120,76 @@ def strip_generated_at(documents: dict[str, str]) -> dict[str, str]:
     }
 
 
+def captures_waiting_on_a_deploy() -> tuple[str, ...]:
+    """Roles whose committed capture no longer holds, which stops a bundle being built.
+
+    A template amendment lands before the stack that carries it, because the stacks holding
+    these roles are applied from a laptop and this repository cannot obtain those
+    credentials. Between the two commits the account is genuinely behind the template, the
+    comparison is genuinely right to say so, and the generator is genuinely right to refuse:
+    a bundle records criteria 4 and 5 as covered on the strength of those captures, so
+    building one now would print a status the gate does not reach.
+
+    That refusal is the behaviour under test rather than an obstacle to it, which is why the
+    cases that need a built bundle are skipped rather than weakened, and why
+    :func:`test_the_generator_refuses_exactly_while_a_capture_is_waiting_on_a_deploy` runs in
+    every state. Skipping without that case would let the skip outlive the deploy.
+    """
+    return tuple(
+        capture.role_name
+        for capture in captures_that_do_not_hold(read_committed_role_captures(PROJECT_ROOT))
+    )
+
+
+def test_the_generator_refuses_exactly_while_a_capture_is_waiting_on_a_deploy(
+    tmp_path: Path,
+    verification: Verification,
+) -> None:
+    """Whichever state the tree is in, the generator must be in the matching one.
+
+    Runs in both directions on purpose. While a capture is behind its template the build has
+    to refuse and name the role; once the deploy lands it has to succeed. The second half is
+    what clears the skips below, because the day they become unnecessary this case is what
+    fails if nobody has removed them.
+    """
+    waiting = captures_waiting_on_a_deploy()
+
+    if waiting:
+        with pytest.raises(ProofBundleError) as refusal:
+            build_into(tmp_path, verification, FIRST_INSTANT)
+        for role_name in waiting:
+            assert role_name in str(refusal.value)
+        return
+
+    documents = build_into(tmp_path, verification, FIRST_INSTANT)
+    assert set(documents) == set(BUNDLE_FILENAMES)
+
+
+#: For cases that build a bundle to prove it refuses something *else*. While a capture is
+#: waiting on a deploy the generator refuses for that reason first, so those cases would
+#: pass on a refusal they did not cause — which is worse than not running them.
+needs_a_buildable_bundle = pytest.mark.skipif(
+    bool(captures_waiting_on_a_deploy()),
+    reason=(
+        "a committed role capture is waiting on a laptop deploy, so the generator refuses "
+        "before reaching the refusal this case is about"
+    ),
+)
+
+
 @pytest.fixture(scope="session")
 def first_bundle(
     tmp_path_factory: pytest.TempPathFactory,
     verification: Verification,
 ) -> dict[str, str]:
+    waiting = captures_waiting_on_a_deploy()
+    if waiting:
+        pytest.skip(
+            "a committed role capture is waiting on a laptop deploy, so no bundle can be "
+            f"built: {', '.join(waiting)}. See "
+            "test_the_generator_refuses_exactly_while_a_capture_is_waiting_on_a_deploy, "
+            "which fails once the deploy lands and this skip stops being true."
+        )
     return build_into(tmp_path_factory.mktemp("first"), verification, FIRST_INSTANT)
 
 
@@ -197,6 +263,7 @@ def test_a_sentence_that_disagrees_with_the_definition_is_caught(
 
 
 @pytest.mark.slow
+@needs_a_buildable_bundle
 def test_the_generator_refuses_to_write_a_bundle_whose_prose_contradicts_the_gate(
     tmp_path: Path,
     verification: Verification,
@@ -269,6 +336,7 @@ def test_the_recorded_goldens_cover_every_committed_role() -> None:
 
 
 @pytest.mark.slow
+@needs_a_buildable_bundle
 def test_a_widened_template_refuses_the_build_rather_than_being_re_recorded(
     tmp_path: Path,
     verification: Verification,
@@ -286,6 +354,7 @@ def test_a_widened_template_refuses_the_build_rather_than_being_re_recorded(
 
 
 @pytest.mark.slow
+@needs_a_buildable_bundle
 def test_regenerating_records_the_live_digest(tmp_path: Path, verification: Verification) -> None:
     build_bundle(PROJECT_ROOT, tmp_path, generated_at=FIRST_INSTANT, verification=verification)
     recorded = json.loads(goldens_path(tmp_path).read_text(encoding="utf-8"))
@@ -603,6 +672,7 @@ def test_the_rebuild_document_names_every_cause_and_no_unexplained_field(
 
 
 @pytest.mark.slow
+@needs_a_buildable_bundle
 def test_a_rebuild_difference_nothing_explains_refuses_the_bundle(
     tmp_path: Path,
     verification: Verification,
