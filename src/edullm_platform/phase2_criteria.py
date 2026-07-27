@@ -66,6 +66,7 @@ RECORDS = "tests/test_phase2_admission_records.py"
 WORKFLOW = "tests/test_phase2_submit_run_workflow.py"
 INFRA = "tests/test_phase2_infrastructure.py"
 DENIALS = "tests/test_phase2_admission_denials.py"
+GITHUB = "tests/test_phase2_github_evidence.py"
 PACKAGE = "tests/test_phase2_lambda_package.py"
 AUTHZ = "tests/test_authorization.py"
 
@@ -614,22 +615,47 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 "The environment reviewer lists match the roster in "
                 "config/organization.yaml."
             ),
-            status=CriterionStatus.GAP,
-            gaps=(
-                (
-                    "Nothing in this repository reads the environment configuration, so this "
-                    "criterion cites no test at all. The configuration exists and was set "
-                    "deliberately. run-approval-lead lists the team-leads team as its single "
-                    "reviewer, because eight leads exceed the six-slot cap and a team counts "
-                    "as one slot. run-approval-admin lists the two roster admins rather than "
-                    "the three GitHub org owners, because the third is the sandbox owner and "
-                    "appears nowhere in this platform's role model."
+            status=CriterionStatus.COVERED,
+            proving_node_ids=(
+                *_ids(GITHUB, "test_the_admin_gate_is_reviewed_by_the_roster_admins_and_nobody_else"),
+                *_ids(GITHUB, "test_no_member_who_is_not_a_lead_or_admin_reviews_either_gate"),
+                *_ids(
+                    GITHUB,
+                    "test_the_lead_gate_is_reviewed_by_the_leads_team_rather_than_by_named_people",
                 ),
-                NEEDS_A_COMMITTED_CAPTURE,
+            ),
+            supporting_node_ids=(
+                *_ids(GITHUB, "test_both_approval_environments_exist_and_no_third_one_does"),
+                *_ids(GITHUB, "test_self_review_is_deliberately_permitted_on_both_gates"),
+            ),
+            scope_limits=(
                 (
-                    "The comparison to write is between the captured reviewer lists and the "
-                    "loaded OrganizationInventory. Drift between the two is otherwise silent, "
-                    "and the whole authorization model assumes they agree."
+                    "Compared against config/organization.yaml rather than against a list "
+                    "written in the test, because drift between GitHub's reviewers and the "
+                    "platform's roster is otherwise silent and the authorization model "
+                    "assumes the two agree."
+                ),
+                (
+                    "The lead gate's single reviewer is the team-leads team, and the "
+                    "assertion pins the type as well as the name. Eight leads exceed the "
+                    "six-slot cap and a team counts as one slot, so the team is the only way "
+                    "to list them all -- and a test that flattened it into its members would "
+                    "agree with the roster for the wrong reason, and would keep agreeing "
+                    "after somebody replaced it with six named users."
+                ),
+                (
+                    "The admin gate lists the two roster admins rather than the three GitHub "
+                    "org owners. The third is the sandbox owner, who appears nowhere in this "
+                    "platform's role model, and an exception released by somebody outside "
+                    "the model would be attributable to a person the policy cannot reason "
+                    "about."
+                ),
+                (
+                    "This rests on a capture, so it is a statement about 2026-07-27 rather "
+                    "than about now, and it expires with the freshness window. A GitHub "
+                    "setting changes in a browser in ten seconds and leaves no artifact in "
+                    "any repository, which is exactly why the statement about one has to "
+                    "lapse rather than stand."
                 ),
             ),
         ),
@@ -639,21 +665,32 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 "Both environments restrict deployment to main only, using the "
                 "custom-branch form."
             ),
-            status=CriterionStatus.GAP,
-            gaps=(
+            status=CriterionStatus.COVERED,
+            proving_node_ids=(
+                *_ids(GITHUB, "test_every_environment_restricts_deployments_to_main_by_name"),
+            ),
+            supporting_node_ids=(
+                *_ids(GITHUB, "test_both_approval_environments_exist_and_no_third_one_does"),
+            ),
+            scope_limits=(
                 (
-                    "Configured and unread. Both environments carry a deployment branch "
-                    "policy with protected_branches false and custom_branch_policies true, "
-                    "and a single branch policy naming main literally."
+                    "The custom form is asserted specifically, and the protected-branches "
+                    "form is asserted absent. They are not equivalent: protected_branches "
+                    "follows whatever branch protection happens to cover, so it widens the "
+                    "moment a second branch is protected -- a change nobody would connect to "
+                    "this control -- while custom_branch_policies matches names that were "
+                    "written down. A test asserting only that some restriction exists would "
+                    "pass on the weaker one."
                 ),
                 (
-                    "The custom form was chosen rather than the protected-branches form, "
-                    "because the latter silently widens the moment a second branch is "
-                    "protected, which is exactly the kind of change nobody would connect to "
-                    "this control. The capture must assert the form specifically and not "
-                    "merely that some branch restriction exists."
+                    "Asserted for every environment the capture found rather than for the "
+                    "two expected by name, so an environment auto-created by naming it in a "
+                    "workflow file is covered by the same assertion."
                 ),
-                NEEDS_A_COMMITTED_CAPTURE,
+                (
+                    "Rests on a capture, so it expires with the freshness window and is a "
+                    "statement about 2026-07-27 rather than about now."
+                ),
             ),
         ),
         CriterionSpec(
@@ -842,25 +879,37 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 "No repository-level secret exists, and any credential is an environment "
                 "secret with a main-only policy."
             ),
-            status=CriterionStatus.GAP,
-            gaps=(
+            status=CriterionStatus.COVERED,
+            proving_node_ids=(
+                *_ids(GITHUB, "test_the_repository_holds_no_secret_a_branch_could_read"),
+                *_ids(GITHUB, "test_phase_two_introduced_no_credential_at_all"),
+            ),
+            supporting_node_ids=(
+                *_ids(
+                    GITHUB,
+                    "test_the_only_repository_variables_are_the_two_role_arns_and_the_region",
+                ),
+            ),
+            scope_limits=(
                 (
-                    "Satisfied in fact and unread by anything. The repository holds zero "
-                    "secrets at repository, organization and Dependabot level, and three "
-                    "non-secret variables: AWS_REGION, AWS_INFRA_DEPLOYER_ROLE_ARN and "
-                    "AWS_ADMISSION_ROLE_ARN."
+                    "Names only, never values, and the model has no field a value could "
+                    "occupy. That is a stronger guarantee than a capture tool that is "
+                    "careful, and it matters because the evidence for "
+                    "no-credentials-are-stored must not itself store one."
                 ),
                 (
-                    "Phase 2 introduced no credential. The approvals endpoint turned out to "
-                    "be reachable with a GITHUB_TOKEN holding actions read, verified on a "
-                    "real run, so the fallback of a stored fine-grained token was never "
-                    "needed."
+                    "Phase 2 introduced no credential, and that was a live question rather "
+                    "than a foregone conclusion. The fallback, had the approvals endpoint "
+                    "needed a fine-grained token, was to store one as an environment secret. "
+                    "The endpoint answered a GITHUB_TOKEN holding actions read, so nothing "
+                    "was stored, and the environment secret lists are empty."
                 ),
-                NEEDS_A_COMMITTED_CAPTURE,
                 (
-                    "The capture records secret names only, never values, at repository, "
-                    "organization and environment level. This check starts satisfied and "
-                    "exists to keep it that way."
+                    "This check starts satisfied and exists to keep it that way, so it will "
+                    "look uneventful for as long as it is working."
+                ),
+                (
+                    "Rests on a capture, so it expires with the freshness window."
                 ),
             ),
         ),
