@@ -1,0 +1,240 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Admission state machine, its validator function, and the log group their executions are recorded in.
+
+Resources:
+  # The /aws/vendedlogs/states/ prefix is not cosmetic. Step Functions delivers execution
+  # logs through the CloudWatch Logs vended-logs path, which attaches a resource policy to
+  # the destination log group; log groups under this prefix are covered by one shared
+  # policy instead of one policy each. The account limit is ten CloudWatch Logs resource
+  # policies per region and this is a shared sandbox, so a state machine logging to a
+  # group outside the prefix burns a tenth of an account-wide budget that other interns
+  # are also drawing on -- and the failure, once the limit is reached, lands on whoever
+  # deploys next rather than on whoever spent it.
+  AdmissionLogGroup:
+    Type: AWS::Logs::LogGroup
+    # Retained because these are the execution records of who admitted which run, with
+    # IncludeExecutionData on: they are the audit trail, not a debugging convenience. The
+    # cost of retaining is that deleting and recreating this stack fails at CreateLogGroup
+    # until the orphaned group is removed by hand, which is the trade we want in the
+    # direction that loses no evidence.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: /aws/vendedlogs/states/sbsandbox-intern-edullm-admission
+      RetentionInDays: 90
+
+  AdmissionValidatorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: sbsandbox-intern-edullm-admission-validator
+      Description: Parses a submitted run manifest and returns the admission intent and decision.
+      Runtime: python3.12
+      Handler: edullm_platform.admission_handler.handler
+      Role:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-admission-lambda
+      # S3ObjectVersion is what makes a code change a CloudFormation change. Without it,
+      # re-uploading a new zip to the same key leaves this resource's properties
+      # byte-identical, the change set comes back empty, and `deploy
+      # --no-fail-on-empty-changeset` reports success while the old code keeps running.
+      # Pinning the version means the template must be edited for every release, and the
+      # edit is the diff a reviewer sees.
+      #
+      # The value below is a placeholder, not a version id. It is deliberately not
+      # anything S3 could return, so the first deploy fails loudly at CreateFunction if
+      # the release procedure did not upload the packaged zip and paste the version id it
+      # printed. A plausible-looking wrong value would fail the same way but read like a
+      # stale release rather than a missing step.
+      Code:
+        S3Bucket: sbsandbox-intern-edullm-artifacts
+        S3Key: admission-validator/admission-validator.zip
+        S3ObjectVersion: pending-first-admission-validator-upload
+      Timeout: 30
+      MemorySize: 512
+
+  AdmissionStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: sbsandbox-intern-edullm-admission
+      # STANDARD, not EXPRESS. Admission runs at most a few times an hour, it must be
+      # exactly-once against a write-once store, and its execution history is the record
+      # we intend to read back. EXPRESS is at-least-once and keeps no queryable history.
+      StateMachineType: STANDARD
+      RoleArn:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-admission-states
+      # Level ALL with execution data, because the thing being audited is the content of
+      # the decision, not merely that a decision happened. The manifest and the decision
+      # both land in the log group above, which is why that group is retained.
+      LoggingConfiguration:
+        Level: ALL
+        IncludeExecutionData: true
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn:
+                Fn::GetAtt:
+                  - AdmissionLogGroup
+                  - Arn
+      # Fn::Sub over a JSON literal rather than DefinitionSubstitutions: the only values
+      # that vary are the partition and the function ARN, and substitutions would move
+      # them out of the text a reader is checking. Amazon States Language uses `$.` and
+      # `$$.` for paths and `{}` for States.Format placeholders, none of which Fn::Sub
+      # touches -- only `${...}` is substituted.
+      #
+      # The two lineage writes catch States.ALL, which is deliberately too broad, and it
+      # is too broad because the exact error has not been observed yet. Every write here
+      # carries `IfNoneMatch: "*"`, so S3 answers 412 PreconditionFailed when the key
+      # already exists -- but what Step Functions surfaces to the Catch for that 412 is a
+      # different question. PreconditionFailed is not a modelled exception on the S3
+      # PutObject API shape, so the SDK integration most likely reports the generic
+      # S3.S3Exception rather than an S3.PreconditionFailedException, and guessing the
+      # name would produce a Catch that silently never fires. There are no AWS
+      # credentials in the environment this was written in, so the guess could not be
+      # settled by observation.
+      #
+      # Consequence, stated plainly: a transient 500 from S3 is currently recorded as an
+      # admission conflict, which is wrong. Run tools/probe_conditional_write.py against
+      # the real account, read the error name it reports, and narrow both ErrorEquals
+      # lists to that name so that only a genuine already-exists lands in RecordConflict.
+      #
+      # There is no Retry on either write for the same reason. A retry of a conditional
+      # PUT that lost the race can never succeed, so retrying is only correct for the
+      # transient case -- and separating the two cases is exactly what the probe unblocks.
+      DefinitionString:
+        Fn::Sub: |
+          {
+            "Comment": "Validate a submitted run manifest, then record the intent and the decision as write-once lineage.",
+            "StartAt": "ValidateAndDecide",
+            "States": {
+              "ValidateAndDecide": {
+                "Type": "Task",
+                "Resource": "arn:${AWS::Partition}:states:::lambda:invoke",
+                "Parameters": {
+                  "FunctionName": "${AdmissionValidatorFunction.Arn}",
+                  "Payload.$": "$"
+                },
+                "ResultSelector": {
+                  "intent.$": "$.Payload.intent",
+                  "decision.$": "$.Payload.decision"
+                },
+                "ResultPath": "$.admission",
+                "Retry": [
+                  {
+                    "ErrorEquals": [
+                      "Lambda.ServiceException",
+                      "Lambda.AWSLambdaException",
+                      "Lambda.SdkClientException",
+                      "Lambda.TooManyRequestsException"
+                    ],
+                    "IntervalSeconds": 2,
+                    "MaxAttempts": 3,
+                    "BackoffRate": 2
+                  }
+                ],
+                "Next": "WriteIntent"
+              },
+              "WriteIntent": {
+                "Type": "Task",
+                "Resource": "arn:${AWS::Partition}:states:::aws-sdk:s3:putObject",
+                "Parameters": {
+                  "Bucket": "sbsandbox-intern-edullm-lineage",
+                  "Key.$": "States.Format('intent/{}.json', $.run_id)",
+                  "Body.$": "States.JsonToString($.admission.intent)",
+                  "ContentType": "application/json",
+                  "ChecksumAlgorithm": "SHA256",
+                  "IfNoneMatch": "*"
+                },
+                "ResultPath": null,
+                "Catch": [
+                  {
+                    "ErrorEquals": ["States.ALL"],
+                    "ResultPath": "$.write_failure",
+                    "Next": "RecordConflict"
+                  }
+                ],
+                "Next": "WriteDecision"
+              },
+              "WriteDecision": {
+                "Type": "Task",
+                "Resource": "arn:${AWS::Partition}:states:::aws-sdk:s3:putObject",
+                "Parameters": {
+                  "Bucket": "sbsandbox-intern-edullm-lineage",
+                  "Key.$": "States.Format('decision/{}.json', $.run_id)",
+                  "Body.$": "States.JsonToString($.admission.decision)",
+                  "ContentType": "application/json",
+                  "ChecksumAlgorithm": "SHA256",
+                  "IfNoneMatch": "*"
+                },
+                "ResultPath": null,
+                "Catch": [
+                  {
+                    "ErrorEquals": ["States.ALL"],
+                    "ResultPath": "$.write_failure",
+                    "Next": "RecordConflict"
+                  }
+                ],
+                "Next": "AdmissionAccepted"
+              },
+              "RecordConflict": {
+                "Type": "Task",
+                "Resource": "arn:${AWS::Partition}:states:::aws-sdk:s3:putObject",
+                "Parameters": {
+                  "Bucket": "sbsandbox-intern-edullm-lineage",
+                  "Key.$": "States.Format('conflicts/{}.json', $$.Execution.Name)",
+                  "Body.$": "States.JsonToString($)",
+                  "ContentType": "application/json",
+                  "ChecksumAlgorithm": "SHA256",
+                  "IfNoneMatch": "*"
+                },
+                "ResultPath": null,
+                "Catch": [
+                  {
+                    "ErrorEquals": ["States.ALL"],
+                    "ResultPath": "$.conflict_write_failure",
+                    "Next": "AdmissionConflict"
+                  }
+                ],
+                "Next": "AdmissionConflict"
+              },
+              "AdmissionAccepted": {
+                "Type": "Choice",
+                "Choices": [
+                  {
+                    "Variable": "$.admission.decision.accepted",
+                    "BooleanEquals": true,
+                    "Next": "Admitted"
+                  }
+                ],
+                "Default": "Rejected"
+              },
+              "Admitted": {
+                "Type": "Succeed"
+              },
+              "Rejected": {
+                "Type": "Fail",
+                "Error": "AdmissionRejected",
+                "Cause": "The validator refused this run. The refusal and its reasons are recorded under decision/ in the lineage bucket."
+              },
+              "AdmissionConflict": {
+                "Type": "Fail",
+                "Error": "AdmissionConflict",
+                "Cause": "A lineage record for this run already existed, so the conditional write was refused. The attempt is recorded under conflicts/ in the lineage bucket."
+              }
+            }
+          }
+
+Outputs:
+  StateMachineName:
+    # Ref on AWS::StepFunctions::StateMachine returns the ARN, not the name, so the two
+    # outputs are the other way round from every IAM role in this repository.
+    Value:
+      Fn::GetAtt:
+        - AdmissionStateMachine
+        - Name
+  StateMachineArn:
+    Value:
+      Ref: AdmissionStateMachine
+  ValidatorFunctionName:
+    Value:
+      Ref: AdmissionValidatorFunction
+  LogGroupName:
+    Value:
+      Ref: AdmissionLogGroup
