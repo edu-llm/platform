@@ -412,6 +412,7 @@ def test_every_run_target_is_offered_by_the_command() -> None:
     )
 
 
+@pytest.mark.slow
 def test_the_image_target_records_the_digest_the_registry_holds_for_this_commit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -430,6 +431,7 @@ def test_the_image_target_records_the_digest_the_registry_holds_for_this_commit(
     assert "registry_id" not in image
 
 
+@pytest.mark.slow
 def test_the_scan_target_records_every_severity_including_the_ones_ecr_omits(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -454,6 +456,7 @@ def test_the_scan_target_records_every_severity_including_the_ones_ecr_omits(
     }
 
 
+@pytest.mark.slow
 def test_the_session_target_records_the_session_that_pushed_the_image(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -475,6 +478,7 @@ def test_the_session_target_records_the_session_that_pushed_the_image(
     assert session["expires_at"].startswith("2026-07-26T23:05:19")
 
 
+@pytest.mark.slow
 def test_the_denials_target_completes_every_attempt_with_its_cloudtrail_event(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -490,6 +494,7 @@ def test_the_denials_target_completes_every_attempt_with_its_cloudtrail_event(
         assert record["event_id"] == event_id
 
 
+@pytest.mark.slow
 def test_a_denial_is_joined_to_its_own_run_rather_than_to_an_earlier_one(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -508,6 +513,7 @@ def test_a_denial_is_joined_to_its_own_run_rather_than_to_an_earlier_one(
     assert "00000000-0000-4000-8000-00000000eeee" not in recorded
 
 
+@pytest.mark.slow
 def test_the_tag_refusal_target_records_the_refusal_and_the_digest_that_survived(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -528,6 +534,7 @@ def test_the_tag_refusal_target_records_the_refusal_and_the_digest_that_survived
     assert refusal["attempted_by_publisher_role"] is False
 
 
+@pytest.mark.slow
 def test_a_refusal_met_by_somebody_other_than_the_publisher_says_so(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -547,6 +554,7 @@ def test_a_refusal_met_by_somebody_other_than_the_publisher_says_so(
     assert OPERATOR_ROLE not in text
 
 
+@pytest.mark.slow
 def test_a_repository_with_no_refused_push_captures_nothing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -563,6 +571,7 @@ def test_a_repository_with_no_refused_push_captures_nothing(
     assert written(tmp_path) == {}
 
 
+@pytest.mark.slow
 def test_a_push_on_a_later_page_of_the_trail_is_still_found(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -606,6 +615,7 @@ def test_a_push_on_a_later_page_of_the_trail_is_still_found(
 # --------------------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_a_scan_of_another_image_is_refused_rather_than_filed_under_this_one(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -624,6 +634,7 @@ def test_a_scan_of_another_image_is_refused_rather_than_filed_under_this_one(
     assert written(tmp_path) == {}
 
 
+@pytest.mark.slow
 def test_a_session_that_cannot_be_tied_to_the_push_is_refused(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -644,6 +655,7 @@ def test_a_session_that_cannot_be_tied_to_the_push_is_refused(
     assert written(tmp_path) == {}
 
 
+@pytest.mark.slow
 def test_a_denial_with_no_matching_event_stops_the_capture(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -725,6 +737,7 @@ def test_a_matrix_missing_an_action_is_refused_by_the_contract_that_holds_it(
 # --------------------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_no_account_id_or_session_key_reaches_a_file_or_a_stream(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -759,6 +772,7 @@ def test_no_account_id_or_session_key_reaches_a_file_or_a_stream(
     assert SESSION_KEY not in captured.out + captured.err
 
 
+@pytest.mark.slow
 def test_the_run_targets_ask_for_exactly_what_they_record(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

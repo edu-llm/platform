@@ -34,6 +34,19 @@ uv run ruff check .       # lint
 uv run mypy               # types
 ```
 
+`uv run pytest -q` runs every test and is the command every proof bundle asks a reviewer
+for. Around two hundred of those tests start a subprocess — a real git repository, a bash
+workflow body, a stubbed CLI, a nested pytest — and they are marked `slow`. While working
+on something else you can leave them out:
+
+```bash
+uv run pytest -q -m "not slow"   # nine tests in ten, in a few seconds
+```
+
+That is a convenience and not a default. The exclusion belongs on the command line and
+nowhere else: written into `addopts` it would make the standard command quietly run less
+than it claims, and `tests/test_suite_budget.py` fails if anyone tries.
+
 Regenerate the published schemas after changing any contract. The output is
 byte-reproducible, so a second run should produce no diff:
 

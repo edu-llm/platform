@@ -163,6 +163,7 @@ def source_identity_payload(**overrides: object) -> dict[str, object]:
     return payload
 
 
+@pytest.mark.slow
 def test_clean_pushed_branch_returns_frozen_verified_identity(
     unchanging_repository: GitFixture,
 ) -> None:
@@ -227,18 +228,21 @@ def test_source_identity_contract_rejects_short_or_uppercase_sha(
         SourceIdentity.model_validate(source_identity_payload(commit_sha=commit_sha))
 
 
+@pytest.mark.slow
 def test_dirty_tracked_worktree_fails(git_fixture: GitFixture) -> None:
     (git_fixture.checkout / "tracked.txt").write_text("dirty\n")
 
     assert_reason(SourceIdentityReason.DIRTY_TREE, git_fixture)
 
 
+@pytest.mark.slow
 def test_dirty_untracked_worktree_fails(git_fixture: GitFixture) -> None:
     (git_fixture.checkout / "untracked.txt").write_text("dirty\n")
 
     assert_reason(SourceIdentityReason.DIRTY_TREE, git_fixture)
 
 
+@pytest.mark.slow
 def test_unpushed_commit_fails_branch_head_verification(
     git_fixture: GitFixture,
 ) -> None:
@@ -254,6 +258,7 @@ def test_unpushed_commit_fails_branch_head_verification(
     )
 
 
+@pytest.mark.slow
 def test_wrong_repository_id_fails(unchanging_repository: GitFixture) -> None:
     assert_reason(
         SourceIdentityReason.REPOSITORY_ID_MISMATCH,
@@ -262,6 +267,7 @@ def test_wrong_repository_id_fails(unchanging_repository: GitFixture) -> None:
     )
 
 
+@pytest.mark.slow
 def test_unknown_repository_fails(unchanging_repository: GitFixture) -> None:
     assert_reason(
         SourceIdentityReason.UNREGISTERED_REPOSITORY,
@@ -270,6 +276,7 @@ def test_unknown_repository_fails(unchanging_repository: GitFixture) -> None:
     )
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     ("field", "value", "reason"),
     [
@@ -292,6 +299,7 @@ def test_verifier_rejects_invalid_identity_inputs(
     assert_reason(reason, unchanging_repository, **{field: value})
 
 
+@pytest.mark.slow
 def test_checkout_head_mismatch_fails(git_fixture: GitFixture) -> None:
     (git_fixture.checkout / "tracked.txt").write_text("second\n")
     run_git(git_fixture.checkout, "add", "tracked.txt")
@@ -307,6 +315,7 @@ def test_checkout_head_mismatch_fails(git_fixture: GitFixture) -> None:
     assert second_sha != git_fixture.commit_sha
 
 
+@pytest.mark.slow
 def test_missing_remote_ref_fails(unchanging_repository: GitFixture) -> None:
     assert_reason(
         SourceIdentityReason.REMOTE_REF_MISSING,
@@ -315,6 +324,7 @@ def test_missing_remote_ref_fails(unchanging_repository: GitFixture) -> None:
     )
 
 
+@pytest.mark.slow
 def test_non_git_root_fails(unchanging_repository: GitFixture, tmp_path: Path) -> None:
     non_git_root = tmp_path / "not-git"
     non_git_root.mkdir()
@@ -326,6 +336,7 @@ def test_non_git_root_fails(unchanging_repository: GitFixture, tmp_path: Path) -
     )
 
 
+@pytest.mark.slow
 def test_initial_git_probe_failure_is_git_command_failure(
     unchanging_repository: GitFixture,
     tmp_path: Path,
@@ -343,6 +354,7 @@ def test_initial_git_probe_failure_is_git_command_failure(
     assert "exit code 42" in error.detail
 
 
+@pytest.mark.slow
 def test_missing_remote_is_sanitized_git_command_failure(
     unchanging_repository: GitFixture,
 ) -> None:
@@ -357,6 +369,7 @@ def test_missing_remote_is_sanitized_git_command_failure(
     assert "AWS_" not in str(error)
 
 
+@pytest.mark.slow
 def test_upload_pack_option_is_rejected_without_executing_command(
     unchanging_repository: GitFixture,
     tmp_path: Path,
@@ -374,6 +387,7 @@ def test_upload_pack_option_is_rejected_without_executing_command(
     assert not marker.exists()
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "remote_name",
     [
@@ -396,6 +410,7 @@ def test_unsafe_remote_names_are_rejected(
     )
 
 
+@pytest.mark.slow
 def test_ls_remote_uses_option_terminator(
     unchanging_repository: GitFixture,
     tmp_path: Path,

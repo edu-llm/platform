@@ -241,6 +241,7 @@ def test_collecting_a_different_tree_starts_its_own_child(
     assert spawns.collections == [one, another]
 
 
+@pytest.mark.slow
 def test_a_new_process_has_verified_nothing() -> None:
     """The memory dies with the process, so it can never validate a tree it never saw.
 

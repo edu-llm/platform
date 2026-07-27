@@ -1053,6 +1053,7 @@ def test_redaction_masks_every_account_id_in_one_pass() -> None:
     )
 
 
+@pytest.mark.slow
 def test_tracked_tree_contains_no_aws_account_id_patterns() -> None:
     tracked_files = tracked_tree_files()
     if tracked_files is None:

@@ -24,9 +24,18 @@ dependence on session ordering, in ``tests/test_verification_reuse.py``.
 
 from __future__ import annotations
 
+import tomllib
+from pathlib import Path
+
 import pytest
 
 from edullm_platform.proof_bundle import collection_child_runs, full_suite_child_runs
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+#: Files pytest reads configuration from. Only pyproject.toml is meant to exist; a second
+#: one is the obvious place to hide a default that makes the standard command run less.
+OTHER_CONFIG_FILES = ("pytest.ini", "setup.cfg", "tox.ini")
 
 pytestmark = pytest.mark.session_budget
 
@@ -51,3 +60,22 @@ def test_a_session_collects_the_tree_at_most_once() -> None:
         "Collection is the same question for every generator and its answer does not "
         "change between them."
     )
+
+
+def test_no_configured_default_makes_the_standard_command_a_subset() -> None:
+    """``uv run pytest -q`` runs every test, and no config file may change that.
+
+    ``slow`` is an opt-out a developer types when they want a quick loop. Written into
+    ``addopts`` instead it becomes the default, and then the command every proof bundle
+    and every contributing note asks for quietly runs less than it says. The first
+    anybody would learn of it is a green pull request that broke something the suite
+    covers, which is the failure a suite exists to prevent.
+    """
+    configuration = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    settings = configuration["tool"]["pytest"]["ini_options"]
+
+    assert "addopts" not in settings, (
+        "pytest addopts is configured. Whatever it adds is now part of every run of the "
+        "standard command, including the deselection this marker exists to keep optional."
+    )
+    assert [name for name in OTHER_CONFIG_FILES if (PROJECT_ROOT / name).exists()] == []
