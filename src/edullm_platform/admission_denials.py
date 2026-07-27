@@ -49,8 +49,9 @@ is Phase 1's first lesson. So a permitted ``PutObject`` writes an object, once: 
 the bucket policy forces means the second such write is answered 412 rather than
 overwriting anything, and a 412 is read here as the permission being present for the same
 reason a dry run that would have succeeded is. What is bounded is written down beside the
-probe; what is not bounded is that the first object exists and, under the bucket's
-``GOVERNANCE`` retention, cannot be deleted for thirty days.
+probe; what is not bounded is that the first object exists. It can be deleted afterwards:
+the bucket carries Object Lock with no default retention rule, so a stray probe object is
+a cleanup rather than a thirty-day tenant.
 
 **Reasons, records and the classifier itself are Phase 1's.**
 :class:`~edullm_platform.publisher_denials.PublisherDenialReason` names every way an
@@ -304,9 +305,9 @@ ADMISSION_PROBE_LESSONS: Final[tuple[ProbeLesson, ...]] = (
             "overwrite a lineage record; --if-none-match '*' means it cannot overwrite "
             "anything at all; and because that header makes every later write of the same "
             "key a 412, a permitted probe can create one object and never a second. What "
-            "is not bounded: that first object exists, and the bucket sets a thirty-day "
-            "GOVERNANCE retention that nobody in this account can bypass, so it cannot be "
-            "deleted until the retention expires.\n"
+            "is not bounded: that first object exists. It can be removed, because the "
+            "bucket enables Object Lock but sets no default retention rule, so nothing "
+            "holds a stray probe object beyond somebody noticing it.\n"
             "\n"
             "Two alternatives were considered and rejected. A deliberately wrong "
             "--content-md5 would make a permitted write fail after authorization, but "

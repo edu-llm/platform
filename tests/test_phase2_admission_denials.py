@@ -1537,9 +1537,9 @@ def test_the_vocabulary_lesson_records_both_words_ec2_uses() -> None:
 
 def test_the_inertness_lesson_says_what_it_could_not_bound() -> None:
     # A lesson that recorded only the mitigation would read as though nothing had been
-    # traded. What is left is an object that cannot be deleted for thirty days.
+    # traded. What is left is a stray object somebody has to notice and remove.
     lesson = ADMISSION_PROBE_LESSONS[2]
 
-    assert "GOVERNANCE" in lesson.detail
-    assert "thirty-day" in lesson.detail
+    assert "no default retention rule" in lesson.detail
+    assert "It can be removed" in lesson.detail
     assert "rejected" in lesson.detail

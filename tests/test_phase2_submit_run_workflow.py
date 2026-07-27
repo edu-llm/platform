@@ -559,18 +559,17 @@ def _comment_block_above(step_name: str) -> str:
 
 
 def test_the_probe_that_cannot_be_made_inert_says_so_where_it_runs() -> None:
-    # The write probe leaves an object behind if the role is ever permitted to write one,
-    # and the bucket's retention means it cannot be deleted. A cost that is only written
-    # down in the tool is a cost the person reading this workflow does not know they are
-    # accepting. The placement is here for the same reason: it looks arbitrary until the
-    # reason is read, and moving it after StartExecution would cost nothing visible.
+    # The write probe leaves an object behind if the role is ever permitted to write one.
+    # A cost that is only written down in the tool is a cost the person reading this
+    # workflow does not know they are accepting. The placement is here for the same
+    # reason: it looks arbitrary until the reason is read, and moving it after
+    # StartExecution would cost nothing visible.
     rationale = _comment_block_above(DENIALS_STEP)
 
     assert "denial-probe/" in rationale
     assert "--if-none-match" in rationale
-    assert "GOVERNANCE" in rationale
-    assert "thirty-day" in rationale
-    assert "nobody in this account can delete it" in rationale
+    assert "no default retention rule" in rationale
+    assert "It can be deleted" in rationale
     assert "credentials actually in hand" in rationale
     assert "template" in rationale
 

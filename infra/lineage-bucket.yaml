@@ -10,26 +10,39 @@ Resources:
       BucketName: sbsandbox-intern-edullm-lineage
       VersioningConfiguration:
         Status: Enabled
-      # Object Lock can only be turned on at bucket creation through CloudFormation:
-      # there is no update path, and no API call this template could make later, that
-      # adds it to a bucket that already exists. Enabling S3 Object Lock on an existing
-      # bucket requires a support request. So if this property is ever dropped and the
-      # stack recreated, the replacement bucket is permanently mutable and the only fix
-      # is a new bucket under a new name. Object Lock also requires versioning, which is
-      # why the two are set together above.
+      # Object Lock is two switches with different reversibility, and conflating them
+      # would cost a bucket. Turning the lock on is creation-only: there is no update
+      # path, enabling it on an existing bucket needs a support request, and a stack
+      # recreated without this property yields a permanently mutable bucket fixable only
+      # under a new name. The default retention rule is not like that — it can be added,
+      # changed and removed on a live bucket at any time. Measured against this account
+      # on 2026-07-27 rather than read off the documentation: a bucket was created locked
+      # with no rule, a GOVERNANCE/30 rule was added to it, the rule was removed again, an
+      # object written under no rule reported ObjectLockMode null, and that version was
+      # permanently deleted. Object Lock also requires versioning, which is why the two
+      # are set together above.
       #
-      # GOVERNANCE rather than COMPLIANCE. GOVERNANCE can be overridden by a principal
-      # holding s3:BypassGovernanceRetention, which nobody in this account is granted;
-      # COMPLIANCE cannot be overridden by anyone including the account root, and an
-      # unrecoverable mistake in a sandbox is worse than a recoverable one. The retention
-      # window is what makes an accidental delete visible rather than silent.
+      # So the lock is on and no rule is set. Records are deletable today, deliberately:
+      # this store is being filled with the test submissions that build the phase, and
+      # holding those for thirty days in a shared sandbox buys nothing. Deletable is not
+      # the same as overwritable — the bucket policy below refuses any write that does not
+      # carry If-None-Match, so first-write-wins holds regardless of retention.
+      #
+      # Adding the rule later is a stack update, not a new bucket. When these records
+      # start carrying real approvals, add:
+      #
+      #   ObjectLockConfiguration:
+      #     ObjectLockEnabled: Enabled
+      #     Rule:
+      #       DefaultRetention:
+      #         Mode: GOVERNANCE
+      #         Days: 30
+      #
+      # GOVERNANCE rather than COMPLIANCE when that day comes: GOVERNANCE is overridable
+      # by a principal holding s3:BypassGovernanceRetention, COMPLIANCE by nobody at all
+      # including the account root, and an unrecoverable mistake in a shared sandbox is
+      # worse than a recoverable one.
       ObjectLockEnabled: true
-      ObjectLockConfiguration:
-        ObjectLockEnabled: Enabled
-        Rule:
-          DefaultRetention:
-            Mode: GOVERNANCE
-            Days: 30
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true

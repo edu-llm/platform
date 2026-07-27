@@ -549,10 +549,12 @@ jobs:
       # under denial-probe/ -- never under intent/, decision/ or conflicts/, which are the
       # lineage record itself -- and sends --if-none-match '*', so it can create an object
       # once and can never overwrite one. If the role ever is permitted, that first object
-      # exists, and the bucket's thirty-day GOVERNANCE retention means nobody in this
-      # account can delete it until the window expires. That is a real and accepted cost
+      # exists. It can be deleted: the bucket enables Object Lock but sets no default
+      # retention rule, so nothing holds the object beyond somebody noticing it. The cost
       # of proving the entry that makes a lineage record a statement by the platform
-      # rather than by its caller.
+      # rather than by its caller is therefore one stray object and a cleanup, and it is
+      # written here rather than only in the tool so the person reading this workflow
+      # knows what they are accepting.
       - name: Attempt the actions the admission session must not have
         env:
           ADMISSION_ACCOUNT_ID: ${{ steps.credentials.outputs.aws-account-id }}

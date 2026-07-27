@@ -236,10 +236,7 @@ def test_verification_reads_the_live_shape_and_never_prints_an_account_id() -> N
             "--bucket",
             LINEAGE_BUCKET,
             "--query",
-            (
-                "{objectLockEnabled:ObjectLockConfiguration.ObjectLockEnabled,"
-                "retentionMode:ObjectLockConfiguration.Rule.DefaultRetention.Mode}"
-            ),
+            "{objectLockEnabled:ObjectLockConfiguration.ObjectLockEnabled}",
             "--output",
             "json",
             ">",
@@ -284,9 +281,11 @@ def test_verification_pins_the_admission_shape_and_fails_loudly_when_it_drifts()
         "handler": "edullm_platform.admission_handler.handler",
         "packageType": "Zip",
     }
+    # The lock only. Enabling it is creation-only and so is what a deploy can get
+    # irreversibly wrong; the retention rule is a live setting this phase leaves unset,
+    # and pinning its absence here would fail the deploy the day somebody adds it.
     assert literal_assignment(python_source, "expected_lineage_object_lock") == {
         "objectLockEnabled": "Enabled",
-        "retentionMode": "GOVERNANCE",
     }
     assert literal_assignment(python_source, "expected_artifacts_versioning") == {
         "status": "Enabled"
@@ -330,7 +329,7 @@ OBSERVED_FUNCTION = {
     "handler": "edullm_platform.admission_handler.handler",
     "packageType": "Zip",
 }
-OBSERVED_LINEAGE = {"objectLockEnabled": "Enabled", "retentionMode": "GOVERNANCE"}
+OBSERVED_LINEAGE = {"objectLockEnabled": "Enabled"}
 OBSERVED_ARTIFACTS = {"status": "Enabled"}
 
 
@@ -390,11 +389,6 @@ def test_the_verification_passes_against_the_control_plane_the_templates_describ
         (
             "LINEAGE_JSON",
             {**OBSERVED_LINEAGE, "objectLockEnabled": None},
-            "lineage bucket object lock",
-        ),
-        (
-            "LINEAGE_JSON",
-            {**OBSERVED_LINEAGE, "retentionMode": "COMPLIANCE"},
             "lineage bucket object lock",
         ),
         ("ARTIFACTS_JSON", {"status": "Suspended"}, "artifacts bucket versioning"),

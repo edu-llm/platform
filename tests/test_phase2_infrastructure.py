@@ -387,11 +387,20 @@ def test_lineage_bucket_is_object_locked_versioned_private_and_retained() -> Non
     assert properties["BucketName"] == LINEAGE_BUCKET
     assert properties["ObjectLockEnabled"] is True
     assert properties["VersioningConfiguration"] == {"Status": "Enabled"}
-    assert properties["ObjectLockConfiguration"]["ObjectLockEnabled"] == "Enabled"
-    assert properties["ObjectLockConfiguration"]["Rule"]["DefaultRetention"]["Mode"] == "GOVERNANCE"
-    assert properties["ObjectLockConfiguration"]["Rule"]["DefaultRetention"]["Days"] >= 1
     assert properties["PublicAccessBlockConfiguration"] == PUBLIC_ACCESS_FULLY_BLOCKED
     assert properties["BucketEncryption"] == AES256_ENCRYPTION
+
+
+def test_lineage_bucket_sets_no_default_retention_so_records_stay_deletable() -> None:
+    # The other half of the one-way door, and the half that is not one. Retention is
+    # deliberately absent while this store holds the test submissions that build the
+    # phase; the lock is on so the rule can be added later as a stack update rather than
+    # a new bucket. Asserted rather than left implicit because a rule appearing here is a
+    # decision about how long a mistake survives, not a tidy-up.
+    template = load_template(LINEAGE_PATH)
+    _, bucket = resource_of_type(template, "AWS::S3::Bucket")
+
+    assert "ObjectLockConfiguration" not in bucket["Properties"]
 
 
 def test_lineage_bucket_denies_every_write_that_is_not_conditional() -> None:

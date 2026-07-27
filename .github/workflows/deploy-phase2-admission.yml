@@ -128,7 +128,7 @@ jobs:
 
           aws s3api get-object-lock-configuration \
             --bucket sbsandbox-intern-edullm-lineage \
-            --query '{objectLockEnabled:ObjectLockConfiguration.ObjectLockEnabled,retentionMode:ObjectLockConfiguration.Rule.DefaultRetention.Mode}' \
+            --query '{objectLockEnabled:ObjectLockConfiguration.ObjectLockEnabled}' \
             --output json > "${lineage_json}"
 
           aws s3api get-bucket-versioning \
@@ -154,10 +154,11 @@ jobs:
               "handler": "edullm_platform.admission_handler.handler",
               "packageType": "Zip",
           }
-          expected_lineage_object_lock = {
-              "objectLockEnabled": "Enabled",
-              "retentionMode": "GOVERNANCE",
-          }
+          # The lock itself, not a retention rule. Turning the lock on is creation-only,
+          # so it is what a deploy can silently get wrong and never fix; the rule is a
+          # live setting this phase deliberately leaves unset, and asserting its absence
+          # here would fail the deploy on the day somebody correctly adds it.
+          expected_lineage_object_lock = {"objectLockEnabled": "Enabled"}
           expected_artifacts_versioning = {"status": "Enabled"}
 
           expectations = [
