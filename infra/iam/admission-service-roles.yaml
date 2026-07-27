@@ -1,0 +1,125 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Service roles the admission state machine and its validator function run as.
+
+Resources:
+  AdmissionStatesRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sbsandbox-intern-edullm-admission-states
+      PermissionsBoundary:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/InternSandboxBoundary
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      # Inline rather than a customer managed policy. InternSandboxBoundary denies
+      # iam:CreatePolicyVersion on every policy, so a managed policy could be created once
+      # and never amended; the first permission change would fail the stack update. Inline
+      # policies go through iam:PutRolePolicy, which the boundary permits on this name.
+      Policies:
+        - PolicyName: run-admission-workflow
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # Both ARNs are needed. Step Functions invokes the unqualified function, but
+              # an alias or a published version is a distinct ARN, so a template that
+              # later pins the task to a version would otherwise fail at runtime rather
+              # than at deploy time.
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:sbsandbox-intern-edullm-admission-validator
+                  - Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:sbsandbox-intern-edullm-admission-validator:*
+              # PutObject only. The state machine appends lineage records and never reads,
+              # overwrites or deletes one; the bucket policy refuses any write that is not
+              # conditional, so even this grant cannot replace an existing record.
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-lineage/*
+              # "*" is the narrowest grant that exists for the delivery half of this list.
+              # CreateLogDelivery, GetLogDelivery, UpdateLogDelivery, DeleteLogDelivery,
+              # ListLogDeliveries, PutResourcePolicy and DescribeResourcePolicies are
+              # listed in the CloudWatch Logs service authorization reference with no
+              # resource type at all, so an ARN cannot be attached to them: a scoped
+              # resource would deny them outright and Step Functions logging would never
+              # start. This is the grant AWS's own vended-logs setup requires, and it is
+              # why the log group name is forced under /aws/vendedlogs/states/ where a
+              # single shared resource policy covers every state machine in the account.
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+
+  AdmissionLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sbsandbox-intern-edullm-admission-lambda
+      PermissionsBoundary:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/InternSandboxBoundary
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      # Inline rather than a customer managed policy, for the same boundary reason as the
+      # states role above.
+      Policies:
+        - PolicyName: write-own-log-group
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # No s3: action of any kind, and none may be added. The validator is the one
+              # component that parses an untrusted run manifest, so it is the one most
+              # likely to be made to do something its author did not intend. Splitting the
+              # work so that the Lambda decides and the state machine records means a
+              # validator that is talked into producing a hostile decision still cannot
+              # put a byte into the lineage store: the write is performed by a different
+              # principal, against a bucket that refuses to overwrite, from a decision the
+              # state machine hands it. The absence here is the control.
+              #
+              # CreateLogGroup is included because Lambda creates the function's log group
+              # on first invocation using this role; without it the function runs and logs
+              # nowhere, which is the failure mode hardest to notice. It is scoped to this
+              # function's own group, so it cannot create or write any other.
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/sbsandbox-intern-edullm-admission-validator:*
+
+Outputs:
+  StatesRoleName:
+    Value:
+      Ref: AdmissionStatesRole
+  StatesRoleArn:
+    Value:
+      Fn::GetAtt:
+        - AdmissionStatesRole
+        - Arn
+  LambdaRoleName:
+    Value:
+      Ref: AdmissionLambdaRole
+  LambdaRoleArn:
+    Value:
+      Fn::GetAtt:
+        - AdmissionLambdaRole
+        - Arn
