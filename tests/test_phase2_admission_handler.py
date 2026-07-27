@@ -70,7 +70,11 @@ ACCEPTED_EVENT: dict[str, Any] = {
         },
     },
     "workflow_run": {
-        "run_id": 30280844622,
+        # Ten digits, and synthetic. Every real GitHub run id is eleven, and the tree
+        # scanner in test_evidence treats any eleven-digit int as an account id whose
+        # leading zero was dropped -- which this account's would be. A real run id here
+        # fails that check rather than this one, from a file that holds no account id.
+        "run_id": 1234567890,
         "run_attempt": 1,
         "run_repository": "edu-llm/platform",
         "workflow_repository": "edu-llm/platform",
