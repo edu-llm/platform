@@ -12,6 +12,7 @@ dev = [
   "jsonschema",
   "mypy",
   "pytest",
+  "pytest-xdist",
   "ruff",
   "types-PyYAML",
 ]

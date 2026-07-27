@@ -42,8 +42,14 @@ jobs:
       - name: Type check
         run: uv run --frozen mypy
 
+      # loadfile, not the default per-test distribution. Session-scoped fixtures are
+      # instantiated once per worker, and the heaviest of them verifies the tree with a
+      # nested full-suite pytest; splitting a module across workers would rebuild that
+      # verification on several of them at once and cost more than it saved. The flags
+      # live here and not in pyproject.toml so that a local `uv run pytest -q` stays
+      # serial, ordered, and readable when something fails.
       - name: Tests
-        run: uv run --frozen pytest -q
+        run: uv run --frozen pytest -q -n4 --dist loadfile
 
       - name: Schemas reproduce from the models
         run: |
