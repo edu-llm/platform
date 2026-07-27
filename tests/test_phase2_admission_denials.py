@@ -42,11 +42,11 @@ from workflow_support import write_stub
 
 from edullm_platform import admission_denials
 from edullm_platform.admission_denials import (
-    ABSENT_IMAGE_ID,
     ADMISSION_DENIED_ACTIONS,
     ADMISSION_PROBE_LESSONS,
     ADMISSION_ROLE_NAME,
     ADMISSION_STATE_MACHINE_NAME,
+    DENIAL_PROBE_KEY_PAIR_NAME,
     EC2_AUTHORIZATION_ERROR_CODES,
     LINEAGE_BUCKET,
     LINEAGE_PROBE_KEY,
@@ -132,19 +132,15 @@ EXPECTED_PROBES: tuple[tuple[str, tuple[str, ...]], ...] = (
         ),
     ),
     (
-        "ec2:RunInstances",
+        "ec2:CreateKeyPair",
         (
             "ec2",
-            "run-instances",
+            "create-key-pair",
             "--dry-run",
             "--region",
             REGION,
-            "--image-id",
-            ABSENT_IMAGE_ID,
-            "--instance-type",
-            "t3.nano",
-            "--count",
-            "1",
+            "--key-name",
+            DENIAL_PROBE_KEY_PAIR_NAME,
         ),
     ),
     (
@@ -214,7 +210,7 @@ EXPECTED_PROBES: tuple[tuple[str, tuple[str, ...]], ...] = (
 #: AccessDenied, and EC2 says something neither of the others would recognise.
 REFUSED_EVERYTHING = (
     "denied:batch:SubmitJob:AccessDeniedException",
-    "denied:ec2:RunInstances:UnauthorizedOperation",
+    "denied:ec2:CreateKeyPair:UnauthorizedOperation",
     "denied:s3:PutObject:AccessDenied",
     "denied:states:StartExecution:AccessDeniedException",
     "denied:states:StopExecution:AccessDeniedException",
@@ -332,7 +328,7 @@ def test_the_matrix_attempts_every_action_the_role_must_not_hold() -> None:
     # minting a role.
     assert ADMISSION_DENIED_ACTIONS == (
         "batch:SubmitJob",
-        "ec2:RunInstances",
+        "ec2:CreateKeyPair",
         "s3:PutObject",
         "states:StartExecution",
         "states:StopExecution",
@@ -359,8 +355,8 @@ def test_no_probe_can_launch_compute_or_start_anything_if_the_deny_were_missing(
     assert "absent" in submit[submit.index("--job-queue") + 1]
     assert "absent" in submit[submit.index("--job-definition") + 1]
 
-    assert "--dry-run" in arguments["ec2:RunInstances"]
-    assert "--no-dry-run" not in arguments["ec2:RunInstances"]
+    assert "--dry-run" in arguments["ec2:CreateKeyPair"]
+    assert "--no-dry-run" not in arguments["ec2:CreateKeyPair"]
 
     start = arguments["states:StartExecution"]
     assert start[start.index("--state-machine-arn") + 1].endswith("-denial-probe-absent")
@@ -375,9 +371,9 @@ def test_no_probe_can_launch_compute_or_start_anything_if_the_deny_were_missing(
 def test_the_dry_run_flag_is_where_a_reader_cannot_miss_it() -> None:
     # It is the whole of what makes the one probe that could start a GPU instance
     # harmless, so it is the first argument after the operation rather than the last.
-    run_instances = probe_for("ec2:RunInstances")
+    create_key_pair = probe_for("ec2:CreateKeyPair")
 
-    assert run_instances.arguments[:3] == ("ec2", "run-instances", "--dry-run")
+    assert create_key_pair.arguments[:3] == ("ec2", "create-key-pair", "--dry-run")
 
 
 def test_the_write_probe_sends_the_header_the_bucket_policy_requires() -> None:
@@ -485,10 +481,10 @@ def test_ec2_refuses_in_a_word_no_other_service_in_this_matrix_uses() -> None:
     # UnauthorizedOperation is a refusal from EC2 and is not a refusal from anybody else,
     # so the code set belongs to the probe. Read with Phase 1's pair, the one probe that
     # stops CI launching compute directly could never have proved anything.
-    run_instances = probe_for("ec2:RunInstances")
-    stderr = cli_error("RunInstances", "UnauthorizedOperation", EC2_REFUSAL_PREFIX)
+    create_key_pair = probe_for("ec2:CreateKeyPair")
+    stderr = cli_error("CreateKeyPair", "UnauthorizedOperation", EC2_REFUSAL_PREFIX)
 
-    assert require_denial(run_instances, returncode=254, stderr=stderr).code == (
+    assert require_denial(create_key_pair, returncode=254, stderr=stderr).code == (
         "UnauthorizedOperation"
     )
     assert "UnauthorizedOperation" in EC2_AUTHORIZATION_ERROR_CODES
@@ -505,12 +501,12 @@ def test_the_short_ec2_refusal_names_no_action_and_is_not_held_to_naming_one() -
     # "You are not authorized to perform this operation." does not contain the phrase a
     # message uses to name an action, which ends in a colon. A check that matched the
     # phrase loosely would read this as a refusal of some other action.
-    run_instances = probe_for("ec2:RunInstances")
+    create_key_pair = probe_for("ec2:CreateKeyPair")
 
     error = require_denial(
-        run_instances,
+        create_key_pair,
         returncode=254,
-        stderr=cli_error("RunInstances", "UnauthorizedOperation", EC2_REFUSAL_PREFIX),
+        stderr=cli_error("CreateKeyPair", "UnauthorizedOperation", EC2_REFUSAL_PREFIX),
     )
 
     assert error.message == EC2_REFUSAL_PREFIX
@@ -557,53 +553,16 @@ def test_a_dry_run_that_would_have_succeeded_is_the_permission_being_present() -
     # inert, and it is exactly what turns "you may launch instances" into a non-zero exit
     # with an error code. Reading it as a call that failed for some other reason would
     # report the worst outcome in the matrix as an inconclusive probe.
-    run_instances = probe_for("ec2:RunInstances")
+    create_key_pair = probe_for("ec2:CreateKeyPair")
     stderr = cli_error(
-        "RunInstances", "DryRunOperation", "Request would have succeeded, but DryRun flag is set"
+        "CreateKeyPair", "DryRunOperation", "Request would have succeeded, but DryRun flag is set"
     )
 
-    failure = refused(run_instances, stderr)
+    failure = refused(create_key_pair, stderr)
 
     assert failure.reason is PublisherDenialReason.ATTEMPT_PERMITTED
     assert failure.error_code == "DryRunOperation"
-    assert str(failure) == "attempt_permitted:ec2:RunInstances:DryRunOperation"
-
-
-def test_an_absent_image_found_missing_is_permission_because_the_lookup_follows_authz(
-) -> None:
-    # The one not-found this matrix reads as a permitted call, and it is measured rather
-    # than assumed. Against us-east-1 on 2026-07-27, run-instances --dry-run answered
-    # InvalidAMIID.Malformed for the seventeen-character forms and InvalidAMIID.NotFound
-    # for ami-00000000, from an identity that holds the permission. EC2 checks an
-    # identifier's format before authorizing and looks the image up after, so reaching
-    # the lookup at all means authorization passed.
-    #
-    # This is why the probe names an eight-character identifier. The long form is the
-    # current AMI format and is what documentation shows, and it made the first live run
-    # of this matrix inconclusive.
-    run_instances = probe_for("ec2:RunInstances")
-    stderr = cli_error(
-        "RunInstances", "InvalidAMIID.NotFound", "The image id '[ami-00000000]' does not exist"
-    )
-
-    failure = refused(run_instances, stderr)
-
-    assert failure.reason is PublisherDenialReason.ATTEMPT_PERMITTED
-    assert failure.error_code == "InvalidAMIID.NotFound"
-
-
-def test_the_probe_names_an_image_id_ec2_will_parse() -> None:
-    # A malformed identifier is refused before authorization, so the probe would report
-    # "failed for another reason" forever and the entry that stops this role launching
-    # compute would never be provable. Asserted on the value rather than left to a live
-    # run to rediscover.
-    from edullm_platform.admission_denials import ABSENT_IMAGE_ID
-
-    suffix = ABSENT_IMAGE_ID.removeprefix("ami-")
-
-    assert ABSENT_IMAGE_ID.startswith("ami-")
-    assert len(suffix) == 8, "us-east-1 answers the seventeen-character form Malformed"
-    assert all(character in "0123456789abcdef" for character in suffix)
+    assert str(failure) == "attempt_permitted:ec2:CreateKeyPair:DryRunOperation"
 
 
 def test_a_conditional_write_refused_by_the_object_already_existing_is_permission() -> None:
@@ -631,12 +590,11 @@ def test_a_conditional_write_refused_by_the_object_already_existing_is_permissio
         # not there gives NoSuchBucket, and only the first proves anything.
         ("s3:PutObject", "NoSuchBucket", "The specified bucket does not exist"),
         ("s3:PutObject", "NoSuchKey", "The specified key does not exist"),
-        # Not-found, in each service's spelling. These stay inconclusive because nobody
-        # has measured whether the service answers them before or after it authorizes,
-        # and the two orderings mean opposite things: after authorization a not-found
-        # proves the caller was permitted, before it proves nothing at all.
-        # ec2:RunInstances is deliberately absent from this list -- it is the one case
-        # where the ordering has been measured. See the test below.
+        # Not-found, in each service's spelling. Every one of these stays inconclusive,
+        # because whether it means the caller was permitted depends on whether the
+        # service looks the resource up before or after it authorizes, and nobody has
+        # measured that for these three. EC2 is the case that was measured, and it looks
+        # up first -- which is why the EC2 probe names no resource at all.
         ("batch:SubmitJob", "ClientException", "Job queue does not exist"),
         ("states:StartExecution", "StateMachineDoesNotExist", "State Machine Does Not Exist"),
         ("states:StopExecution", "ExecutionDoesNotExist", "Execution Does Not Exist"),
@@ -651,12 +609,12 @@ def test_a_conditional_write_refused_by_the_object_already_existing_is_permissio
         # Throttled: the service refused to answer, which is not the service refusing us.
         ("s3:PutObject", "SlowDown", "Please reduce your request rate."),
         ("states:StartExecution", "ThrottlingException", "Rate exceeded"),
-        ("ec2:RunInstances", "RequestLimitExceeded", "Request limit exceeded."),
+        ("ec2:CreateKeyPair", "RequestLimitExceeded", "Request limit exceeded."),
         ("iam:CreateRole", "Throttling", "Rate exceeded"),
         # Credentials, which say nothing about what the credentials were allowed to do.
         # AuthFailure is EC2's, and it is the one code a reader might mistake for its
         # authorization failure: it means the credentials were not usable at all.
-        ("ec2:RunInstances", "AuthFailure", "AWS was not able to validate the credentials"),
+        ("ec2:CreateKeyPair", "AuthFailure", "AWS was not able to validate the credentials"),
         ("batch:SubmitJob", "ExpiredToken", "The security token included is expired"),
         ("states:StopExecution", "UnrecognizedClientException", "The security token is invalid"),
         # A server-side failure is not an answer at all.
@@ -764,11 +722,11 @@ def test_one_error_code_cannot_mean_both_refused_and_allowed() -> None:
     # checks deciding whether the role is narrow or wide open.
     with pytest.raises(ValueError, match="both refused and allowed"):
         AdmissionDenialProbe(
-            action="ec2:RunInstances",
-            operation="RunInstances",
+            action="ec2:CreateKeyPair",
+            operation="CreateKeyPair",
             event_source="ec2.amazonaws.com",
-            resource_name=ABSENT_IMAGE_ID,
-            arguments=("ec2", "run-instances", "--dry-run"),
+            resource_name=DENIAL_PROBE_KEY_PAIR_NAME,
+            arguments=("ec2", "create-key-pair", "--dry-run"),
             authorization_error_codes=frozenset({"DryRunOperation"}),
             permitted_error_codes=frozenset({"DryRunOperation"}),
         )
@@ -809,12 +767,12 @@ def test_the_encoded_authorization_failure_message_is_masked_rather_than_withhel
     # so Phase 1's recording refuses the whole message and the refusal goes unrecorded.
     # Masking it by the label that introduces it keeps the part of the message that says
     # who was refused and for what.
-    run_instances = probe_for("ec2:RunInstances")
-    error = require_denial(run_instances, returncode=254, stderr=denial_stderr(run_instances))
+    create_key_pair = probe_for("ec2:CreateKeyPair")
+    error = require_denial(create_key_pair, returncode=254, stderr=denial_stderr(create_key_pair))
 
     with pytest.raises(DenialNotProvenError) as unmasked:
         record_denial(
-            run_instances,
+            create_key_pair,
             error,
             region=REGION,
             role_name=ROLE_NAME,
@@ -824,7 +782,7 @@ def test_the_encoded_authorization_failure_message_is_masked_rather_than_withhel
 
     assert unmasked.value.reason is PublisherDenialReason.DENIAL_MESSAGE_HOLDS_A_CREDENTIAL
 
-    record = attempt_record(run_instances, denial_stderr(run_instances))
+    record = attempt_record(create_key_pair, denial_stderr(create_key_pair))
 
     assert ENCODED_AUTHORIZATION_BLOB not in record.error_message
     assert "<encoded-authorization-failure-message>" in record.error_message
@@ -943,9 +901,9 @@ def test_every_action_is_attempted_even_after_one_of_them_proves_nothing(
     run = run_answering(
         monkeypatch,
         {
-            "ec2:RunInstances": (
+            "ec2:CreateKeyPair": (
                 254,
-                cli_error("RunInstances", "DryRunOperation", "Request would have succeeded"),
+                cli_error("CreateKeyPair", "DryRunOperation", "Request would have succeeded"),
             ),
             "s3:PutObject": (
                 254,
@@ -957,7 +915,7 @@ def test_every_action_is_attempted_even_after_one_of_them_proves_nothing(
     assert not run.proven
     assert run.summary == (
         REFUSED_EVERYTHING[0],
-        "attempt_permitted:ec2:RunInstances:DryRunOperation",
+        "attempt_permitted:ec2:CreateKeyPair:DryRunOperation",
         "attempt_failed_for_another_reason:s3:PutObject:NoSuchBucket",
         REFUSED_EVERYTHING[3],
         REFUSED_EVERYTHING[4],
@@ -1319,8 +1277,8 @@ def test_a_dry_run_that_would_have_launched_an_instance_stops_the_run(
         tmp_path,
         monkeypatch,
         answers={
-            "ec2:RunInstances": failing_body(
-                "RunInstances",
+            "ec2:CreateKeyPair": failing_body(
+                "CreateKeyPair",
                 "DryRunOperation",
                 "Request would have succeeded, but DryRun flag is set",
             )
@@ -1331,7 +1289,7 @@ def test_a_dry_run_that_would_have_launched_an_instance_stops_the_run(
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert captured.err.splitlines()[1] == "attempt_permitted:ec2:RunInstances:DryRunOperation"
+    assert captured.err.splitlines()[1] == "attempt_permitted:ec2:CreateKeyPair:DryRunOperation"
     assert not (tmp_path / "admission-denials.json").exists()
 
 
