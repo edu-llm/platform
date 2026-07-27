@@ -245,6 +245,23 @@ jobs:
           set -euo pipefail
           cat "${RUNNER_TEMP}/approver-context.md" >> "${GITHUB_STEP_SUMMARY}"
 
+      # The same markdown again, as an artifact, and only because GitHub offers no other
+      # way to read it back. A step summary is rendered in the run page and exposed by no
+      # REST endpoint, and the public page hides it behind sign-in -- so the one check
+      # about what a reviewer was shown could be satisfied only by somebody describing it
+      # from memory. Uploading it makes that check provable by the same evidence path as
+      # everything else, and it costs a kilobyte.
+      #
+      # This is a copy of what the reviewer saw, not a re-render: both come from the one
+      # file the compile step wrote, so the artifact cannot drift from the summary.
+      - name: Upload the approver context
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: approver-context
+          path: ${{ runner.temp }}/approver-context.md
+          if-no-files-found: error
+          retention-days: 30
+
       # The manifest crosses the approval gate as an artifact rather than as a job output.
       # Job outputs are strings assembled into the expression context and the manifest is
       # a document; carrying it as one is also what lets the submit job recompute a hash
