@@ -1,5 +1,5 @@
 from decimal import Decimal, InvalidOperation, localcontext
-from typing import Annotated, ClassVar, Literal, Self
+from typing import Annotated, Any, ClassVar, Literal, Self
 
 from pydantic import BeforeValidator, Field, computed_field, model_validator
 
@@ -47,6 +47,37 @@ class CostInputs(ContractModel):
     maximum_runtime_hours: StrictDecimal = Field(gt=0)
     maximum_attempts: int = Field(ge=1)
     cells: int = Field(default=1, ge=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def reconcile_a_recorded_total(cls, data: Any) -> Any:
+        """Accept a serialized total back, and only if it still adds up.
+
+        ``maximum_compute_cost_usd`` is a computed field, so pydantic writes it out and
+        then refuses it on the way back in, because ``extra="forbid"``. That made every
+        decision record in the lineage store unreadable by the model that wrote it -- an
+        immutable store whose contents no longer parse is a store nobody can audit, which
+        is the one thing it exists for. Found by reading real records back rather than by
+        round-tripping a fixture.
+
+        Dropping the field from the record instead would have been the smaller change and
+        the wrong one: a reader without this code should be able to see what a run was
+        approved to cost. So it stays written, and it is checked rather than trusted. A
+        recorded total that disagrees with the inputs beside it is refused here, which
+        makes an edited record fail to load instead of loading with a figure nothing
+        supports.
+        """
+        if not isinstance(data, dict) or "maximum_compute_cost_usd" not in data:
+            return data
+        remaining = dict(data)
+        recorded = remaining.pop("maximum_compute_cost_usd")
+        candidate = cls(**remaining)
+        if Decimal(str(recorded)) != candidate.maximum_compute_cost_usd:
+            raise ValueError(
+                "the recorded maximum_compute_cost_usd does not match the inputs recorded "
+                f"beside it: {recorded} against {candidate.maximum_compute_cost_usd}"
+            )
+        return remaining
 
     @model_validator(mode="after")
     def validate_maximum_compute_cost(self) -> Self:

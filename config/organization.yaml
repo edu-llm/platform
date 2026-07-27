@@ -14,7 +14,7 @@ pilot_repositories:
   - OLMo-core
   - dolma
 members:
-  - {github_login: BritishAmericqn, display_name: Benjamin}
+  - {github_login: BritishAmericqn, display_name: Benjamin Royston}
   - {github_login: ericrcwu001, display_name: Eric Wu}
   - {github_login: GMatherne, display_name: Grant Matherne}
   - {github_login: nzhao721, display_name: Nathan Zhao}
@@ -26,7 +26,7 @@ members:
   - {github_login: anshulmago1, display_name: Anshul Mago}
   - {github_login: arteexu, display_name: Arthur Xu}
   - {github_login: sidvenkatayogi, display_name: Siddhartha Venkatayogi}
-  - {github_login: banksaj27, display_name: Adam}
+  - {github_login: banksaj27, display_name: Adam Banks}
   - {github_login: claire-mao, display_name: Claire Mao}
   - {github_login: VS-code-cloud, display_name: Vishnu Sharma}
   - {github_login: Avaneesh-Ramesh-07, display_name: Avaneesh Ramesh}

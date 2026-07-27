@@ -31,10 +31,11 @@ import argparse
 import json
 import subprocess
 import sys
+import tempfile
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, Literal, cast
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -42,13 +43,31 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from edullm_platform.canonical import canonical_json_bytes
 from edullm_platform.phase2_evidence import (
+    AdmissionExecution,
+    AdmissionExecutionInventory,
     EnvironmentInventory,
     EnvironmentReviewer,
+    LineageInventory,
+    LineageObject,
     ProtectedEnvironment,
     SecretInventory,
 )
 
-__all__ = ["ALLOWED_OUTPUT_SUFFIX", "CaptureError", "capture_environments", "capture_secrets", "main"]
+#: The deployed names. Written here rather than derived, so a capture aimed at a bucket
+#: this project does not own fails on the name instead of quietly recording somebody
+#: else's objects as Phase 2 lineage.
+LINEAGE_BUCKET: Final = "sbsandbox-intern-edullm-lineage"
+STATE_MACHINE_NAME: Final = "sbsandbox-intern-edullm-admission"
+
+__all__ = [
+    "ALLOWED_OUTPUT_SUFFIX",
+    "CaptureError",
+    "capture_environments",
+    "capture_executions",
+    "capture_lineage",
+    "capture_secrets",
+    "main",
+]
 
 #: A capture is local until somebody reads it and copies what they want into fixtures/.
 #: Writing anywhere else is refused rather than discouraged.
@@ -83,6 +102,28 @@ def _gh(*arguments: str) -> Any:
             f"{completed.stderr.strip()[:400]}"
         )
     return json.loads(completed.stdout or "null")
+
+
+def _is_canonical_json(body: bytes) -> bool:
+    """Whether these bytes are exactly canonical_json_bytes of the record they hold.
+
+    True is the property the design claims: the state machine writes the handler's mapping
+    and S3 stores the canonical serialization, so the object and the digest quoted for it
+    describe the same bytes. False is what records written before the encoding fix look
+    like -- a JSON string rather than an object, because the S3 SDK integration encodes
+    whatever the Body path yields. Both are recorded; the older shape is history rather
+    than a defect to hide.
+    """
+    try:
+        parsed = json.loads(body)
+    except (ValueError, UnicodeDecodeError):
+        return False
+    if not isinstance(parsed, dict):
+        return False
+    canonical = json.dumps(
+        parsed, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return body == canonical
 
 
 def _observed_at() -> datetime:
@@ -184,30 +225,172 @@ def capture_secrets(organization: str, repository: str) -> SecretInventory:
     )
 
 
+def _aws(profile: str, region: str, *arguments: str) -> Any:
+    completed = subprocess.run(
+        ["aws", *arguments, "--profile", profile, "--region", region, "--output", "json"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise CaptureError(
+            f"aws {' '.join(arguments)} failed with {completed.returncode}: "
+            f"{completed.stderr.strip()[:400]}"
+        )
+    return json.loads(completed.stdout or "null")
+
+
+def capture_lineage(profile: str, region: str) -> tuple[LineageInventory, dict[str, bytes]]:
+    """Every lineage object, with the digest and version S3 attests for it.
+
+    ``canonical`` is computed here rather than taken on trust: the stored bytes are parsed
+    and re-serialized through ``canonical_json_bytes`` and compared. Objects written before
+    the encoding fix are recorded as non-canonical rather than skipped, because a capture
+    that hid them would make the store look more uniform than it is.
+    """
+    observed_at = _observed_at()
+    listing = _aws(profile, region, "s3api", "list-objects-v2", "--bucket", LINEAGE_BUCKET)
+    objects: list[LineageObject] = []
+    records: dict[str, bytes] = {}
+    for entry in sorted(listing.get("Contents") or [], key=lambda item: str(item["Key"])):
+        key = str(entry["Key"])
+        head = _aws(
+            profile,
+            region,
+            "s3api",
+            "head-object",
+            "--bucket",
+            LINEAGE_BUCKET,
+            "--key",
+            key,
+            "--checksum-mode",
+            "ENABLED",
+        )
+        # Downloaded to a file rather than to /dev/stdout: get-object writes its metadata
+        # response to stdout as well as the body, so reading the pipe compares the object
+        # against a document that also contains a JSON summary of itself. That reported
+        # every object as non-canonical, including ones already verified byte-identical
+        # by hand, which is the failure mode where a check answers a question nobody asked.
+        with tempfile.TemporaryDirectory() as directory:
+            downloaded = Path(directory) / "object"
+            _aws(
+                profile, region, "s3api", "get-object",
+                "--bucket", LINEAGE_BUCKET, "--key", key, str(downloaded),
+            )
+            body = downloaded.read_bytes()
+        canonical = _is_canonical_json(body)
+        records[key] = body
+        objects.append(
+            LineageObject(
+                observed_at=observed_at,
+                key=key,
+                version_id=str(head["VersionId"]),
+                checksum_sha256=str(head["ChecksumSHA256"]),
+                content_length=int(head["ContentLength"]),
+                canonical=canonical,
+            )
+        )
+    return (
+        LineageInventory(
+            observed_at=observed_at,
+            source="aws",
+            environment="sandbox",
+            bucket=LINEAGE_BUCKET,
+            objects=tuple(objects),
+        ),
+        records,
+    )
+
+
+def capture_executions(profile: str, region: str, account_id: str) -> AdmissionExecutionInventory:
+    """Every admission execution and where it ended."""
+    observed_at = _observed_at()
+    arn = f"arn:aws:states:{region}:{account_id}:stateMachine:{STATE_MACHINE_NAME}"
+    listing = _aws(
+        profile, region, "stepfunctions", "list-executions", "--state-machine-arn", arn
+    )
+    executions: list[AdmissionExecution] = []
+    for entry in sorted(listing.get("executions") or [], key=lambda item: str(item["name"])):
+        described = _aws(
+            profile,
+            region,
+            "stepfunctions",
+            "describe-execution",
+            "--execution-arn",
+            str(entry["executionArn"]),
+        )
+        executions.append(
+            AdmissionExecution(
+                observed_at=observed_at,
+                name=str(entry["name"]),
+                # Narrowed for the type checker; the model rejects anything Step Functions
+                # would not have said, so an unexpected value fails here rather than being
+                # recorded as evidence of a status this platform does not model.
+                status=cast(
+                    "Literal['SUCCEEDED', 'FAILED', 'TIMED_OUT', 'ABORTED', 'RUNNING']",
+                    str(entry["status"]),
+                ),
+                error=described.get("error") or None,
+            )
+        )
+    return AdmissionExecutionInventory(
+        observed_at=observed_at,
+        source="aws",
+        environment="sandbox",
+        state_machine_name=STATE_MACHINE_NAME,
+        executions=tuple(executions),
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--organization", default="edu-llm")
     parser.add_argument("--repository", default="platform")
+    parser.add_argument("--aws-profile", default="sbsandbox")
+    parser.add_argument("--aws-region", default="us-east-1")
     parser.add_argument(
         "--target",
         action="append",
-        choices=["environments", "secrets"],
+        choices=["environments", "secrets", "lineage", "executions"],
         help="repeatable; defaults to every target",
     )
     parser.add_argument("--output-dir", type=Path, required=True)
     arguments = parser.parse_args(argv)
-    targets = arguments.target or ["environments", "secrets"]
+    targets = arguments.target or ["environments", "secrets", "lineage", "executions"]
 
     try:
         output_dir = _resolved_output_dir(arguments.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         written: list[str] = []
-        for target in targets:
-            record = (
-                capture_environments(arguments.organization, arguments.repository)
-                if target == "environments"
-                else capture_secrets(arguments.organization, arguments.repository)
+        account_id = ""
+        if {"executions"}.intersection(targets):
+            account_id = str(
+                _aws(
+                    arguments.aws_profile,
+                    arguments.aws_region,
+                    "sts",
+                    "get-caller-identity",
+                )["Account"]
             )
+        for target in targets:
+            if target == "environments":
+                record: Any = capture_environments(arguments.organization, arguments.repository)
+            elif target == "secrets":
+                record = capture_secrets(arguments.organization, arguments.repository)
+            elif target == "lineage":
+                record, bodies = capture_lineage(arguments.aws_profile, arguments.aws_region)
+                # The records themselves, beside the inventory. The inventory says what S3
+                # attests about each object; only the body says what the platform decided,
+                # and the criteria about record content have to read one.
+                for key, body in bodies.items():
+                    body_path = output_dir / "records" / key
+                    body_path.parent.mkdir(parents=True, exist_ok=True)
+                    body_path.write_bytes(body)
+                    written.append(f"records/{key}")
+            else:
+                record = capture_executions(
+                    arguments.aws_profile, arguments.aws_region, account_id
+                )
             path = output_dir / f"{target}.sanitized.json"
             path.write_bytes(canonical_json_bytes(record) + b"\n")
             written.append(path.name)

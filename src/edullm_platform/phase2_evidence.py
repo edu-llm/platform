@@ -61,6 +61,16 @@ __all__ = [
 #: capturing an incomplete gate.
 APPROVAL_ENVIRONMENT_NAMES: tuple[str, ...] = ("run-approval-lead", "run-approval-admin")
 
+#: The three roles Phase 2 creates, and the committed templates that declare them. The
+#: Phase 1 list is separate on purpose: these roles belong to a different phase's evidence
+#: and a different phase's freshness window, and folding them into COMMITTED_ROLE_TEMPLATES
+#: would make a Phase 1 capture fail because a Phase 2 role drifted.
+PHASE2_ROLE_TEMPLATES: tuple[tuple[str, str], ...] = (
+    ("sbsandbox-intern-edullm-admission", "infra/iam/admission-role.yaml"),
+    ("sbsandbox-intern-edullm-admission-states", "infra/iam/admission-service-roles.yaml"),
+    ("sbsandbox-intern-edullm-admission-lambda", "infra/iam/admission-service-roles.yaml"),
+)
+
 OrderedStrings = Annotated[tuple[str, ...], BeforeValidator(require_ordered_sequence)]
 
 
@@ -180,3 +190,66 @@ class SecretInventory(FreshEvidenceModel):
     ] = Field(default_factory=dict, strict=False)
 
     repository_variable_names: OrderedStrings = Field(strict=False)
+
+
+class LineageObject(FreshEvidenceModel):
+    """One object in the lineage store, as S3 describes it rather than as we wrote it.
+
+    The two digests are separate fields and must stay separate. ``checksum_sha256`` is what
+    S3 computed over the bytes it holds; ``manifest_sha256`` is what the platform computed
+    over the manifest's canonical serialization and is the value an approval was taken
+    against. They answer different questions -- did the object arrive intact, and is this
+    the manifest that was approved -- and a record that conflated them would be a lineage
+    error rather than a wording slip.
+    """
+
+    key: SecretFreeStr = Field(min_length=1)
+    version_id: SecretFreeStr = Field(min_length=1)
+    checksum_sha256: SecretFreeStr = Field(min_length=1)
+    content_length: int = Field(ge=0)
+
+    #: Whether the stored bytes are exactly canonical_json_bytes of the record they hold.
+    #: False for objects written before the encoding fix, which were stored as a JSON
+    #: string rather than an object. Recorded rather than filtered out: a capture that
+    #: omitted the older shape would make the store look more uniform than it is.
+    canonical: bool
+
+
+class LineageInventory(FreshEvidenceModel):
+    """Every object in the lineage store, with what S3 attests about each."""
+
+    source: Literal["aws"]
+    environment: EvidenceEnvironment
+    bucket: SecretFreeStr = Field(min_length=1)
+    objects: Annotated[
+        tuple[LineageObject, ...], BeforeValidator(require_ordered_sequence)
+    ] = Field(strict=False)
+
+
+class AdmissionExecution(FreshEvidenceModel):
+    """One admission execution and where it ended.
+
+    The name is the run id, which is what makes the duplicate-name refusal meaningful: a
+    second StartExecution under a name that has closed is answered
+    ``ExecutionAlreadyExists`` for ninety days, so the name is the deduplication key rather
+    than a label.
+    """
+
+    name: SecretFreeStr = Field(min_length=1)
+    status: Literal["SUCCEEDED", "FAILED", "TIMED_OUT", "ABORTED", "RUNNING"]
+
+    #: Present only on a failure. AdmissionRejected is the state machine refusing a
+    #: submission the validator judged; anything else is the machine itself failing, and
+    #: the two mean very different things about whether admission worked.
+    error: SecretFreeStr | None = None
+
+
+class AdmissionExecutionInventory(FreshEvidenceModel):
+    """Every execution the admission state machine has run."""
+
+    source: Literal["aws"]
+    environment: EvidenceEnvironment
+    state_machine_name: SecretFreeStr = Field(min_length=1)
+    executions: Annotated[
+        tuple[AdmissionExecution, ...], BeforeValidator(require_ordered_sequence)
+    ] = Field(strict=False)
