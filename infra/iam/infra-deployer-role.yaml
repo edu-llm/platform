@@ -176,6 +176,22 @@ Resources:
                   - s3:AbortMultipartUpload
                 Resource:
                   Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-artifacts/*
+              # One action, on one bucket, learned from a failed deploy rather than from
+              # reading the Lambda documentation. AWS::Lambda::Function with a Code block
+              # naming an S3ObjectVersion makes Lambda fetch the object as the deploying
+              # principal, and that fetch needs s3:ListBucketVersions on the *bucket* as
+              # well as s3:GetObjectVersion on the object. Nothing in the template says
+              # so; the deploy failed with an explicit AccessDenied naming the action and
+              # the bucket, and the stack rolled back with the function uncreated.
+              #
+              # Kept out of the bucket statement above, whose resource is every bucket
+              # carrying our prefix. Only the artifacts bucket holds a deployment zip, and
+              # a deployer able to enumerate the versions of every lineage record is a
+              # wider grant than the reason for granting it.
+              - Effect: Allow
+                Action: s3:ListBucketVersions
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-artifacts
               # Deliberately absent: states:StartExecution and states:StopExecution. This
               # role builds the admission state machine and never runs one; starting an
               # execution is the submission role's single permission, and keeping the two

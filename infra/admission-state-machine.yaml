@@ -39,15 +39,16 @@ Resources:
       # Pinning the version means the template must be edited for every release, and the
       # edit is the diff a reviewer sees.
       #
-      # The value below is a placeholder, not a version id. It is deliberately not
-      # anything S3 could return, so the first deploy fails loudly at CreateFunction if
-      # the release procedure did not upload the packaged zip and paste the version id it
-      # printed. A plausible-looking wrong value would fail the same way but read like a
-      # stale release rather than a missing step.
+      # The placeholder that used to sit here did its job: the first deploy of this stack
+      # failed at CreateFunction because nothing had ever built or uploaded the zip. The
+      # value below is the real version id of the first packaged release, produced by
+      # tools/build_admission_lambda.py and uploaded by the procedure in infra/README.md.
+      # Changing the code means running that procedure again and editing this line, which
+      # is the diff a reviewer sees.
       Code:
         S3Bucket: sbsandbox-intern-edullm-artifacts
         S3Key: admission-validator/admission-validator.zip
-        S3ObjectVersion: pending-first-admission-validator-upload
+        S3ObjectVersion: 3HfdCwbD.o_7ILEm0bh1Yt4KqBNKPjnw
       Timeout: 30
       MemorySize: 512
 

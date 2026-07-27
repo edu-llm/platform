@@ -205,6 +205,10 @@ def test_the_deployer_projection_keeps_the_narrowed_wildcards_it_was_given(
         template_arn % ("logs", "log-group:/aws/vendedlogs/states/sbsandbox-intern-edullm-*"),
         bucket_arn % "sbsandbox-intern-edullm-*",
         bucket_arn % "sbsandbox-intern-edullm-artifacts/*",
+        # The artifacts bucket itself, for the one bucket-level action Lambda needs to
+        # fetch a versioned code object. Named rather than folded into the prefix-wide
+        # entry above so version enumeration stops short of the lineage store.
+        bucket_arn % "sbsandbox-intern-edullm-artifacts",
         role_arn % "sbsandbox-intern-edullm-admission-states",
         role_arn % "sbsandbox-intern-edullm-admission-lambda",
         "*",
