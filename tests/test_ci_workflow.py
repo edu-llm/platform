@@ -11,6 +11,7 @@ gate; the listing only means no criterion may cite it, which is a citation nobod
 """
 
 import re
+import tomllib
 from typing import Any
 
 from workflow_support import WORKFLOWS_ROOT, load_workflow, unreal_context_references
@@ -44,6 +45,31 @@ def _job_comment(job_id: str) -> str:
 
 def test_every_expression_names_something_that_actually_exists() -> None:
     assert unreal_context_references(WORKFLOW_PATH) == []
+
+
+def test_the_test_job_runs_every_test_and_groups_the_workers() -> None:
+    # Two properties, and the second is the one that is easy to get wrong. The default
+    # per-test distribution would put one module's tests on several workers and have each
+    # of them build its own copy of that module's session fixtures — including the one
+    # that verifies the tree with a nested full-suite pytest. loadgroup, with the groups
+    # tests/conftest.py assigns, keeps each module whole and keeps the two generators
+    # that share a verification together. The first property is the plainer one:
+    # parallelism may make the suite finish sooner, never make it a subset.
+    workflow = _load_workflow()
+    commands = [step["run"] for step in workflow["jobs"]["checks"]["steps"] if "run" in step]
+    tests = [command for command in commands if " pytest" in command]
+
+    assert tests == ["uv run --frozen pytest -q -n4 --dist loadgroup"]
+    assert "-m" not in tests[0].split(), "CI must not run a subset of the suite"
+
+
+def test_the_distribution_flags_are_not_a_configured_default() -> None:
+    # A local run stays serial, because a parallel one interleaves output and reorders
+    # failures, and the person reading it is usually reading it because something broke.
+    settings = tomllib.loads(
+        (WORKFLOW_PATH.parents[2] / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    assert "addopts" not in settings["tool"]["pytest"]["ini_options"]
 
 
 def test_both_acceptance_gates_run_on_every_change() -> None:

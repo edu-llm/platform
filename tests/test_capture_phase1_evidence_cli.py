@@ -291,6 +291,7 @@ def mutated_answers(key: str, mutate: Any) -> dict[str, Any]:
 # --------------------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_a_capture_writes_both_roles_the_repository_and_a_drift_report_for_each_role(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -308,6 +309,7 @@ def test_a_capture_writes_both_roles_the_repository_and_a_drift_report_for_each_
     }
 
 
+@pytest.mark.slow
 def test_an_account_that_matches_its_templates_captures_clean(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -332,6 +334,7 @@ def test_an_account_that_matches_its_templates_captures_clean(
     assert summary["verdict"] == "ok"
 
 
+@pytest.mark.slow
 def test_the_captured_role_is_the_role_the_template_declares(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -353,6 +356,7 @@ def test_the_captured_role_is_the_role_the_template_declares(
     assert role["status"] == "ok"
 
 
+@pytest.mark.slow
 def test_the_captured_repository_is_the_repository_the_template_declares(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -370,6 +374,7 @@ def test_the_captured_repository_is_the_repository_the_template_declares(
     assert repository["lifecycle_rules"][1]["tag_patterns"] == ["*"]
 
 
+@pytest.mark.slow
 def test_a_repository_with_no_lifecycle_policy_is_captured_as_having_none(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -399,6 +404,7 @@ def test_a_repository_with_no_lifecycle_policy_is_captured_as_having_none(
 # --------------------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_no_account_id_reaches_any_written_file_or_either_stream(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -418,6 +424,7 @@ def test_no_account_id_reaches_any_written_file_or_either_stream(
     assert AWS_ACCOUNT_ID_PLACEHOLDER in resources[0]
 
 
+@pytest.mark.slow
 def test_a_grant_pointed_at_another_account_is_masked_so_it_stays_visible(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -453,6 +460,7 @@ def test_a_grant_pointed_at_another_account_is_masked_so_it_stays_visible(
 # --------------------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_a_role_widened_in_the_console_is_reported_and_fails_the_capture(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -482,6 +490,7 @@ def test_a_role_widened_in_the_console_is_reported_and_fails_the_capture(
     assert f"sanitized/roles/{PUBLISHER_ROLE}.sanitized.json" in written(tmp_path)
 
 
+@pytest.mark.slow
 def test_a_summary_written_after_drift_says_the_capture_is_not_clean(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -515,6 +524,7 @@ def test_a_summary_written_after_drift_says_the_capture_is_not_clean(
     )
 
 
+@pytest.mark.slow
 def test_a_role_narrowed_in_the_console_also_fails_the_capture(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -538,6 +548,7 @@ def test_a_role_narrowed_in_the_console_also_fails_the_capture(
     assert [finding["direction"] for finding in report["findings"]] == ["narrower"]
 
 
+@pytest.mark.slow
 def test_a_boundary_removed_in_the_console_is_reported(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -558,6 +569,7 @@ def test_a_boundary_removed_in_the_console_is_reported(
     assert "permissions boundary" in json.dumps(report)
 
 
+@pytest.mark.slow
 def test_a_managed_policy_attached_in_the_console_is_reported(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -590,6 +602,7 @@ def test_a_managed_policy_attached_in_the_console_is_reported(
 # --------------------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_the_tool_asks_for_exactly_what_it_records_and_nothing_else(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -621,6 +634,7 @@ def test_the_tool_asks_for_exactly_what_it_records_and_nothing_else(
     assert all("--output json" in call for call in calls)
 
 
+@pytest.mark.slow
 def test_capturing_one_target_makes_only_that_target_s_calls(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -648,6 +662,7 @@ def test_the_standing_fact_targets_come_first_and_are_the_ones_a_template_descri
     assert CAPTURE_TARGET_NAMES[:2] == ("roles", "repository")
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     ("failing_call", "expected"),
     [
@@ -685,6 +700,7 @@ def test_a_call_that_was_refused_stops_the_capture_without_echoing_the_account(
     assert ACCOUNT_ID not in captured.out + captured.err
 
 
+@pytest.mark.slow
 def test_a_runner_without_the_aws_cli_captures_nothing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -749,6 +765,7 @@ def test_a_refused_output_directory_says_which_constraint_it_broke(
     assert captured.out == ""
 
 
+@pytest.mark.slow
 def test_an_absolute_path_inside_the_working_directory_is_accepted(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -767,6 +784,7 @@ def test_the_capture_accepts_a_directory_under_the_working_directory(tmp_path: P
     assert resolve_output_dir(allowed, base_dir=tmp_path) == allowed.resolve()
 
 
+@pytest.mark.slow
 def test_a_capture_function_returns_the_records_it_wrote(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

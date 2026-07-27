@@ -668,6 +668,7 @@ def test_a_criterion_result_reports_every_node_id_it_cites() -> None:
 # --------------------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_the_runner_reports_passing_failing_skipped_and_missing_node_ids(
     tmp_path: Path,
 ) -> None:
@@ -689,6 +690,7 @@ def test_the_runner_reports_passing_failing_skipped_and_missing_node_ids(
     }
 
 
+@pytest.mark.slow
 def test_a_missing_node_id_does_not_stop_the_rest_of_the_selection_running(
     tmp_path: Path,
 ) -> None:
@@ -707,6 +709,7 @@ def test_a_missing_node_id_does_not_stop_the_rest_of_the_selection_running(
     }
 
 
+@pytest.mark.slow
 def test_a_tree_with_no_test_suite_reports_every_citation_as_missing(tmp_path: Path) -> None:
     outcome = run_node_ids(tmp_path, ["tests/test_mini.py::test_mini_passes"])
     assert outcome.collected == frozenset()
@@ -714,16 +717,20 @@ def test_a_tree_with_no_test_suite_reports_every_citation_as_missing(tmp_path: P
     assert outcome.execution_error is None
 
 
+@pytest.mark.slow
 def test_a_pytest_run_that_never_finishes_is_reported_as_an_execution_failure(
     tmp_path: Path,
 ) -> None:
     root = write_suite(tmp_path, SLOW_SUITE)
-    outcome = run_node_ids(root, ["tests/test_mini.py::test_mini_sleeps"], timeout=2.0)
+    # The child sleeps for two minutes, so any timeout at all expires against it. Two
+    # seconds spent proving that is two seconds of the suite spent watching a clock.
+    outcome = run_node_ids(root, ["tests/test_mini.py::test_mini_sleeps"], timeout=0.3)
     assert outcome.execution_error is not None
     assert "did not finish" in outcome.execution_error
     assert outcome.passed == frozenset()
 
 
+@pytest.mark.slow
 def test_the_runner_executes_real_cited_node_ids_from_this_repository() -> None:
     node_ids = [
         "tests/test_manifest.py::test_manifest_rejects_short_commit_sha",
@@ -735,6 +742,7 @@ def test_the_runner_executes_real_cited_node_ids_from_this_repository() -> None:
     assert outcome.exit_code == 0
 
 
+@pytest.mark.slow
 def test_every_node_id_the_criteria_cite_can_be_collected(
     references: tuple[object, ...],
     collected: frozenset[str],
@@ -744,6 +752,7 @@ def test_every_node_id_the_criteria_cite_can_be_collected(
     assert uncollectable == []
 
 
+@pytest.mark.slow
 def test_executing_the_real_criteria_agrees_with_the_recorded_statuses(
     criteria: tuple[CriterionSpec, ...],
     collected: frozenset[str],
@@ -784,6 +793,7 @@ def test_the_runner_refuses_to_start_when_it_is_already_nested(
         collect_node_ids(PROJECT_ROOT)
 
 
+@pytest.mark.slow
 def test_a_child_of_the_gate_refuses_to_be_a_gate() -> None:
     completed = subprocess.run(
         [
@@ -924,8 +934,12 @@ def test_the_json_output_keeps_the_two_groups_apart() -> None:
         "operational_inventory_passed",
         "passed",
     }
-    assert "thirteen Phase 0 acceptance criteria" in payload["phase_criteria_note"]
+    # Both notes count the group they describe rather than a number somebody wrote once,
+    # so this one-criterion report says one; tests/test_gate_notes.py holds the derivation.
+    assert "Phase 0 acceptance criteria" in payload["phase_criteria_note"]
+    assert "one criterion is covered" in payload["phase_criteria_note"]
     assert "NOT Phase 0 acceptance criteria" in payload["operational_inventory_note"]
+    assert "All one of them passing" in payload["operational_inventory_note"]
 
 
 def test_the_report_round_trips_through_contract_json() -> None:
@@ -939,6 +953,7 @@ def test_the_report_round_trips_through_contract_json() -> None:
     assert Phase0GateReport.model_validate(payload) == report
 
 
+@pytest.mark.slow
 def test_execute_criteria_runs_the_cited_tests_and_returns_one_result_each(
     tmp_path: Path,
 ) -> None:
@@ -976,6 +991,7 @@ def inventory_checks_of(stdout: str) -> list[dict[str, object]]:
     return checks
 
 
+@pytest.mark.slow
 def test_a_tree_with_no_test_suite_fails_the_gate_closed(tmp_path: Path) -> None:
     repo_root = copy_gate_repo(tmp_path)
     completed = run_validate_phase0(repo_root)
@@ -990,6 +1006,7 @@ def test_a_tree_with_no_test_suite_fails_the_gate_closed(tmp_path: Path) -> None
     }
 
 
+@pytest.mark.slow
 def test_the_nine_inventory_checks_still_all_pass_for_a_faithful_copy(tmp_path: Path) -> None:
     repo_root = copy_gate_repo(tmp_path)
     completed = run_validate_phase0(repo_root)
@@ -1000,6 +1017,7 @@ def test_the_nine_inventory_checks_still_all_pass_for_a_faithful_copy(tmp_path: 
     assert all(str(check["check_id"]).startswith("inventory_") for check in checks)
 
 
+@pytest.mark.slow
 def test_unregistered_compute_profile_cli_emits_structured_json(tmp_path: Path) -> None:
     repo_root = copy_gate_repo(tmp_path)
     manifest_path = repo_root / "fixtures" / "manifests" / "cpu-routine.yaml"
@@ -1017,6 +1035,7 @@ def test_unregistered_compute_profile_cli_emits_structured_json(tmp_path: Path) 
     assert any(check["reason_code"] == "unregistered_compute_profile" for check in failing)
 
 
+@pytest.mark.slow
 def test_missing_gpu_quota_cli_emits_structured_json(tmp_path: Path) -> None:
     repo_root = copy_gate_repo(tmp_path)
     evidence_path = repo_root / "fixtures" / "evidence" / "service-quotas.sanitized.json"
@@ -1041,6 +1060,7 @@ def test_missing_gpu_quota_cli_emits_structured_json(tmp_path: Path) -> None:
     assert aws_check["reason_code"] == "capacity_blocked"
 
 
+@pytest.mark.slow
 def test_validate_phase0_reports_a_private_repository_without_a_team_plan(
     tmp_path: Path,
 ) -> None:
@@ -1058,6 +1078,7 @@ def test_validate_phase0_reports_a_private_repository_without_a_team_plan(
     assert failing[0]["reason_code"] == "plan_insufficient_for_private_repo_controls"
 
 
+@pytest.mark.slow
 def test_validate_phase0_exits_two_for_invalid_config(tmp_path: Path) -> None:
     repo_root = copy_gate_repo(tmp_path)
     (repo_root / "config" / "organization.yaml").write_text(
@@ -1069,6 +1090,7 @@ def test_validate_phase0_exits_two_for_invalid_config(tmp_path: Path) -> None:
     assert completed.stdout == ""
 
 
+@pytest.mark.slow
 def test_validate_phase0_exits_two_for_non_utf8_config(tmp_path: Path) -> None:
     repo_root = copy_gate_repo(tmp_path)
     (repo_root / "config" / "organization.yaml").write_bytes(b"\xff\xfe")
@@ -1078,6 +1100,7 @@ def test_validate_phase0_exits_two_for_non_utf8_config(tmp_path: Path) -> None:
     assert completed.stderr
 
 
+@pytest.mark.slow
 def test_validate_phase0_reports_invalid_aws_capacity_evidence(tmp_path: Path) -> None:
     repo_root = copy_gate_repo(tmp_path)
     evidence_path = repo_root / "fixtures" / "evidence" / "service-quotas.sanitized.json"
@@ -1096,6 +1119,7 @@ def test_validate_phase0_reports_invalid_aws_capacity_evidence(tmp_path: Path) -
     assert aws_check["reason_code"] == "evidence_invalid"
 
 
+@pytest.mark.slow
 def test_validate_phase0_reports_production_environment_as_invalid_aws_capacity(
     tmp_path: Path,
 ) -> None:
@@ -1116,6 +1140,7 @@ def test_validate_phase0_reports_production_environment_as_invalid_aws_capacity(
     assert aws_check["reason_code"] == "evidence_invalid"
 
 
+@pytest.mark.slow
 def test_validate_phase0_reports_account_id_in_alias_as_invalid_aws_capacity(
     tmp_path: Path,
 ) -> None:

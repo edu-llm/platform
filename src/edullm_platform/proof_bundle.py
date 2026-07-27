@@ -5,13 +5,11 @@ the test suite. That only works if the bundle cannot say something the gate does
 the parts that decide what a bundle may claim live here rather than in a generator: a
 second phase with its own copy could relax its own copy.
 
-:func:`contradicting_status_claims` is the sharpest of them. Tables in a bundle are
-rendered from the recorded status and cannot disagree with it; a hand-written sentence
-can, and once did. This reads every status word a document ascribes to a numbered check
-and refuses the bundle when one disagrees with the criteria definition. It is a blunt
-reader by design — it does not understand negation, so ``Check 9 is not covered`` reads
-as a claim of ``covered`` and is meant to. A claim a machine cannot check does not belong
-in a document whose whole purpose is being trustworthy without verification.
+:func:`contradicting_status_claims` is the sharpest of them, and it is imported from
+``edullm_platform.status_prose`` rather than written here: the same reader is run over a
+gate's own note, which is where this class of defect survived once. Tables in a bundle are
+rendered from the recorded status and cannot disagree with it; a hand-written sentence can,
+and twice did.
 
 Everything else here is the shared plumbing: the golden-digest tripwire and its
 regeneration discipline, the nested pytest runs a generator uses to verify the tree it is
@@ -28,11 +26,10 @@ import importlib
 import json
 import os
 import pkgutil
-import re
 import subprocess
 import sys
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, get_args
@@ -42,9 +39,15 @@ import edullm_platform
 from edullm_platform.contracts.base import ContractModel
 from edullm_platform.criteria import CriterionSpec, CriterionStatus
 from edullm_platform.evidence import redact_content_digests, scan_for_secrets
+from edullm_platform.status_prose import (
+    contradicting_status_claims,
+    status_claims,
+    status_count_claims,
+)
 
 __all__ = [
     "CITATION_LEGEND",
+    "GENERATOR_NESTED_ENV_VARS",
     "GENERATOR_TEST_PATHS",
     "STATUS_LEGEND",
     "GoldenDigestDriftError",
@@ -58,11 +61,13 @@ __all__ = [
     "assert_secret_free",
     "bullets",
     "collect_node_ids",
+    "collection_child_runs",
     "command_block",
     "contradicting_status_claims",
     "count_naming",
     "describe_drift",
     "file_digest",
+    "full_suite_child_runs",
     "golden_drift",
     "golden_drift_guidance",
     "load_recorded_goldens",
@@ -76,6 +81,7 @@ __all__ = [
     "schema_file_records",
     "source_commit_sha",
     "status_claims",
+    "status_count_claims",
     "status_label",
     "table",
 ]
@@ -86,19 +92,15 @@ BUNDLE_SCHEMA_VERSION: Final = 1
 #: its verification run rather than only its own; see :func:`run_full_suite`.
 GENERATOR_TEST_PATHS: Final = ("tests/test_phase0_proof.py", "tests/test_phase1_proof.py")
 
-# Prose that names a check and gives it a status. A sentence is the unit, because a
-# status word further away than that is talking about something else.
-CHECK_REFERENCE: Final = re.compile(
-    r"\b(?:check|criterion|criteria)\s+(?P<number>D?[0-9]+)\b", re.IGNORECASE
+#: Every generator's recursion guard, all of which are set on every nested run rather than
+#: only the one belonging to the generator that started it; see :func:`pytest_environment`.
+#: A generator that adds one adds it here, and ``test_verification_reuse.py`` fails until
+#: it does.
+GENERATOR_NESTED_ENV_VARS: Final = (
+    "EDULLM_PHASE0_PROOF_NESTED",
+    "EDULLM_PHASE1_PROOF_NESTED",
 )
-STATUS_CLAIM: Final = re.compile(r"\b(?P<word>covered|deferred|gaps?)\b", re.IGNORECASE)
-CLAUSE_BREAK: Final = re.compile(r"[.;|\n]")
-STATUS_BY_WORD: Final = {
-    "covered": CriterionStatus.COVERED,
-    "deferred": CriterionStatus.DEFERRED,
-    "gap": CriterionStatus.GAP,
-    "gaps": CriterionStatus.GAP,
-}
+
 STATUS_PROSE: Final = {
     CriterionStatus.COVERED: "covered",
     CriterionStatus.DEFERRED: "deferred",
@@ -299,8 +301,21 @@ class SuiteOutcome:
 
 
 def pytest_environment(nested_env: str) -> dict[str, str]:
+    """The child's environment, with every generator's guard set rather than just one.
+
+    Setting only the caller's own guard left a Phase 0 child and a Phase 1 child differing
+    in one variable while running the same command over the same tree, which is a
+    difference with no consequence and one cost: two children that cannot be recognised as
+    the same measurement. Setting all of them makes them byte-identical, which is what
+    lets :func:`run_full_suite` and :func:`collect_node_ids` answer both from one run.
+
+    It tightens the guard rather than loosening it. Every generator now refuses inside any
+    nested run, not only inside its own, which is the answer a generator should give
+    anywhere below a verification.
+    """
     environment = dict(os.environ)
-    environment[nested_env] = "1"
+    for variable in (*GENERATOR_NESTED_ENV_VARS, nested_env):
+        environment[variable] = "1"
     return environment
 
 
@@ -321,7 +336,24 @@ def run_pytest(
     )
 
 
-def collect_node_ids(repo_root: Path, *, nested_env: str) -> tuple[str, ...]:
+#: What this process has already collected, keyed by resolved repository root. Memory
+#: only, for the reason given in :func:`run_full_suite`.
+_COLLECTION_CACHE: dict[Path, tuple[str, ...]] = {}
+
+#: How many collection children this process has actually started; see
+#: :func:`full_suite_child_runs` for what reads the pair of these.
+_collection_child_runs = 0
+
+
+def collection_child_runs() -> int:
+    """The number of collection pytest children started in this process so far."""
+    return _collection_child_runs
+
+
+def execute_collection(repo_root: Path, *, nested_env: str) -> tuple[str, ...]:
+    """Ask a pytest child what it can collect in this tree. No reuse, no memory."""
+    global _collection_child_runs
+    _collection_child_runs += 1
     completed = run_pytest(
         repo_root, ["--collect-only", "-q", "--no-header"], nested_env=nested_env
     )
@@ -333,6 +365,23 @@ def collect_node_ids(repo_root: Path, *, nested_env: str) -> tuple[str, ...]:
     node_ids = tuple(line.strip() for line in completed.stdout.splitlines() if "::" in line)
     if not node_ids:
         raise ProofBundleError("pytest collected no test node ids")
+    return node_ids
+
+
+def collect_node_ids(repo_root: Path, *, nested_env: str) -> tuple[str, ...]:
+    """Every node id pytest collects in this tree, collected once per process.
+
+    Kept on the same terms as :func:`run_full_suite`, and safe for the same reasons: the
+    memory is process-local and never written to disk, and the key is the resolved
+    repository root, so a different tree collects for itself. What every generator gets
+    is one honest listing of the tree in front of them rather than three of it.
+    """
+    key = repo_root.resolve()
+    remembered = _COLLECTION_CACHE.get(key)
+    if remembered is not None:
+        return remembered
+    node_ids = execute_collection(repo_root, nested_env=nested_env)
+    _COLLECTION_CACHE[key] = node_ids
     return node_ids
 
 
@@ -382,20 +431,32 @@ def run_test_selection(
         return read_junit_outcome(report, completed.returncode), failed_node_ids(report)
 
 
-def run_full_suite(
+#: What this process has already measured, keyed by resolved repository root and ignore
+#: list. Memory only, and deliberately: a verification written to disk would be found
+#: again after the tree it described had changed, and a bundle would report a pass for a
+#: suite that never ran against what it describes. See :func:`run_full_suite`.
+_FULL_SUITE_CACHE: dict[tuple[Path, tuple[str, ...]], SuiteOutcome] = {}
+
+#: How many full-suite children this process has actually started. Read by the session
+#: budget in ``tests/test_suite_budget.py``, which is what stops a later phase quietly
+#: reintroducing the multiplier this cache removed.
+_full_suite_child_runs = 0
+
+
+def full_suite_child_runs() -> int:
+    """The number of full-suite pytest children started in this process so far."""
+    return _full_suite_child_runs
+
+
+def execute_full_suite(
     repo_root: Path,
     *,
     nested_env: str,
-    ignore: Sequence[str] = GENERATOR_TEST_PATHS,
+    ignore: Sequence[str],
 ) -> SuiteOutcome:
-    """The whole suite, minus the modules that build a bundle.
-
-    Every generator's test module is excluded, not just this generator's own. A generator
-    test builds a bundle, which runs the suite, which would run the other generator's
-    tests, which build another bundle: bounded, because each build excludes its own tests,
-    and quadratic in wall-clock time for no added assurance. Those modules run in the
-    reviewer's own `uv run pytest -q`, which is the command every bundle asks for.
-    """
+    """Start a pytest child and measure the tree with it. No reuse, no memory."""
+    global _full_suite_child_runs
+    _full_suite_child_runs += 1
     with tempfile.TemporaryDirectory() as workspace:
         report = Path(workspace) / "suite.xml"
         completed = run_pytest(
@@ -415,6 +476,40 @@ def run_full_suite(
                 + (completed.stderr.strip() or completed.stdout.strip())
             )
         return read_junit_outcome(report, completed.returncode)
+
+
+def run_full_suite(
+    repo_root: Path,
+    *,
+    nested_env: str,
+    ignore: Sequence[str] = GENERATOR_TEST_PATHS,
+) -> SuiteOutcome:
+    """The whole suite, minus the modules that build a bundle, measured once per tree.
+
+    Every generator's test module is excluded, not just this generator's own. A generator
+    test builds a bundle, which runs the suite, which would run the other generator's
+    tests, which build another bundle: bounded, because each build excludes its own tests,
+    and quadratic in wall-clock time for no added assurance. Those modules run in the
+    reviewer's own `uv run pytest -q`, which is the command every bundle asks for.
+
+    Several generators verify the same unchanged tree in one session and every one of them
+    asks the same question, so the answer is kept against the tree it was measured on. A
+    bundle still reports a full suite that genuinely ran in this session; it reports the
+    run that happened rather than the third repetition of it.
+
+    Two properties stop that becoming a way to claim a verification nobody performed. The
+    memory is process-local and never written to disk, so a new process measures rather
+    than remembers and a pass recorded before a change cannot be found after it. And the
+    key is the resolved root with the ignore list, so a different tree — including every
+    temporary one a test builds — misses and measures for itself.
+    """
+    key = (repo_root.resolve(), tuple(ignore))
+    remembered = _FULL_SUITE_CACHE.get(key)
+    if remembered is not None:
+        return remembered
+    outcome = execute_full_suite(repo_root, nested_env=nested_env, ignore=ignore)
+    _FULL_SUITE_CACHE[key] = outcome
+    return outcome
 
 
 # --------------------------------------------------------------------------------------
@@ -628,60 +723,6 @@ def render_check_detail(check: CriterionSpec) -> list[str]:
             ]
         )
     return sections
-
-
-def _clause_around(text: str, reference: re.Match[str]) -> tuple[str, str]:
-    return (
-        CLAUSE_BREAK.split(text[: reference.start()])[-1],
-        CLAUSE_BREAK.split(text[reference.end() :], maxsplit=1)[0],
-    )
-
-
-def status_claims(text: str) -> tuple[tuple[str, CriterionStatus], ...]:
-    """Every ``(check number, status)`` pair this prose asserts.
-
-    A status word after the reference wins over one before it, because that is how a
-    status is ascribed: ``Check 9 is deferred``. Only the first word in the clause counts,
-    so ``deferred rather than covered`` claims one status and not two. No attempt is made
-    to read a negation: ``Check 9 is not covered`` reads here as a claim of COVERED, and
-    is meant to, because a claim a machine cannot check does not belong in this bundle.
-    """
-    claims: list[tuple[str, CriterionStatus]] = []
-    for reference in CHECK_REFERENCE.finditer(text):
-        before, after = _clause_around(text, reference)
-        claimed = STATUS_CLAIM.search(after) or STATUS_CLAIM.search(before)
-        if claimed is None:
-            continue
-        claims.append((reference.group("number"), STATUS_BY_WORD[claimed.group().lower()]))
-    return tuple(claims)
-
-
-def contradicting_status_claims(
-    documents: Mapping[str, str],
-    checks: Sequence[CriterionSpec],
-) -> tuple[str, ...]:
-    """Prose in a bundle that gives a check a status the criteria definition does not.
-
-    The bundle exists so a reviewer can trust it without reading the suite, so a sentence
-    that disagrees with the gate is the one defect it cannot survive. Tables are rendered
-    from the computed status and cannot disagree; a hand-written sentence can, and did.
-    """
-    recorded = {check.number: check.status for check in checks}
-    problems: list[str] = []
-    for filename, text in sorted(documents.items()):
-        for number, claimed in status_claims(text):
-            actual = recorded.get(number)
-            if actual is None:
-                problems.append(
-                    f"{filename} calls check {number} {claimed.value}, and no criterion of "
-                    "this phase carries that number"
-                )
-            elif actual is not claimed:
-                problems.append(
-                    f"{filename} calls check {number} {claimed.value}; the criteria "
-                    f"definition records it {actual.value}"
-                )
-    return tuple(problems)
 
 
 def recorded_status(checks: Sequence[CriterionSpec], number: str) -> CriterionStatus:

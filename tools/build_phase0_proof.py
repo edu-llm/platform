@@ -70,6 +70,7 @@ from edullm_platform.proof_bundle import (
     status_label,
     table,
 )
+from edullm_platform.status_prose import spell
 
 PHASE: Final = "phase-0"
 BUNDLE_SCHEMA_VERSION: Final = 1
@@ -318,8 +319,9 @@ def render_unit_test_report(verification: Verification) -> str:
         "",
         "## Targeted verification run",
         "",
-        ("Every test node id cited by the negative-case matrix, plus every test parametrised "
-        "over one of the nine fixtures, executed as one selection."),
+        (f"Every test node id cited by the negative-case matrix, plus every test parametrised "
+        f"over one of the {spell(len(verification.fixture_coverage))} fixtures, executed as one "
+        "selection."),
         "",
         table(
             ["measure", "count"],
@@ -447,7 +449,8 @@ def render_schema_report(
                 "",
                 "## Repository-configuration contracts",
                 "",
-                (f"{len(exported)} models are reachable from the four root models exported to "
+                (f"{len(exported)} models are reachable from the {spell(len(schema_files))} "
+                "root models exported to "
                 "`schemas/`. These describe what the repository declares: who is in the "
                 "organization, what compute exists, what policy applies, and what a submission "
                 "looks like. They are versioned by the checked-in JSON Schema files below rather "
@@ -652,9 +655,9 @@ def render_index(
                     [
                         ("`unit-test-report.md` — summarised pass and fail counts, per fixture "
                         "and for the whole suite, with the commands to reproduce them."),
-                        ("`negative-case-matrix.md` — each of the thirteen Phase 0 acceptance "
-                        "criteria mapped to the tests cited for it, by node id, with every gap "
-                        "and every deferral stated. Read this one first."),
+                        (f"`negative-case-matrix.md` — each of the {spell(len(criteria))} Phase 0 "
+                        "acceptance criteria mapped to the tests cited for it, by node id, with "
+                        "every gap and every deferral stated. Read this one first."),
                         "`serialization-goldens.md` and `"
                         + GOLDENS_FILENAME
                         + "` — the recorded canonical digest of every fixture, and the "

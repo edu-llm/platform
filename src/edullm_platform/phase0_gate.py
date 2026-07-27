@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Final, TypeVar, cast
 
-from pydantic import BeforeValidator, Field, ValidationError, computed_field
+from pydantic import BeforeValidator, Field, ValidationError, computed_field, model_validator
 
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.base import (
@@ -41,6 +42,7 @@ from edullm_platform.manifest_helpers import (
     load_manifests_from_directory,
 )
 from edullm_platform.phase0_criteria import discover_fixtures, phase0_criteria
+from edullm_platform.status_prose import checked_phase_criteria_note, spell
 
 T = TypeVar("T", bound=ContractModel)
 
@@ -100,27 +102,29 @@ STALE_EVIDENCE_DETAIL: Final = (
     "Operational evidence is stale; re-run tools/capture_phase0_evidence.py to refresh it."
 )
 
-PHASE_CRITERIA_NOTE: Final = (
-    "phase_criteria are the thirteen Phase 0 acceptance criteria. Every pytest node id cited "
-    "for a criterion was executed by this run. A criterion whose cited tests do not all exist "
-    "and pass is a gap and fails the gate, whatever status the definition records. Only three "
-    "statuses exist: covered passes, deferred passes and requires a written reason and a "
-    "written trigger, gap fails."
-)
+PHASE: Final = "Phase 0"
 
-OPERATIONAL_INVENTORY_NOTE: Final = (
+OPERATIONAL_INVENTORY_NOTE_PREAMBLE: Final = (
     "operational_inventory_checks are NOT Phase 0 acceptance criteria. They came from an "
     "earlier definition of the phase and are retained because they are useful: they check that "
     "the roster, pilot repositories, workload catalog, approval paths, GitHub plan, AWS "
-    "capacity, representative manifests, and reviewed costs are sane. All nine passing says "
-    "nothing about whether Phase 0 is done. Read phase_criteria for that."
+    "capacity, representative manifests, and reviewed costs are sane."
 )
+
 
 class GateCheck(ContractModel):
     check_id: str
     passed: bool
     reason_code: str
     detail: str
+
+
+def operational_inventory_note(checks: Sequence[GateCheck]) -> str:
+    """The inventory note, with the only number in it counted rather than remembered."""
+    return (
+        f"{OPERATIONAL_INVENTORY_NOTE_PREAMBLE} All {spell(len(checks))} of them passing says "
+        "nothing about whether Phase 0 is done. Read phase_criteria for that."
+    )
 
 
 class Phase0GateResult(ContractModel):
@@ -137,10 +141,12 @@ class Phase0GateResult(ContractModel):
 
 
 class Phase0GateReport(ContractModel):
-    """The whole gate: the thirteen phase criteria and the nine inventory checks.
+    """The whole gate: the phase criteria and the operational inventory checks.
 
     The two groups are reported separately so nobody reads the inventory checks as
-    acceptance criteria again. The verdict is the AND of both.
+    acceptance criteria again. The verdict is the AND of both. Both notes are derived from
+    the groups they describe, so neither can state a count or a status this run did not
+    compute; see ``edullm_platform.status_prose``.
     """
 
     phase_criteria: Annotated[
@@ -149,8 +155,25 @@ class Phase0GateReport(ContractModel):
     operational_inventory_checks: Annotated[
         tuple[GateCheck, ...], BeforeValidator(require_ordered_sequence)
     ] = Field(strict=False)
-    phase_criteria_note: str = PHASE_CRITERIA_NOTE
-    operational_inventory_note: str = OPERATIONAL_INVENTORY_NOTE
+    phase_criteria_note: str = ""
+    operational_inventory_note: str = ""
+
+    @model_validator(mode="after")
+    def _derive_and_check_the_notes(self) -> Phase0GateReport:
+        # Both notes are derived rather than defaulted, and the criteria note is read back
+        # by the guard that refuses a contradicting proof bundle. The model is frozen,
+        # which is why these are written through object.__setattr__.
+        object.__setattr__(
+            self,
+            "phase_criteria_note",
+            checked_phase_criteria_note(self.phase_criteria, phase=PHASE),
+        )
+        object.__setattr__(
+            self,
+            "operational_inventory_note",
+            operational_inventory_note(self.operational_inventory_checks),
+        )
+        return self
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -207,7 +230,9 @@ def load_aws_capacity_evidence(path: Path) -> tuple[ServiceQuotasEvidence | None
         return None, evidence_load_reason_code(exc)
 
 
-def load_json_evidence[T: ContractModel](path: Path, model_type: type[T]) -> tuple[T | None, str | None]:
+def load_json_evidence[T: ContractModel](
+    path: Path, model_type: type[T]
+) -> tuple[T | None, str | None]:
     if model_type is GitHubPlanEvidence:
         github_plan, error = load_github_plan_evidence(path)
         return cast(tuple[T | None, str | None], (github_plan, error))
@@ -330,7 +355,9 @@ def check_workload_coverage(catalog: WorkloadCatalog) -> GateCheck:
             missing.append("cpu")
         if "gpu" not in accelerators:
             missing.append("gpu")
-        reason = "missing_gpu_representative" if missing == ["gpu"] else "missing_cpu_representative"
+        reason = (
+            "missing_gpu_representative" if missing == ["gpu"] else "missing_cpu_representative"
+        )
         if len(missing) == 2:
             reason = "missing_cpu_and_gpu_representatives"
         return fail_check(
@@ -561,10 +588,7 @@ def check_representative_manifests(
             return fail_check(
                 "inventory_representative_manifests",
                 "classification_mismatch",
-                (
-                    f"Manifest {filename!r} classifies as {actual.value}; "
-                    f"expected {expected.value}."
-                ),
+                (f"Manifest {filename!r} classifies as {actual.value}; expected {expected.value}."),
             )
     return ok_check(
         "inventory_representative_manifests",
