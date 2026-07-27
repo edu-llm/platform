@@ -1,0 +1,616 @@
+name: Submit a run for admission
+
+# The admission role trust policy pins job_workflow_ref to
+# edu-llm/platform/.github/workflows/submit-run.yml@refs/heads/main, and pins the subject
+# claim to :environment:run-approval-lead and :environment:run-approval-admin. Renaming or
+# moving this file, or renaming either GitHub environment, silently revokes every
+# submission: the failure arrives as an AssumeRole denial that reads like a broken role
+# ARN. Change infra/iam/admission-role.yaml in the same commit or do not change this.
+#
+# The form below is SubmissionInputs field for field. Fourteen properties against a
+# workflow_dispatch ceiling of twenty-five, so the length is a usability question rather
+# than a platform constraint. Eight are required; six are overrides that take the workload
+# profile's registered default when left empty.
+on:
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: Registry key of the research repository, such as OLMo-core.
+        required: true
+        type: string
+      commit_sha:
+        description: Full forty-character commit SHA the image was built from.
+        required: true
+        type: string
+      image_digest:
+        description: Digest of the published image, written as sha256 followed by sixty-four hex characters.
+        required: true
+        type: string
+      workload_profile:
+        description: Registered workload profile. It fixes the compute profile, the runtime and attempt bounds, and the checkpoint contract.
+        required: true
+        type: string
+      dataset_release:
+        description: Registered dataset release this run reads.
+        required: true
+        type: string
+      team:
+        description: Team the run is charged to and whose lead may approve it.
+        required: true
+        type: string
+      wandb_project:
+        description: Weights and Biases project the run reports into.
+        required: true
+        type: string
+      command:
+        description: Command the container runs, written as one shell command line and split with POSIX quoting rules.
+        required: true
+        type: string
+      compute_profile:
+        description: Override the workload profile's compute profile. Leave empty to take the registered default.
+        required: false
+        type: string
+        default: ""
+      maximum_runtime_hours:
+        description: Override the runtime bound, in hours, written in base ten. Leave empty to take the registered default.
+        required: false
+        type: string
+        default: ""
+      maximum_attempts:
+        description: Override the attempt bound. Only a workload that checkpoints may be retried. Leave empty to take the registered default.
+        required: false
+        type: string
+        default: ""
+      fanout_size:
+        description: Number of cells in a fan-out. Declare all three fan-out fields or none of them.
+        required: false
+        type: string
+        default: ""
+      fanout_parallelism:
+        description: How many fan-out cells may run at once. Declare all three fan-out fields or none of them.
+        required: false
+        type: string
+        default: ""
+      fanout_index_parameter:
+        description: What the fan-out index varies, such as seed or shard. Declare all three fan-out fields or none of them.
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  # Credential free by construction. There is no id-token permission and no environment
+  # key here, so this job cannot request an OIDC token at all: a job that cannot mint a
+  # token cannot leak one, which is a stronger claim than trusting it not to. It is also
+  # what makes the classification below worth anything, because the decision that picks
+  # which approval gate a submission faces is computed before this run can reach AWS.
+  compile:
+    name: Compile the submission and classify it
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      run_id: ${{ steps.compile.outputs.run_id }}
+      approval_class: ${{ steps.compile.outputs.approval_class }}
+      environment: ${{ steps.compile.outputs.environment }}
+      manifest_sha256: ${{ steps.compile.outputs.manifest_sha256 }}
+    steps:
+      # github.sha, never the floating ref the dispatch was aimed at. The submit job
+      # checks out the same commit and recomputes the manifest hash on the far side of
+      # the approval gate; that recomputation is a real tripwire only because both sides
+      # are pinned. Against a moving ref the two hashes could differ merely because the
+      # branch advanced, and a tripwire that fires for an ordinary reason is one people
+      # learn to route around.
+      - name: Check out the platform
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      # pipx installs the pin, but an earlier uv already on PATH would keep answering and
+      # resolve the lockfile under a version nobody chose, so the pin is verified rather
+      # than assumed.
+      - name: Install the platform tooling
+        env:
+          UV_VERSION: "0.11.32"
+        run: |
+          set -euo pipefail
+          pipx install "uv==${UV_VERSION}"
+          installed="$(uv --version)"
+          if [[ "${installed}" != "uv ${UV_VERSION}" && "${installed}" != "uv ${UV_VERSION} "* ]]; then
+            echo "unexpected_uv_version" >&2
+            echo "Expected uv ${UV_VERSION} but PATH answers with: ${installed}" >&2
+            exit 1
+          fi
+          uv sync --locked
+
+      # A file rather than a command line, because SubmissionInputs is strict about types
+      # in a way a flat string cannot express: the attempt and fan-out bounds are whole
+      # numbers, the runtime bound is base-ten text because a bound that went through
+      # binary floating point is not the number the approver reads, and the command is an
+      # ordered sequence. Every value arrives through the environment, so nothing a
+      # submitter types is ever part of this script.
+      - name: Assemble the submission form
+        env:
+          FORM_REPOSITORY: ${{ inputs.repository }}
+          FORM_COMMIT_SHA: ${{ inputs.commit_sha }}
+          FORM_IMAGE_DIGEST: ${{ inputs.image_digest }}
+          FORM_WORKLOAD_PROFILE: ${{ inputs.workload_profile }}
+          FORM_DATASET_RELEASE: ${{ inputs.dataset_release }}
+          FORM_TEAM: ${{ inputs.team }}
+          FORM_WANDB_PROJECT: ${{ inputs.wandb_project }}
+          FORM_COMMAND: ${{ inputs.command }}
+          FORM_COMPUTE_PROFILE: ${{ inputs.compute_profile }}
+          FORM_MAXIMUM_RUNTIME_HOURS: ${{ inputs.maximum_runtime_hours }}
+          FORM_MAXIMUM_ATTEMPTS: ${{ inputs.maximum_attempts }}
+          FORM_FANOUT_SIZE: ${{ inputs.fanout_size }}
+          FORM_FANOUT_PARALLELISM: ${{ inputs.fanout_parallelism }}
+          FORM_FANOUT_INDEX_PARAMETER: ${{ inputs.fanout_index_parameter }}
+        run: |
+          set -euo pipefail
+          uv run --frozen python - "${RUNNER_TEMP}/submission-form.json" <<'PY'
+          import json
+          import os
+          import shlex
+          import sys
+          from pathlib import Path
+
+          TEXT_FIELDS = (
+              ("repository", "FORM_REPOSITORY"),
+              ("commit_sha", "FORM_COMMIT_SHA"),
+              ("image_digest", "FORM_IMAGE_DIGEST"),
+              ("workload_profile", "FORM_WORKLOAD_PROFILE"),
+              ("dataset_release", "FORM_DATASET_RELEASE"),
+              ("team", "FORM_TEAM"),
+              ("wandb_project", "FORM_WANDB_PROJECT"),
+              ("compute_profile", "FORM_COMPUTE_PROFILE"),
+              ("maximum_runtime_hours", "FORM_MAXIMUM_RUNTIME_HOURS"),
+              ("fanout_index_parameter", "FORM_FANOUT_INDEX_PARAMETER"),
+          )
+          WHOLE_FIELDS = (
+              ("maximum_attempts", "FORM_MAXIMUM_ATTEMPTS"),
+              ("fanout_size", "FORM_FANOUT_SIZE"),
+              ("fanout_parallelism", "FORM_FANOUT_PARALLELISM"),
+          )
+
+          form: dict[str, object] = {}
+          for field, variable in TEXT_FIELDS:
+              text = os.environ.get(variable, "").strip()
+              if text:
+                  form[field] = text
+          for field, variable in WHOLE_FIELDS:
+              text = os.environ.get(variable, "").strip()
+              if not text:
+                  continue
+              try:
+                  form[field] = int(text)
+              except ValueError:
+                  raise SystemExit(
+                      f"{field} must be a whole number, and the form carried {text!r}"
+                  ) from None
+          # An empty command leaves the field out rather than writing an empty list, so
+          # the refusal names a missing required field instead of an unusable one.
+          command = shlex.split(os.environ.get("FORM_COMMAND", ""))
+          if command:
+              form["command"] = command
+
+          Path(sys.argv[1]).write_text(
+              json.dumps(form, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          print(f"The form declares {len(form)} of the fourteen fields.")
+          PY
+
+      - name: Compile the submission
+        id: compile
+        env:
+          SUBMITTER: ${{ github.actor }}
+          SERVER_URL: ${{ github.server_url }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          RESEARCH_REPOSITORY: ${{ inputs.repository }}
+        run: |
+          set -euo pipefail
+          compile_status=0
+          uv run --frozen python tools/compile_submission.py \
+            --inputs "${RUNNER_TEMP}/submission-form.json" \
+            --config-dir config \
+            --submitter "${SUBMITTER}" \
+            --repository-url "${SERVER_URL}/${REPOSITORY_OWNER}/${RESEARCH_REPOSITORY}" \
+            --output "${RUNNER_TEMP}/compiled-submission.json" \
+            --summary "${RUNNER_TEMP}/approver-context.md" \
+            --github-output "${GITHUB_OUTPUT}" || compile_status=$?
+          # Exit 1 is a refusal on the merits, and it is the whole point of refusing here:
+          # a submission naming an unregistered dataset would be denied by admission
+          # whatever a reviewer said, and spending human attention on it first teaches
+          # reviewers that approving is a formality. Exit 2 is a different thing and must
+          # not read like a judgement.
+          if [[ "${compile_status}" -eq 1 ]]; then
+            echo "submission_refused" >&2
+            echo "The form does not compile into a manifest policy can judge, so no reviewer was asked. The reason is printed above." >&2
+            exit 1
+          fi
+          if [[ "${compile_status}" -ne 0 ]]; then
+            echo "submission_form_unusable" >&2
+            echo "The form or the reviewed configuration could not be read. This is not a refusal on the merits." >&2
+            exit 1
+          fi
+
+      # GitHub's approval notification carries none of this, so the reviewer has to open
+      # the run. That is a limitation of the mechanism; what this can do is make the
+      # summary complete enough that opening the run is sufficient.
+      - name: Publish the approver context
+        run: |
+          set -euo pipefail
+          cat "${RUNNER_TEMP}/approver-context.md" >> "${GITHUB_STEP_SUMMARY}"
+
+      # The manifest crosses the approval gate as an artifact rather than as a job output.
+      # Job outputs are strings assembled into the expression context and the manifest is
+      # a document; carrying it as one is also what lets the submit job recompute a hash
+      # over exactly the bytes this job hashed.
+      - name: Upload the compiled submission
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: compiled-submission
+          path: ${{ runner.temp }}/compiled-submission.json
+          if-no-files-found: error
+          retention-days: 30
+
+  # This job exists in this file rather than in a file of its own, and it has to. The
+  # admission role trust policy pins job_workflow_ref to this exact path with
+  # StringEquals, so the same attempt made from another workflow would be refused because
+  # the file is the wrong file -- a refusal that says nothing about the condition under
+  # test. Here the claim differs from the submit job's in exactly one respect: this job
+  # declares no `environment:`, so GitHub mints a ref-scoped subject
+  # (repo:...:ref:refs/heads/main) rather than an environment-scoped one
+  # (repo:...:environment:run-approval-lead). Same file, same repository, same branch,
+  # differing only in the absence of the environment key, which isolates the environment
+  # condition as the only variable.
+  #
+  # One limitation, stated rather than hidden. STS reports a refusal without saying which
+  # condition failed, and on any ref other than refs/heads/main the job_workflow_ref
+  # condition fails as well. On a branch this job therefore goes green for a reason it
+  # cannot distinguish from the one it is testing; it is a real check only on main.
+  deny-unapproved:
+    name: Verify an unapproved job cannot assume the admission role
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      # No checkout. This job holds an OIDC token aimed at a production role and has no
+      # business reading code beside it.
+      - name: Attempt the admission role without an approval
+        env:
+          ADMISSION_ROLE_ARN: ${{ vars.AWS_ADMISSION_ROLE_ARN }}
+          PROBE_AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          # A probe that fails for an unrelated reason proves nothing, so everything it
+          # needs is checked before the attempt and each shortfall is reported as itself.
+          # The ARN is never echoed on any path: it carries the account id.
+          if [[ -z "${ADMISSION_ROLE_ARN}" ]]; then
+            echo "admission_role_arn_unset" >&2
+            exit 1
+          fi
+          if [[ ! "${ADMISSION_ROLE_ARN}" =~ ^arn:aws[a-z-]*:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$ ]]; then
+            echo "admission_role_arn_malformed" >&2
+            exit 1
+          fi
+          if [[ -z "${PROBE_AWS_REGION}" ]]; then
+            echo "aws_region_unset" >&2
+            exit 1
+          fi
+          if [[ -z "${ACTIONS_ID_TOKEN_REQUEST_URL-}" || -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN-}" ]]; then
+            echo "oidc_token_request_unavailable" >&2
+            exit 1
+          fi
+
+          token_file="${RUNNER_TEMP}/deny-probe-token.json"
+          token_status=0
+          curl --silent --show-error --fail \
+            --header "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            --output "${token_file}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com" 2>/dev/null || token_status=$?
+          if [[ "${token_status}" -ne 0 ]]; then
+            echo "oidc_token_unobtainable" >&2
+            exit 1
+          fi
+          web_identity_token="$(jq -r '.value // empty' "${token_file}")"
+          if [[ -z "${web_identity_token}" ]]; then
+            echo "oidc_token_unreadable" >&2
+            exit 1
+          fi
+
+          # Credentials land on stdout when this succeeds, so stdout goes nowhere. The
+          # refusal lands on stderr, and only the error code is ever read out of it.
+          error_file="${RUNNER_TEMP}/deny-probe-error.txt"
+          attempt_status=0
+          aws sts assume-role-with-web-identity \
+            --role-arn "${ADMISSION_ROLE_ARN}" \
+            --role-session-name deny-unapproved-probe \
+            --web-identity-token "${web_identity_token}" \
+            --region "${PROBE_AWS_REGION}" \
+            --output text > /dev/null 2> "${error_file}" || attempt_status=$?
+
+          if [[ "${attempt_status}" -eq 0 ]]; then
+            echo "admission_role_assumed_without_an_environment" >&2
+            echo "A job that declared no environment was issued admission credentials. The trust policy no longer enumerates only the two approval environments in its sub condition." >&2
+            exit 1
+          fi
+          if ! grep -q AssumeRoleWithWebIdentity "${error_file}"; then
+            echo "deny_probe_inconclusive:sts_was_not_reached" >&2
+            echo "The attempt failed before STS answered, so it establishes nothing about the environment condition." >&2
+            exit 1
+          fi
+          error_code="$(sed -n 's/.*An error occurred (\([A-Za-z0-9]*\)).*/\1/p' "${error_file}")"
+          error_code="${error_code%%$'\n'*}"
+          if [[ "${error_code}" != "AccessDenied" ]]; then
+            echo "deny_probe_inconclusive:${error_code:-no_sts_error_code}" >&2
+            echo "STS answered, but not with a trust-policy refusal, so the attempt establishes nothing about the environment condition." >&2
+            exit 1
+          fi
+          echo "The admission role refused a subject minted without an environment, which is what the enumerated sub condition requires."
+
+  submit:
+    name: Submit the approved manifest to admission
+    runs-on: ubuntu-latest
+    needs: [compile, deny-unapproved]
+    timeout-minutes: 30
+    # The gate is named by the compile job, never by the form. GitHub is equally happy to
+    # resolve this key from an expression over the dispatch inputs, and that spelling
+    # would let the submitter pick which reviewers they face -- an exception routed to
+    # the lead gate by typing a name into a text box, which collapses the whole
+    # two-environment design.
+    # The name comes from `needs` because the job that computed it holds no credentials
+    # and derives the answer from policy rather than from the submitter.
+    environment:
+      name: ${{ needs.compile.outputs.environment }}
+    permissions:
+      contents: read
+      id-token: write
+      # For GET /repos/{owner}/{repo}/actions/runs/{run_id}/approvals, which is how this
+      # job learns who released the gate. The documentation reads as though the endpoint
+      # is reviewer-only. It is not: a token holding actions: read reaches it, verified
+      # against this repository.
+      actions: read
+    steps:
+      - name: Check out the platform
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install the platform tooling
+        env:
+          UV_VERSION: "0.11.32"
+        run: |
+          set -euo pipefail
+          pipx install "uv==${UV_VERSION}"
+          installed="$(uv --version)"
+          if [[ "${installed}" != "uv ${UV_VERSION}" && "${installed}" != "uv ${UV_VERSION} "* ]]; then
+            echo "unexpected_uv_version" >&2
+            echo "Expected uv ${UV_VERSION} but PATH answers with: ${installed}" >&2
+            exit 1
+          fi
+          uv sync --locked
+
+      - name: Download the compiled submission
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: compiled-submission
+          path: ${{ runner.temp }}/compiled-submission
+
+      # An environment gate releases a job; it does not tell the job who released it.
+      # This endpoint does, and admission needs the answer, because authorization is
+      # evaluated against the approver and a submission that names nobody is refused
+      # there. Failing here instead is the kinder half of the same outcome: it costs the
+      # approval either way, and this way the reason is a line in a log rather than a
+      # lineage record that reads as though the approver was not permitted.
+      - name: Read who released the gate
+        id: approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          approvals_file="${RUNNER_TEMP}/approvals.json"
+          api_status=0
+          gh api "repos/${RUN_REPOSITORY}/actions/runs/${WORKFLOW_RUN_ID}/approvals" \
+            --header "Accept: application/vnd.github+json" \
+            > "${approvals_file}" 2>/dev/null || api_status=$?
+          if [[ "${api_status}" -ne 0 ]]; then
+            echo "approvals_endpoint_unreadable" >&2
+            exit 1
+          fi
+          approver="$(jq -r '[.[] | select(.state == "approved") | .user.login // empty] | last // empty' "${approvals_file}")"
+          if [[ -z "${approver}" ]]; then
+            echo "approver_login_unreadable" >&2
+            echo "The approvals endpoint answered but named nobody who released this run, so the admission request cannot say who approved it." >&2
+            exit 1
+          fi
+          # GitHubLogin, the shape the record this feeds is validated against. Checking it
+          # here also keeps anything else out of GITHUB_OUTPUT.
+          if [[ ! "${approver}" =~ ^[A-Za-z0-9-]+$ ]]; then
+            echo "approver_login_unusable" >&2
+            exit 1
+          fi
+          echo "approver=${approver}" >> "${GITHUB_OUTPUT}"
+          echo "The gate was released by ${approver}."
+
+      # The value that crossed the gate is the digest the reviewer was shown; the document
+      # that crossed it is the artifact. Recomputing one from the other is a tripwire
+      # rather than a formality only because both sides are pinned -- the dispatch inputs
+      # are immutable for the life of the run and both checkouts name github.sha -- so the
+      # two must agree by construction and a difference means something moved. Admission
+      # recomputes it a third time inside AWS, because this runner is not trusted to
+      # report its own result.
+      - name: Recompute the manifest hash after approval
+        env:
+          APPROVED_SHA256: ${{ needs.compile.outputs.manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          uv run --frozen python tools/verify_approved_manifest.py \
+            --submission "${RUNNER_TEMP}/compiled-submission/compiled-submission.json" \
+            --approved-sha256 "${APPROVED_SHA256}"
+
+      - name: Assemble the admission request
+        env:
+          APPROVED_SHA256: ${{ needs.compile.outputs.manifest_sha256 }}
+          APPROVER: ${{ steps.approval.outputs.approver }}
+          RUN_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_FILE_PATH: ${{ job.workflow_file_path }}
+          WORKFLOW_REF: ${{ job.workflow_ref }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
+          WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          uv run --frozen python - \
+            "${RUNNER_TEMP}/compiled-submission/compiled-submission.json" \
+            "${RUNNER_TEMP}/admission-request.json" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+
+          def required(name: str) -> str:
+              # The job-context workflow identity is documented as unavailable on GitHub
+              # Enterprise Server, where it resolves to the empty string rather than
+              # failing. Empty here would record a workflow run nobody can find.
+              value = os.environ.get(name, "").strip()
+              if not value:
+                  raise SystemExit(f"{name} is empty, so the admission request cannot be assembled")
+              return value
+
+
+          source, destination = Path(sys.argv[1]), Path(sys.argv[2])
+          document = json.loads(source.read_text(encoding="utf-8"))
+          workflow_ref = required("WORKFLOW_REF")
+          if "@" not in workflow_ref:
+              raise SystemExit("job.workflow_ref must read owner/repo/path@ref")
+
+          request = {
+              "run_id": document["run_id"],
+              "submitter": document["submitter"],
+              "approver": required("APPROVER"),
+              "approving_environment": document["approving_environment"],
+              # The digest the compile job published and the reviewer was shown, carried
+              # across the gate through `needs` rather than read back out of the very
+              # document admission is being asked to judge.
+              "approved_manifest_sha256": required("APPROVED_SHA256"),
+              "manifest": document["manifest"],
+              "workflow_run": {
+                  "run_repository": required("RUN_REPOSITORY"),
+                  "workflow_repository": required("WORKFLOW_REPOSITORY"),
+                  "workflow_path": required("WORKFLOW_FILE_PATH"),
+                  "workflow_ref": workflow_ref.split("@", 1)[1],
+                  "run_id": int(required("WORKFLOW_RUN_ID")),
+                  "run_attempt": int(required("WORKFLOW_RUN_ATTEMPT")),
+              },
+          }
+          destination.write_text(
+              json.dumps(request, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          print(f"The admission request names run {request['run_id']}.")
+          PY
+
+      - name: Configure AWS credentials
+        id: credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ vars.AWS_ADMISSION_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          # One StartExecution and a bounded poll. The role's maximum is an hour and this
+          # job has no use for one, so it asks for the shortest session STS issues.
+          role-duration-seconds: 900
+          # Defaults to false in v6. The two ARNs below are composed from the assumed
+          # identity, so without this the account id reaches a world-readable log the
+          # first time a call reports an error against one of them.
+          mask-aws-account-id: true
+
+      # ExecutionAlreadyExists is a success here. That is counter-intuitive enough to be
+      # worth writing down before somebody corrects it. Step Functions treats a
+      # StartExecution carrying the same name and the same input as idempotent only while
+      # the original execution is still running; once it has closed, the same name is
+      # refused with a 400 ExecutionAlreadyExists for ninety days. Admission settles in
+      # seconds, so a genuine re-run of this job never arrives inside the idempotent
+      # window and always lands on the error -- and the only thing that error can mean is
+      # that this run id was already admitted, which is what the re-run was asking for.
+      # The execution is then polled like any other, so the re-run reports the decision
+      # the first attempt reached rather than assuming it. Every other error is a failure.
+      - name: Start the admission execution
+        env:
+          ADMISSION_ACCOUNT_ID: ${{ steps.credentials.outputs.aws-account-id }}
+          ADMISSION_REGION: ${{ vars.AWS_REGION }}
+          RUN_ID: ${{ needs.compile.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          state_machine_arn="arn:aws:states:${ADMISSION_REGION}:${ADMISSION_ACCOUNT_ID}:stateMachine:sbsandbox-intern-edullm-admission"
+          request="$(cat "${RUNNER_TEMP}/admission-request.json")"
+          error_file="${RUNNER_TEMP}/start-execution-error.txt"
+          start_status=0
+          aws stepfunctions start-execution \
+            --state-machine-arn "${state_machine_arn}" \
+            --name "${RUN_ID}" \
+            --input "${request}" \
+            --output text > /dev/null 2> "${error_file}" || start_status=$?
+          if [[ "${start_status}" -eq 0 ]]; then
+            echo "Admission execution started."
+          elif grep -q ExecutionAlreadyExists "${error_file}"; then
+            echo "An execution already carries this run id, so this manifest has already been admitted. Reading back the decision it reached."
+          else
+            # Never echoed: a StartExecution diagnostic names the state machine ARN.
+            echo "start_execution_failed" >&2
+            exit 1
+          fi
+
+      # StartExecution answers as soon as the execution is created, so without this the
+      # job would report success for a submission admission was still judging, and a
+      # rejected one would be indistinguishable from an accepted one.
+      - name: Wait for the admission decision
+        env:
+          ADMISSION_ACCOUNT_ID: ${{ steps.credentials.outputs.aws-account-id }}
+          ADMISSION_REGION: ${{ vars.AWS_REGION }}
+          RUN_ID: ${{ needs.compile.outputs.run_id }}
+          MAXIMUM_POLL_ATTEMPTS: "60"
+          POLL_INTERVAL_SECONDS: "5"
+        run: |
+          set -euo pipefail
+          # Derivable rather than read back from StartExecution, because the already-exists
+          # path above has no response to read one out of and still has to be polled.
+          execution_arn="arn:aws:states:${ADMISSION_REGION}:${ADMISSION_ACCOUNT_ID}:execution:sbsandbox-intern-edullm-admission:${RUN_ID}"
+          status_file="${RUNNER_TEMP}/execution-status.txt"
+          status="RUNNING"
+          attempt=0
+          while [[ "${attempt}" -lt "${MAXIMUM_POLL_ATTEMPTS}" ]]; do
+            aws stepfunctions describe-execution \
+              --execution-arn "${execution_arn}" \
+              --query status \
+              --output text > "${status_file}"
+            status="$(cat "${status_file}")"
+            if [[ "${status}" != "RUNNING" ]]; then
+              break
+            fi
+            attempt=$((attempt + 1))
+            sleep "${POLL_INTERVAL_SECONDS}"
+          done
+          case "${status}" in
+            SUCCEEDED)
+              echo "Admission accepted this submission. The intent and decision records are in the lineage bucket."
+              ;;
+            RUNNING)
+              echo "admission_execution_did_not_settle" >&2
+              echo "The execution was still running after the poll bound. Nothing has been decided either way; read the execution history before re-running." >&2
+              exit 1
+              ;;
+            *)
+              echo "admission_execution_${status}" >&2
+              echo "Admission did not accept this submission. The decision and its reasons are recorded under decision/ in the lineage bucket." >&2
+              exit 1
+              ;;
+          esac
