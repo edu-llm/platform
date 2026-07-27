@@ -674,13 +674,35 @@ def test_deployer_passrole_names_both_service_roles_and_never_a_prefix() -> None
     assert iam_actions == ["iam:PassRole"]
 
 
+#: The Phase 2 actions whose service authorization reference lists no resource type, so
+#: that "*" is the narrowest grant that exists rather than a scope somebody skipped.
+#: logs:DescribeLogGroups is the only one, and it is here because scoping it to the log
+#: group ARN is what made the second deploy fail.
+PHASE2_ACTIONS_WITH_NO_RESOURCE_TYPE = {"logs:DescribeLogGroups"}
+
+
 def test_deployer_phase2_grants_are_scoped_past_the_shared_intern_prefix() -> None:
     statements = policy_statements(
         role_named(DEPLOYER_PATH, "sbsandbox-intern-edullm-infra-deployer"),
         "deploy-phase2-admission-stacks",
     )
-    scoped = [arn for statement in statements for arn in resource_arns(statement["Resource"])]
+    unscoped = [
+        statement
+        for statement in statements
+        if "*" in resource_arns(statement["Resource"])
+    ]
+    scoped = [
+        arn
+        for statement in statements
+        if statement not in unscoped
+        for arn in resource_arns(statement["Resource"])
+    ]
 
+    # An unscoped statement is allowed only for an action that cannot be scoped, and only
+    # for one this file names. Anything else appearing here is a scope given up on.
+    assert {
+        action for statement in unscoped for action in all_actions([statement])
+    } == PHASE2_ACTIONS_WITH_NO_RESOURCE_TYPE
     assert scoped
     assert all(arn.startswith("arn:${AWS::Partition}:") for arn in scoped)
     assert not [arn for arn in scoped if "sbsandbox-intern-*" in arn]
