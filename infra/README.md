@@ -440,6 +440,25 @@ need editing.
 Uploading an object is not applying a stack, so this one S3 write is a laptop step
 without contradicting the rule above.
 
+**The configuration is inside the zip, so editing `config/` is a release.**
+`tools/build_admission_lambda.py` copies `config/*.yaml` to `edullm_platform/config/`,
+because the validator has to read the catalog it was reviewed against rather than whatever
+happens to be in a bucket when it runs. That is the right property and it has a
+consequence worth stating plainly: a change to `config/workload-catalog.yaml` or
+`config/execution-targets.yaml` changes nothing in the account until this procedure is
+run.
+
+Phase 4 paid for this. The GPU compute environment, queue, job definition and roles were
+deployed and `VALID`, both config files agreed, every test was green — and the first GPU
+submission was refused with `unprovisioned_compute_profile`, because the deployed zip
+still held a catalog in which that profile was not provisioned. The refusal was correct
+for the bytes that produced it and wrong about the account, which is the hardest kind to
+read: it names the compute profile, not the release.
+
+So the rule is: **promoting a compute profile, or changing anything else under `config/`
+that admission reads, is a validator release.** Rebuild, upload, edit `S3ObjectVersion`,
+and let CI deploy — before submitting anything that depends on the change.
+
 The deployer role needs `s3:ListBucketVersions` on the artifacts bucket for this to work,
 and that is not obvious: Lambda fetches the versioned code object as the deploying
 principal, and needs a bucket-level action as well as `s3:GetObjectVersion` on the object.

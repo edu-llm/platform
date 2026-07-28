@@ -57,10 +57,31 @@ Resources:
       # The lesson is the one this pin already encodes, arriving a phase late: a state
       # machine and the function it calls are released separately, and a template test
       # cannot see the gap between them.
+      #
+      # THIS IS THE THIRD RELEASE, AND IT IS THE SAME SEAM WEARING DIFFERENT CLOTHES. The
+      # second was a code change nobody released. This one is a *configuration* change
+      # nobody released, which is harder to see coming.
+      #
+      # tools/build_admission_lambda.py copies config/*.yaml into the zip at
+      # edullm_platform/config/, because the validator has to read the catalog it was
+      # reviewed against rather than whatever is in a bucket at run time. The consequence
+      # is that config/workload-catalog.yaml and config/execution-targets.yaml are part of
+      # this function's release, and editing them changes nothing in the account until
+      # somebody rebuilds the zip and edits the line below.
+      #
+      # Phase 4 met it head on. The GPU compute environment, queue, job definition and
+      # roles were all deployed and VALID; the catalog said gpu-1xa10g was provisioned and
+      # execution-targets named its queue. The validator, still running the previous zip,
+      # refused the first GPU submission with unprovisioned_compute_profile -- a refusal
+      # that is correct for the code that produced it and wrong about the account. Nothing
+      # was broken except which bytes were running.
+      #
+      # So: promoting a compute profile is a Lambda release. Nothing in a config diff says
+      # so, and the failure it produces names the profile rather than the release.
       Code:
         S3Bucket: sbsandbox-intern-edullm-artifacts
         S3Key: admission-validator/admission-validator.zip
-        S3ObjectVersion: nXEUyz_xMZmwL4UuaPgxGhB6El5GDG1l
+        S3ObjectVersion: rcDyIY99q8pScFvCobEy6p5iVJRbj55T
       Timeout: 30
       MemorySize: 512
 

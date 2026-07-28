@@ -1,0 +1,37 @@
+# What is actually deployed as the admission validator, recorded beside the template that
+# names it.
+#
+# THE GAP THIS CLOSES COST A LIVE RUN. tools/build_admission_lambda.py copies config/*.yaml
+# into the zip, so the validator reads the catalog it was reviewed against rather than
+# whatever is in a bucket when it runs. That is the right property. Its consequence is that
+# config/workload-catalog.yaml and config/execution-targets.yaml are part of this
+# function's release -- and editing them changes nothing in the account until somebody
+# rebuilds the zip, uploads it, and edits S3ObjectVersion in
+# infra/admission-state-machine.yaml.
+#
+# Phase 4 walked into it. The GPU compute environment, queue, job definition and roles were
+# deployed and VALID, both config files agreed, the suite was green, and the first GPU
+# submission was refused with unprovisioned_compute_profile -- because the deployed zip
+# still held a catalog in which that profile was not provisioned. The refusal was correct
+# for the bytes that produced it and wrong about the account, and it named the compute
+# profile rather than the release, which is why it took a run to find.
+#
+# So the digest below is compared against a zip built from the current tree. Change
+# anything the package carries -- the handler, a contract it imports, or a config file --
+# without releasing, and the comparison fails at CI with the reason, instead of at
+# admission with a refusal that reads like a configuration mistake.
+#
+# The build is deterministic, so a rebuild that changed nothing produces the same digest
+# and needs no edit here. Releasing means running the procedure in infra/README.md and
+# updating both fields below in the same commit as the change that caused them to move.
+schema_version: 1
+
+#: The object the template's Code block names. Kept here as well so the two can be
+#: compared: a version id edited in one place and not the other is a template pointing at
+#: a zip nobody recorded, or a record describing a zip nobody deployed.
+s3_key: admission-validator/admission-validator.zip
+s3_object_version: rcDyIY99q8pScFvCobEy6p5iVJRbj55T
+
+#: sha256 of the uploaded zip, as tools/build_admission_lambda.py reports it. This is the
+#: field that ties the release to a tree rather than to a moment.
+sha256: dd237c28c862db8f516e8a5627a9a248f4dc769425f5d903b7af1cc623c0fbfc
