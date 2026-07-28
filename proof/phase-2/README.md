@@ -2,8 +2,8 @@
 
 Phase: phase-2
 Bundle schema version: 1
-Source commit: 5e7d77a7ebfb89a6950d61f7a631b8750913c0aa
-Generated: 2026-07-28T03:36:23+00:00
+Source commit: 1a1c5684bd4bb2659be424cd89514a8bda8defd7
+Generated: 2026-07-28T05:26:31+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 2 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase2_proof.py` at generation time. It is not done, and the Result table below says by how much.
 
@@ -45,9 +45,9 @@ This run evaluated 22 acceptance criteria: twelve criteria are covered, one crit
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3171 |
-| suite tests executed | 3009 |
-| suite passed | 3009 |
+| suite tests collected | 3226 |
+| suite tests executed | 3064 |
+| suite passed | 3064 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
@@ -109,9 +109,9 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | fixtures/evidence/phase-2/lineage/records/intent/run_019fa46a-5478-70ea-aab6-28de23c41f7f.json | sha256:89ad215366a6c1e6177e24a04de4db99f0687529175d9bccae39ef3dfadd4ba1 |
 | fixtures/evidence/phase-2/lineage/records/intent/run_019fa471-0173-7050-a41b-22ca01969b52.json | sha256:e1e6f323427445671f554e4af5d23ea7a2020b578d926d6e934d3144604be0ba |
 | fixtures/evidence/phase-2/lineage/records/intent/run_019fa4c0-390d-7081-b539-08d9ff6b58be.json | sha256:be35e6f2797c899e1a5b44544ed64d053b125f6d17cb47fb0cc6932f2fd976a5 |
-| infra/admission-state-machine.yaml | sha256:35cf140df478e1ff5bbe0629e0d08104d80a7b446a6d3051c5f4647319d3489f |
+| infra/admission-state-machine.yaml | sha256:5982999fffe044e7c6d7df69de649ee7dee2801c1c2fdaebe67807e37ae71421 |
 | infra/iam/admission-role.yaml | sha256:e5e5b2db0ae9b7d1cdf8d46ab3568f35279a33344fe1ec337cf69e82b9c9e841 |
-| infra/iam/admission-service-roles.yaml | sha256:829c2a55e96e74dabc3da803b118615701fdec0da6305569b860102a9c6676dc |
+| infra/iam/admission-service-roles.yaml | sha256:7bd2a23e234a6a398dc2e6adf683ccbc38d25b2049a9348bf5d280d144ebc8e7 |
 | infra/iam/infra-deployer-role.yaml | sha256:905fbf8444c271ee9337874643c01d76eefdaba31571142407f3220eeef1c019 |
 | infra/lineage-bucket.yaml | sha256:9bad0303f92659a47caa1fe57f1bf10c77a3b11a11a9f58f21b1c341befd761d |
 

@@ -145,6 +145,10 @@ Gap:
 - The authorization matrix is proved across the lead roster. The live corroboration is the one scenario in this phase that one person cannot produce: it needs a lead other than the submitter to release the deployment, and every run so far was released by the submitter, who is also a lead. Closing this needs a second member of the team-leads team to approve one routine submission.
 - What this waits on is a second person rather than a missing capture, and it is the only criterion in the phase where that is true. The tooling is already there: tools/capture_phase2_evidence.py records the lineage store's objects, the decision record names the approver, and criterion 1 is covered on exactly that reading of a run the submitter released. So the day a lead other than the submitter releases one routine submission, closing this is the ordinary re-capture and a citation -- and no amount of work in this repository brings that day forward.
 
+Scope:
+
+- Not pilot-blocking, and this is the plan's own call rather than one taken here. Everything else in the authorization group fails towards permitting something that should have been refused; this one fails towards refusing something that should have been permitted. Nobody loses money, data, attribution or a lineage record when it breaks -- a member is stuck, and a stuck member complains, which is the loudest failure mode in the phase.
+
 No test proves this check.
 
 Supporting tests (2), all executed and passing, cited as evidence rather than as proof:
@@ -163,6 +167,10 @@ team_bindings.teams in config/organization.yaml is empty, so membership is unver
 Live again when:
 
 Populating team_bindings.teams in config/organization.yaml once sub-team assignments exist. Enforcement goes live with no code change, team_verified starts reporting true, and this must be re-recorded as covered or argued again.
+
+Scope:
+
+- This one cannot be marked pilot-blocking, and the shared contract refuses the combination rather than leaving it to a reviewer. A deferral is a decision that the criterion is intentionally false right now, so requiring it before a pilot would make the rung unreachable rather than make it safe. What it would have protected goes on the limitations page instead, in the words a user needs: the team recorded against a run is unverified, and nothing stops somebody naming a team they do not belong to.
 
 No test proves this check.
 
@@ -298,6 +306,10 @@ Gap:
 - One field this criterion asks for is not there and cannot be. Reading a real rendered context on 2026-07-27 accounts for every item in the statement except the branch: submitter, team, linked repository, linked short SHA, image digest, dataset release, compute profile with its hourly rate, the arithmetic shown as rate times nodes times hours times attempts times cells, and the classification as the first line of the document. For an exception the renderer also names each ceiling that was exceeded, in words, with the value beside the limit.
 - The branch is absent because RunManifest has no branch field and the dispatch form never collects one. That follows from the global constraint that every source revision uses a full commit SHA: a branch is mutable and a commit is not, so the branch is not part of run identity. It is still context an approver would use, and this criterion inherited its wording from a draft written before the manifest settled. Closing it means either carrying the branch as advisory metadata that nothing authorizes on, or amending the criterion with that reason written down. It is a decision rather than an omission, and until somebody takes it this criterion cannot be honestly marked covered.
 
+Scope:
+
+- Not pilot-blocking, and it is the closest call in the phase. Its absence plainly lets somebody release a run whose cost they misjudged, which is money. What saves it is the size of the rung: a pilot approver is one of two or three named people who already know what was submitted and can work the figure out once told the screen does not show it, which is a limitation a reader can act on. The argument expires the moment the approver stops being somebody who already knows the run, so this is load-bearing for the team rung while not blocking the pilot one -- the only entry in the phase where those two answers differ.
+
 No test proves this check.
 
 Supporting tests (1), all executed and passing, cited as evidence rather than as proof:
@@ -364,6 +376,7 @@ Supporting tests (2), all executed and passing, cited as evidence rather than as
 
 Scope:
 
+- Pilot-blocking, and it has no counterpart in the master plan's list. The plan's checks describe what the approval gate refuses; this one describes who is standing at it. If GitHub's reviewer lists drift from the roster the platform reasons about, a person the policy has no model of releases spend and the decision record attributes it to somebody the model cannot place. That is money and attribution in one, and no limitations page helps: a pilot user cannot act on being told the reviewer list is unchecked.
 - Compared against config/organization.yaml rather than against a list written in the test, because drift between GitHub's reviewers and the platform's roster is otherwise silent and the authorization model assumes the two agree.
 - The lead gate's single reviewer is the team-leads team, and the assertion pins the type as well as the name. Eight leads exceed the six-slot cap and a team counts as one slot, so the team is the only way to list them all -- and a test that flattened it into its members would agree with the roster for the wrong reason, and would keep agreeing after somebody replaced it with six named users.
 - The admin gate lists the two roster admins rather than the three GitHub org owners. The third is the sandbox owner, who appears nowhere in this platform's role model, and an exception released by somebody outside the model would be attributable to a person the policy cannot reason about.
@@ -386,6 +399,7 @@ Supporting tests (2), all executed and passing, cited as evidence rather than as
 
 Scope:
 
+- Pilot-blocking, and it has no counterpart in the master plan's list although the plan's Build section requires it. This is one of the two escape routes the phase closes: off-main cannot reach the environment, and skipping the environment cannot reach AWS. The plan's checks mark the second and leave the first implicit, so it is marked here. Its absence lets a workflow on any branch reach the approval environment and, through it, the admission role, which is money.
 - The custom form is asserted specifically, and the protected-branches form is asserted absent. They are not equivalent: protected_branches follows whatever branch protection happens to cover, so it widens the moment a second branch is protected -- a change nobody would connect to this control -- while custom_branch_policies matches names that were written down. A test asserting only that some restriction exists would pass on the weaker one.
 - Asserted for every environment the capture found rather than for the two expected by name, so an environment auto-created by naming it in a workflow file is covered by the same assertion.
 - Rests on a capture, so it expires with the freshness window and is a statement about 2026-07-27 rather than about now.
@@ -404,6 +418,7 @@ Supporting tests (1), all executed and passing, cited as evidence rather than as
 
 Scope:
 
+- Pilot-blocking, and it has no counterpart in the master plan's list. It is the lineage record itself: records that do not load, or that do not join by run id, are an audit trail nobody can audit. This is not hypothetical here -- reading the real store found every decision record failing to load, which is the exact shape the ladder marks, a record that looks fine and is wrong.
 - Validated against the same models the Lambda used to write them, which is what makes this more than a shape check: a record the writing model cannot read back is an audit trail nobody can audit.
 - Reading the real records found exactly that. maximum_compute_cost_usd is a computed field, so pydantic wrote it out and refused it on the way back in, and every decision record in the store failed to load. CostInputs now accepts a recorded total and refuses one that disagrees with the inputs beside it.
 - The store holds two shapes and both are captured. Records written before the encoding fix are a JSON string containing the object; records after are the canonical bytes. Hiding the older shape would make the store look uniform and leave the next reader meeting a surprise nobody wrote down.
@@ -424,6 +439,7 @@ Supporting tests (2), all executed and passing, cited as evidence rather than as
 
 Scope:
 
+- Pilot-blocking, and the closest of the eight calls the plan's list left to be made here. The argument against is that the conditional write already refuses an overwrite, so the version is a second line rather than the first. What decides it is the ladder's other rule: a limitation only substitutes for a check when a reader can act on it, and there is nothing a pilot user can do with the sentence 'the objects holding your authorization records are neither attested nor versioned'. An unattested object that has been altered reads exactly like one that has not.
 - S3-attested rather than computed here. Every object in the store returned both a ChecksumSHA256 and a VersionId from HeadObject with checksum mode enabled.
 - The two digests are asserted distinct. ChecksumSHA256 attests the object's bytes; manifest_sha256 attests the manifest's canonical serialization and is the value an approval was taken against. Conflating them would be a lineage error rather than a wording slip, so a test asserts they differ.
 
@@ -446,6 +462,10 @@ Gap:
 - A citation here reads a committed CloudFormation template, which is what the account was asked for rather than what it holds. The three Phase 2 roles were deployed from a laptop on 2026-07-27 and no capture has been compared against them, so no Phase 2 role appears in role_drift.COMMITTED_ROLE_TEMPLATES and the comparison that catches a role widened in the console does not run for them.
 - Both roles were read back from IAM by hand on 2026-07-27 and matched. The Lambda role carries CloudWatch Logs on its own log group and nothing else, with no S3 action of any kind. Reading a role by hand is not a comparison any test re-runs, so closing this means adding the three Phase 2 roles to a Phase 2 capture and comparing them in both directions, as Phase 1 does for its two.
 
+Scope:
+
+- Pilot-blocking, and this is the criterion the master plan's own status block names as having no counterpart in its check list at all. The property is that the deciding component cannot write and the writing component cannot decide. Lose it and the session that asked for a submission can write its own decision record, which forges attribution and corrupts the lineage store in the same act -- two of the four harms at once, and both of them silent.
+
 No test proves this check.
 
 Supporting tests (3), all executed and passing, cited as evidence rather than as proof:
@@ -460,6 +480,7 @@ Supporting tests (3), all executed and passing, cited as evidence rather than as
 
 Scope:
 
+- Pilot-blocking, and it has no counterpart in the master plan's list although the plan's Build section requires it. A caller who can supply the policy the decision is taken against can supply one with no ceilings in it, which routes around every cost bound the phase has. That is the money harm in its most direct form, and it leaves a decision record that looks properly authorized.
 - Two halves, and both are readable from committed artifacts, which is why this is covered while its neighbours are not. The handler resolves its configuration relative to its own file and the packaging tool copies the config yaml files to exactly that location, so the policy the function reads is the packaged one. And the admission core ignores any policy in its input payload: an event carrying an attacker-supplied policy_version produces a decision citing the deployed one.
 - That is what makes policy_version in a decision record a fact about the platform rather than a claim by the caller.
 - Not claimed: that the deployed function is running the package this repository last built. The code object is pinned by S3ObjectVersion, so a template edit is what releases a change, but nothing compares the running function's code to a locally built zip. A capture recording the deployed S3ObjectVersion beside the build's sha256 would close that, and it is not part of this criterion as stated.
@@ -482,6 +503,7 @@ Supporting tests (1), all executed and passing, cited as evidence rather than as
 
 Scope:
 
+- Pilot-blocking, and it has no counterpart in the master plan's list although the plan's Build section requires exactly these five fields. A decision missing any of them is a run nobody can attribute afterwards, which is the attribution harm stated as plainly as the ladder states it.
 - Read from committed records rather than from the model's declaration, because the master plan names these five explicitly and a record missing one is a gate failure.
 - The actor is the field to read carefully. The approver reaches AWS because the submitting job read it from the GitHub approvals API and passed it along; no OIDC claim names who approved. The gate cannot be skipped, and a compromised runner could still misreport who released it. This asserts the field is recorded, not that AWS verified it.
 
@@ -501,6 +523,7 @@ Supporting tests (3), all executed and passing, cited as evidence rather than as
 
 Scope:
 
+- Pilot-blocking, and it is the one of the eight that looks least like a check because it starts satisfied. A repository-level secret is readable by a workflow on any branch, so the moment one exists the branch protections and the environment gate are both walked around, and what leaks is a credential. A check that guards a state you are already in is exactly the kind whose absence is invisible until it is expensive.
 - Names only, never values, and the model has no field a value could occupy. That is a stronger guarantee than a capture tool that is careful, and it matters because the evidence for no-credentials-are-stored must not itself store one.
 - Phase 2 introduced no credential, and that was a live question rather than a foregone conclusion. The fallback, had the approvals endpoint needed a fine-grained token, was to store one as an environment secret. The endpoint answered a GITHUB_TOKEN holding actions read, so nothing was stored, and the environment secret lists are empty.
 - This check starts satisfied and exists to keep it that way, so it will look uneventful for as long as it is working.

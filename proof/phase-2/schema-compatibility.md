@@ -17,6 +17,6 @@ The repository-wide inventory, including every Phase 0 contract, is in `proof/ph
 | LineageObject | edullm_platform.phase2_evidence | record | unversioned | no | sha256:e8b3a5a7c45fa505cd8a7a2f3d2a8df3cf482684a693d8b96404488ac9773d06 |
 | ProtectedEnvironment | edullm_platform.phase2_evidence | record | unversioned | no | sha256:3d60181d51ce862aa4b65d8d7cbe3da760a50552e10328d96ef5894bc735f692 |
 | SecretInventory | edullm_platform.phase2_evidence | record | unversioned | no | sha256:ba3cec7c6b95f1761756f3938cfd445b3ba081f34d7cd5fb33e6f3c9754dad39 |
-| Phase2GateReport | edullm_platform.phase2_gate | record | unversioned | no | sha256:eb16fc35d20f667769de8f3038ced40678062483a8c3dca08b31519fe28921ac |
+| Phase2GateReport | edullm_platform.phase2_gate | record | unversioned | no | sha256:237063f6f507f5fc06a78659bb898512bfaf472ad6c8c641d8cf840d049e3dbf |
 
 `IntentRecord` and `DecisionRecord` are the two a reviewer should read closely: they are the audit trail, they are written once and never rewritten, and a field retyped after a record is in the store is a field the store's older objects no longer satisfy. That is not hypothetical here -- `CostInputs` had to be taught to accept a recorded total, because `maximum_compute_cost_usd` is computed and pydantic refused every decision record in the store on the way back in.

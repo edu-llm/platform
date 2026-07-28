@@ -86,6 +86,32 @@ Resources:
                   - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-cpu
                   - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-cpu-run
                   - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-cpu-run:*
+              # batch:TagResource is here to serve the SubmitJob above and for no other
+              # reason. batch_submit_request always sends Tags -- the run id, the team and
+              # the compute profile, which is what Phase 5's cost attribution reads -- and
+              # Batch authorizes tagging-on-creation as a separate action from the create
+              # itself. So a role holding SubmitJob and not this one is refused every
+              # submission, which is what the first run through the whole path measured:
+              #
+              #   not authorized to perform: batch:TagResource on resource:
+              #   arn:aws:batch:us-east-1:<account>:job-definition/sbsandbox-intern-edullm-cpu-run
+              #
+              # The ARNs mirror SubmitJob's exactly, because it is the same call against the
+              # same two resource types and the denial named one of them. They are a
+              # separate statement rather than a second action on the one above so that the
+              # grant reads as what it is: not a capability to tag Batch resources, but the
+              # half of SubmitJob that AWS bills to a different action name. Widening either
+              # list without widening the other produces a role that can submit and cannot,
+              # which fails at run time and nowhere earlier.
+              #
+              # No batch:UntagResource. The tags are lineage, and a principal that could
+              # remove them could detach a running job from the run that paid for it.
+              - Effect: Allow
+                Action: batch:TagResource
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-cpu
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-cpu-run
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-cpu-run:*
               # ecr:DescribeImageScanFindings, for the ReadImageScan state the state
               # machine runs before it validates anything. The findings reach the validator
               # as a payload key the ASL builds from this task's result and from nowhere
