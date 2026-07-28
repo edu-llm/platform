@@ -4,7 +4,7 @@ The 22 Phase 3 acceptance criteria, mapped to the tests cited for each one by no
 
 This mapping is defined once, in `src/edullm_platform/phase3_criteria.py`. The acceptance gate reads the same definition and executes the same node ids, so this matrix and `tools/validate_phase3.py` cannot disagree.
 
-Verification run: 315 tests executed, 315 passed, 0 failed, 0 errored, pytest exit code 0.
+Verification run: 316 tests executed, 316 passed, 0 failed, 0 errored, pytest exit code 0.
 
 Three statuses exist and no more. **COVERED** means one or more cited tests prove the criterion as stated against the shipped configuration and all of them pass; the gate passes it. **DEFERRED** means an explicit recorded decision not to satisfy it yet, which requires both a written reason and a written trigger describing what makes it live again; the gate passes it. **GAP** is everything else, and the gate fails it. There is no in-between status, because an in-between status is what lets a gate be green and wrong at the same time.
 
@@ -435,8 +435,10 @@ Supporting tests (3), all executed and passing, cited as evidence rather than as
 Scope:
 
 - Pilot-blocking, and one of the criteria the plan's own status block names as missing from its check list. It is the only entry in the phase whose absence bills money continuously with nothing running: an environment left holding vCPUs while idle pays for hardware nobody asked for, in a shared account that is already carrying a four-figure capacity charge somebody else made.
-- minvCpus and desiredvCpus are different facts and only the second can catch this. minvCpus is what the template asks for and is asserted from the template by the supporting citation; desiredvCpus is what the environment is actually holding, and it is the one that can be non-zero while nothing runs. The proving citation reads it from the deployed environment after all four runs had finished, and it was zero.
+- minvCpus and desiredvCpus are different facts and the second is closer to the claim. minvCpus is what the template asks for and is asserted from the template by the supporting citation; desiredvCpus is what the scheduler is asking for. The proving citation reads both from the deployed environment while nothing was queued, and both were zero.
+- DESIREDVCPUS ALONE DOES NOT ESTABLISH THIS, WHICH THIS CRITERION USED TO ASSUME. Measured on 2026-07-28 against Phase 4's first GPU run: the job reached SUCCEEDED at 22:33:48Z, desiredvCpus read zero by 22:34:47Z, and the g5.xlarge it had started ran until 22:41:5xZ. For those seven minutes the number this criterion rested on said the environment held nothing while an instance was on the bill. ecs:list-container-instances read zero over the same window, because the agent deregisters before the host goes away. Both signals answer a neighbouring question -- what the scheduler wants, and what the cluster can place onto -- and neither answers what is being paid for. So the record now carries live_instance_count, attributed by the auto scaling group tag Batch puts on its own instances, and the proving citation asserts all three.
 - The environment demonstrably does scale, which is what makes the reading worth anything. It was observed holding 32 vCPUs while the timeout run was in flight and back at zero afterwards, so a capture taken at the wrong moment records the non-zero figure and fails this rather than quietly reading as idle.
+- The capture is of the CPU environment. Phase 4's GPU environment is the one the seven-minute window was measured on and is not committed here, so what this criterion covers is the environment Phase 3 built. Saying otherwise would be the same error the paragraph above records.
 - This rests on a committed capture, and a capture is a statement about one moment. Every record is a FreshEvidenceModel, so thirty days after it was taken it stops loading, the cited tests fail and this criterion is a gap again with the gate red. The run does not need repeating -- every object is still in a write-once store -- so what renews it is re-running the capture, which is what the expiry is asking for.
 
 Proving tests (1), all executed and passing:

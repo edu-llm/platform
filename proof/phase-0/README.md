@@ -2,8 +2,8 @@
 
 Phase: phase-0
 Bundle schema version: 1
-Source commit: b399b4d68257ff5db5cf7386d1aa67238a9a8f78
-Generated: 2026-07-28T22:06:16+00:00
+Source commit: b12467925021dac993040d1b5fb13a3a315ed586
+Generated: 2026-07-28T22:52:34+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 0 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase0_proof.py` at generation time.
 
@@ -18,10 +18,10 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3272 |
-| suite tests executed | 3110 |
-| suite passed | 3107 |
-| suite failed | 3 |
+| suite tests collected | 3273 |
+| suite tests executed | 3111 |
+| suite passed | 3111 |
+| suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
 | matrix node ids executed | 254 |

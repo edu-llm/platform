@@ -545,13 +545,27 @@ class ComputeEnvironmentEvidence(FreshEvidenceModel):
 
     Two criteria read this and they want opposite things from it. One asks that the
     environment exists and is usable, which is ``status`` VALID and ``state`` ENABLED. The
-    other asks that it holds nothing while idle, which is ``desired_vcpus`` at zero. Both
+    other asks that it holds nothing while idle, which needs two numbers and not one. Both
     are properties of the same object at the same instant, so they are captured together
     rather than as two records that could be observed hours apart and read as one moment.
 
     The subnet and security group ids are here because the networking criterion asks what
     the environment *uses*, which is not what a template asks for -- a stack applied by
     hand can land somewhere else, and only the deployed object says where.
+
+    WHY THE IDLE CLAIM TAKES TWO NUMBERS, measured on 2026-07-28 against the first GPU run.
+    ``desiredvCpus`` fell to zero within a minute of the job reaching SUCCEEDED, while the
+    ``g5.xlarge`` it had started went on running for a further quarter of an hour and
+    billing the whole time. ``ecs:list-container-instances`` reported zero across the same
+    window, because the agent deregisters before the host goes away.
+
+    So both of the obvious signals answer a neighbouring question. ``desiredvCpus`` is what
+    the scheduler is asking for and ``list-container-instances`` is what the cluster can
+    schedule onto; neither is what the account is paying for. A capture taken in that
+    window records zero, zero, and an instance nobody can see from this record -- which is
+    the same failure shape as reading a green ``--dry-run`` as evidence of placement.
+
+    ``live_instance_count`` is the third number and the only one that tracks the bill.
     """
 
     source: Literal["aws"]
@@ -563,6 +577,12 @@ class ComputeEnvironmentEvidence(FreshEvidenceModel):
     desired_vcpus: int = Field(ge=0)
     minimum_vcpus: int = Field(ge=0)
     maximum_vcpus: int = Field(ge=0)
+    #: EC2 instances this environment still has, in any state that bills or is about to
+    #: stop billing: pending, running, shutting-down, stopping and stopped. Attributed by
+    #: the ``aws:autoscaling:groupName`` tag Batch puts on them, which carries the compute
+    #: environment name, rather than by an instance type or a tag of ours -- AWS assigns it
+    #: and a hand-launched instance cannot forge it.
+    live_instance_count: int = Field(ge=0)
     vpc_id: VpcId
     subnet_ids: Annotated[
         tuple[SubnetId, ...], BeforeValidator(require_ordered_sequence)
@@ -581,4 +601,7 @@ class ComputeEnvironmentEvidence(FreshEvidenceModel):
 
     @property
     def idle_and_holding_nothing(self) -> bool:
-        return self.desired_vcpus == 0
+        # Both, and the second one is the one that was missing. This returned
+        # ``desired_vcpus == 0`` alone and would have answered True for a quarter of an
+        # hour after every run, while an instance was still on the bill.
+        return self.desired_vcpus == 0 and self.live_instance_count == 0
