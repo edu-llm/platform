@@ -248,14 +248,34 @@ Resources:
       # the failure. Everything downstream is JSONPath again and reads $.admission and
       # $.submission as though nothing had changed.
       #
-      # ArrayProperties is the reason for the small Choice before WriteBinding.
+      # ArrayProperties is the reason for the small Choice before the binding is written.
       # batch_submit_request omits it for a single container -- Batch rejects an array job
       # of size one, so emitting it unconditionally would fail every non-fan-out submission
-      # -- and Amazon States Language cannot include a Parameters key conditionally. Two
-      # Pass states set $.binding_array_size to the size or to null, and one WriteBinding
-      # reads it, so the conditional write, the key and the checksum are written once.
-      # Dropping array_size from the binding instead would have been simpler and would mean
-      # a fan-out's binding record says nothing about the fan-out.
+      # -- and Amazon States Language cannot include a Parameters key conditionally.
+      #
+      # THIS WAS ONE WRITE STATE AND TWO PASS STATES, AND IT WAS WRONG IN A WAY THAT ONLY A
+      # REAL RUN COULD SHOW. The single-container Pass said "Result": null, intending to set
+      # $.binding_array_size to a literal null for one WriteBinding to read. Amazon States
+      # Language does not distinguish a null Result from an absent one: a Pass with no Result
+      # passes its input through, so $.binding_array_size received the entire execution
+      # payload. Every binding this platform has written is 27 kilobytes of duplicated
+      # admission decision with an object where an integer belongs, and each one is refused
+      # by BatchJobBinding when anything tries to read it back.
+      #
+      # Nothing caught it. The template test compares the body's key set against the
+      # contract's field names and the key was present; the write succeeded, because S3 does
+      # not validate; and the lineage store is write-once, so the eight records already
+      # written stay wrong forever. It is the exact failure the paragraph below predicted --
+      # a record that fails validation only when somebody reads it back -- arriving through
+      # the one route that paragraph did not consider, which was the value rather than the
+      # key.
+      #
+      # So there are now two write states and no null. The fan-out path writes array_size
+      # from the size; the single-container path omits the key entirely, which the contract
+      # already permits because array_size is int | None with a default. The duplication is
+      # deliberate: the alternative is a JSONPath reference that resolves to null, and a
+      # reference that resolves to nothing is the failure mode that stopped the first real
+      # submission of this phase at ResolveExecutionTarget.
       #
       # The binding body is assembled here rather than returned by the handler, which is the
       # opposite of how the intent and the decision are handled, and the reason is that the
@@ -458,21 +478,15 @@ Resources:
                     "Next": "RecordFanOutSize"
                   }
                 ],
-                "Default": "RecordSingleContainer"
+                "Default": "WriteBindingForSingleContainer"
               },
               "RecordFanOutSize": {
                 "Type": "Pass",
                 "InputPath": "$.execution.submit_request.ArrayProperties.Size",
                 "ResultPath": "$.binding_array_size",
-                "Next": "WriteBinding"
+                "Next": "WriteBindingForFanOut"
               },
-              "RecordSingleContainer": {
-                "Type": "Pass",
-                "Result": null,
-                "ResultPath": "$.binding_array_size",
-                "Next": "WriteBinding"
-              },
-              "WriteBinding": {
+              "WriteBindingForFanOut": {
                 "Type": "Task",
                 "Resource": "arn:${AWS::Partition}:states:::aws-sdk:s3:putObject",
                 "Parameters": {
@@ -491,6 +505,40 @@ Resources:
                     "attempt_duration_seconds.$": "$.execution.submit_request.Timeout.AttemptDurationSeconds",
                     "attempts.$": "$.execution.submit_request.RetryStrategy.Attempts",
                     "array_size.$": "$.binding_array_size",
+                    "submitted_at.$": "$$.State.EnteredTime"
+                  },
+                  "ContentType": "application/json",
+                  "ChecksumAlgorithm": "SHA256",
+                  "IfNoneMatch": "*"
+                },
+                "ResultPath": null,
+                "Catch": [
+                  {
+                    "ErrorEquals": ["S3.S3Exception"],
+                    "ResultPath": "$.write_failure",
+                    "Next": "RecordConflict"
+                  }
+                ],
+                "Next": "Submitted"
+              },
+              "WriteBindingForSingleContainer": {
+                "Type": "Task",
+                "Resource": "arn:${AWS::Partition}:states:::aws-sdk:s3:putObject",
+                "Parameters": {
+                  "Bucket": "sbsandbox-intern-edullm-lineage",
+                  "Key.$": "States.Format('binding/{}.json', $.admission.run_id)",
+                  "Body": {
+                    "schema_version": 1,
+                    "run_id.$": "$.admission.run_id",
+                    "batch_job_id.$": "$.submission.JobId",
+                    "batch_job_arn.$": "$.submission.JobArn",
+                    "batch_job_name.$": "$.submission.JobName",
+                    "job_queue_arn.$": "$.execution.target.job_queue_arn",
+                    "job_definition_arn.$": "$.execution.target.job_definition_arn",
+                    "compute_profile.$": "$.execution.target.compute_profile",
+                    "log_group.$": "$.execution.target.log_group",
+                    "attempt_duration_seconds.$": "$.execution.submit_request.Timeout.AttemptDurationSeconds",
+                    "attempts.$": "$.execution.submit_request.RetryStrategy.Attempts",
                     "submitted_at.$": "$$.State.EnteredTime"
                   },
                   "ContentType": "application/json",

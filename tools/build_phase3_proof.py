@@ -1054,8 +1054,22 @@ def render_open_decisions(decisions: Sequence[OpenDecision]) -> str:
             ["#", "question", "has to be answered"],
             [[decision.number, decision.question, decision.lands_in] for decision in decisions],
         ),
-        "",
     ]
+    if not decisions:
+        sections.extend(
+            [
+                "",
+                (
+                    "**The register is empty, and that is a state rather than an absence.** "
+                    "An empty table here does not mean nobody looked; it means every question "
+                    "this repository surfaced has been answered and the answer put where it "
+                    "is enforced. `src/edullm_platform/open_decisions.py` names each one that "
+                    "has left and where its answer now lives, which is the only place that "
+                    "history is kept."
+                ),
+            ]
+        )
+    sections.append("")
     for decision in decisions:
         sections.extend(
             [

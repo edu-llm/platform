@@ -4,7 +4,7 @@ The 22 Phase 3 acceptance criteria, mapped to the tests cited for each one by no
 
 This mapping is defined once, in `src/edullm_platform/phase3_criteria.py`. The acceptance gate reads the same definition and executes the same node ids, so this matrix and `tools/validate_phase3.py` cannot disagree.
 
-Verification run: 270 tests executed, 270 passed, 0 failed, 0 errored, pytest exit code 0.
+Verification run: 274 tests executed, 274 passed, 0 failed, 0 errored, pytest exit code 0.
 
 Three statuses exist and no more. **COVERED** means one or more cited tests prove the criterion as stated against the shipped configuration and all of them pass; the gate passes it. **DEFERRED** means an explicit recorded decision not to satisfy it yet, which requires both a written reason and a written trigger describing what makes it live again; the gate passes it. **GAP** is everything else, and the gate fails it. There is no in-between status, because an in-between status is what lets a gate be green and wrong at the same time.
 
@@ -190,6 +190,10 @@ Gap:
 - The mutation this criterion exists to catch is recording the log *group* rather than the stream: it reads as complete and resolves to no single job. Only fetching a recorded stream back and finding the line the container printed distinguishes the two, and no container has printed one.
 - Closing this means running the Wave 5 live matrix, capturing the named artifact with tools/capture_phase3_evidence.py, sanitizing it through the existing SecretFreeStr and account-id redaction, committing it under fixtures/evidence/phase-3/, and citing a test that reads it. A criterion may not cite an evidence file; it cites the test.
 
+Scope:
+
+- Not pilot-blocking, and the plan's own call. Losing the logs of a run that otherwise behaved costs the user their diagnosis rather than their money or their record: the job ran, the result still joins to it, and the spend happened either way.
+
 No test proves this check.
 
 Supporting tests (2), all executed and passing, cited as evidence rather than as proof:
@@ -240,6 +244,10 @@ Gap:
 - Nothing in this account may terminate a job today, and that is not only a deploy away. The plan routes cancellation through a state machine that holds batch:TerminateJob; no such state machine is written, and every role Phase 3 declares deliberately excludes the action. So this criterion needs a component built as well as a run observed.
 - Closing this means running the Wave 5 live matrix, capturing the named artifact with tools/capture_phase3_evidence.py, sanitizing it through the existing SecretFreeStr and account-id redaction, committing it under fixtures/evidence/phase-3/, and citing a test that reads it. A criterion may not cite an evidence file; it cites the test.
 
+Scope:
+
+- Not pilot-blocking, and the plan's own call. It is bounded by the mandatory timeout, which is marked: with a timeout in force, the absence of cancellation costs the remainder of one job rather than an open-ended amount, and that bound is the whole of what makes this gap survivable.
+
 No test proves this check.
 
 Supporting tests (4), all executed and passing, cited as evidence rather than as proof:
@@ -259,6 +267,10 @@ Gap:
 - Even once it is built, this check is as much about GitHub's grace period being long enough as about the wiring, and the grace period is bounded, not configurable, and not guaranteed to be reached at all. That half can only be answered by cancelling a real dispatched run mid-job.
 - Closing this means running the Wave 5 live matrix, capturing the named artifact with tools/capture_phase3_evidence.py, sanitizing it through the existing SecretFreeStr and account-id redaction, committing it under fixtures/evidence/phase-3/, and citing a test that reads it. A criterion may not cite an evidence file; it cites the test.
 
+Scope:
+
+- Not pilot-blocking, and the plan requires this one on the pilot limitations page in exactly its own words: cancelling the GitHub workflow does not stop the Batch job. The harm is not the missing mechanism, it is that the default belief is wrong -- somebody who cancels in GitHub believes they have stopped the spend. Correcting the belief is what makes the gap survivable, and it is the clearest case in the phase of a limitation that works only because a reader can act on it.
+
 No test proves this check.
 
 Supporting tests (3), all executed and passing, cited as evidence rather than as proof:
@@ -277,13 +289,17 @@ Gap:
 - The mutation is asserting only the parent, which is what a single DescribeJobs on the parent id returns and which would pass while both children ran on. Distinguishing them needs a two-cell array job, terminated at the parent, with both child job ids observed terminal.
 - Closing this means running the Wave 5 live matrix, capturing the named artifact with tools/capture_phase3_evidence.py, sanitizing it through the existing SecretFreeStr and account-id redaction, committing it under fixtures/evidence/phase-3/, and citing a test that reads it. A criterion may not cite an evidence file; it cites the test.
 
+Scope:
+
+- Not pilot-blocking. A pilot user running a fan-out before this passes is running one they intend to let finish, which is a limitation a reader can act on, and the per-child timeout bounds what happens when they forget. Batch imposes no timeout on an array parent, so the bound is per cell rather than on the sweep.
+
 No test proves this check.
 
 Supporting tests (3), all executed and passing, cited as evidence rather than as proof:
 
 - `tests/test_phase3_execution.py::test_a_fan_out_submits_its_size_and_nothing_else_changes`
 - `tests/test_phase3_execution.py::test_a_single_container_submits_no_array_properties`
-- `tests/test_phase3_infrastructure.py::test_a_fan_out_binding_records_its_size_and_a_single_container_records_none`
+- `tests/test_phase3_infrastructure.py::test_a_fan_out_binding_records_its_size_and_a_single_container_omits_the_key`
 
 ### Check 8 — A mandatory timeout terminates a runaway job.
 
@@ -355,6 +371,10 @@ Gap:
 - The derivation is proved -- the same event projects to byte-identical bytes, the id comes from EventBridge rather than being minted, and deduplicate_lifecycle_events raises on same-id-different-content. What is unproved is the store's half: the same event redelivered and the conditional write refusing it, captured.
 - Closing this means running the Wave 5 live matrix, capturing the named artifact with tools/capture_phase3_evidence.py, sanitizing it through the existing SecretFreeStr and account-id redaction, committing it under fixtures/evidence/phase-3/, and citing a test that reads it. A criterion may not cite an evidence file; it cites the test.
 
+Scope:
+
+- Not pilot-blocking, and it argued hard for the marker, because a conflicting terminal state is a lineage defect. What decides it the other way is visibility: a duplicate event produces a record that disagrees with itself and can be seen to, where every criterion marked in this phase produces a record that looks fine and is wrong.
+
 No test proves this check.
 
 Supporting tests (5), all executed and passing, cited as evidence rather than as proof:
@@ -374,6 +394,10 @@ Gap:
 - Wave 5 is held. No Phase 3 stack has been applied to the account: there is no compute environment, no job queue, no job definition, no EventBridge rule, no recorder and no outputs bucket, and no Batch job has ever run here. Every artifact this criterion would be proved from is an observation of infrastructure that does not exist.
 - The matrix is written, wired into the submit job before the one call that session makes, and attempts all four actions Phase 3 makes meaningful. It has never run: it needs a real admission session, which needs a dispatched submission through a protected environment. Until then this criterion rests on templates, and a role widened in the console leaves every one of them green.
 - Closing this means running the Wave 5 live matrix, capturing the named artifact with tools/capture_phase3_evidence.py, sanitizing it through the existing SecretFreeStr and account-id redaction, committing it under fixtures/evidence/phase-3/, and citing a test that reads it. A criterion may not cite an evidence file; it cites the test.
+
+Scope:
+
+- Pilot-blocking, and it has no counterpart in the plan's Phase 3 check list -- it is Phase 2's gate sentence, carried here because this is the first phase in which administering Batch means launching something that bills. Its absence lets a GitHub path start compute outside admission altogether, which is unbounded spend with no intent record in front of it.
 
 No test proves this check.
 
@@ -396,12 +420,16 @@ Gap:
 - The workload matrix runs from inside the container under the job role, so it cannot run before a job does. The mutation it exists to catch -- widening the workload role's S3 scope to the bucket rather than the prefix -- is caught by the template test today and would not be caught by it after somebody edited the deployed role in the console.
 - Closing this means running the Wave 5 live matrix, capturing the named artifact with tools/capture_phase3_evidence.py, sanitizing it through the existing SecretFreeStr and account-id redaction, committing it under fixtures/evidence/phase-3/, and citing a test that reads it. A criterion may not cite an evidence file; it cites the test.
 
+Scope:
+
+- Pilot-blocking, and one of the criteria the plan's own status block names as missing from its check list. The workload role is the identity a researcher's container runs as. If it can write to the lineage store it can forge the record of what it did; if it can start something it can spend outside the admission path. Attribution, lineage and money in one role.
+
 No test proves this check.
 
 Supporting tests (3), all executed and passing, cited as evidence rather than as proof:
 
 - `tests/test_phase3_infrastructure.py::test_the_workload_role_can_neither_reach_lineage_nor_start_anything`
-- `tests/test_phase3_infrastructure.py::test_the_workload_role_writes_only_under_its_own_team_prefix`
+- `tests/test_phase3_infrastructure.py::test_the_workload_role_writes_only_under_a_runs_prefix_of_the_outputs_bucket`
 - `tests/test_phase3_batch_denials.py::test_a_repository_outside_this_project_is_a_setup_failure`
 
 ### Check 14 — The validator resolves the target and cannot submit; the state machine submits and cannot decide.
@@ -414,6 +442,10 @@ Gap:
 - A citation here reads a committed CloudFormation template, which is what the account will be asked for rather than what it holds. The four Phase 3 roles are registered in role_drift.PHASE3_ROLE_TEMPLATES and none has been deployed, so the comparison that catches a role widened in the console has nothing to compare.
 - The separation is proved of the committed templates and of the ASL. The criterion is about deployed roles, and the mutation -- giving the Lambda batch:SubmitJob, which would work and would move the launch out of the execution history -- is exactly the kind a console edit makes and a template test cannot see.
 - Closing this means running the Wave 5 live matrix, capturing the named artifact with tools/capture_phase3_evidence.py, sanitizing it through the existing SecretFreeStr and account-id redaction, committing it under fixtures/evidence/phase-3/, and citing a test that reads it. A criterion may not cite an evidence file; it cites the test.
+
+Scope:
+
+- Pilot-blocking, and it has no counterpart in the plan's check list. The mutation it exists to catch -- giving the validator Lambda batch:SubmitJob -- would work, and would move the launch out of the state machine's execution history, so the record of what started a job would stop describing what started it. A launch nothing recorded is the lineage harm in its purest form.
 
 No test proves this check.
 
@@ -434,6 +466,10 @@ Gap:
 - The seam is closed: exactly one profile is provisioned in the catalog and exactly one target backs it, compared from both files. 'Backed' also means the environment exists and is usable, which is a DescribeComputeEnvironments showing it VALID and ENABLED -- and a VALID environment is still not evidence a job can run, which is why criterion 1 is separate from this one.
 - Closing this means running the Wave 5 live matrix, capturing the named artifact with tools/capture_phase3_evidence.py, sanitizing it through the existing SecretFreeStr and account-id redaction, committing it under fixtures/evidence/phase-3/, and citing a test that reads it. A criterion may not cite an evidence file; it cites the test.
 
+Scope:
+
+- Not pilot-blocking, and this is the judgement call in the phase most worth arguing with. The harmful half of this seam -- refusing a manifest that names a profile with nowhere to run, before anything is submitted -- belongs to the rejection check above and is marked there. What is left here is placement: a profile that is priced and not backed produces a job that cannot start, which is visible, bills nothing while it waits, and is bounded by the queue. Availability rather than harm.
+
 No test proves this check.
 
 Supporting tests (3), all executed and passing, cited as evidence rather than as proof:
@@ -452,6 +488,10 @@ Gap:
 - minvCpus is 0 in the template and the test fails if it is raised. The criterion is about the account: desiredvCpus observed at 0 after the live matrix has finished, which is the reading that would catch an environment that scaled up and did not come back down.
 - Closing this means running the Wave 5 live matrix, capturing the named artifact with tools/capture_phase3_evidence.py, sanitizing it through the existing SecretFreeStr and account-id redaction, committing it under fixtures/evidence/phase-3/, and citing a test that reads it. A criterion may not cite an evidence file; it cites the test.
 
+Scope:
+
+- Pilot-blocking, and one of the criteria the plan's own status block names as missing from its check list. It is the only entry in the phase whose absence bills money continuously with nothing running: an environment left holding vCPUs while idle pays for hardware nobody asked for, in a shared account that is already carrying a four-figure capacity charge somebody else made.
+
 No test proves this check.
 
 Supporting tests (1), all executed and passing, cited as evidence rather than as proof:
@@ -467,6 +507,10 @@ Gap:
 - Wave 5 is held. No Phase 3 stack has been applied to the account: there is no compute environment, no job queue, no job definition, no EventBridge rule, no recorder and no outputs bucket, and no Batch job has ever run here. Every artifact this criterion would be proved from is an observation of infrastructure that does not exist.
 - The writers ask for the checksum; whether S3 attested one is a fact about the object. It needs HeadObject --checksum-mode ENABLED against the binding, one event, the attempt and the result, captured. This is distinct from the canonical manifest hash and has to be recorded as such, because a reader who conflated them would think one proved the other.
 - Closing this means running the Wave 5 live matrix, capturing the named artifact with tools/capture_phase3_evidence.py, sanitizing it through the existing SecretFreeStr and account-id redaction, committing it under fixtures/evidence/phase-3/, and citing a test that reads it. A criterion may not cite an evidence file; it cites the test.
+
+Scope:
+
+- Pilot-blocking, on the same reasoning as the equivalent Phase 2 criterion and deliberately worded to match it, because the same property recorded two ways in two phases is how a split like this rots. The conditional write refuses an overwrite, so attestation and versioning are the second line rather than the first; what settles it is that no limitations page helps. There is nothing a pilot user can do with the sentence that the objects recording their run are neither attested nor versioned, and an object that has been altered reads exactly like one that has not.
 
 No test proves this check.
 
@@ -485,6 +529,10 @@ Gap:
 - Wave 5 is held. No Phase 3 stack has been applied to the account: there is no compute environment, no job queue, no job definition, no EventBridge rule, no recorder and no outputs bucket, and no Batch job has ever run here. Every artifact this criterion would be proved from is an observation of infrastructure that does not exist.
 - The pattern names the queue the compute stack creates, compared across both files, and the projection refuses a delivery that is not ours as a second line. The criterion also asks that no lifecycle record exist whose run id is not ours, which is a statement about what the deployed rule actually delivered in a shared account.
 - Closing this means running the Wave 5 live matrix, capturing the named artifact with tools/capture_phase3_evidence.py, sanitizing it through the existing SecretFreeStr and account-id redaction, committing it under fixtures/evidence/phase-3/, and citing a test that reads it. A criterion may not cite an evidence file; it cites the test.
+
+Scope:
+
+- Pilot-blocking, and one of the criteria the plan's own status block names as missing from its check list. This is a shared account, and a rule that matched every Batch event in it would write lifecycle records under run ids that are not ours. The store would then hold entries describing somebody else's job, which is the lineage record corrupted by construction rather than by accident.
 
 No test proves this check.
 
@@ -507,6 +555,10 @@ Gap:
 - This is the gate restated as an executable assertion and it is the one check that fails if any other passes for the wrong reason: one run id resolving to eleven artifacts -- a GitHub run URL, a CloudTrail AssumeRoleWithWebIdentity, a Step Functions execution, an intent, a decision, a binding, at least one event, an attempt, a result, a Batch job id and a log stream -- all present and all agreeing. Six of the eleven have never been written.
 - Closing this means running the Wave 5 live matrix, capturing the named artifact with tools/capture_phase3_evidence.py, sanitizing it through the existing SecretFreeStr and account-id redaction, committing it under fixtures/evidence/phase-3/, and citing a test that reads it. A criterion may not cite an evidence file; it cites the test.
 
+Scope:
+
+- Pilot-blocking, and it is this phase's gate restated as an assertion. Eleven artifacts have to resolve from one run id and agree; where they do not, the platform has run something it cannot account for afterwards, which is attribution and lineage lost together. It is also the one check that fails when another passes for the wrong reason, so leaving it out of the pilot set would let the rung open on the strength of the very checks it exists to cross-examine.
+
 No test proves this check.
 
 Supporting tests (4), all executed and passing, cited as evidence rather than as proof:
@@ -522,6 +574,7 @@ Supporting tests (4), all executed and passing, cited as evidence rather than as
 
 Scope:
 
+- Not pilot-blocking, and the call took an argument. A deployment role scoped more widely than measured is a real exposure in a shared account -- it is how somebody else's stack gets deleted. What keeps it off the pilot list is who can reach it: this role is assumed by the deployment workflow and by nothing a pilot user touches, so its absence widens the build team's own path rather than the path being opened. The scoping itself is asserted by the citations beside this one; what this criterion adds is that the list of unscoped actions cannot grow without somebody measuring the addition.
 - Stated in two statements rather than the plan's one, and the difference is the point. Six actions are on "*" because the resource-type probe -- run with its ValidateTemplate and DescribeStacks controls -- found they support no resource-level permission. Ten read-only ec2:Describe* actions are on "*" because EC2 describes are account-wide by the service's own model. Folding them together would let a reader believe the probe measured all sixteen, and would let an unmeasured action join the measured list without anybody noticing.
 - This reads the committed template, which is the right thing to read: the criterion is about what the repository asks for, and the failure it prevents is a half-finished stack found afterwards, which this repository has now hit twice. Whether the deployed role matches the template is criterion 14's problem and is a gap.
 
@@ -549,6 +602,10 @@ Gap:
 - What is missing is the other half of the criterion's words: the networking the compute environment *uses*. The network stack is not deployed, so no VPC, subnet or security-group id exists to record, and the committed placement record describes the interim candidate VPC these probes were aimed at rather than one this project owns.
 - Closing this means running the Wave 5 live matrix, capturing the named artifact with tools/capture_phase3_evidence.py, sanitizing it through the existing SecretFreeStr and account-id redaction, committing it under fixtures/evidence/phase-3/, and citing a test that reads it. A criterion may not cite an evidence file; it cites the test.
 
+Scope:
+
+- Not pilot-blocking. What is missing is a record of which VPC, subnets and security group the environment ends up on, and somebody who wants it can read it off the deployed stack. Nothing is spent, lost or misattributed by its absence; what is lost is a later reader's ability to reconstruct the placement without opening a console, which is a reviewer's need rather than a pilot user's.
+
 No test proves this check.
 
 Supporting tests (7), all executed and passing, cited as evidence rather than as proof:
@@ -567,6 +624,7 @@ Supporting tests (7), all executed and passing, cited as evidence rather than as
 
 Scope:
 
+- Not pilot-blocking, and this is the one place in the phase where the ladder's test comes out under-inclusive, which is worth recording rather than stretching one of its four harms to cover it. Running a container with unreviewed critical findings is a security exposure; it is not money, data, attribution or the lineage record, which are the four the test names. So the test answers no, and the reservation is written down here so that the next person applying it to a vulnerability question knows it has been applied once and did not obviously fit.
 - The mutation this criterion exists to catch is leaving the open-decisions entry in place and marking the criterion covered, which is the exact shape of a question settled by accident. So the proving citation is that the entry is gone *and* that the answer is enforced somewhere, rather than either alone.
 - The answer went a way the register did not list as obvious: block unless an exception is recorded, enforced at admission rather than at publish, because ECR scans after the push and a publish-time refusal would leave that commit permanently unpublishable. The four criticals in the only published image are carried by a recorded exception naming that digest, which is a decision somebody took in writing rather than a threshold quietly set above them.
 - It is enforced in code and configuration this repository commits and admission reads. Nothing here says the enforcement has ever refused a real submission, which is criterion 9's territory and is a gap.

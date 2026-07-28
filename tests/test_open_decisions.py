@@ -47,7 +47,7 @@ def test_the_register_holds_what_it_says_it_holds() -> None:
     decisions = open_decisions()
 
     assert len(decisions) == OPEN_DECISION_COUNT
-    assert [decision.number for decision in decisions] == ["2"]
+    assert [decision.number for decision in decisions] == []
 
 
 def test_the_scan_question_is_gone_because_it_was_answered() -> None:

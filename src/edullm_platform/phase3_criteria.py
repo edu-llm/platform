@@ -316,7 +316,7 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
             supporting_node_ids=(
                 *_ids(EXECUTION, "test_a_fan_out_submits_its_size_and_nothing_else_changes"),
                 *_ids(EXECUTION, "test_a_single_container_submits_no_array_properties"),
-                *_ids(INFRA, "test_a_fan_out_binding_records_its_size_and_a_single_container_records_none"),
+                *_ids(INFRA, "test_a_fan_out_binding_records_its_size_and_a_single_container_omits_the_key"),
             ),
             scope_limits=(
                 (
@@ -486,7 +486,10 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
             pilot_blocking=True,
             supporting_node_ids=(
                 *_ids(INFRA, "test_the_workload_role_can_neither_reach_lineage_nor_start_anything"),
-                *_ids(INFRA, "test_the_workload_role_writes_only_under_its_own_team_prefix"),
+                *_ids(
+                    INFRA,
+                    "test_the_workload_role_writes_only_under_a_runs_prefix_of_the_outputs_bucket",
+                ),
                 *_ids(DENIALS, "test_a_repository_outside_this_project_is_a_setup_failure"),
             ),
             scope_limits=(
