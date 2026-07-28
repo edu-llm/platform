@@ -244,7 +244,7 @@ Resources:
           FromPort: 443
           ToPort: 443
           CidrIp: 0.0.0.0/0
-          Description: ECR, S3 and CloudWatch Logs, and the ECS agent's control channel.
+          Description: ECR, S3 and CloudWatch Logs, and the ECS agent control channel.
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80

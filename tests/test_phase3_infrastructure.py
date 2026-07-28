@@ -471,27 +471,47 @@ def test_the_security_group_allows_egress_and_no_ingress_at_all() -> None:
     assert all(rule["IpProtocol"] == "tcp" for rule in properties["SecurityGroupEgress"])
 
 
-def test_the_security_group_description_uses_only_characters_ec2_accepts() -> None:
-    """Mutation: write an apostrophe in the description, as the first version did.
+def test_every_security_group_description_uses_only_characters_ec2_accepts() -> None:
+    """Mutation: write an apostrophe in any description here, as the first two versions did.
 
-    EC2 accepts a security group description only from ``a-zA-Z0-9. _-:/()#,@[]+=&;{}!$*``.
-    An apostrophe -- the obvious way to write "the compute environment's hosts" -- is not in
-    that set, and nothing catches it before the account does: the description is a plain
-    string to YAML, and ``cloudformation validate-template`` checks that a document is a
-    template rather than that a property is valid, so it passes too.
+    EC2 accepts a description only from ``a-zA-Z0-9. _-:/()#,@[]+=&;{}!$*``. An apostrophe
+    -- the obvious way to write "the compute environment's hosts" or "the ECS agent's
+    control channel" -- is not in that set, and nothing catches it before the account does:
+    a description is a plain string to YAML, and ``cloudformation validate-template`` checks
+    that a document is a template rather than that a property is valid, so both pass.
 
-    This cost a deploy. ``CreateSecurityGroup`` returned ``InvalidParameterValue`` partway
-    into the network stack, which cancelled the five subnets, the route table and the
-    gateway behind it and rolled the whole stack back to ``ROLLBACK_COMPLETE`` -- a state
-    that then blocks the stack name until somebody deletes it by hand. The failure is
-    trivial and the recovery is not, which is exactly the shape worth a test.
+    This cost two deploys rather than one, and the second is the reason this test is written
+    over every description instead of over ``GroupDescription`` alone. The group description
+    was fixed, the egress rules were not looked at, and the next run failed the same stack at
+    the same resource -- EC2 reports the rule case as "Invalid rule description" against the
+    identical character set. A test narrower than the constraint it is checking buys one
+    round trip and no more, so this walks the group description and every ingress and egress
+    rule description together.
+
+    Each failure rolled ``sbsandbox-intern-edullm-phase3-network`` back to
+    ``ROLLBACK_COMPLETE``, cancelling the five subnets, the route table and the gateway
+    behind it, and blocking the stack name until it was deleted by hand.
     """
     permitted = set(string.ascii_letters + string.digits + ". _-:/()#,@[]+=&;{}!$*")
-    description = properties_of(NETWORK_PATH, "AWS::EC2::SecurityGroup")["GroupDescription"]
+    properties = properties_of(NETWORK_PATH, "AWS::EC2::SecurityGroup")
 
-    assert len(description) < 256
-    rejected = sorted(set(description) - permitted)
-    assert not rejected, f"EC2 refuses these characters in a group description: {rejected}"
+    described = {"GroupDescription": properties["GroupDescription"]}
+    for key in ("SecurityGroupEgress", "SecurityGroupIngress"):
+        for index, rule in enumerate(properties.get(key, [])):
+            if "Description" in rule:
+                described[f"{key}[{index}].Description"] = rule["Description"]
+
+    # The group description plus both egress rules. Asserted so that deleting a description
+    # does not turn this test into one that checks nothing and still passes.
+    assert len(described) == 3
+
+    rejected = {
+        where: sorted(set(value) - permitted)
+        for where, value in described.items()
+        if set(value) - permitted
+    }
+    assert not rejected, f"EC2 refuses these characters: {rejected}"
+    assert all(len(value) < 256 for value in described.values())
 
 
 # --------------------------------------------------------------------------------------
