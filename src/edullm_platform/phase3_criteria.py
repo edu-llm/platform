@@ -571,7 +571,8 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                 *_ids(DEPLOYER, "test_the_only_other_unscoped_statement_is_the_read_only_ec2_describes"),
             ),
             supporting_node_ids=(
-                *_ids(DEPLOYER, "test_every_scoped_phase3_arn_carries_the_project_prefix_or_is_a_named_ec2_exception"),
+                *_ids(DEPLOYER, "test_every_scoped_phase3_arn_carries_the_project_prefix_or_is_a_named_exception"),
+                *_ids(DEPLOYER, "test_the_network_scope_can_change_egress_and_can_never_open_a_port"),
                 *_ids(DEPLOYER, "test_the_batch_scopes_cover_all_three_resource_types_the_stack_creates"),
                 *_ids(DEPLOYER, "test_iam_pass_role_is_still_the_only_iam_action_the_whole_role_holds"),
                 *_ids(DEPLOYER, "test_pass_role_names_four_whole_roles_and_never_a_prefix"),

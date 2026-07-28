@@ -167,6 +167,12 @@ EXPECTED_BUCKET_ACTIONS = {
     "s3:PutBucketTagging",
     "s3:PutBucketVersioning",
     "s3:PutEncryptionConfiguration",
+    # The write that Phase 3's first deploy was missing while the matching read,
+    # s3:GetLifecycleConfiguration, was already granted above. infra/outputs-bucket.yaml is
+    # the first bucket template here to set a LifecycleConfiguration, and the denial landed
+    # after CreateBucket had succeeded, so the retained bucket outlived the rolled-back
+    # stack. Pinning the set is what turns the next such omission into a red test.
+    "s3:PutLifecycleConfiguration",
 }
 EXPECTED_OBJECT_ACTIONS = {
     "s3:AbortMultipartUpload",
@@ -575,13 +581,15 @@ def test_deployer_grants_nothing_outside_the_services_the_two_phases_deploy() ->
 #: inventory rather than a pattern, for the reason the Phase 1 and Phase 2 entries are one:
 #: the widening worth catching is a `*` that looks like the ones around it.
 #:
-#: The six ec2: entries are the only scopes in this role that do not carry the project
-#: prefix, and they cannot. An EC2 network resource is addressed by an ID the service
-#: assigns at creation, so `vpc/*` is the narrowest ARN that exists and this role can
-#: therefore delete any VPC, subnet, route table, internet gateway or security group in a
-#: shared account. The template says so in the open and names the narrowing that was not
-#: taken; tests/test_phase3_deployer_role.py enumerates the six resource types so a seventh
-#: has to be a visible edit.
+#: The six ec2: entries and the lambda event-source-mapping entry are the only scopes in this
+#: role that do not carry the project prefix, and none of them can. Each names a resource
+#: addressed by an identifier the service assigns at creation, so `vpc/*` and
+#: `event-source-mapping:*` are the narrowest ARNs that exist. The EC2 six are the ones to
+#: weigh: this role can therefore delete any VPC, subnet, route table, internet gateway or
+#: security group in a shared account. The template says so in the open and names the
+#: narrowing that was not taken; tests/test_phase3_deployer_role.py enumerates the six
+#: resource types so a seventh has to be a visible edit, and pins the mapping scope to one
+#: read-only action.
 PHASE3_WILDCARDS = [
     # The measured no-resource-type actions, then EC2's account-wide describes. Two
     # statements, two different reasons, kept apart on purpose.
@@ -612,6 +620,11 @@ PHASE3_WILDCARDS = [
     REGIONAL_ARN % ("sqs", f"{RESOURCE_PREFIX}*"),
     # The event source mapping actions authorize against the function, not the mapping.
     REGIONAL_ARN % ("lambda", f"function:{RESOURCE_PREFIX}*"),
+    # Except lambda:ListTags, which authorizes against whatever ARN it is handed, and the
+    # mapping's Read handler hands it the mapping's. A mapping is addressed by a UUID Lambda
+    # assigns at creation, so this is the seventh and last scope in the role that cannot
+    # carry the project prefix -- the EC2 problem in a second service. It is read-only.
+    REGIONAL_ARN % ("lambda", "event-source-mapping:*"),
 ]
 
 

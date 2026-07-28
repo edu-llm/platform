@@ -139,9 +139,26 @@ Resources:
               # bucket has on each Read -- CORS, replication, analytics, website and the
               # rest -- whether or not the template sets them, and an AccessDenied on any
               # one of them fails the stack update rather than being skipped. The write
-              # half is only what infra/lineage-bucket.yaml and infra/artifacts-bucket.yaml
-              # actually set, so adding a new bucket property fails the deploy until this
-              # is amended, which is the direction that fails closed.
+              # half is only what infra/lineage-bucket.yaml, infra/artifacts-bucket.yaml
+              # and infra/outputs-bucket.yaml actually set, so adding a new bucket property
+              # fails the deploy until this is amended, which is the direction that fails
+              # closed.
+              #
+              # s3:PutLifecycleConfiguration is the third time that direction has been paid
+              # for, and the shape is identical each time: the read was granted and the
+              # matching write was not. Phase 1 lost a stack to ecr:PutLifecyclePolicy
+              # while holding ecr:GetLifecyclePolicy, Phase 2 to logs:DescribeLogGroups,
+              # and Phase 3's first deploy to this one -- s3:GetLifecycleConfiguration sits
+              # in the read half below and reads as though the lifecycle were covered.
+              # infra/outputs-bucket.yaml is the first bucket here to carry a
+              # LifecycleConfiguration, and the denial arrived after CreateBucket had
+              # already succeeded, so DeletionPolicy: Retain left the bucket behind.
+              #
+              # s3:DeleteBucketLifecycle is deliberately absent. It is what the handler
+              # calls when a LifecycleConfiguration is removed from a template, and no
+              # committed template has one to remove, so leaving it out means deleting that
+              # block is a deploy failure naming the action -- the same fail-closed
+              # direction the rest of the write half is chosen on.
               - Effect: Allow
                 Action:
                   - s3:CreateBucket
@@ -152,6 +169,7 @@ Resources:
                   - s3:PutEncryptionConfiguration
                   - s3:PutBucketTagging
                   - s3:PutBucketPolicy
+                  - s3:PutLifecycleConfiguration
                   - s3:DeleteBucketPolicy
                   - s3:ListBucket
                   - s3:GetBucketLocation
@@ -309,6 +327,14 @@ Resources:
         # ec2:RunInstances is absent. This role creates a compute environment and Batch's
         # own service-linked role launches the instances, so a deployer that could launch
         # one directly would be a compute path outside admission.
+        #
+        # eks:DescribeCluster is absent, and it is the one absence a reader is most likely
+        # to mistake for an oversight, because it sits in the Create, Update and Delete
+        # lists of the AWS::Batch::ComputeEnvironment handler. It is reachable only through
+        # an EksConfiguration, and infra/batch-compute.yaml sets Type: EC2 and no EKS
+        # configuration at all. It measured scopable on 2026-07-27, so if Phase 4 ever
+        # needs it the grant is a cluster ARN rather than a wildcard -- which is the reason
+        # to record the measurement here rather than only the refusal.
         - PolicyName: deploy-phase3-batch-stacks
           PolicyDocument:
             Version: "2012-10-17"
@@ -348,9 +374,34 @@ Resources:
               # that is worth keeping apart from the one above. EC2's Describe actions are
               # account-wide by design -- they enumerate, they do not address, and the EC2
               # service authorization reference lists none of them with a resource type.
-              # This is not the §0.5 simulator measurement; it is EC2's documented model,
-              # and the CloudFormation resource handlers for VPC, Subnet, RouteTable,
-              # InternetGateway and SecurityGroup call these on every Read.
+              # The first ten rest on that documented model, and the CloudFormation
+              # resource handlers for VPC, Subnet, RouteTable, InternetGateway and
+              # SecurityGroup call them on every Read.
+              #
+              # The five added on 2026-07-27 were measured rather than assumed, with the
+              # same probe and the same two controls as the statement above:
+              # ec2:DescribeInstances, ec2:DescribeLaunchTemplateVersions,
+              # ec2:DescribeNetworkInterfaces, ec2:DescribeVpcEncryptionControls and
+              # ec2:DescribeVpnGateways each answered implicitDeny when granted on one ARN
+              # and simulated against that same ARN, while cloudformation:ValidateTemplate
+              # answered implicitDeny and cloudformation:DescribeStacks answered allowed on
+              # every invocation.
+              #
+              # None of the five is inferable from the templates, which is the whole reason
+              # they were missing, so which handler calls each one is recorded here:
+              #   - DescribeVpnGateways: AWS::EC2::VPCGatewayAttachment's Read, and its
+              #     Create, Update and Delete too -- on the attachment that names an
+              #     internet gateway and no VPN gateway at all;
+              #   - DescribeVpcEncryptionControls: AWS::EC2::VPC's Read, a configuration
+              #     surface no template here sets;
+              #   - DescribeNetworkInterfaces: AWS::EC2::Route's Create, which resolves a
+              #     target that may be an ENI even when ours is a gateway;
+              #   - DescribeInstances: AWS::EC2::SecurityGroup's Delete, so this one is
+              #     needed on the rollback path rather than on the create path. That is the
+              #     path that stranded the Phase 1 ECR stack, and a rollback that cannot
+              #     finish leaves a DELETE_FAILED stack holding the name;
+              #   - DescribeLaunchTemplateVersions: AWS::Batch::ComputeEnvironment's
+              #     Create, Update and Delete, whether or not a launch template is named.
               #
               # Read-only, and that bounds it: this statement reveals the shape of the
               # shared account's networking and changes none of it. The actions that change
@@ -358,15 +409,20 @@ Resources:
               - Effect: Allow
                 Action:
                   - ec2:DescribeAvailabilityZones
+                  - ec2:DescribeInstances
                   - ec2:DescribeInternetGateways
+                  - ec2:DescribeLaunchTemplateVersions
                   - ec2:DescribeNetworkAcls
+                  - ec2:DescribeNetworkInterfaces
                   - ec2:DescribeRouteTables
                   - ec2:DescribeSecurityGroupRules
                   - ec2:DescribeSecurityGroups
                   - ec2:DescribeSubnets
                   - ec2:DescribeTags
                   - ec2:DescribeVpcAttribute
+                  - ec2:DescribeVpcEncryptionControls
                   - ec2:DescribeVpcs
+                  - ec2:DescribeVpnGateways
                 Resource: "*"
               # THE WIDEST GRANT IN THIS FILE, and the one to argue about rather than skim.
               #
@@ -393,6 +449,35 @@ Resources:
               # produces a deploy that fails in the middle with half a network. It is the
               # first thing Phase 4 should measure, before it adds a second subnet list.
               #
+              # Four of these were added on 2026-07-27, each because a property one of the
+              # templates sets is what calls it -- the same test the S3 write half above is
+              # chosen by:
+              #   - ModifyVpcTenancy for InstanceTenancy, which batch-network.yaml pins to
+              #     default;
+              #   - ReplaceRoute for the default route's DestinationCidrBlock and
+              #     GatewayId, which is how a change to either is applied in place rather
+              #     than by recreating the route;
+              #   - ReplaceRouteTableAssociation, which is in the *Create* handler of
+              #     AWS::EC2::SubnetRouteTableAssociation and not only in its update path,
+              #     because a subnet already carrying an association is replaced rather
+              #     than associated twice;
+              #   - UpdateSecurityGroupRuleDescriptionsEgress for the Description on each
+              #     of the two egress rules.
+              #
+              # The three ingress verbs are absent and must stay absent.
+              # ec2:AuthorizeSecurityGroupIngress, ec2:RevokeSecurityGroupIngress and
+              # ec2:UpdateSecurityGroupRuleDescriptionsIngress all appear in the
+              # AWS::EC2::SecurityGroup handler's lists and none of them is reachable,
+              # because batch-network.yaml declares no SecurityGroupIngress at all and
+              # says why. Granting them against a rule this repository has decided never to
+              # write would hand a deploy credential the ability to open a port on any
+              # security group in a shared account.
+              #
+              # Absent for the same "no property sets it" reason, each measured as scopable
+              # so that adding one later is an ARN rather than a wildcard:
+              # ec2:CreateVpcEncryptionControl, ec2:AttachVpnGateway, ec2:DetachVpnGateway,
+              # ec2:AssociateSubnetCidrBlock and ec2:DisassociateSubnetCidrBlock.
+              #
               # ec2:RunInstances is absent from this list and must stay absent.
               - Effect: Allow
                 Action:
@@ -417,7 +502,11 @@ Resources:
                   - ec2:DisassociateRouteTable
                   - ec2:ModifySubnetAttribute
                   - ec2:ModifyVpcAttribute
+                  - ec2:ModifyVpcTenancy
+                  - ec2:ReplaceRoute
+                  - ec2:ReplaceRouteTableAssociation
                   - ec2:RevokeSecurityGroupEgress
+                  - ec2:UpdateSecurityGroupRuleDescriptionsEgress
                 Resource:
                   - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:internet-gateway/*
                   - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:route-table/*
@@ -549,6 +638,25 @@ Resources:
                   - lambda:UpdateEventSourceMapping
                 Resource:
                   Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:sbsandbox-intern-edullm-*
+              # The fifth event-source-mapping grant, in a statement of its own because it
+              # is the one that does NOT authorize against the function ARN. The
+              # AWS::Lambda::EventSourceMapping Read handler lists the mapping's tags, and
+              # lambda:ListTags authorizes against whatever ARN it is handed -- here the
+              # mapping's, not the function's -- so the Phase 2 grant of the same action on
+              # the function prefix does not cover this call. Folding it into the statement
+              # above would produce exactly the Phase 2 failure again: an action granted,
+              # on a scope that cannot match, denied with a message naming the action.
+              #
+              # A mapping is addressed by a UUID Lambda assigns at creation, so there is no
+              # name for IAM to match on and `event-source-mapping:*` is the narrowest ARN
+              # that can be written. That is the EC2 problem arriving in a second service,
+              # and it is bounded far better here: this is read-only and it reads tag keys
+              # and values on event source mappings, which is not a capability anybody
+              # would notice being without.
+              - Effect: Allow
+                Action: lambda:ListTags
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:event-source-mapping:*
               # Four whole role ARNs, and they must stay whole. A prefix --
               # sbsandbox-intern-edullm-* -- would let this role pass any role that ever
               # takes such a name, including one created in Phase 4 with permissions nobody
