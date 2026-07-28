@@ -45,6 +45,7 @@ from edullm_platform.contracts.image_scan import (
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.manifest import RunManifest
 from edullm_platform.contracts.policy import ApprovalPolicy
+from edullm_platform.contracts.results import output_prefix
 from edullm_platform.contracts.workload import (
     UnprovisionedComputeProfileError,
     UnregisteredComputeProfileError,
@@ -393,6 +394,55 @@ def test_the_submitted_target_is_the_resolved_one_and_not_anything_from_the_mani
 
     assert request["JobQueue"] == resolved.job_queue_arn
     assert request["JobDefinition"] == resolved.job_definition_arn
+
+
+def test_the_container_environment_is_exactly_these_five_variables() -> None:
+    """Mutation: add, drop or rename a variable the container reads.
+
+    Nothing else in the repository pins this list, which was measured rather than assumed:
+    ``EDULLM_OUTPUT_PREFIX`` was added to it and the entire suite stayed green. The seam
+    test that holds the ASL and this function to the same key set cannot see inside
+    ``ContainerOverrides``, because ``SubmitToBatch`` carries the request through whole
+    with ``InputPath`` and names no field of it -- which is the right design and is exactly
+    why this needs its own assertion.
+
+    An exact set rather than a subset. A dropped variable is a container that reads an
+    empty string for something it was told it would have, and a variable that arrives
+    unannounced is one nothing downstream was written to expect.
+    """
+    request = batch_submit_request(manifest=manifest(), target=target(), run_id=RUN_ID)
+    environment = request["ContainerOverrides"]["Environment"]
+
+    assert [entry["Name"] for entry in environment] == [
+        "EDULLM_RUN_ID",
+        "EDULLM_TEAM",
+        "EDULLM_DATASET_RELEASE",
+        "EDULLM_COMMIT_SHA",
+        "EDULLM_OUTPUT_PREFIX",
+    ]
+
+
+def test_the_prefix_the_container_is_told_is_the_one_the_shared_function_builds() -> None:
+    """Mutation: assemble the prefix here from the run id and the team.
+
+    Three places used to answer "where does a run write" and two of them agreed, which is
+    why the answer now has one author. Rebuilding it here would restore the arrangement
+    this test exists to prevent -- a literal that matches until somebody changes the other
+    one.
+    """
+    subject = manifest()
+    request = batch_submit_request(manifest=subject, target=target(), run_id=RUN_ID)
+    told = next(
+        entry["Value"]
+        for entry in request["ContainerOverrides"]["Environment"]
+        if entry["Name"] == "EDULLM_OUTPUT_PREFIX"
+    )
+
+    assert told == output_prefix(team=subject.team, run_id=RUN_ID)
+    # And it is a location, not a bucket: a prefix that stopped at the bucket would let
+    # every run write over every other one and would still satisfy the line above.
+    assert told.endswith(f"/runs/{RUN_ID}/")
+    assert f"/teams/{subject.team}/" in told
 
 
 # ---------------------------------------------------------------------------------------

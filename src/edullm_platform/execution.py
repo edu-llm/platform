@@ -39,6 +39,7 @@ from .contracts.execution import (
     UnbackedComputeProfileError,
 )
 from .contracts.manifest import RunManifest
+from .contracts.results import output_prefix
 from .contracts.workload import (
     WorkloadCatalog,
     resolve_compute_profile_for_execution,
@@ -141,6 +142,16 @@ def batch_submit_request(
                 {"Name": "EDULLM_TEAM", "Value": manifest.team},
                 {"Name": "EDULLM_DATASET_RELEASE", "Value": manifest.dataset_release},
                 {"Name": "EDULLM_COMMIT_SHA", "Value": manifest.commit_sha},
+                # Told, not computed. The container could assemble this from the two
+                # variables above, and a container that assembled it would be a container
+                # that decides where its own output goes -- which is the same value the
+                # workload role is scoped against, so a container that computed it
+                # differently would simply be denied, at the end of a run rather than at
+                # the start. Sending the whole prefix keeps one function the author of it.
+                {
+                    "Name": "EDULLM_OUTPUT_PREFIX",
+                    "Value": output_prefix(team=manifest.team, run_id=run_id),
+                },
             ],
         },
         # Unconditional. See the module docstring for why there is no branch here.

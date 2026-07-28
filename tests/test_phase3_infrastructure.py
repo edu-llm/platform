@@ -98,7 +98,6 @@ DEAD_LETTER_QUEUE_NAME = "sbsandbox-intern-edullm-batch-lifecycle-dlq"
 RECORDER_FUNCTION_NAME = "sbsandbox-intern-edullm-lifecycle-recorder"
 OUTPUTS_BUCKET = "sbsandbox-intern-edullm-outputs"
 LINEAGE_BUCKET = "sbsandbox-intern-edullm-lineage"
-TEAM_PREFIX = "teams/data-prep/runs/"
 
 #: c7i.8xlarge is offered in these five and not in us-east-1e. Measured against the account
 #: on 2026-07-27; the consequence of getting it wrong is a job that waits rather than errors.
@@ -841,15 +840,23 @@ def test_the_binding_record_the_state_machine_writes_is_the_contract_it_claims_t
     added to the contract and not here is a record that fails validation only when somebody
     reads it back -- long after the job it describes has gone.
     """
-    body = state_machine_definition()["States"]["WriteBinding"]["Parameters"]["Body"]
-    written = {key.removesuffix(".$") for key in body}
+    states = state_machine_definition()["States"]
+    # The fan-out path writes every field; the single-container path writes every field
+    # except array_size, which the contract makes optional. Checked against the contract
+    # separately so that a field added to BatchJobBinding and to only one of the two write
+    # states fails here rather than on whichever kind of run happens to go first.
+    fan_out = states["WriteBindingForFanOut"]["Parameters"]["Body"]
+    single = states["WriteBindingForSingleContainer"]["Parameters"]["Body"]
+    declared = set(BatchJobBinding.model_fields)
 
-    assert written == set(BatchJobBinding.model_fields)
-    assert body["schema_version"] == 1
-    # The job name is the run id, so the S3 key, the execution name and the Batch job name
-    # all carry one identifier and any two disagreeing is visible.
-    assert body["batch_job_name.$"] == "$.submission.JobName"
-    assert body["run_id.$"] == "$.admission.run_id"
+    assert {key.removesuffix(".$") for key in fan_out} == declared
+    assert {key.removesuffix(".$") for key in single} == declared - {"array_size"}
+    for body in (fan_out, single):
+        assert body["schema_version"] == 1
+        # The job name is the run id, so the S3 key, the execution name and the Batch job
+        # name all carry one identifier and any two disagreeing is visible.
+        assert body["batch_job_name.$"] == "$.submission.JobName"
+        assert body["run_id.$"] == "$.admission.run_id"
 
 
 # --------------------------------------------------------------------------------------
@@ -963,31 +970,45 @@ def test_the_binding_write_is_conditional_and_checksummed_like_every_lineage_wri
     """
     states = state_machine_definition()["States"]
 
-    for name in ("WriteIntent", "WriteDecision", "WriteBinding", "RecordSubmissionFailure"):
+    binding_writes = ("WriteBindingForFanOut", "WriteBindingForSingleContainer")
+    for name in ("WriteIntent", "WriteDecision", *binding_writes, "RecordSubmissionFailure"):
         parameters = states[name]["Parameters"]
         assert parameters["Bucket"] == LINEAGE_BUCKET
         assert {key: parameters[key] for key in CONDITIONAL_WRITE_PARAMETERS} == (
             CONDITIONAL_WRITE_PARAMETERS
         )
-    assert states["WriteBinding"]["Parameters"]["Key.$"] == (
-        "States.Format('binding/{}.json', $.admission.run_id)"
-    )
-    assert states["WriteBinding"]["Catch"] == [
-        {
-            "ErrorEquals": ["S3.S3Exception"],
-            "ResultPath": "$.write_failure",
-            "Next": "RecordConflict",
-        }
-    ]
+    # Both binding writes, because they are one record written from two states and a
+    # conditional write applied to only one of them would leave the other able to overwrite.
+    for name in binding_writes:
+        assert states[name]["Parameters"]["Key.$"] == (
+            "States.Format('binding/{}.json', $.admission.run_id)"
+        )
+        assert states[name]["Catch"] == [
+            {
+                "ErrorEquals": ["S3.S3Exception"],
+                "ResultPath": "$.write_failure",
+                "Next": "RecordConflict",
+            }
+        ]
 
 
-def test_a_fan_out_binding_records_its_size_and_a_single_container_records_none() -> None:
-    """Mutation: delete the Choice and always read ``ArrayProperties.Size``.
+def test_a_fan_out_binding_records_its_size_and_a_single_container_omits_the_key() -> None:
+    """Mutation: reintroduce a single write state fed by a Pass with ``"Result": null``.
 
-    ``batch_submit_request`` omits ``ArrayProperties`` for a single container, because Batch
-    rejects an array job of size one. A Parameters path to an absent field is a run-time
-    error, so an unconditional read fails every non-fan-out run -- and no fan-out fixture
-    would catch it.
+    THE VERSION OF THIS TEST THAT SHIPPED ASSERTED THE DEFECT. It read
+    ``states["RecordSingleContainer"]["Result"] is None`` and passed, because that is
+    exactly what the template said -- and ``"Result": null`` is precisely the construct
+    that broke. Amazon States Language does not distinguish a null ``Result`` from an
+    absent one, so the Pass state passed its whole input through and every binding this
+    platform wrote carried the entire execution payload where an integer belongs. A test
+    that reads the template back and asserts what it finds will agree with any defect
+    expressed in the template; only reading the written record against its own contract
+    finds this class, which is what the committed capture test now does.
+
+    So this asserts the shape that cannot express the bug: no ``Result`` anywhere on this
+    path, and a single container routed to a write state that has no ``array_size`` key at
+    all. The contract permits the omission -- ``array_size`` is ``int | None`` with a
+    default -- and an omitted key cannot be the wrong type.
     """
     states = state_machine_definition()["States"]
     choice = states["BindingIsFanOut"]
@@ -999,14 +1020,25 @@ def test_a_fan_out_binding_records_its_size_and_a_single_container_records_none(
             "Next": "RecordFanOutSize",
         }
     ]
-    assert choice["Default"] == "RecordSingleContainer"
-    assert states["RecordFanOutSize"]["InputPath"] == (
-        "$.execution.submit_request.ArrayProperties.Size"
-    )
-    assert states["RecordSingleContainer"]["Result"] is None
-    for name in ("RecordFanOutSize", "RecordSingleContainer"):
-        assert states[name]["ResultPath"] == "$.binding_array_size"
-        assert states[name]["Next"] == "WriteBinding"
+    # Straight to the write, with no Pass in between to get a literal null wrong in.
+    assert choice["Default"] == "WriteBindingForSingleContainer"
+    assert "RecordSingleContainer" not in states
+
+    fan_out = states["RecordFanOutSize"]
+    assert fan_out["InputPath"] == "$.execution.submit_request.ArrayProperties.Size"
+    assert fan_out["ResultPath"] == "$.binding_array_size"
+    assert fan_out["Next"] == "WriteBindingForFanOut"
+    # The one surviving Pass carries no Result either, because it has an InputPath.
+    assert "Result" not in fan_out
+
+    fan_out_body = states["WriteBindingForFanOut"]["Parameters"]["Body"]
+    single_body = states["WriteBindingForSingleContainer"]["Parameters"]["Body"]
+
+    assert fan_out_body["array_size.$"] == "$.binding_array_size"
+    assert not [key for key in single_body if key.startswith("array_size")]
+    # Identical in every other respect, so the two states cannot drift into writing
+    # different records for the same phase.
+    assert set(fan_out_body) - {"array_size.$"} == set(single_body)
 
 
 def test_a_refused_submission_is_recorded_and_the_execution_fails_saying_so() -> None:
@@ -1177,13 +1209,22 @@ def test_every_alarm_watches_a_metric_the_deployed_services_actually_publish() -
 # --------------------------------------------------------------------------------------
 
 
-def test_the_workload_role_writes_only_under_its_own_team_prefix() -> None:
-    """Mutation: widen the resource to the whole outputs bucket, or to ``teams/*``.
+def test_the_workload_role_writes_only_under_a_runs_prefix_of_the_outputs_bucket() -> None:
+    """Mutation: widen the resource to the whole outputs bucket, or drop the runs segment.
 
-    Phase 4 asserts that S3 receives outputs only under the authorized prefix and Phase 5
-    asserts that cross-team access fails closed. A bucket-wide grant satisfies neither and
-    would pass every test written before those phases. This scope is per-team rather than
-    per-run and that gap is recorded as open decision 2, not hidden.
+    THE SCOPE THIS ASSERTS IS THE WIDE ONE, AND THE TEST SAYS SO RATHER THAN IMPLYING
+    OTHERWISE. Open decision 2 was answered on 2026-07-28 in favour of ``teams/*/runs/*``,
+    so a workload may write under any team's prefix and under any run id including one that
+    belongs to somebody else. That is a recorded limitation, and the Phase 4 isolation
+    criterion is a gap because of it.
+
+    What is still worth holding, and what this therefore checks, is the part that is real:
+    the grant reaches only the outputs bucket, only below ``teams/``, and only below a
+    ``runs/`` segment. Widening it to the bucket would let a workload write over another
+    project's data entirely, and dropping ``runs/`` would put it beside the prefix layout
+    that ``contracts/results.py::output_prefix`` is the single author of -- which is what
+    makes tightening this later an IAM change rather than a migration of keys already
+    written into lineage records nothing rewrites.
     """
     role = role_named(BATCH_ROLES_PATH, WORKLOAD_ROLE_NAME)
     statements = [
@@ -1198,14 +1239,16 @@ def test_the_workload_role_writes_only_under_its_own_team_prefix() -> None:
         for arn in resource_arns(statement["Resource"])
     ]
 
-    assert written == [f"arn:${{AWS::Partition}}:s3:::{OUTPUTS_BUCKET}/{TEAM_PREFIX}*"]
+    assert written == [f"arn:${{AWS::Partition}}:s3:::{OUTPUTS_BUCKET}/teams/*/runs/*"]
+    # Not the bucket root, which is the widening this still refuses.
+    assert not any(arn.endswith(f"{OUTPUTS_BUCKET}/*") for arn in written)
     # Listing is a bucket-level action that no object ARN can scope, so the prefix condition
-    # is the only thing stopping it enumerating another team's output.
+    # is the only thing keeping it below the same layout.
     listing = [
         statement for statement in statements if "s3:ListBucket" in statement_actions(statement)
     ]
     assert len(listing) == 1
-    assert listing[0]["Condition"]["StringLike"]["s3:prefix"] == f"{TEAM_PREFIX}*"
+    assert listing[0]["Condition"]["StringLike"]["s3:prefix"] == "teams/*/runs/*"
 
 
 def test_the_workload_role_can_neither_reach_lineage_nor_start_anything() -> None:

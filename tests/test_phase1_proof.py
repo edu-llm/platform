@@ -750,13 +750,29 @@ def test_a_rebuild_difference_nothing_explains_refuses_the_bundle(
 def test_the_open_decisions_document_records_the_question_without_answering_it(
     first_bundle: dict[str, str],
 ) -> None:
-    document = first_bundle["open-decisions.md"]
-    decision = open_decisions()[0]
+    """Mutation: render only the questions, or render nothing when the register empties.
 
-    assert decision.question in document
-    for option in decision.options:
-        assert option in document
-    assert decision.lands_in in document
+    Both halves matter and the second is the one that arrived late. The register held one
+    entry for most of this project's life and now holds none, because decision 2 was
+    answered on 2026-07-28. A renderer written against a non-empty register emits a heading,
+    an empty table and no explanation, which reads to a reviewer as "this section was not
+    filled in" rather than "there is nothing open" -- the same empty-set defect the pilot
+    verdict refuses, in a document instead of a verdict.
+    """
+    document = first_bundle["open-decisions.md"]
+    decisions = open_decisions()
+
+    for decision in decisions:
+        assert decision.question in document
+        # Every option, because a document that printed the question and one option would
+        # be a document that had answered it.
+        for option in decision.options:
+            assert option in document
+        assert decision.lands_in in document
+
+    if not decisions:
+        assert "The register is empty" in document
+        assert "open_decisions.py" in document
 
 
 @pytest.mark.slow

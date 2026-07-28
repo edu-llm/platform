@@ -8,9 +8,9 @@
       "relative_path": "infra/iam/batch-roles.yaml"
     },
     {
-      "canonical_json_bytes": 1167,
+      "canonical_json_bytes": 1151,
       "contract": "TemplateRole",
-      "digest": "sha256:e1cab4af087e1f9531947e2af0a79463ed6ec93815c8dce5a15d1344fcb7d3a5",
+      "digest": "sha256:c8db5c5373fe66028d398ff1d0c4650db78203516cf10d761e8f937c2eed4ea6",
       "fixture": "sbsandbox-intern-edullm-batch-workload",
       "relative_path": "infra/iam/batch-roles.yaml"
     },
