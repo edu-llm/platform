@@ -171,15 +171,21 @@ Resources:
       # reached CreateFunction, and had it done so it would have failed there, because
       # nothing had ever built or uploaded the zip. A placeholder fails loudly at a named
       # step, where an omitted property would have deployed something. The value below is
-      # the real version id of the first packaged release, produced by
-      # tools/build_lifecycle_lambda.py (sha256
-      # 930c5d700be5d4f585dd04e14ff66dc8b23fe8f96e43c40b0c5b18eb4dea04f9) and uploaded by
-      # the procedure in infra/README.md. Changing the code means running that procedure
-      # again and editing this line, which is the diff a reviewer sees.
+      # produced by tools/build_lifecycle_lambda.py and uploaded by the procedure in
+      # infra/README.md. Changing the code means running that procedure again and editing
+      # this line, which is the diff a reviewer sees.
+      #
+      # Second release, sha256
+      # 2d56156fba4cf01fbf6df23fb0a23ffdbbd24079b375be99dc6e74527dd14052. The first run
+      # through the whole path found what it carries: this handler wrote its three records
+      # without ChecksumAlgorithm, so HeadObject returned a VersionId and no ChecksumSHA256
+      # for the events, the attempt and the result, while the five the state machine writes
+      # each came back attested. Nothing reported it -- an unattested object reads exactly
+      # like an attested one until a reader asks for the digest.
       Code:
         S3Bucket: sbsandbox-intern-edullm-artifacts
         S3Key: lifecycle-recorder/lifecycle-recorder.zip
-        S3ObjectVersion: DwufsfLhd1nwz8wPDBxawmSmwyHb4Nx6
+        S3ObjectVersion: GUlccidGMVMpxnoL_T_yvFIsliSIW.uw
       # Sixty seconds against a function that makes up to three conditional writes and no
       # other AWS call. The queue's visibility timeout above is six times this and has to
       # be changed with it.
