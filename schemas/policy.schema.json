@@ -8,6 +8,38 @@
       "title": "ApprovalScope",
       "type": "string"
     },
+    "ImageScanPolicy": {
+      "additionalProperties": false,
+      "description": "Which severities require a recorded exception before an image may run.\n\n``blocking_severities`` is a list rather than a single floor because \"critical and high\"\nand \"critical only\" are both defensible and the difference is a policy decision somebody\nshould be able to make by editing a file. It must not be empty: an empty list would mean\nnothing ever blocks, which is option one wearing option four's clothes, and it would do\nso without anybody recording that the policy had changed.",
+      "properties": {
+        "blocking_severities": {
+          "items": {
+            "$ref": "#/$defs/ImageScanSeverity"
+          },
+          "minItems": 1,
+          "title": "Blocking Severities",
+          "type": "array"
+        }
+      },
+      "required": [
+        "blocking_severities"
+      ],
+      "title": "ImageScanPolicy",
+      "type": "object"
+    },
+    "ImageScanSeverity": {
+      "description": "The severities ECR basic scanning reports, in the order it ranks them.",
+      "enum": [
+        "CRITICAL",
+        "HIGH",
+        "MEDIUM",
+        "LOW",
+        "INFORMATIONAL",
+        "UNDEFINED"
+      ],
+      "title": "ImageScanSeverity",
+      "type": "string"
+    },
     "PolicyThresholds": {
       "additionalProperties": false,
       "properties": {
@@ -60,7 +92,8 @@
           "unregistered_dataset",
           "unregistered_compute_profile",
           "mutable_repository_revision",
-          "mutable_image_reference"
+          "mutable_image_reference",
+          "image_scan_findings_unreviewed"
         ],
         "type": "string"
       },
@@ -75,6 +108,9 @@
       "minItems": 1,
       "title": "Exception Approver Roles",
       "type": "array"
+    },
+    "image_scan": {
+      "$ref": "#/$defs/ImageScanPolicy"
     },
     "policy_version": {
       "pattern": "^v[1-9][0-9]*$",
@@ -93,6 +129,7 @@
   "required": [
     "policy_version",
     "thresholds",
+    "image_scan",
     "approval_scope",
     "routine_approver_role",
     "exception_approver_roles",

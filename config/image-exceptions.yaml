@@ -1,0 +1,27 @@
+# Digests that may run despite carrying findings at a severity policy blocks on.
+#
+# This is the escape hatch that makes the image-scan rule enforceable rather than either
+# toothless or absolute. An entry is a person saying they read the findings and accepted
+# them, and it arrives as a reviewed pull request, so it carries an author and a date
+# without needing any machinery of its own.
+#
+# Adding an entry is not routine. The question it answers is "does this specific image,
+# with these specific findings, get to run", and the reason has a length floor in the
+# contract because "approved" is not a reason.
+#
+# Removing the last entry does not turn the rule off. An image with no entry and no
+# blocking findings runs; an image with no entry and blocking findings does not.
+schema_version: 1
+exceptions:
+  - image_digest: "sha256:4ebdba1ba3b57096efb4f4647ed41ed5ded4ac9e77e8c9038b7ff24db0bc6db8"
+    reason: >-
+      Four critical and eight high findings, all of them Debian base-OS packages inherited
+      from the digest-pinned base this repository registers: three criticals in perl, one
+      in glibc, with the highs in perl, glibc and sqlite3. The Dockerfile installs nothing
+      -- it sets three environment variables, creates a working directory and copies the
+      source -- so none of these came from this project and none can be fixed here. The
+      workload is a Python training entrypoint and invokes none of the affected packages.
+      Recorded so Phase 3 can run the one image the platform has published; it does not
+      generalise to the next base, which gets its own reading.
+    recorded_by: philote
+    recorded_at: "2026-07-27T18:00:00.000000Z"

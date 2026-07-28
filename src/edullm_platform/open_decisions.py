@@ -91,90 +91,93 @@ def validate_open_decisions(decisions: Sequence[OpenDecision]) -> None:
 
 
 def open_decisions() -> tuple[OpenDecision, ...]:
-    """Every question this repository has surfaced and has not answered."""
+    """Every question this repository has surfaced and has not answered.
+
+    Decision 1, on whether a registry scan may block, was answered during Phase 3 and is
+    gone from here rather than edited to agree with what was built. The answer lives in
+    ``contracts/image_scan.py``, in ``config/policy.yaml``'s ``image_scan`` block and
+    ``image_scan_findings_unreviewed`` condition, in ``config/image-exceptions.yaml``, and
+    in ``tests/test_phase3_image_scan.py``. It went one way the register did not list as
+    obvious: block unless an exception is recorded, enforced at admission rather than at
+    publish, because ECR scans after the push and a publish-time refusal would leave that
+    commit permanently unpublishable.
+    """
     decisions = (
         OpenDecision(
-            number="1",
+            number="2",
             question=(
-                "Should the result of the registry image scan be able to block a publish, "
-                "and if so on what?"
+                "Should the workload role's write access be scoped per run, per team, or "
+                "per bucket?"
             ),
             why_it_matters=(
                 (
-                    "Nothing runs a Phase 1 image, so the findings are inert today and the "
-                    "question has no urgency. It acquires all of its urgency at once, on the "
-                    "day the first workload runs one, and that is the worst moment to be "
-                    "deciding it: whoever is standing there will settle it by whichever way "
-                    "makes their job work."
+                    "Phase 3 writes the first workload role, so whichever scope it uses "
+                    "becomes the shape every later team inherits. Nothing forces the "
+                    "choice at the moment it is made, which is exactly the condition under "
+                    "which it gets made by whoever is typing."
                 ),
                 (
-                    "It is a policy question rather than an implementation one. Blocking on "
-                    "criticals would have refused the image this phase published, whose four "
-                    "critical findings are all inherited from a base image the platform "
-                    "chose and pins. Not blocking at all means a scan runs on every push, "
-                    "costs nothing to ignore, and is decoration."
+                    "Phase 4 asserts that S3 receives outputs only under the authorized run "
+                    "prefix, and Phase 5 asserts that cross-team data access fails closed. "
+                    "Both are claims about this scope. A role scoped per bucket satisfies "
+                    "neither and would pass every test written before those phases."
                 ),
                 (
-                    "Whatever the answer, the enforcement point is the publish workflow, "
-                    "which is Phase 1's file. A rule added there later is a change to the "
-                    "path this phase's criteria are written about."
+                    "The scopes are not equally reachable. A static role cannot name a run "
+                    "id, so per-run needs either a session tag the submitting principal "
+                    "sets or a role assumed per run; per-team needs a prefix convention and "
+                    "a role per team or a tag. Deciding late means discovering the "
+                    "mechanism late, after the prefix layout is already in lineage records "
+                    "that cannot be rewritten."
                 ),
             ),
             what_is_known=(
                 (
-                    "The repository is created with ScanOnPush, so a scan exists as soon as "
-                    "an image does. The scan of the published image is committed under "
-                    "fixtures/evidence/phase-1/run/image-scan.sanitized.json: status "
-                    "COMPLETE, four critical and eight high findings."
+                    "The lineage bucket is not a candidate. It is write-once by bucket "
+                    "policy and only the admission state machine writes to it; a workload "
+                    "role holding s3:PutObject there would undo the property that store "
+                    "exists to have."
                 ),
                 (
-                    "Those findings are the base image's. The Dockerfile installs nothing — "
-                    "it sets three environment variables, creates a working directory and "
-                    "copies the source — so every package a scanner can see came from the "
-                    "registered base, which is pinned by digest in config/repositories.yaml."
+                    "Batch supports neither tags on the job role session nor a per-job role "
+                    "override at submit time in a way this platform currently uses, so "
+                    "per-run scoping is not free: it needs the run id to reach the policy "
+                    "somehow, and the two ways to do that are a session tag and a role per "
+                    "run."
                 ),
                 (
-                    "A gate would need no new permission. The publisher role already holds "
-                    "ecr:DescribeImageScanFindings, because reading the scan back was "
-                    "anticipated even though nothing reads it yet."
-                ),
-                (
-                    "Whatever the rule, it cannot be enforced at push time in the obvious "
-                    "way: ECR scans an image after it is pushed, so a scan result can refuse "
-                    "the next step but cannot prevent the image existing. A tag that has been "
-                    "written cannot be withdrawn, only left unused."
+                    "config/organization.yaml carries no team bindings yet, so per-team "
+                    "scoping has nothing to enumerate today. TeamBinding already has fields "
+                    "for an S3 namespace, which is where the answer would land."
                 ),
             ),
             options=(
                 (
-                    "Record and never block. The scan is evidence, a run manifest names a "
-                    "digest, and whether a digest with findings may run is decided by "
-                    "whoever authorizes the run rather than by the build."
+                    "Per bucket. One outputs bucket, the workload role may write anywhere "
+                    "in it. Simplest, and it makes the Phase 4 and Phase 5 isolation checks "
+                    "unprovable rather than failing."
                 ),
                 (
-                    "Block on a severity threshold. Simple to state and simple to check, and "
-                    "it would have refused this phase's first image on findings nobody in "
-                    "this project introduced or can fix without changing the base."
+                    "Per team, through a prefix and the S3 namespace TeamBinding already "
+                    "declares. Reachable with a role per team, and it matches where Phase 5 "
+                    "is going, but it isolates teams rather than runs."
                 ),
                 (
-                    "Block only on findings the build introduced — those present in the image "
-                    "and absent from the registered base, which is scannable on its own. "
-                    "Narrow and meaningful, and it needs a second scan and a comparison that "
-                    "does not exist."
-                ),
-                (
-                    "Block unless an exception is recorded against the digest, in the way "
-                    "Phase 0 already records exceptions for fan-out over the routine ceiling."
+                    "Per run, through a session tag the submitting principal sets and an "
+                    "aws:PrincipalTag condition on the prefix. The narrowest, and the only "
+                    "one that makes 'outputs only under the authorized run prefix' literally "
+                    "true; it needs the tag to travel from admission into the Batch job."
                 ),
             ),
             lands_in=(
-                "Before the first workload runs a published image. The phase that introduces "
-                "the workload role is where that happens, and this must be answered before "
-                "its acceptance criteria are written rather than after."
+                "Before a second team submits, or before Phase 4 writes its check that "
+                "outputs land only under the authorized run prefix -- whichever comes "
+                "first. Phase 3 may ship the widest scope provided the record says so; it "
+                "may not ship a narrower claim than it enforces."
             ),
             raised_by=(
-                "Phase 1's first live publish, whose scan returned four critical and eight "
-                "high findings and blocked nothing, because nothing was ever wired to it."
+                "Phase 3 writing sbsandbox-intern-edullm-batch-workload and finding that "
+                "nothing in the repository said what it should be allowed to write to."
             ),
         ),
     )

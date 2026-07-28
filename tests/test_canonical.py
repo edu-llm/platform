@@ -128,6 +128,7 @@ def request_facts_payload(**overrides: object) -> dict[str, object]:
         "compute_profile_registered": True,
         "immutable_revision": True,
         "immutable_image": True,
+        "image_scan_reviewed": True,
         "estimated_cost_usd": "0",
         "maximum_runtime_hours": "1",
         "maximum_attempts": 1,

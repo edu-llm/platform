@@ -1,5 +1,6 @@
 import inspect
 from collections.abc import Callable, Mapping
+from datetime import UTC, datetime
 from decimal import Decimal
 from itertools import combinations
 from pathlib import Path
@@ -11,6 +12,10 @@ from edullm_platform.canonical import sha256_digest
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.admission import ApprovalEnvironment
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
+from edullm_platform.contracts.image_scan import (
+    ImageScanExceptionRegistry,
+    ImageScanSummary,
+)
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.manifest import FanOut
 from edullm_platform.contracts.policy import ApprovalClass, ApprovalPolicy
@@ -127,6 +132,24 @@ def load_dataset_registry() -> DatasetRegistry:
     return load_yaml(PROJECT_ROOT / "config" / "datasets.yaml", DatasetRegistry)
 
 
+#: A scan with nothing in it, for the tests that are about admission rather than about
+#: scanning. Passing a clean summary rather than omitting the arguments keeps these tests
+#: on the same code path production uses; omitting them would take the opt-out branch and
+#: quietly stop exercising the gate at all.
+def clean_image_scan() -> ImageScanSummary:
+    return ImageScanSummary(
+        schema_version=1,
+        status="COMPLETE",
+        scanned_at=datetime(2026, 7, 26, 22, 5, 49, tzinfo=UTC),
+    )
+
+
+def load_image_scan_registry() -> ImageScanExceptionRegistry:
+    return load_yaml(
+        PROJECT_ROOT / "config" / "image-exceptions.yaml", ImageScanExceptionRegistry
+    )
+
+
 def workload_profile(name: str) -> WorkloadProfile:
     return next(workload for workload in load_workload_catalog().workloads if workload.name == name)
 
@@ -167,6 +190,8 @@ def compile_payload(
     payload: Mapping[str, object],
     *,
     policy: ApprovalPolicy | None = None,
+    image_scan_registry: ImageScanExceptionRegistry | None = None,
+    image_scan_summary: ImageScanSummary | None = None,
 ) -> CompiledSubmission:
     return compile_submission(
         submission_inputs(payload),
@@ -175,6 +200,14 @@ def compile_payload(
         inventory=load_organization_inventory(),
         catalog=load_workload_catalog(),
         dataset_registry=load_dataset_registry(),
+        image_scan_registry=(
+            image_scan_registry
+            if image_scan_registry is not None
+            else ImageScanExceptionRegistry(schema_version=1)
+        ),
+        image_scan_summary=(
+            image_scan_summary if image_scan_summary is not None else clean_image_scan()
+        ),
     )
 
 

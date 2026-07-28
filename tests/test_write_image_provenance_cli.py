@@ -90,6 +90,7 @@ def test_provenance_is_canonical_and_derives_registry_facts_from_the_registry(
             "run_attempt": 2,
         },
         "built_at": "2026-07-26T12:00:00.000000Z",
+        "image_scan": None,
     }
     assert written.endswith("\n")
     assert ", " not in written and '": ' not in written

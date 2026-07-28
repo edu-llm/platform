@@ -1,0 +1,62 @@
+{
+  "$defs": {
+    "ImageScanException": {
+      "additionalProperties": false,
+      "description": "One digest somebody looked at and accepted, with their name against it.\n\n``reason`` is required and has a floor on its length because \"approved\" is not a reason,\nand the whole value of this record is that a later reader can tell whether the findings\nwere understood or waved through.",
+      "properties": {
+        "image_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Image Digest",
+          "type": "string"
+        },
+        "reason": {
+          "minLength": 40,
+          "title": "Reason",
+          "type": "string"
+        },
+        "recorded_at": {
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$",
+          "title": "Recorded At",
+          "type": "string"
+        },
+        "recorded_by": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9-]+$",
+          "title": "Recorded By",
+          "type": "string"
+        }
+      },
+      "required": [
+        "image_digest",
+        "reason",
+        "recorded_by",
+        "recorded_at"
+      ],
+      "title": "ImageScanException",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The reviewed set of digests that may run despite carrying blocking findings.",
+  "properties": {
+    "exceptions": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ImageScanException"
+      },
+      "title": "Exceptions",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version"
+  ],
+  "title": "ImageScanExceptionRegistry",
+  "type": "object"
+}

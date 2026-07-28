@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import Field, field_validator
 
 from .base import SANDBOX_BUCKET_PREFIX, ContractModel, Sha256Digest, UtcTimestamp
+from .image_scan import ImageScanSummary
 from .repository_registry import ECR_REPOSITORY_PATTERN
 from .source_identity import SourceIdentity
 
@@ -102,6 +103,18 @@ class ImageProvenance(ContractModel):
     source: SourceIdentity
     workflow_run: GitHubWorkflowRunReference
     built_at: UtcTimestamp
+    #: What the registry's scan said, at the moment the image was published. Optional
+    #: because provenance written before this field existed is still valid provenance, and
+    #: because ECR scans asynchronously -- a publish can legitimately finish before the
+    #: scan does.
+    #:
+    #: This is not what the admission decision rests on. The compile job reads it to choose
+    #: an approval environment, because that job holds no AWS credentials and cannot ask
+    #: ECR; admission asks ECR itself and fails closed on disagreement. Recorded here
+    #: because a digest's findings at publish time are a fact about the publish, and
+    #: because a reader holding only the provenance should not have to go to the registry
+    #: to see whether anything was found.
+    image_scan: ImageScanSummary | None = None
 
 
 def resolve_image_reference(

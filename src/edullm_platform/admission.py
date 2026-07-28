@@ -46,6 +46,10 @@ from edullm_platform.contracts.authorization import (
 )
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
 from edullm_platform.contracts.image import GitHubWorkflowRunReference
+from edullm_platform.contracts.image_scan import (
+    ImageScanExceptionRegistry,
+    ImageScanSummary,
+)
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.manifest import RunManifest
 from edullm_platform.contracts.policy import (
@@ -76,6 +80,7 @@ _CONDITION_FOR_FALSE_FACT: dict[str, str] = {
     "compute_profile_registered": "unregistered_compute_profile",
     "immutable_revision": "mutable_repository_revision",
     "immutable_image": "mutable_image_reference",
+    "image_scan_reviewed": "image_scan_findings_unreviewed",
 }
 
 
@@ -145,6 +150,8 @@ def admit(
     inventory: OrganizationInventory,
     catalog: WorkloadCatalog,
     dataset_registry: DatasetRegistry,
+    image_scan_registry: ImageScanExceptionRegistry,
+    image_scan_summary: ImageScanSummary | None,
     recorded_at: datetime,
 ) -> AdmissionOutcome:
     manifest = _parse_manifest(manifest_payload)
@@ -216,6 +223,13 @@ def admit(
         catalog=catalog,
         dataset_registry=dataset_registry,
         estimated_cost_usd=estimated_cost_usd,
+        # Re-derived here rather than taken from the caller, for the same reason the
+        # manifest hash is recomputed: the compile step read the scan from a provenance
+        # record on a runner, and this is the side that decides. A caller that lied about
+        # the findings gets the answer ECR gives, not the one it supplied.
+        image_scan_policy=policy.image_scan,
+        image_scan_registry=image_scan_registry,
+        image_scan_summary=image_scan_summary,
     )
     approval_class = classify_request(facts, policy.thresholds)
     authorization = evaluate_authorization(

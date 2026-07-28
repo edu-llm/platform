@@ -59,6 +59,7 @@ def image_payload(**overrides: object) -> dict[str, object]:
         "source": source_payload(),
         "workflow_run": workflow_payload(),
         "built_at": "2026-07-25T18:30:00.123456Z",
+        "image_scan": None,
     }
     payload.update(overrides)
     return payload

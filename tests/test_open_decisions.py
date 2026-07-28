@@ -47,38 +47,37 @@ def test_the_register_holds_what_it_says_it_holds() -> None:
     decisions = open_decisions()
 
     assert len(decisions) == OPEN_DECISION_COUNT
-    assert [decision.number for decision in decisions] == ["1"]
+    assert [decision.number for decision in decisions] == ["2"]
 
 
-def test_the_scan_question_is_recorded_and_is_not_answered() -> None:
+def test_the_scan_question_is_gone_because_it_was_answered() -> None:
     # Phase 1 ran a scan that found four critical and eight high, and blocked nothing.
-    # Whether it should have been able to is a policy question, and the point of
-    # recording it is that nobody discovers it by accident later.
-    decision = open_decisions()[0]
+    # Phase 3 answered whether it should have been able to. The register's own rule is that
+    # answering means deleting the entry and putting the answer where it is enforced, so
+    # the assertion is that no scan question survives here -- not that one reads correctly.
+    #
+    # Where the answer went is asserted in tests/test_phase3_image_scan.py, against the
+    # shipped policy and the shipped exception registry rather than against this module.
+    for decision in open_decisions():
+        assert "image scan" not in decision.question.lower()
 
-    assert "scan" in decision.question.lower()
-    assert "block" in decision.question.lower()
-    assert len(decision.options) >= 2
 
-
-def test_the_scan_question_cites_the_scan_that_raised_it() -> None:
-    # A question with no evidence behind it is somebody's worry. This one names a record
-    # committed in this repository that a reader can go and open.
-    decision = open_decisions()[0]
-    known = " ".join(decision.what_is_known)
+def test_the_scan_that_raised_the_answered_question_is_still_committed() -> None:
+    # The question is gone; the evidence that made it urgent is not, and the answer in
+    # config/policy.yaml only makes sense beside it. Four criticals is why blocking on a
+    # severity threshold alone was rejected.
     scan = json.loads(
         (PROJECT_ROOT / RUN_CAPTURE_DIR / "image-scan.sanitized.json").read_text(encoding="utf-8")
     )
 
-    assert str(RUN_CAPTURE_DIR) in known.replace("\\", "/")
     assert scan["finding_counts"]["critical"] == 4
     assert scan["finding_counts"]["high"] == 8
 
 
-def test_the_scan_question_says_when_it_has_to_be_answered() -> None:
-    decision = open_decisions()[0]
+def test_every_open_question_says_when_it_has_to_be_answered() -> None:
+    for decision in open_decisions():
 
-    assert "before" in decision.lands_in.lower()
+        assert "before" in decision.lands_in.lower()
 
 
 def test_a_question_with_one_option_is_refused() -> None:

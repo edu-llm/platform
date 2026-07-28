@@ -91,6 +91,7 @@ def facts_for_profile(
         compute_profile_registered=True,
         immutable_revision=True,
         immutable_image=True,
+        image_scan_reviewed=True,
         estimated_cost_usd=estimated_cost,
         maximum_runtime_hours=maximum_runtime_hours,
         maximum_attempts=maximum_attempts,
