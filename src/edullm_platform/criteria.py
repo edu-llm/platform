@@ -28,6 +28,32 @@ gate be green and wrong at the same time, so no such status exists here.
 :func:`criterion_result` is here rather than in a phase's gate for the same reason the
 statuses are. It is where execution is allowed to overrule the recorded table, and a
 phase that carried its own copy could quietly overrule it in the other direction.
+
+**Capability and adoption are separate, and so are their verdicts.** A phase's gate
+verdict is the AND of every criterion: it answers whether the phase may be called
+complete. ``pilot_blocking`` answers a different question — whether somebody outside the
+build team may use the capability yet — and :func:`pilot_verdict` is the AND of the
+pilot-blocking criteria alone. The two are reported side by side and never folded
+together, because a phase is routinely pilot-ready with a red gate and that is the
+ordinary case rather than an exception. Nothing here removes a check or lowers one; the
+gate still has to close.
+
+Three rules hold the flag to something a build can fail on.
+
+A ``DEFERRED`` criterion may never be pilot-blocking, and the combination is refused when
+the spec is constructed. A deferral is a decision that the criterion is intentionally
+false today, so requiring it before a pilot would make the rung unreachable rather than
+make it safe. What the deferred check would have protected belongs on the limitations
+page instead.
+
+A phase whose criteria carry no pilot flag at all reports
+:attr:`PilotReadiness.NOT_ASSESSED` rather than ready. The AND of an empty set is true,
+and a verdict that read "pilot-ready" off nothing at all would be the same vacuous
+assertion this repository has twice shipped and twice had to repair.
+
+The pilot verdict never moves an exit code. A gate that exited on the pilot verdict would
+be a gate that stopped meaning "this phase is complete", which is the one thing it has
+always meant.
 """
 
 from __future__ import annotations
@@ -38,7 +64,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Final
 
-from pydantic import BeforeValidator, Field
+from pydantic import BeforeValidator, Field, computed_field, model_validator
 
 from edullm_platform.contracts.base import (
     ContractModel,
@@ -53,10 +79,13 @@ __all__ = [
     "CriterionResult",
     "CriterionSpec",
     "CriterionStatus",
+    "PilotReadiness",
+    "PilotVerdict",
     "cited_node_ids",
     "criterion_result",
     "evaluate_criteria",
     "execute_criteria",
+    "pilot_verdict",
     "validate_criterion_specs",
 ]
 
@@ -91,6 +120,21 @@ class CriterionStatus(StrEnum):
     GAP = "gap"
 
 
+class PilotReadiness(StrEnum):
+    """Whether a phase's pilot-blocking checks are met, or whether there are any.
+
+    ``NOT_ASSESSED`` is the third value and the reason this is an enum rather than a
+    bool. A phase that has named no pilot-blocking check has not been assessed for the
+    pilot rung; it has not passed one. Collapsing the two would let a phase reach the
+    rung by flagging nothing, which is the cheapest possible way to make a control
+    disappear.
+    """
+
+    READY = "ready"
+    BLOCKED = "blocked"
+    NOT_ASSESSED = "not_assessed"
+
+
 def _is_written(text: str | None) -> bool:
     return text is not None and bool(text.strip())
 
@@ -108,11 +152,19 @@ class CriterionSpec:
     a synthetic configuration that is not what ships, or because they prove only part of
     the claim. They are executed by the gate exactly like proving tests, so a supporting
     citation that is renamed or deleted still fails the criterion.
+
+    ``pilot_blocking`` says this criterion has to pass before anybody outside the build
+    team uses the capability, rather than only before the gate closes. The test it
+    answers is whether the criterion's absence would let somebody lose money, lose data,
+    lose attribution, or corrupt the lineage record — not whether it is important, which
+    selects everything and sorts nothing. Where the answer took an argument, the argument
+    belongs in ``scope_limits`` beside the criterion it is about.
     """
 
     number: str
     statement: str
     status: CriterionStatus
+    pilot_blocking: bool = False
     proving_node_ids: tuple[str, ...] = ()
     supporting_node_ids: tuple[str, ...] = ()
     scope_limits: tuple[str, ...] = ()
@@ -171,6 +223,13 @@ class CriterionSpec:
         self._reject_deferral_fields()
 
     def _validate_deferred(self) -> None:
+        if self.pilot_blocking:
+            raise self._fail(
+                "is deferred and marked pilot-blocking; a deferral is a recorded decision "
+                "that the criterion is intentionally false today, so requiring it before a "
+                "pilot would make the rung unreachable rather than make it safe. What the "
+                "deferral would have protected belongs on the limitations page"
+            )
         if self.proving_node_ids:
             raise self._fail(
                 "is deferred but cites proving tests; a deferred criterion is not proved, "
@@ -210,20 +269,122 @@ CriterionStatusValue = Annotated[
     CriterionStatus, BeforeValidator(parse_str_enum(CriterionStatus))
 ]
 NodeIdSequence = Annotated[tuple[str, ...], BeforeValidator(require_ordered_sequence)]
+CriterionNumberSequence = Annotated[tuple[str, ...], BeforeValidator(require_ordered_sequence)]
 
 
 class CriterionResult(ContractModel):
-    """One acceptance criterion of any phase, after its cited tests were executed."""
+    """One acceptance criterion of any phase, after its cited tests were executed.
+
+    ``pilot_blocking`` is carried through from the spec rather than recomputed, and it
+    defaults to false so that a caller who omits it shrinks the pilot set rather than
+    growing it. Shrinking it far enough reports the phase as not assessed, which is the
+    safe direction; growing it would report a rung as open on a check nobody chose.
+    """
 
     number: str
     statement: str
     status: CriterionStatusValue
     passed: bool
+    pilot_blocking: bool = False
     reason_code: str
     detail: str
     cited_node_ids: NodeIdSequence = Field(strict=False)
     missing_node_ids: NodeIdSequence = Field(strict=False)
     failed_node_ids: NodeIdSequence = Field(strict=False)
+
+
+#: What the pilot note says when a phase has flagged nothing. It states the defect rather
+#: than only the verdict, because "not assessed" read quickly looks like a tooling gap and
+#: is in fact the answer the mechanism exists to give.
+NOTHING_IS_FLAGGED_NOTE: Final = (
+    "No criterion of this phase is marked pilot-blocking, so the pilot rung is not "
+    "assessed rather than open. The conjunction of an empty set is true, and a verdict "
+    "that read as ready off nothing at all would be a control that cannot fail."
+)
+
+#: The sentence both assessed verdicts end on. The split exists so that a reader who sees
+#: a ready pilot beside a failing gate does not conclude one of them is wrong.
+EXIT_CODE_IS_THE_GATES_NOTE: Final = (
+    "The gate verdict is separate and is what the exit code means: a phase can be "
+    "pilot-ready and gate-red at once."
+)
+
+
+class PilotVerdict(ContractModel):
+    """Whether a phase's pilot-blocking checks are met, reported beside the gate's.
+
+    Everything a reader acts on is derived. ``readiness`` and ``note`` are computed from
+    the two lists, so no caller can supply a verdict that disagrees with the criteria it
+    claims to summarize, and the note cannot go stale the way a hand-written count does.
+    """
+
+    evaluated_criteria: int
+    blocking_criteria: CriterionNumberSequence = Field(strict=False)
+    unmet_criteria: CriterionNumberSequence = Field(strict=False)
+
+    @model_validator(mode="after")
+    def _the_lists_have_to_agree(self) -> PilotVerdict:
+        stray = tuple(
+            number for number in self.unmet_criteria if number not in self.blocking_criteria
+        )
+        if stray:
+            raise ValueError(
+                "a criterion cannot block the pilot rung without being pilot-blocking; "
+                f"unmet but not flagged: {list(stray)!r}"
+            )
+        if len(self.blocking_criteria) > self.evaluated_criteria:
+            raise ValueError(
+                f"{len(self.blocking_criteria)} criteria are pilot-blocking out of "
+                f"{self.evaluated_criteria} the run evaluated"
+            )
+        return self
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def readiness(self) -> PilotReadiness:
+        if not self.blocking_criteria:
+            return PilotReadiness.NOT_ASSESSED
+        return PilotReadiness.BLOCKED if self.unmet_criteria else PilotReadiness.READY
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def note(self) -> str:
+        if not self.blocking_criteria:
+            return NOTHING_IS_FLAGGED_NOTE
+        blocking = len(self.blocking_criteria)
+        verb = "is" if blocking == 1 else "are"
+        preamble = (
+            f"{blocking} of the {self.evaluated_criteria} criteria this run evaluated "
+            f"{verb} pilot-blocking"
+        )
+        if self.unmet_criteria:
+            return (
+                f"{preamble}, and {len(self.unmet_criteria)} of those did not pass, so the "
+                f"pilot rung is closed until they do. {EXIT_CODE_IS_THE_GATES_NOTE}"
+            )
+        return (
+            f"{preamble}, and every one of them passed, so the pilot rung is open on this "
+            f"phase's own checks. {EXIT_CODE_IS_THE_GATES_NOTE}"
+        )
+
+
+def pilot_verdict(results: Sequence[CriterionResult]) -> PilotVerdict:
+    """The AND of the pilot-blocking criteria, and of nothing else.
+
+    Order is the phase's own rather than sorted, because criterion numbers are strings
+    and sorting them puts 10 before 2. Nothing here consults the gate verdict, and the
+    gate verdict does not consult this: a criterion that is not pilot-blocking is
+    invisible here and still fails the gate.
+    """
+    blocking = tuple(result.number for result in results if result.pilot_blocking)
+    unmet = tuple(
+        result.number for result in results if result.pilot_blocking and not result.passed
+    )
+    return PilotVerdict(
+        evaluated_criteria=len(results),
+        blocking_criteria=blocking,
+        unmet_criteria=unmet,
+    )
 
 
 def _ordered(node_ids: Iterable[str]) -> tuple[str, ...]:
@@ -248,6 +409,7 @@ def criterion_result(spec: CriterionSpec, outcome: SelectionOutcome) -> Criterio
             statement=spec.statement,
             status=status,
             passed=status is not CriterionStatus.GAP,
+            pilot_blocking=spec.pilot_blocking,
             reason_code=reason_code,
             detail=detail,
             cited_node_ids=cited,

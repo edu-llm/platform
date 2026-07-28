@@ -28,7 +28,12 @@ from typing import Annotated, Final
 from pydantic import BeforeValidator, Field, computed_field, model_validator
 
 from edullm_platform.contracts.base import ContractModel, require_ordered_sequence
-from edullm_platform.criteria import CriterionResult, execute_criteria
+from edullm_platform.criteria import (
+    CriterionResult,
+    PilotVerdict,
+    execute_criteria,
+    pilot_verdict,
+)
 from edullm_platform.phase3_criteria import PHASE3_CRITERION_COUNT, phase3_criteria
 from edullm_platform.status_prose import checked_phase_criteria_note
 
@@ -61,6 +66,17 @@ class Phase3GateReport(ContractModel):
     @property
     def passed(self) -> bool:
         return all(criterion.passed for criterion in self.phase_criteria)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def pilot(self) -> PilotVerdict:
+        """The adoption verdict, computed beside the gate's and never folded into it.
+
+        This is the phase the split was worked out on, and the verdict is not kind to it:
+        every pilot-blocking criterion here waits on the first container run, so the
+        rung is closed rather than merely unevidenced.
+        """
+        return pilot_verdict(self.phase_criteria)
 
 
 def evaluate_phase3_criteria(repo_root: Path) -> tuple[CriterionResult, ...]:

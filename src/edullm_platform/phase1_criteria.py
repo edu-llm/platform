@@ -73,6 +73,14 @@ digest rather than building a commit twice, which is correct and is why the ship
 can never produce the comparison. The builds were therefore made locally and recorded, and
 the criterion's scope limits say so plainly rather than leaving a reader to assume the
 workflow produced them.
+
+**Seven of the eight are pilot-blocking, and the mapping to the master plan's check list
+is one to one.** Phase 1's checks and this module's criteria are the same eight statements
+in the same order, so the pilot split needed no judgement at all: it is the plan's markers
+carried across. The one that is not pilot-blocking is criterion 2, which is the only entry
+in the list that asks for an explanation rather than a refusal, and its scope limits say
+why. All eight are covered, so the pilot verdict for this phase is ready — retrospectively,
+since the gate closed before the rung existed.
 """
 
 from __future__ import annotations
@@ -221,6 +229,7 @@ def phase1_criteria() -> tuple[CriterionSpec, ...]:
             number="1",
             statement="A pushed branch commit produces a digest.",
             status=CriterionStatus.COVERED,
+            pilot_blocking=True,
             proving_node_ids=(
                 RUN_EVIDENCE_HOLDS,
                 f"{RUN_MODULE}::test_a_pushed_branch_commit_produced_a_digest",
@@ -309,6 +318,17 @@ def phase1_criteria() -> tuple[CriterionSpec, ...]:
                     "different BuildKit."
                 ),
                 (
+                    "The one criterion of this phase that does not block a pilot, and the "
+                    "reason is what it asks for. Every other check in the list is a refusal, "
+                    "and a refusal that does not happen is money, data, attribution or "
+                    "lineage lost. This one asks that a difference between two builds be "
+                    "explainable, which is what a reviewer needs in order to accept the gate "
+                    "and is not what stands between a pilot user and harm: an unexplained "
+                    "difference in an image config costs somebody an afternoon, and the "
+                    "digest pinning that makes the image trustworthy is proved elsewhere "
+                    "in this list rather than here."
+                ),
+                (
                     "Byte-level reproducibility is not claimed and is not attempted. Three of "
                     "the four causes are clock readings that SOURCE_DATE_EPOCH could pin; the "
                     "fourth is the per-run label, which is deliberate and whose removal would "
@@ -323,6 +343,7 @@ def phase1_criteria() -> tuple[CriterionSpec, ...]:
             number="3",
             statement="A dirty or unpushed commit is rejected.",
             status=CriterionStatus.COVERED,
+            pilot_blocking=True,
             proving_node_ids=(
                 "tests/test_source_identity.py::test_dirty_tracked_worktree_fails",
                 "tests/test_source_identity.py::test_dirty_untracked_worktree_fails",
@@ -359,6 +380,7 @@ def phase1_criteria() -> tuple[CriterionSpec, ...]:
             number="4",
             statement="A commit from an unauthorized repository is rejected.",
             status=CriterionStatus.COVERED,
+            pilot_blocking=True,
             proving_node_ids=(
                 "tests/test_source_identity.py::test_unknown_repository_fails",
                 "tests/test_source_identity.py::test_wrong_repository_id_fails",
@@ -394,6 +416,7 @@ def phase1_criteria() -> tuple[CriterionSpec, ...]:
             number="5",
             statement="A pull-request test job cannot request AWS credentials.",
             status=CriterionStatus.COVERED,
+            pilot_blocking=True,
             proving_node_ids=(
                 "tests/test_build_research_image_workflow.py::test_workflow_has_exactly_three_ordered_jobs_with_exact_permission_maps",
                 "tests/test_build_research_image_workflow.py::test_verify_job_never_requests_an_oidc_token_by_any_spelling",
@@ -435,6 +458,7 @@ def phase1_criteria() -> tuple[CriterionSpec, ...]:
                 "The publisher role cannot submit jobs, read datasets, alter IAM, or modify Batch."
             ),
             status=CriterionStatus.COVERED,
+            pilot_blocking=True,
             proving_node_ids=(
                 RUN_EVIDENCE_HOLDS,
                 DENIAL_MATRIX_WAS_REFUSED,
@@ -499,6 +523,7 @@ def phase1_criteria() -> tuple[CriterionSpec, ...]:
             number="7",
             statement="An immutable tag cannot be overwritten.",
             status=CriterionStatus.COVERED,
+            pilot_blocking=True,
             proving_node_ids=(
                 RUN_EVIDENCE_HOLDS,
                 TAG_WAS_NOT_OVERWRITTEN,
@@ -543,6 +568,7 @@ def phase1_criteria() -> tuple[CriterionSpec, ...]:
             number="8",
             statement="A run manifest using a tag instead of a digest is rejected.",
             status=CriterionStatus.COVERED,
+            pilot_blocking=True,
             proving_node_ids=(
                 "tests/test_manifest.py::test_manifest_rejects_mutable_image_digest",
                 "tests/test_manifest.py::test_manifest_rejects_image_digest_with_trailing_tag",

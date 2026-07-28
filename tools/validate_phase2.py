@@ -14,7 +14,8 @@ if str(PROJECT_ROOT) not in sys.path:
 from edullm_platform.canonical import canonical_json_bytes
 from edullm_platform.criteria import CriteriaDefinitionError
 from edullm_platform.criteria_runner import NestedExecutionError
-from edullm_platform.phase2_gate import evaluate_repository
+from edullm_platform.phase2_gate import PHASE, evaluate_repository
+from edullm_platform.status_prose import gate_and_pilot_line
 
 
 def main() -> int:
@@ -35,6 +36,14 @@ def main() -> int:
         return 2
 
     sys.stdout.write(canonical_json_bytes(result).decode("utf-8") + "\n")
+    # Both verdicts, on stderr so that stdout stays exactly the canonical report a caller
+    # parses. The exit code below is the gate's and only the gate's: a pilot-ready phase
+    # with a red gate still exits 1, because the gate is what the exit code has always
+    # meant and reusing it for adoption would silently change every caller's question.
+    print(
+        gate_and_pilot_line(phase=PHASE, gate_passed=result.passed, verdict=result.pilot),
+        file=sys.stderr,
+    )
     return 0 if result.passed else 1
 
 

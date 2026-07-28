@@ -133,13 +133,16 @@ KNOWN_GATE_INVOKING_MODULES = (
     "tests/test_phase1_proof.py",
 )
 
-#: Markers that only appear where a criterion is defined.
+#: Markers that only appear where a criterion is defined. ``pilot_blocking=True`` is the
+#: assignment rather than the bare keyword, because the shared contract carries the flag
+#: from a spec into its result and that is not a definition of anything.
 DEFINITION_MARKERS = (
     "CriterionSpec(",
     "proving_node_ids=",
     "supporting_node_ids=",
     "deferral_reason=",
     "deferral_trigger=",
+    "pilot_blocking=True",
 )
 
 #: Markers that only appear where the criterion contract itself is declared. The three

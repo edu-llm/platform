@@ -39,6 +39,25 @@ approval happened and which gate it passed; it carries no claim naming the appro
 identity in a decision record reaches AWS because the submitting job read it from the
 GitHub API and passed it along. Criterion 21 states what the record carries; it does not
 claim AWS verified it.
+
+**Nineteen of the twenty-two are pilot-blocking, and eight of those nineteen had no
+counterpart in the master plan's coarser list.** The plan resolves this phase into
+fourteen checks and marks eleven of them; those fourteen are criteria 1 to 14 here, in
+order, so that half of the split is transcription rather than judgement. The three the
+plan does not mark are the interim-behaviour happy path, whose failure leaves members
+stuck rather than harmed; the deferred wrong-team check, which the shared contract refuses
+to let anybody mark at all; and the approver display, which the plan argues at length and
+which is load-bearing for the team rung rather than the pilot one.
+
+Criteria 15 to 22 are the eight the plan's list never reached, and every one of them is
+pilot-blocking. That is a high proportion and it is the honest answer for this phase
+rather than a lazy one: authorization is where the money and the attribution live, and
+what these eight add to the plan's fourteen is the reviewer roster, the branch policy on
+both gates, the shape and joinability of the lineage records, the attestation on the
+objects that hold them, the separation of the deciding component from the writing one, the
+refusal to evaluate a caller-supplied policy, the five fields a decision has to carry, and
+the absence of any secret a branch could read. Each one's ``scope_limits`` records what
+its absence would cost, in the ladder's own terms.
 """
 
 from __future__ import annotations
@@ -130,6 +149,7 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
             number="1",
             statement="Lead self-authorization succeeds.",
             status=CriterionStatus.COVERED,
+            pilot_blocking=True,
             proving_node_ids=(
                 *_ids(LINEAGE, "test_an_accepted_routine_run_was_released_by_the_lead_gate"),
             ),
@@ -155,6 +175,7 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
             number="2",
             statement="Member submission without lead approval is rejected.",
             status=CriterionStatus.GAP,
+            pilot_blocking=True,
             supporting_node_ids=(
                 *_ids(WORKFLOW, "test_the_three_jobs_carry_exactly_these_permission_maps"),
                 *_ids(WORKFLOW, "test_the_compile_job_cannot_request_a_token_by_any_spelling"),
@@ -193,6 +214,16 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 *_ids(
                     AUTHZ,
                     "test_admin_without_a_team_lead_role_may_approve_a_member_routine_run",
+                ),
+            ),
+            scope_limits=(
+                (
+                    "Not pilot-blocking, and this is the plan's own call rather than one taken "
+                    "here. Everything else in the authorization group fails towards permitting "
+                    "something that should have been refused; this one fails towards refusing "
+                    "something that should have been permitted. Nobody loses money, data, "
+                    "attribution or a lineage record when it breaks -- a member is stuck, and "
+                    "a stuck member complains, which is the loudest failure mode in the phase."
                 ),
             ),
             gaps=(
@@ -240,11 +271,23 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 "team_verified starts reporting true, and this must be re-recorded as "
                 "covered or argued again."
             ),
+            scope_limits=(
+                (
+                    "This one cannot be marked pilot-blocking, and the shared contract refuses "
+                    "the combination rather than leaving it to a reviewer. A deferral is a "
+                    "decision that the criterion is intentionally false right now, so requiring "
+                    "it before a pilot would make the rung unreachable rather than make it "
+                    "safe. What it would have protected goes on the limitations page instead, "
+                    "in the words a user needs: the team recorded against a run is unverified, "
+                    "and nothing stops somebody naming a team they do not belong to."
+                ),
+            ),
         ),
         CriterionSpec(
             number="5",
             statement="Admin exception succeeds only through the admin path.",
             status=CriterionStatus.COVERED,
+            pilot_blocking=True,
             proving_node_ids=(
                 *_ids(LINEAGE, "test_an_accepted_exception_was_released_by_the_admin_gate_and_priced"),
                 *_ids(ADMISSION, "test_an_exception_released_by_the_lead_gate_is_refused"),
@@ -275,6 +318,7 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 "the role."
             ),
             status=CriterionStatus.GAP,
+            pilot_blocking=True,
             supporting_node_ids=(
                 *_ids(
                     INFRA,
@@ -310,6 +354,7 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 "role, even from main."
             ),
             status=CriterionStatus.GAP,
+            pilot_blocking=True,
             supporting_node_ids=(
                 *_ids(
                     WORKFLOW,
@@ -348,6 +393,7 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 "reviewer approves."
             ),
             status=CriterionStatus.COVERED,
+            pilot_blocking=True,
             proving_node_ids=(
                 *_ids(WORKFLOW, "test_the_compile_job_cannot_request_a_token_by_any_spelling"),
                 *_ids(WORKFLOW, "test_the_three_jobs_carry_exactly_these_permission_maps"),
@@ -385,6 +431,7 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
             number="9",
             statement="A member cannot approve their own submission.",
             status=CriterionStatus.GAP,
+            pilot_blocking=True,
             supporting_node_ids=(
                 *_ids(
                     AUTHZ,
@@ -439,6 +486,7 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 "weaker approval path."
             ),
             status=CriterionStatus.COVERED,
+            pilot_blocking=True,
             proving_node_ids=(
                 *_ids(
                     WORKFLOW,
@@ -495,6 +543,19 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
             supporting_node_ids=(
                 *_ids(WORKFLOW, "test_the_approver_context_survives_the_run_that_showed_it"),
             ),
+            scope_limits=(
+                (
+                    "Not pilot-blocking, and it is the closest call in the phase. Its absence "
+                    "plainly lets somebody release a run whose cost they misjudged, which is "
+                    "money. What saves it is the size of the rung: a pilot approver is one of "
+                    "two or three named people who already know what was submitted and can "
+                    "work the figure out once told the screen does not show it, which is a "
+                    "limitation a reader can act on. The argument expires the moment the "
+                    "approver stops being somebody who already knows the run, so this is "
+                    "load-bearing for the team rung while not blocking the pilot one -- the "
+                    "only entry in the phase where those two answers differ."
+                ),
+            ),
             gaps=(
                 (
                     "Until 2026-07-27 this criterion was unprovable by any tool. GitHub "
@@ -543,6 +604,7 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 "Duplicate execution names do not create duplicate intent records."
             ),
             status=CriterionStatus.GAP,
+            pilot_blocking=True,
             supporting_node_ids=(
                 *_ids(ADMISSION, "test_the_two_records_of_one_submission_are_keyed_the_same"),
                 *_ids(
@@ -576,6 +638,7 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
             number="13",
             statement="Edited manifests invalidate prior approvals.",
             status=CriterionStatus.COVERED,
+            pilot_blocking=True,
             proving_node_ids=(
                 *_ids(LINEAGE, "test_a_refused_submission_still_earns_an_attributable_decision"),
             ),
@@ -605,6 +668,7 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 "Admission failure does not create compute or partial accepted state."
             ),
             status=CriterionStatus.GAP,
+            pilot_blocking=True,
             supporting_node_ids=(
                 *_ids(
                     INFRA,
@@ -650,6 +714,7 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 "config/organization.yaml."
             ),
             status=CriterionStatus.COVERED,
+            pilot_blocking=True,
             proving_node_ids=(
                 *_ids(GITHUB, "test_the_admin_gate_is_reviewed_by_the_roster_admins_and_nobody_else"),
                 *_ids(GITHUB, "test_no_member_who_is_not_a_lead_or_admin_reviews_either_gate"),
@@ -663,6 +728,16 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 *_ids(GITHUB, "test_self_review_is_deliberately_permitted_on_both_gates"),
             ),
             scope_limits=(
+                (
+                    "Pilot-blocking, and it has no counterpart in the master plan's list. The "
+                    "plan's checks describe what the approval gate refuses; this one describes "
+                    "who is standing at it. If GitHub's reviewer lists drift from the roster "
+                    "the platform reasons about, a person the policy has no model of releases "
+                    "spend and the decision record attributes it to somebody the model cannot "
+                    "place. That is money and attribution in one, and no limitations page "
+                    "helps: a pilot user cannot act on being told the reviewer list is "
+                    "unchecked."
+                ),
                 (
                     "Compared against config/organization.yaml rather than against a list "
                     "written in the test, because drift between GitHub's reviewers and the "
@@ -700,6 +775,7 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 "custom-branch form."
             ),
             status=CriterionStatus.COVERED,
+            pilot_blocking=True,
             proving_node_ids=(
                 *_ids(GITHUB, "test_every_environment_restricts_deployments_to_main_by_name"),
             ),
@@ -707,6 +783,15 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 *_ids(GITHUB, "test_both_approval_environments_exist_and_no_third_one_does"),
             ),
             scope_limits=(
+                (
+                    "Pilot-blocking, and it has no counterpart in the master plan's list "
+                    "although the plan's Build section requires it. This is one of the two "
+                    "escape routes the phase closes: off-main cannot reach the environment, "
+                    "and skipping the environment cannot reach AWS. The plan's checks mark the "
+                    "second and leave the first implicit, so it is marked here. Its absence "
+                    "lets a workflow on any branch reach the approval environment and, through "
+                    "it, the admission role, which is money."
+                ),
                 (
                     "The custom form is asserted specifically, and the protected-branches "
                     "form is asserted absent. They are not equivalent: protected_branches "
@@ -733,6 +818,7 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 "The intent and decision records are schema-valid and join by run ID."
             ),
             status=CriterionStatus.COVERED,
+            pilot_blocking=True,
             proving_node_ids=(
                 *_ids(LINEAGE, "test_every_intent_and_decision_join_by_run_id"),
                 *_ids(LINEAGE, "test_the_manifest_in_every_intent_still_hashes_to_its_recorded_value"),
@@ -742,6 +828,14 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 *_ids(LINEAGE, "test_the_older_shape_is_recorded_rather_than_hidden"),
             ),
             scope_limits=(
+                (
+                    "Pilot-blocking, and it has no counterpart in the master plan's list. It is "
+                    "the lineage record itself: records that do not load, or that do not join "
+                    "by run id, are an audit trail nobody can audit. This is not hypothetical "
+                    "here -- reading the real store found every decision record failing to "
+                    "load, which is the exact shape the ladder marks, a record that looks fine "
+                    "and is wrong."
+                ),
                 (
                     "Validated against the same models the Lambda used to write them, which is what "
                     "makes this more than a shape check: a record the writing model cannot read back is "
@@ -767,6 +861,7 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 "Each written object carries an S3-attested ChecksumSHA256 and a VersionId."
             ),
             status=CriterionStatus.COVERED,
+            pilot_blocking=True,
             proving_node_ids=(
                 *_ids(LINEAGE, "test_every_stored_object_carries_a_checksum_and_a_version"),
             ),
@@ -775,6 +870,16 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 *_ids(INFRA, "test_every_lineage_write_is_conditional_and_lands_on_its_documented_key"),
             ),
             scope_limits=(
+                (
+                    "Pilot-blocking, and the closest of the eight calls the plan's list left to "
+                    "be made here. The argument against is that the conditional write already "
+                    "refuses an overwrite, so the version is a second line rather than the "
+                    "first. What decides it is the ladder's other rule: a limitation only "
+                    "substitutes for a check when a reader can act on it, and there is nothing "
+                    "a pilot user can do with the sentence 'the objects holding your "
+                    "authorization records are neither attested nor versioned'. An unattested "
+                    "object that has been altered reads exactly like one that has not."
+                ),
                 (
                     "S3-attested rather than computed here. Every object in the store returned both a "
                     "ChecksumSHA256 and a VersionId from HeadObject with checksum mode enabled."
@@ -794,6 +899,7 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 "none either."
             ),
             status=CriterionStatus.GAP,
+            pilot_blocking=True,
             supporting_node_ids=(
                 *_ids(
                     INFRA,
@@ -803,6 +909,17 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 *_ids(
                     INFRA,
                     "test_service_roles_are_bounded_and_trusted_only_by_their_own_aws_service",
+                ),
+            ),
+            scope_limits=(
+                (
+                    "Pilot-blocking, and this is the criterion the master plan's own status "
+                    "block names as having no counterpart in its check list at all. The "
+                    "property is that the deciding component cannot write and the writing "
+                    "component cannot decide. Lose it and the session that asked for a "
+                    "submission can write its own decision record, which forges attribution "
+                    "and corrupts the lineage store in the same act -- two of the four harms "
+                    "at once, and both of them silent."
                 ),
             ),
             gaps=(
@@ -825,6 +942,7 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
             number="20",
             statement="The Lambda evaluates deployed policy, not caller-supplied policy.",
             status=CriterionStatus.COVERED,
+            pilot_blocking=True,
             proving_node_ids=(
                 *_ids(
                     HANDLER,
@@ -846,6 +964,14 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 *_ids(PACKAGE, "test_the_configuration_lands_where_the_handler_looks_for_it"),
             ),
             scope_limits=(
+                (
+                    "Pilot-blocking, and it has no counterpart in the master plan's list "
+                    "although the plan's Build section requires it. A caller who can supply "
+                    "the policy the decision is taken against can supply one with no ceilings "
+                    "in it, which routes around every cost bound the phase has. That is the "
+                    "money harm in its most direct form, and it leaves a decision record that "
+                    "looks properly authorized."
+                ),
                 (
                     "Two halves, and both are readable from committed artifacts, which is why "
                     "this is covered while its neighbours are not. The handler resolves its "
@@ -876,6 +1002,7 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 "policy version, the decision and the run ID."
             ),
             status=CriterionStatus.COVERED,
+            pilot_blocking=True,
             proving_node_ids=(
                 *_ids(LINEAGE, "test_every_decision_carries_the_five_fields_the_master_plan_names"),
             ),
@@ -884,6 +1011,12 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 *_ids(ADMISSION, "test_the_decision_cites_the_policy_version_aws_deployed", "v1"),
             ),
             scope_limits=(
+                (
+                    "Pilot-blocking, and it has no counterpart in the master plan's list "
+                    "although the plan's Build section requires exactly these five fields. A "
+                    "decision missing any of them is a run nobody can attribute afterwards, "
+                    "which is the attribution harm stated as plainly as the ladder states it."
+                ),
                 (
                     "Read from committed records rather than from the model's declaration, because the "
                     "master plan names these five explicitly and a record missing one is a gate failure."
@@ -904,6 +1037,7 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 "secret with a main-only policy."
             ),
             status=CriterionStatus.COVERED,
+            pilot_blocking=True,
             proving_node_ids=(
                 *_ids(GITHUB, "test_the_repository_holds_no_secret_a_branch_could_read"),
                 *_ids(GITHUB, "test_phase_two_introduced_no_credential_at_all"),
@@ -915,6 +1049,14 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 ),
             ),
             scope_limits=(
+                (
+                    "Pilot-blocking, and it is the one of the eight that looks least like a "
+                    "check because it starts satisfied. A repository-level secret is readable "
+                    "by a workflow on any branch, so the moment one exists the branch "
+                    "protections and the environment gate are both walked around, and what "
+                    "leaks is a credential. A check that guards a state you are already in is "
+                    "exactly the kind whose absence is invisible until it is expensive."
+                ),
                 (
                     "Names only, never values, and the model has no field a value could "
                     "occupy. That is a stronger guarantee than a capture tool that is "
