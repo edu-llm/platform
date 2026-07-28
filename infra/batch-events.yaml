@@ -167,16 +167,19 @@ Resources:
       # byte-identical, the change set comes back empty, and `deploy
       # --no-fail-on-empty-changeset` reports success while the old code keeps running.
       #
-      # The value below is a placeholder and this stack will fail at CreateFunction until it
-      # is replaced. That is the same thing that happened to the admission validator on its
-      # first deploy and it did its job then: a placeholder fails loudly at a named step,
-      # where an omitted property would have deployed something. Build the zip with
-      # tools/build_lifecycle_lambda.py, upload it by the procedure in infra/README.md, and
-      # paste the version id it prints here. The edit is the diff a reviewer sees.
+      # The placeholder that used to sit here did its job: this stack's first deploy never
+      # reached CreateFunction, and had it done so it would have failed there, because
+      # nothing had ever built or uploaded the zip. A placeholder fails loudly at a named
+      # step, where an omitted property would have deployed something. The value below is
+      # the real version id of the first packaged release, produced by
+      # tools/build_lifecycle_lambda.py (sha256
+      # 930c5d700be5d4f585dd04e14ff66dc8b23fe8f96e43c40b0c5b18eb4dea04f9) and uploaded by
+      # the procedure in infra/README.md. Changing the code means running that procedure
+      # again and editing this line, which is the diff a reviewer sees.
       Code:
         S3Bucket: sbsandbox-intern-edullm-artifacts
         S3Key: lifecycle-recorder/lifecycle-recorder.zip
-        S3ObjectVersion: REPLACE-WITH-THE-VERSION-ID-FROM-THE-RELEASE-PROCEDURE
+        S3ObjectVersion: DwufsfLhd1nwz8wPDBxawmSmwyHb4Nx6
       # Sixty seconds against a function that makes up to three conditional writes and no
       # other AWS call. The queue's visibility timeout above is six times this and has to
       # be changed with it.
