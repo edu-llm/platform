@@ -521,11 +521,32 @@ Resources:
                   - batch:UpdateComputeEnvironment
                 Resource:
                   Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:compute-environment/sbsandbox-intern-edullm-*
+              # CreateJobQueue and UpdateJobQueue authorize against the compute environments
+              # the queue names as well as against the queue itself, so both ARNs are here
+              # and DeleteJobQueue is split out below. This was measured rather than read:
+              # the Service Authorization Reference lists the resource types an action
+              # accepts without saying that a single call is authorized against more than
+              # one of them, and the deploy that found it failed with
+              #
+              #   not authorized to perform: batch:CreateJobQueue on resource:
+              #   arn:aws:batch:us-east-1:<account>:compute-environment/sbsandbox-intern-edullm-cpu
+              #
+              # naming the compute environment on an action that reads as being about the
+              # queue. Both take computeEnvironmentOrder, which is the property being
+              # authorized; a scope covering only the queue denies the create outright.
               - Effect: Allow
                 Action:
                   - batch:CreateJobQueue
-                  - batch:DeleteJobQueue
                   - batch:UpdateJobQueue
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-*
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:compute-environment/sbsandbox-intern-edullm-*
+              # Delete takes the queue and nothing else -- there is no compute environment in
+              # the request to authorize against -- so it keeps the narrower scope rather
+              # than inheriting the pair above.
+              - Effect: Allow
+                Action:
+                  - batch:DeleteJobQueue
                 Resource:
                   Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-*
               # RegisterJobDefinition mints a revision and the revision is part of the ARN,
@@ -621,15 +642,39 @@ Resources:
                   - sqs:UntagQueue
                 Resource:
                   Fn::Sub: arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:sbsandbox-intern-edullm-*
-              # The other half of D6. These four authorize against the *function* ARN
-              # rather than against a mapping, because a mapping is identified by a UUID
-              # that does not exist until it is created. The scope is the same function
-              # prefix the Phase 2 policy uses for the function lifecycle itself.
+              # The other half of D6, and both ARNs are here because one of them was
+              # measured the hard way. This statement previously carried the function ARN
+              # alone, on the reasoning that a mapping is identified by a UUID that does
+              # not exist until it is created, so there could be nothing to match on. That
+              # reasoning is intuitive and it is wrong: Lambda authorizes the create
+              # against the mapping ARN pattern, and the deploy that found it failed with
               #
-              # This is a capability added rather than a restriction removed, which is the
-              # whole reason option 2 was taken. An event source mapping decides which
-              # queue a function reads; it does not decide who may invoke the function, and
-              # lambda:AddPermission -- which does -- stays absent from this role.
+              #   not authorized to perform: lambda:CreateEventSourceMapping on resource:
+              #   arn:aws:lambda:us-east-1:<account>:event-source-mapping:*
+              #
+              # naming the very ARN the absent UUID was the argument against. The function
+              # ARN stays because the call authorizes against both -- the same shape as
+              # batch:CreateJobQueue above, which authorizes against the compute
+              # environment it names as well as against the queue.
+              #
+              # `event-source-mapping:*` is the narrowest ARN that exists, for the reason
+              # the old comment gave: there is no name for IAM to match on. Granting three
+              # write verbs on every mapping in a shared account is not acceptable on that
+              # basis alone, so the scope is closed with a condition instead of an ARN.
+              #
+              # lambda:FunctionArn is documented for exactly this: "Event source mappings
+              # are always associated with a function. You can also use the
+              # lambda:FunctionArn condition to restrict actions by associated function."
+              # So the reachable set is mappings whose function is ours, which is the same
+              # set the function ARN below describes -- the pair says "these mappings, on
+              # these functions" rather than "any mapping".
+              #
+              # If Lambda ever stops populating that key for a create, this statement stops
+              # matching and the deploy fails naming the action. That is the direction to
+              # fail in, and it is why the condition is preferred over widening.
+              #
+              # These four manage which queue a function reads. They do not decide who may
+              # invoke a function; lambda:AddPermission, which does, stays absent.
               - Effect: Allow
                 Action:
                   - lambda:CreateEventSourceMapping
@@ -637,7 +682,12 @@ Resources:
                   - lambda:GetEventSourceMapping
                   - lambda:UpdateEventSourceMapping
                 Resource:
-                  Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:sbsandbox-intern-edullm-*
+                  - Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:sbsandbox-intern-edullm-*
+                  - Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:event-source-mapping:*
+                Condition:
+                  ArnLike:
+                    lambda:FunctionArn:
+                      Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:sbsandbox-intern-edullm-*
               # The fifth event-source-mapping grant, in a statement of its own because it
               # is the one that does NOT authorize against the function ARN. The
               # AWS::Lambda::EventSourceMapping Read handler lists the mapping's tags, and

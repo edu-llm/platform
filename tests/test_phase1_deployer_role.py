@@ -607,6 +607,12 @@ PHASE3_WILDCARDS = [
         )
     ],
     REGIONAL_ARN % ("batch", f"compute-environment/{RESOURCE_PREFIX}*"),
+    # Creating or updating a job queue is authorized against the compute environments the
+    # queue names as well as against the queue, so that statement carries both ARNs.
+    REGIONAL_ARN % ("batch", f"job-queue/{RESOURCE_PREFIX}*"),
+    REGIONAL_ARN % ("batch", f"compute-environment/{RESOURCE_PREFIX}*"),
+    # Deleting one is not: the request carries no compute environment, so it stays narrow
+    # in a statement of its own rather than inheriting the pair above.
     REGIONAL_ARN % ("batch", f"job-queue/{RESOURCE_PREFIX}*"),
     REGIONAL_ARN % ("batch", f"job-definition/{RESOURCE_PREFIX}*"),
     # The tagging statement names all three Batch resource types, because Batch uses one
@@ -618,12 +624,21 @@ PHASE3_WILDCARDS = [
     REGIONAL_ARN % ("logs", f"log-group:/aws/batch/{RESOURCE_PREFIX}*"),
     REGIONAL_ARN % ("cloudwatch", f"alarm:{RESOURCE_PREFIX}*"),
     REGIONAL_ARN % ("sqs", f"{RESOURCE_PREFIX}*"),
-    # The event source mapping actions authorize against the function, not the mapping.
+    # The event source mapping actions authorize against both the function and the mapping,
+    # so that statement carries both ARNs. This list said "the function, not the mapping"
+    # until a deploy said otherwise: lambda:CreateEventSourceMapping was denied naming
+    # event-source-mapping:*, which is the ARN the mapping's absent UUID had been the
+    # argument against granting.
     REGIONAL_ARN % ("lambda", f"function:{RESOURCE_PREFIX}*"),
-    # Except lambda:ListTags, which authorizes against whatever ARN it is handed, and the
-    # mapping's Read handler hands it the mapping's. A mapping is addressed by a UUID Lambda
-    # assigns at creation, so this is the seventh and last scope in the role that cannot
-    # carry the project prefix -- the EC2 problem in a second service. It is read-only.
+    REGIONAL_ARN % ("lambda", "event-source-mapping:*"),
+    # The third occurrence is the same function prefix again, as the value of the
+    # lambda:FunctionArn condition that closes the mapping scope. It is a wildcard string
+    # in the template and so it is declared here, even though it grants nothing on its own.
+    REGIONAL_ARN % ("lambda", f"function:{RESOURCE_PREFIX}*"),
+    # And again for lambda:ListTags, which authorizes against whatever ARN it is handed and
+    # is given the mapping's by the Read handler, so it keeps a statement of its own. A
+    # mapping is addressed by a UUID Lambda assigns at creation, so this is the scope in the
+    # role that cannot carry the project prefix -- the EC2 problem in a second service.
     REGIONAL_ARN % ("lambda", "event-source-mapping:*"),
 ]
 

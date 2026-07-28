@@ -2,8 +2,8 @@
 
 Phase: phase-2
 Bundle schema version: 1
-Source commit: 834c5fbe1c821cea9cc696a32ec4347ba7d2c955
-Generated: 2026-07-28T01:09:03+00:00
+Source commit: 5e7d77a7ebfb89a6950d61f7a631b8750913c0aa
+Generated: 2026-07-28T03:36:23+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 2 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase2_proof.py` at generation time. It is not done, and the Result table below says by how much.
 
@@ -45,9 +45,9 @@ This run evaluated 22 acceptance criteria: twelve criteria are covered, one crit
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3168 |
-| suite tests executed | 3006 |
-| suite passed | 3006 |
+| suite tests collected | 3171 |
+| suite tests executed | 3009 |
+| suite passed | 3009 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
@@ -112,7 +112,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | infra/admission-state-machine.yaml | sha256:35cf140df478e1ff5bbe0629e0d08104d80a7b446a6d3051c5f4647319d3489f |
 | infra/iam/admission-role.yaml | sha256:e5e5b2db0ae9b7d1cdf8d46ab3568f35279a33344fe1ec337cf69e82b9c9e841 |
 | infra/iam/admission-service-roles.yaml | sha256:829c2a55e96e74dabc3da803b118615701fdec0da6305569b860102a9c6676dc |
-| infra/iam/infra-deployer-role.yaml | sha256:feb32d24f24956cbab5a5fe47882557554ede17c811845214e3cf3c9d6a3af32 |
+| infra/iam/infra-deployer-role.yaml | sha256:905fbf8444c271ee9337874643c01d76eefdaba31571142407f3220eeef1c019 |
 | infra/lineage-bucket.yaml | sha256:9bad0303f92659a47caa1fe57f1bf10c77a3b11a11a9f58f21b1c341befd761d |
 
 ## Known limitations

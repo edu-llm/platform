@@ -407,8 +407,25 @@
           "action_match": {
             "actions": [
               "batch:CreateJobQueue",
-              "batch:DeleteJobQueue",
               "batch:UpdateJobQueue"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-queue/sbsandbox-intern-edullm-*",
+              "arn:aws:batch:us-east-1:<aws-account-id>:compute-environment/sbsandbox-intern-edullm-*"
+            ]
+          },
+          "sid": null
+        },
+        {
+          "action_match": {
+            "actions": [
+              "batch:DeleteJobQueue"
             ],
             "element": "Action"
           },
@@ -565,12 +582,21 @@
             ],
             "element": "Action"
           },
-          "conditions": [],
+          "conditions": [
+            {
+              "condition_key": "lambda:FunctionArn",
+              "operator": "ArnLike",
+              "values": [
+                "arn:aws:lambda:us-east-1:<aws-account-id>:function:sbsandbox-intern-edullm-*"
+              ]
+            }
+          ],
           "effect": "Allow",
           "resource_match": {
             "element": "Resource",
             "resources": [
-              "arn:aws:lambda:us-east-1:<aws-account-id>:function:sbsandbox-intern-edullm-*"
+              "arn:aws:lambda:us-east-1:<aws-account-id>:function:sbsandbox-intern-edullm-*",
+              "arn:aws:lambda:us-east-1:<aws-account-id>:event-source-mapping:*"
             ]
           },
           "sid": null
@@ -616,7 +642,7 @@
     }
   ],
   "max_session_duration_seconds": 3600,
-  "observed_at": "2026-07-28T01:02:10Z",
+  "observed_at": "2026-07-28T03:28:09Z",
   "permissions_boundary_policy_name": "InternSandboxBoundary",
   "role_name": "sbsandbox-intern-edullm-infra-deployer",
   "source": "aws",
