@@ -22,6 +22,13 @@ and comparing is what stops an exception being released by a lead.
 
 Authorization is evaluated last, because it is the only question whose answer depends on a
 person rather than on the request.
+
+One thing is resolved after the decision rather than as part of it. Where an accepted run
+would go -- the queue, the job definition, the two roles -- is read from deployed
+configuration once everything else has said yes, and a profile with nowhere to run becomes
+a refusal with its own reason rather than an exception. That ordering is not cosmetic: a
+submission refused for want of capacity has already been classified, priced and authorized,
+and a reader of the record can see that the only thing wrong with it was the profile.
 """
 
 from __future__ import annotations
@@ -45,6 +52,11 @@ from edullm_platform.contracts.authorization import (
     evaluate_authorization,
 )
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
+from edullm_platform.contracts.execution import (
+    ExecutionTarget,
+    ExecutionTargetCatalog,
+    UnbackedComputeProfileError,
+)
 from edullm_platform.contracts.image import GitHubWorkflowRunReference
 from edullm_platform.contracts.image_scan import (
     ImageScanExceptionRegistry,
@@ -58,7 +70,12 @@ from edullm_platform.contracts.policy import (
     RequestFacts,
     classify_request,
 )
-from edullm_platform.contracts.workload import CostInputs, WorkloadCatalog
+from edullm_platform.contracts.workload import (
+    ComputeProfileResolutionError,
+    CostInputs,
+    WorkloadCatalog,
+)
+from edullm_platform.execution import resolve_execution_target
 from edullm_platform.manifest_helpers import (
     build_request_facts,
     compute_manifest_cost_inputs,
@@ -98,6 +115,11 @@ class UnreadableManifestError(ValueError):
 class AdmissionOutcome:
     intent: IntentRecord
     decision: DecisionRecord
+    #: Where this run goes, and ``None`` whenever it is not going anywhere. Populated only
+    #: for an accepted decision, because a target resolved for a refused submission would
+    #: be a queue and a job definition attached to a run nobody may start -- and the state
+    #: machine's Choice reads the acceptance, not this.
+    execution: ExecutionTarget | None = None
 
     @property
     def accepted(self) -> bool:
@@ -149,6 +171,8 @@ def admit(
     policy: ApprovalPolicy,
     inventory: OrganizationInventory,
     catalog: WorkloadCatalog,
+    execution_targets: ExecutionTargetCatalog,
+    account_id: str,
     dataset_registry: DatasetRegistry,
     image_scan_registry: ImageScanExceptionRegistry,
     image_scan_summary: ImageScanSummary | None,
@@ -175,9 +199,11 @@ def admit(
         approval_class: ApprovalClass,
         authorization: AuthorizationDecision | None,
         cost: CostInputs | None,
+        execution: ExecutionTarget | None = None,
     ) -> AdmissionOutcome:
         return AdmissionOutcome(
             intent=intent,
+            execution=execution,
             decision=DecisionRecord(
                 schema_version=1,
                 run_id=run_id,
@@ -279,6 +305,31 @@ def admit(
             cost=cost,
         )
 
+    try:
+        execution = resolve_execution_target(
+            compute_profile=manifest.compute_profile,
+            catalog=catalog,
+            targets=execution_targets,
+            account_id=account_id,
+        )
+    except (ComputeProfileResolutionError, UnbackedComputeProfileError) as exc:
+        # A policy refusal, not a crash. The profile is registered and priced -- an
+        # unregistered one was denied outright above -- so what happened is that the
+        # platform was asked for capacity it does not have, which is a thing to record and
+        # tell the submitter rather than a reason for the validator to fail the execution
+        # and leave no decision behind.
+        return decide(
+            reason=AdmissionReason.NO_EXECUTION_TARGET,
+            detail=(
+                f"The submission was authorized and has nowhere to run: {exc.reason_code}. "
+                f"Compute profile {manifest.compute_profile!r} is registered and priced, "
+                "and no compute environment deployed by this platform backs it."
+            ),
+            approval_class=approval_class,
+            authorization=authorization,
+            cost=cost,
+        )
+
     return decide(
         reason=AdmissionReason.ACCEPTED,
         detail=(
@@ -289,4 +340,5 @@ def admit(
         approval_class=approval_class,
         authorization=authorization,
         cost=cost,
+        execution=execution,
     )

@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from edullm_platform.config import load_yaml
+from edullm_platform.contracts.workload import WorkloadCatalog
 from edullm_platform.criteria import (
     CriteriaDefinitionError,
     CriterionSpec,
@@ -452,9 +454,27 @@ def shipped_checks() -> tuple[CriterionSpec, ...]:
     return recorded_checks(discover_fixtures(PROJECT_ROOT))
 
 
-def test_known_limitations_name_the_unprovisioned_compute_and_empty_team_bindings() -> None:
+def test_known_limitations_name_the_compute_provisioning_state_and_empty_team_bindings() -> None:
+    """The provisioning limitation narrowed when Phase 3 promoted one profile; it did not go.
+
+    This asserted "No compute profile is provisioned" until Phase 3, and the assertion is
+    deliberately not just deleted. Eleven of the twelve are still priced entries nothing
+    backs, which is the same limitation over a smaller set, and a bundle that stopped
+    mentioning provisioning at all would read as though the question had been settled. What
+    is checked is that the prose says which profiles are provisioned and which are not --
+    the shape of the claim rather than its wording, so promoting a second one in Phase 4
+    does not fail here for the wrong reason.
+    """
+    catalog = load_yaml(PROJECT_ROOT / "config" / "workload-catalog.yaml", WorkloadCatalog)
+    provisioned = [profile.name for profile in catalog.compute_profiles if profile.provisioned]
     limitations = known_limitations(PROJECT_ROOT, shipped_checks())
-    assert any("No compute profile is provisioned" in item for item in limitations)
+
+    compute = [item for item in limitations if "provisioned" in item]
+    assert compute, "the bundle no longer says anything about compute provisioning"
+    if provisioned:
+        assert any(name in item for name in provisioned for item in compute)
+    else:
+        assert any("No compute profile is provisioned" in item for item in compute)
     assert any("Team bindings are empty" in item for item in limitations)
 
 

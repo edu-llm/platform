@@ -6,7 +6,8 @@
         "manifest_hash_mismatch",
         "denied_outright",
         "authorization_denied",
-        "approval_environment_mismatch"
+        "approval_environment_mismatch",
+        "no_execution_target"
       ],
       "title": "AdmissionReason",
       "type": "string"

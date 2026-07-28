@@ -82,6 +82,13 @@ class AdmissionReason(StrEnum):
     AUTHORIZATION_DENIED = "authorization_denied"
     #: The submission was classified into one approval path and arrived through the other.
     APPROVAL_ENVIRONMENT_MISMATCH = "approval_environment_mismatch"
+    #: The compute profile is registered and priced, and nothing backs it: either the
+    #: catalog does not call it provisioned, or it does and no execution target names it.
+    #: A refusal rather than an exception, because a manifest asking for capacity that
+    #: does not exist is a request this platform understood and declined -- and a
+    #: submission that crashed the validator would leave no decision record saying so.
+    #: Which of the two it was is in ``detail``; both mean there is nowhere to run.
+    NO_EXECUTION_TARGET = "no_execution_target"
 
 
 AdmissionReasonValue = Annotated[

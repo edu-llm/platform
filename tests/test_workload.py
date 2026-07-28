@@ -293,7 +293,15 @@ def test_workload_catalog_yaml_validates_against_contract() -> None:
     config_path = project_root / "config" / "workload-catalog.yaml"
     catalog = load_yaml(config_path, WorkloadCatalog)
     assert len(catalog.compute_profiles) == 12
-    assert len(catalog.workloads) == 2
+    assert len(catalog.workloads) == 3
+    # The CPU workload Phase 3 runs. It names OLMo-core because that is the only
+    # registered repository with a published image; dolma-tokenize-smoke is the same
+    # shape against a repository that has neither.
+    runnable_cpu = next(
+        workload for workload in catalog.workloads if workload.name == "olmo-core-cpu-smoke"
+    )
+    assert runnable_cpu.repository == "OLMo-core"
+    assert runnable_cpu.compute_profile == "cpu-32vcpu"
     profile_by_name = {profile.name: profile for profile in catalog.compute_profiles}
     cpu_workload = next(
         workload for workload in catalog.workloads if workload.name == "dolma-tokenize-smoke"

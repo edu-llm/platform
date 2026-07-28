@@ -18,6 +18,14 @@ live run that stored every record quoted and escaped.
 dataset registry are packaged into the deployment artifact and read from disk. Nothing in
 the event can supply or override them. That is what makes ``policy_version`` in a decision
 record a fact about the platform rather than a claim by the caller.
+
+**It resolves where an accepted run would go, and it still cannot send it there.** Phase 3
+adds ``config/execution-targets.yaml`` to that packaged set and an ``execution`` key to the
+answer, carrying the resolved target and the exact parameter block the state machine passes
+to ``batch:SubmitJob``. The split is the same one the S3 writes use and the reason is
+sharper: the component that parses a manifest an attacker could shape decides *what would
+be submitted* and holds no permission to submit it, and the launch appears as a first-class
+event in the execution history rather than inside this function's logs.
 """
 
 from __future__ import annotations
@@ -34,6 +42,7 @@ from edullm_platform.canonical import canonical_json_bytes
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.admission import ApprovalEnvironment
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
+from edullm_platform.contracts.execution import ExecutionTargetCatalog
 from edullm_platform.contracts.image import GitHubWorkflowRunReference
 from edullm_platform.contracts.image_scan import (
     ImageScanExceptionRegistry,
@@ -42,8 +51,15 @@ from edullm_platform.contracts.image_scan import (
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.policy import ApprovalPolicy
 from edullm_platform.contracts.workload import WorkloadCatalog
+from edullm_platform.execution import batch_submit_request
 
-__all__ = ["AdmissionEventError", "config_directory", "handler"]
+__all__ = [
+    "AdmissionContextError",
+    "AdmissionEventError",
+    "account_id_from_context",
+    "config_directory",
+    "handler",
+]
 
 #: Where the packaged configuration lives inside the deployment artifact. Overridable so a
 #: test can point at the repository's own ``config/`` without staging a build.
@@ -63,11 +79,50 @@ class AdmissionEventError(ValueError):
     """The state machine sent something this handler cannot interpret."""
 
 
+class AdmissionContextError(ValueError):
+    """Lambda did not say which account this invocation is running in.
+
+    Distinct from an event error because nothing the caller sent is at fault and no
+    decision record could describe it. Without the account there is no ARN to build, so the
+    handler refuses rather than guessing one.
+    """
+
+
 def config_directory() -> Path:
     configured = os.environ.get(CONFIG_DIRECTORY_VARIABLE)
     if configured:
         return Path(configured)
     return Path(__file__).resolve().parent / "config"
+
+
+def account_id_from_context(context: object) -> str:
+    """Read the account this function is running in out of its own invocation context.
+
+    From the context rather than from an environment variable or from STS, and the reason
+    is different for each of the two.
+
+    An environment variable is deployment configuration: it says what somebody wrote into a
+    template, which is a claim that can be wrong, and a wrong one would build queue and
+    job-definition ARNs pointing at another account -- where the submit would fail with a
+    message about a missing queue rather than about a misconfigured function.
+    ``invoked_function_arn`` is Lambda's own statement about where this invocation is
+    happening and cannot disagree with it.
+
+    STS would be equally true and costs a network call from a component whose whole design
+    property is that it makes none. It would also mean this handler needed a permission,
+    and ``sts:GetCallerIdentity`` cannot be denied by a policy -- so the grant would be
+    invisible in a role diff while the call itself became a failure mode on the admission
+    path.
+    """
+    arn = getattr(context, "invoked_function_arn", None)
+    segments = arn.split(":") if isinstance(arn, str) else []
+    if len(segments) < 6 or not segments[4].isdigit() or len(segments[4]) != 12:
+        raise AdmissionContextError(
+            "the invocation context carries no usable invoked_function_arn, so the "
+            "account this function runs in is unknown and no execution target ARN can be "
+            "built"
+        )
+    return segments[4]
 
 
 def _require(event: Mapping[str, Any], field: str) -> Any:
@@ -77,7 +132,7 @@ def _require(event: Mapping[str, Any], field: str) -> Any:
 
 
 def handler(event: Mapping[str, Any], context: object = None) -> dict[str, Any]:
-    del context  # The handler is a pure function of its event and its packaged config.
+    account_id = account_id_from_context(context)
 
     missing = [field for field in _REQUIRED_EVENT_FIELDS if field not in event]
     if missing:
@@ -93,6 +148,7 @@ def handler(event: Mapping[str, Any], context: object = None) -> dict[str, Any]:
     image_scan_registry = load_yaml(
         config / "image-exceptions.yaml", ImageScanExceptionRegistry
     )
+    execution_targets = load_yaml(config / "execution-targets.yaml", ExecutionTargetCatalog)
 
     try:
         approving_environment = ApprovalEnvironment(_require(event, "approving_environment"))
@@ -119,6 +175,8 @@ def handler(event: Mapping[str, Any], context: object = None) -> dict[str, Any]:
         policy=policy,
         inventory=inventory,
         catalog=catalog,
+        execution_targets=execution_targets,
+        account_id=account_id,
         dataset_registry=dataset_registry,
         image_scan_registry=image_scan_registry,
         # The state machine puts the ECR describe result here, from a task it ran itself.
@@ -131,7 +189,7 @@ def handler(event: Mapping[str, Any], context: object = None) -> dict[str, Any]:
     )
 
     run_id = outcome.intent.run_id
-    return {
+    answer: dict[str, Any] = {
         "accepted": outcome.accepted,
         "run_id": run_id,
         "reason": outcome.decision.reason.value,
@@ -159,3 +217,21 @@ def handler(event: Mapping[str, Any], context: object = None) -> dict[str, Any]:
         "intent": json.loads(canonical_json_bytes(outcome.intent)),
         "decision": json.loads(canonical_json_bytes(outcome.decision)),
     }
+    if outcome.execution is not None:
+        # Present only when accepted, and absent rather than null when not: the state
+        # machine's Choice branches on `accepted`, and a rejected submission that carried
+        # an execution block would be one InputPath away from being submitted anyway.
+        #
+        # `submit_request` is passed through to batch:submitJob untouched -- the ASL sends
+        # it by InputPath and does not build it -- so its key set is a hard contract
+        # between this function and the state machine, and reshaping it here is the same
+        # change as editing the ASL. A seam test holds the two together.
+        answer["execution"] = {
+            "target": json.loads(canonical_json_bytes(outcome.execution)),
+            "submit_request": batch_submit_request(
+                manifest=outcome.intent.manifest,
+                target=outcome.execution,
+                run_id=run_id,
+            ),
+        }
+    return answer

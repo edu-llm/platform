@@ -6,7 +6,11 @@ compute_profiles:
     hourly_rate_usd: "1.428"
     pricing_source: "AWS Price List API get-products AmazonEC2 c7i.8xlarge us-east-1 Linux/Shared/NA/Used"
     pricing_observed_at: "2026-07-24"
-    provisioned: false
+    # The one profile Phase 3 promotes, backed by the compute environment
+    # infra/batch-compute.yaml creates and named in config/execution-targets.yaml. Promoting
+    # a second without deploying an environment for it is a contradiction between two files
+    # rather than a flag, and a test refuses it.
+    provisioned: true
   - name: gpu-1xt4
     instance_type: g4dn.xlarge
     accelerator: gpu
@@ -96,6 +100,19 @@ compute_profiles:
     pricing_observed_at: "2026-07-25"
     provisioned: false
 workloads:
+  # The CPU workload Phase 3 actually runs. It names OLMo-core rather than dolma because
+  # OLMo-core is the only repository config/repositories.yaml registers and the only one
+  # with a published image; a workload naming an unregistered repository cannot reach Batch
+  # however well the rest of the path works.
+  - name: olmo-core-cpu-smoke
+    repository: OLMo-core
+    compute_profile: cpu-32vcpu
+    maximum_runtime_hours: "1"
+    maximum_attempts: 1
+    checkpoint: null
+  # Retained and still unrunnable: dolma has no registration and no image. Kept because the
+  # catalog is a pricing-and-shape document and this entry is the shape a tokenizer job
+  # takes, not a claim that one can be submitted today.
   - name: dolma-tokenize-smoke
     repository: dolma
     compute_profile: cpu-32vcpu

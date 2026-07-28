@@ -286,7 +286,10 @@ def phase0_criteria(references: Sequence[FixtureReference]) -> tuple[CriterionSp
                     "tests/test_fanout.py::test_the_fanout_block_cannot_carry_per_cell_resource_overrides[dataset_release]",
                     "tests/test_fanout.py::test_the_fanout_block_cannot_carry_per_cell_resource_overrides[overrides]",
                     "tests/test_compute_profiles.py::test_unpriced_profile_is_refused_as_unregistered",
-                    "tests/test_compute_profiles.py::test_shipped_profile_is_refused_at_execution_until_provisioned[gpu-4xa10g]",
+                    # Renamed in Phase 3, when promoting cpu-32vcpu meant the parametrisation
+                    # stopped covering every profile. gpu-4xa10g is still unprovisioned and
+                    # is still the case this criterion cites.
+                    "tests/test_compute_profiles.py::test_an_unprovisioned_profile_is_refused_at_execution[gpu-4xa10g]",
                     "tests/test_workload.py::test_resolving_unknown_profile_reports_unregistered_profile",
                     "tests/test_phase0_gate.py::test_representative_manifests_fails_for_unregistered_compute_profile",
                     "tests/test_bindings.py::test_team_binding_rejects_s3_namespaces_outside_the_sandbox[memory-split]",

@@ -1,0 +1,27 @@
+# Which compute profiles are actually backed by infrastructure, and by what.
+#
+# Separate from config/workload-catalog.yaml on purpose. That file is a pricing-and-shape
+# document: it answers "what would this cost" and is read by the compile step, the approver
+# context and cost estimation, none of which should acquire an opinion about queues. This
+# file answers "is there anywhere to run it", which is an infrastructure fact and changes
+# when infrastructure changes.
+#
+# The two must agree. A profile marked provisioned in the catalog with no entry here, or an
+# entry here for a profile the catalog does not call provisioned, is a contradiction between
+# two files and is caught by
+# tests/test_phase3_execution.py::test_every_provisioned_profile_is_backed_and_every_target_names_a_provisioned_one
+# -- a config-to-config comparison, so it lives beside the resolver rather than with the
+# CloudFormation tests. Whether the queue this file names is the one the templates create
+# is a different seam, checked in tests/test_phase3_infrastructure.py.
+#
+# Names rather than ARNs, so no account id lands in reviewed configuration. The ARNs are
+# assembled at resolution time; see contracts/execution.py.
+schema_version: 1
+targets:
+  - compute_profile: cpu-32vcpu
+    region: us-east-1
+    job_queue: sbsandbox-intern-edullm-cpu
+    job_definition: sbsandbox-intern-edullm-cpu-run
+    execution_role: sbsandbox-intern-edullm-batch-execution
+    workload_role: sbsandbox-intern-edullm-batch-workload
+    log_group: /aws/batch/sbsandbox-intern-edullm-cpu

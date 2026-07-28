@@ -1,0 +1,68 @@
+{
+  "$defs": {
+    "AttemptTerminalState": {
+      "enum": [
+        "succeeded",
+        "failed",
+        "cancelled"
+      ],
+      "title": "AttemptTerminalState",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "attempt_id": {
+      "pattern": "^att_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "title": "Attempt Id",
+      "type": "string"
+    },
+    "attempt_ordinal": {
+      "minimum": 1,
+      "title": "Attempt Ordinal",
+      "type": "integer"
+    },
+    "ended_at": {
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$",
+      "title": "Ended At",
+      "type": "string"
+    },
+    "run_id": {
+      "pattern": "^run_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "scheduler_job_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9:/_.-]{0,511}$",
+      "title": "Scheduler Job Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "started_at": {
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$",
+      "title": "Started At",
+      "type": "string"
+    },
+    "terminal_state": {
+      "$ref": "#/$defs/AttemptTerminalState"
+    }
+  },
+  "required": [
+    "schema_version",
+    "attempt_id",
+    "run_id",
+    "attempt_ordinal",
+    "scheduler_job_id",
+    "started_at",
+    "ended_at",
+    "terminal_state"
+  ],
+  "title": "SchedulerAttempt",
+  "type": "object"
+}

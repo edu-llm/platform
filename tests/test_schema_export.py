@@ -165,6 +165,17 @@ def test_rendered_schemas_cover_all_root_contract_models() -> None:
         # Reviewed configuration a human edits: which published digests somebody has read
         # the scan findings for and accepted.
         "image-exceptions.schema.json",
+        # The execution records Phase 3 writes into the same store. Defined in Phase 0 and
+        # constructed by nothing until Phase 3, which is why they arrive here only now.
+        "logical-run.schema.json",
+        "scheduler-attempt.schema.json",
+        "lifecycle-event.schema.json",
+        "checkpoint-manifest.schema.json",
+        "result-manifest.schema.json",
+        # The one record Phase 3 adds rather than reuses: what Batch said when it accepted
+        # a submission, which is a fact no Phase 0 contract could hold because every one of
+        # them needs an outcome that does not exist yet.
+        "batch-job-binding.schema.json",
     }
 
 

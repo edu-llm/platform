@@ -37,16 +37,37 @@ from edullm_platform.admission_handler import (
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 STATE_MACHINE_PATH = PROJECT_ROOT / "infra" / "admission-state-machine.yaml"
 
+#: Twelve digits that are not this account's. The handler reads the account out of its own
+#: invocation context and builds queue and job-definition ARNs from it, and a real account
+#: id in a committed test file is the thing every capture tool then has to redact.
+ACCOUNT_ID = "123456789012"
+
+
+class InvocationContext:
+    """What Lambda hands a function about the invocation, as far as this handler reads it.
+
+    A stand-in rather than a mock: the handler reads one attribute, and a test that passed
+    the account in some other way would exercise a path the deployed function does not
+    take. ``invoked_function_arn`` is the whole interface.
+    """
+
+    invoked_function_arn = (
+        f"arn:aws:lambda:us-east-1:{ACCOUNT_ID}:function:sbsandbox-intern-edullm-admission"
+    )
+
+
 #: A submission that admission accepts, in the shape the submitting workflow sends. The
 #: commit and digest are the ones Phase 1 actually published, so nothing here is a shape
-#: that could not occur.
+#: that could not occur. The compute profile is the one Phase 3 promoted, because admission
+#: now refuses a profile nothing backs and the eleven unpromoted ones would be refused for
+#: a reason none of these tests is about.
 ACCEPTED_EVENT: dict[str, Any] = {
     "run_id": "run_019fa439-203e-70c7-bf8a-9ce33bc71f20",
     "submitter": "philote-dev",
     "approver": "philote-dev",
     "approving_environment": "run-approval-lead",
     "approved_manifest_sha256": (
-        "sha256:819aaf8aef45e1ac51efed1924e1455f7fca7356f1c3ee1067fa934558e6075c"
+        "sha256:d6de8ce982365bf8491922097edf7aeaf28a280e9cf005eb4131cb3a41360770"
     ),
     "manifest": {
         "schema_version": 1,
@@ -55,8 +76,8 @@ ACCEPTED_EVENT: dict[str, Any] = {
         "image_digest": (
             "sha256:4ebdba1ba3b57096efb4f4647ed41ed5ded4ac9e77e8c9038b7ff24db0bc6db8"
         ),
-        "workload_profile": "olmo-core-train-smoke",
-        "compute_profile": "gpu-4xa10g",
+        "workload_profile": "olmo-core-cpu-smoke",
+        "compute_profile": "cpu-32vcpu",
         "dataset_release": "dolma-2026-07",
         "team": "memory-split",
         "wandb_project": "olmo-core-memory-split",
@@ -121,7 +142,7 @@ def definition() -> dict[str, Any]:
 def test_the_handler_admits_a_routine_submission_a_lead_released(
     _packaged_config: None,
 ) -> None:
-    result = handler(ACCEPTED_EVENT)
+    result = handler(ACCEPTED_EVENT, InvocationContext())
 
     assert result["accepted"] is True
     assert result["reason"] == "accepted"
@@ -132,7 +153,7 @@ def test_the_records_are_mappings_rather_than_strings(_packaged_config: None) ->
     # A string here is stored by S3 quoted and escaped, because the SDK integration
     # JSON-encodes whatever the Body path yields. That went live once and every record
     # written that day has to be parsed twice to read.
-    result = handler(ACCEPTED_EVENT)
+    result = handler(ACCEPTED_EVENT, InvocationContext())
 
     for field in ("intent", "decision"):
         assert isinstance(result[field], Mapping), f"{field} must not be a string"
@@ -148,7 +169,7 @@ def test_the_records_serialize_back_to_the_bytes_they_were_hashed_from(
     # canonical order, so an encoder that keeps insertion order and compact separators --
     # which is what the S3 integration was measured to do -- reproduces the canonical
     # bytes exactly. Building the mapping any other way loses this silently.
-    result = handler(ACCEPTED_EVENT)
+    result = handler(ACCEPTED_EVENT, InvocationContext())
 
     for field in ("intent", "decision"):
         record = result[field]
@@ -166,7 +187,7 @@ def test_the_decision_cites_the_policy_on_disk_not_anything_in_the_event(
     deployed = yaml.safe_load((PROJECT_ROOT / "config" / "policy.yaml").read_text())
     tampered = {**ACCEPTED_EVENT, "policy": {"policy_version": "attacker-supplied"}}
 
-    decision = handler(tampered)["decision"]
+    decision = handler(tampered, InvocationContext())["decision"]
 
     assert decision["policy_version"] == deployed["policy_version"]
     assert decision["policy_version"] != "attacker-supplied"
@@ -177,7 +198,7 @@ def test_a_manifest_that_does_not_hash_to_the_approved_value_is_refused(
 ) -> None:
     tampered = {**ACCEPTED_EVENT, "approved_manifest_sha256": "sha256:" + "0" * 64}
 
-    result = handler(tampered)
+    result = handler(tampered, InvocationContext())
 
     assert result["accepted"] is False
     assert result["reason"] == "manifest_hash_mismatch"
@@ -185,7 +206,10 @@ def test_a_manifest_that_does_not_hash_to_the_approved_value_is_refused(
 
 def test_an_event_missing_a_field_names_all_of_them(_packaged_config: None) -> None:
     with pytest.raises(AdmissionEventError, match="submitter"):
-        handler({key: value for key, value in ACCEPTED_EVENT.items() if key != "submitter"})
+        handler(
+            {key: value for key, value in ACCEPTED_EVENT.items() if key != "submitter"},
+            InvocationContext(),
+        )
 
 
 def _payload_paths(node: Any, found: set[str]) -> None:
@@ -218,7 +242,7 @@ def test_every_payload_path_the_definition_reads_is_a_key_the_handler_returns(
     # keys by running the handler, the paths by parsing the committed template. A rename
     # on either side fails here rather than at States.Runtime in a live execution, which
     # is where it failed the first time.
-    returned = set(handler(ACCEPTED_EVENT))
+    returned = set(handler(ACCEPTED_EVENT, InvocationContext()))
     read: set[str] = set()
     _payload_paths(definition, read)
 

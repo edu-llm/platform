@@ -224,12 +224,26 @@ def known_limitations(repo_root: Path, checks: Sequence[CriterionSpec]) -> tuple
     inventory = load_yaml(repo_root / "config" / "organization.yaml", OrganizationInventory)
     policy = load_yaml(repo_root / "config" / "policy.yaml", ApprovalPolicy)
     limitations: list[str] = []
-    if not any(profile.provisioned for profile in catalog.compute_profiles):
+    provisioned = [profile.name for profile in catalog.compute_profiles if profile.provisioned]
+    if not provisioned:
         limitations.append(
             f"No compute profile is provisioned. All {len(catalog.compute_profiles)} profiles in "
             "the workload catalog are priced and dated but carry provisioned: false, so "
             "resolve_compute_profile_for_execution refuses every one of them. Phase 0 proves "
             "pricing and classification, not that anything can run."
+        )
+    else:
+        # Still a limitation, and a narrower one. Phase 3 promoted one profile; the rest are
+        # priced entries that nothing backs, which is the state Phase 4 has to change before
+        # it can promote a second. Said in the same place as the original so a reader
+        # comparing two bundles sees the claim shrink rather than disappear.
+        limitations.append(
+            f"{len(provisioned)} of {len(catalog.compute_profiles)} compute profiles are "
+            f"provisioned: {', '.join(sorted(provisioned))}. Every other profile is priced "
+            "and dated but carries provisioned: false, so "
+            "resolve_compute_profile_for_execution refuses it. Phase 0 proves pricing and "
+            "classification for all of them and that nothing can run is no longer true of "
+            "the whole catalog."
         )
     if not inventory.team_bindings.teams:
         limitations.append(

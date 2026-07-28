@@ -11,6 +11,7 @@ from edullm_platform.config import load_yaml
 from edullm_platform.contracts.admission import AdmissionReason, ApprovalEnvironment
 from edullm_platform.contracts.authorization import AuthorizationReason
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
+from edullm_platform.contracts.execution import ExecutionTargetCatalog
 from edullm_platform.contracts.image import GitHubWorkflowRunReference
 from edullm_platform.contracts.image_scan import (
     ImageScanExceptionRegistry,
@@ -38,6 +39,15 @@ RUN_ID = "run_0198f0a1-2b3c-7d4e-8f01-23456789abcd"
 RECORDED_AT = datetime(2026, 7, 27, 9, 15, 30, 123456, tzinfo=UTC)
 UNMATCHED_DIGEST = "sha256:" + "0" * 64
 
+#: Twelve digits that are not this account's. Admission builds queue and job-definition
+#: ARNs from whatever account it is told about, and a real one in a committed test file is
+#: the account id every capture tool then has to redact.
+ACCOUNT_ID = "123456789012"
+
+#: The profile the exception fixture names. Priced, and not backed by anything Phase 3
+#: deploys, which is a refusal in its own right -- see the note on ``backed_by_a_target``.
+EXCEPTION_COMPUTE_PROFILE = "gpu-4xa10g"
+
 UNREGISTERED_DATASET = "dolma-2026-99"
 UNREGISTERED_REPOSITORY = "not-a-pilot-repository"
 UNREGISTERED_COMPUTE_PROFILE = "cpu-1024vcpu"
@@ -57,6 +67,41 @@ def load_workload_catalog() -> WorkloadCatalog:
 
 def load_dataset_registry() -> DatasetRegistry:
     return load_yaml(PROJECT_ROOT / "config" / "datasets.yaml", DatasetRegistry)
+
+
+def load_execution_targets() -> ExecutionTargetCatalog:
+    return load_yaml(PROJECT_ROOT / "config" / "execution-targets.yaml", ExecutionTargetCatalog)
+
+
+def backed_by_a_target(profile_name: str) -> tuple[WorkloadCatalog, ExecutionTargetCatalog]:
+    """A catalog and a target file that both say this profile can run.
+
+    Phase 3 made "nowhere to run" a refusal, and eleven of the twelve profiles are in that
+    state -- including the one the exception fixture names. The two tests below are about
+    which gate may release an exception, not about whether capacity exists, so they run
+    against configuration that backs the profile rather than being refused for a reason
+    that has nothing to do with what they assert.
+
+    The refusal itself is not skipped by this: it is the subject of
+    ``tests/test_phase3_execution.py``, where it is asserted directly instead of arriving
+    here as an incidental failure that would pass whatever the gate did.
+    """
+    catalog = load_workload_catalog()
+    profiles = tuple(
+        profile.model_copy(update={"provisioned": True})
+        if profile.name == profile_name
+        else profile
+        for profile in catalog.compute_profiles
+    )
+    backed = catalog.model_copy(update={"compute_profiles": profiles})
+    deployed = load_execution_targets()
+    template = deployed.targets[0]
+    targets = (
+        deployed.targets
+        if profile_name in deployed.backed_profiles
+        else (*deployed.targets, template.model_copy(update={"compute_profile": profile_name}))
+    )
+    return backed, deployed.model_copy(update={"targets": targets})
 
 
 #: A scan with nothing in it, for the tests that are about admission rather than about
@@ -128,6 +173,8 @@ def admit_submission(
     approver: str | None = LEAD,
     approving_environment: ApprovalEnvironment = ApprovalEnvironment.LEAD,
     policy: ApprovalPolicy | None = None,
+    catalog: WorkloadCatalog | None = None,
+    execution_targets: ExecutionTargetCatalog | None = None,
     dataset_registry: DatasetRegistry | None = None,
     image_scan_registry: ImageScanExceptionRegistry | None = None,
     image_scan_summary: ImageScanSummary | None = None,
@@ -151,7 +198,11 @@ def admit_submission(
         workflow_run=workflow_run(),
         policy=policy if policy is not None else load_approval_policy(),
         inventory=load_organization_inventory(),
-        catalog=load_workload_catalog(),
+        catalog=catalog if catalog is not None else load_workload_catalog(),
+        execution_targets=(
+            execution_targets if execution_targets is not None else load_execution_targets()
+        ),
+        account_id=ACCOUNT_ID,
         dataset_registry=(
             dataset_registry if dataset_registry is not None else load_dataset_registry()
         ),
@@ -209,11 +260,14 @@ def test_a_correct_submission_through_the_right_gate_is_admitted() -> None:
 
 
 def test_an_exception_released_by_an_admin_through_the_admin_gate_is_admitted() -> None:
+    catalog, targets = backed_by_a_target(EXCEPTION_COMPUTE_PROFILE)
     outcome = admit_submission(
         manifest_name=EXCEPTION_MANIFEST,
         submitter=LEAD,
         approver=ADMIN,
         approving_environment=ApprovalEnvironment.ADMIN,
+        catalog=catalog,
+        execution_targets=targets,
     )
     decision = outcome.decision
 
@@ -358,11 +412,14 @@ def test_a_routine_submission_released_by_the_admin_gate_is_refused() -> None:
 def test_the_class_is_re_derived_rather_than_read_from_the_gate_that_released_it(
     approving_environment: ApprovalEnvironment,
 ) -> None:
+    catalog, targets = backed_by_a_target(EXCEPTION_COMPUTE_PROFILE)
     outcome = admit_submission(
         manifest_name=EXCEPTION_MANIFEST,
         submitter=LEAD,
         approver=ADMIN,
         approving_environment=approving_environment,
+        catalog=catalog,
+        execution_targets=targets,
     )
 
     assert outcome.decision.approval_class is ApprovalClass.EXCEPTION
