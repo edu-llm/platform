@@ -152,9 +152,13 @@ def test_the_generator_refuses_to_write_a_bundle_whose_prose_contradicts_the_gat
     # The one defect a bundle cannot survive. A reviewer who trusts it without reading the
     # suite would come away believing a gap was closed -- which in this phase would mean
     # believing a container had run.
+    # A claim in the other direction now that check 1 is covered: a bundle understating a
+    # closed check is the same defect as one overstating an open one, because a reviewer
+    # cannot tell which way a bundle is wrong without reading the suite it exists to
+    # replace.
     monkeypatch.setattr(
         "tools.build_phase3_proof.known_limitations",
-        lambda checks, goldens: ("Check 1 is covered.",),
+        lambda checks, goldens: ("Check 1 is a gap.",),
     )
 
     with pytest.raises(ProofBundleError, match="did not reach"):
@@ -188,7 +192,10 @@ def test_a_limitation_that_names_a_check_takes_its_status_from_the_definition() 
     # off the checks rather than typed. This is what makes the guard above never fire.
     limitations = known_limitations(shipped_checks(), compute_goldens(PROJECT_ROOT))
 
-    assert any("check 1 -- that a valid run reaches succeeded -- is a gap" in text.lower() for text in limitations)
+    assert any(
+        "check 1 -- that a valid run reaches succeeded -- is covered" in text.lower()
+        for text in limitations
+    )
     assert any("check 22 is covered" in text.lower() for text in limitations)
 
 
@@ -209,13 +216,32 @@ def test_every_empty_document_is_written_rather_than_omitted(
     """Mutation: skip a section that has nothing in it.
 
     A document omitted because there was nothing to put in it makes the phase look like it
-    has fewer claims than it has, and nobody counts what is not there. Seven of the
-    seventeen files in this bundle exist to hold live evidence and hold none.
+    has fewer claims than it has, and nobody counts what is not there.
+
+    Seven of the seventeen files existed to hold live evidence and held none. Six now hold
+    it, rendered from the captures of four completed runs, and the seventh -- EventBridge
+    delivery -- is still empty because the two checks it serves need a redelivered event
+    and an inventory of the whole lineage store, neither of which any completed run
+    produced. The count is asserted so that a document quietly moving between the two
+    groups is visible here rather than only in a diff of the bundle.
     """
-    assert len(EMPTY_SECTIONS) == 7
+    assert len(EMPTY_SECTIONS) == 1
     for section in EMPTY_SECTIONS:
         assert section.filename in first_bundle, section.filename
         assert section.filename in BUNDLE_FILENAMES
+
+    # The six that used to be empty are in the bundle and are no longer empty, which is the
+    # half this test would otherwise stop checking.
+    for filename in (
+        "batch-execution-evidence.md",
+        "log-stream-evidence.md",
+        "lineage-record-evidence.md",
+        "cancellation-and-timeout-evidence.md",
+        "deployed-role-drift.md",
+        "rollback-evidence.md",
+    ):
+        assert filename in BUNDLE_FILENAMES
+        assert "This document is empty" not in first_bundle[filename], filename
 
 
 @pytest.mark.slow
@@ -230,7 +256,11 @@ def test_every_empty_document_says_why_and_what_would_fill_it(
     for section in EMPTY_SECTIONS:
         text = first_bundle[section.filename]
         assert "This document is empty" in text
-        assert "Wave 5 is held" in text
+        # The reason is no longer that the phase is undeployed, and the boilerplate has to
+        # say the reason it actually has. A document still blaming a held wave would send a
+        # reader looking for a deploy that happened.
+        assert "no longer that the phase is undeployed" in text
+        assert "Wave 5" not in text
         assert section.records in text
         for filler in section.filled_by:
             assert filler in text
@@ -368,9 +398,21 @@ def test_the_networking_document_records_the_terms_rather_than_only_the_ids(
 
 
 @pytest.mark.slow
-def test_the_denial_document_says_the_matrices_have_never_run(
+def test_the_denial_document_separates_the_matrix_that_ran_from_the_one_that_did_not(
     first_bundle: dict[str, str],
 ) -> None:
+    """The two matrices are in different states and the document must not average them.
+
+    Mutation: go back to "neither has ever run", or forward to "both have". The admission
+    matrix executes in every submission against a real session; the workload matrix runs
+    inside the container and no command has ever run it. A sentence covering both would be
+    false about one of them whichever way it was written, and the direction it is false in
+    is the direction a reader would over-trust.
+
+    Having run is also not the same as being recorded here, and the document has to say so:
+    the admission matrix writes to a GitHub artifact that expires, which is why the check
+    resting on it is still open.
+    """
     from edullm_platform.batch_denials import (
         ADMISSION_BATCH_DENIED_ACTIONS,
         BATCH_PROBE_LESSONS,
@@ -384,7 +426,12 @@ def test_the_denial_document_says_the_matrices_have_never_run(
     for lesson in BATCH_PROBE_LESSONS:
         assert lesson.rule in document
         assert lesson.learned_from in document
-    assert "neither has ever run" in document
+    assert "The admission matrix has run" in document
+    assert "The workload matrix has not" in document
+    assert "neither has ever run" not in document
+    # The artifact retention is why check 12 is still a gap, and the document says it
+    # rather than leaving a reader to wonder why a matrix that passed closes nothing.
+    assert "thirty-day retention" in document
 
 
 @pytest.mark.slow

@@ -39,17 +39,35 @@ from typing import Annotated, Final, Literal
 
 from pydantic import BeforeValidator, Field
 
-from edullm_platform.contracts.base import ContractModel, require_ordered_sequence
-from edullm_platform.evidence import FreshEvidenceModel, SecretFreeStr
+from edullm_platform.contracts.base import (
+    ContractModel,
+    UtcTimestamp,
+    require_ordered_sequence,
+)
+from edullm_platform.contracts.execution import LogGroupName
+from edullm_platform.contracts.identity import RunId
+from edullm_platform.contracts.lifecycle import SchedulerJobId
+from edullm_platform.evidence import (
+    EvidenceEnvironment,
+    FreshEvidenceModel,
+    SecretFreeStr,
+)
 from edullm_platform.role_drift import PHASE3_ROLE_TEMPLATES
 
 __all__ = [
+    "EVERY_BATCH_JOB_STATUS",
     "PHASE3_ROLE_TEMPLATES",
     "AccountMeasurements",
     "AuthorizationControl",
     "BatchInventory",
+    "BatchJobEvidence",
+    "ComputeEnvironmentEvidence",
+    "LineageObjectAttestation",
+    "LogStreamEvidence",
     "NetworkPlacement",
+    "RefusedRunEvidence",
     "RegionAuthorization",
+    "RunLineageAttestation",
     "ServiceLinkedRoleRecord",
     "SubnetOffering",
     "VpcQuotaRecord",
@@ -294,3 +312,273 @@ class AccountMeasurements(FreshEvidenceModel):
             if record.role_name == role_name:
                 return record.exists
         return None
+
+
+# --------------------------------------------------------------------------------------
+# What one live run left behind
+# --------------------------------------------------------------------------------------
+
+#: A CloudWatch Logs stream name. Colons and asterisks are the two characters the service
+#: refuses, so this is the service's own rule rather than a guess at one.
+LogStreamName = Annotated[str, Field(pattern=r"^[^:*]{1,512}$")]
+
+#: Every status Batch reports. Written as a Literal rather than imported from an enum so a
+#: captured record is checked against the exact strings the service wrote, and a renamed
+#: member fails to load instead of quietly reading as something else.
+BatchJobStatus = Literal[
+    "SUBMITTED", "PENDING", "RUNNABLE", "STARTING", "RUNNING", "SUCCEEDED", "FAILED"
+]
+
+#: The six kinds of object one run puts in the lineage store. ``events`` is plural because
+#: a run writes one object per lifecycle event and the others write exactly one each.
+LineageRecordKind = Literal["intent", "decision", "binding", "events", "attempt", "result"]
+
+#: What Batch says when it stops a job for outrunning ``attemptDurationSeconds``. Observed
+#: on 2026-07-28 against a job given 180 seconds and a command that slept 600.
+BATCH_TIMEOUT_STATUS_REASON: Final = "Job attempt duration exceeded timeout"
+
+
+class BatchJobEvidence(FreshEvidenceModel):
+    """One Batch job as the service describes it, joined to its run by the job name.
+
+    **The exit code is the field this record exists for.** The lineage store says a run
+    ``failed``; only Batch says the container exited 3. Those are different facts, and the
+    criterion about a failure preserving its reason is about the second one. A record that
+    carried only the outcome would let a job killed by the scheduler read exactly like a
+    command that returned non-zero.
+
+    ``container_exit_code`` and ``status_reason`` are both optional because a job that
+    never placed has neither, and recording a zero for "no container ran" would be the
+    worst available answer -- zero is the success value.
+
+    ``log_stream_name`` is the stream and never the group. The group is in the binding
+    already and resolves to every job on the queue; only the stream resolves to this one.
+    """
+
+    source: Literal["aws"]
+    environment: EvidenceEnvironment
+    region: AwsRegionName
+    run_id: RunId
+    batch_job_id: SchedulerJobId
+    #: The job name Batch holds, which the platform sets to the run id. Recorded rather
+    #: than assumed equal to ``run_id``: the whole join rests on them agreeing, so a
+    #: capture that wrote one value into both fields could not show that they do.
+    batch_job_name: RunId
+    status: BatchJobStatus
+    status_reason: SecretFreeStr | None = Field(default=None, max_length=1024)
+    container_exit_code: int | None = None
+    log_stream_name: LogStreamName | None = None
+    job_queue_name: SecretFreeStr = Field(min_length=1)
+    job_definition_name: SecretFreeStr = Field(min_length=1)
+    started_at: UtcTimestamp | None = None
+    stopped_at: UtcTimestamp | None = None
+    #: How many attempts Batch recorded. A retry that the platform did not ask for would
+    #: show up here and nowhere else in the lineage.
+    attempt_count: int = Field(ge=0)
+
+    @property
+    def joins_to_its_run(self) -> bool:
+        return self.batch_job_name == self.run_id
+
+    @property
+    def succeeded(self) -> bool:
+        return self.status == "SUCCEEDED" and self.container_exit_code == 0
+
+    @property
+    def timed_out(self) -> bool:
+        """Whether Batch stopped this job for outrunning its attempt duration.
+
+        Matched on the service's own wording, pinned rather than approximated. Two
+        failures that look alike in every other field are entirely different events: a
+        command that returned non-zero decided its own fate and has an exit code, while a
+        job the scheduler killed has none. Reading them the same way would let a timeout
+        that never fired look like a workload that failed on its own.
+
+        If AWS rewords the reason this goes false and the check resting on it fails
+        loudly, which is the right outcome -- somebody re-reads it rather than a timeout
+        quietly reclassifying itself as an ordinary failure.
+        """
+        return (
+            self.status == "FAILED"
+            and self.status_reason == BATCH_TIMEOUT_STATUS_REASON
+            and self.container_exit_code is None
+        )
+
+
+class LogStreamEvidence(FreshEvidenceModel):
+    """The lines a container actually printed, fetched back out of its recorded stream.
+
+    This is the record that distinguishes a recorded log *group* from a recorded log
+    *stream*, which is the mutation the logs criterion exists to catch: a group name reads
+    as complete and resolves to every job on the queue. Fetching the stream back and
+    finding the line the container printed is the only thing that tells them apart.
+
+    ``lines`` holds the messages rather than a count, because a stream that exists and is
+    empty is a different failure from one that has the output in it, and a count of zero
+    cannot say which of those a reader is looking at.
+    """
+
+    source: Literal["aws"]
+    environment: EvidenceEnvironment
+    region: AwsRegionName
+    run_id: RunId
+    log_group_name: LogGroupName
+    log_stream_name: LogStreamName
+    lines: Annotated[tuple[str, ...], BeforeValidator(require_ordered_sequence)] = Field(
+        strict=False
+    )
+    #: True when the capture stopped short of the end of the stream. A truncated record
+    #: still proves the stream resolves and carries output; it cannot prove what the last
+    #: line was, and a reader has to be able to tell.
+    truncated: bool = False
+
+
+class LineageObjectAttestation(ContractModel):
+    """What S3 attests about one lineage object, and whether the object still loads.
+
+    ``checksum_sha256`` and ``version_id`` are what the store says about the bytes. They
+    are the criterion about attestation, and they are deliberately separate from the
+    manifest hash an approval was taken against -- a reader who conflated the two would
+    think one proved the other.
+
+    ``loads_as_contract`` is the field that keeps this honest. Three bindings written
+    before the ASL fix carry a whole admission payload where ``array_size`` belongs, so
+    they are attested, versioned, intact, and refused by the contract that defines what a
+    binding is. Recording only the attestation would describe those objects as sound.
+    """
+
+    key: SecretFreeStr = Field(min_length=1)
+    record_kind: LineageRecordKind
+    version_id: SecretFreeStr = Field(min_length=1)
+    checksum_sha256: SecretFreeStr = Field(min_length=1)
+    content_length: int = Field(ge=0)
+    #: Whether the stored bytes are exactly the canonical serialization of the record they
+    #: hold, computed here rather than taken on trust.
+    canonical: bool
+    #: Whether the object loads as the contract its key claims it is.
+    loads_as_contract: bool
+
+
+class RunLineageAttestation(FreshEvidenceModel):
+    """Every lineage object one run wrote, with what S3 attests about each.
+
+    Driven by the run id rather than by the bucket listing, so an object another run wrote
+    cannot arrive in this record, and an object this run should have written and did not
+    is absent rather than substituted for.
+    """
+
+    source: Literal["aws"]
+    environment: EvidenceEnvironment
+    run_id: RunId
+    bucket: SecretFreeStr = Field(min_length=1)
+    objects: Annotated[
+        tuple[LineageObjectAttestation, ...], BeforeValidator(require_ordered_sequence)
+    ] = Field(min_length=1, strict=False)
+
+    def kinds(self) -> tuple[str, ...]:
+        return tuple(sorted({record.record_kind for record in self.objects}))
+
+    @property
+    def every_object_is_attested(self) -> bool:
+        return all(
+            record.checksum_sha256 and record.version_id for record in self.objects
+        )
+
+    @property
+    def unloadable(self) -> tuple[LineageObjectAttestation, ...]:
+        return tuple(record for record in self.objects if not record.loads_as_contract)
+
+
+#: Every Batch status a job can be sitting in. A search for "is there a job for this run"
+#: has to name where it looked, because Batch's ListJobs answers one status at a time and
+#: a search that quietly skipped one would report an absence it had not established.
+EVERY_BATCH_JOB_STATUS: Final = (
+    "SUBMITTED",
+    "PENDING",
+    "RUNNABLE",
+    "STARTING",
+    "RUNNING",
+    "SUCCEEDED",
+    "FAILED",
+)
+
+
+class RefusedRunEvidence(FreshEvidenceModel):
+    """A run admission refused, and the absence of the job it would otherwise have started.
+
+    **The absence is the evidence, so it is recorded rather than implied.** A capture that
+    simply had no Batch job record for a refused run would look identical to one where
+    nobody went and checked. ``matching_batch_job_ids`` being empty is the claim, and
+    ``searched_job_statuses`` is what makes it a claim somebody can audit: Batch answers
+    ``ListJobs`` one status at a time, so an absence established without naming the
+    statuses searched is an absence established nowhere.
+
+    ``decision_accepted`` is typed as a plain bool rather than pinned to ``False``. A
+    refusal record that could not express "the decision actually said yes" would have no
+    way to report the one outcome that matters most -- a run this platform believed it had
+    refused and did not.
+    """
+
+    source: Literal["aws"]
+    environment: EvidenceEnvironment
+    region: AwsRegionName
+    run_id: RunId
+    decision_accepted: bool
+    decision_reason: SecretFreeStr = Field(min_length=1)
+    decision_detail: SecretFreeStr = Field(min_length=1)
+    execution_status: Literal["SUCCEEDED", "FAILED", "TIMED_OUT", "ABORTED", "RUNNING"]
+    execution_error: SecretFreeStr | None = None
+    matching_batch_job_ids: OrderedStrings = Field(strict=False)
+    searched_job_statuses: OrderedStrings = Field(min_length=1, strict=False)
+
+    @property
+    def refused_and_started_nothing(self) -> bool:
+        return not self.decision_accepted and not self.matching_batch_job_ids
+
+    @property
+    def searched_every_status(self) -> bool:
+        return set(self.searched_job_statuses) == set(EVERY_BATCH_JOB_STATUS)
+
+
+class ComputeEnvironmentEvidence(FreshEvidenceModel):
+    """The deployed compute environment, its capacity and the networking it landed on.
+
+    Two criteria read this and they want opposite things from it. One asks that the
+    environment exists and is usable, which is ``status`` VALID and ``state`` ENABLED. The
+    other asks that it holds nothing while idle, which is ``desired_vcpus`` at zero. Both
+    are properties of the same object at the same instant, so they are captured together
+    rather than as two records that could be observed hours apart and read as one moment.
+
+    The subnet and security group ids are here because the networking criterion asks what
+    the environment *uses*, which is not what a template asks for -- a stack applied by
+    hand can land somewhere else, and only the deployed object says where.
+    """
+
+    source: Literal["aws"]
+    environment: EvidenceEnvironment
+    region: AwsRegionName
+    compute_environment_name: SecretFreeStr = Field(min_length=1)
+    status: Literal["CREATING", "UPDATING", "DELETING", "DELETED", "VALID", "INVALID"]
+    state: Literal["ENABLED", "DISABLED"]
+    desired_vcpus: int = Field(ge=0)
+    minimum_vcpus: int = Field(ge=0)
+    maximum_vcpus: int = Field(ge=0)
+    vpc_id: VpcId
+    subnet_ids: Annotated[
+        tuple[SubnetId, ...], BeforeValidator(require_ordered_sequence)
+    ] = Field(min_length=1, strict=False)
+    security_group_ids: Annotated[
+        tuple[str, ...], BeforeValidator(require_ordered_sequence)
+    ] = Field(min_length=1, strict=False)
+    instance_types: OrderedStrings = Field(strict=False)
+    #: The queues that route to this environment. Recorded so "exactly one profile is
+    #: provisioned and it is backed" can be read from one record.
+    job_queue_names: OrderedStrings = Field(strict=False)
+
+    @property
+    def usable(self) -> bool:
+        return self.status == "VALID" and self.state == "ENABLED"
+
+    @property
+    def idle_and_holding_nothing(self) -> bool:
+        return self.desired_vcpus == 0

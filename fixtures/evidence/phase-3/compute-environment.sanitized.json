@@ -1,0 +1,29 @@
+{
+  "compute_environment_name": "sbsandbox-intern-edullm-cpu",
+  "desired_vcpus": 0,
+  "environment": "sandbox",
+  "instance_types": [
+    "c7i.8xlarge"
+  ],
+  "job_queue_names": [
+    "sbsandbox-intern-edullm-cpu"
+  ],
+  "maximum_vcpus": 128,
+  "minimum_vcpus": 0,
+  "observed_at": "2026-07-28T17:15:22Z",
+  "region": "us-east-1",
+  "security_group_ids": [
+    "sg-087218d8c87aa8576"
+  ],
+  "source": "aws",
+  "state": "ENABLED",
+  "status": "VALID",
+  "subnet_ids": [
+    "subnet-01f4bf9a051404a37",
+    "subnet-08792525c62ba31c0",
+    "subnet-0a4235fb98b63930f",
+    "subnet-0bbe2b7870da13713",
+    "subnet-0fd5ed8accae254dc"
+  ],
+  "vpc_id": "vpc-0622b8d314ff5f800"
+}

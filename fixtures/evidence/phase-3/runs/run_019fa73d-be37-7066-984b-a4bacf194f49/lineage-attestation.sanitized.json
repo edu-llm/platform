@@ -1,0 +1,90 @@
+{
+  "bucket": "sbsandbox-intern-edullm-lineage",
+  "environment": "sandbox",
+  "objects": [
+    {
+      "canonical": true,
+      "checksum_sha256": "p1KmQGmv7DPpFARl2wguYkpAXADDxD8cKPqH+aqI4+Q=",
+      "content_length": 316,
+      "key": "attempt/run_019fa73d-be37-7066-984b-a4bacf194f49/att_019fa910-13ef-7af8-ad90-81b03811c034.json",
+      "loads_as_contract": true,
+      "record_kind": "attempt",
+      "version_id": "OFxXHnZYHMNc9uvTM1bPbPIVJ7hkgkQj"
+    },
+    {
+      "canonical": false,
+      "checksum_sha256": "H5B/h99okudQc+WDZO/mQjG8Sr7nwT7UpVJPnaNs8pE=",
+      "content_length": 26166,
+      "key": "binding/run_019fa73d-be37-7066-984b-a4bacf194f49.json",
+      "loads_as_contract": false,
+      "record_kind": "binding",
+      "version_id": "A9kodlnLf7zM.KbCdLZAK6Vkawl_pxAM"
+    },
+    {
+      "canonical": true,
+      "checksum_sha256": "sOsXOGKVr3n3XAkNVoz11iz6h85KV2AxmSX4NKHGO1I=",
+      "content_length": 822,
+      "key": "decision/run_019fa73d-be37-7066-984b-a4bacf194f49.json",
+      "loads_as_contract": true,
+      "record_kind": "decision",
+      "version_id": "lgSVeEDSjNGFBWQ5EMjjLBglHYtwBXiL"
+    },
+    {
+      "canonical": true,
+      "checksum_sha256": "tKYQcNAv39D/QFX51ygJSLIJk6ls5ViysfeluWgy0TQ=",
+      "content_length": 264,
+      "key": "events/run_019fa73d-be37-7066-984b-a4bacf194f49/evt_0b479f87-f01b-6d6e-d5aa-b7877e9463ec.json",
+      "loads_as_contract": true,
+      "record_kind": "events",
+      "version_id": "8ZzuIgOuj3wGlHBM3pQzdvYgFe2XyBmL"
+    },
+    {
+      "canonical": true,
+      "checksum_sha256": "K5jdJ5OYtm9OcGe4I1MtHQcEAKhXbqP8wljXF4wTM3M=",
+      "content_length": 228,
+      "key": "events/run_019fa73d-be37-7066-984b-a4bacf194f49/evt_1923a7f0-bc3d-e17d-c9c4-3fc498d67e13.json",
+      "loads_as_contract": true,
+      "record_kind": "events",
+      "version_id": "KmW1sIRKWY1BXgyMJ6emy1Y6NPk4VbEy"
+    },
+    {
+      "canonical": true,
+      "checksum_sha256": "pDLEJPY23E3/X5w1t/bGYKW7UeIsp8UgXwferajiQgI=",
+      "content_length": 227,
+      "key": "events/run_019fa73d-be37-7066-984b-a4bacf194f49/evt_5a876b9a-d3d4-8dc2-a61d-e39dbb1aac9a.json",
+      "loads_as_contract": true,
+      "record_kind": "events",
+      "version_id": "YNiy9_FxhpOVcWwR7MkOYbELRVqqqaTU"
+    },
+    {
+      "canonical": true,
+      "checksum_sha256": "M5gTVfsERCGMJj34b+pDwWC5hdTS/4RYvzNXui4duwU=",
+      "content_length": 228,
+      "key": "events/run_019fa73d-be37-7066-984b-a4bacf194f49/evt_67450957-0084-8e98-bf00-b8fa8a9d679c.json",
+      "loads_as_contract": true,
+      "record_kind": "events",
+      "version_id": "CLZCUrVC6qDRJHb2SL1Kc9lmFvkkLvju"
+    },
+    {
+      "canonical": true,
+      "checksum_sha256": "TDMlMb1oqrB5QaPgCYgi57tGYhNC8XfaISmphXKq62w=",
+      "content_length": 1030,
+      "key": "intent/run_019fa73d-be37-7066-984b-a4bacf194f49.json",
+      "loads_as_contract": true,
+      "record_kind": "intent",
+      "version_id": "jSlaNR2i4Nw0h6XfqrwZxIlkxDbhYSlI"
+    },
+    {
+      "canonical": true,
+      "checksum_sha256": "kRWduE7jFxBPLd4EzhfZk9SrZ2QAcNrvq9dElneJ034=",
+      "content_length": 356,
+      "key": "result/run_019fa73d-be37-7066-984b-a4bacf194f49.json",
+      "loads_as_contract": true,
+      "record_kind": "result",
+      "version_id": "4NWOlqcTvArtXX10sfMCpivZikVlpiVG"
+    }
+  ],
+  "observed_at": "2026-07-28T16:40:09Z",
+  "run_id": "run_019fa73d-be37-7066-984b-a4bacf194f49",
+  "source": "aws"
+}

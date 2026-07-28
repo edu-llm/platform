@@ -80,12 +80,22 @@ Resources:
               # renaming it without the event pattern makes jobs run with no lineage at
               # all. infra/README.md explains it and tests/test_phase3_infrastructure.py
               # compares all three against each other.
+              #
+              # THE GPU PAIR IS LISTED, NOT MATCHED BY A PREFIX. sbsandbox-intern-edullm-*
+              # across both resource types would have covered Phase 4 and every phase after
+              # it in one edit, and that is the reason not to: this is the only principal in
+              # the account that may put work on a queue, and a prefix would extend that to
+              # any queue a later phase happens to name. Two profiles are provisioned, so
+              # six ARNs are listed. A third is a visible edit here.
               - Effect: Allow
                 Action: batch:SubmitJob
                 Resource:
                   - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-cpu
                   - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-cpu-run
                   - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-cpu-run:*
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-run
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-run:*
               # batch:TagResource is here to serve the SubmitJob above and for no other
               # reason. batch_submit_request always sends Tags -- the run id, the team and
               # the compute profile, which is what Phase 5's cost attribution reads -- and
@@ -112,6 +122,9 @@ Resources:
                   - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-cpu
                   - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-cpu-run
                   - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-cpu-run:*
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-run
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-run:*
               # ecr:DescribeImageScanFindings, for the ReadImageScan state the state
               # machine runs before it validates anything. The findings reach the validator
               # as a payload key the ASL builds from this task's result and from nowhere

@@ -1,0 +1,13 @@
+{
+  "environment": "sandbox",
+  "lines": [
+    "edullm deliberate failure"
+  ],
+  "log_group_name": "/aws/batch/sbsandbox-intern-edullm-cpu",
+  "log_stream_name": "cpu-run/default/462480fa644f4112a85e292d07b0d3b6",
+  "observed_at": "2026-07-28T16:40:09Z",
+  "region": "us-east-1",
+  "run_id": "run_019fa73d-be37-7066-984b-a4bacf194f49",
+  "source": "aws",
+  "truncated": false
+}

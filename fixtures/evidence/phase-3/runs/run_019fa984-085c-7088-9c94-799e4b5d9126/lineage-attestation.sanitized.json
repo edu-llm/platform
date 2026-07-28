@@ -1,0 +1,27 @@
+{
+  "bucket": "sbsandbox-intern-edullm-lineage",
+  "environment": "sandbox",
+  "objects": [
+    {
+      "canonical": true,
+      "checksum_sha256": "B/sPKY60X6GgX3AGm3Jpj/95ySiFqPipzXqRpvgUPdc=",
+      "content_length": 927,
+      "key": "decision/run_019fa984-085c-7088-9c94-799e4b5d9126.json",
+      "loads_as_contract": true,
+      "record_kind": "decision",
+      "version_id": "8bpmifzpXxep7Ql.9UobX9KHkXNPL0XO"
+    },
+    {
+      "canonical": true,
+      "checksum_sha256": "eVDFMYdnvmDRDAwtsoLaJCt+jvM5Y2PEdo+d0R2i5O0=",
+      "content_length": 999,
+      "key": "intent/run_019fa984-085c-7088-9c94-799e4b5d9126.json",
+      "loads_as_contract": true,
+      "record_kind": "intent",
+      "version_id": "ZNbV6cO0hpo51vlQ0TslHZbTH.6R.k.I"
+    }
+  ],
+  "observed_at": "2026-07-28T16:50:54Z",
+  "run_id": "run_019fa984-085c-7088-9c94-799e4b5d9126",
+  "source": "aws"
+}

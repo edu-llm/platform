@@ -312,6 +312,7 @@ def read_committed_role_captures(
     capture_dir: Path | None = None,
     partition: str = CAPTURE_PARTITION,
     region: str = CAPTURE_REGION,
+    role_templates: Sequence[tuple[str, str]] | None = None,
 ) -> tuple[CommittedRoleCapture, ...]:
     """Every role a template declares, plus any captured role none of them does.
 
@@ -323,8 +324,15 @@ def read_committed_role_captures(
     A template this module cannot project raises rather than producing a verdict: that is
     a defect in the repository rather than a fact about the account, and reporting it as a
     capture that does not hold would point the reader at the wrong half.
+
+    ``role_templates`` defaults to Phase 1's registry and is a parameter so that Phase 3
+    can compare its own four roles through the same machinery. The registries stay
+    separate -- a Phase 3 role drifting must not fail a Phase 1 capture -- and what is
+    shared is the comparison rather than the list.
     """
-    templates = dict(COMMITTED_ROLE_TEMPLATES)
+    templates = dict(
+        COMMITTED_ROLE_TEMPLATES if role_templates is None else role_templates
+    )
     directory = repo_root / ROLE_CAPTURE_DIR if capture_dir is None else capture_dir
     found: list[CommittedRoleCapture] = []
     if directory.is_dir():

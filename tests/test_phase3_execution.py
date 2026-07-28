@@ -70,6 +70,10 @@ RUN_ID = "run_0198f0a1-2b3c-7d4e-8f01-23456789abcd"
 RECORDED_AT = datetime(2026, 7, 27, 9, 15, 30, 123456, tzinfo=UTC)
 
 PROMOTED_PROFILE = "cpu-32vcpu"
+#: Every profile the catalog marks provisioned, in the order it promotes them. The seam
+#: test below compares this against both config files; the constant exists so that adding
+#: a profile is one visible edit rather than a number somebody increments.
+PROMOTED_PROFILES = (PROMOTED_PROFILE, "gpu-1xa10g")
 UNPROVISIONED_PROFILE = "gpu-4xa10g"
 UNREGISTERED_PROFILE = "cpu-1024vcpu"
 
@@ -233,18 +237,30 @@ def test_a_provisioned_profile_with_no_target_is_a_contradiction_rather_than_a_r
 def test_every_provisioned_profile_is_backed_and_every_target_names_a_provisioned_one() -> None:
     """Seam test 3, read from both files rather than either.
 
-    Mutation: flip a second profile to ``provisioned: true`` without adding a target. That
-    is the specific way Phase 4's promotion would quietly claim capacity that does not
-    exist, and it is invisible to any test that reads one file.
+    Mutation: flip a third profile to ``provisioned: true`` without adding a target. That
+    is the way a promotion quietly claims capacity that does not exist, and it is invisible
+    to any test that reads one file.
+
+    THIS TEST CAUGHT WHAT IT WAS WRITTEN FOR AND THEN HAD TO BE EDITED, which is the
+    intended sequence and not a weakening. It said ``provisioned == {PROMOTED_PROFILE}``
+    and its docstring named "Phase 4's promotion" as the mutation. Phase 4 promoted
+    ``gpu-1xa10g``, this failed, and a person checked that the compute environment, the
+    queue, the job definition and the two roles all existed before changing the number.
+
+    The equality above it is the part that must never be relaxed into a subset. Provisioned
+    without a target is a manifest accepted and then refused at resolution; a target for a
+    profile nobody promoted is a queue the catalog will not route to, which is the same
+    disagreement read from the other side.
     """
     catalog = workload_catalog()
     targets = execution_targets()
     provisioned = {profile.name for profile in catalog.compute_profiles if profile.provisioned}
 
     assert provisioned == set(targets.backed_profiles)
-    assert provisioned == {PROMOTED_PROFILE}, (
-        "Phase 3 promotes exactly one profile on purpose; a second one arriving here "
-        "without its own compute environment is the thing this seam exists to catch"
+    assert provisioned == set(PROMOTED_PROFILES), (
+        "a profile arriving here without its own compute environment is the thing this "
+        "seam exists to catch; promoting one is a deliberate edit in both files and in "
+        "this list, after the infrastructure it names has been deployed"
     )
 
 

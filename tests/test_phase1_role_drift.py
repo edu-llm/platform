@@ -240,6 +240,14 @@ def test_the_deployer_projection_keeps_the_narrowed_wildcards_it_was_given(
         role_arn % "sbsandbox-intern-edullm-batch-workload",
         role_arn % "sbsandbox-intern-edullm-batch-instance",
         role_arn % "sbsandbox-intern-edullm-lifecycle-lambda",
+        # Phase 4. Three more whole role ARNs and no new wildcard, which is the property
+        # this test is really about: the GPU stack needed no widened scope anywhere, because
+        # every Batch, log-group, rule and alarm entry above already stops at the edullm
+        # segment and a queue named ...-gpu falls inside it. The only edit a second compute
+        # environment forced on this role was naming the three roles it passes.
+        role_arn % "sbsandbox-intern-edullm-batch-gpu-execution",
+        role_arn % "sbsandbox-intern-edullm-batch-gpu-workload",
+        role_arn % "sbsandbox-intern-edullm-batch-gpu-instance",
         # The second exception, and the same cause in another service: an event source
         # mapping is addressed by a UUID Lambda assigns at creation, so the mapping's tag
         # read cannot be scoped by name either. It is the only action granted on it and it

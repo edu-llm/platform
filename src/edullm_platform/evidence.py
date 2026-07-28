@@ -93,12 +93,22 @@ class InstanceEvidence(TypedDict):
     quota_code: str
 
 
+#: The instance types capacity evidence can be captured for, and what each one needs.
+#:
+#: This is not a list of instance types the platform knows about -- the catalog prices
+#: twelve. It is the subset any profile requiring capacity evidence uses, which is the
+#: provisioned ones plus the ones a representative manifest names. Adding a profile to
+#: either of those sets without adding its instance type here fails the capture outright,
+#: which is the direction to fail in: the alternative is a quota record whose required_vcpus
+#: somebody guessed.
 INSTANCE_EVIDENCE: dict[str, InstanceEvidence] = {
+    "g5.xlarge": {"required_vcpus": 4, "quota_code": "L-DB2E81BA"},
     "g5.12xlarge": {"required_vcpus": 48, "quota_code": "L-DB2E81BA"},
     "c7i.8xlarge": {"required_vcpus": 32, "quota_code": "L-1216C47A"},
 }
 
 WORKLOAD_PROFILE_REQUIRED_VCPUS: Final = {
+    "gpu-1xa10g": INSTANCE_EVIDENCE["g5.xlarge"]["required_vcpus"],
     "gpu-4xa10g": INSTANCE_EVIDENCE["g5.12xlarge"]["required_vcpus"],
     "cpu-32vcpu": INSTANCE_EVIDENCE["c7i.8xlarge"]["required_vcpus"],
 }

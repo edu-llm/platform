@@ -1,23 +1,24 @@
 # Phase 3 Batch execution evidence
 
-**This document is empty, and it is empty for one reason.** Wave 5 is held: no Phase 3 stack has been applied to this account, no compute environment or job queue exists, and no Batch job has ever run here. There is nothing to record. It is generated empty rather than omitted because a bundle missing a document reads as a phase with fewer claims, and a reviewer counting what is here should count this too.
+What Batch says about each job this platform submitted, read back with `describe-jobs` and projected field by field rather than scanned afterwards -- a Batch job detail carries the full container command and environment, so a capture that sanitized by scanning would be one unrecognised field away from committing a workload's arguments.
 
-## What this document records
+The exit code column is the one that earns its place. A result record says a run failed; only the exit code separates a command that returned non-zero, which has one, from a job the scheduler killed, which does not.
 
-The successful and failed Batch job ids, their compute environment, queue and job definition, the attempts array, the container exit codes, and the instance each job actually ran on.
+| run | Batch job id | status | container exit | reason Batch gave |
+| --- | --- | --- | --- | --- |
+| `run_019fa73d-be37-7066-984b-a4bacf194f49` | `fde2fa08-a611-48dc-a0ef-1c6797147543` | FAILED | 3 | Essential container in task exited |
+| `run_019fa96f-8f10-705a-a7a9-69c42eafce16` | `7505b42e-0c45-4600-9488-bab6474de3c1` | SUCCEEDED | 0 | Essential container in task exited |
+| `run_019fa984-085c-7088-9c94-799e4b5d9126` | — | no job | — | refused before submission |
+| `run_019fa9a6-4460-7095-a358-a1552e250f1b` | `56b43cb9-abcc-4f74-bbf5-6f61f12d1981` | FAILED | — | Job attempt duration exceeded timeout |
 
-## What would fill it
+## The compute environment these ran on
 
-- One accepted run carried through to SUCCEEDED, and one whose command exits non-zero carried through to FAILED.
-- `aws batch describe-jobs` for each, captured and sanitized by field projection rather than by scanning afterwards: a Batch job detail carries the full container command and environment.
+Read from the deployed environment after every run above had finished. `desiredvCpus` is the reading that matters: `minvCpus` is what the template asks for and cannot catch an environment that scaled up and did not come back down.
 
-## Criteria waiting on it
-
-| criterion | status today |
+| fact | value |
 | --- | --- |
-| 1 | a gap |
-| 4 | a gap |
-| 15 | a gap |
-| 16 | a gap |
-
-Each of those is recorded in `src/edullm_platform/phase3_criteria.py` with the same account of what is missing, and `uv run python tools/validate_phase3.py` reports it. This document and that definition are two views of one fact rather than two claims.
+| compute environment | `sbsandbox-intern-edullm-cpu` |
+| status | VALID, ENABLED |
+| job queues routing to it | `sbsandbox-intern-edullm-cpu` |
+| vCPUs, min / desired / max | 0 / 0 / 128 |
+| observed | 2026-07-28 |

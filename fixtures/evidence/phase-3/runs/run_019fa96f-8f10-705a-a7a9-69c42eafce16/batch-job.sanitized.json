@@ -1,0 +1,18 @@
+{
+  "attempt_count": 1,
+  "batch_job_id": "7505b42e-0c45-4600-9488-bab6474de3c1",
+  "batch_job_name": "run_019fa96f-8f10-705a-a7a9-69c42eafce16",
+  "container_exit_code": 0,
+  "environment": "sandbox",
+  "job_definition_name": "sbsandbox-intern-edullm-cpu-run:1",
+  "job_queue_name": "sbsandbox-intern-edullm-cpu",
+  "log_stream_name": "cpu-run/default/d64383e765184601b7c5bcf80a9de736",
+  "observed_at": "2026-07-28T16:58:10Z",
+  "region": "us-east-1",
+  "run_id": "run_019fa96f-8f10-705a-a7a9-69c42eafce16",
+  "source": "aws",
+  "started_at": "2026-07-28T15:59:43.794000Z",
+  "status": "SUCCEEDED",
+  "status_reason": "Essential container in task exited",
+  "stopped_at": "2026-07-28T15:59:44.116000Z"
+}

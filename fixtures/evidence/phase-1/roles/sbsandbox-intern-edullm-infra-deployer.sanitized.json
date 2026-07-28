@@ -633,6 +633,9 @@
               "arn:aws:iam::<aws-account-id>:role/sbsandbox-intern-edullm-batch-execution",
               "arn:aws:iam::<aws-account-id>:role/sbsandbox-intern-edullm-batch-workload",
               "arn:aws:iam::<aws-account-id>:role/sbsandbox-intern-edullm-batch-instance",
+              "arn:aws:iam::<aws-account-id>:role/sbsandbox-intern-edullm-batch-gpu-execution",
+              "arn:aws:iam::<aws-account-id>:role/sbsandbox-intern-edullm-batch-gpu-workload",
+              "arn:aws:iam::<aws-account-id>:role/sbsandbox-intern-edullm-batch-gpu-instance",
               "arn:aws:iam::<aws-account-id>:role/sbsandbox-intern-edullm-lifecycle-lambda"
             ]
           },
@@ -642,7 +645,7 @@
     }
   ],
   "max_session_duration_seconds": 3600,
-  "observed_at": "2026-07-28T03:28:09Z",
+  "observed_at": "2026-07-28T20:28:02Z",
   "permissions_boundary_policy_name": "InternSandboxBoundary",
   "role_name": "sbsandbox-intern-edullm-infra-deployer",
   "source": "aws",

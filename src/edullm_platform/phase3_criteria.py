@@ -6,37 +6,63 @@ attempt and the result landing write-once in the lineage bucket beside the inten
 decision. This module records the twenty-two checks the phase must satisfy, against the
 contract in :mod:`edullm_platform.criteria`.
 
-**Twenty of the twenty-two are gaps, and the reason is one sentence: nothing has been
-deployed.** Wave 5 -- the laptop IAM stacks, the CI stacks, and the live matrix that
-exercises them -- is deliberately held. No Batch job has ever run in this account, no
-compute environment exists, no lifecycle event has been delivered, and no Phase 3 record
-has been written to S3. Nineteen of the twenty-two checks name something that can only be
-established by observing that, and the twentieth needs committed captures of it.
+**The phase is deployed and has run.** Every stack is applied, and four submissions have
+gone GitHub to OIDC to admission to Batch to EventBridge to S3: one that succeeded, one
+whose command exited three deliberately, one stopped by its own timeout, and one that
+admission refused before anything could be launched. What those runs left behind is
+captured, sanitized and committed under ``fixtures/evidence/phase-3/``, and thirteen of the
+twenty-two criteria are covered by tests that read it. This module used to say that nothing
+had been deployed and that nineteen criteria were blocked behind that; that sentence was
+true when it was written and is not now.
 
-So they are ``GAP`` and not ``DEFERRED``, and the distinction is the whole point of having
-two words. A deferral is a decision not to do something, with a written trigger that makes
-it live again; the ``team_verified`` deferral Phase 0 and Phase 2 both carry is one,
-because nothing about it is unfinished -- the configuration is empty on purpose. Phase 3's
-live checks are not postponed. They are unfinished work with a deploy in front of them, and
-recording them as deferrals would make ``tools/validate_phase3.py`` exit 0 against a phase
-whose central claim -- that a container ran -- nothing has ever observed. **The gate exiting
-1 today is the report working.**
+**Nine criteria remain gaps, and they are not one gap repeated.** They fall into three
+kinds, and the difference decides what closing each one costs.
 
-**Which criteria close only when the live matrix runs.** Every criterion here except 20 and
-22. Concretely, in the order the plan's Wave 5 reaches them: 1, 2, 3, 4, 10, 17 and 19 close
-on one accepted run to ``SUCCEEDED`` and its capture; 8 on a job stopped by its timeout; 5,
-6 and 7 on the three cancellation cases; 11 and 18 on a redelivered EventBridge event; 9 and
-15 on a refused unprovisioned profile and a ``DescribeComputeEnvironments`` against the live
-environment; 12 and 13 on the two denial matrices run from real sessions; 14 and 16 on
-re-capturing the deployed roles and reading the idle environment back; and 21 on recording
-the networking the environment ends up on. Each one's ``gaps`` says what specifically.
+Three are a component nobody has built. Criteria 5, 6 and 7 are cancellation, and no
+cancellation state machine exists: every role Phase 3 declares deliberately excludes
+``batch:TerminateJob``, so these need code written before a run could demonstrate anything.
 
-**What is covered rests on committed artifacts.** Criterion 20 reads a CloudFormation
-template this repository commits, and 22 reads a decision that has been answered and moved
-to where it is enforced. Neither depends on the account, which is why neither waits.
+Four are a scenario nobody has run. Criteria 10, 11, 12 and 13 each name an observation
+that the four completed runs did not produce -- a second submission under one run id, a
+redelivered EventBridge event, a committed capture of the denial matrix the submit job
+already executes, and the workload matrix running from inside a container. None of them
+needs new infrastructure; each needs a run aimed at it, and criterion 13's also needs an
+image carrying the probe.
 
-**Two of the plan's checks are stated differently here than in the plan, and the difference
-is deliberate rather than drift.**
+Two are an observation the per-run captures cannot make. Criteria 14 and 18 are about the
+store and the roles taken as a whole rather than about any one run: whether the two Phase 2
+roles the validator and state machine actually hold still match their templates, and
+whether every lifecycle record in the bucket belongs to a run this platform submitted. A
+capture scoped to one run id can say nothing about either by construction.
+
+They are ``GAP`` and not ``DEFERRED``, and the distinction is the whole point of having two
+words. A deferral is a decision not to do something, with a written trigger that makes it
+live again; the ``team_verified`` deferral Phase 0 and Phase 2 both carry is one, because
+nothing about it is unfinished -- the configuration is empty on purpose. These nine are
+unfinished work, and recording them as deferrals would make ``tools/validate_phase3.py``
+exit 0 against a phase that cannot yet stop a job it has started. **The gate exiting 1
+today is the report working.**
+
+**A criterion cites a test, never an evidence file.** The thirteen covered criteria cite
+tests in ``tests/test_phase3_run_evidence.py``, which read the committed captures through
+:mod:`edullm_platform.phase3_capture` and hold them to agreeing with one another. Those
+records expire: every one is a ``FreshEvidenceModel``, and thirty days after the capture
+they stop loading, the citations fail, and these criteria are gaps again with the gate red.
+That is the window working rather than a defect to route around -- a deployed role can be
+widened in a console, and the only thing that establishes it has not been is somebody going
+and looking again.
+
+**One committed record is permanently broken, and the criteria say so rather than route
+around it.** Three of the four runs were submitted before the ``"Result": null`` fix in the
+admission ASL and carry a whole admission payload where a fan-out size belongs. The lineage
+store is write-once, so no future capture repairs them. They are recorded as attested,
+versioned and unloadable, and the runs holding one are reported as not traceable end to
+end -- which is why criterion 19 rests on the one run whose binding is clean, and why the
+capture withholds the corrupt bodies rather than committing an approver's name and a CVE
+dump to establish something the attestation already says.
+
+**Three of the plan's checks are stated differently here, and the difference is deliberate
+rather than drift.**
 
 Check 20 says the deployer's ``"*"``-scoped actions are "exactly the six measured ones".
 The deployer now carries a *second* unscoped statement, for ten read-only ``ec2:Describe*``
@@ -49,20 +75,26 @@ both statements and what separates them.
 Check 21 assumed the compute environment would run in a VPC belonging to somebody else,
 and said the borrowed VPC would be the phase's largest known limitation. It is not
 borrowed. The ``L-F678F1CE`` increase from five to ten was filed and applied on 2026-07-27,
-and ``infra/batch-network.yaml`` creates our own VPC unconditionally. So the terms the
-criterion has to record are different terms -- ownership settled rather than a dependency
-to carry -- and the part that remains open is narrower: the environment is not deployed, so
-nothing records the ids it actually uses.
+``infra/batch-network.yaml`` creates our own VPC unconditionally, and the deployed
+environment's own VPC, subnets and security groups are now captured from the account rather
+than read off the template.
 
-**Thirteen of the twenty-two are pilot-blocking, and every one of them is a gap, so this
-phase is not pilot-ready.** The master plan resolves Phase 3 into eleven checks and marks
-six; those eleven are criteria 1 to 11 here, in order, so that part of the split is the
-plan's markers carried across rather than a judgement. The remaining eleven criteria had no
-counterpart in the plan's list, and seven of them are marked here: the four that keep a
-GitHub path, a container, a validator and a state machine inside their own authority; the
-one that stops an idle compute environment billing; the one that attests what the lineage
-store holds; and the one that makes a run traceable by run id alone, which is the phase's
-gate restated as an assertion.
+Check 9 is about an invalid queue, job definition, role or override being rejected before
+submission. What was actually exercised is the override: a manifest naming ``gpu-1xa10g``,
+a profile the catalog prices and no compute environment backs. The criterion below is
+covered on that basis and its ``scope_limits`` says which of the four the run reached, so
+that a reader does not take one refusal as four.
+
+**Thirteen of the twenty-two are pilot-blocking, and five of those thirteen are still gaps,
+so this phase is not pilot-ready.** The master plan resolves Phase 3 into eleven checks and
+marks six; those eleven are criteria 1 to 11 here, in order, so that part of the split is
+the plan's markers carried across rather than a judgement. The remaining eleven criteria
+had no counterpart in the plan's list, and seven of them are marked here: the four that
+keep a GitHub path, a container, a validator and a state machine inside their own
+authority; the one that stops an idle compute environment billing; the one that attests
+what the lineage store holds; and the one that makes a run traceable by run id alone, which
+is the phase's gate restated as an assertion. The five still open are 10, 12, 13, 14 and
+18.
 
 The four that are not marked are worth naming because saying no is what makes the marker
 mean anything. Criterion 15 is a placement question whose harmful half already lives in
@@ -83,10 +115,11 @@ from edullm_platform.criteria import (
 )
 
 __all__ = [
-    "NEEDS_THE_LIVE_MATRIX",
-    "NOTHING_IS_DEPLOYED",
+    "CAPTURE_A_RUN_AIMED_AT_IT",
+    "NEEDS_A_COMPONENT_BUILT",
     "PHASE3_CRITERION_COUNT",
     "TEMPLATE_NOT_CAPTURE",
+    "THE_CAPTURES_EXPIRE",
     "phase3_criteria",
 ]
 
@@ -103,35 +136,52 @@ MEASUREMENTS = "tests/test_phase3_account_measurements.py"
 DEPLOY_WORKFLOW = "tests/test_phase3_batch_deployment_workflow.py"
 SUBMIT_WORKFLOW = "tests/test_phase2_submit_run_workflow.py"
 DECISIONS = "tests/test_open_decisions.py"
+#: The tests that read the committed captures of the four completed runs. Every covered
+#: criterion that is about the account rather than about a template cites this module.
+RUN_EVIDENCE = "tests/test_phase3_run_evidence.py"
 
-#: Why nineteen criteria are gaps. Written once because it is the same sentence nineteen
-#: times, and a reader who has met it once should not have to check whether the nineteenth
-#: wording differs. ``gaps`` is a tuple the gate joins with a space, so this is a sibling
-#: element rather than a concatenation.
-NOTHING_IS_DEPLOYED: Final = (
-    "Wave 5 is held. No Phase 3 stack has been applied to the account: there is no compute "
-    "environment, no job queue, no job definition, no EventBridge rule, no recorder and no "
-    "outputs bucket, and no Batch job has ever run here. Every artifact this criterion "
-    "would be proved from is an observation of infrastructure that does not exist."
+#: What closes a criterion whose scenario simply has not been run. Written once because it
+#: is the same instruction four times, and a reader who has met it once should not have to
+#: check whether the fourth wording differs. ``gaps`` is a tuple the gate joins with a
+#: space, so this is a sibling element rather than a concatenation.
+CAPTURE_A_RUN_AIMED_AT_IT: Final = (
+    "Nothing here needs building. Closing this means dispatching a run aimed at this case, "
+    "capturing what it leaves behind with tools/capture_phase3_evidence.py --target run, "
+    "committing the sanitized records under fixtures/evidence/phase-3/runs/, and citing a "
+    "test that reads them. A criterion may not cite an evidence file; it cites the test."
 )
 
-#: What closes a criterion once the deploy has happened. Separate from the sentence above
-#: because they are different facts: one is why the criterion is open, the other is the
-#: work. A reader deciding what to do next needs the second.
-NEEDS_THE_LIVE_MATRIX: Final = (
-    "Closing this means running the Wave 5 live matrix, capturing the named artifact with "
-    "tools/capture_phase3_evidence.py, sanitizing it through the existing SecretFreeStr and "
-    "account-id redaction, committing it under fixtures/evidence/phase-3/, and citing a test "
-    "that reads it. A criterion may not cite an evidence file; it cites the test."
+#: What closes a criterion that has no mechanism behind it yet. Distinct from the sentence
+#: above because the two are different amounts of work, and a reader deciding what to do
+#: next is choosing between them.
+NEEDS_A_COMPONENT_BUILT: Final = (
+    "This one cannot be closed by running anything, because the mechanism does not exist. "
+    "It needs a cancellation path built and deployed first -- a state machine holding "
+    "batch:TerminateJob, which no role Phase 3 declares is permitted today -- and only then "
+    "a run that exercises it and a test over the capture."
+)
+
+#: Why the covered criteria are not settled forever. Attached to the scope limits of the
+#: criteria that rest on captures rather than to their gaps, because it is a property of
+#: the evidence rather than a reason the criterion is open.
+THE_CAPTURES_EXPIRE: Final = (
+    "This rests on a committed capture, and a capture is a statement about one moment. "
+    "Every record is a FreshEvidenceModel, so thirty days after it was taken it stops "
+    "loading, the cited tests fail and this criterion is a gap again with the gate red. The "
+    "run does not need repeating -- every object is still in a write-once store -- so what "
+    "renews it is re-running the capture, which is what the expiry is asking for."
 )
 
 #: Why a template citation is not a deployed-role citation. Phase 1 draws the same
-#: distinction for its two roles, and Phase 3's four have no capture at all yet.
+#: distinction for its two roles. Phase 3's four are now captured and compared; the two the
+#: validator and the state machine hold belong to Phase 2's registry and are not.
 TEMPLATE_NOT_CAPTURE: Final = (
-    "A citation here reads a committed CloudFormation template, which is what the account "
-    "will be asked for rather than what it holds. The four Phase 3 roles are registered in "
-    "role_drift.PHASE3_ROLE_TEMPLATES and none has been deployed, so the comparison that "
-    "catches a role widened in the console has nothing to compare."
+    "A citation that reads a committed CloudFormation template reads what the account will "
+    "be asked for rather than what it holds, and a role widened in a console leaves every "
+    "such citation green. The four roles in role_drift.PHASE3_ROLE_TEMPLATES are now "
+    "captured from the account and compared, so that gap is closed for them. The two this "
+    "criterion is actually about are registered in PHASE2_ROLE_TEMPLATES and are not part "
+    "of this phase's capture."
 )
 
 
@@ -154,29 +204,43 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
         CriterionSpec(
             number="1",
             statement="A valid run reaches SUCCEEDED.",
-            status=CriterionStatus.GAP,
+            status=CriterionStatus.COVERED,
             pilot_blocking=True,
+            proving_node_ids=(
+                *_ids(RUN_EVIDENCE, "test_a_real_container_ran_to_succeeded_under_the_run_id_that_asked_for_it"),
+                *_ids(RUN_EVIDENCE, "test_every_committed_run_capture_holds"),
+            ),
             supporting_node_ids=(
                 *_ids(EXECUTION, "test_the_promoted_profile_resolves_to_the_deployed_queue_and_job_definition"),
                 *_ids(EXECUTION, "test_the_job_name_is_the_run_id_so_batch_is_a_third_join"),
                 *_ids(PROJECTION, "test_a_successful_run_records_where_its_output_went"),
+                *_ids(RUN_EVIDENCE, "test_the_admission_execution_is_named_for_the_run_it_admitted"),
             ),
-            gaps=(
-                NOTHING_IS_DEPLOYED,
+            scope_limits=(
                 (
-                    "No test substitutes for this one. What the cited tests prove is that the "
-                    "platform would submit the right job and would read a SUCCEEDED event as a "
-                    "success; the criterion is that a container ran, which only a captured "
-                    "Batch job detail with status SUCCEEDED, its exit code and the run id "
-                    "joining it to the intent and decision records can establish."
+                    "Proved of one run, and one is the right number for this claim. The "
+                    "criterion is that a valid run can reach SUCCEEDED, which one container "
+                    "reaching it establishes; that every valid run does is a reliability "
+                    "question no finite number of runs answers."
                 ),
-                NEEDS_THE_LIVE_MATRIX,
+                (
+                    "The proving citation is Batch's answer rather than the platform's. A "
+                    "result record saying succeeded is this platform's own projection of an "
+                    "event and would say the same thing if the projection were wrong, so what "
+                    "is asserted is the service reporting SUCCEEDED with exit code 0 for a job "
+                    "whose name is the run id."
+                ),
+                THE_CAPTURES_EXPIRE,
             ),
         ),
         CriterionSpec(
             number="2",
             statement="Stdout and stderr are available through the recorded log stream.",
-            status=CriterionStatus.GAP,
+            status=CriterionStatus.COVERED,
+            proving_node_ids=(
+                *_ids(RUN_EVIDENCE, "test_the_container_output_is_readable_through_the_stream_the_job_recorded"),
+                *_ids(RUN_EVIDENCE, "test_the_failing_container_printed_its_own_line_before_exiting"),
+            ),
             supporting_node_ids=(
                 *_ids(INFRA, "test_the_log_group_the_config_names_is_the_one_the_container_writes_to"),
                 *_ids(INFRA, "test_execution_targets_config_names_exactly_what_the_templates_create"),
@@ -188,58 +252,75 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                     "their record: the job ran, the result still joins to it, and the spend happened "
                     "either way."
                 ),
-            ),
-            gaps=(
-                NOTHING_IS_DEPLOYED,
                 (
-                    "The mutation this criterion exists to catch is recording the log *group* "
-                    "rather than the stream: it reads as complete and resolves to no single "
-                    "job. Only fetching a recorded stream back and finding the line the "
-                    "container printed distinguishes the two, and no container has printed one."
+                    "Proved on a run that succeeded and one that failed, deliberately. Logs are "
+                    "read when something went wrong, so a configuration that delivered them only "
+                    "for a clean exit would satisfy this criterion and be useless."
                 ),
-                NEEDS_THE_LIVE_MATRIX,
+                (
+                    "What is asserted is a line the container printed, fetched back out of the "
+                    "stream the job recorded. The mutation this criterion exists to catch is "
+                    "recording the log group rather than the stream -- it reads as complete and "
+                    "resolves to every job on the queue -- so the stream being different from "
+                    "the group is asserted beside the content."
+                ),
+                THE_CAPTURES_EXPIRE,
             ),
         ),
         CriterionSpec(
             number="3",
             statement="The S3 result manifest matches the logical run and the Batch job.",
-            status=CriterionStatus.GAP,
+            status=CriterionStatus.COVERED,
             pilot_blocking=True,
+            proving_node_ids=(
+                *_ids(RUN_EVIDENCE, "test_the_result_the_attempt_and_the_batch_job_each_name_the_next"),
+            ),
             supporting_node_ids=(
                 *_ids(PROJECTION, "test_the_result_joins_to_the_attempt_and_the_attempt_to_the_batch_job"),
                 *_ids(PROJECTION, "test_one_attempt_gets_one_id_whichever_event_describes_it"),
+                *_ids(RUN_EVIDENCE, "test_an_attempt_naming_another_job_does_not_hold"),
             ),
-            gaps=(
+            scope_limits=(
                 (
-                    "This is the one criterion of the twenty that needs no live call, and it "
-                    "still cannot be proved: it is a test over committed captures, and nothing "
-                    "is committed under fixtures/evidence/phase-3/ except the account "
-                    "measurements. The cited test proves the three joins hold in a projection "
-                    "built from a synthetic event, which is the mechanism rather than the "
-                    "record."
+                    "Three links rather than two ends. The result names an attempt, the attempt "
+                    "names a scheduler job, and the job's name is the run id; a check of only "
+                    "the first and last would pass while the middle pointed at somebody else's "
+                    "container, which is exactly what a result manifest describing the wrong "
+                    "job looks like. The supporting citation is the mutation case that holds "
+                    "the middle link to being checked."
                 ),
-                NEEDS_THE_LIVE_MATRIX,
+                (
+                    "The committed results record their output location under the older "
+                    "outputs/{run_id}/ prefix rather than the teams/{team}/runs/{run_id}/ shape "
+                    "output_prefix() now produces. These runs predate that fix and wrote no "
+                    "output, so what is asserted is that the location was recorded and names "
+                    "the run, not that it has the shape the code now emits."
+                ),
+                THE_CAPTURES_EXPIRE,
             ),
         ),
         CriterionSpec(
             number="4",
             statement="A failed command reaches FAILED with its reason preserved.",
-            status=CriterionStatus.GAP,
+            status=CriterionStatus.COVERED,
             pilot_blocking=True,
+            proving_node_ids=(
+                *_ids(RUN_EVIDENCE, "test_a_deliberate_non_zero_exit_reached_failed_with_the_code_preserved"),
+            ),
             supporting_node_ids=(
                 *_ids(PROJECTION, "test_a_failed_run_records_the_failure_rather_than_the_nearest_success"),
                 *_ids(PROJECTION, "test_a_job_stopped_before_any_attempt_began_still_records_that_it_stopped"),
+                *_ids(RUN_EVIDENCE, "test_a_timeout_and_a_non_zero_exit_are_distinguishable_in_the_record"),
             ),
-            gaps=(
-                NOTHING_IS_DEPLOYED,
+            scope_limits=(
                 (
-                    "The mutation is projecting every terminal state to succeeded, which the "
-                    "cited test does catch. What it cannot establish is that Batch reports a "
-                    "non-zero container exit the way this projection reads it, which needs a "
-                    "job that deliberately exits non-zero and a captured detail carrying its "
-                    "statusReason and exit code."
+                    "The exit code is what makes this a preserved reason rather than a recorded "
+                    "outcome. A command that exits three and a job the scheduler kills are both "
+                    "failed in the lineage store; only the container's exit code separates them, "
+                    "and the supporting citation holds the two apart so that this criterion and "
+                    "the timeout one cannot come to rest on the same observation."
                 ),
-                NEEDS_THE_LIVE_MATRIX,
+                THE_CAPTURES_EXPIRE,
             ),
         ),
         CriterionSpec(
@@ -261,15 +342,14 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                 ),
             ),
             gaps=(
-                NOTHING_IS_DEPLOYED,
                 (
-                    "Nothing in this account may terminate a job today, and that is not only a "
-                    "deploy away. The plan routes cancellation through a state machine that "
-                    "holds batch:TerminateJob; no such state machine is written, and every "
-                    "role Phase 3 declares deliberately excludes the action. So this criterion "
-                    "needs a component built as well as a run observed."
+                    "Nothing in this account may terminate a job today, and the deploy did not "
+                    "change that. The plan routes cancellation through a state machine holding "
+                    "batch:TerminateJob; no such state machine is written, and every role "
+                    "Phase 3 declares deliberately excludes the action. Four runs have "
+                    "completed and none of them could have been stopped."
                 ),
-                NEEDS_THE_LIVE_MATRIX,
+                NEEDS_A_COMPONENT_BUILT,
             ),
         ),
         CriterionSpec(
@@ -306,7 +386,7 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                     "not configurable, and not guaranteed to be reached at all. That half can "
                     "only be answered by cancelling a real dispatched run mid-job."
                 ),
-                NEEDS_THE_LIVE_MATRIX,
+                NEEDS_A_COMPONENT_BUILT,
             ),
         ),
         CriterionSpec(
@@ -328,37 +408,55 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                 ),
             ),
             gaps=(
-                NOTHING_IS_DEPLOYED,
                 (
                     "The mutation is asserting only the parent, which is what a single "
                     "DescribeJobs on the parent id returns and which would pass while both "
                     "children ran on. Distinguishing them needs a two-cell array job, "
-                    "terminated at the parent, with both child job ids observed terminal."
+                    "terminated at the parent, with both child job ids observed terminal. All "
+                    "four completed runs were single containers, so no array job has ever been "
+                    "submitted here, and none of them could have been terminated anyway."
                 ),
-                NEEDS_THE_LIVE_MATRIX,
+                NEEDS_A_COMPONENT_BUILT,
             ),
         ),
         CriterionSpec(
             number="8",
             statement="A mandatory timeout terminates a runaway job.",
-            status=CriterionStatus.GAP,
+            status=CriterionStatus.COVERED,
             pilot_blocking=True,
+            proving_node_ids=(
+                *_ids(RUN_EVIDENCE, "test_a_runaway_job_was_stopped_by_the_timeout_the_manifest_asked_for"),
+            ),
             supporting_node_ids=(
                 *_ids(EXECUTION, "test_every_submit_carries_a_timeout_including_the_shortest_manifest"),
                 *_ids(EXECUTION, "test_the_timeout_sent_to_batch_is_the_manifest_runtime_in_seconds", "1-3600", "2-7200", "13-46800", "0.5-1800"),
                 *_ids(EXECUTION, "test_the_runtime_bound_is_rounded_down_rather_than_up"),
                 *_ids(INFRA, "test_the_job_definition_carries_a_timeout_and_a_retry_floor_of_its_own"),
+                *_ids(RUN_EVIDENCE, "test_a_timeout_and_a_non_zero_exit_are_distinguishable_in_the_record"),
             ),
-            gaps=(
-                NOTHING_IS_DEPLOYED,
+            scope_limits=(
                 (
-                    "The testable half is done and is the half that usually rots: the submit "
-                    "request always carries a Timeout, for every fixture including the one "
-                    "with no explicit runtime, so making the block conditional fails. What is "
-                    "unproved is that Batch acts on it -- a job whose command sleeps past "
-                    "attemptDurationSeconds, observed FAILED with the timeout reason."
+                    "Two halves, and the supporting citations carry the first: the submit "
+                    "request always sends a Timeout, for every fixture including the one with "
+                    "no explicit runtime. That is the half that usually rots and it is also the "
+                    "half that cannot fail visibly, because a duration Batch ignores looks "
+                    "identical in the request."
                 ),
-                NEEDS_THE_LIVE_MATRIX,
+                (
+                    "The proving citation is the service acting on it. A command that would "
+                    "have run 600 seconds was given 180 and Batch stopped it, reporting 'Job "
+                    "attempt duration exceeded timeout' and no container exit code. The absent "
+                    "exit code is the load-bearing part: a job the scheduler killed never got "
+                    "to return a status, so anything else there would mean the command finished "
+                    "on its own and the timeout was a coincidence."
+                ),
+                (
+                    "Proved at 180 seconds rather than at a production bound. What that "
+                    "establishes is that Batch enforces the number this platform sends; that a "
+                    "particular workload's bound is the right one is a different question and "
+                    "not this criterion's."
+                ),
+                THE_CAPTURES_EXPIRE,
             ),
         ),
         CriterionSpec(
@@ -367,24 +465,53 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                 "An invalid queue, job definition, role or override is rejected before "
                 "submission."
             ),
-            status=CriterionStatus.GAP,
+            status=CriterionStatus.COVERED,
             pilot_blocking=True,
+            proving_node_ids=(
+                *_ids(RUN_EVIDENCE, "test_a_profile_with_nowhere_to_run_was_refused_and_started_nothing"),
+                *_ids(RUN_EVIDENCE, "test_a_refused_run_wrote_its_intent_and_decision_and_nothing_past_them"),
+            ),
             supporting_node_ids=(
                 *_ids(EXECUTION, "test_every_provisioned_profile_is_backed_and_every_target_names_a_provisioned_one"),
                 *_ids(EXECUTION, "test_a_priced_but_unprovisioned_profile_has_nowhere_to_go"),
                 *_ids(EXECUTION, "test_an_unprovisioned_profile_is_a_refusal_rather_than_a_crash"),
                 *_ids(EXECUTION, "test_the_two_ways_of_having_nowhere_to_run_are_distinguishable_in_the_record"),
                 *_ids(INFRA, "test_execution_targets_config_names_exactly_what_the_templates_create"),
+                *_ids(RUN_EVIDENCE, "test_a_refusal_whose_run_started_a_job_anyway_does_not_hold"),
             ),
-            gaps=(
-                NOTHING_IS_DEPLOYED,
+            scope_limits=(
                 (
-                    "The refusal is proved locally and the seam between the catalog and the "
-                    "targets file is read from both sides. What is unproved is that it happens "
-                    "inside AWS: a manifest naming a priced-but-unprovisioned profile reaching "
-                    "a decision with accepted false, and no Batch job existing for that run id."
+                    "One of the four the criterion names was exercised, and it is worth saying "
+                    "which rather than letting one refusal read as four. A live submission "
+                    "overrode the compute profile to gpu-1xa10g, which on 2026-07-28 was "
+                    "priced in the catalog and backed by nothing, and admission refused it "
+                    "with reason no_execution_target before submission. An invalid queue, job "
+                    "definition or role has not been submitted to the account; those three are "
+                    "unreachable through the dispatch form, which resolves all three from "
+                    "deployed configuration the submitter never sees."
                 ),
-                NEEDS_THE_LIVE_MATRIX,
+                (
+                    "THAT PROFILE IS NOW PROVISIONED, so the refusal above is not reproducible "
+                    "by repeating it. Phase 4 promoted gpu-1xa10g and built the compute "
+                    "environment, queue and job definition behind it, which is the outcome the "
+                    "refusal was pointing at rather than a contradiction of it. The evidence "
+                    "still holds because it is a record of something that happened: the capture "
+                    "carries the decision, the reason code and the absence of any Batch job. "
+                    "What stopped being true is only the present tense, and this note exists "
+                    "because nothing else in the bundle would have caught that -- the status "
+                    "guard reads numbered claims, and a sentence describing an account is not "
+                    "one. Reproducing the refusal today needs a profile that is still "
+                    "unprovisioned; the catalog prices ten."
+                ),
+                (
+                    "The absence of a Batch job is half the claim and it is recorded rather "
+                    "than implied. ListJobs answers one status at a time, so an absence "
+                    "established without naming the statuses searched is an absence established "
+                    "nowhere -- and the case that matters is a refused submission sitting in "
+                    "RUNNABLE, which a search of the terminal statuses would miss. The capture "
+                    "records all seven and the supporting citation fails if it stops."
+                ),
+                THE_CAPTURES_EXPIRE,
             ),
         ),
         CriterionSpec(
@@ -401,16 +528,23 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                 *_ids(SUBMIT_WORKFLOW, "test_an_execution_that_already_exists_under_this_run_id_is_a_success"),
             ),
             gaps=(
-                NOTHING_IS_DEPLOYED,
                 (
                     "Three mechanisms, each of which has to be observed separately: "
                     "ExecutionAlreadyExists on a second start with the same name, a 412 "
                     "PreconditionFailed on the binding's conditional write, and the Batch job "
                     "name being the run id so a second job would be visible. The mutation that "
                     "defeats all three at once is minting a fresh run id inside AWS, which no "
-                    "local test can see."
+                    "local test can see. Four runs have completed and each carried its own run "
+                    "id, so none of the three has ever been exercised."
                 ),
-                NEEDS_THE_LIVE_MATRIX,
+                (
+                    "The run that closes this is cheap and specific: re-running the submit job "
+                    "of a workflow run that already succeeded. It downloads the same compiled "
+                    "submission, so the run id is reused, and StartExecution must answer "
+                    "ExecutionAlreadyExists -- which the workflow treats as success, and which "
+                    "is the counter-intuitive behaviour most worth having a captured record of."
+                ),
+                CAPTURE_A_RUN_AIMED_AT_IT,
             ),
         ),
         CriterionSpec(
@@ -434,7 +568,6 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                 ),
             ),
             gaps=(
-                NOTHING_IS_DEPLOYED,
                 (
                     "The derivation is proved -- the same event projects to byte-identical "
                     "bytes, the id comes from EventBridge rather than being minted, and "
@@ -442,7 +575,15 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                     "unproved is the store's half: the same event redelivered and the "
                     "conditional write refusing it, captured."
                 ),
-                NEEDS_THE_LIVE_MATRIX,
+                (
+                    "The four completed runs wrote sixteen lifecycle records between them and "
+                    "EventBridge delivered each event once, so the redelivery path has never "
+                    "been taken. It cannot be forced by dispatching another ordinary run; what "
+                    "closes this is invoking the deployed recorder with an event payload "
+                    "already recorded, which is the redelivery path exactly, and capturing the "
+                    "refusal the store answers with."
+                ),
+                CAPTURE_A_RUN_AIMED_AT_IT,
             ),
         ),
         CriterionSpec(
@@ -467,16 +608,23 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                 ),
             ),
             gaps=(
-                NOTHING_IS_DEPLOYED,
                 (
-                    "The matrix is written, wired into the submit job before the one call that "
-                    "session makes, and attempts all four actions Phase 3 makes meaningful. It "
-                    "has never run: it needs a real admission session, which needs a dispatched "
-                    "submission through a protected environment. Until then this criterion "
-                    "rests on templates, and a role widened in the console leaves every one of "
-                    "them green."
+                    "The matrix has now run, and that is the change since this criterion was "
+                    "last written. It executes in the submit job before the one call that "
+                    "session makes, against a real admission session issued through a "
+                    "protected environment, and it attempts all four Batch actions Phase 3 "
+                    "makes meaningful. Every one of the four completed submissions passed it; "
+                    "a submission whose matrix fails does not proceed."
                 ),
-                NEEDS_THE_LIVE_MATRIX,
+                (
+                    "What is missing is a committed record of it. The matrix writes its result "
+                    "to a GitHub Actions artifact with a thirty-day retention, so the evidence "
+                    "exists, is unexpired, and lives somewhere this repository does not read "
+                    "and cannot cite. A criterion may not cite an artifact URL any more than it "
+                    "may cite an evidence file, so this stays open until the artifact is "
+                    "captured into fixtures/evidence/phase-3/ and a test reads it."
+                ),
+                CAPTURE_A_RUN_AIMED_AT_IT,
             ),
         ),
         CriterionSpec(
@@ -502,16 +650,35 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                 ),
             ),
             gaps=(
-                NOTHING_IS_DEPLOYED,
-                TEMPLATE_NOT_CAPTURE,
                 (
-                    "The workload matrix runs from inside the container under the job role, so "
-                    "it cannot run before a job does. The mutation it exists to catch -- "
-                    "widening the workload role's S3 scope to the bucket rather than the "
-                    "prefix -- is caught by the template test today and would not be caught by "
-                    "it after somebody edited the deployed role in the console."
+                    "Half of this is now closed and it is worth being precise about which. The "
+                    "deployed workload role is captured from the account and compared to the "
+                    "template that declares it, with no drift, so the mutation this criterion "
+                    "used to be most exposed to -- somebody widening the role in the console, "
+                    "leaving every template test green -- is caught. What the comparison "
+                    "establishes is that the deployed policy grants no lineage write and no "
+                    "way to start anything."
                 ),
-                NEEDS_THE_LIVE_MATRIX,
+                (
+                    "What a policy says and what AWS refuses are different claims, and only the "
+                    "second is a denial. The workload matrix runs from inside the container "
+                    "under the job role, so it cannot run until a job runs it, and the four "
+                    "completed runs all ran commands that printed a line. Closing this also "
+                    "needs the probe present in the research image, which this repository does "
+                    "not build, so it is a change in another repository before it is a run here."
+                ),
+                (
+                    "A limitation found while capturing, recorded here rather than left for "
+                    "Phase 4 to discover. The deployed role permits s3:PutObject under "
+                    "teams/*/runs/*, not teams/{team}/runs/*, so the workload role can write "
+                    "into any team's output prefix. The template agrees, so this is deliberate "
+                    "rather than drift, and for a single-team pilot nothing is misattributed. "
+                    "It does mean the cross-team isolation output_prefix() says the teams/ "
+                    "segment exists to make expressible is not expressed yet, and the Phase 4 "
+                    "check that a workload role cannot reach another team's prefix would fail "
+                    "against this role today."
+                ),
+                CAPTURE_A_RUN_AIMED_AT_IT,
             ),
         ),
         CriterionSpec(
@@ -538,22 +705,53 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                 ),
             ),
             gaps=(
-                NOTHING_IS_DEPLOYED,
                 TEMPLATE_NOT_CAPTURE,
                 (
-                    "The separation is proved of the committed templates and of the ASL. The "
-                    "criterion is about deployed roles, and the mutation -- giving the Lambda "
-                    "batch:SubmitJob, which would work and would move the launch out of the "
-                    "execution history -- is exactly the kind a console edit makes and a "
-                    "template test cannot see."
+                    "The separation is proved of the committed templates and of the ASL, and "
+                    "four runs have exercised it end to end: the validator resolved a target "
+                    "and the state machine made the SubmitJob call, which is in its execution "
+                    "history. What that does not establish is the negative half -- that the "
+                    "validator could not have submitted -- because a role that never tried "
+                    "looks exactly like a role that could not."
                 ),
-                NEEDS_THE_LIVE_MATRIX,
+                (
+                    "The mutation is giving the validator Lambda batch:SubmitJob. It would "
+                    "work, and it would move the launch out of the state machine's execution "
+                    "history, so the record of what started a job would stop describing what "
+                    "started it. That is the lineage harm in its purest form and it is exactly "
+                    "the kind a console edit makes."
+                ),
+                (
+                    "Closing this needs the two roles the criterion is about captured and "
+                    "compared, the way the four Phase 3 roles now are. They are "
+                    "sbsandbox-intern-edullm-admission-lambda and "
+                    "sbsandbox-intern-edullm-admission-states, both registered in "
+                    "PHASE2_ROLE_TEMPLATES, so the capture belongs to Phase 2's evidence and "
+                    "its freshness window rather than being copied into this phase's fixtures."
+                ),
             ),
         ),
         CriterionSpec(
             number="15",
-            statement="Exactly one compute profile is provisioned, and it is backed.",
-            status=CriterionStatus.GAP,
+            # Reworded in Phase 4, and the reason is worth recording rather than absorbing.
+            # This said "Exactly one compute profile is provisioned, and it is backed." That
+            # was true of the tree the day it was written and became false the moment Phase 4
+            # promoted a second profile -- so the criterion would have started failing over a
+            # change that made the platform more capable and broke nothing it claimed.
+            #
+            # A criterion is evaluated against the current tree, not against the tree of its
+            # own phase, so a statement that counts things is a statement with an expiry date
+            # on it. What the check was ever protecting is the seam: a profile priced and
+            # promoted with nowhere to run. That property is what is stated now, and it holds
+            # at one profile, at two, and at however many come later.
+            statement=(
+                "Every provisioned compute profile is backed by a compute environment "
+                "that exists and is usable."
+            ),
+            status=CriterionStatus.COVERED,
+            proving_node_ids=(
+                *_ids(RUN_EVIDENCE, "test_exactly_one_compute_environment_backs_the_one_provisioned_profile"),
+            ),
             supporting_node_ids=(
                 *_ids(EXECUTION, "test_every_provisioned_profile_is_backed_and_every_target_names_a_provisioned_one"),
                 *_ids(EXECUTION, "test_every_target_names_infrastructure_this_project_owns"),
@@ -569,24 +767,39 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                     "is visible, bills nothing while it waits, and is bounded by the queue. "
                     "Availability rather than harm."
                 ),
-            ),
-            gaps=(
-                NOTHING_IS_DEPLOYED,
                 (
-                    "The seam is closed: exactly one profile is provisioned in the catalog and "
-                    "exactly one target backs it, compared from both files. 'Backed' also means "
-                    "the environment exists and is usable, which is a DescribeComputeEnvironments "
-                    "showing it VALID and ENABLED -- and a VALID environment is still not "
-                    "evidence a job can run, which is why criterion 1 is separate from this one."
+                    "Two claims, and the supporting citations carry the first: the set of "
+                    "profiles the catalog marks provisioned is exactly the set of profiles "
+                    "the execution targets back, compared from both files in both "
+                    "directions. The proving citation carries the second -- that the "
+                    "environment named actually exists, is VALID and ENABLED, and is the "
+                    "one the job queue routes to. A template creating a compute environment is "
+                    "a request; an environment can be created and land INVALID, in which case "
+                    "every job queued to it waits forever with no error anywhere."
                 ),
-                NEEDS_THE_LIVE_MATRIX,
+                (
+                    "The proving citation reads Phase 3's committed capture, so it speaks "
+                    "for the CPU environment and for no other. Phase 4's GPU environment is "
+                    "covered by the supporting config-to-config comparison and by the "
+                    "deploy-time verification, and not yet by a capture of its own. That is "
+                    "the honest limit of this criterion after a second profile was promoted."
+                ),
+                (
+                    "A VALID environment is still not evidence a job can run, which is why "
+                    "criterion 1 is separate from this one and rests on a container having "
+                    "actually reached SUCCEEDED."
+                ),
+                THE_CAPTURES_EXPIRE,
             ),
         ),
         CriterionSpec(
             number="16",
             statement="The compute environment holds no capacity when it is idle.",
-            status=CriterionStatus.GAP,
+            status=CriterionStatus.COVERED,
             pilot_blocking=True,
+            proving_node_ids=(
+                *_ids(RUN_EVIDENCE, "test_the_compute_environment_held_no_capacity_after_the_runs_finished"),
+            ),
             supporting_node_ids=(
                 *_ids(INFRA, "test_the_compute_environment_holds_no_capacity_when_it_is_idle"),
             ),
@@ -598,16 +811,22 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                     "vCPUs while idle pays for hardware nobody asked for, in a shared account that "
                     "is already carrying a four-figure capacity charge somebody else made."
                 ),
-            ),
-            gaps=(
-                NOTHING_IS_DEPLOYED,
                 (
-                    "minvCpus is 0 in the template and the test fails if it is raised. The "
-                    "criterion is about the account: desiredvCpus observed at 0 after the live "
-                    "matrix has finished, which is the reading that would catch an environment "
-                    "that scaled up and did not come back down."
+                    "minvCpus and desiredvCpus are different facts and only the second can "
+                    "catch this. minvCpus is what the template asks for and is asserted from "
+                    "the template by the supporting citation; desiredvCpus is what the "
+                    "environment is actually holding, and it is the one that can be non-zero "
+                    "while nothing runs. The proving citation reads it from the deployed "
+                    "environment after all four runs had finished, and it was zero."
                 ),
-                NEEDS_THE_LIVE_MATRIX,
+                (
+                    "The environment demonstrably does scale, which is what makes the reading "
+                    "worth anything. It was observed holding 32 vCPUs while the timeout run was "
+                    "in flight and back at zero afterwards, so a capture taken at the wrong "
+                    "moment records the non-zero figure and fails this rather than quietly "
+                    "reading as idle."
+                ),
+                THE_CAPTURES_EXPIRE,
             ),
         ),
         CriterionSpec(
@@ -616,12 +835,16 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                 "Every record written by this phase carries an S3-attested ChecksumSHA256 and "
                 "a VersionId."
             ),
-            status=CriterionStatus.GAP,
+            status=CriterionStatus.COVERED,
             pilot_blocking=True,
+            proving_node_ids=(
+                *_ids(RUN_EVIDENCE, "test_every_lineage_object_carries_an_s3_attested_checksum_and_version"),
+            ),
             supporting_node_ids=(
                 *_ids(INFRA, "test_the_binding_write_is_conditional_and_checksummed_like_every_lineage_write"),
                 *_ids(PROJECTION, "test_every_write_is_conditional_so_a_replay_cannot_overwrite_anything"),
                 *_ids(PROJECTION, "test_the_stored_bytes_are_the_canonical_ones_rather_than_a_re_encoding"),
+                *_ids(RUN_EVIDENCE, "test_the_bindings_written_before_the_asl_fix_are_recorded_as_permanently_corrupt"),
             ),
             scope_limits=(
                 (
@@ -634,17 +857,23 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                     "neither attested nor versioned, and an object that has been altered reads "
                     "exactly like one that has not."
                 ),
-            ),
-            gaps=(
-                NOTHING_IS_DEPLOYED,
                 (
-                    "The writers ask for the checksum; whether S3 attested one is a fact about "
-                    "the object. It needs HeadObject --checksum-mode ENABLED against the "
-                    "binding, one event, the attempt and the result, captured. This is distinct "
-                    "from the canonical manifest hash and has to be recorded as such, because "
+                    "The writers asking for a checksum and S3 having stored one are different "
+                    "claims. The supporting citations carry the first, from the ASL and the "
+                    "templates; the proving citation carries the second, from HeadObject with "
+                    "checksum mode enabled against every object all four runs wrote. This is "
+                    "distinct from the canonical manifest hash and is recorded as such, because "
                     "a reader who conflated them would think one proved the other."
                 ),
-                NEEDS_THE_LIVE_MATRIX,
+                (
+                    "Attestation is not integrity of content, and the corrupt bindings are the "
+                    "proof of that. Three objects here are attested, versioned and intact -- S3 "
+                    "holds exactly the bytes it was sent -- and are refused by the contract that "
+                    "defines what a binding is. The supporting citation records them, so a "
+                    "reader cannot take this criterion as saying the store holds nothing "
+                    "malformed."
+                ),
+                THE_CAPTURES_EXPIRE,
             ),
         ),
         CriterionSpec(
@@ -669,27 +898,47 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                 ),
             ),
             gaps=(
-                NOTHING_IS_DEPLOYED,
                 (
                     "The pattern names the queue the compute stack creates, compared across "
                     "both files, and the projection refuses a delivery that is not ours as a "
-                    "second line. The criterion also asks that no lifecycle record exist whose "
-                    "run id is not ours, which is a statement about what the deployed rule "
-                    "actually delivered in a shared account."
+                    "second line. Four runs have now been delivered through the deployed rule "
+                    "and every lifecycle record they produced carries their own run id, so the "
+                    "rule is demonstrably delivering what it should."
                 ),
-                NEEDS_THE_LIVE_MATRIX,
+                (
+                    "What is unproved is the other direction, and it is the half the criterion "
+                    "is actually about: that no lifecycle record exists whose run id is *not* "
+                    "ours. A capture scoped to one run id cannot establish that by "
+                    "construction -- it only ever reads keys under the run it was asked for, so "
+                    "it would report a clean result in a store full of somebody else's events. "
+                    "This is a shared account and a rule matching every Batch event in it would "
+                    "write records under run ids we never submitted."
+                ),
+                (
+                    "Closing this needs a different shape of capture rather than another run: "
+                    "an inventory of the whole lineage bucket, with every events/ key's run id "
+                    "checked against the intents this platform wrote. That is one list call and "
+                    "a comparison, and it belongs beside the per-run captures rather than "
+                    "inside one."
+                ),
             ),
         ),
         CriterionSpec(
             number="19",
             statement="A run is traceable end to end by run id alone.",
-            status=CriterionStatus.GAP,
+            status=CriterionStatus.COVERED,
             pilot_blocking=True,
+            proving_node_ids=(
+                *_ids(RUN_EVIDENCE, "test_one_run_id_resolves_to_all_eleven_artifacts"),
+                *_ids(RUN_EVIDENCE, "test_the_session_that_started_the_run_came_through_the_approval_gate"),
+            ),
             supporting_node_ids=(
                 *_ids(EXECUTION, "test_the_job_name_is_the_run_id_so_batch_is_a_third_join"),
                 *_ids(INFRA, "test_the_binding_record_the_state_machine_writes_is_the_contract_it_claims_to_be"),
                 *_ids(PROJECTION, "test_the_handler_writes_the_four_keys_the_rest_of_phase_three_reads"),
                 *_ids(PROJECTION, "test_the_result_joins_to_the_attempt_and_the_attempt_to_the_batch_job"),
+                *_ids(RUN_EVIDENCE, "test_the_admission_execution_is_named_for_the_run_it_admitted"),
+                *_ids(RUN_EVIDENCE, "test_a_job_whose_name_is_not_the_run_id_does_not_hold"),
             ),
             scope_limits=(
                 (
@@ -701,19 +950,32 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                     "let the rung open on the strength of the very checks it exists to "
                     "cross-examine."
                 ),
-            ),
-            gaps=(
-                NOTHING_IS_DEPLOYED,
                 (
-                    "This is the gate restated as an executable assertion and it is the one "
-                    "check that fails if any other passes for the wrong reason: one run id "
-                    "resolving to eleven artifacts -- a GitHub run URL, a CloudTrail "
-                    "AssumeRoleWithWebIdentity, a Step Functions execution, an intent, a "
-                    "decision, a binding, at least one event, an attempt, a result, a Batch job "
-                    "id and a log stream -- all present and all agreeing. Six of the eleven "
-                    "have never been written."
+                    "Eleven artifacts, named rather than counted: a GitHub workflow run, a "
+                    "CloudTrail AssumeRoleWithWebIdentity, a Step Functions execution, an "
+                    "intent, a decision, a binding, at least one event, an attempt, a result, a "
+                    "Batch job id and a log stream. They are enumerated in "
+                    "phase3_capture.TRACEABLE_ARTIFACTS and asserted by name, because a check "
+                    "that counted eleven would go on passing after somebody removed one and "
+                    "added another."
                 ),
-                NEEDS_THE_LIVE_MATRIX,
+                (
+                    "Proved of one run of the four, and which one is not arbitrary. The other "
+                    "three were submitted before the ASL fix and carry bindings that will never "
+                    "load, so ten of their eleven artifacts resolve and the eleventh cannot -- "
+                    "and they are reported as not traceable rather than as nearly traceable. "
+                    "That is the criterion working: an unbroken chain is the claim, and a chain "
+                    "missing a link is not a chain."
+                ),
+                (
+                    "The session is joined through the StartExecution call that names this run "
+                    "id, not by recency. Every submission assumes the same role, so a capture "
+                    "that took the most recent session would name one belonging to a different "
+                    "run and still look complete; the subject claim carrying "
+                    ":environment:run-approval-lead is what additionally shows it was issued "
+                    "past the approval gate."
+                ),
+                THE_CAPTURES_EXPIRE,
             ),
         ),
         CriterionSpec(
@@ -732,7 +994,7 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                 *_ids(DEPLOYER, "test_the_network_scope_can_change_egress_and_can_never_open_a_port"),
                 *_ids(DEPLOYER, "test_the_batch_scopes_cover_all_three_resource_types_the_stack_creates"),
                 *_ids(DEPLOYER, "test_iam_pass_role_is_still_the_only_iam_action_the_whole_role_holds"),
-                *_ids(DEPLOYER, "test_pass_role_names_four_whole_roles_and_never_a_prefix"),
+                *_ids(DEPLOYER, "test_pass_role_names_whole_roles_and_never_a_prefix"),
                 *_ids(EC2, "test_the_declared_action_list_matches_the_probes_actually_built"),
             ),
             scope_limits=(
@@ -770,7 +1032,10 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
             statement=(
                 "The networking the compute environment uses is recorded, with its terms."
             ),
-            status=CriterionStatus.GAP,
+            status=CriterionStatus.COVERED,
+            proving_node_ids=(
+                *_ids(RUN_EVIDENCE, "test_the_networking_the_compute_environment_uses_is_recorded"),
+            ),
             supporting_node_ids=(
                 *_ids(MEASUREMENTS, "test_the_capture_is_committed_and_inside_its_freshness_window"),
                 *_ids(MEASUREMENTS, "test_the_vpc_quota_has_room_for_a_vpc_we_own"),
@@ -789,25 +1054,22 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                     "without opening a console, which is a reviewer's need rather than a pilot "
                     "user's."
                 ),
-            ),
-            gaps=(
                 (
                     "The terms are not the ones the plan expected, and they are better. The "
                     "plan assumed a borrowed VPC and called it the phase's largest known "
                     "limitation; the L-F678F1CE quota increase from five to ten was filed and "
                     "applied on 2026-07-27, and infra/batch-network.yaml creates our own VPC "
-                    "unconditionally. Ownership is settled, and the committed measurements "
-                    "record the quota, the request id, the zones and which of them offers the "
-                    "instance type."
+                    "unconditionally. Ownership is settled, so what this criterion records is a "
+                    "placement rather than a dependency to carry."
                 ),
                 (
-                    "What is missing is the other half of the criterion's words: the "
-                    "networking the compute environment *uses*. The network stack is not "
-                    "deployed, so no VPC, subnet or security-group id exists to record, and "
-                    "the committed placement record describes the interim candidate VPC these "
-                    "probes were aimed at rather than one this project owns."
+                    "The proving citation reads the deployed environment rather than the "
+                    "template. A stack applied from a laptop can land somewhere other than "
+                    "where its template says, and a record copied from the template would agree "
+                    "with itself forever; these are the VPC, subnet and security group ids the "
+                    "environment is actually configured with, read back from the account."
                 ),
-                NEEDS_THE_LIVE_MATRIX,
+                THE_CAPTURES_EXPIRE,
             ),
         ),
         CriterionSpec(
@@ -857,8 +1119,12 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                 ),
                 (
                     "It is enforced in code and configuration this repository commits and "
-                    "admission reads. Nothing here says the enforcement has ever refused a real "
-                    "submission, which is criterion 9's territory and is a gap."
+                    "admission reads. What this criterion does not say is that the scan gate "
+                    "has ever refused a real submission: the four completed runs all named an "
+                    "image whose four criticals are carried by a recorded exception, so the "
+                    "gate was evaluated and passed every time. A refusal on scan findings has "
+                    "not been observed, and the rejection that has been -- an unprovisioned "
+                    "compute profile -- travelled a different path."
                 ),
             ),
         ),

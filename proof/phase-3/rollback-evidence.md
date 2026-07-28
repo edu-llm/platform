@@ -1,19 +1,17 @@
 # Phase 3 rollback rehearsal
 
-**This document is empty, and it is empty for one reason.** Wave 5 is held: no Phase 3 stack has been applied to this account, no compute environment or job queue exists, and no Batch job has ever run here. There is nothing to record. It is generated empty rather than omitted because a bundle missing a document reads as a phase with fewer claims, and a reviewer counting what is here should count this too.
+**The rehearsal has not been performed.** Rolling back this phase means disabling the job queue, letting the compute environment drain to zero desired vCPUs, removing the reviewers from both GitHub environments, and redeploying the states role without `batch:SubmitJob`. Each of those has been written down; none has been executed, and a rollback nobody has run is a plan rather than a rehearsal.
 
-## What this document records
+What would make it a rehearsal rather than a description is recording four things: that a submission dispatched after the queue is disabled creates no Batch job; that a job already running still reaches a terminal state and still lands its result record; that `desiredvCpus` is observed at zero afterwards rather than assumed; and that a record written before the rollback is still readable after it.
 
-The rollback executed rather than argued: the job queue disabled, the compute environment observed at zero desired vCPUs, the reviewers removed from both GitHub environments, and the states role redeployed without `batch:SubmitJob`.
+## Why no check is waiting on this
 
-## What would fill it
+This document used to carry the check that the compute environment holds no capacity when idle, on the reasoning that draining it was part of the rollback. That check closed a different way: the environment was observed at zero desired vCPUs after four runs had finished, in the ordinary course of running them, which is the same reading taken without tearing anything down.
 
-- The rehearsal, recording the four things that make it a rehearsal rather than a description: that a submission dispatched after step 1 creates no Batch job; that a job running at step 1 still reaches a terminal state and still lands its result record; that `desiredvCpus` is observed at 0 after step 2 rather than assumed; and that a record written before step 1 is still readable afterwards.
+So the rehearsal is still worth doing, and nothing in the acceptance list is waiting for it. That is recorded here rather than quietly dropped, because work nobody is blocked on is exactly the kind that stops being done and then stops being remembered.
 
-## Criteria waiting on it
-
-| criterion | status today |
+| fact | value |
 | --- | --- |
-| 16 | a gap |
-
-Each of those is recorded in `src/edullm_platform/phase3_criteria.py` with the same account of what is missing, and `uv run python tools/validate_phase3.py` reports it. This document and that definition are two views of one fact rather than two claims.
+| rehearsal performed | **no** |
+| desired vCPUs when last observed | 0 |
+| observed | 2026-07-28 |

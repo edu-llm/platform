@@ -5,13 +5,19 @@ refusal to overwrite a drifted one, the same nested verification run, the same s
 over every document before it is written, and the same rule that no sentence may give a
 criterion a status the gate did not reach.
 
-**Most of this bundle is empty, deliberately and with a reason in each hole.** Wave 5 is
-held: no Phase 3 stack has been applied, no Batch job has ever run in this account, and no
-lifecycle record exists. Seven of the documents below describe live evidence, and each is
-written as explicitly empty, naming the capture that would fill it and the criterion it
-would close. That is the only honest shape for them. Omitting them would make a reader think
-the phase had fewer claims than it has; filling them with the templates' intentions would
-make the bundle say a container ran.
+**Six documents that were empty now hold what four completed runs left behind.** They are
+rendered from the captures committed under ``fixtures/evidence/phase-3/`` and read through
+:mod:`edullm_platform.phase3_capture`, which holds those records to agreeing with one
+another; if they stop agreeing, or expire, this generator refuses to build rather than
+describing runs nobody has confirmed lately. The same rule the account measurements have
+always carried, applied to the runs.
+
+**One document is still empty, and the machinery for that stays.** ``event-evidence.md``
+serves two checks that need a redelivered EventBridge event and an inventory of the whole
+lineage store, neither of which an ordinary run produces. It is written as explicitly empty,
+naming what would fill it and the criteria waiting on it. That is the only honest shape for
+it: omitting it would make a reader think the phase had fewer claims than it has, and
+filling it with the templates' intentions would make the bundle say something was observed.
 
 The two probes this phase depends on carry their controls into ``measurement-method.md``,
 which is a document rather than a section for one reason: an earlier revision of the Phase 3
@@ -50,6 +56,14 @@ from edullm_platform.criteria import (
 )
 from edullm_platform.ec2_authorization import CONTROL_OBSERVATIONS
 from edullm_platform.open_decisions import OpenDecision, open_decisions
+from edullm_platform.phase1_capture import read_committed_role_captures
+from edullm_platform.phase3_capture import (
+    PHASE3_CAPTURE_DIR,
+    TRACEABLE_ARTIFACTS,
+    CommittedPhase3Evidence,
+    CommittedPhase3Run,
+    read_committed_phase3_evidence,
+)
 from edullm_platform.phase3_criteria import phase3_criteria
 from edullm_platform.phase3_evidence import AccountMeasurements
 from edullm_platform.proof_bundle import (
@@ -172,14 +186,17 @@ GOLDENS_MISSING_GUIDANCE: Final = (
     f"source of this tripwire; generate it with `{GENERATOR_COMMAND}` and commit the result."
 )
 
-#: What every empty document says about why it is empty. One sentence rather than seven, so
-#: a reader who has met it once knows every hole in this bundle has the same cause.
+#: What an empty document says about why it is empty. Six of the seven that once carried
+#: this now hold evidence; the sentence stayed general rather than being deleted with them,
+#: because the next phase will open with holes of its own.
 NOTHING_RAN: Final = (
-    "**This document is empty, and it is empty for one reason.** Wave 5 is held: no Phase 3 "
-    "stack has been applied to this account, no compute environment or job queue exists, and "
-    "no Batch job has ever run here. There is nothing to record. It is generated empty rather "
-    "than omitted because a bundle missing a document reads as a phase with fewer claims, and "
-    "a reviewer counting what is here should count this too."
+    "**This document is empty, and it is empty because nothing has produced what it "
+    "records.** The stacks are applied and four runs have completed, so the reason is no "
+    "longer that the phase is undeployed -- it is that the observations this document exists "
+    "to hold are not observations an ordinary run produces. What would produce them is listed "
+    "below. It is generated empty rather than omitted because a bundle missing a document "
+    "reads as a phase with fewer claims, and a reviewer counting what is here should count "
+    "this too."
 )
 
 
@@ -198,45 +215,10 @@ class EmptySection:
     closes: tuple[str, ...]
 
 
+#: The one live-evidence document still empty, and the criteria waiting on it. The
+#: other six were empty until four runs completed; each is now rendered from the
+#: committed captures, and this machinery stays for the next phase that needs it.
 EMPTY_SECTIONS: Final[tuple[EmptySection, ...]] = (
-    EmptySection(
-        filename="batch-execution-evidence.md",
-        title="Phase 3 Batch execution evidence",
-        records=(
-            "The successful and failed Batch job ids, their compute environment, queue and "
-            "job definition, the attempts array, the container exit codes, and the instance "
-            "each job actually ran on."
-        ),
-        filled_by=(
-            (
-                "One accepted run carried through to SUCCEEDED, and one whose command exits "
-                "non-zero carried through to FAILED."
-            ),
-            (
-                "`aws batch describe-jobs` for each, captured and sanitized by field projection "
-                "rather than by scanning afterwards: a Batch job detail carries the full "
-                "container command and environment."
-            ),
-        ),
-        closes=("1", "4", "15", "16"),
-    ),
-    EmptySection(
-        filename="log-stream-evidence.md",
-        title="Phase 3 log stream evidence",
-        records=(
-            "The CloudWatch log group and stream reference for each job, and the retrieved "
-            "line proving the stream resolves. References rather than contents, per D8: the "
-            "lineage store is immutable and a workload's stdout is the least predictable text "
-            "this platform handles."
-        ),
-        filled_by=(
-            (
-                "The log stream name recorded on a captured binding, fetched back and returning "
-                "the line the container printed."
-            ),
-        ),
-        closes=("2", "19"),
-    ),
     EmptySection(
         filename="event-evidence.md",
         title="Phase 3 EventBridge delivery evidence",
@@ -255,90 +237,6 @@ EMPTY_SECTIONS: Final[tuple[EmptySection, ...]] = (
             ),
         ),
         closes=("11", "18"),
-    ),
-    EmptySection(
-        filename="lineage-record-evidence.md",
-        title="Phase 3 lineage record evidence",
-        records=(
-            "The binding, event, attempt and result URIs with their VersionId and "
-            "ChecksumSHA256, joined to the Phase 2 intent and decision for the same run id."
-        ),
-        filled_by=(
-            (
-                "`aws s3api head-object --checksum-mode ENABLED` for the binding, one event, the "
-                "attempt and the result."
-            ),
-            (
-                "The intent and decision records Phase 2 wrote for the same run id, so the join "
-                "is shown rather than asserted."
-            ),
-        ),
-        closes=("3", "17", "19"),
-    ),
-    EmptySection(
-        filename="cancellation-and-timeout-evidence.md",
-        title="Phase 3 cancellation and timeout evidence",
-        records=(
-            "The cancelled single job, the cancelled fan-out with both children, and the "
-            "timed-out job, each with the reason Batch recorded."
-        ),
-        filled_by=(
-            (
-                "A cancellation path that can terminate a job. There is none: every Phase 3 role "
-                "deliberately excludes `batch:TerminateJob`, and the state machine the plan routes "
-                "cancellation through has not been written. This section needs a component built "
-                "before it needs a run."
-            ),
-            (
-                "A two-cell array job terminated at the parent, with both child job ids observed "
-                "terminal rather than the parent alone."
-            ),
-            (
-                "A job whose command sleeps past `attemptDurationSeconds`, observed FAILED with "
-                "the timeout reason."
-            ),
-        ),
-        closes=("5", "6", "7", "8"),
-    ),
-    EmptySection(
-        filename="deployed-role-drift.md",
-        title="Phase 3 deployed-role drift",
-        records=(
-            "The four new roles and the two amendments, compared against the templates that "
-            "declare them."
-        ),
-        filled_by=(
-            (
-                "The four Phase 3 roles deployed from a laptop, then captured with "
-                "`tools/capture_phase3_evidence.py` and committed."
-            ),
-            (
-                "The two amended roles re-captured. The Phase 1 deployer capture is behind its "
-                "template today and the difference is recorded as a pending amendment in "
-                "`edullm_platform.pending_amendments`; that record has to be deleted in the same "
-                "change as the re-capture, because its findings are compared for equality."
-            ),
-        ),
-        closes=("13", "14"),
-    ),
-    EmptySection(
-        filename="rollback-evidence.md",
-        title="Phase 3 rollback rehearsal",
-        records=(
-            "The rollback executed rather than argued: the job queue disabled, the compute "
-            "environment observed at zero desired vCPUs, the reviewers removed from both "
-            "GitHub environments, and the states role redeployed without `batch:SubmitJob`."
-        ),
-        filled_by=(
-            (
-                "The rehearsal, recording the four things that make it a rehearsal rather than a "
-                "description: that a submission dispatched after step 1 creates no Batch job; that "
-                "a job running at step 1 still reaches a terminal state and still lands its result "
-                "record; that `desiredvCpus` is observed at 0 after step 2 rather than assumed; and "
-                "that a record written before step 1 is still readable afterwards."
-            ),
-        ),
-        closes=("16",),
     ),
 )
 
@@ -864,15 +762,510 @@ def render_networking(repo_root: Path) -> str:
                 "",
                 placement.borrowing_terms,
                 "",
-                "## What is still open",
+                "## What the compute environment actually landed on",
                 "",
                 (
-                    "The network stack is not deployed. Nothing here records the VPC, subnet or "
-                    "security-group ids the compute environment actually uses, because there is "
-                    "no compute environment, and criterion 21 is a gap for exactly that reason. "
-                    "The measurements above describe the account and the candidate placement "
-                    "these probes were aimed at; they are premises rather than a description of a "
-                    "running system."
+                    "Everything above is a premise: it describes the account and the placement "
+                    "these probes were aimed at, measured before any stack was applied. The "
+                    "table below is different in kind -- it is read back from the deployed "
+                    "compute environment, so it says where this project's jobs actually run "
+                    "rather than where a template asked for them to. A stack applied from a "
+                    "laptop can land somewhere other than its template says, and a record "
+                    "copied from the template would agree with itself forever."
+                ),
+                "",
+                deployed_placement_table(repo_root),
+            ]
+        )
+        + "\n"
+    )
+
+
+def deployed_placement_table(repo_root: Path) -> str:
+    """The deployed environment's own networking, or a note saying nothing is captured.
+
+    Rendered from the committed capture rather than from the template. Absent rather than
+    invented when no capture is committed: a bundle that filled this in from the template
+    would be asserting a placement nobody observed.
+    """
+    evidence = read_committed_phase3_evidence(repo_root)
+    found = evidence.compute_environment
+    if found is None:
+        return (
+            "No capture of the deployed compute environment is committed under "
+            f"`{PHASE3_CAPTURE_DIR}/`, so nothing here records the networking it uses."
+        )
+    return table(
+        ["fact", "value"],
+        [
+            ["compute environment", f"`{found.compute_environment_name}`"],
+            ["status", f"{found.status}, {found.state}"],
+            ["VPC", f"`{found.vpc_id}`"],
+            ["subnets", ", ".join(f"`{subnet}`" for subnet in found.subnet_ids)],
+            [
+                "security groups",
+                ", ".join(f"`{group}`" for group in found.security_group_ids),
+            ],
+            ["instance types", ", ".join(f"`{shape}`" for shape in found.instance_types) or "—"],
+            [
+                "vCPUs, min / desired / max",
+                f"{found.minimum_vcpus} / {found.desired_vcpus} / {found.maximum_vcpus}",
+            ],
+            ["observed", found.observed_at.date().isoformat()],
+        ],
+    )
+
+
+# --------------------------------------------------------------------------------------
+# What the completed runs left behind
+# --------------------------------------------------------------------------------------
+
+
+def read_runs(repo_root: Path) -> CommittedPhase3Evidence:
+    """The committed run captures, or a refusal to build a bundle that would describe them.
+
+    Held to the same rule as the account measurements: five documents below are rendered
+    from these records, so a bundle built on captures that have expired or stopped
+    agreeing with each other would describe a system nobody has confirmed lately. Refusing
+    here is what stops that being discovered by a reader instead.
+    """
+    evidence = read_committed_phase3_evidence(repo_root)
+    if not evidence.holds:
+        problems = [
+            f"{problem.record}: {problem.reason}"
+            for run in evidence.runs
+            for problem in run.problems
+        ] + [f"{problem.record}: {problem.reason}" for problem in evidence.problems]
+        raise ProofBundleError(
+            "the committed Phase 3 run captures no longer hold, and five of this bundle's "
+            "documents are rendered from them, so it would describe runs nobody has "
+            "confirmed lately: " + "; ".join(sorted(problems))
+        )
+    return evidence
+
+
+def _run_label(run: CommittedPhase3Run) -> str:
+    return f"`{run.run_id}`"
+
+
+def render_batch_execution(repo_root: Path) -> str:
+    """The Batch jobs themselves, as the service describes them rather than as we recorded."""
+    evidence = read_runs(repo_root)
+    environment = evidence.compute_environment
+    rows = []
+    for run in evidence.runs:
+        job = run.job
+        if job is None:
+            rows.append(
+                [_run_label(run), "—", "no job", "—", "refused before submission"]
+            )
+            continue
+        rows.append(
+            [
+                _run_label(run),
+                f"`{job.batch_job_id}`",
+                job.status,
+                "—" if job.container_exit_code is None else str(job.container_exit_code),
+                job.status_reason or "—",
+            ]
+        )
+    return (
+        "\n".join(
+            [
+                "# Phase 3 Batch execution evidence",
+                "",
+                (
+                    "What Batch says about each job this platform submitted, read back with "
+                    "`describe-jobs` and projected field by field rather than scanned "
+                    "afterwards -- a Batch job detail carries the full container command and "
+                    "environment, so a capture that sanitized by scanning would be one "
+                    "unrecognised field away from committing a workload's arguments."
+                ),
+                "",
+                (
+                    "The exit code column is the one that earns its place. A result record "
+                    "says a run failed; only the exit code separates a command that returned "
+                    "non-zero, which has one, from a job the scheduler killed, which does not."
+                ),
+                "",
+                table(
+                    ["run", "Batch job id", "status", "container exit", "reason Batch gave"],
+                    rows,
+                ),
+                "",
+                "## The compute environment these ran on",
+                "",
+                (
+                    "Read from the deployed environment after every run above had finished. "
+                    "`desiredvCpus` is the reading that matters: `minvCpus` is what the "
+                    "template asks for and cannot catch an environment that scaled up and did "
+                    "not come back down."
+                ),
+                "",
+                table(
+                    ["fact", "value"],
+                    (
+                        [
+                            ["compute environment", f"`{environment.compute_environment_name}`"],
+                            ["status", f"{environment.status}, {environment.state}"],
+                            ["job queues routing to it", ", ".join(f"`{q}`" for q in environment.job_queue_names)],
+                            [
+                                "vCPUs, min / desired / max",
+                                (
+                                    f"{environment.minimum_vcpus} / "
+                                    f"{environment.desired_vcpus} / "
+                                    f"{environment.maximum_vcpus}"
+                                ),
+                            ],
+                            ["observed", environment.observed_at.date().isoformat()],
+                        ]
+                        if environment is not None
+                        else [["compute environment", "no capture is committed"]]
+                    ),
+                ),
+            ]
+        )
+        + "\n"
+    )
+
+
+def render_log_streams(repo_root: Path) -> str:
+    """The streams each job recorded, and the lines fetched back out of them."""
+    evidence = read_runs(repo_root)
+    sections = [
+        "# Phase 3 log stream evidence",
+        "",
+        (
+            "The stream each job recorded, fetched back and returning the line its container "
+            "printed. The stream and not the group: a group name reads as complete and "
+            "resolves to every job on the queue, so a record carrying one looks healthy and "
+            "locates nothing."
+        ),
+        "",
+        (
+            "The lines are reproduced here because these are smoke commands whose output this "
+            "repository wrote. That is a deliberate exception to D8's rule that references "
+            "travel rather than contents, and it does not generalise: a research workload's "
+            "stdout is the least predictable text this platform handles and belongs behind a "
+            "reference."
+        ),
+        "",
+    ]
+    for run in evidence.runs:
+        logs = run.logs
+        sections.append(f"## {run.run_id}")
+        sections.append("")
+        if logs is None:
+            sections.append(
+                "Refused before submission, so no container ran and no stream exists."
+            )
+            sections.append("")
+            continue
+        sections.extend(
+            [
+                table(
+                    ["fact", "value"],
+                    [
+                        ["log group", f"`{logs.log_group_name}`"],
+                        ["log stream", f"`{logs.log_stream_name}`"],
+                        ["lines retrieved", str(len(logs.lines))],
+                        ["truncated", "yes" if logs.truncated else "no"],
+                    ],
+                ),
+                "",
+                "```",
+                *logs.lines,
+                "```",
+                "",
+            ]
+        )
+    return "\n".join(sections) + "\n"
+
+
+def render_lineage_records(repo_root: Path) -> str:
+    """Every object the runs wrote, with what S3 attests, and the joins between them."""
+    evidence = read_runs(repo_root)
+    sections = [
+        "# Phase 3 lineage record evidence",
+        "",
+        (
+            "What S3 attests about every object these runs wrote. The writers asking for a "
+            "checksum and the store having computed one are different claims: the first is "
+            "read from the state machine definition elsewhere in this bundle, and only "
+            "`head-object --checksum-mode ENABLED` establishes the second."
+        ),
+        "",
+        (
+            "`loads` is the column worth reading twice. Three bindings here are attested, "
+            "versioned and intact -- S3 holds exactly the bytes it was sent -- and are refused "
+            "by the contract that defines what a binding is, because they were written before "
+            "the `\"Result\": null` fix in the admission state machine and carry a whole "
+            "admission payload where a fan-out size belongs. The lineage store is write-once, "
+            "so those objects are permanent and no future capture repairs them."
+        ),
+        "",
+    ]
+    for run in evidence.runs:
+        attestation = run.lineage
+        sections.append(f"## {run.run_id}")
+        sections.append("")
+        if attestation is None:
+            sections.extend(["No attestation is committed for this run.", ""])
+            continue
+        sections.extend(
+            [
+                table(
+                    ["key", "kind", "bytes", "canonical", "loads", "VersionId", "ChecksumSHA256"],
+                    [
+                        [
+                            f"`{record.key.rsplit('/', 1)[-1]}`",
+                            record.record_kind,
+                            str(record.content_length),
+                            "yes" if record.canonical else "**no**",
+                            "yes" if record.loads_as_contract else "**no**",
+                            f"`{record.version_id}`",
+                            f"`{record.checksum_sha256}`",
+                        ]
+                        for record in attestation.objects
+                    ],
+                ),
+                "",
+                (
+                    f"Traceable end to end: **{'yes' if run.traceable else 'no'}**"
+                    + (
+                        ""
+                        if run.traceable
+                        else f" — unresolved: {', '.join(run.unresolved_artifacts)}."
+                    )
+                ),
+                "",
+            ]
+        )
+    traceable = [run for run in evidence.runs if run.traceable]
+    sections.extend(
+        [
+            "## The eleven artifacts one run id has to resolve to",
+            "",
+            (
+                "Named rather than counted, in `phase3_capture.TRACEABLE_ARTIFACTS`, because a "
+                "check that counted eleven would go on passing after somebody removed one and "
+                "added another."
+            ),
+            "",
+            ", ".join(f"`{name}`" for name in TRACEABLE_ARTIFACTS) + ".",
+            "",
+            (
+                f"{spell(len(traceable))} of the {spell(len(evidence.runs))} captured runs "
+                "resolve all eleven. The others are the runs holding a binding that will never "
+                "load, and they are reported as not traceable rather than as nearly traceable: "
+                "an unbroken chain is the claim, and a chain missing a link is not a chain."
+            ),
+        ]
+    )
+    return "\n".join(sections) + "\n"
+
+
+def render_cancellation_and_timeout(repo_root: Path) -> str:
+    """The timeout, which fired, beside the cancellation path, which does not exist."""
+    evidence = read_runs(repo_root)
+    timed_out = [run for run in evidence.runs if run.job is not None and run.job.timed_out]
+    sections = [
+        "# Phase 3 cancellation and timeout evidence",
+        "",
+        (
+            "Two halves of one document and they are in opposite states. The timeout has been "
+            "observed stopping a real job. Cancellation has not been observed at all, because "
+            "there is nothing to observe: no component in this account may terminate a job."
+        ),
+        "",
+        "## The timeout, which fired",
+        "",
+    ]
+    if not timed_out:
+        sections.extend(["No captured run was stopped by its timeout.", ""])
+    for run in timed_out:
+        job = run.job
+        binding = run.body("binding")
+        assert job is not None
+        sections.extend(
+            [
+                table(
+                    ["fact", "value"],
+                    [
+                        ["run", _run_label(run)],
+                        ["attempt duration sent to Batch", f"{binding['attempt_duration_seconds']}s" if binding else "—"],
+                        [
+                            "ran for",
+                            f"{int((job.stopped_at - job.started_at).total_seconds())}s"
+                            if job.started_at and job.stopped_at
+                            else "—",
+                        ],
+                        ["status", job.status],
+                        ["reason Batch gave", job.status_reason or "—"],
+                        ["container exit", "none — the scheduler stopped it"],
+                    ],
+                ),
+                "",
+                (
+                    "The absent exit code is the load-bearing part. A job the scheduler killed "
+                    "never got to return a status, so anything in that field would mean the "
+                    "command finished on its own and the timeout was a coincidence."
+                ),
+                "",
+            ]
+        )
+    sections.extend(
+        [
+            "## Cancellation, which does not exist",
+            "",
+            (
+                "Every Phase 3 role deliberately excludes `batch:TerminateJob`, and the state "
+                "machine the plan routes cancellation through has not been written. So this "
+                "half needs a component built before it needs a run, and the three checks "
+                "waiting on it say so rather than describing a capture somebody could take."
+            ),
+            "",
+            (
+                "The bound that makes the absence survivable is the timeout above. With a "
+                "mandatory attempt duration in force and demonstrably enforced, the cost of "
+                "being unable to cancel is the remainder of one job rather than an open-ended "
+                "amount."
+            ),
+            "",
+            (
+                "Cancelling the GitHub workflow does not stop the Batch job. The submit job "
+                "records that where an operator will read it rather than implying otherwise by "
+                "silence, and it is on the pilot limitations page in those words."
+            ),
+        ]
+    )
+    return "\n".join(sections) + "\n"
+
+
+def render_deployed_role_drift(repo_root: Path) -> str:
+    """The four Phase 3 roles as deployed, compared to the templates that declare them."""
+    captures = read_committed_role_captures(
+        repo_root,
+        capture_dir=repo_root / PHASE3_CAPTURE_DIR / "roles",
+        role_templates=PHASE3_ROLE_TEMPLATES,
+    )
+    return (
+        "\n".join(
+            [
+                "# Phase 3 deployed-role drift",
+                "",
+                (
+                    "The four roles this phase creates, captured from the account and compared "
+                    "to the templates that declare them. This is the only check in the bundle "
+                    "that can see a role widened in a console: every other test of these roles "
+                    "reads a committed template, which is what the account was asked for rather "
+                    "than what it holds."
+                ),
+                "",
+                table(
+                    ["role", "template", "verdict"],
+                    [
+                        [
+                            f"`{capture.role_name}`",
+                            f"`{capture.template_path}`" if capture.template_path else "—",
+                            capture.verdict.value,
+                        ]
+                        for capture in captures
+                    ],
+                ),
+                "",
+                "## What this does not cover",
+                "",
+                (
+                    "Two roles the checks about separation of authority are actually about are "
+                    "not here. `sbsandbox-intern-edullm-admission-lambda` and "
+                    "`sbsandbox-intern-edullm-admission-states` are registered in "
+                    "`PHASE2_ROLE_TEMPLATES`, so a capture of them belongs to Phase 2's evidence "
+                    "and Phase 2's freshness window rather than being copied here. Until they "
+                    "are captured, the claim that the validator could not have submitted the "
+                    "job rests on a template."
+                ),
+                "",
+                (
+                    "A policy declining to permit an action is also not AWS refusing one. The "
+                    "workload role's deployed policy grants no lineage write and no way to start "
+                    "anything, and that is what these captures establish; the denial matrix is "
+                    "the only thing that shows a call being turned down, and the workload half "
+                    "of it has not run."
+                ),
+                "",
+                (
+                    "One thing these captures did find, recorded here rather than left for a "
+                    "later phase to discover: the deployed workload role permits `s3:PutObject` "
+                    "under `teams/*/runs/*` rather than under one team's prefix. The template "
+                    "agrees, so it is deliberate rather than drift, and for a single-team pilot "
+                    "nothing is misattributed -- but the cross-team isolation the `teams/` "
+                    "segment exists to make expressible is not expressed yet."
+                ),
+            ]
+        )
+        + "\n"
+    )
+
+
+def render_rollback(repo_root: Path) -> str:
+    """The rehearsal, which has not been performed, and why no check is waiting on it now."""
+    evidence = read_runs(repo_root)
+    environment = evidence.compute_environment
+    return (
+        "\n".join(
+            [
+                "# Phase 3 rollback rehearsal",
+                "",
+                (
+                    "**The rehearsal has not been performed.** Rolling back this phase means "
+                    "disabling the job queue, letting the compute environment drain to zero "
+                    "desired vCPUs, removing the reviewers from both GitHub environments, and "
+                    "redeploying the states role without `batch:SubmitJob`. Each of those has "
+                    "been written down; none has been executed, and a rollback nobody has run "
+                    "is a plan rather than a rehearsal."
+                ),
+                "",
+                (
+                    "What would make it a rehearsal rather than a description is recording four "
+                    "things: that a submission dispatched after the queue is disabled creates no "
+                    "Batch job; that a job already running still reaches a terminal state and "
+                    "still lands its result record; that `desiredvCpus` is observed at zero "
+                    "afterwards rather than assumed; and that a record written before the "
+                    "rollback is still readable after it."
+                ),
+                "",
+                "## Why no check is waiting on this",
+                "",
+                (
+                    "This document used to carry the check that the compute environment holds no "
+                    "capacity when idle, on the reasoning that draining it was part of the "
+                    "rollback. That check closed a different way: the environment was observed "
+                    "at zero desired vCPUs after four runs had finished, in the ordinary course "
+                    "of running them, which is the same reading taken without tearing anything "
+                    "down."
+                ),
+                "",
+                (
+                    "So the rehearsal is still worth doing, and nothing in the acceptance list "
+                    "is waiting for it. That is recorded here rather than quietly dropped, "
+                    "because work nobody is blocked on is exactly the kind that stops being "
+                    "done and then stops being remembered."
+                ),
+                "",
+                table(
+                    ["fact", "value"],
+                    [
+                        ["rehearsal performed", "**no**"],
+                        [
+                            "desired vCPUs when last observed",
+                            str(environment.desired_vcpus) if environment else "—",
+                        ],
+                        [
+                            "observed",
+                            environment.observed_at.date().isoformat() if environment else "—",
+                        ],
+                    ],
                 ),
             ]
         )
@@ -886,19 +1279,30 @@ def render_denial_matrix() -> str:
         "# Phase 3 denial matrices",
         "",
         (
-            "Two matrices, one per identity, and neither has ever run. The admission matrix "
-            "needs a real admission session, which needs a dispatched submission through a "
-            "protected environment; the workload matrix runs from inside the container under "
-            "the job role, so it cannot run before a job does. Both are written, wired and "
-            "tested against recorded CLI output, and both are claims about templates until a "
-            "session answers them."
+            "Two matrices, one per identity, and they are in different states. The admission "
+            "matrix has run: it executes inside the submit job against a real admission "
+            "session issued through a protected environment, before the one call that session "
+            "makes, and every completed submission passed it. The workload matrix has not, "
+            "because it runs from inside the container under the job role, and every command "
+            "run there so far has printed a line and exited."
+        ),
+        "",
+        (
+            "Having run is not the same as being recorded here. The admission matrix writes "
+            "its result to a GitHub Actions artifact with a thirty-day retention, which is "
+            "somewhere this repository does not read and cannot cite, so the check that rests "
+            "on it stays open until the artifact is captured into the evidence tree and a "
+            "test reads it."
         ),
         "",
         (
             "That distinction is the whole reason these matrices exist. Every other test of "
             "these roles reads a committed CloudFormation template, which is what the account "
             "was asked for rather than what it holds -- and a role widened in the console "
-            "leaves every one of them green."
+            "leaves every one of them green. The four roles this phase creates are now also "
+            "captured from the account and compared, which closes that gap for them; the "
+            "matrices remain the only thing that shows AWS refusing a call rather than a "
+            "policy declining to permit one."
         ),
         "",
         "## The admission session, attempted before the one call it may make",
@@ -993,13 +1397,21 @@ def render_denial_matrix() -> str:
         [
             "## Why this document is not evidence yet",
             "",
-            NOTHING_RAN,
+            (
+                "The two halves fall short for different reasons and neither is that the phase "
+                "is undeployed. The admission matrix has run against real sessions and its "
+                "result is a GitHub Actions artifact this repository cannot cite; the workload "
+                "matrix has never run, because it executes inside the container and no command "
+                "run there has invoked it."
+            ),
             "",
             (
-                "Criteria 12 and 13 rest on it and are gaps. What fills it is one live run of "
-                "each matrix, its record uploaded as a workflow artifact, committed under "
-                "`fixtures/evidence/phase-3/`, and a test that reads it -- with the CloudTrail "
-                "event id of each refusal, so a reviewer can look any of them up in the account."
+                "Criteria 12 and 13 rest on this and are gaps. What fills it is each matrix's "
+                "record committed under `fixtures/evidence/phase-3/` and a test that reads it -- "
+                "with the CloudTrail event id of each refusal, so a reviewer can look any of "
+                "them up in the account. For the admission half that is a capture of an "
+                "artifact that already exists; for the workload half it is a container image "
+                "carrying the probe, which this repository does not build."
             ),
         ]
     )
@@ -1377,49 +1789,73 @@ def known_limitations(
 
     return (
         (
-            "Nothing has been deployed and nothing has run. This is the limitation every other "
-            "one below is a consequence of: no Phase 3 stack has been applied to the account, "
-            "no Batch job has ever run in it, and no lifecycle record exists. Seven documents "
-            "in this bundle are therefore empty with a reason rather than absent."
+            "Everything live here rests on four runs, and four is a small number. One "
+            "succeeded, one exited non-zero deliberately, one was stopped by its timeout and "
+            "one was refused before submission. That is enough to establish that each path "
+            "works once; it is not a sample from which anything about reliability follows."
         ),
         (
             f"Check 1 -- that a valid run reaches SUCCEEDED -- is {status_of('1')}, and it is "
             "the phase's central claim. A reviewer should read this bundle as a description of "
-            "a system that has been built and not yet operated."
+            "a system that has been operated a handful of times rather than one in service."
+        ),
+        (
+            "This phase still cannot stop a job it has started. No component in the account "
+            f"holds `batch:TerminateJob`, so checks 5, 6 and 7 are {status_of('5')}s that need "
+            "a component built rather than a run taken. What bounds the exposure is the "
+            "mandatory attempt duration, which has been observed stopping a real job."
         ),
         (
             f"Check 20 is {status_of('20')} on a committed CloudFormation template, which is "
             "what the repository asks the account for rather than what the account holds. The "
-            "four Phase 3 roles have no capture at all, so the comparison that catches a role "
-            "widened in the console does not run for any of them, and check 14 is "
-            f"{status_of('14')} for that reason."
+            "four Phase 3 roles are now captured from the account and compared, so that gap is "
+            "closed for them; the two roles the validator and the state machine hold belong to "
+            f"Phase 2's registry and are not, which is why check 14 is {status_of('14')}."
         ),
         (
             f"Check 22 is {status_of('22')} because the open-decisions entry is gone and the "
-            "answer is enforced in code and configuration this repository commits. Nothing here "
-            "says the enforcement has ever refused a real submission."
+            "answer is enforced in code and configuration this repository commits. Every run so "
+            "far named an image whose findings are carried by a recorded exception, so the gate "
+            "has been evaluated and passed and has never had to refuse anything."
         ),
         (
-            "A compute environment reporting VALID would not be evidence that a job can run. "
-            "Batch does not fail a job it cannot place; it waits. Only a job observed in "
+            "A compute environment reporting VALID is not on its own evidence that a job can "
+            "run. Batch does not fail a job it cannot place; it waits. Only a job observed in "
             "RUNNING and then SUCCEEDED establishes placement, egress and the image pull, which "
-            "is why checks 1 and 15 are separate."
+            "is why checks 1 and 15 are separate and are cited separately."
         ),
         (
-            "The account measurements this bundle's networking and method documents are "
-            "rendered from expire thirty days after they were observed, and this generator "
-            "refuses to build once they do. Nothing about the account will have changed on that "
-            "date; what will have lapsed is anybody's knowledge of it."
+            "Three lineage bindings will never load. They were written before the "
+            '`"Result": null` fix in the admission state machine and carry an admission payload '
+            "where a fan-out size belongs; the store is write-once, so they are permanent. The "
+            "runs holding one are reported as not traceable end to end rather than as nearly "
+            "traceable, and the corrupt bodies are described in the attestation rather than "
+            "committed, because they carry an approver's name and a full image scan."
         ),
         (
-            "The recorded role digests are over four templates nobody has deployed. They catch "
-            "a template widened between now and the deploy, and they say nothing about the "
-            "account, because there is no account state to say anything about yet."
+            "The captures every live check rests on expire thirty days after they were "
+            "observed, and this generator refuses to build once they do. Nothing about the runs "
+            "will have changed on that date -- every object is still in a write-once store -- "
+            "and what will have lapsed is anybody's knowledge of the account they are in."
         ),
         (
-            "The two denial matrices are written and have never run. Until a real session "
-            "answers them, every claim about what these roles cannot do rests on a document "
-            "rather than on a refusal."
+            "The admission denial matrix has run against a real session and its result lives in "
+            "a GitHub Actions artifact with a thirty-day retention, which is somewhere this "
+            "repository cannot cite. The workload matrix has not run at all: it executes inside "
+            "the container, and no command run there has ever invoked it. So every claim about "
+            f"what the workload role cannot do rests on a policy, and check 13 is {status_of('13')}."
+        ),
+        (
+            "The deployed workload role permits writes under `teams/*/runs/*` rather than under "
+            "one team's prefix, so it can write into any team's output location. The template "
+            "agrees, so this is deliberate rather than drift, and for a single-team pilot "
+            "nothing is misattributed -- but the cross-team isolation the `teams/` segment "
+            "exists to make expressible is not expressed yet."
+        ),
+        (
+            "The rollback rehearsal has not been performed. It is written down and no "
+            "acceptance check is waiting on it, which is exactly the condition in which work "
+            "stops being done and then stops being remembered."
         ),
         (
             "The nested verification run excludes every test module that builds a proof bundle "
@@ -1506,12 +1942,21 @@ def render_index(
                 "",
                 (
                     "**Read this first.** Phase 3's claim is that one manifest becomes one "
-                    "container that runs on AWS Batch and lands its records in lineage. The "
-                    "software for that is built and tested. None of it has been deployed, and no "
-                    "Batch job has ever run in this account, because Wave 5 -- the laptop IAM "
-                    "stacks, the CI stacks and the live matrix -- is held. Seven of the documents "
-                    "below are therefore empty with a reason in each, and the Result table shows "
-                    "how few criteria that leaves standing."
+                    "container that runs on AWS Batch and lands its records in lineage. That has "
+                    "happened. Four submissions have gone from GitHub through OIDC, admission, "
+                    "Batch and EventBridge to S3: one succeeded, one exited non-zero "
+                    "deliberately, one was stopped by its own timeout, and one was refused "
+                    "before anything could be launched. What they left behind is captured and "
+                    "committed, and the checks that rest on it cite tests that read those "
+                    "records rather than describing what a run would show."
+                ),
+                "",
+                (
+                    "What is not done is the other end of a run's life. Nothing in this account "
+                    "can stop a job once it has started, so the three cancellation checks need a "
+                    "component built before they need a run. Four more need a run aimed at them, "
+                    "and two need a shape of capture the per-run records cannot produce. The "
+                    "Result table below says which."
                 ),
                 "",
                 "## Contents",
@@ -1538,7 +1983,8 @@ def render_index(
                         (
                             "`batch-denial-matrix.md` — the two matrices, what each probe is aimed "
                             "at so a permitted call changes nothing, and what choosing a probe has "
-                            "cost. Neither has run."
+                            "cost. The admission matrix has run against real sessions; the "
+                            "workload one has not."
                         ),
                         (
                             "`open-decisions.md` — the question this phase answered and moved to "
@@ -1560,10 +2006,19 @@ def render_index(
                         ),
                         (
                             "`batch-execution-evidence.md`, `log-stream-evidence.md`, "
-                            "`event-evidence.md`, `lineage-record-evidence.md`, "
-                            "`cancellation-and-timeout-evidence.md`, `deployed-role-drift.md` and "
-                            "`rollback-evidence.md` — empty. Each says what it records, what "
-                            "would fill it, and which criteria are waiting on it."
+                            "`lineage-record-evidence.md`, `cancellation-and-timeout-evidence.md` "
+                            "and `deployed-role-drift.md` — what four completed runs left "
+                            "behind, rendered from the captures committed under "
+                            f"`{PHASE3_CAPTURE_DIR}/`."
+                        ),
+                        (
+                            "`rollback-evidence.md` — the rollback rehearsal, which has not been "
+                            "performed. It says so, and says why nothing in the acceptance list "
+                            "is waiting for it."
+                        ),
+                        (
+                            "`event-evidence.md` — empty. It says what it records, what would "
+                            "fill it, and which criteria are waiting on it."
                         ),
                     ]
                 ),
@@ -1690,6 +2145,12 @@ def build_bundle(
         "negative-case-matrix.md": render_matrix(criteria, resolved),
         "measurement-method.md": render_measurement_method(repo_root),
         "networking-evidence.md": render_networking(repo_root),
+        "batch-execution-evidence.md": render_batch_execution(repo_root),
+        "log-stream-evidence.md": render_log_streams(repo_root),
+        "lineage-record-evidence.md": render_lineage_records(repo_root),
+        "cancellation-and-timeout-evidence.md": render_cancellation_and_timeout(repo_root),
+        "deployed-role-drift.md": render_deployed_role_drift(repo_root),
+        "rollback-evidence.md": render_rollback(repo_root),
         "batch-denial-matrix.md": render_denial_matrix(),
         "open-decisions.md": render_open_decisions(decisions),
         "schema-compatibility.md": render_schema_report(models),

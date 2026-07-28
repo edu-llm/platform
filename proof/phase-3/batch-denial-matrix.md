@@ -1,8 +1,10 @@
 # Phase 3 denial matrices
 
-Two matrices, one per identity, and neither has ever run. The admission matrix needs a real admission session, which needs a dispatched submission through a protected environment; the workload matrix runs from inside the container under the job role, so it cannot run before a job does. Both are written, wired and tested against recorded CLI output, and both are claims about templates until a session answers them.
+Two matrices, one per identity, and they are in different states. The admission matrix has run: it executes inside the submit job against a real admission session issued through a protected environment, before the one call that session makes, and every completed submission passed it. The workload matrix has not, because it runs from inside the container under the job role, and every command run there so far has printed a line and exited.
 
-That distinction is the whole reason these matrices exist. Every other test of these roles reads a committed CloudFormation template, which is what the account was asked for rather than what it holds -- and a role widened in the console leaves every one of them green.
+Having run is not the same as being recorded here. The admission matrix writes its result to a GitHub Actions artifact with a thirty-day retention, which is somewhere this repository does not read and cannot cite, so the check that rests on it stays open until the artifact is captured into the evidence tree and a test reads it.
+
+That distinction is the whole reason these matrices exist. Every other test of these roles reads a committed CloudFormation template, which is what the account was asked for rather than what it holds -- and a role widened in the console leaves every one of them green. The four roles this phase creates are now also captured from the account and compared, which closes that gap for them; the matrices remain the only thing that shows AWS refusing a call rather than a policy declining to permit one.
 
 ## The admission session, attempted before the one call it may make
 
@@ -56,6 +58,6 @@ The gap is recorded rather than closed because closing it means a permitted prob
 
 ## Why this document is not evidence yet
 
-**This document is empty, and it is empty for one reason.** Wave 5 is held: no Phase 3 stack has been applied to this account, no compute environment or job queue exists, and no Batch job has ever run here. There is nothing to record. It is generated empty rather than omitted because a bundle missing a document reads as a phase with fewer claims, and a reviewer counting what is here should count this too.
+The two halves fall short for different reasons and neither is that the phase is undeployed. The admission matrix has run against real sessions and its result is a GitHub Actions artifact this repository cannot cite; the workload matrix has never run, because it executes inside the container and no command run there has invoked it.
 
-Criteria 12 and 13 rest on it and are gaps. What fills it is one live run of each matrix, its record uploaded as a workflow artifact, committed under `fixtures/evidence/phase-3/`, and a test that reads it -- with the CloudTrail event id of each refusal, so a reviewer can look any of them up in the account.
+Criteria 12 and 13 rest on this and are gaps. What fills it is each matrix's record committed under `fixtures/evidence/phase-3/` and a test that reads it -- with the CloudTrail event id of each refusal, so a reviewer can look any of them up in the account. For the admission half that is a capture of an artifact that already exists; for the workload half it is a container image carrying the probe, which this repository does not build.
