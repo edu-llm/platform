@@ -291,18 +291,20 @@ def test_service_roles_are_bounded_and_trusted_only_by_their_own_aws_service() -
 
 
 def test_states_role_invokes_the_validator_and_appends_lineage_and_nothing_else() -> None:
-    # Five statements since Phase 3, not three. The two it gained -- batch:SubmitJob on one
-    # queue and one job definition, and ecr:DescribeImageScanFindings on one repository --
-    # are asserted in tests/test_phase3_infrastructure.py, which also compares the queue
-    # name here against the queue infra/batch-compute.yaml creates. What this test still
-    # owns is the Phase 2 claim: the S3 grant is PutObject on the lineage bucket and nothing
-    # else, whatever else the role has since been given.
+    # Six statements since Phase 3, not three. The three it gained -- batch:SubmitJob on one
+    # queue and one job definition, batch:TagResource on the same ARNs because Batch
+    # authorizes the tags that submission carries under a separate action name, and
+    # ecr:DescribeImageScanFindings on one repository -- are asserted in
+    # tests/test_phase3_infrastructure.py, which also compares the queue name here against
+    # the queue infra/batch-compute.yaml creates. What this test still owns is the Phase 2
+    # claim: the S3 grant is PutObject on the lineage bucket and nothing else, whatever else
+    # the role has since been given.
     statements = policy_statements(
         role_named(SERVICE_ROLES_PATH, STATES_ROLE_NAME), "run-admission-workflow"
     )
-    invoke, write, _submit, _describe_scan, _logs = statements
+    invoke, write, _submit, _tag, _describe_scan, _logs = statements
 
-    assert len(statements) == 5
+    assert len(statements) == 6
     assert invoke["Effect"] == "Allow"
     assert statement_actions(invoke) == ["lambda:InvokeFunction"]
     assert invoke["Resource"] == [

@@ -8,9 +8,9 @@
       "relative_path": "infra/iam/admission-role.yaml"
     },
     {
-      "canonical_json_bytes": 2386,
+      "canonical_json_bytes": 2877,
       "contract": "TemplateRole",
-      "digest": "sha256:3306a63f552cbac9e59f858e744e2c37a77e055340f3af8ab6fac1c5b631108e",
+      "digest": "sha256:0e5e232e4a119e4d98829293016b97a46ad1f3c3c18cfc4bcf67f821e1a2227c",
       "fixture": "sbsandbox-intern-edullm-admission-states",
       "relative_path": "infra/iam/admission-service-roles.yaml"
     },

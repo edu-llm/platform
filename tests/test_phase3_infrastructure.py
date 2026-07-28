@@ -580,18 +580,38 @@ def rule_queue_arns() -> list[str]:
     return [entry["Fn::Sub"] for entry in pattern["detail"]["jobQueue"]]
 
 
-def states_role_submit_arns() -> list[str]:
+def states_role_arns_for(action: str) -> list[str]:
     statements = [
         statement
         for policy in role_named(SERVICE_ROLES_PATH, "sbsandbox-intern-edullm-admission-states")[
             "Policies"
         ]
         for statement in policy["PolicyDocument"]["Statement"]
-        if "batch:SubmitJob" in statement_actions(statement)
+        if action in statement_actions(statement)
     ]
-    assert len(statements) == 1, "batch:SubmitJob belongs in exactly one statement"
-    assert statement_actions(statements[0]) == ["batch:SubmitJob"]
+    assert len(statements) == 1, f"{action} belongs in exactly one statement"
+    assert statement_actions(statements[0]) == [action]
     return resource_arns(statements[0]["Resource"])
+
+
+def states_role_submit_arns() -> list[str]:
+    return states_role_arns_for("batch:SubmitJob")
+
+
+def test_the_tag_scope_is_the_submit_scope_because_it_is_the_same_call() -> None:
+    """Mutation: widen or narrow one of the two lists and leave the other.
+
+    ``batch:TagResource`` is not a capability to tag Batch resources. It is the half of
+    ``SubmitJob`` that AWS bills to a different action name, because every submission
+    carries Tags and Batch authorizes tagging-on-creation separately. The two lists
+    therefore describe one call against one pair of resources, and the failure mode of
+    letting them drift is a role that can submit and cannot -- which the first run through
+    the whole path measured, at ``SubmitToBatch``, as a 403 naming the job definition.
+
+    Nothing else in the phase catches it. Each list is well-formed on its own, the queue
+    seam below reads only the submit list, and a template test cannot reach the account.
+    """
+    assert states_role_arns_for("batch:TagResource") == states_role_submit_arns()
 
 
 def test_the_event_rule_matches_the_job_queue_the_compute_stack_creates() -> None:
@@ -1418,13 +1438,28 @@ def test_the_states_role_gains_batch_and_ecr_reads_and_no_way_to_stop_a_job() ->
         for action in statement_actions(statement)
     ]
 
-    assert [action for action in actions if action.startswith("batch:")] == ["batch:SubmitJob"]
+    # Two Batch actions, and the second is not a second capability. batch_submit_request
+    # always sends Tags, and Batch authorizes tagging-on-creation under its own action
+    # name, so a role holding SubmitJob without TagResource is refused every submission --
+    # measured on the first run through the whole path, which reached SubmitToBatch and got
+    # a 403 naming the job definition. Asserted as an exact list so a third action cannot
+    # arrive unnoticed on the strength of this one having been allowed.
+    assert [action for action in actions if action.startswith("batch:")] == [
+        "batch:SubmitJob",
+        "batch:TagResource",
+    ]
     assert [action for action in actions if action.startswith("ecr:")] == [
         "ecr:DescribeImageScanFindings"
     ]
-    assert not {"batch:TerminateJob", "batch:CancelJob", "batch:RegisterJobDefinition"} & set(
-        actions
-    )
+    # UntagResource joins the three that were already refused. The tags are lineage: a
+    # principal that could remove them could detach a running job from the run that paid
+    # for it, which is the same harm as terminating one and harder to see afterwards.
+    assert not {
+        "batch:TerminateJob",
+        "batch:CancelJob",
+        "batch:RegisterJobDefinition",
+        "batch:UntagResource",
+    } & set(actions)
 
 
 # --------------------------------------------------------------------------------------
