@@ -41,14 +41,26 @@ Resources:
       #
       # The placeholder that used to sit here did its job: the first deploy of this stack
       # failed at CreateFunction because nothing had ever built or uploaded the zip. The
-      # value below is the real version id of the first packaged release, produced by
-      # tools/build_admission_lambda.py and uploaded by the procedure in infra/README.md.
-      # Changing the code means running that procedure again and editing this line, which
-      # is the diff a reviewer sees.
+      # value below is a version id produced by tools/build_admission_lambda.py and
+      # uploaded by the procedure in infra/README.md. Changing the code means running that
+      # procedure again and editing this line, which is the diff a reviewer sees.
+      #
+      # This is the second release, and the first run through the whole path is what
+      # forced it. The Phase 3 amendment added ResolveExecutionTarget below, which reads
+      # $.admission.payload.execution -- a key the Phase 2 package does not emit. CI
+      # deployed the amended state machine and the states were correct, so nothing here
+      # went red; the function behind ValidateAndDecide simply kept running Phase 2 code
+      # under policy v1. The failure surfaced only on an accepted submission, after the
+      # intent and decision records had been written, at the one state that reads a key
+      # the deployed package had never heard of.
+      #
+      # The lesson is the one this pin already encodes, arriving a phase late: a state
+      # machine and the function it calls are released separately, and a template test
+      # cannot see the gap between them.
       Code:
         S3Bucket: sbsandbox-intern-edullm-artifacts
         S3Key: admission-validator/admission-validator.zip
-        S3ObjectVersion: baIeOo1zFWgHFAIPst7Lglnqb7hmBug4
+        S3ObjectVersion: nXEUyz_xMZmwL4UuaPgxGhB6El5GDG1l
       Timeout: 30
       MemorySize: 512
 
