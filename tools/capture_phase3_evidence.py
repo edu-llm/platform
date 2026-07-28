@@ -48,6 +48,7 @@ from typing import Any, Final
 from pydantic import ValidationError
 
 from edullm_platform.contracts.admission import DecisionRecord, IntentRecord
+from edullm_platform.contracts.base import ContractModel
 from edullm_platform.contracts.execution import BatchJobBinding
 from edullm_platform.contracts.lifecycle import LifecycleEvent, SchedulerAttempt
 from edullm_platform.contracts.results import ResultManifest
@@ -134,7 +135,11 @@ MAXIMUM_LOOKUP_PAGES: Final = 40
 #: Which contract each lineage key is read through when deciding whether the stored object
 #: still loads as the thing its key says it is. ``events`` is the only prefix holding more
 #: than one object per run, which is why the mapping is by prefix rather than by file.
-RECORD_CONTRACTS: Final = {
+#
+# Annotated rather than inferred. Left bare, mypy joins six unrelated model classes and
+# lands on their shared metaclass, which has no ``model_validate`` -- so the one call this
+# mapping exists to serve stops typechecking while reading perfectly.
+RECORD_CONTRACTS: Final[dict[str, type[ContractModel]]] = {
     "intent": IntentRecord,
     "decision": DecisionRecord,
     "binding": BatchJobBinding,

@@ -251,10 +251,16 @@ class CommittedPhase3Evidence:
         return tuple(captured for captured in self.runs if captured.outcome == outcome)
 
 
-def _load_record(
-    path: Path, contract: type[FreshEvidenceModel], *, run_id: str
-) -> tuple[FreshEvidenceModel | None, Phase3EvidenceProblem | None]:
-    """One committed file, whatever state it is in. Never raises for its contents."""
+def _load_record[T: FreshEvidenceModel](
+    path: Path, contract: type[T], *, run_id: str
+) -> tuple[T | None, Phase3EvidenceProblem | None]:
+    """One committed file, whatever state it is in. Never raises for its contents.
+
+    Generic in the contract rather than returning the base, so a caller gets back the type
+    it asked for. Declared as ``FreshEvidenceModel | None`` this compiled and lied: every
+    caller had to know the real type anyway, and the one that passes the result straight
+    into a typed field was handing over a base-class value nothing checked.
+    """
     name = path.name.removesuffix(CAPTURE_SUFFIX)
     if not path.is_file():
         return None, Phase3EvidenceProblem(
@@ -484,14 +490,17 @@ def _read_run(directory: Path) -> CommittedPhase3Run:
         # says does not load. A body missing for any other reason is somebody removing
         # evidence, and it has to read differently from the capture deliberately
         # withholding a record that will never load.
-        for record in lineage.objects:
-            if record.loads_as_contract and not bodies.get(record.record_kind):
+        # ``attested`` rather than ``record``: the loop above binds ``record`` to a loaded
+        # contract, and reusing the name here made every attribute on it a type error while
+        # the code itself was correct.
+        for attested in lineage.objects:
+            if attested.loads_as_contract and not bodies.get(attested.record_kind):
                 problems.append(
                     Phase3EvidenceProblem(
-                        record=record.record_kind,
+                        record=attested.record_kind,
                         reason=CaptureVerdict.ABSENT.value,
                         detail=(
-                            f"{record.key} is attested in the committed capture of "
+                            f"{attested.key} is attested in the committed capture of "
                             f"{run_id} and loads, but its body is not committed beside "
                             f"it. {RUN_RECAPTURE_GUIDANCE}"
                         ),
