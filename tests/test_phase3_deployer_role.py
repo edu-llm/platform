@@ -417,16 +417,44 @@ def test_every_scoped_phase3_arn_carries_the_project_prefix_or_is_a_named_except
     assert not [arn for arn in everything_else if f"{SHARED_PREFIX}*" in arn]
     assert {arn.rsplit(":", 1)[1].split("/", 1)[0] for arn in ec2_arns} == EC2_NETWORK_RESOURCE_TYPES
     assert all(arn.endswith("/*") for arn in ec2_arns)
-    # Exactly one statement may use the mapping ARN, and the action on it is read-only.
-    # A write verb reaching every event source mapping in a shared account is the widening
-    # this exemption would otherwise let through unnoticed.
-    assert len(mapping_arns) == 1
+    # Two statements may use the mapping ARN, and what separates them is the whole point.
+    # A mapping is addressed by a UUID Lambda assigns at creation, so there is no name for
+    # IAM to match on and the ARN cannot be narrowed. The widening that matters is a write
+    # verb reaching every event source mapping in a shared account, and it is closed by a
+    # condition rather than by an ARN: lambda:FunctionArn restricts each action to mappings
+    # whose function is ours.
+    #
+    # The mutation this catches is somebody adding a write verb on the mapping ARN without
+    # the condition -- which is what the deploy that forced this change would have produced
+    # if the error message had simply been obeyed.
+    assert len(mapping_arns) == 2
     granting = [
         statement
         for statement in statements(PHASE3_POLICY_NAME)
         if EVENT_SOURCE_MAPPING_ARN in arns(statement)
     ]
-    assert [statement_actions(statement) for statement in granting] == [["lambda:ListTags"]]
+    read_only = [s for s in granting if statement_actions(s) == ["lambda:ListTags"]]
+    assert len(read_only) == 1, "lambda:ListTags must keep a statement of its own"
+    assert "Condition" not in read_only[0], "a read-only grant needs no condition"
+
+    writing = [s for s in granting if s is not read_only[0]]
+    assert len(writing) == 1
+    assert statement_actions(writing[0]) == [
+        "lambda:CreateEventSourceMapping",
+        "lambda:DeleteEventSourceMapping",
+        "lambda:GetEventSourceMapping",
+        "lambda:UpdateEventSourceMapping",
+    ]
+    assert writing[0]["Condition"] == {
+        "ArnLike": {
+            "lambda:FunctionArn": {
+                "Fn::Sub": (
+                    "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}"
+                    f":function:{RESOURCE_PREFIX}*"
+                )
+            }
+        }
+    }
 
 
 def test_the_batch_scopes_cover_all_three_resource_types_the_stack_creates() -> None:
@@ -457,6 +485,44 @@ def test_the_batch_scopes_cover_all_three_resource_types_the_stack_creates() -> 
         arn for statement in batch_statements for arn in arns(statement) if ":job-definition/" in arn
     ]
     assert all(arn.endswith("sbsandbox-intern-edullm-*") for arn in definitions)
+
+
+def test_creating_a_job_queue_is_authorized_against_the_compute_environment_as_well() -> None:
+    """Mutation: scope ``batch:CreateJobQueue`` to the job queue alone, as it first was.
+
+    A queue names the compute environments it feeds from, and Batch authorizes the create
+    against those environments as well as against the queue. Scoped to the queue alone the
+    call is denied outright, with a message naming ``batch:CreateJobQueue`` on a
+    ``compute-environment`` ARN -- an action that reads as being about the queue, refused on
+    a resource that is not one. That denial cost a deploy and rolled the compute stack back.
+
+    Measured rather than read. The Service Authorization Reference lists the resource types
+    an action accepts without saying a single call is authorized against more than one of
+    them, so nothing short of the failure said this.
+
+    ``batch:DeleteJobQueue`` is deliberately excluded: its request carries no compute
+    environment, so there is nothing to authorize against and widening it would grant reach
+    the call cannot use.
+    """
+    for action in ("batch:CreateJobQueue", "batch:UpdateJobQueue"):
+        granting = [
+            statement
+            for statement in statements(PHASE3_POLICY_NAME)
+            if action in statement_actions(statement)
+        ]
+        assert len(granting) == 1, f"{action} should be granted in exactly one statement"
+        covered = {arn.rsplit(":", 1)[1].split("/", 1)[0] for arn in arns(granting[0])}
+        assert covered == {"job-queue", "compute-environment"}, (
+            f"{action} is scoped to {covered}, which denies the call Batch actually makes"
+        )
+
+    deleting = [
+        statement
+        for statement in statements(PHASE3_POLICY_NAME)
+        if "batch:DeleteJobQueue" in statement_actions(statement)
+    ]
+    assert len(deleting) == 1
+    assert {arn.rsplit(":", 1)[1].split("/", 1)[0] for arn in arns(deleting[0])} == {"job-queue"}
 
 
 def test_the_event_source_mapping_grants_arrive_instead_of_lambda_add_permission() -> None:
