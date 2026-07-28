@@ -66,6 +66,13 @@ from edullm_platform.evidence import (
 )
 from edullm_platform.phase1_evidence import OidcSessionEvidence
 from edullm_platform.phase2_evidence import AdmissionExecution
+
+#: The reader's own names for the file this tool writes. Imported rather than restated,
+#: because the writer spelled "compute-environment.sanitized.json" as a literal in two
+#: places and the reader looked for it through a constant -- three spellings of one
+#: filename, agreeing today. A capture written under a name the reader does not look for is
+#: an absent record, and an absent record reads as a run that never happened.
+from edullm_platform.phase3_capture import CAPTURE_SUFFIX, COMPUTE_ENVIRONMENT_RECORD
 from edullm_platform.phase3_evidence import (
     EVERY_BATCH_JOB_STATUS,
     BatchJobEvidence,
@@ -927,6 +934,29 @@ def capture_compute_environment(
             for entry in queue.get("order") or []
         )
     )
+    # WHAT THE ACCOUNT IS ACTUALLY PAYING FOR, WHICH NEITHER OF THE OTHER TWO NUMBERS SAYS.
+    #
+    # Batch puts the instances it starts into an auto scaling group named
+    # AWSBatch-<compute environment>-asg-<uuid>, and AWS assigns that tag rather than this
+    # project, so an instance somebody launched by hand cannot land in the count and one
+    # Batch started cannot escape it.
+    #
+    # The states are every state that bills or is about to stop billing. `terminated` is
+    # excluded and `stopped` is not: a stopped instance holds its EBS volume, and an
+    # environment sitting on stopped hosts is not one holding nothing.
+    instances = aws_json(
+        [
+            "ec2",
+            "describe-instances",
+            "--filters",
+            f"Name=tag:aws:autoscaling:groupName,Values=AWSBatch-{COMPUTE_ENVIRONMENT_NAME}-asg-*",
+            "Name=instance-state-name,Values=pending,running,shutting-down,stopping,stopped",
+            "--query",
+            "length(Reservations[].Instances[])",
+        ],
+        profile=profile,
+        region=region,
+    )
     return ComputeEnvironmentEvidence.model_validate(
         {
             "observed_at": observed_at,
@@ -936,6 +966,7 @@ def capture_compute_environment(
             "compute_environment_name": str(found["computeEnvironmentName"]),
             "status": str(found["status"]),
             "state": str(found["state"]),
+            "live_instance_count": int(instances),
             "desired_vcpus": int(resources.get("desiredvCpus", 0)),
             "minimum_vcpus": int(resources.get("minvCpus", 0)),
             "maximum_vcpus": int(resources.get("maxvCpus", 0)),
@@ -1421,7 +1452,11 @@ def build_parser() -> argparse.ArgumentParser:
         description="Capture the account facts Phase 3 rests on. Read-only."
     )
     parser.add_argument("--aws-profile", required=True)
-    parser.add_argument("--target", choices=["account", "roles", "run"], required=True)
+    parser.add_argument(
+        "--target",
+        choices=["account", "roles", "run", "compute-environment"],
+        required=True,
+    )
     parser.add_argument(
         "--run-id",
         action="append",
@@ -1495,6 +1530,52 @@ def capture_roles_target(arguments: argparse.Namespace) -> int:
     return 1 if findings else 0
 
 
+def capture_compute_environment_target(arguments: argparse.Namespace) -> int:
+    """The compute environment on its own, with no run to hang it off.
+
+    THIS EXISTS BECAUSE THE IDLE CLAIM CANNOT BE CAPTURED WHILE CAPTURING A RUN. The
+    environment record is a standing fact and was only ever produced as a side effect of
+    ``--target run``, which needs a run id, reads that run's logs, and makes a CloudTrail
+    lookup that is slow and rate limited. So the one record whose whole content is "nothing
+    is running here" could only be taken by a command about something that ran.
+
+    That is not merely awkward. The criterion wants the environment observed when it is
+    quiet, and after the first GPU run the quiet moment arrived about fifteen minutes after
+    the job finished -- long after any reason to be capturing that run. Needing a run id to
+    take it is how a capture ends up taken at the wrong instant.
+
+    Exit 0 when the environment was read, 2 when it could not be.
+    """
+    observed_at = datetime.now(tz=UTC).replace(microsecond=0)
+    environment = capture_compute_environment(
+        profile=arguments.aws_profile,
+        region=arguments.home_region,
+        observed_at=observed_at,
+    )
+    path = arguments.output_dir / f"{COMPUTE_ENVIRONMENT_RECORD}{CAPTURE_SUFFIX}"
+    write_model(path, environment)
+    print(
+        json.dumps(
+            {
+                "targets": ["compute-environment"],
+                "written": [path.name],
+                "compute_environment": environment.compute_environment_name,
+                "desired_vcpus": environment.desired_vcpus,
+                "live_instance_count": environment.live_instance_count,
+                # Reported rather than enforced. A capture taken while the environment is
+                # busy is a true record of a busy environment, and refusing to write it
+                # would leave the only way to record that state unavailable. What must not
+                # happen is committing it as evidence for the idle criterion, which is why
+                # the verdict says which one this is.
+                "verdict": "idle" if environment.idle_and_holding_nothing else "holding",
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
 def capture_run_target(arguments: argparse.Namespace) -> int:
     """The run half of the CLI: what named runs left behind, plus the environment they ran on.
 
@@ -1543,8 +1624,9 @@ def capture_run_target(arguments: argparse.Namespace) -> int:
         region=arguments.home_region,
         observed_at=observed_at,
     )
-    write_model(arguments.output_dir / "compute-environment.sanitized.json", environment)
-    written.append("compute-environment.sanitized.json")
+    environment_record = f"{COMPUTE_ENVIRONMENT_RECORD}{CAPTURE_SUFFIX}"
+    write_model(arguments.output_dir / environment_record, environment)
+    written.append(environment_record)
 
     print(
         json.dumps(
@@ -1571,6 +1653,17 @@ def capture_run_target(arguments: argparse.Namespace) -> int:
 
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
+    if arguments.target == "compute-environment":
+        try:
+            check_output_location(arguments.output_dir)
+            return capture_compute_environment_target(arguments)
+        except CaptureFailedError as exc:
+            print(exc.reason, file=sys.stderr)
+            return 2
+        except OSError:
+            print("output_unwritable", file=sys.stderr)
+            return 2
+
     if arguments.target == "run":
         try:
             check_output_location(arguments.output_dir)

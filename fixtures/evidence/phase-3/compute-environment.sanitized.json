@@ -8,9 +8,10 @@
   "job_queue_names": [
     "sbsandbox-intern-edullm-cpu"
   ],
+  "live_instance_count": 0,
   "maximum_vcpus": 128,
   "minimum_vcpus": 0,
-  "observed_at": "2026-07-28T17:15:22Z",
+  "observed_at": "2026-07-28T22:42:27Z",
   "region": "us-east-1",
   "security_group_ids": [
     "sg-087218d8c87aa8576"

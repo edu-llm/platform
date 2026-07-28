@@ -391,19 +391,55 @@ def test_exactly_one_compute_environment_backs_the_one_provisioned_profile(
 def test_the_compute_environment_held_no_capacity_after_the_runs_finished(
     evidence: CommittedPhase3Evidence,
 ) -> None:
-    """Criterion 16. The mutation is reading minvCpus and calling it idle capacity.
+    """Criterion 16. The mutation is calling the environment idle on one number.
 
-    minvCpus is what the template asks for and is asserted from the template elsewhere.
-    desiredvCpus is what the environment is actually holding, and it is the only one that
-    can be non-zero while nothing runs -- an environment that scaled up for a job and did
-    not come back down bills continuously with an empty queue.
+    minvCpus is what the template asks for and is asserted from the template elsewhere. The
+    two numbers below are what the account is doing, and BOTH are needed, which this test
+    said for a long time about only the first.
+
+    Measured on 2026-07-28 against the first GPU run. The job reached SUCCEEDED at
+    22:33:48Z. desiredvCpus read zero by 22:34:47Z, under a minute later. The g5.xlarge it
+    had started went on running until 22:41:5xZ -- seven minutes during which this test's
+    original assertion was satisfied and an instance was on the bill.
+    ecs:list-container-instances read zero across the same window too, because the agent
+    deregisters before the host goes away.
+
+    So desiredvCpus answers what the scheduler is asking for, and neither it nor the ECS
+    view answers what is being paid for. live_instance_count is the one that does, and it
+    is attributed by the auto scaling group tag Batch puts on its own instances rather than
+    by an instance type, so it cannot be satisfied by counting the wrong shapes.
     """
     found = evidence.compute_environment
     assert found is not None
     assert found.minimum_vcpus == 0
     assert found.desired_vcpus == 0
+    assert found.live_instance_count == 0
     assert found.idle_and_holding_nothing
     assert found.maximum_vcpus > 0
+
+
+def test_an_environment_at_zero_desired_with_an_instance_still_up_is_not_idle(
+    evidence: CommittedPhase3Evidence,
+) -> None:
+    """The mutation is putting ``desired_vcpus == 0`` back as the whole of the idle claim.
+
+    This is the state the account was actually in for seven minutes after the first GPU
+    run, reconstructed from the committed record so it can be asserted rather than
+    remembered. Every other field is the real one; only the instance count is the value the
+    account had at 22:35Z.
+
+    A reader that took the first number alone would call this idle. It is a g5.xlarge at
+    $1.006/hour with an empty queue, which is precisely what the criterion exists to
+    refuse.
+    """
+    found = evidence.compute_environment
+    assert found is not None
+
+    still_billing = found.model_copy(update={"live_instance_count": 1})
+
+    assert still_billing.desired_vcpus == 0
+    assert still_billing.usable
+    assert not still_billing.idle_and_holding_nothing
 
 
 def test_every_lineage_object_carries_an_s3_attested_checksum_and_version(

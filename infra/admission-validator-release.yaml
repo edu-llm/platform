@@ -24,14 +24,29 @@
 # The build is deterministic, so a rebuild that changed nothing produces the same digest
 # and needs no edit here. Releasing means running the procedure in infra/README.md and
 # updating both fields below in the same commit as the change that caused them to move.
+#
+# THIS CONTROL IS COARSER THAN THE DEFECT IT CATCHES, AND THAT IS A CHOICE RATHER THAN AN
+# OVERSIGHT. The builder packages all of src/edullm_platform, so the digest moves for any
+# change to the package -- including modules the validator never imports. It moved within
+# the hour on a change to phase3_evidence.py, which the handler does not touch.
+#
+# The tax is one rebuild, one upload and one edit per change to the package, and it needs
+# laptop AWS credentials, so a contributor without them is blocked on somebody who has.
+# That is a real cost and the alternative is worse in the direction that matters: narrowing
+# the digest to the modules the handler imports means computing reachability, and getting
+# that wrong reintroduces exactly this failure while looking like it is covered.
+#
+# The honest reading of a moved digest is what it says -- the deployed zip is not the zip
+# this tree builds -- which is true whether or not the changed module is reachable. If the
+# tax becomes the thing that hurts, the fix is to package less rather than to check less.
 schema_version: 1
 
 #: The object the template's Code block names. Kept here as well so the two can be
 #: compared: a version id edited in one place and not the other is a template pointing at
 #: a zip nobody recorded, or a record describing a zip nobody deployed.
 s3_key: admission-validator/admission-validator.zip
-s3_object_version: rcDyIY99q8pScFvCobEy6p5iVJRbj55T
+s3_object_version: zWJNnB6ixITetRhst_hOs0t_.KTZA84M
 
 #: sha256 of the uploaded zip, as tools/build_admission_lambda.py reports it. This is the
 #: field that ties the release to a tree rather than to a moment.
-sha256: dd237c28c862db8f516e8a5627a9a248f4dc769425f5d903b7af1cc623c0fbfc
+sha256: 6c7a741532590c326db85f6c51721c0f145f3f56fae29284e208c25f6d80f49a
