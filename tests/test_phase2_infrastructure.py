@@ -509,17 +509,30 @@ def test_state_machine_is_standard_and_logs_everything_with_execution_data() -> 
 
 
 def test_admission_definition_validates_then_records_intent_and_decision() -> None:
+    # Phase 3 put ReadImageScan in front of the validator and a submission path behind the
+    # Choice, so the state list is longer and StartAt moved. What this test still owns is the
+    # Phase 2 spine: validate, write the intent, write the decision, then choose. The new
+    # states are asserted in tests/test_phase3_infrastructure.py.
     definition = state_machine_definition()
     states = definition["States"]
 
-    assert definition["StartAt"] == "ValidateAndDecide"
+    assert definition["StartAt"] == "ReadImageScan"
     assert list(states) == [
+        "ReadImageScan",
         "ValidateAndDecide",
         "WriteIntent",
         "WriteDecision",
         "RecordConflict",
         "AdmissionAccepted",
-        "Admitted",
+        "ResolveExecutionTarget",
+        "SubmitToBatch",
+        "RecordSubmissionFailure",
+        "BindingIsFanOut",
+        "RecordFanOutSize",
+        "RecordSingleContainer",
+        "WriteBinding",
+        "Submitted",
+        "SubmissionFailed",
         "Rejected",
         "AdmissionConflict",
     ]
@@ -610,10 +623,13 @@ def test_every_state_is_reachable_and_every_transition_names_a_real_state() -> N
 
     assert sorted(reachable - set(states)) == []
     assert sorted(set(states) - reachable) == []
+    # Submitted rather than Admitted since Phase 3: the accepted branch now continues into
+    # submission, so there is no terminal state meaning "admitted and then nothing".
     assert {name for name, state in states.items() if state["Type"] in ("Succeed", "Fail")} == {
-        "Admitted",
+        "Submitted",
         "Rejected",
         "AdmissionConflict",
+        "SubmissionFailed",
     }
 
 
@@ -622,11 +638,18 @@ def test_admission_ends_in_a_succeed_or_a_named_rejection_failure() -> None:
     choice = states["AdmissionAccepted"]
 
     assert choice["Type"] == "Choice"
+    # The true branch runs the accepted submission rather than ending, since Phase 3. The
+    # false branch is unchanged, which is the half this test exists for: a rejection still
+    # ends in a named failure and never reaches Batch.
     assert choice["Choices"] == [
-        {"Variable": "$.admission.accepted", "BooleanEquals": True, "Next": "Admitted"}
+        {
+            "Variable": "$.admission.accepted",
+            "BooleanEquals": True,
+            "Next": "ResolveExecutionTarget",
+        }
     ]
     assert choice["Default"] == "Rejected"
-    assert states["Admitted"] == {"Type": "Succeed"}
+    assert states["Submitted"] == {"Type": "Succeed"}
     assert states["Rejected"]["Type"] == "Fail"
     assert states["Rejected"]["Error"] == "AdmissionRejected"
     assert states["AdmissionConflict"]["Type"] == "Fail"

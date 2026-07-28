@@ -626,6 +626,98 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      # Read out of config/repositories.yaml rather than written down here. The Phase 3
+      # matrix below carries no image probe and never uses this value, but the tool
+      # validates every argument before it attempts anything, and a placeholder invented to
+      # satisfy a validator is the first step towards a probe aimed at something that is not
+      # there. The registered name costs one lookup and is the true answer.
+      - name: Resolve the registered image repository
+        id: registry
+        env:
+          RESEARCH_REPOSITORY: ${{ inputs.repository }}
+        run: |
+          set -euo pipefail
+          uv run --frozen python - > "${RUNNER_TEMP}/ecr-repository.txt" <<'PY'
+          import os
+          from pathlib import Path
+
+          from edullm_platform.build_tooling import load_registry
+
+          registered = load_registry(Path("config/repositories.yaml")).repository_by_name(
+              os.environ["RESEARCH_REPOSITORY"]
+          )
+          print(registered.ecr_repository)
+          PY
+          ecr_repository="$(cat "${RUNNER_TEMP}/ecr-repository.txt")"
+          # An ECR repository name, and nothing that could carry a second line into
+          # GITHUB_OUTPUT. The registry contract already constrains the field; this is the
+          # same check the approver login gets, for the same reason.
+          if [[ ! "${ecr_repository}" =~ ^[a-z0-9][a-z0-9._/-]*$ ]]; then
+            echo "registered_repository_unusable" >&2
+            exit 1
+          fi
+          echo "ecr_repository=${ecr_repository}" >> "${GITHUB_OUTPUT}"
+
+      # PHASE 3'S HALF OF THE SAME MATRIX, AND THE REASON IT IS A SECOND STEP.
+      #
+      # The step above proves what Phase 2 said the admission session must not be able to
+      # do: write lineage, describe a state machine it does not own, stop an execution.
+      # Phase 3 makes four more actions meaningful, because there is now a queue to submit
+      # to, a job definition to register and jobs to describe -- and the whole architecture
+      # rests on the GitHub-facing role gaining none of them. `batch:SubmitJob` was already
+      # probed in Phase 1 against a queue that did not exist; the other three were not
+      # probed at all, because until this phase they were hypothetical.
+      #
+      # Attempted from the real session, immediately before the one call it is allowed to
+      # make, for the reason the Phase 2 step gives: infra/iam/admission-role.yaml is a
+      # committed claim about a role created from a laptop, so a policy widened in the
+      # console leaves every template test in this repository green.
+      #
+      # Every probe here is inert whether or not it is permitted. The submit and terminate
+      # probes name a queue and a job id that do not exist, the describe returns nothing,
+      # and the register probe would create a job definition under this project's own
+      # denial-probe name. None of them can reach a real job. That is a deliberate
+      # difference from the Phase 2 step above, whose s3:PutObject probe has to be aimed at
+      # the real bucket and can leave one stray object behind.
+      - name: Attempt the Batch actions the admission session must not have
+        env:
+          ADMISSION_ACCOUNT_ID: ${{ steps.credentials.outputs.aws-account-id }}
+          ADMISSION_REGION: ${{ vars.AWS_REGION }}
+          ECR_REPOSITORY: ${{ steps.registry.outputs.ecr_repository }}
+        run: |
+          set -euo pipefail
+          state_machine_arn="arn:aws:states:${ADMISSION_REGION}:${ADMISSION_ACCOUNT_ID}:stateMachine:sbsandbox-intern-edullm-admission"
+          denials_status=0
+          uv run --frozen python tools/verify_batch_denials.py \
+            --role admission \
+            --region "${ADMISSION_REGION}" \
+            --state-machine-arn "${state_machine_arn}" \
+            --ecr-repository "${ECR_REPOSITORY}" \
+            --output "${RUNNER_TEMP}/batch-denials.json" || denials_status=$?
+          # The same two answers the step above separates, for the same reason. Exit 1 says
+          # something the admission role must not be able to do was permitted, or a probe
+          # answered in a way that establishes nothing: a security finding, never a warning.
+          # Exit 2 says nothing was attempted, so nothing was learned about how wide the
+          # role is. Both stop the submission.
+          if [[ "${denials_status}" -eq 1 ]]; then
+            echo "batch_denial_matrix_not_proved" >&2
+            echo "The session in hand was not shown to be refused every Batch action Phase 3 makes meaningful, so this run must not submit. One line per action is printed above; read the deployed role against infra/iam/admission-role.yaml before re-running." >&2
+            exit 1
+          fi
+          if [[ "${denials_status}" -ne 0 ]]; then
+            echo "batch_denial_matrix_not_attempted" >&2
+            echo "The Batch probes could not be set up, so none of them was attempted. This is not a finding about how wide the role is." >&2
+            exit 1
+          fi
+
+      - name: Upload the Batch denial matrix
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: batch-denials
+          path: ${{ runner.temp }}/batch-denials.json
+          if-no-files-found: error
+          retention-days: 30
+
       # ExecutionAlreadyExists is a success here. That is counter-intuitive enough to be
       # worth writing down before somebody corrects it. Step Functions treats a
       # StartExecution carrying the same name and the same input as idempotent only while
@@ -707,3 +799,74 @@ jobs:
               exit 1
               ;;
           esac
+
+      # WHAT CANCELLING THIS WORKFLOW DOES, AND THE THREE THINGS IT DOES NOT GUARANTEE.
+      #
+      # `if: cancelled()` is the only condition that runs after a cancellation; `always()`
+      # would also run on a failure and `success()` never runs at all. It runs under the
+      # credentials configured above, which is the point of it being in this job: by the
+      # time somebody cancels, a Batch job may already be running with this run id on it,
+      # and nothing else in the system will notice that the person who asked for it has
+      # gone away.
+      #
+      # First, the grace period. GitHub sends SIGINT to the running step and then gives the
+      # job a bounded window -- documented as up to five minutes and not configurable -- to
+      # run its remaining `if: cancelled()` and `if: always()` steps before the runner is
+      # killed outright. That is enough for a few API calls and it is a budget rather than a
+      # promise: a step that needs longer is cut off mid-way, and a cancellation issued
+      # while the runner is already being torn down, or while the job is still queued, may
+      # never reach this step at all. So this is best-effort by construction, and a design
+      # that depended on it running would be a design with a hole in it.
+      #
+      # Second, and more important: this step stops nothing today, and says so rather than
+      # implying otherwise. Stopping a running Batch job needs `batch:TerminateJob`, which
+      # the admission role deliberately does not hold -- infra/iam/admission-role.yaml
+      # grants one `states:StartExecution` and two read-only execution actions, and the plan
+      # routes cancellation through a separate state machine that has not been built. The
+      # honest thing a cancelled workflow can do is leave a record naming what is still
+      # running, so an operator has the run id rather than a job nobody knows about.
+      #
+      # Third: a cancelled workflow is not a cancelled run. The admission execution may
+      # already have accepted the submission and written its intent and decision records,
+      # and those are immutable. Cancelling here removes nobody's approval and unwrites
+      # nothing.
+      #
+      # The step must not fail the job. A cancelled job is already cancelled, and a red
+      # cross beside it would report a defect where there is a person changing their mind.
+      - name: Record that a cancelled workflow stopped no compute
+        if: cancelled()
+        env:
+          RUN_ID: ${{ needs.compile.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          # A quoted heredoc rather than a run of echoes, so the shell substitutes nothing
+          # into the prose. The run id is echoed separately, which is why it is the only
+          # value this step interpolates.
+          #
+          # The commands an operator needs are named by reference rather than printed here.
+          # infra/README.md is where every laptop procedure in this repository lives, so a
+          # copy in this file would be a second copy going stale -- and a literal `aws` line
+          # in a run body is indistinguishable, to anything reading this workflow, from a
+          # call this job makes.
+          {
+            echo "## This workflow run was cancelled"
+            echo
+            echo "Run id: \`${RUN_ID}\`"
+            cat <<'NOTICE'
+
+          Cancelling this workflow does not stop AWS compute. The admission role holds no
+          `batch:TerminateJob`, deliberately, so if admission had already submitted this run
+          then a Batch job carrying the run id above as its job name may still be running,
+          and it will run to its own attempt timeout unless somebody stops it.
+
+          To check whether one is running and stop it if it is, follow the section of
+          infra/README.md headed:
+          Stopping a job a cancelled workflow left running
+          It needs an SSO session. No identity this workflow can obtain is permitted to do
+          it, which is the point rather than an oversight.
+
+          Any intent and decision records admission already wrote are immutable and stay
+          where they are. This cancellation removes no approval and unwrites nothing.
+          NOTICE
+          } >> "${GITHUB_STEP_SUMMARY}"
+          echo "Cancelled. The step summary records what may still be running."

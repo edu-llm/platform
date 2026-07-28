@@ -1,0 +1,302 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: The VPC, public subnets and security group the CPU compute environment places instances into.
+
+# This network is ours, and on the morning of 2026-07-27 it could not have been.
+# us-east-1 held five VPCs against a quota of five and ec2:CreateVpc returned
+# VpcLimitExceeded. The L-F678F1CE increase to 10 was filed and applied the same day and
+# confirmed by creating a VPC and deleting it again, so the conditional half this template
+# was planned to carry -- a VPC behind a CloudFormation condition, with borrowed subnets
+# until the quota landed -- is gone. Everything below is created unconditionally.
+#
+# Two things from that morning are worth keeping, because both nearly sent this phase
+# somewhere else.
+#
+# VpcLimitExceeded is not an authorization failure. A quota is a support request we can
+# file ourselves; a denial is not fixable by us at all. Anything that reports "CreateVpc
+# failed" without telling the two apart has thrown away the actionable half.
+#
+# us-east-2 is not a fallback and looks like one. The region lock permits both, so the
+# obvious answer to a full us-east-1 is to move. ec2:CreateVpc, ec2:CreateSubnet,
+# ec2:CreateSecurityGroup and ec2:RunInstances are all UnauthorizedOperation there,
+# measured with --dry-run against the real API rather than simulated. An EC2 compute
+# environment in us-east-2 is not possible at all. tools/probe_ec2_authorization.py
+# re-measures this without creating anything.
+#
+# The availability zones below are written as literals rather than assembled from
+# ${AWS::Region}, which makes this template us-east-1 only. That is honest rather than
+# limiting: the zone list is a us-east-1 fact -- c7i.8xlarge is offered in 1a, 1b, 1c, 1d
+# and 1f and not in 1e -- and a template that looked portable would carry a subnet list
+# that is wrong everywhere else.
+
+Resources:
+  BatchVpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      # 10.20.0.0/16. The account's existing VPCs use 10.0, 10.42, 10.73 and 10.88, so
+      # this does not overlap any of them. Overlap would matter the day somebody peers two
+      # of these together, and choosing a free block costs nothing today.
+      CidrBlock: 10.20.0.0/16
+      # Both on, because Batch resolves the ECR registry, S3 and CloudWatch Logs endpoints
+      # by name from inside the container host. DNS support alone is not enough for the
+      # instance to get a resolvable name, and the failure mode of getting this wrong is a
+      # job that starts and cannot pull.
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      InstanceTenancy: default
+      Tags:
+        - Key: Name
+          Value: sbsandbox-intern-edullm-batch
+        - Key: Project
+          Value: edullm
+
+  # Public subnets with an internet gateway route, and no NAT gateway. The container needs
+  # to reach ECR, S3 and CloudWatch Logs and nothing needs to reach it, so the two honest
+  # options are public subnets with public IPs or private subnets behind a NAT gateway.
+  # A NAT gateway is roughly $32 a month plus data processing, for a network path that
+  # carries exactly the same traffic in the same direction. The security group below has
+  # no ingress rule at all, which is what actually keeps the instances unreachable; a
+  # public IP with no open port is not an exposure, and paying for a NAT to feel private
+  # would be paying for a feeling.
+  #
+  # The alternative worth naming: VPC endpoints for ECR, S3 and Logs would remove the
+  # internet path entirely and cost about as much as the NAT. That is a Phase 7 hardening
+  # decision, not a Phase 3 one, and it is recorded here so the next reader knows the
+  # option was seen rather than missed.
+  #
+  # Five subnets and not six. c7i.8xlarge is offered in us-east-1a, 1b, 1c, 1d and 1f, and
+  # NOT in us-east-1e. A subnet in 1e handed to the compute environment is a subnet Batch
+  # will consider and can never place into, and Batch does not fail a job it cannot place
+  # -- it waits. The symptom is a job sitting in RUNNABLE with no error and no statusReason
+  # worth reading, which is the hardest failure in this phase to diagnose and the cheapest
+  # to prevent. tests/test_phase3_infrastructure.py asserts 1e is absent from this file and
+  # that infra/batch-compute.yaml imports exactly the subnets declared here.
+  SubnetUsEast1a:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: BatchVpc
+      AvailabilityZone: us-east-1a
+      CidrBlock: 10.20.0.0/20
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: sbsandbox-intern-edullm-batch-us-east-1a
+
+  SubnetUsEast1b:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: BatchVpc
+      AvailabilityZone: us-east-1b
+      CidrBlock: 10.20.16.0/20
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: sbsandbox-intern-edullm-batch-us-east-1b
+
+  SubnetUsEast1c:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: BatchVpc
+      AvailabilityZone: us-east-1c
+      CidrBlock: 10.20.32.0/20
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: sbsandbox-intern-edullm-batch-us-east-1c
+
+  SubnetUsEast1d:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: BatchVpc
+      AvailabilityZone: us-east-1d
+      CidrBlock: 10.20.48.0/20
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: sbsandbox-intern-edullm-batch-us-east-1d
+
+  SubnetUsEast1f:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: BatchVpc
+      AvailabilityZone: us-east-1f
+      CidrBlock: 10.20.64.0/20
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: sbsandbox-intern-edullm-batch-us-east-1f
+
+  BatchInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: sbsandbox-intern-edullm-batch
+
+  BatchInternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId:
+        Ref: BatchVpc
+      InternetGatewayId:
+        Ref: BatchInternetGateway
+
+  # One route table shared by all five subnets. They are identical -- the same default
+  # route to the same gateway -- so five tables would be five places to make the same edit
+  # and four places to get it wrong.
+  BatchRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: BatchVpc
+      Tags:
+        - Key: Name
+          Value: sbsandbox-intern-edullm-batch-public
+
+  # DependsOn is load-bearing and not decoration. A route to an internet gateway is
+  # rejected until the gateway is attached to the VPC, and CloudFormation infers no
+  # dependency on the attachment from a Ref to the gateway itself. Without this the stack
+  # fails on a race it wins most of the time, which is the worst kind.
+  BatchDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: BatchInternetGatewayAttachment
+    Properties:
+      RouteTableId:
+        Ref: BatchRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Ref: BatchInternetGateway
+
+  RouteTableAssociationUsEast1a:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: BatchRouteTable
+      SubnetId:
+        Ref: SubnetUsEast1a
+
+  RouteTableAssociationUsEast1b:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: BatchRouteTable
+      SubnetId:
+        Ref: SubnetUsEast1b
+
+  RouteTableAssociationUsEast1c:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: BatchRouteTable
+      SubnetId:
+        Ref: SubnetUsEast1c
+
+  RouteTableAssociationUsEast1d:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: BatchRouteTable
+      SubnetId:
+        Ref: SubnetUsEast1d
+
+  RouteTableAssociationUsEast1f:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: BatchRouteTable
+      SubnetId:
+        Ref: SubnetUsEast1f
+
+  # No ingress rule of any kind, and none may be added without a reason written beside it.
+  # A Batch container host is reached by nothing: the ECS agent opens outbound connections
+  # to the control plane, the job's output goes out to S3 and CloudWatch, and there is no
+  # inbound path anybody needs. SSH is the rule that will be proposed first and it is the
+  # one to refuse -- these instances are created and destroyed by the scheduler, so a
+  # session on one is a session on something that is about to stop existing, and whatever
+  # it was for belongs in the log stream instead.
+  #
+  # CloudFormation gives a security group with no SecurityGroupIngress exactly no ingress
+  # rules, which is what is wanted. It does NOT do the same for egress: omitting
+  # SecurityGroupEgress leaves the default allow-all rule in place, so the rule below is
+  # written out to be explicit rather than to change anything. Making it narrower is not
+  # possible in a useful way -- ECR, S3 and CloudWatch Logs are reached over HTTPS at
+  # address ranges that change -- so 0.0.0.0/0 on 443 plus 80 for the package mirrors the
+  # base image may use is the honest scope, and the container's own identity is what
+  # bounds what it can do out there.
+  BatchSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: sbsandbox-intern-edullm-batch
+      GroupDescription: Egress-only group for the CPU Batch compute environment's container hosts.
+      VpcId:
+        Ref: BatchVpc
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: ECR, S3 and CloudWatch Logs, and the ECS agent's control channel.
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: Plain-HTTP package and metadata endpoints the base image may reach.
+      Tags:
+        - Key: Name
+          Value: sbsandbox-intern-edullm-batch
+
+# Exported, because infra/batch-compute.yaml has to name these and no CloudFormation
+# parameter may carry them. Every other name in this repository is a hardcoded literal
+# that both sides spell the same way; a VPC, a subnet and a security group are the one
+# class of resource whose identifier the service assigns, so there is nothing to spell.
+#
+# An export is better than the alternative here and not merely equivalent to it. Passing
+# subnet IDs as stack parameters would put an environment-specific value into a `deploy`
+# command line, which is exactly how a stack ends up pointing at infrastructure no
+# committed file describes. An Fn::ImportValue also makes the dependency real: while the
+# compute stack imports these, CloudFormation refuses to delete this stack or to change an
+# exported value, so the network cannot be pulled out from under a running compute
+# environment. That refusal is a feature, and it is also the reason a rollback deletes the
+# stacks in the reverse of the order the workflow creates them.
+Outputs:
+  VpcId:
+    Value:
+      Ref: BatchVpc
+    Export:
+      Name: sbsandbox-intern-edullm-batch-vpc-id
+  SecurityGroupId:
+    Value:
+      Fn::GetAtt:
+        - BatchSecurityGroup
+        - GroupId
+    Export:
+      Name: sbsandbox-intern-edullm-batch-security-group-id
+  SubnetIdUsEast1a:
+    Value:
+      Ref: SubnetUsEast1a
+    Export:
+      Name: sbsandbox-intern-edullm-batch-subnet-us-east-1a
+  SubnetIdUsEast1b:
+    Value:
+      Ref: SubnetUsEast1b
+    Export:
+      Name: sbsandbox-intern-edullm-batch-subnet-us-east-1b
+  SubnetIdUsEast1c:
+    Value:
+      Ref: SubnetUsEast1c
+    Export:
+      Name: sbsandbox-intern-edullm-batch-subnet-us-east-1c
+  SubnetIdUsEast1d:
+    Value:
+      Ref: SubnetUsEast1d
+    Export:
+      Name: sbsandbox-intern-edullm-batch-subnet-us-east-1d
+  SubnetIdUsEast1f:
+    Value:
+      Ref: SubnetUsEast1f
+    Export:
+      Name: sbsandbox-intern-edullm-batch-subnet-us-east-1f
