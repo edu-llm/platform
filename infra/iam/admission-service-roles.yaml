@@ -37,10 +37,68 @@ Resources:
               # PutObject only. The state machine appends lineage records and never reads,
               # overwrites or deletes one; the bucket policy refuses any write that is not
               # conditional, so even this grant cannot replace an existing record.
+              #
+              # Phase 3 adds two more prefixes under this same grant and no second
+              # statement: binding/, written the instant Batch accepts a submission, and
+              # submission-failure/, written when it refuses one. A separate Allow naming
+              # binding/* would be a strict subset of this one, so it would grant nothing
+              # and would read as though it did -- and the next reader would have to work
+              # out which of the two was load-bearing. If this ever needs narrowing, narrow
+              # it here by enumerating every prefix at once; do not layer a second Allow on
+              # top of a wider one.
               - Effect: Allow
                 Action: s3:PutObject
                 Resource:
                   Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-lineage/*
+              # The only principal in this account that may start compute, and it is
+              # reachable only through an execution the admission role started -- which in
+              # turn is reachable only from a GitHub job that cleared a protected
+              # environment. Nothing else holds batch:SubmitJob: not the deploy role, which
+              # builds this queue and never runs anything on it; not the validator Lambda,
+              # which decides and does not act; not the workload role, which is what an
+              # untrusted command runs as.
+              #
+              # Two ARNs and two resource types, because SubmitJob authorizes against both
+              # the queue it lands in and the job definition it instantiates. Granting one
+              # without the other is refused, and the denial names only the missing half.
+              #
+              # The job definition appears twice for the reason lambda:InvokeFunction does
+              # above: RegisterJobDefinition mints a new revision on every deploy and the
+              # revision is part of the ARN, so a grant on the bare name authorizes nothing
+              # once a second revision exists. The unsuffixed form is kept because a
+              # submission that names the bare definition is authorized against it.
+              #
+              # Deliberately absent: batch:TerminateJob and batch:CancelJob. Cancellation
+              # is its own path with its own principal; an admission execution that could
+              # also stop a job would be able to end a run whose decision it had just
+              # recorded as accepted, and nothing in the lineage store would say why.
+              #
+              # The queue name below is the worst rename in this phase. It appears here, in
+              # infra/batch-compute.yaml, and in infra/batch-events.yaml's event pattern,
+              # and no CloudFormation reference connects the three. Renaming the queue
+              # without this line makes every submission fail closed, which is survivable;
+              # renaming it without the event pattern makes jobs run with no lineage at
+              # all. infra/README.md explains it and tests/test_phase3_infrastructure.py
+              # compares all three against each other.
+              - Effect: Allow
+                Action: batch:SubmitJob
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-cpu
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-cpu-run
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-cpu-run:*
+              # ecr:DescribeImageScanFindings, for the ReadImageScan state the state
+              # machine runs before it validates anything. The findings reach the validator
+              # as a payload key the ASL builds from this task's result and from nowhere
+              # else: a caller that could supply its own scan findings could declare its
+              # own image clean, so the state machine reads them itself.
+              #
+              # Read-only and scoped to the one repository this project publishes to.
+              # ecr:PutImage, ecr:InitiateLayerUpload and the rest of the push path are
+              # absent: admission reads what the publisher recorded and publishes nothing.
+              - Effect: Allow
+                Action: ecr:DescribeImageScanFindings
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-olmo-core
               # "*" is the narrowest grant that exists for the delivery half of this list.
               # CreateLogDelivery, GetLogDelivery, UpdateLogDelivery, DeleteLogDelivery,
               # ListLogDeliveries, PutResourcePolicy and DescribeResourcePolicies are

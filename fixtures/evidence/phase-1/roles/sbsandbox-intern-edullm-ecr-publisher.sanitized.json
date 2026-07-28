@@ -52,7 +52,7 @@
     }
   ],
   "max_session_duration_seconds": 3600,
-  "observed_at": "2026-07-27T06:01:20Z",
+  "observed_at": "2026-07-27T21:28:51Z",
   "permissions_boundary_policy_name": "InternSandboxBoundary",
   "role_name": "sbsandbox-intern-edullm-ecr-publisher",
   "source": "aws",

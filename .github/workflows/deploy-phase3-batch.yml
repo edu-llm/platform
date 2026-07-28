@@ -1,0 +1,278 @@
+name: Deploy Phase 3 CPU batch execution
+
+# The deployer role trust policy pins job_workflow_ref to
+# edu-llm/platform/.github/workflows/deploy-phase3-batch.yml@refs/heads/main.
+# Renaming or moving this file silently revokes every deployment. Do not rename it.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/deploy-phase3-batch.yml
+      - infra/outputs-bucket.yaml
+      - infra/batch-network.yaml
+      - infra/batch-compute.yaml
+      - infra/batch-events.yaml
+      - infra/admission-state-machine.yaml
+
+permissions:
+  contents: read
+
+# The same group Phase 2 uses, and that is not a copy-paste slip. These two workflows
+# deploy one stack in common -- sbsandbox-intern-edullm-phase2-admission, which Phase 3
+# amends rather than replaces -- and infra/admission-state-machine.yaml is in both path
+# filters, so a push that touches it starts both runs. Sharing the group makes the second
+# wait instead of racing the first into a mid-update stack. The group keeps Phase 2's name
+# because Phase 2 named it first and renaming it is an edit to that workflow.
+concurrency:
+  group: cloudformation-sbsandbox-intern-edullm-phase2
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Validate, deploy, and verify Phase 3 CPU batch execution
+    runs-on: ubuntu-latest
+    # Longer than Phase 2's fifteen. A compute environment takes a few minutes to reach
+    # VALID because Batch creates an ECS cluster and an Auto Scaling group behind it, and a
+    # VPC with five subnets is not instant either.
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ vars.AWS_INFRA_DEPLOYER_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-duration-seconds: 900
+          # Account IDs are not secret, but the verification step reads a state machine ARN
+          # out of a stack output, and masking keeps that ARN from turning a public log into
+          # a free lookup of the sandbox account number.
+          mask-aws-account-id: true
+
+      # WHAT VALIDATE-TEMPLATE CHECKS, AND WHAT IT DOES NOT. It parses the document and
+      # reports the parameters and capabilities it found. It does not check a resource's
+      # properties against that resource's schema: a template declaring an
+      # AWS::Batch::JobQueue whose only property is one Batch has never heard of validates
+      # clean, measured on 2026-07-27. So a pass here means "this is a CloudFormation
+      # template", not "this will deploy".
+      #
+      # It is still worth running first, because the failure it does catch -- a malformed
+      # document -- is the one worth catching before three stacks have already changed. What
+      # covers the rest is tests/test_phase3_infrastructure.py against the committed files,
+      # and the verification step against the deployed account.
+      - name: Validate CloudFormation templates
+        run: |
+          set -euo pipefail
+          aws cloudformation validate-template --template-body file://infra/outputs-bucket.yaml
+          aws cloudformation validate-template --template-body file://infra/batch-network.yaml
+          aws cloudformation validate-template --template-body file://infra/batch-compute.yaml
+          aws cloudformation validate-template --template-body file://infra/batch-events.yaml
+          aws cloudformation validate-template --template-body file://infra/admission-state-machine.yaml
+
+      # No --capabilities on any deploy here, for the reason the Phase 2 workflow states and
+      # checks: CloudFormation demands CAPABILITY_IAM or CAPABILITY_NAMED_IAM only for
+      # templates containing an IAM entity, and none of these five contains one. The four
+      # Phase 3 roles and the instance profile live in infra/iam/ and are applied from a
+      # laptop, because this role holds no iam:CreateRole.
+      #
+      # Withholding the acknowledgement is worth more than it costs: a template that grew an
+      # IAM resource fails at InsufficientCapabilities, naming the reason, instead of at an
+      # AccessDenied several minutes into a rollback.
+      #
+      # THE ORDER OF THE NEXT FIVE STEPS IS THE ONLY THING THAT ENFORCES IT, for three of
+      # the four dependencies. infra/batch-compute.yaml imports the network stack's exported
+      # subnet and security group IDs, so CloudFormation does enforce that one -- an import
+      # of an export that does not exist fails the deploy. Nothing links the others.
+      - name: Deploy Phase 3 outputs bucket stack
+        run: |
+          set -euo pipefail
+          aws cloudformation deploy \
+            --stack-name sbsandbox-intern-edullm-phase3-outputs \
+            --template-file infra/outputs-bucket.yaml \
+            --no-fail-on-empty-changeset
+
+      - name: Deploy Phase 3 network stack
+        run: |
+          set -euo pipefail
+          aws cloudformation deploy \
+            --stack-name sbsandbox-intern-edullm-phase3-network \
+            --template-file infra/batch-network.yaml \
+            --no-fail-on-empty-changeset
+
+      # After the network, because the compute environment imports its subnets and security
+      # group. Also after AWSServiceRoleForBatch exists, which is a laptop command in
+      # infra/README.md and not something this workflow can do or check -- a compute
+      # environment created without it fails in a way that names the role and not the reason.
+      - name: Deploy Phase 3 batch compute stack
+        run: |
+          set -euo pipefail
+          aws cloudformation deploy \
+            --stack-name sbsandbox-intern-edullm-phase3-batch \
+            --template-file infra/batch-compute.yaml \
+            --no-fail-on-empty-changeset
+
+      # After the compute stack, because the EventBridge rule's pattern names the job queue
+      # ARN. Nothing makes CloudFormation check that: the pattern is a string, and a rule
+      # scoped to a queue that does not exist deploys perfectly and matches nothing forever.
+      - name: Deploy Phase 3 batch events stack
+        run: |
+          set -euo pipefail
+          aws cloudformation deploy \
+            --stack-name sbsandbox-intern-edullm-phase3-events \
+            --template-file infra/batch-events.yaml \
+            --no-fail-on-empty-changeset
+
+      # Last, and it is the Phase 2 stack under its Phase 2 name. The amended state machine
+      # submits to the queue and job definition the batch stack creates, so deploying it
+      # first would leave a submit state pointing at nothing -- which fails at run time
+      # rather than at deploy time, on the first accepted run.
+      - name: Deploy the amended admission state machine
+        run: |
+          set -euo pipefail
+          aws cloudformation deploy \
+            --stack-name sbsandbox-intern-edullm-phase2-admission \
+            --template-file infra/admission-state-machine.yaml \
+            --no-fail-on-empty-changeset
+
+      # WHAT THIS STEP CANNOT PROVE, said here so the green tick is read correctly. A
+      # compute environment reporting VALID and ENABLED establishes that Batch accepted the
+      # instance type, the subnets, the security group and the instance profile. It
+      # establishes nothing about whether a job can run, because Batch does not fail a job
+      # it cannot place -- it waits, indefinitely, with no error. Only a job observed in
+      # RUNNING proves the placement, the egress and the ECR pull, and this workflow cannot
+      # submit one: the deployer holds no batch:SubmitJob and must not, because the
+      # admission state machine is the only principal in the account that may start compute.
+      #
+      # That proof comes from tools/probe_batch_compute.py before this stack is built, and
+      # from the Wave 5 live matrix afterwards.
+      - name: Verify Phase 3 CPU batch execution
+        run: |
+          set -euo pipefail
+          state_machine_arn_file="${RUNNER_TEMP}/phase3-state-machine-arn.txt"
+          compute_environment_json="${RUNNER_TEMP}/phase3-compute-environment.json"
+          job_queue_json="${RUNNER_TEMP}/phase3-job-queue.json"
+          job_definition_json="${RUNNER_TEMP}/phase3-job-definition.json"
+          rule_json="${RUNNER_TEMP}/phase3-lifecycle-rule.json"
+          state_machine_json="${RUNNER_TEMP}/phase3-state-machine.json"
+          outputs_json="${RUNNER_TEMP}/phase3-outputs-versioning.json"
+
+          aws cloudformation describe-stacks \
+            --stack-name sbsandbox-intern-edullm-phase2-admission \
+            --query "Stacks[0].Outputs[?OutputKey=='StateMachineArn'].OutputValue" \
+            --output text > "${state_machine_arn_file}"
+
+          read -r state_machine_arn < "${state_machine_arn_file}"
+
+          aws batch describe-compute-environments \
+            --compute-environments sbsandbox-intern-edullm-cpu \
+            --query "computeEnvironments[0].{name:computeEnvironmentName,type:type,status:status,state:state,minvCpus:computeResources.minvCpus,subnetCount:length(computeResources.subnets)}" \
+            --output json > "${compute_environment_json}"
+
+          aws batch describe-job-queues \
+            --job-queues sbsandbox-intern-edullm-cpu \
+            --query "jobQueues[0].{name:jobQueueName,status:status,state:state}" \
+            --output json > "${job_queue_json}"
+
+          aws batch describe-job-definitions \
+            --job-definition-name sbsandbox-intern-edullm-cpu-run \
+            --status ACTIVE \
+            --query "reverse(sort_by(jobDefinitions,&revision))[0].{name:jobDefinitionName,type:type,status:status,digestPinned:contains(containerProperties.image,'@sha256:'),tagged:contains(containerProperties.image,':latest')}" \
+            --output json > "${job_definition_json}"
+
+          aws events describe-rule \
+            --name sbsandbox-intern-edullm-batch-lifecycle \
+            --query "{name:Name,state:State,scopedToOurQueue:contains(EventPattern,'job-queue/sbsandbox-intern-edullm-cpu')}" \
+            --output json > "${rule_json}"
+
+          aws stepfunctions describe-state-machine \
+            --state-machine-arn "${state_machine_arn}" \
+            --query "{status:status,submitsToBatch:contains(definition,'SubmitToBatch'),writesTheBinding:contains(definition,'WriteBinding'),readsTheImageScan:contains(definition,'ReadImageScan')}" \
+            --output json > "${state_machine_json}"
+
+          aws s3api get-bucket-versioning \
+            --bucket sbsandbox-intern-edullm-outputs \
+            --query "{status:Status}" \
+            --output json > "${outputs_json}"
+
+          python - "${compute_environment_json}" "${job_queue_json}" "${job_definition_json}" "${rule_json}" "${state_machine_json}" "${outputs_json}" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          # minvCpus is pinned at zero here as well as in the template because this is the
+          # number that bills when nobody is looking, and a console edit would not show up
+          # in a template test. subnetCount is five because us-east-1e cannot hold a
+          # c7i.8xlarge and a sixth subnet would be one Batch considers and can never place
+          # into -- which produces a job that waits rather than one that errors.
+          expected_compute_environment = {
+              "name": "sbsandbox-intern-edullm-cpu",
+              "type": "MANAGED",
+              "status": "VALID",
+              "state": "ENABLED",
+              "minvCpus": 0,
+              "subnetCount": 5,
+          }
+          expected_job_queue = {
+              "name": "sbsandbox-intern-edullm-cpu",
+              "status": "VALID",
+              "state": "ENABLED",
+          }
+          # Booleans rather than the image reference, so this check cannot print the
+          # registry host and the account id inside it. digestPinned is the property that
+          # matters; tagged is asserted false as well, because an image reference can carry
+          # both a tag and a digest and only the digest decides which bytes run.
+          expected_job_definition = {
+              "name": "sbsandbox-intern-edullm-cpu-run",
+              "type": "container",
+              "status": "ACTIVE",
+              "digestPinned": True,
+              "tagged": False,
+          }
+          # The seam that produces no error anywhere when it breaks. A rule scoped to a
+          # queue nobody submits to matches nothing, jobs run, and no lifecycle event,
+          # attempt or result record is ever written. Read as a boolean so the deployed
+          # pattern is compared against the deployed queue name rather than printed.
+          expected_rule = {
+              "name": "sbsandbox-intern-edullm-batch-lifecycle",
+              "state": "ENABLED",
+              "scopedToOurQueue": True,
+          }
+          # Three states, because the amendment is three states and a partial deploy that
+          # left one out would be an admission path that decides and never submits.
+          expected_state_machine = {
+              "status": "ACTIVE",
+              "submitsToBatch": True,
+              "writesTheBinding": True,
+              "readsTheImageScan": True,
+          }
+          expected_outputs_versioning = {"status": "Enabled"}
+
+          expectations = [
+              ("compute environment", expected_compute_environment),
+              ("job queue", expected_job_queue),
+              ("job definition", expected_job_definition),
+              ("lifecycle rule", expected_rule),
+              ("admission state machine", expected_state_machine),
+              ("outputs bucket versioning", expected_outputs_versioning),
+          ]
+          arguments = sys.argv[1:]
+          if len(arguments) != len(expectations):
+              raise SystemExit("phase 3 verification was handed the wrong number of files")
+
+          failures = []
+          for (label, expected), argument in zip(expectations, arguments):
+              observed = json.loads(Path(argument).read_text(encoding="utf-8"))
+              if observed != expected:
+                  failures.append(f"{label}: expected {expected}, observed {observed}")
+
+          if failures:
+              raise SystemExit("phase 3 batch verification failed:\n" + "\n".join(failures))
+
+          print("PHASE3_BATCH_VERIFICATION_PASSED")
+          PY

@@ -48,6 +48,9 @@ PHASE1_DEPLOY_WORKFLOW_REF = (
 )
 PHASE2_DEPLOY_WORKFLOW = ".github/workflows/deploy-phase2-admission.yml"
 PHASE2_DEPLOY_WORKFLOW_REF = f"edu-llm/platform/{PHASE2_DEPLOY_WORKFLOW}@refs/heads/main"
+PHASE3_DEPLOY_WORKFLOW_REF = (
+    "edu-llm/platform/.github/workflows/deploy-phase3-batch.yml@refs/heads/main"
+)
 
 STATE_MACHINE_ARN = {
     "Fn::Sub": (
@@ -288,12 +291,18 @@ def test_service_roles_are_bounded_and_trusted_only_by_their_own_aws_service() -
 
 
 def test_states_role_invokes_the_validator_and_appends_lineage_and_nothing_else() -> None:
+    # Five statements since Phase 3, not three. The two it gained -- batch:SubmitJob on one
+    # queue and one job definition, and ecr:DescribeImageScanFindings on one repository --
+    # are asserted in tests/test_phase3_infrastructure.py, which also compares the queue
+    # name here against the queue infra/batch-compute.yaml creates. What this test still
+    # owns is the Phase 2 claim: the S3 grant is PutObject on the lineage bucket and nothing
+    # else, whatever else the role has since been given.
     statements = policy_statements(
         role_named(SERVICE_ROLES_PATH, STATES_ROLE_NAME), "run-admission-workflow"
     )
-    invoke, write, _logs = statements
+    invoke, write, _submit, _describe_scan, _logs = statements
 
-    assert len(statements) == 3
+    assert len(statements) == 5
     assert invoke["Effect"] == "Allow"
     assert statement_actions(invoke) == ["lambda:InvokeFunction"]
     assert invoke["Resource"] == [
@@ -647,7 +656,11 @@ def test_deployer_trusts_both_phase_deployment_workflows_and_nothing_else() -> N
     references = condition["StringEquals"]["token.actions.githubusercontent.com:job_workflow_ref"]
 
     assert isinstance(references, list)
-    assert references == [PHASE1_DEPLOY_WORKFLOW_REF, PHASE2_DEPLOY_WORKFLOW_REF]
+    assert references == [
+        PHASE1_DEPLOY_WORKFLOW_REF,
+        PHASE2_DEPLOY_WORKFLOW_REF,
+        PHASE3_DEPLOY_WORKFLOW_REF,
+    ]
     assert not any("*" in reference for reference in references)
     assert (PROJECT_ROOT / PHASE2_DEPLOY_WORKFLOW).is_file()
 
@@ -761,6 +774,7 @@ def test_deployer_keeps_every_phase1_grant_it_already_had() -> None:
     assert [policy["PolicyName"] for policy in role["Policies"]] == [
         "deploy-phase1-stacks",
         "deploy-phase2-admission-stacks",
+        "deploy-phase3-batch-stacks",
     ]
     assert all(action.startswith(("cloudformation:", "ecr:")) for action in actions)
     assert {"cloudformation:CreateStack", "cloudformation:ValidateTemplate"} <= set(actions)

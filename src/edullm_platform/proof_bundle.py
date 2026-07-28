@@ -50,6 +50,7 @@ __all__ = [
     "GENERATOR_NESTED_ENV_VARS",
     "GENERATOR_TEST_PATHS",
     "STATUS_LEGEND",
+    "BundleWaitingOnADeployError",
     "GoldenDigestDriftError",
     "GoldenDrift",
     "MissingTestNodeError",
@@ -155,6 +156,22 @@ class ProofBundleError(RuntimeError):
 
 class GoldenDigestDriftError(ProofBundleError):
     pass
+
+
+class BundleWaitingOnADeployError(ProofBundleError):
+    """A committed template amendment has not reached the account yet.
+
+    Its own class rather than a message a caller matches on, because two different callers
+    have to tell this refusal apart from every other one and prose is the wrong thing for
+    either to key on. A case that expects some *other* refusal has to be able to say it
+    did not get this one; a case that skips while a deploy is outstanding has to skip on
+    this and on nothing else, or an expired capture would take the same branch.
+
+    It is still a :class:`ProofBundleError`, and the bundle is still not written. The
+    account is behind the committed template, the criteria the bundle would print rest on
+    a capture of the account, and a bundle written now would state a status the gate does
+    not reach. See :mod:`edullm_platform.pending_amendments`.
+    """
 
 
 class MissingTestNodeError(ProofBundleError):

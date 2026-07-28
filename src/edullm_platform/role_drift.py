@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any, Final
@@ -87,6 +88,7 @@ __all__ = [
     "EVIDENCE_ONLY_ROLE_FIELDS",
     "FOREIGN_ACCOUNT_PLACEHOLDER",
     "INFRA_DEPLOYER_ROLE_NAME",
+    "PHASE3_ROLE_TEMPLATES",
     "PUBLISHER_ROLE_NAME",
     "DriftDirection",
     "PolicyNotComparableError",
@@ -97,6 +99,7 @@ __all__ = [
     "iam_policy_from_arn",
     "load_template_roles",
     "normalize_policy_string",
+    "project_deployed_role",
     "project_template_role",
     "read_inline_policy",
     "read_trust_statements",
@@ -117,6 +120,34 @@ INFRA_DEPLOYER_ROLE_NAME: Final = "sbsandbox-intern-edullm-infra-deployer"
 COMMITTED_ROLE_TEMPLATES: Final[tuple[tuple[str, str], ...]] = (
     (PUBLISHER_ROLE_NAME, "infra/iam/ecr-publisher-role.yaml"),
     (INFRA_DEPLOYER_ROLE_NAME, "infra/iam/infra-deployer-role.yaml"),
+)
+
+#: The four roles Phase 3 adds, and the committed templates that declare them.
+#:
+#: **Separate from the tuple above, and Phase 3 nearly got this wrong.** The obvious move is
+#: to append to ``COMMITTED_ROLE_TEMPLATES``, which reads as "one registry, everything in
+#: it". ``phase2_evidence.PHASE2_ROLE_TEMPLATES`` already declined to, with the reason
+#: written beside it: those two names belong to a different phase's evidence and a different
+#: phase's freshness window, and folding a later phase's roles into them would make a Phase
+#: 1 capture fail because a Phase 3 role drifted. The Phase 1 proof bundle also counts that
+#: tuple -- "roles compared to their template" is a number in its README -- so appending
+#: would change a committed golden for a reason that has nothing to do with Phase 1.
+#:
+#: So the shape is one registry per phase and one drift comparison per phase, which is what
+#: the two phases before this one already do. ``phase3_evidence`` is where the Phase 3
+#: capture reads this from; it lives here rather than there because the comparison machinery
+#: is here and because this is the file a reader checks when asking "is this role compared
+#: to anything at all".
+#:
+#: The two roles Phase 3 *amends* rather than creates are not repeated here. The deployer is
+#: in the tuple above and the admission states role is in ``PHASE2_ROLE_TEMPLATES``; both are
+#: compared where they already were, which is the point of amending a template rather than
+#: writing a new one.
+PHASE3_ROLE_TEMPLATES: Final[tuple[tuple[str, str], ...]] = (
+    ("sbsandbox-intern-edullm-batch-execution", "infra/iam/batch-roles.yaml"),
+    ("sbsandbox-intern-edullm-batch-workload", "infra/iam/batch-roles.yaml"),
+    ("sbsandbox-intern-edullm-batch-instance", "infra/iam/batch-roles.yaml"),
+    ("sbsandbox-intern-edullm-lifecycle-lambda", "infra/iam/lifecycle-lambda-role.yaml"),
 )
 
 #: What ``DeployedRoleEvidence`` carries that a template projection cannot: the evidence
@@ -644,6 +675,75 @@ def load_template_roles(path: Path) -> tuple[TemplateRole, ...]:
             raise PolicyNotComparableError(f"{path.name} declares a role with no Properties")
         roles.append(project_template_role(properties))
     return tuple(roles)
+
+
+def project_deployed_role(
+    role: Mapping[str, Any],
+    inline_documents: Sequence[Mapping[str, Any]],
+    attached: Sequence[Mapping[str, Any]],
+    *,
+    own_account: str,
+    environment: str,
+    observed_at: datetime,
+) -> DeployedRoleEvidence:
+    """One role as IAM described it, masked and narrowed to what a template can be
+    compared against.
+
+    Read and dropped on purpose: the role's own ARN, its path, its role ID, its tags, its
+    description, and its creation and last-used dates. None of them is comparable to
+    anything this repository commits, and the ARN is the account ID with a name attached.
+
+    Lives here rather than in a capture tool because every phase that adds roles needs it
+    and the four functions it is built from are already here. It was in
+    ``tools/capture_phase1_evidence.py`` until Phase 3 needed the same projection for its
+    own four roles, and a second copy would have been a second answer to "what is
+    comparable", drifting silently from the comparison directly below.
+
+    Takes the three context values it uses rather than a capture context, so no phase's
+    tool has to construct another phase's argument object to project a role.
+    """
+    masked = redact_account_ids_in_document(dict(role), own_account=own_account)
+    boundary = masked.get("PermissionsBoundary")
+    boundary_name: str | None = None
+    if isinstance(boundary, dict):
+        boundary_name, _scope = iam_policy_from_arn(
+            str(boundary.get("PermissionsBoundaryArn")), what="PermissionsBoundary"
+        )
+    trust_document = masked.get("AssumeRolePolicyDocument")
+    attached_policies = redact_account_ids_in_document(list(attached), own_account=own_account)
+    return DeployedRoleEvidence.model_validate(
+        {
+            "source": "aws",
+            "environment": environment,
+            "status": "ok",
+            "observed_at": observed_at,
+            "role_name": masked.get("RoleName"),
+            "permissions_boundary_policy_name": boundary_name,
+            "max_session_duration_seconds": masked.get("MaxSessionDuration"),
+            "trust_policy_version": (
+                trust_document.get("Version") if isinstance(trust_document, dict) else None
+            ),
+            "trust_statements": read_trust_statements(trust_document),
+            "inline_policies": [
+                read_inline_policy(
+                    redact_account_ids_in_document(dict(document), own_account=own_account)
+                )
+                for document in inline_documents
+            ],
+            "attached_managed_policies": [
+                {
+                    "policy_name": policy.get("PolicyName"),
+                    # The name comes from IAM's own field and the scope from the ARN,
+                    # because the ARN's name may carry a path and its owner field is the
+                    # only thing that says who manages the policy.
+                    "scope": iam_policy_from_arn(
+                        str(policy.get("PolicyArn")), what="AttachedPolicies entry"
+                    )[1],
+                }
+                for policy in attached_policies
+            ],
+        }
+    )
 
 
 # --------------------------------------------------------------------------------------

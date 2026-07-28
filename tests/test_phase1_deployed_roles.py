@@ -11,22 +11,30 @@ The first half asks what the committed capture says: that one exists for each ro
 it is inside its window, that it matches the template, and that the publisher role in the
 account grants what the template says it grants and nothing else.
 
-"Matches the template" has one recorded exception, and :class:`PendingAmendment` is it. A
-template is amended before the stack is applied, and the stack that creates these roles is
-applied from a laptop, so between the two commits the deployed role is genuinely behind
-the template and the comparison is genuinely right to say so. What is written down is
-which difference is expected, why, and what removes the record — the same three things a
-``DEFERRED`` criterion carries in :mod:`edullm_platform.criteria`. The findings are
-recorded verbatim and compared for equality, so a difference the record does not name
-fails, and so does the day the amendment is deployed and the recorded findings stop being
-reported. That second direction is the point: it is what stops the record outliving the
-deploy it is waiting for.
+"Matches the template" has one recorded exception, and
+:class:`~edullm_platform.pending_amendments.PendingAmendment` is it. A template is amended
+before the stack is applied, and the stack that creates these roles is applied from a
+laptop, so between the two commits the deployed role is genuinely behind the template and
+the comparison is genuinely right to say so. What is written down is which difference is
+expected, why, and what removes the record — the same three things a ``DEFERRED`` criterion
+carries in :mod:`edullm_platform.criteria`. The findings are recorded verbatim and compared
+for equality, so a difference the record does not name fails, and so does the day the
+amendment is deployed and the recorded findings stop being reported. That second direction
+is the point: it is what stops the record outliving the deploy it is waiting for.
 
-The record reaches these cases and nothing else. ``phase1_capture`` goes on returning
-``DRIFTED`` for the role, so the capture does not hold, and the proof generator goes on
-refusing to build a bundle on it. That is the right split: a difference somebody has
-written down and is waiting on is not a reason to stop testing, and it is also not
-something a bundle may certify.
+**The record used to live in this module and now lives in the library.** While it was here
+it reached these cases and nothing else, so ``phase1_capture`` reported the role as
+``DRIFTED`` — the verdict a role widened in the console gets — and every consumer
+downstream had to re-derive whether the difference was the expected one. One of them did
+not: the proof generator treated *any* capture that had stopped holding as a pending
+deploy, so an expired capture skipped the same cases an undeployed amendment did.
+:mod:`edullm_platform.pending_amendments` is now where the record lives, and the capture
+reader gives the state its own verdict, ``PENDING_DEPLOY``.
+
+Naming the state changed nothing about what it costs. The capture still does not hold, and
+the proof generator still refuses to build a bundle on it. That is the right split: a
+difference somebody has written down and is waiting on is not a reason to stop testing, and
+it is also not something a bundle may certify.
 
 The second half asks what happens when it stops being true. A capture is a statement
 about one moment, and every claim resting on it has to expire rather than quietly go on
@@ -43,14 +51,20 @@ That is the intended behaviour and ``phase1_criteria`` says so where a reader wi
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Final
+from typing import Any
 
 import pytest
 
 from edullm_platform.evidence import FRESHNESS_WINDOW, scan_for_secrets
+from edullm_platform.pending_amendments import (
+    PENDING_AMENDMENTS,
+    PendingAmendment,
+    PendingAmendmentError,
+    declared_role_templates,
+    pending_for,
+)
 from edullm_platform.phase1_capture import (
     CAPTURE_SUFFIX,
     ROLE_CAPTURE_DIR,
@@ -80,95 +94,6 @@ FORBIDDEN_SERVICES = ("batch", "s3", "iam", "ec2", "sts")
 # --------------------------------------------------------------------------------------
 
 
-class PendingAmendmentError(ValueError):
-    """A recorded pending amendment is not something a reader could act on."""
-
-
-@dataclass(frozen=True)
-class PendingAmendment:
-    """A template amendment that is committed and has not been applied to the account.
-
-    The stacks that create these roles are applied by hand, so a template change and the
-    deploy that realises it are two acts and there is a window between them. During that
-    window the comparison reports the deployed role as narrower than the template, and it
-    is right to: the committed template has stopped describing the account. Deleting the
-    comparison or loosening it would answer a true statement by silencing the thing that
-    made it, so what is recorded instead is the difference itself.
-
-    An entry carries the same two things a ``DEFERRED`` criterion carries, for the same
-    reason: a :attr:`reason` a reader can weigh, and a :attr:`cleared_by` that says what
-    ends it. It carries a third thing a criterion does not, :attr:`findings`, which is
-    what makes it self-clearing rather than an exemption — they are compared for equality,
-    so the record fails the moment the account stops differing in exactly this way, in
-    either direction.
-
-    Every finding must be ``NARROWER``. An undeployed template change can only leave the
-    account behind the template; a deployed role that grants something the template does
-    not is a security finding and nothing pending explains it.
-    """
-
-    role_name: str
-    reason: str
-    cleared_by: str
-    findings: tuple[RoleDriftFinding, ...]
-
-    def __post_init__(self) -> None:
-        if not self.findings:
-            raise self._fail(
-                "records no findings; a pending amendment that expects no difference is "
-                "a record with nothing to clear"
-            )
-        for name in ("reason", "cleared_by"):
-            if not getattr(self, name).strip():
-                raise self._fail(f"does not say {name.replace('_', ' ')}")
-        ahead = [
-            finding
-            for finding in self.findings
-            if finding.direction is not DriftDirection.NARROWER
-        ]
-        if ahead:
-            raise self._fail(
-                "records a finding that is not narrower: "
-                + ", ".join(f"{one.direction.value} at {one.element}" for one in ahead)
-                + ". An undeployed template change leaves the account behind the "
-                "template; a role that grants more than its template is a security "
-                "finding and no pending deploy explains it"
-            )
-
-    def _fail(self, problem: str) -> PendingAmendmentError:
-        return PendingAmendmentError(f"pending amendment for {self.role_name}: {problem}")
-
-
-def pending_amendments() -> tuple[PendingAmendment, ...]:
-    """Every committed template amendment the account has not caught up with yet."""
-    # Empty, and that is the ordinary state. The Phase 2 deployer amendment was recorded
-    # here while the template was ahead of the account, and was removed on 2026-07-27
-    # when the stack was applied from a laptop and the re-capture reported no findings.
-    # An entry lives here only between those two moments.
-    amendments: tuple[PendingAmendment, ...] = ()
-    declared = dict(COMMITTED_ROLE_TEMPLATES)
-    for amendment in amendments:
-        if amendment.role_name not in declared:
-            raise PendingAmendmentError(
-                f"pending amendment for {amendment.role_name}: no committed template "
-                "declares that role, so nothing here will ever compare it and the record "
-                "would never clear"
-            )
-    names = [amendment.role_name for amendment in amendments]
-    if len(set(names)) != len(names):
-        raise PendingAmendmentError(f"one role may carry one pending amendment; got {names}")
-    return amendments
-
-
-PENDING_AMENDMENTS: Final = pending_amendments()
-
-
-def pending_for(role_name: str) -> PendingAmendment | None:
-    return next(
-        (amendment for amendment in PENDING_AMENDMENTS if amendment.role_name == role_name), None
-    )
-
-
 def expected_findings(role_name: str) -> tuple[RoleDriftFinding, ...]:
     """What the comparison must report for this role: nothing, unless one is pending."""
     pending = pending_for(role_name)
@@ -176,18 +101,116 @@ def expected_findings(role_name: str) -> tuple[RoleDriftFinding, ...]:
 
 
 def expected_verdict(role_name: str) -> CaptureVerdict:
-    return CaptureVerdict.OK if pending_for(role_name) is None else CaptureVerdict.DRIFTED
+    return CaptureVerdict.OK if pending_for(role_name) is None else CaptureVerdict.PENDING_DEPLOY
 
 
 def unexpected(capture: CommittedRoleCapture) -> str:
     """What to print when a capture is not in the state recorded for its role."""
-    pending = pending_for(capture.role_name)
-    if pending is None:
-        return capture.detail
-    return (
-        f"{capture.detail} A pending amendment is recorded for {capture.role_name}. "
-        f"Why: {pending.reason} Cleared by: {pending.cleared_by}"
+    return capture.detail
+
+
+def test_a_pending_amendment_must_say_why_and_what_ends_it() -> None:
+    # The two fields that distinguish a record somebody is waiting on from an exemption.
+    # Checked here rather than trusted, because an entry with neither reads identically
+    # to one with both from every consumer's side.
+    for amendment in PENDING_AMENDMENTS:
+        assert amendment.reason.strip()
+        assert amendment.cleared_by.strip()
+        assert amendment.findings
+        assert amendment.role_name in declared_role_templates()
+
+
+@pytest.mark.parametrize(
+    ("broken", "expected"),
+    [
+        (
+            {"findings": ()},
+            "nothing to clear",
+        ),
+        (
+            {"reason": "   "},
+            "does not say reason",
+        ),
+        (
+            {"cleared_by": ""},
+            "does not say cleared by",
+        ),
+        (
+            {
+                "findings": (
+                    RoleDriftFinding(
+                        direction=DriftDirection.WIDER,
+                        element="inline policy 'x'",
+                        detail="the deployed role carries an inline policy the template does not",
+                    ),
+                )
+            },
+            "not narrower",
+        ),
+    ],
+    ids=["no findings", "no reason", "no trigger", "the account is ahead"],
+)
+def test_a_pending_amendment_a_reader_could_not_act_on_is_refused(
+    broken: dict[str, Any],
+    expected: str,
+) -> None:
+    # The last case is the one worth reading. A pending deploy can only leave the account
+    # behind the template; a role granting more than its template is a security finding,
+    # and a record able to absorb one would be the most valuable place to hide it.
+    fields: dict[str, Any] = {
+        "role_name": DEPLOYER_ROLE,
+        "reason": "a reason",
+        "cleared_by": "a trigger",
+        "findings": (
+            RoleDriftFinding(
+                direction=DriftDirection.NARROWER,
+                element="inline policy 'x'",
+                detail="the template declares an inline policy the deployed role does not carry",
+            ),
+        ),
+        **broken,
+    }
+
+    with pytest.raises(PendingAmendmentError, match=expected):
+        PendingAmendment(**fields)
+
+
+def test_a_pending_amendment_explains_only_the_exact_findings_it_records() -> None:
+    # Equality in both directions, which is what makes the record self-clearing. A second
+    # difference arriving while this one is open must not read as explained, and neither
+    # must a partial deploy that removed only one of the recorded findings.
+    #
+    # Built here rather than read from PENDING_AMENDMENTS, which is what this case used to
+    # do. The registry is empty whenever no amendment is outstanding -- its ordinary state,
+    # and the one the Phase 3 deploy restored on 2026-07-27 -- so indexing it made the case
+    # that proves the self-clearing rule the one case a clearing broke.
+    amendment = PendingAmendment(
+        role_name=DEPLOYER_ROLE,
+        reason="a template amendment that has not been deployed yet",
+        cleared_by="deploying it and re-capturing",
+        findings=(
+            RoleDriftFinding(
+                direction=DriftDirection.NARROWER,
+                element="trust policy statement 1 conditions",
+                detail="the deployed role does not accept a value the template does",
+            ),
+            RoleDriftFinding(
+                direction=DriftDirection.NARROWER,
+                element="inline policy 'deploy-some-stacks'",
+                detail="the template declares an inline policy the deployed role does not carry",
+            ),
+        ),
     )
+    extra = RoleDriftFinding(
+        direction=DriftDirection.NARROWER,
+        element="inline policy 'something-else'",
+        detail="the template declares an inline policy the deployed role does not carry",
+    )
+
+    assert amendment.explains(amendment.findings)
+    assert not amendment.explains(())
+    assert not amendment.explains(amendment.findings[:1])
+    assert not amendment.explains((*amendment.findings, extra))
 
 
 @pytest.fixture(scope="module")
@@ -377,6 +400,46 @@ def test_a_capture_that_no_longer_matches_its_template_does_not_hold(tmp_path: P
     assert capture.report is not None
     assert [finding.direction.value for finding in capture.report.findings] == ["wider"]
     assert "ecr:DeleteRepository" in capture.detail
+
+
+def test_a_second_difference_does_not_hide_behind_a_pending_amendment(tmp_path: Path) -> None:
+    # The failure this prevents is the reason PENDING_DEPLOY is a verdict rather than a
+    # flag somebody sets. The deployer's committed capture already reports exactly the
+    # recorded findings, so a role widened in the console while the amendment is
+    # outstanding would arrive as one more finding on a capture already being tolerated.
+    # It has to read as ordinary drift, and the tolerating has to stop.
+    payload = committed_payload(DEPLOYER_ROLE)
+    payload["inline_policies"][0]["statements"][0]["action_match"]["actions"].append(
+        "iam:CreateRole"
+    )
+    write_capture(tmp_path, DEPLOYER_ROLE, payload)
+
+    capture = one(read_committed_role_captures(PROJECT_ROOT, capture_dir=tmp_path), DEPLOYER_ROLE)
+
+    assert capture.verdict is CaptureVerdict.DRIFTED
+    assert not capture.holds
+    assert capture.report is not None
+    assert DriftDirection.WIDER in {finding.direction for finding in capture.report.findings}
+    assert "iam:CreateRole" in capture.detail
+
+
+def test_a_capture_matching_a_pending_amendment_says_what_would_end_it(
+    captures: tuple[CommittedRoleCapture, ...],
+) -> None:
+    # Only meaningful while an amendment is outstanding, and it must not silently become
+    # meaningless: a reader who meets this verdict needs the two things the record carries
+    # rather than a bare "does not match", which is what the verdict replaced.
+    pending = [capture for capture in captures if capture.verdict is CaptureVerdict.PENDING_DEPLOY]
+
+    assert [capture.role_name for capture in pending] == [
+        amendment.role_name for amendment in PENDING_AMENDMENTS
+    ]
+    for capture in pending:
+        amendment = pending_for(capture.role_name)
+        assert amendment is not None
+        assert amendment.reason in capture.detail
+        assert amendment.cleared_by in capture.detail
+        assert not capture.holds
 
 
 def test_a_capture_for_a_role_no_template_declares_is_refused(tmp_path: Path) -> None:

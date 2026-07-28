@@ -1,0 +1,118 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Service role the lifecycle recorder function runs as while it projects Batch state changes onto lineage.
+
+Resources:
+  LifecycleLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sbsandbox-intern-edullm-lifecycle-lambda
+      PermissionsBoundary:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/InternSandboxBoundary
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      # Inline rather than a customer managed policy. InternSandboxBoundary denies
+      # iam:CreatePolicyVersion on every policy, so a managed policy could be created once
+      # and never amended; the first permission change would fail the stack update. Inline
+      # policies go through iam:PutRolePolicy, which the boundary permits on this name.
+      Policies:
+        - PolicyName: record-what-batch-reported
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # This role is the mirror image of the admission validator's. That one
+              # decides and cannot write; this one writes and cannot decide. The
+              # separation is not symmetry for its own sake: the recorder is reached by an
+              # EventBridge delivery rather than by an execution somebody approved, so it
+              # is the component furthest from the gate, and the only thing it may do with
+              # that distance is append a record of something that already happened.
+              #
+              # PutObject only, and only under the four prefixes this phase writes. No
+              # GetObject, no DeleteObject, no ListBucket: the bucket policy already
+              # refuses an unconditional write, and a recorder that could read the store
+              # could read every team's admission decisions on its way past.
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-lineage/binding/*
+                  - Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-lineage/events/*
+                  - Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-lineage/attempt/*
+                  - Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-lineage/result/*
+              # The event source mapping polls as this role, so receive, delete and the
+              # attribute read are all needed; without DeleteMessage a projected event is
+              # redelivered until it reaches the dead-letter queue, which reads as a
+              # broken projection and is a missing permission.
+              #
+              # The dead-letter queue is deliberately absent from this scope. Nothing
+              # reads it automatically -- an event that failed projection is meant to sit
+              # there until a person looks -- and a recorder that could drain its own
+              # dead-letter queue could erase the evidence that it failed.
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:sbsandbox-intern-edullm-batch-lifecycle
+              # No batch: action of any kind, and batch:DescribeJobs in particular.
+              #
+              # The Phase 3 plan asked for it on "*" -- it has no resource type, so "*" is
+              # the narrowest grant that exists -- on the grounds that a Batch Job State
+              # Change event carries the job's status and exit code but not its attempts
+              # array, and SchedulerAttempt is built from the attempts. That premise is
+              # false. The detail carries `attempts`, each with `startedAt`, `stoppedAt`,
+              # `statusReason` and the container exit code, and lifecycle_projection.py
+              # reads the first three straight off the event. The exit code it does not
+              # read at all: no Phase 0 contract has a field for one, so it is captured
+              # evidence rather than a projected value.
+              #
+              # Reading them from a describe instead would be actively wrong rather than
+              # merely unnecessary. An event is a fixed statement about the instant the
+              # state changed; a describe returns the job as it is when the recorder asks.
+              # So a redelivered event would project from different inputs than its first
+              # delivery, produce different bytes under the same derived key, and the
+              # conditional write would refuse the second one -- silently keeping whichever
+              # projection happened to arrive first. The entire write-once design rests on
+              # a replay recomputing the same record, and a grant that makes the projection
+              # depend on when it runs takes that property away.
+              #
+              # Kept out rather than kept unexercised. A grant that nothing calls is one
+              # nobody notices, and the argument for it stops being checkable the moment
+              # its justification is wrong. If a later state change genuinely carries a
+              # detail the projection cannot read, the answer is to add the grant then,
+              # with the event that needed it named.
+              #
+              # batch:SubmitJob, batch:TerminateJob and batch:CancelJob are absent for a
+              # different reason and it still holds: the component that records what
+              # happened must not be able to make something happen, and an event-driven
+              # component is the worst place to put that ability -- a malformed event would
+              # be a way to reach it.
+              #
+              # CreateLogGroup is included because Lambda creates the function's own group
+              # on first invocation using this role; without it the function runs and logs
+              # nowhere, which is the failure mode hardest to notice. Scoped to this
+              # function's group, so it can create or write no other -- including the Batch
+              # job log group, whose contents this role must be able to reference and not
+              # to alter.
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/sbsandbox-intern-edullm-lifecycle-recorder:*
+
+Outputs:
+  RoleName:
+    Value:
+      Ref: LifecycleLambdaRole
+  RoleArn:
+    Value:
+      Fn::GetAtt:
+        - LifecycleLambdaRole
+        - Arn

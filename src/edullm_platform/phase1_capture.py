@@ -24,6 +24,17 @@ responses are in :data:`RECAPTURE_GUIDANCE`, and neither of them is editing the 
 means nobody has looked; a stale one means somebody looked too long ago; an invalid one
 means what they wrote down is not a role capture. Collapsing the three would lose the
 only part a reader can act on, so each is its own verdict and each carries its own text.
+
+**Drift somebody has written down is not the same as drift nobody has.** The stacks that
+hold these roles are applied from a laptop, so a template amendment lands before the deploy
+that realises it and the account is genuinely behind the template in between.
+:mod:`edullm_platform.pending_amendments` is where that difference is recorded, and a
+capture reporting exactly the recorded findings gets its own verdict,
+:attr:`CaptureVerdict.PENDING_DEPLOY`, rather than the one a role widened in the console
+would get. It still does not hold: the criteria resting on it are still not certified and
+the proof generator still refuses to build on it. What the verdict buys is that a reader
+downstream can tell "waiting on a deploy" from "expired" without re-deriving it, which is
+what one consumer got wrong by treating every capture that stopped holding as the former.
 """
 
 from __future__ import annotations
@@ -43,6 +54,7 @@ from edullm_platform.evidence import (
     FreshEvidenceModel,
     evidence_load_reason_code,
 )
+from edullm_platform.pending_amendments import PendingAmendment, pending_for
 from edullm_platform.phase1_evidence import (
     DenialEvidence,
     DeployedRoleEvidence,
@@ -73,7 +85,9 @@ __all__ = [
     "CommittedRoleCapture",
     "CommittedRunEvidence",
     "RunEvidenceProblem",
+    "captures_pending_a_deploy",
     "captures_that_do_not_hold",
+    "only_a_pending_deploy_stands_in_the_way",
     "read_committed_role_captures",
     "read_committed_run_evidence",
 ]
@@ -116,6 +130,12 @@ class CaptureVerdict(StrEnum):
     INVALID = "evidence_invalid"
     #: A record loaded and disagrees with the template that declares the role.
     DRIFTED = "role_drift"
+    #: A record loaded and disagrees with its template in exactly the way a recorded
+    #: pending amendment says it will, because the template is committed and the deploy
+    #: that realises it has not been run. Distinct from ``DRIFTED`` and equally not ``OK``:
+    #: the difference is expected, and the capture still establishes nothing about the
+    #: template as it now stands.
+    PENDING_DEPLOY = "role_drift_pending_deploy"
     #: A record loaded and names a role no committed template declares.
     UNDECLARED = "role_has_no_committed_template"
 
@@ -170,6 +190,39 @@ def _drift_detail(report: RoleDriftReport) -> str:
             for finding in report.findings
         )
     )
+
+
+def _pending_detail(report: RoleDriftReport, pending: PendingAmendment) -> str:
+    return (
+        f"{_drift_detail(report)}. That is exactly the difference recorded as pending for "
+        f"{report.role_name}, so it is expected rather than unexplained — and it is still "
+        f"not agreement. Why: {pending.reason} Cleared by: {pending.cleared_by}"
+    )
+
+
+def _verdict_and_detail(
+    report: RoleDriftReport,
+    *,
+    role_name: str,
+    relative_path: str,
+    observed_on: str,
+) -> tuple[CaptureVerdict, str]:
+    """Which of the three comparison outcomes this is, and what to tell a reader.
+
+    Three rather than two. Agreement, a difference somebody recorded and is waiting on,
+    and a difference nobody has explained are distinct facts, and only the first is
+    ``OK``. Folding the middle one into either neighbour loses something: into ``OK`` and
+    a bundle would certify criteria resting on a role the account does not hold; into
+    ``DRIFTED`` and a reader cannot tell an undeployed amendment from a console edit.
+    """
+    if report.matches:
+        return CaptureVerdict.OK, (
+            f"The deployed {role_name} matches {relative_path} as observed on {observed_on}."
+        )
+    pending = pending_for(role_name)
+    if pending is not None and pending.explains(report.findings):
+        return CaptureVerdict.PENDING_DEPLOY, _pending_detail(report, pending)
+    return CaptureVerdict.DRIFTED, _drift_detail(report)
 
 
 def _read_one(
@@ -236,17 +289,18 @@ def _read_one(
         partition=partition,
         region=region,
     )
+    verdict, detail = _verdict_and_detail(
+        report,
+        role_name=evidence.role_name,
+        relative_path=relative_path,
+        observed_on=evidence.observed_at.date().isoformat(),
+    )
     return CommittedRoleCapture(
         role_name=evidence.role_name,
         template_path=relative_path,
         capture_path=capture_path,
-        verdict=CaptureVerdict.OK if report.matches else CaptureVerdict.DRIFTED,
-        detail=(
-            f"The deployed {evidence.role_name} matches {relative_path} as observed on "
-            f"{evidence.observed_at.date().isoformat()}."
-            if report.matches
-            else _drift_detail(report)
-        ),
+        verdict=verdict,
+        detail=detail,
         evidence=evidence,
         report=report,
     )
@@ -307,6 +361,35 @@ def captures_that_do_not_hold(
     captures: Sequence[CommittedRoleCapture],
 ) -> tuple[CommittedRoleCapture, ...]:
     return tuple(capture for capture in captures if not capture.holds)
+
+
+def captures_pending_a_deploy(
+    captures: Sequence[CommittedRoleCapture],
+) -> tuple[CommittedRoleCapture, ...]:
+    """The captures whose only difference from their template is one somebody recorded."""
+    return tuple(
+        capture for capture in captures if capture.verdict is CaptureVerdict.PENDING_DEPLOY
+    )
+
+
+def only_a_pending_deploy_stands_in_the_way(
+    captures: Sequence[CommittedRoleCapture],
+) -> tuple[CommittedRoleCapture, ...]:
+    """The pending captures, or nothing at all if anything else has also stopped holding.
+
+    The distinction this draws is the reason the verdict exists. A caller that treats
+    "waiting on a laptop deploy" as a reason to stand down -- skipping a case, softening a
+    message -- must not do so while some other capture has expired, been edited into
+    something that does not load, or drifted for a reason nobody wrote down. Returning
+    nothing in that case makes the caller take the ordinary path, which is the loud one.
+
+    All-or-nothing rather than per-role, because the callers ask a whole-tree question:
+    can a bundle be built, is this refusal the expected one. One expired capture is enough
+    for the answer to be no for a reason nobody has recorded.
+    """
+    broken = captures_that_do_not_hold(captures)
+    pending = captures_pending_a_deploy(captures)
+    return pending if len(pending) == len(broken) else ()
 
 
 # --------------------------------------------------------------------------------------

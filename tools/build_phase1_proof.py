@@ -31,8 +31,10 @@ from edullm_platform.phase1_capture import (
     CAPTURE_REGION,
     ROLE_CAPTURE_DIR,
     RUN_CAPTURE_DIR,
+    CaptureVerdict,
     CommittedRoleCapture,
     CommittedRunEvidence,
+    captures_pending_a_deploy,
     captures_that_do_not_hold,
     read_committed_role_captures,
     read_committed_run_evidence,
@@ -43,6 +45,7 @@ from edullm_platform.proof_bundle import (
     GENERATOR_TEST_PATHS,
     STATUS_LEGEND,
     STATUS_PROSE,
+    BundleWaitingOnADeployError,
     GoldenDigestDriftError,
     MissingTestNodeError,
     ModelRecord,
@@ -93,6 +96,12 @@ PHASE: Final = "phase-1"
 BUNDLE_SCHEMA_VERSION: Final = 1
 BUNDLE_RELATIVE_DIR: Final = Path("proof") / PHASE
 GOLDENS_FILENAME: Final = "serialization-goldens.json"
+GOLDENS_REPORT_FILENAME: Final = "serialization-goldens.md"
+
+#: The two documents that describe the committed role templates and nothing else. Written
+#: together, and before anything that reads the account; see :func:`write_goldens`.
+GOLDENS_FILENAMES: Final = (GOLDENS_FILENAME, GOLDENS_REPORT_FILENAME)
+
 BUNDLE_FILENAMES: Final = (
     "README.md",
     "deployed-role-drift.md",
@@ -102,7 +111,7 @@ BUNDLE_FILENAMES: Final = (
     "publisher-denial-matrix.md",
     "schema-compatibility.md",
     GOLDENS_FILENAME,
-    "serialization-goldens.md",
+    GOLDENS_REPORT_FILENAME,
     "unit-test-report.md",
 )
 NESTED_RUN_ENV: Final = "EDULLM_PHASE1_PROOF_NESTED"
@@ -287,8 +296,17 @@ def refuse_a_capture_that_no_longer_holds(captures: Sequence[CommittedRoleCaptur
     load, the gate fails those criteria and this bundle would still print them covered —
     which is the one defect a bundle cannot survive. Refusing is also what makes the
     expiry visible: somebody has to re-capture, or delete the records and the citations.
+
+    A capture waiting on a laptop deploy is held back for
+    :func:`refuse_a_bundle_waiting_on_a_deploy` rather than reported here, because the two
+    have different owners and different remedies and are raised at different points in
+    the build.
     """
-    broken = captures_that_do_not_hold(captures)
+    broken = [
+        capture
+        for capture in captures_that_do_not_hold(captures)
+        if capture.verdict is not CaptureVerdict.PENDING_DEPLOY
+    ]
     if not broken:
         return
     raise ProofBundleError(
@@ -296,6 +314,32 @@ def refuse_a_capture_that_no_longer_holds(captures: Sequence[CommittedRoleCaptur
         "recorded as covered, so this bundle would state a status the acceptance gate "
         "does not reach:\n  "
         + "\n  ".join(f"{capture.verdict.value}: {capture.detail}" for capture in broken)
+    )
+
+
+def refuse_a_bundle_waiting_on_a_deploy(captures: Sequence[CommittedRoleCapture]) -> None:
+    """Stop, last of all, because a committed amendment has not reached the account.
+
+    Same verdict as every other refusal — nothing is written — and deliberately the last
+    one raised. Everything before it is a defect in this tree that somebody can fix by
+    editing a file, so a build has to reach all of them and report the one it found. This
+    is not that: it is a laptop operation nobody in this process can perform, and it would
+    otherwise mask every defect behind it for as long as the deploy is outstanding. That
+    is exactly what happened, and the cost was three cases about *other* refusals that
+    could not reach the refusal they were written for, and passed or failed on this one.
+
+    The golden digests are recorded before this fires, for a related reason: they describe
+    the committed templates and say nothing about the account, so a deploy nobody has run
+    must not be able to stop the tripwire being re-armed against the template as amended.
+    """
+    waiting = captures_pending_a_deploy(captures)
+    if not waiting:
+        return
+    raise BundleWaitingOnADeployError(
+        "a committed template amendment has not been applied to the account yet, so the "
+        "captures the criteria rest on describe a role this repository no longer declares; "
+        "the golden digests above were re-recorded and no bundle document was written:\n  "
+        + "\n  ".join(f"{capture.role_name}: {capture.detail}" for capture in waiting)
     )
 
 
@@ -784,7 +828,12 @@ def render_role_drift(
                 [
                     capture.role_name,
                     observation_date(capture),
-                    "yes",
+                    # Read off the verdict rather than written as "yes". A cell that
+                    # asserts agreement without consulting the comparison it is reporting
+                    # is the shape of defect this whole document exists to catch, and a
+                    # build that reached here with a capture in any other state would have
+                    # printed it.
+                    "yes" if capture.holds else capture.verdict.value,
                     str(len(capture.report.findings)) if capture.report else "0",
                     expiry_date(capture),
                 ]
@@ -1390,6 +1439,59 @@ def render_index(
     )
 
 
+def write_goldens(
+    output_dir: Path,
+    goldens: Sequence[RecordedGolden],
+    criteria: Sequence[CriterionSpec],
+    *,
+    regenerate: bool,
+) -> tuple[Path, ...]:
+    """Record what each committed role template grants, before anything reads the account.
+
+    The pair is written together and first, on its own terms. Both documents are derived
+    from the templates this repository commits and neither says anything about the
+    account, so neither depends on a capture holding, on a run record loading, or on a
+    verification run having happened.
+
+    Writing them first is what makes ``--regenerate-goldens`` usable in the state this
+    repository is actually in. A template amendment lands before the laptop deploy that
+    realises it; the capture is then legitimately behind the template and the bundle is
+    legitimately refused. If re-recording the digest were downstream of that refusal, the
+    tripwire would report a drift that nobody could clear until a deploy no test can
+    perform, and the suite would carry a red test saying, in a second voice, exactly what
+    the pending-amendment record already says.
+
+    They are written as a pair rather than the ``.json`` alone, which is the shape this
+    had and the reason it was worth changing: the ``.md`` renders the same digests for a
+    human, and re-recording one without the other leaves two committed documents in the
+    same directory disagreeing about what a role grants.
+    """
+    goldens_file = goldens_path(output_dir)
+    if goldens_file.exists() and not regenerate:
+        drift = golden_drift(load_recorded_goldens(goldens_file), goldens)
+        if drift:
+            raise GoldenDigestDriftError(describe_drift(drift, command=GENERATOR_COMMAND))
+
+    documents = {
+        GOLDENS_FILENAME: render_goldens_document(goldens, phase=PHASE),
+        GOLDENS_REPORT_FILENAME: render_goldens_report(goldens),
+    }
+    contradictions = contradicting_status_claims(documents, criteria)
+    if contradictions:
+        raise ProofBundleError(
+            "the recorded golden digests state a criterion status the acceptance gate did "
+            "not reach:\n  " + "\n  ".join(contradictions)
+        )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
+    for filename, text in sorted(documents.items()):
+        assert_secret_free(filename, text)
+        path = output_dir / filename
+        path.write_text(text, encoding="utf-8")
+        written.append(path)
+    return tuple(written)
+
+
 def build_bundle(
     repo_root: Path,
     output_dir: Path,
@@ -1400,17 +1502,7 @@ def build_bundle(
 ) -> tuple[Path, ...]:
     criteria = phase1_criteria()
     goldens = compute_goldens(repo_root)
-
-    goldens_file = goldens_path(output_dir)
-    if goldens_file.exists() and not regenerate_goldens:
-        drift = golden_drift(load_recorded_goldens(goldens_file), goldens)
-        if drift:
-            raise GoldenDigestDriftError(describe_drift(drift, command=GENERATOR_COMMAND))
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-    goldens_document = render_goldens_document(goldens, phase=PHASE)
-    assert_secret_free(GOLDENS_FILENAME, goldens_document)
-    goldens_file.write_text(goldens_document, encoding="utf-8")
+    goldens_written = write_goldens(output_dir, goldens, criteria, regenerate=regenerate_goldens)
 
     resolved = verify_repository(repo_root) if verification is None else verification
     models = phase1_models(repo_root)
@@ -1427,7 +1519,6 @@ def build_bundle(
         "image-rebuild-comparison.md": rebuild_document,
         "open-decisions.md": render_open_decisions(decisions),
         "deployed-role-drift.md": render_role_drift(repo_root, captures),
-        "serialization-goldens.md": render_goldens_report(goldens),
         "schema-compatibility.md": render_schema_report(models),
         "README.md": render_index(
             generated_at=generated_at,
@@ -1444,7 +1535,7 @@ def build_bundle(
             limitations=known_limitations(repo_root, criteria, captures, run),
         ),
     }
-    if set(documents) | {GOLDENS_FILENAME} != set(BUNDLE_FILENAMES):
+    if set(documents) | set(GOLDENS_FILENAMES) != set(BUNDLE_FILENAMES):
         raise ProofBundleError("the bundle wrote a different file set than it declares")
     contradictions = contradicting_status_claims(documents, criteria)
     if contradictions:
@@ -1455,7 +1546,8 @@ def build_bundle(
         )
     for filename, text in sorted(documents.items()):
         assert_secret_free(filename, text)
-    written = [goldens_file]
+    refuse_a_bundle_waiting_on_a_deploy(captures)
+    written = list(goldens_written)
     for filename, text in sorted(documents.items()):
         path = output_dir / filename
         path.write_text(text, encoding="utf-8")
