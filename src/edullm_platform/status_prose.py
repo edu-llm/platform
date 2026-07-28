@@ -33,7 +33,7 @@ from collections import Counter
 from collections.abc import Mapping, Sequence
 from typing import Final, Protocol
 
-from edullm_platform.criteria import CriterionStatus
+from edullm_platform.criteria import CriterionStatus, PilotVerdict
 
 __all__ = [
     "NUMBER_WORDS",
@@ -42,6 +42,7 @@ __all__ = [
     "StatusRecord",
     "checked_phase_criteria_note",
     "contradicting_status_claims",
+    "gate_and_pilot_line",
     "phase_criteria_note",
     "spell",
     "status_claims",
@@ -297,6 +298,20 @@ def phase_criteria_note(records: Sequence[StatusRecord], *, phase: str) -> str:
     return (
         f"phase_criteria are the {phase} acceptance criteria. "
         f"{PHASE_CRITERIA_NOTE_PREAMBLE} {status_summary_sentence(records)}"
+    )
+
+
+def gate_and_pilot_line(*, phase: str, gate_passed: bool, verdict: PilotVerdict) -> str:
+    """The one line a person reads beside the JSON: both verdicts, and which one exits.
+
+    The exit code is stated rather than left to be inferred, because the two verdicts
+    disagree in the ordinary case and a reader who sees a ready pilot beside exit 1 has
+    to be told which of them the number is about. It is the gate's, always.
+    """
+    exit_code = 0 if gate_passed else 1
+    return (
+        f"{phase} gate: {'pass' if gate_passed else 'fail'}, exit {exit_code}. "
+        f"{phase} pilot rung: {verdict.readiness.value}. {verdict.note}"
     )
 
 

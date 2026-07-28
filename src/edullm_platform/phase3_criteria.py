@@ -53,6 +53,23 @@ and ``infra/batch-network.yaml`` creates our own VPC unconditionally. So the ter
 criterion has to record are different terms -- ownership settled rather than a dependency
 to carry -- and the part that remains open is narrower: the environment is not deployed, so
 nothing records the ids it actually uses.
+
+**Thirteen of the twenty-two are pilot-blocking, and every one of them is a gap, so this
+phase is not pilot-ready.** The master plan resolves Phase 3 into eleven checks and marks
+six; those eleven are criteria 1 to 11 here, in order, so that part of the split is the
+plan's markers carried across rather than a judgement. The remaining eleven criteria had no
+counterpart in the plan's list, and seven of them are marked here: the four that keep a
+GitHub path, a container, a validator and a state machine inside their own authority; the
+one that stops an idle compute environment billing; the one that attests what the lineage
+store holds; and the one that makes a run traceable by run id alone, which is the phase's
+gate restated as an assertion.
+
+The four that are not marked are worth naming because saying no is what makes the marker
+mean anything. Criterion 15 is a placement question whose harmful half already lives in
+criterion 9. Criterion 20 constrains the deployment role the build team uses rather than
+anything a pilot user can reach. Criterion 21 records the networking for a later reader.
+Criterion 22 is the one place the ladder's four harms come out under-inclusive, and its
+``scope_limits`` says so rather than stretching one of the four to cover it.
 """
 
 from __future__ import annotations
@@ -138,6 +155,7 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
             number="1",
             statement="A valid run reaches SUCCEEDED.",
             status=CriterionStatus.GAP,
+            pilot_blocking=True,
             supporting_node_ids=(
                 *_ids(EXECUTION, "test_the_promoted_profile_resolves_to_the_deployed_queue_and_job_definition"),
                 *_ids(EXECUTION, "test_the_job_name_is_the_run_id_so_batch_is_a_third_join"),
@@ -163,6 +181,14 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                 *_ids(INFRA, "test_the_log_group_the_config_names_is_the_one_the_container_writes_to"),
                 *_ids(INFRA, "test_execution_targets_config_names_exactly_what_the_templates_create"),
             ),
+            scope_limits=(
+                (
+                    "Not pilot-blocking, and the plan's own call. Losing the logs of a run that "
+                    "otherwise behaved costs the user their diagnosis rather than their money or "
+                    "their record: the job ran, the result still joins to it, and the spend happened "
+                    "either way."
+                ),
+            ),
             gaps=(
                 NOTHING_IS_DEPLOYED,
                 (
@@ -178,6 +204,7 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
             number="3",
             statement="The S3 result manifest matches the logical run and the Batch job.",
             status=CriterionStatus.GAP,
+            pilot_blocking=True,
             supporting_node_ids=(
                 *_ids(PROJECTION, "test_the_result_joins_to_the_attempt_and_the_attempt_to_the_batch_job"),
                 *_ids(PROJECTION, "test_one_attempt_gets_one_id_whichever_event_describes_it"),
@@ -198,6 +225,7 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
             number="4",
             statement="A failed command reaches FAILED with its reason preserved.",
             status=CriterionStatus.GAP,
+            pilot_blocking=True,
             supporting_node_ids=(
                 *_ids(PROJECTION, "test_a_failed_run_records_the_failure_rather_than_the_nearest_success"),
                 *_ids(PROJECTION, "test_a_job_stopped_before_any_attempt_began_still_records_that_it_stopped"),
@@ -224,6 +252,14 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                 *_ids(PROJECTION, "test_a_termination_from_outside_this_platform_understates_rather_than_guesses"),
                 *_ids(INFRA, "test_the_states_role_gains_batch_and_ecr_reads_and_no_way_to_stop_a_job"),
             ),
+            scope_limits=(
+                (
+                    "Not pilot-blocking, and the plan's own call. It is bounded by the mandatory "
+                    "timeout, which is marked: with a timeout in force, the absence of cancellation "
+                    "costs the remainder of one job rather than an open-ended amount, and that bound "
+                    "is the whole of what makes this gap survivable."
+                ),
+            ),
             gaps=(
                 NOTHING_IS_DEPLOYED,
                 (
@@ -244,6 +280,17 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                 *_ids(SUBMIT_WORKFLOW, "test_the_cancellation_step_runs_only_on_a_cancellation_and_last"),
                 *_ids(SUBMIT_WORKFLOW, "test_the_cancellation_step_neither_claims_to_stop_a_job_nor_can"),
                 *_ids(SUBMIT_WORKFLOW, "test_the_cancellation_notice_is_written_where_a_person_will_find_it"),
+            ),
+            scope_limits=(
+                (
+                    "Not pilot-blocking, and the plan requires this one on the pilot limitations "
+                    "page in exactly its own words: cancelling the GitHub workflow does not stop the "
+                    "Batch job. The harm is not the missing mechanism, it is that the default belief "
+                    "is wrong -- somebody who cancels in GitHub believes they have stopped the "
+                    "spend. Correcting the belief is what makes the gap survivable, and it is the "
+                    "clearest case in the phase of a limitation that works only because a reader can "
+                    "act on it."
+                ),
             ),
             gaps=(
                 (
@@ -271,6 +318,15 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                 *_ids(EXECUTION, "test_a_single_container_submits_no_array_properties"),
                 *_ids(INFRA, "test_a_fan_out_binding_records_its_size_and_a_single_container_records_none"),
             ),
+            scope_limits=(
+                (
+                    "Not pilot-blocking. A pilot user running a fan-out before this passes is "
+                    "running one they intend to let finish, which is a limitation a reader can act "
+                    "on, and the per-child timeout bounds what happens when they forget. Batch "
+                    "imposes no timeout on an array parent, so the bound is per cell rather than on "
+                    "the sweep."
+                ),
+            ),
             gaps=(
                 NOTHING_IS_DEPLOYED,
                 (
@@ -286,6 +342,7 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
             number="8",
             statement="A mandatory timeout terminates a runaway job.",
             status=CriterionStatus.GAP,
+            pilot_blocking=True,
             supporting_node_ids=(
                 *_ids(EXECUTION, "test_every_submit_carries_a_timeout_including_the_shortest_manifest"),
                 *_ids(EXECUTION, "test_the_timeout_sent_to_batch_is_the_manifest_runtime_in_seconds", "1-3600", "2-7200", "13-46800", "0.5-1800"),
@@ -311,6 +368,7 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                 "submission."
             ),
             status=CriterionStatus.GAP,
+            pilot_blocking=True,
             supporting_node_ids=(
                 *_ids(EXECUTION, "test_every_provisioned_profile_is_backed_and_every_target_names_a_provisioned_one"),
                 *_ids(EXECUTION, "test_a_priced_but_unprovisioned_profile_has_nowhere_to_go"),
@@ -336,6 +394,7 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                 "untracked job."
             ),
             status=CriterionStatus.GAP,
+            pilot_blocking=True,
             supporting_node_ids=(
                 *_ids(EXECUTION, "test_the_job_name_is_the_run_id_so_batch_is_a_third_join"),
                 *_ids(INFRA, "test_the_binding_write_is_conditional_and_checksummed_like_every_lineage_write"),
@@ -365,6 +424,15 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                 *_ids(PROJECTION, "test_a_redelivered_event_is_refused_by_the_store_and_that_is_success"),
                 *_ids(INFRA, "test_the_recorder_role_holds_no_batch_action_at_all"),
             ),
+            scope_limits=(
+                (
+                    "Not pilot-blocking, and it argued hard for the marker, because a conflicting "
+                    "terminal state is a lineage defect. What decides it the other way is "
+                    "visibility: a duplicate event produces a record that disagrees with itself and "
+                    "can be seen to, where every criterion marked in this phase produces a record "
+                    "that looks fine and is wrong."
+                ),
+            ),
             gaps=(
                 NOTHING_IS_DEPLOYED,
                 (
@@ -381,12 +449,22 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
             number="12",
             statement="No GitHub path can administer Batch or EC2.",
             status=CriterionStatus.GAP,
+            pilot_blocking=True,
             supporting_node_ids=(
                 *_ids(SUBMIT_WORKFLOW, "test_the_submit_job_gained_no_aws_capability_when_phase_three_arrived"),
                 *_ids(SUBMIT_WORKFLOW, "test_the_batch_matrix_attempts_every_action_phase_three_makes_meaningful"),
                 *_ids(SUBMIT_WORKFLOW, "test_the_workflow_makes_exactly_these_aws_calls_in_exactly_this_order"),
                 *_ids(DENIALS, "test_each_matrix_names_the_role_it_is_a_claim_about"),
                 *_ids(DEPLOY_WORKFLOW, "test_the_workflow_never_submits_a_job_and_never_asks_to"),
+            ),
+            scope_limits=(
+                (
+                    "Pilot-blocking, and it has no counterpart in the plan's Phase 3 check list -- "
+                    "it is Phase 2's gate sentence, carried here because this is the first phase in "
+                    "which administering Batch means launching something that bills. Its absence "
+                    "lets a GitHub path start compute outside admission altogether, which is "
+                    "unbounded spend with no intent record in front of it."
+                ),
             ),
             gaps=(
                 NOTHING_IS_DEPLOYED,
@@ -405,10 +483,20 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
             number="13",
             statement="The workload role cannot write to the lineage store or start anything.",
             status=CriterionStatus.GAP,
+            pilot_blocking=True,
             supporting_node_ids=(
                 *_ids(INFRA, "test_the_workload_role_can_neither_reach_lineage_nor_start_anything"),
                 *_ids(INFRA, "test_the_workload_role_writes_only_under_its_own_team_prefix"),
                 *_ids(DENIALS, "test_a_repository_outside_this_project_is_a_setup_failure"),
+            ),
+            scope_limits=(
+                (
+                    "Pilot-blocking, and one of the criteria the plan's own status block names as "
+                    "missing from its check list. The workload role is the identity a researcher's "
+                    "container runs as. If it can write to the lineage store it can forge the record "
+                    "of what it did; if it can start something it can spend outside the admission "
+                    "path. Attribution, lineage and money in one role."
+                ),
             ),
             gaps=(
                 NOTHING_IS_DEPLOYED,
@@ -430,11 +518,21 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                 "submits and cannot decide."
             ),
             status=CriterionStatus.GAP,
+            pilot_blocking=True,
             supporting_node_ids=(
                 *_ids(INFRA, "test_the_states_role_gains_batch_and_ecr_reads_and_no_way_to_stop_a_job"),
                 *_ids(INFRA, "test_the_validator_payload_is_built_field_by_field_and_never_forwarded"),
                 *_ids(INFRA, "test_submit_to_batch_passes_the_request_through_and_names_no_field_of_it"),
                 *_ids(INFRA, "test_the_recorder_role_writes_lineage_and_cannot_make_anything_happen"),
+            ),
+            scope_limits=(
+                (
+                    "Pilot-blocking, and it has no counterpart in the plan's check list. The "
+                    "mutation it exists to catch -- giving the validator Lambda batch:SubmitJob -- "
+                    "would work, and would move the launch out of the state machine's execution "
+                    "history, so the record of what started a job would stop describing what started "
+                    "it. A launch nothing recorded is the lineage harm in its purest form."
+                ),
             ),
             gaps=(
                 NOTHING_IS_DEPLOYED,
@@ -458,6 +556,17 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                 *_ids(EXECUTION, "test_every_target_names_infrastructure_this_project_owns"),
                 *_ids(INFRA, "test_the_compute_environment_holds_no_capacity_when_it_is_idle"),
             ),
+            scope_limits=(
+                (
+                    "Not pilot-blocking, and this is the judgement call in the phase most worth "
+                    "arguing with. The harmful half of this seam -- refusing a manifest that names a "
+                    "profile with nowhere to run, before anything is submitted -- belongs to the "
+                    "rejection check above and is marked there. What is left here is placement: a "
+                    "profile that is priced and not backed produces a job that cannot start, which "
+                    "is visible, bills nothing while it waits, and is bounded by the queue. "
+                    "Availability rather than harm."
+                ),
+            ),
             gaps=(
                 NOTHING_IS_DEPLOYED,
                 (
@@ -474,8 +583,18 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
             number="16",
             statement="The compute environment holds no capacity when it is idle.",
             status=CriterionStatus.GAP,
+            pilot_blocking=True,
             supporting_node_ids=(
                 *_ids(INFRA, "test_the_compute_environment_holds_no_capacity_when_it_is_idle"),
+            ),
+            scope_limits=(
+                (
+                    "Pilot-blocking, and one of the criteria the plan's own status block names as "
+                    "missing from its check list. It is the only entry in the phase whose absence "
+                    "bills money continuously with nothing running: an environment left holding "
+                    "vCPUs while idle pays for hardware nobody asked for, in a shared account that "
+                    "is already carrying a four-figure capacity charge somebody else made."
+                ),
             ),
             gaps=(
                 NOTHING_IS_DEPLOYED,
@@ -495,10 +614,23 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                 "a VersionId."
             ),
             status=CriterionStatus.GAP,
+            pilot_blocking=True,
             supporting_node_ids=(
                 *_ids(INFRA, "test_the_binding_write_is_conditional_and_checksummed_like_every_lineage_write"),
                 *_ids(PROJECTION, "test_every_write_is_conditional_so_a_replay_cannot_overwrite_anything"),
                 *_ids(PROJECTION, "test_the_stored_bytes_are_the_canonical_ones_rather_than_a_re_encoding"),
+            ),
+            scope_limits=(
+                (
+                    "Pilot-blocking, on the same reasoning as the equivalent Phase 2 criterion and "
+                    "deliberately worded to match it, because the same property recorded two ways in "
+                    "two phases is how a split like this rots. The conditional write refuses an "
+                    "overwrite, so attestation and versioning are the second line rather than the "
+                    "first; what settles it is that no limitations page helps. There is nothing a "
+                    "pilot user can do with the sentence that the objects recording their run are "
+                    "neither attested nor versioned, and an object that has been altered reads "
+                    "exactly like one that has not."
+                ),
             ),
             gaps=(
                 NOTHING_IS_DEPLOYED,
@@ -516,12 +648,22 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
             number="18",
             statement="The EventBridge rule receives only our queue's events.",
             status=CriterionStatus.GAP,
+            pilot_blocking=True,
             supporting_node_ids=(
                 *_ids(INFRA, "test_the_event_rule_matches_the_job_queue_the_compute_stack_creates"),
                 *_ids(INFRA, "test_the_queue_the_states_role_may_submit_to_is_the_queue_that_exists"),
                 *_ids(INFRA, "test_the_queue_accepts_deliveries_only_from_our_own_rule_in_our_own_account"),
                 *_ids(PROJECTION, "test_a_delivery_that_is_not_ours_is_refused", "foreign-source", "foreign-detail-type"),
                 *_ids(PROJECTION, "test_a_job_whose_name_is_not_a_run_id_is_refused"),
+            ),
+            scope_limits=(
+                (
+                    "Pilot-blocking, and one of the criteria the plan's own status block names as "
+                    "missing from its check list. This is a shared account, and a rule that matched "
+                    "every Batch event in it would write lifecycle records under run ids that are "
+                    "not ours. The store would then hold entries describing somebody else's job, "
+                    "which is the lineage record corrupted by construction rather than by accident."
+                ),
             ),
             gaps=(
                 NOTHING_IS_DEPLOYED,
@@ -539,11 +681,23 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
             number="19",
             statement="A run is traceable end to end by run id alone.",
             status=CriterionStatus.GAP,
+            pilot_blocking=True,
             supporting_node_ids=(
                 *_ids(EXECUTION, "test_the_job_name_is_the_run_id_so_batch_is_a_third_join"),
                 *_ids(INFRA, "test_the_binding_record_the_state_machine_writes_is_the_contract_it_claims_to_be"),
                 *_ids(PROJECTION, "test_the_handler_writes_the_four_keys_the_rest_of_phase_three_reads"),
                 *_ids(PROJECTION, "test_the_result_joins_to_the_attempt_and_the_attempt_to_the_batch_job"),
+            ),
+            scope_limits=(
+                (
+                    "Pilot-blocking, and it is this phase's gate restated as an assertion. Eleven "
+                    "artifacts have to resolve from one run id and agree; where they do not, the "
+                    "platform has run something it cannot account for afterwards, which is "
+                    "attribution and lineage lost together. It is also the one check that fails when "
+                    "another passes for the wrong reason, so leaving it out of the pilot set would "
+                    "let the rung open on the strength of the very checks it exists to "
+                    "cross-examine."
+                ),
             ),
             gaps=(
                 NOTHING_IS_DEPLOYED,
@@ -580,6 +734,16 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
             ),
             scope_limits=(
                 (
+                    "Not pilot-blocking, and the call took an argument. A deployment role scoped "
+                    "more widely than measured is a real exposure in a shared account -- it is how "
+                    "somebody else's stack gets deleted. What keeps it off the pilot list is who can "
+                    "reach it: this role is assumed by the deployment workflow and by nothing a "
+                    "pilot user touches, so its absence widens the build team's own path rather than "
+                    "the path being opened. The scoping itself is asserted by the citations beside "
+                    "this one; what this criterion adds is that the list of unscoped actions cannot "
+                    "grow without somebody measuring the addition."
+                ),
+                (
                     "Stated in two statements rather than the plan's one, and the difference is "
                     "the point. Six actions are on \"*\" because the resource-type probe -- run "
                     "with its ValidateTemplate and DescribeStacks controls -- found they support "
@@ -612,6 +776,16 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                 *_ids(INFRA, "test_the_vpc_is_created_unconditionally_because_the_quota_landed"),
                 *_ids(INFRA, "test_the_subnets_exclude_the_zone_that_cannot_hold_the_instance_type"),
                 *_ids(INFRA, "test_the_compute_environment_places_into_exactly_the_subnets_the_network_exports"),
+            ),
+            scope_limits=(
+                (
+                    "Not pilot-blocking. What is missing is a record of which VPC, subnets and "
+                    "security group the environment ends up on, and somebody who wants it can read "
+                    "it off the deployed stack. Nothing is spent, lost or misattributed by its "
+                    "absence; what is lost is a later reader's ability to reconstruct the placement "
+                    "without opening a console, which is a reviewer's need rather than a pilot "
+                    "user's."
+                ),
             ),
             gaps=(
                 (
@@ -652,6 +826,16 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                 *_ids(SCAN, "test_both_production_callers_evaluate_the_scan_gate"),
             ),
             scope_limits=(
+                (
+                    "Not pilot-blocking, and this is the one place in the phase where the ladder's "
+                    "test comes out under-inclusive, which is worth recording rather than stretching "
+                    "one of its four harms to cover it. Running a container with unreviewed critical "
+                    "findings is a security exposure; it is not money, data, attribution or the "
+                    "lineage record, which are the four the test names. So the test answers no, and "
+                    "the reservation is written down here so that the next person applying it to a "
+                    "vulnerability question knows it has been applied once and did not obviously "
+                    "fit."
+                ),
                 (
                     "The mutation this criterion exists to catch is leaving the open-decisions "
                     "entry in place and marking the criterion covered, which is the exact shape "

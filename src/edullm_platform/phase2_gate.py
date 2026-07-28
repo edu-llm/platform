@@ -27,7 +27,12 @@ from typing import Annotated, Final
 from pydantic import BeforeValidator, Field, computed_field, model_validator
 
 from edullm_platform.contracts.base import ContractModel, require_ordered_sequence
-from edullm_platform.criteria import CriterionResult, execute_criteria
+from edullm_platform.criteria import (
+    CriterionResult,
+    PilotVerdict,
+    execute_criteria,
+    pilot_verdict,
+)
 from edullm_platform.phase2_criteria import PHASE2_CRITERION_COUNT, phase2_criteria
 from edullm_platform.status_prose import checked_phase_criteria_note
 
@@ -60,6 +65,17 @@ class Phase2GateReport(ContractModel):
     @property
     def passed(self) -> bool:
         return all(criterion.passed for criterion in self.phase_criteria)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def pilot(self) -> PilotVerdict:
+        """The adoption verdict, computed beside the gate's and never folded into it.
+
+        Phase 2 is where the two verdicts first disagree in a way that matters: the path
+        ran end to end and most of what it did was never captured, so criteria are red
+        for want of evidence rather than for want of a mechanism.
+        """
+        return pilot_verdict(self.phase_criteria)
 
 
 def evaluate_phase2_criteria(repo_root: Path) -> tuple[CriterionResult, ...]:

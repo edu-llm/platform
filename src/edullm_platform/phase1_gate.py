@@ -29,7 +29,12 @@ from typing import Annotated, Final
 from pydantic import BeforeValidator, Field, computed_field, model_validator
 
 from edullm_platform.contracts.base import ContractModel, require_ordered_sequence
-from edullm_platform.criteria import CriterionResult, execute_criteria
+from edullm_platform.criteria import (
+    CriterionResult,
+    PilotVerdict,
+    execute_criteria,
+    pilot_verdict,
+)
 from edullm_platform.phase1_criteria import PHASE1_CRITERION_COUNT, phase1_criteria
 from edullm_platform.status_prose import checked_phase_criteria_note
 
@@ -62,6 +67,16 @@ class Phase1GateReport(ContractModel):
     @property
     def passed(self) -> bool:
         return all(criterion.passed for criterion in self.phase_criteria)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def pilot(self) -> PilotVerdict:
+        """The adoption verdict, computed beside the gate's and never folded into it.
+
+        Derived rather than stored, for the reason the note is: a field a caller could
+        supply is a field that can disagree with the criteria printed beside it.
+        """
+        return pilot_verdict(self.phase_criteria)
 
 
 def evaluate_phase1_criteria(repo_root: Path) -> tuple[CriterionResult, ...]:
