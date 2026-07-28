@@ -17,9 +17,9 @@ uv run python tools/build_phase2_proof.py
 
 | measure | count |
 | --- | --- |
-| collected by pytest | 3270 |
-| executed (excluding tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py) | 3108 |
-| passed | 3108 |
+| collected by pytest | 3272 |
+| executed (excluding tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py) | 3110 |
+| passed | 3110 |
 | failed | 0 |
 | errored | 0 |
 | skipped | 0 |
@@ -31,9 +31,9 @@ Every test node id cited by the negative-case matrix, plus every test in the mod
 
 | measure | count |
 | --- | --- |
-| selected node ids | 560 |
-| executed | 560 |
-| passed | 560 |
+| selected node ids | 562 |
+| executed | 562 |
+| passed | 562 |
 | failed | 0 |
 | errored | 0 |
 | skipped | 0 |
@@ -53,7 +53,7 @@ The test modules Phase 2 added, excluding the ones that invoke a gate or this ge
 | tests/test_phase2_dataset_registry.py | 31 | pass |
 | tests/test_phase2_github_evidence.py | 10 | pass |
 | tests/test_phase2_infrastructure.py | 37 | pass |
-| tests/test_phase2_lambda_package.py | 9 | pass |
+| tests/test_phase2_lambda_package.py | 11 | pass |
 | tests/test_phase2_lineage_evidence.py | 12 | pass |
 | tests/test_phase2_probe_tools.py | 35 | pass |
 | tests/test_phase2_submission.py | 72 | pass |

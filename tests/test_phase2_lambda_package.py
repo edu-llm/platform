@@ -22,8 +22,10 @@ from __future__ import annotations
 import hashlib
 import zipfile
 from pathlib import Path
+from typing import Any
 
 import pytest
+import yaml
 
 from tools.build_admission_lambda import (
     DEFAULT_PYTHON_PLATFORM,
@@ -34,6 +36,27 @@ from tools.build_admission_lambda import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+RELEASE_RECORD_PATH = PROJECT_ROOT / "infra" / "admission-validator-release.yaml"
+STATE_MACHINE_PATH = PROJECT_ROOT / "infra" / "admission-state-machine.yaml"
+
+
+def release_record() -> dict[str, Any]:
+    loaded = yaml.safe_load(RELEASE_RECORD_PATH.read_text(encoding="utf-8"))
+    assert isinstance(loaded, dict)
+    return loaded
+
+
+def deployed_code_block() -> dict[str, Any]:
+    template = yaml.safe_load(STATE_MACHINE_PATH.read_text(encoding="utf-8"))
+    functions = [
+        resource
+        for resource in template["Resources"].values()
+        if resource["Type"] == "AWS::Lambda::Function"
+    ]
+    assert len(functions) == 1, "this template declares exactly one validator"
+    code = functions[0]["Properties"]["Code"]
+    assert isinstance(code, dict)
+    return code
 
 #: What edullm_platform.admission_handler.config_directory reads when EDULLM_CONFIG_DIR is
 #: unset. A file one directory away is a file the handler will not find.
@@ -79,12 +102,25 @@ def test_the_handler_and_everything_it_imports_are_in_the_archive(names: list[st
 
 @pytest.mark.slow
 def test_the_configuration_lands_where_the_handler_looks_for_it(names: list[str]) -> None:
-    # The handler resolves config relative to its own __file__, so the four files it loads
-    # have to sit inside the package rather than at the root of the archive.
+    # The handler resolves config relative to its own __file__, so the files it loads have
+    # to sit inside the package rather than at the root of the archive.
+    #
+    # execution-targets.yaml is named here as well as the four the handler has always read,
+    # because it is the file that decides whether an accepted manifest has anywhere to run.
+    # It reached the zip on its own -- the builder copies config/*.yaml -- so nothing here
+    # ever asserted it, and a change to the glob or to the file's name would have produced
+    # a validator that refuses every submission with no execution target while both
+    # committed config files said otherwise.
     packaged = {name.removeprefix(PACKAGED_CONFIG_PREFIX) for name in names
                 if name.startswith(PACKAGED_CONFIG_PREFIX)}
 
-    assert {"policy.yaml", "organization.yaml", "workload-catalog.yaml", "datasets.yaml"} <= packaged
+    assert {
+        "policy.yaml",
+        "organization.yaml",
+        "workload-catalog.yaml",
+        "datasets.yaml",
+        "execution-targets.yaml",
+    } <= packaged
 
 
 @pytest.mark.slow
@@ -130,6 +166,53 @@ def test_identical_inputs_produce_identical_bytes(tmp_path: Path) -> None:
     assert (
         hashlib.sha256((tmp_path / "one.zip").read_bytes()).hexdigest()
         == hashlib.sha256((tmp_path / "two.zip").read_bytes()).hexdigest()
+    )
+
+
+def test_the_template_pins_the_object_the_release_record_names() -> None:
+    """Reads BOTH files. Mutation: edit S3ObjectVersion in one of them and not the other.
+
+    Two files name the deployed object and no reference connects them. Edited apart, the
+    template points at a zip nobody recorded or the record describes a zip nobody deployed,
+    and the digest comparison below then vouches for the wrong bytes -- which is worse than
+    not having it, because it would report a release that did not happen.
+    """
+    code = deployed_code_block()
+    recorded = release_record()
+
+    assert code["S3Key"] == recorded["s3_key"]
+    assert code["S3ObjectVersion"] == recorded["s3_object_version"]
+
+
+@pytest.mark.slow
+def test_the_released_zip_is_the_one_this_tree_builds(package: dict[str, object]) -> None:
+    """Mutation: change config/workload-catalog.yaml and do not release the validator.
+
+    THIS IS THE TEST THAT WAS MISSING WHEN PHASE 4 NEEDED IT. build_admission_lambda copies
+    config/*.yaml into the zip, so the catalog and the execution targets are part of this
+    function's release rather than something it reads at run time. Nothing about editing a
+    config file suggests a Lambda release, and nothing failed when one was skipped: every
+    template was deployed, every test was green, and the first GPU submission was refused
+    with unprovisioned_compute_profile by a validator holding the previous catalog.
+
+    That refusal is the worst shape available here. It is correct for the bytes that
+    produced it, wrong about the account, and it names the compute profile rather than the
+    release -- so it reads as a configuration mistake and sends the reader to the two files
+    that were already right.
+
+    The build is deterministic, so this compares a digest rather than a timestamp: an
+    unchanged tree rebuilds to the recorded digest and needs no edit. It fails only when
+    the packaged bytes have moved and the record has not, which is exactly the window in
+    which the account is running something this tree did not describe.
+    """
+    recorded = release_record()
+
+    assert package["sha256"] == recorded["sha256"], (
+        "the zip this tree builds is not the zip that was released. Something the package "
+        "carries has changed -- the handler, a contract it imports, or a file under "
+        "config/ -- and the deployed validator is still running the previous bytes. "
+        "Release it with the procedure in infra/README.md and update "
+        "infra/admission-validator-release.yaml in the same commit."
     )
 
 
