@@ -2,8 +2,8 @@
 
 Phase: phase-3
 Bundle schema version: 1
-Source commit: 263471d05f3edce2d93c47c6e9278d51a8747ab3
-Generated: 2026-07-27T22:44:55+00:00
+Source commit: 834c5fbe1c821cea9cc696a32ec4347ba7d2c955
+Generated: 2026-07-28T01:10:22+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 3 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase3_proof.py` at generation time. It is not done, and the Result table below says by how much.
 
@@ -25,14 +25,14 @@ This bundle exists so that a reviewer can decide whether Phase 3 is done without
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3167 |
-| suite tests executed | 3005 |
-| suite passed | 3005 |
+| suite tests collected | 3168 |
+| suite tests executed | 3006 |
+| suite passed | 3006 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
-| matrix node ids executed | 266 |
-| matrix node ids passed | 266 |
+| matrix node ids executed | 267 |
+| matrix node ids passed | 267 |
 | matrix node ids failed | 0 |
 | phase criteria | 22 |
 | criteria COVERED | 2 (20, 22) |
@@ -79,7 +79,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | infra/batch-network.yaml | sha256:77bc3b6b1b7fc41adea201388e016aacd50f3c9bcec61454a59f333931183d88 |
 | infra/iam/admission-service-roles.yaml | sha256:829c2a55e96e74dabc3da803b118615701fdec0da6305569b860102a9c6676dc |
 | infra/iam/batch-roles.yaml | sha256:7c70b84b97d75600d752bbe32ae0705de584b992962b756b500b4dac0fb0a0a0 |
-| infra/iam/infra-deployer-role.yaml | sha256:d9161af33aa297dc2677d6f8b400e1078495846969ce72339fa3f6b640fa9540 |
+| infra/iam/infra-deployer-role.yaml | sha256:feb32d24f24956cbab5a5fe47882557554ede17c811845214e3cf3c9d6a3af32 |
 | infra/iam/lifecycle-lambda-role.yaml | sha256:f23ec64e8e2cd611eedb4748cbd7ae7ed26a1cd74d9c8569d6d5af93ed28f53c |
 | infra/outputs-bucket.yaml | sha256:7ea6c087d7e2e4f5531e1ccf88120d9836ad7591fec30c52e762b56c76347fe2 |
 

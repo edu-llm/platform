@@ -8,8 +8,16 @@ this repository a failed deploy each.
 The first is the ``"*"`` set. An action whose service authorization reference lists no
 resource type cannot be granted on an ARN at all, and scoping one produces a deploy failure
 that names the action without hinting that the scope is what refused it. Phase 2 learned
-that with ``logs:DescribeLogGroups``; Phase 3 has six more, measured with controls, and the
-next reader's instinct will be to tidy them away.
+that with ``logs:DescribeLogGroups``; Phase 3 has six more in one statement and fifteen EC2
+describes in another, all measured with controls, and the next reader's instinct will be to
+tidy them away.
+
+The third property is newer, and it cost a stack rather than a deploy. A resource handler
+reads and writes configuration surfaces no template mentions, so the audit that keeps this
+role honest is against the handlers rather than against the templates: ``ec2:DescribeInstances``
+is called on a security group's *delete*, ``lambda:ListTags`` on an event source mapping's
+ARN rather than its function's, and ``s3:PutLifecycleConfiguration`` -- the one this
+amendment was written for -- on a bucket whose read half already looked complete.
 
 The second is ``iam:PassRole``. Passing a role is how a principal lends its own limits away,
 so the ARNs are written out whole -- a prefix would let this role pass a role created later
@@ -63,9 +71,19 @@ NO_RESOURCE_TYPE_ACTIONS = frozenset(
 
 #: The second unscoped statement, and it is unscoped for a different reason that is worth
 #: keeping apart from the one above. EC2's Describe actions enumerate rather than address:
-#: they are account-wide by EC2's documented model, not by a simulator measurement, and the
-#: CloudFormation handlers for VPC, Subnet, RouteTable, InternetGateway and SecurityGroup
-#: call them on every Read. All of them are read-only.
+#: they are account-wide by EC2's documented model, and the CloudFormation handlers for VPC,
+#: Subnet, RouteTable, InternetGateway and SecurityGroup call them on every Read. All of
+#: them are read-only.
+#:
+#: The five below the first ten were added on 2026-07-27, and unlike the first ten they were
+#: measured with the probe and both of its controls rather than taken from EC2's model:
+#: each answered `implicitDeny` when granted on one ARN and simulated against that same ARN,
+#: while cloudformation:ValidateTemplate answered `implicitDeny` and
+#: cloudformation:DescribeStacks answered `allowed` on every invocation. None of the five is
+#: inferable from the templates -- DescribeVpnGateways is read by the VPCGatewayAttachment
+#: handler on an attachment that names no VPN gateway, DescribeInstances by the
+#: SecurityGroup handler's Delete, and DescribeLaunchTemplateVersions by the Batch compute
+#: environment handler with no launch template in sight.
 EC2_DESCRIBE_ACTIONS = frozenset(
     {
         "ec2:DescribeAvailabilityZones",
@@ -78,6 +96,11 @@ EC2_DESCRIBE_ACTIONS = frozenset(
         "ec2:DescribeTags",
         "ec2:DescribeVpcAttribute",
         "ec2:DescribeVpcs",
+        "ec2:DescribeInstances",
+        "ec2:DescribeLaunchTemplateVersions",
+        "ec2:DescribeNetworkInterfaces",
+        "ec2:DescribeVpcEncryptionControls",
+        "ec2:DescribeVpnGateways",
     }
 )
 
@@ -105,6 +128,15 @@ EC2_NETWORK_RESOURCE_TYPES = frozenset(
         "subnet",
         "vpc",
     }
+)
+
+#: The second ARN in this policy that cannot carry the project prefix, and the reason is the
+#: EC2 one arriving in another service: an event source mapping is addressed by a UUID Lambda
+#: assigns at creation, so `event-source-mapping:*` is the narrowest ARN there is. Named here
+#: as a single literal rather than allowed by a pattern, so that a second unscoped Lambda ARN
+#: has to be a visible edit to this list. The one action granted on it is read-only.
+EVENT_SOURCE_MAPPING_ARN = (
+    "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:event-source-mapping:*"
 )
 
 #: What CI must never be able to do to a role, including to this one. Restated from the
@@ -276,6 +308,30 @@ def test_the_only_other_unscoped_statement_is_the_read_only_ec2_describes() -> N
     ]
 
 
+def test_the_network_scope_can_change_egress_and_can_never_open_a_port() -> None:
+    """Mutation: add ``ec2:AuthorizeSecurityGroupIngress`` while auditing the handler lists.
+
+    It is the plausible mistake, because all three ingress verbs sit in the
+    ``AWS::EC2::SecurityGroup`` handler's own permission lists next to the egress verbs that
+    genuinely are needed. None of them is reachable: ``infra/batch-network.yaml`` declares no
+    ``SecurityGroupIngress`` and says why, and CloudFormation gives a group with no ingress
+    block exactly no ingress rules. Granting them anyway would let a deploy credential open a
+    port on any security group in a shared account, for a rule this repository has decided
+    never to write.
+    """
+    granted = {action for action in actions(PHASE3_POLICY_NAME) if action.startswith("ec2:")}
+    egress = {action for action in granted if action.endswith("Egress")}
+
+    assert not [action for action in granted if action.endswith("Ingress")]
+    # The egress half is present, so the assertion above is about direction rather than about
+    # security groups being out of scope entirely.
+    assert egress == {
+        "ec2:AuthorizeSecurityGroupEgress",
+        "ec2:RevokeSecurityGroupEgress",
+        "ec2:UpdateSecurityGroupRuleDescriptionsEgress",
+    }
+
+
 def test_pass_role_names_four_whole_roles_and_never_a_prefix() -> None:
     """Mutation: replace the four ARNs with ``sbsandbox-intern-edullm-*``.
 
@@ -334,15 +390,16 @@ def test_the_deployer_builds_the_queue_and_can_never_run_anything_on_it() -> Non
     assert not [action for action in granted if action.startswith("ec2:Run")]
 
 
-def test_every_scoped_phase3_arn_carries_the_project_prefix_or_is_a_named_ec2_exception(
-) -> None:
+def test_every_scoped_phase3_arn_carries_the_project_prefix_or_is_a_named_exception() -> None:
     """Mutation: widen a Batch or SQS scope to ``sbsandbox-intern-*``.
 
     ``sbsandbox-intern-`` is the whole account's prefix and every intern's resources begin
-    with it, so only the ``edullm`` segment makes a name ours. The EC2 network ARNs are the
-    single exception and they are enumerated rather than pattern-matched: an EC2 network
-    resource is addressed by an ID the service assigns, so `vpc/*` is the narrowest ARN
-    there is and a sixth resource type appearing under it has to be a visible edit.
+    with it, so only the ``edullm`` segment makes a name ours. Two ARNs cannot carry the
+    prefix at all, and both are enumerated rather than pattern-matched, because the exemption
+    is what a future widening would hide behind. An EC2 network resource and a Lambda event
+    source mapping are each addressed by an identifier the service assigns at creation, so
+    `vpc/*` and `event-source-mapping:*` are the narrowest ARNs there are; a seventh EC2
+    resource type or a second unscoped Lambda ARN has to be a visible edit.
     """
     scoped = [
         arn
@@ -351,7 +408,8 @@ def test_every_scoped_phase3_arn_carries_the_project_prefix_or_is_a_named_ec2_ex
         for arn in arns(statement)
     ]
     ec2_arns = [arn for arn in scoped if ":ec2:" in arn]
-    everything_else = [arn for arn in scoped if arn not in ec2_arns]
+    mapping_arns = [arn for arn in scoped if arn == EVENT_SOURCE_MAPPING_ARN]
+    everything_else = [arn for arn in scoped if arn not in ec2_arns + mapping_arns]
 
     assert scoped
     assert all(arn.startswith("arn:${AWS::Partition}:") for arn in everything_else)
@@ -359,6 +417,16 @@ def test_every_scoped_phase3_arn_carries_the_project_prefix_or_is_a_named_ec2_ex
     assert not [arn for arn in everything_else if f"{SHARED_PREFIX}*" in arn]
     assert {arn.rsplit(":", 1)[1].split("/", 1)[0] for arn in ec2_arns} == EC2_NETWORK_RESOURCE_TYPES
     assert all(arn.endswith("/*") for arn in ec2_arns)
+    # Exactly one statement may use the mapping ARN, and the action on it is read-only.
+    # A write verb reaching every event source mapping in a shared account is the widening
+    # this exemption would otherwise let through unnoticed.
+    assert len(mapping_arns) == 1
+    granting = [
+        statement
+        for statement in statements(PHASE3_POLICY_NAME)
+        if EVENT_SOURCE_MAPPING_ARN in arns(statement)
+    ]
+    assert [statement_actions(statement) for statement in granting] == [["lambda:ListTags"]]
 
 
 def test_the_batch_scopes_cover_all_three_resource_types_the_stack_creates() -> None:
@@ -407,6 +475,12 @@ def test_the_event_source_mapping_grants_arrive_instead_of_lambda_add_permission
         "lambda:DeleteEventSourceMapping",
         "lambda:GetEventSourceMapping",
         "lambda:UpdateEventSourceMapping",
+        # The read half, and the one that is not authorized against the function ARN the
+        # other four use: the mapping's Read handler lists its tags, and lambda:ListTags
+        # authorizes against the ARN it is handed. Granting it on the function prefix -- as
+        # the Phase 2 policy already does, for the function's own tags -- produces a scope
+        # that cannot match and a denial naming the action, which is the Phase 2 failure.
+        "lambda:ListTags",
     }
     sqs_actions = {action for action in granted if action.startswith("sqs:")}
     assert sqs_actions

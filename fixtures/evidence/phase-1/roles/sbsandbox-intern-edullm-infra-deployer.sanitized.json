@@ -112,6 +112,7 @@
               "s3:PutEncryptionConfiguration",
               "s3:PutBucketTagging",
               "s3:PutBucketPolicy",
+              "s3:PutLifecycleConfiguration",
               "s3:DeleteBucketPolicy",
               "s3:ListBucket",
               "s3:GetBucketLocation",
@@ -309,15 +310,20 @@
           "action_match": {
             "actions": [
               "ec2:DescribeAvailabilityZones",
+              "ec2:DescribeInstances",
               "ec2:DescribeInternetGateways",
+              "ec2:DescribeLaunchTemplateVersions",
               "ec2:DescribeNetworkAcls",
+              "ec2:DescribeNetworkInterfaces",
               "ec2:DescribeRouteTables",
               "ec2:DescribeSecurityGroupRules",
               "ec2:DescribeSecurityGroups",
               "ec2:DescribeSubnets",
               "ec2:DescribeTags",
               "ec2:DescribeVpcAttribute",
-              "ec2:DescribeVpcs"
+              "ec2:DescribeVpcEncryptionControls",
+              "ec2:DescribeVpcs",
+              "ec2:DescribeVpnGateways"
             ],
             "element": "Action"
           },
@@ -355,7 +361,11 @@
               "ec2:DisassociateRouteTable",
               "ec2:ModifySubnetAttribute",
               "ec2:ModifyVpcAttribute",
-              "ec2:RevokeSecurityGroupEgress"
+              "ec2:ModifyVpcTenancy",
+              "ec2:ReplaceRoute",
+              "ec2:ReplaceRouteTableAssociation",
+              "ec2:RevokeSecurityGroupEgress",
+              "ec2:UpdateSecurityGroupRuleDescriptionsEgress"
             ],
             "element": "Action"
           },
@@ -568,6 +578,23 @@
         {
           "action_match": {
             "actions": [
+              "lambda:ListTags"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:lambda:us-east-1:<aws-account-id>:event-source-mapping:*"
+            ]
+          },
+          "sid": null
+        },
+        {
+          "action_match": {
+            "actions": [
               "iam:PassRole"
             ],
             "element": "Action"
@@ -589,7 +616,7 @@
     }
   ],
   "max_session_duration_seconds": 3600,
-  "observed_at": "2026-07-27T21:28:51Z",
+  "observed_at": "2026-07-28T01:02:10Z",
   "permissions_boundary_policy_name": "InternSandboxBoundary",
   "role_name": "sbsandbox-intern-edullm-infra-deployer",
   "source": "aws",

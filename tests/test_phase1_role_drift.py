@@ -240,6 +240,11 @@ def test_the_deployer_projection_keeps_the_narrowed_wildcards_it_was_given(
         role_arn % "sbsandbox-intern-edullm-batch-workload",
         role_arn % "sbsandbox-intern-edullm-batch-instance",
         role_arn % "sbsandbox-intern-edullm-lifecycle-lambda",
+        # The second exception, and the same cause in another service: an event source
+        # mapping is addressed by a UUID Lambda assigns at creation, so the mapping's tag
+        # read cannot be scoped by name either. It is the only action granted on it and it
+        # is read-only, which the deployer role tests pin.
+        template_arn % ("lambda", "event-source-mapping:*"),
         *ec2_network,
     }
     assert not [one for one in resources if "sbsandbox-intern-*" in one]

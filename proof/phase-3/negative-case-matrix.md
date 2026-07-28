@@ -4,7 +4,7 @@ The 22 Phase 3 acceptance criteria, mapped to the tests cited for each one by no
 
 This mapping is defined once, in `src/edullm_platform/phase3_criteria.py`. The acceptance gate reads the same definition and executes the same node ids, so this matrix and `tools/validate_phase3.py` cannot disagree.
 
-Verification run: 266 tests executed, 266 passed, 0 failed, 0 errored, pytest exit code 0.
+Verification run: 267 tests executed, 267 passed, 0 failed, 0 errored, pytest exit code 0.
 
 Three statuses exist and no more. **COVERED** means one or more cited tests prove the criterion as stated against the shipped configuration and all of them pass; the gate passes it. **DEFERRED** means an explicit recorded decision not to satisfy it yet, which requires both a written reason and a written trigger describing what makes it live again; the gate passes it. **GAP** is everything else, and the gate fails it. There is no in-between status, because an in-between status is what lets a gate be green and wrong at the same time.
 
@@ -31,7 +31,7 @@ Three statuses exist and no more. **COVERED** means one or more cited tests prov
 | 17 | GAP | 0 | 3 | Every record written by this phase carries an S3-attested ChecksumSHA256 and a VersionId. |
 | 18 | GAP | 0 | 6 | The EventBridge rule receives only our queue's events. |
 | 19 | GAP | 0 | 4 | A run is traceable end to end by run id alone. |
-| 20 | COVERED | 2 | 5 | The deployer's unscoped actions are exactly the measured ones, in two statements separated by why each is unscoped. |
+| 20 | COVERED | 2 | 6 | The deployer's unscoped actions are exactly the measured ones, in two statements separated by why each is unscoped. |
 | 21 | GAP | 0 | 7 | The networking the compute environment uses is recorded, with its terms. |
 | 22 | COVERED | 4 | 6 | The image-scan decision has been answered. |
 
@@ -530,9 +530,10 @@ Proving tests (2), all executed and passing:
 - `tests/test_phase3_deployer_role.py::test_the_six_measured_actions_are_on_star_and_in_a_statement_of_their_own`
 - `tests/test_phase3_deployer_role.py::test_the_only_other_unscoped_statement_is_the_read_only_ec2_describes`
 
-Supporting tests (5), all executed and passing, cited as evidence rather than as proof:
+Supporting tests (6), all executed and passing, cited as evidence rather than as proof:
 
-- `tests/test_phase3_deployer_role.py::test_every_scoped_phase3_arn_carries_the_project_prefix_or_is_a_named_ec2_exception`
+- `tests/test_phase3_deployer_role.py::test_every_scoped_phase3_arn_carries_the_project_prefix_or_is_a_named_exception`
+- `tests/test_phase3_deployer_role.py::test_the_network_scope_can_change_egress_and_can_never_open_a_port`
 - `tests/test_phase3_deployer_role.py::test_the_batch_scopes_cover_all_three_resource_types_the_stack_creates`
 - `tests/test_phase3_deployer_role.py::test_iam_pass_role_is_still_the_only_iam_action_the_whole_role_holds`
 - `tests/test_phase3_deployer_role.py::test_pass_role_names_four_whole_roles_and_never_a_prefix`
