@@ -293,7 +293,7 @@ def test_workload_catalog_yaml_validates_against_contract() -> None:
     config_path = project_root / "config" / "workload-catalog.yaml"
     catalog = load_yaml(config_path, WorkloadCatalog)
     assert len(catalog.compute_profiles) == 12
-    assert len(catalog.workloads) == 3
+    assert len(catalog.workloads) == 4
     # The CPU workload Phase 3 runs. It names OLMo-core because that is the only
     # registered repository with a published image; dolma-tokenize-smoke is the same
     # shape against a repository that has neither.

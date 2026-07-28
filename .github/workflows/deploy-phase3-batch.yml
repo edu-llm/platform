@@ -1,4 +1,4 @@
-name: Deploy Phase 3 CPU batch execution
+name: Deploy the Batch execution estate
 
 # The deployer role trust policy pins job_workflow_ref to
 # edu-llm/platform/.github/workflows/deploy-phase3-batch.yml@refs/heads/main.
@@ -13,6 +13,7 @@ on:
       - infra/outputs-bucket.yaml
       - infra/batch-network.yaml
       - infra/batch-compute.yaml
+      - infra/batch-compute-gpu.yaml
       - infra/batch-events.yaml
       - infra/admission-state-machine.yaml
 
@@ -31,7 +32,7 @@ concurrency:
 
 jobs:
   deploy:
-    name: Validate, deploy, and verify Phase 3 CPU batch execution
+    name: Validate, deploy, and verify CPU and GPU batch execution
     runs-on: ubuntu-latest
     # Longer than Phase 2's fifteen. A compute environment takes a few minutes to reach
     # VALID because Batch creates an ECS cluster and an Auto Scaling group behind it, and a
@@ -72,6 +73,7 @@ jobs:
           aws cloudformation validate-template --template-body file://infra/outputs-bucket.yaml
           aws cloudformation validate-template --template-body file://infra/batch-network.yaml
           aws cloudformation validate-template --template-body file://infra/batch-compute.yaml
+          aws cloudformation validate-template --template-body file://infra/batch-compute-gpu.yaml
           aws cloudformation validate-template --template-body file://infra/batch-events.yaml
           aws cloudformation validate-template --template-body file://infra/admission-state-machine.yaml
 
@@ -117,8 +119,26 @@ jobs:
             --template-file infra/batch-compute.yaml \
             --no-fail-on-empty-changeset
 
-      # After the compute stack, because the EventBridge rule's pattern names the job queue
-      # ARN. Nothing makes CloudFormation check that: the pattern is a string, and a rule
+      # The GPU sibling, deployed here rather than from a workflow of its own, and the
+      # reason is the events stack below. That stack's rule now names both queues, so a
+      # separate Phase 4 workflow would put the GPU queue's creation and the rule that
+      # matches it in two runs with nothing ordering them -- reintroducing exactly the
+      # deploy-order seam the next comment exists to close, across a boundary no test can
+      # see. One workflow keeps compute-before-events true for both queues.
+      #
+      # It imports the same network stack exports as the CPU environment, so
+      # CloudFormation enforces that dependency. Nothing enforces its ordering against the
+      # GPU IAM stack, which is applied from a laptop before this runs.
+      - name: Deploy Phase 4 GPU batch compute stack
+        run: |
+          set -euo pipefail
+          aws cloudformation deploy \
+            --stack-name sbsandbox-intern-edullm-phase4-gpu \
+            --template-file infra/batch-compute-gpu.yaml \
+            --no-fail-on-empty-changeset
+
+      # After both compute stacks, because the EventBridge rule's pattern names the job queue
+      # ARNs. Nothing makes CloudFormation check that: the pattern is a string, and a rule
       # scoped to a queue that does not exist deploys perfectly and matches nothing forever.
       - name: Deploy Phase 3 batch events stack
         run: |
@@ -151,13 +171,16 @@ jobs:
       #
       # That proof comes from tools/probe_batch_compute.py before this stack is built, and
       # from the Wave 5 live matrix afterwards.
-      - name: Verify Phase 3 CPU batch execution
+      - name: Verify CPU and GPU batch execution
         run: |
           set -euo pipefail
           state_machine_arn_file="${RUNNER_TEMP}/phase3-state-machine-arn.txt"
           compute_environment_json="${RUNNER_TEMP}/phase3-compute-environment.json"
           job_queue_json="${RUNNER_TEMP}/phase3-job-queue.json"
           job_definition_json="${RUNNER_TEMP}/phase3-job-definition.json"
+          gpu_compute_environment_json="${RUNNER_TEMP}/phase4-gpu-compute-environment.json"
+          gpu_job_queue_json="${RUNNER_TEMP}/phase4-gpu-job-queue.json"
+          gpu_job_definition_json="${RUNNER_TEMP}/phase4-gpu-job-definition.json"
           rule_json="${RUNNER_TEMP}/phase3-lifecycle-rule.json"
           state_machine_json="${RUNNER_TEMP}/phase3-state-machine.json"
           outputs_json="${RUNNER_TEMP}/phase3-outputs-versioning.json"
@@ -185,9 +208,25 @@ jobs:
             --query "reverse(sort_by(jobDefinitions,&revision))[0].{name:jobDefinitionName,type:type,status:status,digestPinned:contains(containerProperties.image,'@sha256:'),tagged:contains(containerProperties.image,':latest')}" \
             --output json > "${job_definition_json}"
 
+          aws batch describe-compute-environments \
+            --compute-environments sbsandbox-intern-edullm-gpu \
+            --query "computeEnvironments[0].{name:computeEnvironmentName,type:type,status:status,state:state,minvCpus:computeResources.minvCpus,subnetCount:length(computeResources.subnets),imageType:computeResources.ec2Configuration[0].imageType}" \
+            --output json > "${gpu_compute_environment_json}"
+
+          aws batch describe-job-queues \
+            --job-queues sbsandbox-intern-edullm-gpu \
+            --query "jobQueues[0].{name:jobQueueName,status:status,state:state}" \
+            --output json > "${gpu_job_queue_json}"
+
+          aws batch describe-job-definitions \
+            --job-definition-name sbsandbox-intern-edullm-gpu-run \
+            --status ACTIVE \
+            --query "reverse(sort_by(jobDefinitions,&revision))[0].{name:jobDefinitionName,type:type,status:status,digestPinned:contains(containerProperties.image,'@sha256:'),tagged:contains(containerProperties.image,':latest'),requestsAGpu:contains(containerProperties.resourceRequirements[].type,'GPU'),injectsTheWandbKey:contains(containerProperties.secrets[].name,'WANDB_API_KEY')}" \
+            --output json > "${gpu_job_definition_json}"
+
           aws events describe-rule \
             --name sbsandbox-intern-edullm-batch-lifecycle \
-            --query "{name:Name,state:State,scopedToOurQueue:contains(EventPattern,'job-queue/sbsandbox-intern-edullm-cpu')}" \
+            --query "{name:Name,state:State,scopedToOurQueue:contains(EventPattern,'job-queue/sbsandbox-intern-edullm-cpu'),scopedToTheGpuQueue:contains(EventPattern,'job-queue/sbsandbox-intern-edullm-gpu')}" \
             --output json > "${rule_json}"
 
           aws stepfunctions describe-state-machine \
@@ -200,7 +239,7 @@ jobs:
             --query "{status:Status}" \
             --output json > "${outputs_json}"
 
-          python - "${compute_environment_json}" "${job_queue_json}" "${job_definition_json}" "${rule_json}" "${state_machine_json}" "${outputs_json}" <<'PY'
+          python - "${compute_environment_json}" "${job_queue_json}" "${job_definition_json}" "${gpu_compute_environment_json}" "${gpu_job_queue_json}" "${gpu_job_definition_json}" "${rule_json}" "${state_machine_json}" "${outputs_json}" <<'PY'
           import json
           import sys
           from pathlib import Path
@@ -234,14 +273,68 @@ jobs:
               "digestPinned": True,
               "tagged": False,
           }
+          # THE ONE CHECK IN THIS FILE THAT CATCHES A FAILURE NOTHING ELSE REPORTS.
+          #
+          # imageType must be ECS_AL2023_NVIDIA. Left to its default the GPU environment
+          # runs the same AMI as the CPU one, which carries no NVIDIA driver -- so an
+          # instance launches, joins the cluster, takes the job and runs it on the CPU at
+          # GPU prices. Nothing errors. The job does not wait, no permission is denied, and
+          # the only trace is that the container cannot see a device. Every other line in
+          # this expectation would be satisfied by that environment.
+          #
+          # subnetCount is five because describe-instance-type-offerings reports g5.xlarge
+          # in all five availability zones the network stack has a subnet in. That is not a
+          # property of GPU shapes in general and must be re-measured before a different one
+          # is promoted: g6e and p4d are absent from us-east-1f.
+          expected_gpu_compute_environment = {
+              "name": "sbsandbox-intern-edullm-gpu",
+              "type": "MANAGED",
+              "status": "VALID",
+              "state": "ENABLED",
+              "minvCpus": 0,
+              "subnetCount": 5,
+              "imageType": "ECS_AL2023_NVIDIA",
+          }
+          expected_gpu_job_queue = {
+              "name": "sbsandbox-intern-edullm-gpu",
+              "status": "VALID",
+              "state": "ENABLED",
+          }
+          # requestsAGpu is the other half of the AMI check above and fails just as quietly
+          # on its own: without a GPU entry in resourceRequirements, ECS does not select the
+          # NVIDIA runtime for the task, so even on the right AMI no device is attached.
+          # Both have to be right and neither reports the other being wrong.
+          #
+          # injectsTheWandbKey is read as a boolean and never as a value. What is asserted
+          # is that a secret of that name is wired, not what it resolves to -- the runner
+          # log is world readable.
+          expected_gpu_job_definition = {
+              "name": "sbsandbox-intern-edullm-gpu-run",
+              "type": "container",
+              "status": "ACTIVE",
+              "digestPinned": True,
+              "tagged": False,
+              "requestsAGpu": True,
+              "injectsTheWandbKey": True,
+          }
           # The seam that produces no error anywhere when it breaks. A rule scoped to a
           # queue nobody submits to matches nothing, jobs run, and no lifecycle event,
-          # attempt or result record is ever written. Read as a boolean so the deployed
-          # pattern is compared against the deployed queue name rather than printed.
+          # attempt or result record is ever written. Read as booleans so the deployed
+          # pattern is compared against the deployed queue names rather than printed. Both
+          # queues are asserted because one rule now serves both, and a pattern that lost
+          # either half would leave the runs on that queue invisible to lineage.
+          #
+          # No apostrophe anywhere in a run body, here or above, and it is not a style
+          # preference. tests/test_phase3_batch_deployment_workflow.py parses these scripts
+          # with shlex to read the aws calls out of them, and one unbalanced quote in a
+          # comment makes the whole script unparseable -- so the tests that check this
+          # workflow never submits a job, and never prints an account id, fail with a
+          # quoting error rather than an answer.
           expected_rule = {
               "name": "sbsandbox-intern-edullm-batch-lifecycle",
               "state": "ENABLED",
               "scopedToOurQueue": True,
+              "scopedToTheGpuQueue": True,
           }
           # Three states, because the amendment is three states and a partial deploy that
           # left one out would be an admission path that decides and never submits.
@@ -257,13 +350,16 @@ jobs:
               ("compute environment", expected_compute_environment),
               ("job queue", expected_job_queue),
               ("job definition", expected_job_definition),
+              ("gpu compute environment", expected_gpu_compute_environment),
+              ("gpu job queue", expected_gpu_job_queue),
+              ("gpu job definition", expected_gpu_job_definition),
               ("lifecycle rule", expected_rule),
               ("admission state machine", expected_state_machine),
               ("outputs bucket versioning", expected_outputs_versioning),
           ]
           arguments = sys.argv[1:]
           if len(arguments) != len(expectations):
-              raise SystemExit("phase 3 verification was handed the wrong number of files")
+              raise SystemExit("batch verification was handed the wrong number of files")
 
           failures = []
           for (label, expected), argument in zip(expectations, arguments):
@@ -272,7 +368,7 @@ jobs:
                   failures.append(f"{label}: expected {expected}, observed {observed}")
 
           if failures:
-              raise SystemExit("phase 3 batch verification failed:\n" + "\n".join(failures))
+              raise SystemExit("batch verification failed:\n" + "\n".join(failures))
 
           print("PHASE3_BATCH_VERIFICATION_PASSED")
           PY

@@ -149,18 +149,23 @@ def test_shipped_catalog_instance_types_are_unique() -> None:
     assert len(set(instance_types)) == len(instance_types)
 
 
-def test_exactly_one_profile_is_provisioned() -> None:
-    """Phase 3 promotes one, on purpose, and the count is the assertion.
+def test_only_the_deliberately_promoted_profiles_are_provisioned() -> None:
+    """Two are promoted, on purpose, and the list is the assertion.
 
-    This test used to say no profile was provisioned. It is the tripwire for the specific
-    Phase 4 mistake of flipping a second flag before deploying anything to back it: the
-    catalog would then claim capacity that does not exist, and every submission naming that
-    profile would reach Batch and sit in RUNNABLE forever rather than being refused at
-    admission. Whether the promoted one is actually backed is a separate question, asserted
-    against config/execution-targets.yaml in tests/test_phase3_execution.py.
+    This test said no profile was provisioned, then one, and now names two. Each change was
+    a deliberate edit made after the infrastructure existed, which is the whole point of
+    writing the names out: it is the tripwire for flipping a flag before deploying anything
+    to back it. The catalog would then claim capacity that does not exist, and every
+    submission naming that profile would reach Batch and sit in RUNNABLE forever rather than
+    being refused at admission.
+
+    Whether a promoted profile is actually backed is a separate question, asserted against
+    config/execution-targets.yaml in tests/test_phase3_execution.py. This one is only about
+    the flag, which is why it can be read from a single file.
     """
     assert [profile.name for profile in SHIPPED_PROFILES if profile.provisioned] == [
-        "cpu-32vcpu"
+        "cpu-32vcpu",
+        "gpu-1xa10g",
     ]
 
 
@@ -252,6 +257,22 @@ def representative_quota_records() -> tuple[QuotaRecord, ...]:
                 "required_vcpus": 48,
             }
         ),
+        # The same quota code as the entry above, and a second record rather than a wider
+        # one, because these records are per profile and not per quota. Both G-family
+        # profiles draw on L-DB2E81BA; what differs is how much each needs, and it is
+        # required_vcpus that the sufficiency check reads.
+        QuotaRecord.model_validate(
+            {
+                "service_code": "ec2",
+                "quota_code": "L-DB2E81BA",
+                "quota_name": "Running On-Demand G and VT instances",
+                "applied_value": 768.0,
+                "unit": "vCPU",
+                "quota_applied_at_level": "ACCOUNT",
+                "workload_profile": "gpu-1xa10g",
+                "required_vcpus": 4,
+            }
+        ),
     )
 
 
@@ -259,7 +280,7 @@ def test_priced_but_unreferenced_profiles_do_not_demand_capacity_evidence() -> N
     required = {
         profile.name for profile in profiles_requiring_capacity_evidence(shipped_catalog())
     }
-    assert required == {"cpu-32vcpu", "gpu-4xa10g"}
+    assert required == {"cpu-32vcpu", "gpu-1xa10g", "gpu-4xa10g"}
     reason_code, detail = ec2_quota_coverage_issues(
         catalog=shipped_catalog(),
         quotas=representative_quota_records(),
@@ -271,7 +292,7 @@ def test_priced_but_unreferenced_profiles_do_not_demand_capacity_evidence() -> N
 def test_provisioning_a_profile_demands_capacity_evidence_for_it() -> None:
     catalog = catalog_with_provisioned_h100()
     required = {profile.name for profile in profiles_requiring_capacity_evidence(catalog)}
-    assert required == {"cpu-32vcpu", "gpu-4xa10g", "gpu-8xh100"}
+    assert required == {"cpu-32vcpu", "gpu-1xa10g", "gpu-4xa10g", "gpu-8xh100"}
     reason_code, detail = ec2_quota_coverage_issues(
         catalog=catalog,
         quotas=representative_quota_records(),

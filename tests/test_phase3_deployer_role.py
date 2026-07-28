@@ -104,13 +104,20 @@ EC2_DESCRIBE_ACTIONS = frozenset(
     }
 )
 
-#: Four whole role ARNs, in the order the template writes them. Written out here for the
+#: Seven whole role ARNs, in the order the template writes them. Written out here for the
 #: same reason they are written out there: a name that has to be typed twice cannot grow a
 #: wildcard on one side only.
+#:
+#: The middle three arrived with the GPU compute environment. Batch has no per-job role
+#: override, so a second job definition is the only way to give a container a different
+#: identity, and a second job definition needs its own execution and workload roles passed.
 PASS_ROLE_NAMES = [
     "sbsandbox-intern-edullm-batch-execution",
     "sbsandbox-intern-edullm-batch-workload",
     "sbsandbox-intern-edullm-batch-instance",
+    "sbsandbox-intern-edullm-batch-gpu-execution",
+    "sbsandbox-intern-edullm-batch-gpu-workload",
+    "sbsandbox-intern-edullm-batch-gpu-instance",
     "sbsandbox-intern-edullm-lifecycle-lambda",
 ]
 
@@ -332,13 +339,17 @@ def test_the_network_scope_can_change_egress_and_can_never_open_a_port() -> None
     }
 
 
-def test_pass_role_names_four_whole_roles_and_never_a_prefix() -> None:
-    """Mutation: replace the four ARNs with ``sbsandbox-intern-edullm-*``.
+def test_pass_role_names_whole_roles_and_never_a_prefix() -> None:
+    """Mutation: replace the seven ARNs with ``sbsandbox-intern-edullm-*``.
 
-    A prefix would let this role pass any role that ever takes such a name, including one
-    Phase 4 creates with permissions nobody weighed against a deploy credential. Passing a
-    role is how a principal lends its own limits away, so naming each one means adding a
-    fifth is a visible edit to the template rather than something a new name inherits.
+    A prefix would let this role pass any role that ever takes such a name, with permissions
+    nobody weighed against a deploy credential. Passing a role is how a principal lends its
+    own limits away, so naming each one means adding an eighth is a visible edit to the
+    template rather than something a new name inherits.
+
+    This test predicted its own next edit and got it. It said four when it was written and
+    named "one Phase 4 creates" as the thing a prefix would silently absorb; Phase 4 created
+    three, and each had to be added here by hand. That is the control working, not drift.
     """
     matching = [
         statement

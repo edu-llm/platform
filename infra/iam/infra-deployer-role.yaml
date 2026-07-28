@@ -707,24 +707,29 @@ Resources:
                 Action: lambda:ListTags
                 Resource:
                   Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:event-source-mapping:*
-              # Four whole role ARNs, and they must stay whole. A prefix --
+              # Seven whole role ARNs, and they must stay whole. A prefix --
               # sbsandbox-intern-edullm-* -- would let this role pass any role that ever
-              # takes such a name, including one created in Phase 4 with permissions nobody
-              # weighed against a deploy credential; passing a role is how a principal
-              # lends its own limits away. Naming each one means a fifth is a visible edit
-              # to this file rather than something a new role name inherits.
+              # takes such a name, including one created in a later phase with permissions
+              # nobody weighed against a deploy credential; passing a role is how a
+              # principal lends its own limits away. Naming each one means an eighth is a
+              # visible edit to this file rather than something a new role name inherits.
+              #
+              # THE PHASE 4 EDIT IS WHAT THAT SENTENCE WAS FOR. This list said four when it
+              # was written, and it predicted "one created in Phase 4". The three that
+              # arrived are the GPU trio in infra/iam/batch-gpu-roles.yaml, and they are
+              # here because a reader weighed them, not because their names matched.
               #
               # Which call needs which:
-              #   - batch:CreateComputeEnvironment passes the instance role, through the
+              #   - batch:CreateComputeEnvironment passes an instance role, through the
               #     instance profile that wraps it. The profile is not itself passed --
-              #     iam:PassRole authorizes on the role inside it -- which is why there are
-              #     four ARNs here and five new IAM resources in the phase;
-              #   - batch:RegisterJobDefinition passes the execution role and the workload
-              #     role, which is where the container's two identities are fixed;
+              #     iam:PassRole authorizes on the role inside it;
+              #   - batch:RegisterJobDefinition passes an execution role and a workload
+              #     role, which is where a container's two identities are fixed. There are
+              #     two job definitions, so there are two of each;
               #   - lambda:CreateFunction passes the lifecycle recorder's role. That verb
               #     is granted by the Phase 2 policy above and is not repeated here.
               #
-              # The blast radius is bounded on the other side too: each of these four is
+              # The blast radius is bounded on the other side too: each of these seven is
               # trusted only by the single AWS service its own trust policy names, so
               # passing one anywhere else yields a role that cannot be assumed.
               - Effect: Allow
@@ -733,6 +738,9 @@ Resources:
                   - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-execution
                   - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-workload
                   - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-instance
+                  - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-execution
+                  - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-workload
+                  - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-instance
                   - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-lifecycle-lambda
 
 Outputs:

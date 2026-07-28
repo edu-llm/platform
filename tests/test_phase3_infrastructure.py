@@ -61,6 +61,7 @@ from edullm_platform.lifecycle_projection import project_batch_event
 
 NETWORK_PATH = INFRA_ROOT / "batch-network.yaml"
 COMPUTE_PATH = INFRA_ROOT / "batch-compute.yaml"
+GPU_COMPUTE_PATH = INFRA_ROOT / "batch-compute-gpu.yaml"
 EVENTS_PATH = INFRA_ROOT / "batch-events.yaml"
 OUTPUTS_PATH = INFRA_ROOT / "outputs-bucket.yaml"
 STATE_MACHINE_PATH = INFRA_ROOT / "admission-state-machine.yaml"
@@ -88,6 +89,21 @@ COMPUTE_ENVIRONMENT_NAME = "sbsandbox-intern-edullm-cpu"
 JOB_QUEUE_NAME = "sbsandbox-intern-edullm-cpu"
 JOB_DEFINITION_NAME = "sbsandbox-intern-edullm-cpu-run"
 BATCH_LOG_GROUP = "/aws/batch/sbsandbox-intern-edullm-cpu"
+
+#: Every compute template, so a seam test compares a role, a rule or a config against the
+#: whole set of queues that exist rather than against one of them. A test that reads only
+#: COMPUTE_PATH goes green while the GPU half of the same seam is broken, which is the
+#: failure this tuple exists to make impossible: adding a third compute template is the one
+#: edit needed to bring every seam below along with it.
+COMPUTE_PATHS = (COMPUTE_PATH, GPU_COMPUTE_PATH)
+GPU_COMPUTE_ENVIRONMENT_NAME = "sbsandbox-intern-edullm-gpu"
+GPU_JOB_QUEUE_NAME = "sbsandbox-intern-edullm-gpu"
+GPU_JOB_DEFINITION_NAME = "sbsandbox-intern-edullm-gpu-run"
+GPU_BATCH_LOG_GROUP = "/aws/batch/sbsandbox-intern-edullm-gpu"
+GPU_EXECUTION_ROLE_NAME = "sbsandbox-intern-edullm-batch-gpu-execution"
+GPU_WORKLOAD_ROLE_NAME = "sbsandbox-intern-edullm-batch-gpu-workload"
+GPU_INSTANCE_ROLE_NAME = "sbsandbox-intern-edullm-batch-gpu-instance"
+GPU_BATCH_ROLES_PATH = IAM_ROOT / "batch-gpu-roles.yaml"
 EXECUTION_ROLE_NAME = "sbsandbox-intern-edullm-batch-execution"
 WORKLOAD_ROLE_NAME = "sbsandbox-intern-edullm-batch-workload"
 INSTANCE_ROLE_NAME = "sbsandbox-intern-edullm-batch-instance"
@@ -238,16 +254,30 @@ def state_machine_definition() -> dict[str, Any]:
     return parsed
 
 
-def execution_targets() -> dict[str, Any]:
+def execution_target_bindings() -> dict[str, dict[str, Any]]:
+    """Every backed target, keyed by compute profile.
+
+    This returned the single Phase 3 binding and asserted there was exactly one, which was
+    the right shape while one profile was promoted and the wrong one the moment a second
+    was. The assertion it carried -- "a second entry needs its own queue" -- is now checked
+    where it belongs, by comparing every binding against the templates rather than by
+    refusing to look at more than one.
+    """
     loaded = yaml.safe_load(EXECUTION_TARGETS_PATH.read_text(encoding="utf-8"))
     assert isinstance(loaded, dict)
     targets = loaded["targets"]
-    assert isinstance(targets, list) and len(targets) == 1, (
-        "Phase 3 backs exactly one compute profile; a second entry needs its own queue"
-    )
-    binding = targets[0]
-    assert isinstance(binding, dict)
-    return binding
+    assert isinstance(targets, list) and targets
+    bindings = {}
+    for binding in targets:
+        assert isinstance(binding, dict)
+        bindings[binding["compute_profile"]] = binding
+    assert len(bindings) == len(targets), "two targets claim the same compute profile"
+    return bindings
+
+
+def names_across_compute_templates(resource_type: str, key: str) -> set[str]:
+    """One named property from ``resource_type``, gathered across every compute template."""
+    return {properties_of(path, resource_type)[key] for path in COMPUTE_PATHS}
 
 
 def seam_target(manifest: RunManifest) -> ExecutionTarget:
@@ -621,12 +651,16 @@ def test_the_event_rule_matches_the_job_queue_the_compute_stack_creates() -> Non
     lifecycle event, attempt or result record is ever written. The run looks fine in Batch
     and vanishes from lineage; nothing errors anywhere.
     """
-    created = properties_of(COMPUTE_PATH, "AWS::Batch::JobQueue")["JobQueueName"]
-    matched = rule_queue_arns()
+    created = names_across_compute_templates("AWS::Batch::JobQueue", "JobQueueName")
+    matched = {named_after(arn, "job-queue") for arn in rule_queue_arns()}
 
-    assert created == JOB_QUEUE_NAME
-    assert len(matched) == 1
-    assert named_after(matched[0], "job-queue") == created
+    assert created == {JOB_QUEUE_NAME, GPU_JOB_QUEUE_NAME}
+    # Set equality in both directions, which is the whole test now that one rule serves two
+    # queues. A queue created and not matched is the silent half above. A queue matched and
+    # not created is the other direction and is not harmless either: it is how a rule keeps
+    # a pattern for a queue somebody deleted, so nothing fails and the next queue to take
+    # that name inherits a delivery path nobody meant to grant it.
+    assert matched == created
     # An account-wide aws.batch pattern would deliver other teams' job state changes to our
     # recorder, which would then read a foreign job name as one of our run ids.
     pattern = properties_of(EVENTS_PATH, "AWS::Events::Rule")["EventPattern"]
@@ -643,14 +677,14 @@ def test_the_queue_the_states_role_may_submit_to_is_the_queue_that_exists() -> N
     survivable; renaming it without the pattern is the silent half above. This compares all
     three against each other rather than each against a constant.
     """
-    created = properties_of(COMPUTE_PATH, "AWS::Batch::JobQueue")["JobQueueName"]
-    from_the_rule = named_after(rule_queue_arns()[0], "job-queue")
+    created = names_across_compute_templates("AWS::Batch::JobQueue", "JobQueueName")
+    from_the_rule = {named_after(arn, "job-queue") for arn in rule_queue_arns()}
     granted = states_role_submit_arns()
-    from_the_role = [
+    from_the_role = {
         name for name in (named_after(arn, "job-queue") for arn in granted) if name is not None
-    ]
+    }
 
-    assert from_the_role == [created]
+    assert from_the_role == created
     assert from_the_rule == created
 
 
@@ -662,18 +696,19 @@ def test_the_job_definition_the_states_role_may_submit_is_the_one_that_is_regist
     diagnose. Both ARN forms are required because RegisterJobDefinition mints a revision on
     every deploy and the revision is part of the ARN.
     """
-    registered = properties_of(COMPUTE_PATH, "AWS::Batch::JobDefinition")["JobDefinitionName"]
-    from_the_role = [
+    registered = names_across_compute_templates("AWS::Batch::JobDefinition", "JobDefinitionName")
+    from_the_role = {
         name
         for name in (named_after(arn, "job-definition") for arn in states_role_submit_arns())
         if name is not None
-    ]
+    }
     revisions = [arn for arn in states_role_submit_arns() if arn.endswith(":*")]
 
-    assert registered == JOB_DEFINITION_NAME
-    assert set(from_the_role) == {registered}
-    assert len(revisions) == 1, (
-        "a grant on the bare definition name authorizes nothing once a second revision exists"
+    assert registered == {JOB_DEFINITION_NAME, GPU_JOB_DEFINITION_NAME}
+    assert from_the_role == registered
+    assert len(revisions) == len(registered), (
+        "a grant on the bare definition name authorizes nothing once a second revision "
+        "exists, so every registered definition needs both ARN forms"
     )
 
 
@@ -691,22 +726,49 @@ def test_execution_targets_config_names_exactly_what_the_templates_create() -> N
     deploy time -- a mismatch is an accepted decision whose submission is refused, or worse,
     a binding record naming a log group nobody can read.
     """
-    binding = execution_targets()
-    execution_role = role_named(BATCH_ROLES_PATH, EXECUTION_ROLE_NAME)
-    workload_role = role_named(BATCH_ROLES_PATH, WORKLOAD_ROLE_NAME)
+    bindings = execution_target_bindings()
+    # Which compute template backs which profile, and which IAM template holds its roles.
+    # Written out rather than derived, because a derivation would have to guess the pairing
+    # from the names -- and the names agreeing is the thing being checked.
+    backing = {
+        "cpu-32vcpu": (COMPUTE_PATH, BATCH_ROLES_PATH, EXECUTION_ROLE_NAME, WORKLOAD_ROLE_NAME),
+        "gpu-1xa10g": (
+            GPU_COMPUTE_PATH,
+            GPU_BATCH_ROLES_PATH,
+            GPU_EXECUTION_ROLE_NAME,
+            GPU_WORKLOAD_ROLE_NAME,
+        ),
+    }
 
-    assert binding["region"] == "us-east-1"
-    assert binding["job_queue"] == properties_of(COMPUTE_PATH, "AWS::Batch::JobQueue")[
-        "JobQueueName"
-    ]
-    assert binding["job_definition"] == properties_of(COMPUTE_PATH, "AWS::Batch::JobDefinition")[
-        "JobDefinitionName"
-    ]
-    assert binding["execution_role"] == execution_role["RoleName"]
-    assert binding["workload_role"] == workload_role["RoleName"]
-    assert binding["log_group"] == properties_of(COMPUTE_PATH, "AWS::Logs::LogGroup")[
-        "LogGroupName"
-    ]
+    assert set(bindings) == set(backing), (
+        "every backed profile needs a compute template and a role template named here; a "
+        "target with neither is a validator resolving names nothing creates"
+    )
+
+    for profile, (compute, roles, execution_name, workload_name) in backing.items():
+        binding = bindings[profile]
+        execution_role = role_named(roles, execution_name)
+        workload_role = role_named(roles, workload_name)
+
+        assert binding["region"] == "us-east-1", profile
+        assert binding["job_queue"] == properties_of(compute, "AWS::Batch::JobQueue")[
+            "JobQueueName"
+        ], profile
+        assert binding["job_definition"] == properties_of(compute, "AWS::Batch::JobDefinition")[
+            "JobDefinitionName"
+        ], profile
+        assert binding["execution_role"] == execution_role["RoleName"], profile
+        assert binding["workload_role"] == workload_role["RoleName"], profile
+        assert binding["log_group"] == properties_of(compute, "AWS::Logs::LogGroup")[
+            "LogGroupName"
+        ], profile
+
+    # The two targets share no identity at all. A GPU job definition that named a CPU role
+    # would validate against every assertion above taken one at a time, and would hand the
+    # training container the wrong log group and the wrong output scope.
+    for field in ("job_queue", "job_definition", "execution_role", "workload_role", "log_group"):
+        values = [binding[field] for binding in bindings.values()]
+        assert len(set(values)) == len(values), field
 
 
 def test_the_log_group_the_config_names_is_the_one_the_container_writes_to() -> None:
@@ -716,14 +778,24 @@ def test_the_log_group_the_config_names_is_the_one_the_container_writes_to() -> 
     does not match the one the log group resource declares means a container that starts and
     logs nowhere -- and a binding record pointing at a group that holds nothing.
     """
-    declared = properties_of(COMPUTE_PATH, "AWS::Logs::LogGroup")["LogGroupName"]
-    container = properties_of(COMPUTE_PATH, "AWS::Batch::JobDefinition")["ContainerProperties"]
-    driven = container["LogConfiguration"]["Options"]["awslogs-group"]
+    bindings = execution_target_bindings()
+    seen = set()
+    for path in COMPUTE_PATHS:
+        declared = properties_of(path, "AWS::Logs::LogGroup")["LogGroupName"]
+        container = properties_of(path, "AWS::Batch::JobDefinition")["ContainerProperties"]
+        driven = container["LogConfiguration"]["Options"]["awslogs-group"]
 
-    assert declared == BATCH_LOG_GROUP
-    assert driven == declared
-    assert execution_targets()["log_group"] == declared
-    assert container["LogConfiguration"]["LogDriver"] == "awslogs"
+        assert driven == declared, path.name
+        assert container["LogConfiguration"]["LogDriver"] == "awslogs", path.name
+        seen.add(declared)
+
+    assert seen == {BATCH_LOG_GROUP, GPU_BATCH_LOG_GROUP}
+    # One group per target and no sharing, which is not tidiness. Each execution role is
+    # scoped to a single group, so two targets naming one group would mean either principal
+    # could write into the record of the other's jobs -- and a GPU run's stdout is the
+    # evidence that it saw a device.
+    assert {binding["log_group"] for binding in bindings.values()} == seen
+    assert len({binding["log_group"] for binding in bindings.values()}) == len(bindings)
 
 
 # --------------------------------------------------------------------------------------

@@ -483,12 +483,25 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                 (
                     "One of the four the criterion names was exercised, and it is worth saying "
                     "which rather than letting one refusal read as four. A live submission "
-                    "overrode the compute profile to gpu-1xa10g -- priced in the catalog, "
-                    "backed by nothing -- and admission refused it with reason "
-                    "no_execution_target before submission. An invalid queue, job definition or "
-                    "role has not been submitted to the account; those three are unreachable "
-                    "through the dispatch form, which resolves all three from deployed "
-                    "configuration the submitter never sees."
+                    "overrode the compute profile to gpu-1xa10g, which on 2026-07-28 was "
+                    "priced in the catalog and backed by nothing, and admission refused it "
+                    "with reason no_execution_target before submission. An invalid queue, job "
+                    "definition or role has not been submitted to the account; those three are "
+                    "unreachable through the dispatch form, which resolves all three from "
+                    "deployed configuration the submitter never sees."
+                ),
+                (
+                    "THAT PROFILE IS NOW PROVISIONED, so the refusal above is not reproducible "
+                    "by repeating it. Phase 4 promoted gpu-1xa10g and built the compute "
+                    "environment, queue and job definition behind it, which is the outcome the "
+                    "refusal was pointing at rather than a contradiction of it. The evidence "
+                    "still holds because it is a record of something that happened: the capture "
+                    "carries the decision, the reason code and the absence of any Batch job. "
+                    "What stopped being true is only the present tense, and this note exists "
+                    "because nothing else in the bundle would have caught that -- the status "
+                    "guard reads numbered claims, and a sentence describing an account is not "
+                    "one. Reproducing the refusal today needs a profile that is still "
+                    "unprovisioned; the catalog prices ten."
                 ),
                 (
                     "The absence of a Batch job is half the claim and it is recorded rather "
@@ -720,7 +733,21 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
         ),
         CriterionSpec(
             number="15",
-            statement="Exactly one compute profile is provisioned, and it is backed.",
+            # Reworded in Phase 4, and the reason is worth recording rather than absorbing.
+            # This said "Exactly one compute profile is provisioned, and it is backed." That
+            # was true of the tree the day it was written and became false the moment Phase 4
+            # promoted a second profile -- so the criterion would have started failing over a
+            # change that made the platform more capable and broke nothing it claimed.
+            #
+            # A criterion is evaluated against the current tree, not against the tree of its
+            # own phase, so a statement that counts things is a statement with an expiry date
+            # on it. What the check was ever protecting is the seam: a profile priced and
+            # promoted with nowhere to run. That property is what is stated now, and it holds
+            # at one profile, at two, and at however many come later.
+            statement=(
+                "Every provisioned compute profile is backed by a compute environment "
+                "that exists and is usable."
+            ),
             status=CriterionStatus.COVERED,
             proving_node_ids=(
                 *_ids(RUN_EVIDENCE, "test_exactly_one_compute_environment_backs_the_one_provisioned_profile"),
@@ -741,13 +768,21 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                     "Availability rather than harm."
                 ),
                 (
-                    "Two claims, and the supporting citations carry the first: exactly one "
-                    "profile is provisioned in the catalog and exactly one target backs it, "
-                    "compared from both files. The proving citation carries the second -- that "
-                    "the environment named actually exists, is VALID and ENABLED, and is the "
+                    "Two claims, and the supporting citations carry the first: the set of "
+                    "profiles the catalog marks provisioned is exactly the set of profiles "
+                    "the execution targets back, compared from both files in both "
+                    "directions. The proving citation carries the second -- that the "
+                    "environment named actually exists, is VALID and ENABLED, and is the "
                     "one the job queue routes to. A template creating a compute environment is "
                     "a request; an environment can be created and land INVALID, in which case "
                     "every job queued to it waits forever with no error anywhere."
+                ),
+                (
+                    "The proving citation reads Phase 3's committed capture, so it speaks "
+                    "for the CPU environment and for no other. Phase 4's GPU environment is "
+                    "covered by the supporting config-to-config comparison and by the "
+                    "deploy-time verification, and not yet by a capture of its own. That is "
+                    "the honest limit of this criterion after a second profile was promoted."
                 ),
                 (
                     "A VALID environment is still not evidence a job can run, which is why "
@@ -959,7 +994,7 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                 *_ids(DEPLOYER, "test_the_network_scope_can_change_egress_and_can_never_open_a_port"),
                 *_ids(DEPLOYER, "test_the_batch_scopes_cover_all_three_resource_types_the_stack_creates"),
                 *_ids(DEPLOYER, "test_iam_pass_role_is_still_the_only_iam_action_the_whole_role_holds"),
-                *_ids(DEPLOYER, "test_pass_role_names_four_whole_roles_and_never_a_prefix"),
+                *_ids(DEPLOYER, "test_pass_role_names_whole_roles_and_never_a_prefix"),
                 *_ids(EC2, "test_the_declared_action_list_matches_the_probes_actually_built"),
             ),
             scope_limits=(

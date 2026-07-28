@@ -1,0 +1,323 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: The three roles a Batch GPU job runs under, and the instance profile the GPU container hosts assume.
+
+# A SECOND TRIO RATHER THAN A WIDENING OF THE FIRST, AND THAT IS THE DECISION TO ARGUE WITH.
+#
+# The obvious change was to widen the three roles in infra/iam/batch-roles.yaml: add the GPU
+# log group to the execution role, add AWSBatch-...-gpu-* to the instance role, narrow the
+# workload role's team prefix. One file, three edits, no duplication.
+#
+# It was not taken, for two reasons that both hold on their own.
+#
+# The first is evidential. fixtures/evidence/phase-3/roles/ pins the deployed shape of all
+# three of those roles as captured on 2026-07-27, and Phase 3's proof bundle rests on them
+# matching their templates. Editing them makes four committed captures wrong, forces a
+# re-capture and a golden re-record, and rewrites prose in a bundle that was finished. The
+# GPU path gaining its own roles leaves every Phase 3 statement true.
+#
+# The second is that these roles genuinely differ, so the duplication is thinner than it
+# looks. Only this execution role reads a secret. Only this workload role may read an object
+# back, because only a training job resumes from a checkpoint it wrote. Only this instance
+# role joins the GPU cluster. Widening the CPU trio would have handed each of those
+# capabilities to a CPU job that has no use for any of them, which is the same argument that
+# made three roles out of one in the first place.
+#
+# What is shared, deliberately: the ECR repository, because there is one image; and the
+# outputs bucket, because there is one place results go.
+#
+# THE COST, STATED. sbsandbox-intern-edullm-batch-workload still permits teams/*/runs/*.
+# Phase 3 recorded that as its criterion 13 gap and this template does not close it. What it
+# does is stop the GPU path inheriting it, so the cross-team isolation check this phase
+# writes has something honest to run against.
+
+Resources:
+  # ------------------------------------------------------------------------------------
+  # Execution role: what ECS uses to start the GPU task
+  # ------------------------------------------------------------------------------------
+  BatchGpuExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sbsandbox-intern-edullm-batch-gpu-execution
+      PermissionsBoundary:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/InternSandboxBoundary
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      # Inline rather than a customer managed policy. InternSandboxBoundary denies
+      # iam:CreatePolicyVersion on every policy, so a managed policy could be created once
+      # and never amended; the first permission change would fail the stack update.
+      Policies:
+        - PolicyName: pull-the-image-open-the-log-stream-and-read-one-secret
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # ecr:GetAuthorizationToken has no resource type: it mints a registry-wide
+              # token and there is no ARN to attach it to, so "*" is the narrowest grant
+              # that exists for it. In its own statement so nobody has to guess which of
+              # the four actions earned the wildcard.
+              - Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              # The same single repository the CPU execution role names. One image is
+              # published and both job definitions pin a digest from it.
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-olmo-core
+              # The GPU log group and only the GPU log group. Not
+              # /aws/batch/sbsandbox-intern-edullm-* -- a prefix here would let a GPU task
+              # write into the record of what a CPU job printed, and the two log groups
+              # exist to be readable as separate accounts of separate work.
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/batch/sbsandbox-intern-edullm-gpu:*
+              # THE WILDCARD ON THIS ARN IS LOAD-BEARING AND IS NOT A PREFIX GRANT.
+              #
+              # Secrets Manager appends a random six-character suffix to every secret ARN --
+              # here -fnwEVp. The suffix is not predictable and is not stable across a
+              # delete-and-recreate, so a grant written against the exact ARN works until
+              # somebody recreates the secret and then fails as an access denial that reads
+              # like a policy error. The trailing -* matches that suffix and nothing else:
+              # the name it follows is complete, so this cannot reach a second secret unless
+              # somebody creates one whose name begins with this one.
+              #
+              # Deliberately absent: secretsmanager:PutSecretValue, UpdateSecret and
+              # DeleteSecret. This identity reads a credential in order to inject it and has
+              # no business changing it, by the same reasoning that keeps
+              # batch:UntagResource off the admission states role. The value is set from a
+              # laptop and from nowhere else.
+              #
+              # Deliberately absent: secretsmanager:ListSecrets. It has no resource type, so
+              # granting it would be an account-wide enumeration of sixteen other teams'
+              # secret names to save a call this role never needs to make.
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sbsandbox-intern-edullm-wandb-api-key-*
+
+  # ------------------------------------------------------------------------------------
+  # Workload role: what the training command itself runs as
+  # ------------------------------------------------------------------------------------
+  BatchGpuWorkloadRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sbsandbox-intern-edullm-batch-gpu-workload
+      PermissionsBoundary:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/InternSandboxBoundary
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: write-and-resume-one-teams-outputs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # ONE TEAM, NAMED, RATHER THAN teams/*/runs/*.
+              #
+              # The CPU workload role takes the wildcard, recorded as Phase 3's answer to
+              # open decision 2 on the terms that decision set: the widest scope may ship
+              # provided the record says so. This role does not inherit it.
+              #
+              # `platform` is spelled out because it is the only team that has ever run
+              # anything -- all four Phase 3 runs declared it, and the `data-prep` that
+              # appears in the CPU job definition's default environment has never submitted.
+              # So for today this is not an approximation of isolation, it is isolation: a
+              # GPU job cannot write under another team's prefix because there is one team
+              # and this role names it.
+              #
+              # WHAT THIS COSTS WHEN A SECOND TEAM ARRIVES. Batch has no per-job role
+              # override at submit time, so a second team needs a second role and therefore
+              # a second job definition. That structure is deliberately not built here for
+              # one team, and infra/iam/batch-roles.yaml already records the measurement
+              # behind it. The direction this fails in is closed: a second team's job is
+              # refused at write time rather than silently writing somewhere it should not.
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:AbortMultipartUpload
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-outputs/teams/platform/runs/*
+              # s3:GetObject, which the CPU workload role does not have and should not.
+              #
+              # A training job reads back what it wrote: the checkpoint commit protocol
+              # checks for its own success marker, and a resumed run loads the checkpoint
+              # that marker vouches for. Both are reads of this run's own output under the
+              # prefix above, which is why the resource is the same ARN rather than a wider
+              # one. It cannot reach the dataset bucket, the artifacts bucket, or the
+              # lineage store.
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-outputs/teams/platform/runs/*
+              # Listing is a bucket-level action, so it cannot be scoped by an object ARN;
+              # the prefix condition is what keeps it from enumerating another team's
+              # output. Granted because a trainer that cannot tell whether a checkpoint step
+              # already exists writes it again.
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-outputs
+                Condition:
+                  StringLike:
+                    s3:prefix: teams/platform/runs/*
+              # DELIBERATELY ABSENT: s3:DeleteObject, and the reason is a property rather
+              # than a preference.
+              #
+              # A trainer configured to overwrite its save folder is the usual reason to
+              # want it. Every run writes under its own run id, so there is never a previous
+              # run's object in the way -- the per-run segment of the prefix is what makes
+              # delete unnecessary, which is one of the things D5 bought. A role that needed
+              # delete would be a signal that two runs are sharing a prefix, and that is the
+              # condition to fail on rather than to permit.
+              #
+              # Deliberately absent: any reach into sbsandbox-intern-edullm-lineage. That
+              # store is write-once by bucket policy and only the admission state machine
+              # writes to it. Object Lock would refuse the delete, and a role that has to be
+              # stopped by Object Lock should not have been granted it.
+              #
+              # Deliberately absent: batch:SubmitJob, batch:TerminateJob,
+              # states:StartExecution and ecr:PutImage. The container is what an untrusted
+              # training command runs inside; it may write its results and it may not start
+              # anything, stop anything, or publish anything.
+              #
+              # Deliberately absent: any logs: action. The container's stdout is written by
+              # the awslogs driver under the execution role above, before this role's
+              # process starts. A logs grant here would let the command write directly into
+              # the record of what it printed, which is a different thing from printing.
+              #
+              # Deliberately absent: secretsmanager:GetSecretValue. The W&B key reaches the
+              # container as an environment variable that ECS resolves under the execution
+              # role. A training command that could read the secret itself could read it
+              # under a name nobody injected.
+
+  # ------------------------------------------------------------------------------------
+  # Instance role: what the GPU EC2 container host runs as
+  # ------------------------------------------------------------------------------------
+  BatchGpuInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sbsandbox-intern-edullm-batch-gpu-instance
+      PermissionsBoundary:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/InternSandboxBoundary
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: join-the-batch-managed-gpu-ecs-cluster
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # Every action here is listed in the ECS and ECR service authorization
+              # references with no resource type, so "*" is the narrowest grant that exists
+              # for all four. ecs:StartTelemetrySession is the agent's control channel and
+              # is not GPU telemetry -- nothing in this file emits a GPU metric, and the
+              # name is close enough to mislead a reader who is looking for one.
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecs:DiscoverPollEndpoint
+                  - ecs:Poll
+                  - ecs:StartTelemetrySession
+                Resource: "*"
+              # Batch names the ECS cluster it manages AWSBatch-<compute environment>-<id>,
+              # so the compute environment's own name is what makes this scopable. Renaming
+              # the environment in infra/batch-compute-gpu.yaml without changing this prefix
+              # produces instances that register nowhere and a queue whose jobs sit in
+              # RUNNABLE with no error anywhere -- the silent half-failure the CPU trio has
+              # the same exposure to, which is why the tests compare the two files rather
+              # than each against a constant.
+              - Effect: Allow
+                Action:
+                  - ecs:DeregisterContainerInstance
+                  - ecs:RegisterContainerInstance
+                  - ecs:SubmitAttachmentStateChanges
+                  - ecs:SubmitContainerStateChange
+                  - ecs:SubmitTaskStateChange
+                  - ecs:UpdateContainerInstancesState
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:cluster/AWSBatch-sbsandbox-intern-edullm-gpu-*
+              # The image layers the agent pulls on the host's behalf. Same single
+              # repository as the execution role, and for the same reason.
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-olmo-core
+              # The ECS agent's own log group, which is not the job's. Scoped to the
+              # /aws/ecs/ path so an instance cannot write into the record of what a job
+              # printed.
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/ecs/sbsandbox-intern-edullm-*
+
+  # An instance profile is the only way an EC2 instance can hold a role, and Batch takes its
+  # ARN in the compute environment. It lives beside the role it wraps because the two have no
+  # independent lifetime. Expect this stack to take about three minutes for the same reason
+  # infra/iam/batch-roles.yaml does: that is IAM propagation rather than a hang.
+  BatchGpuInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: sbsandbox-intern-edullm-batch-gpu-instance
+      Roles:
+        - Ref: BatchGpuInstanceRole
+
+Outputs:
+  ExecutionRoleName:
+    Value:
+      Ref: BatchGpuExecutionRole
+  ExecutionRoleArn:
+    Value:
+      Fn::GetAtt:
+        - BatchGpuExecutionRole
+        - Arn
+  WorkloadRoleName:
+    Value:
+      Ref: BatchGpuWorkloadRole
+  WorkloadRoleArn:
+    Value:
+      Fn::GetAtt:
+        - BatchGpuWorkloadRole
+        - Arn
+  InstanceRoleName:
+    Value:
+      Ref: BatchGpuInstanceRole
+  InstanceRoleArn:
+    Value:
+      Fn::GetAtt:
+        - BatchGpuInstanceRole
+        - Arn
+  InstanceProfileName:
+    Value:
+      Ref: BatchGpuInstanceProfile
+  InstanceProfileArn:
+    Value:
+      Fn::GetAtt:
+        - BatchGpuInstanceProfile
+        - Arn

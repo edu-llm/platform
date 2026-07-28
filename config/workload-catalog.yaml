@@ -34,7 +34,21 @@ compute_profiles:
     hourly_rate_usd: "1.0060"
     pricing_source: "AWS Price List API get-products AmazonEC2 g5.xlarge us-east-1 Linux/Shared/NA/Used"
     pricing_observed_at: "2026-07-25"
-    provisioned: false
+    # The second profile promoted, and Phase 4 promotes exactly one the way Phase 3 did.
+    # Backed by the compute environment infra/batch-compute-gpu.yaml creates and named in
+    # config/execution-targets.yaml; the same seam test that refused a second promotion
+    # without a target now reads a set of two rather than a set of one.
+    #
+    # Chosen over gpu-1xt4 because 24 GB of A10G lets a small model train without the
+    # gradient-checkpointing gymnastics a T4's 16 GB would force, and those gymnastics would
+    # be an artifact of the test rig rather than of the research. Chosen over gpu-4xa10g
+    # because four GPUs is a distribution problem wearing a single-node costume.
+    #
+    # g5.xlarge is offered in every availability zone the network stack has a subnet in,
+    # measured with describe-instance-type-offerings on 2026-07-28. That is not general: g6e
+    # and p4d are absent from us-east-1f, so promoting an L40S or an A100 later means
+    # narrowing the subnet list in the compute template.
+    provisioned: true
   - name: gpu-1xa10g-sagemaker
     instance_type: g5.2xlarge
     accelerator: gpu
@@ -119,6 +133,29 @@ workloads:
     maximum_runtime_hours: "2"
     maximum_attempts: 1
     checkpoint: null
+  # The GPU workload Phase 4 actually runs, and a sibling of olmo-core-train-smoke rather
+  # than a repointing of it. The four-GPU shape below is a real future target and deleting
+  # it would lose its pricing entry, which is what this catalog is for.
+  #
+  # One entry serves both of the phase's live runs, because a workload profile fixes the
+  # compute profile, the bounds and the checkpoint contract while the command arrives with
+  # the submission. So the capability run -- which asks the container what devices it can
+  # see -- and the training run that follows it are the same profile with different
+  # commands, and the second inherits the first's proven placement.
+  #
+  # checkpoint is null, and that is a claim rather than an omission. A CheckpointContract
+  # says the platform requires periodic checkpointing at an interval to a destination; a
+  # twenty-step smoke has no interval to checkpoint on. The checkpoint the training run
+  # writes goes under the run's own output prefix, which
+  # contracts/results.py::output_prefix derives at submit time. Writing a static prefix here
+  # would add a fourth literal answer to "where does a run write", which is the exact defect
+  # D5 exists to have closed -- and a static string cannot carry a run id anyway.
+  - name: olmo-core-gpu-smoke
+    repository: OLMo-core
+    compute_profile: gpu-1xa10g
+    maximum_runtime_hours: "1"
+    maximum_attempts: 1
+    checkpoint: null
   - name: olmo-core-train-smoke
     repository: OLMo-core
     compute_profile: gpu-4xa10g
@@ -126,5 +163,13 @@ workloads:
     maximum_attempts: 1
     checkpoint:
       interval_minutes: 30
-      destination_prefix: "s3://sbsandbox-intern-edullm-checkpoints/runs/"
+      # Repointed from s3://sbsandbox-intern-edullm-checkpoints/runs/, which named a bucket
+      # that has never existed. Phase 4 settled the question that entry was guessing at:
+      # checkpoints live under the outputs bucket, beneath the same teams/{team}/runs/{run_id}/
+      # prefix as everything else a run writes, so one grant in the workload role covers a
+      # run's whole output and there is no second bucket to create, scope and retain.
+      #
+      # This value is the root the derived per-run prefix hangs under, not the path anything
+      # writes to. The path is output_prefix(team, run_id) + "checkpoints/".
+      destination_prefix: "s3://sbsandbox-intern-edullm-outputs/teams/"
       resume_required: false

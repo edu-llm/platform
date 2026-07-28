@@ -42,6 +42,7 @@ PHASE2_WORKFLOW_PATH = WORKFLOWS_ROOT / "deploy-phase2-admission.yml"
 OUTPUTS_TEMPLATE = "infra/outputs-bucket.yaml"
 NETWORK_TEMPLATE = "infra/batch-network.yaml"
 COMPUTE_TEMPLATE = "infra/batch-compute.yaml"
+GPU_COMPUTE_TEMPLATE = "infra/batch-compute-gpu.yaml"
 EVENTS_TEMPLATE = "infra/batch-events.yaml"
 ADMISSION_TEMPLATE = "infra/admission-state-machine.yaml"
 
@@ -52,14 +53,22 @@ ADMISSION_STACK = "sbsandbox-intern-edullm-phase2-admission"
 # something CloudFormation refuses to get wrong; the rule naming a queue ARN, and the state
 # machine naming a queue and a job definition, are strings that deploy perfectly against
 # resources that do not exist.
+#
+# The GPU compute stack sits between the CPU one and the events stack, and it is in this
+# workflow rather than a Phase 4 one of its own for a reason this order makes visible: the
+# single EventBridge rule now names both queues. Split across two workflows, the GPU queue's
+# creation and the rule that matches it would be in separate runs with nothing ordering
+# them, which is this list's whole subject matter reintroduced across a boundary no test can
+# reach.
 DEPLOYMENT_ORDER = (
     ("Deploy Phase 3 outputs bucket stack", "sbsandbox-intern-edullm-phase3-outputs", OUTPUTS_TEMPLATE),
     ("Deploy Phase 3 network stack", "sbsandbox-intern-edullm-phase3-network", NETWORK_TEMPLATE),
     ("Deploy Phase 3 batch compute stack", "sbsandbox-intern-edullm-phase3-batch", COMPUTE_TEMPLATE),
+    ("Deploy Phase 4 GPU batch compute stack", "sbsandbox-intern-edullm-phase4-gpu", GPU_COMPUTE_TEMPLATE),
     ("Deploy Phase 3 batch events stack", "sbsandbox-intern-edullm-phase3-events", EVENTS_TEMPLATE),
     ("Deploy the amended admission state machine", ADMISSION_STACK, ADMISSION_TEMPLATE),
 )
-VERIFY_STEP = "Verify Phase 3 CPU batch execution"
+VERIFY_STEP = "Verify CPU and GPU batch execution"
 
 #: The same group the Phase 2 workflow declares. The two deploy one stack in common, so a
 #: distinct group would let them race into a mid-update stack.
@@ -286,6 +295,9 @@ def test_the_verification_reads_the_live_shape_and_never_prints_an_account_id() 
         ("batch", "describe-compute-environments"),
         ("batch", "describe-job-queues"),
         ("batch", "describe-job-definitions"),
+        ("batch", "describe-compute-environments"),
+        ("batch", "describe-job-queues"),
+        ("batch", "describe-job-definitions"),
         ("events", "describe-rule"),
         ("stepfunctions", "describe-state-machine"),
         ("s3api", "get-bucket-versioning"),
@@ -328,10 +340,37 @@ def test_the_verification_pins_the_shape_the_templates_describe() -> None:
         "digestPinned": True,
         "tagged": False,
     }
+    # imageType is the one line here whose absence produces no error anywhere. Left to its
+    # default the GPU environment runs the CPU AMI, which has no NVIDIA driver, so the job
+    # runs on the CPU at GPU prices and every other value in this dictionary still matches.
+    assert literal_assignment(source, "expected_gpu_compute_environment") == {
+        "name": "sbsandbox-intern-edullm-gpu",
+        "type": "MANAGED",
+        "status": "VALID",
+        "state": "ENABLED",
+        "minvCpus": 0,
+        "subnetCount": 5,
+        "imageType": "ECS_AL2023_NVIDIA",
+    }
+    assert literal_assignment(source, "expected_gpu_job_queue") == {
+        "name": "sbsandbox-intern-edullm-gpu",
+        "status": "VALID",
+        "state": "ENABLED",
+    }
+    assert literal_assignment(source, "expected_gpu_job_definition") == {
+        "name": "sbsandbox-intern-edullm-gpu-run",
+        "type": "container",
+        "status": "ACTIVE",
+        "digestPinned": True,
+        "tagged": False,
+        "requestsAGpu": True,
+        "injectsTheWandbKey": True,
+    }
     assert literal_assignment(source, "expected_rule") == {
         "name": "sbsandbox-intern-edullm-batch-lifecycle",
         "state": "ENABLED",
         "scopedToOurQueue": True,
+        "scopedToTheGpuQueue": True,
     }
     assert literal_assignment(source, "expected_state_machine") == {
         "status": "ACTIVE",
@@ -379,12 +418,30 @@ def test_the_workflow_does_not_reach_for_the_retired_shared_deploy_role() -> Non
 # hand it a drifted account without an AWS session. The state machine ARN is deliberately
 # unreadable as an account number: the step reads it from a stack output and passes it
 # straight back, and nothing in it needs to look real.
+#
+# The three Batch verbs are each called twice now, once per queue, so the inner case
+# discriminates on the resource name in the arguments rather than on the verb alone. A stub
+# that answered both calls from one variable would hand the GPU expectation the CPU
+# account's shape, and every drift case below would pass while proving nothing about the
+# half that is new. The GPU names all contain ``-gpu``; none of the CPU calls does.
 AWS_STUB = """
 case "$1 $2" in
   "cloudformation describe-stacks") printf '%s\\n' "${STACK_OUTPUT_ARN}" ;;
-  "batch describe-compute-environments") printf '%s' "${COMPUTE_ENVIRONMENT_JSON}" ;;
-  "batch describe-job-queues") printf '%s' "${JOB_QUEUE_JSON}" ;;
-  "batch describe-job-definitions") printf '%s' "${JOB_DEFINITION_JSON}" ;;
+  "batch describe-compute-environments")
+    case "$*" in
+      *sbsandbox-intern-edullm-gpu*) printf '%s' "${GPU_COMPUTE_ENVIRONMENT_JSON}" ;;
+      *) printf '%s' "${COMPUTE_ENVIRONMENT_JSON}" ;;
+    esac ;;
+  "batch describe-job-queues")
+    case "$*" in
+      *sbsandbox-intern-edullm-gpu*) printf '%s' "${GPU_JOB_QUEUE_JSON}" ;;
+      *) printf '%s' "${JOB_QUEUE_JSON}" ;;
+    esac ;;
+  "batch describe-job-definitions")
+    case "$*" in
+      *sbsandbox-intern-edullm-gpu*) printf '%s' "${GPU_JOB_DEFINITION_JSON}" ;;
+      *) printf '%s' "${JOB_DEFINITION_JSON}" ;;
+    esac ;;
   "events describe-rule") printf '%s' "${RULE_JSON}" ;;
   "stepfunctions describe-state-machine") printf '%s' "${STATE_MACHINE_JSON}" ;;
   "s3api get-bucket-versioning") printf '%s' "${OUTPUTS_JSON}" ;;
@@ -411,10 +468,34 @@ OBSERVED_JOB_DEFINITION = {
     "digestPinned": True,
     "tagged": False,
 }
+OBSERVED_GPU_COMPUTE_ENVIRONMENT = {
+    "name": "sbsandbox-intern-edullm-gpu",
+    "type": "MANAGED",
+    "status": "VALID",
+    "state": "ENABLED",
+    "minvCpus": 0,
+    "subnetCount": 5,
+    "imageType": "ECS_AL2023_NVIDIA",
+}
+OBSERVED_GPU_JOB_QUEUE = {
+    "name": "sbsandbox-intern-edullm-gpu",
+    "status": "VALID",
+    "state": "ENABLED",
+}
+OBSERVED_GPU_JOB_DEFINITION = {
+    "name": "sbsandbox-intern-edullm-gpu-run",
+    "type": "container",
+    "status": "ACTIVE",
+    "digestPinned": True,
+    "tagged": False,
+    "requestsAGpu": True,
+    "injectsTheWandbKey": True,
+}
 OBSERVED_RULE = {
     "name": "sbsandbox-intern-edullm-batch-lifecycle",
     "state": "ENABLED",
     "scopedToOurQueue": True,
+    "scopedToTheGpuQueue": True,
 }
 OBSERVED_STATE_MACHINE = {
     "status": "ACTIVE",
@@ -436,6 +517,9 @@ def run_verification(tmp_path: Path, **drift: object) -> subprocess.CompletedPro
         "COMPUTE_ENVIRONMENT_JSON": dict(OBSERVED_COMPUTE_ENVIRONMENT),
         "JOB_QUEUE_JSON": dict(OBSERVED_JOB_QUEUE),
         "JOB_DEFINITION_JSON": dict(OBSERVED_JOB_DEFINITION),
+        "GPU_COMPUTE_ENVIRONMENT_JSON": dict(OBSERVED_GPU_COMPUTE_ENVIRONMENT),
+        "GPU_JOB_QUEUE_JSON": dict(OBSERVED_GPU_JOB_QUEUE),
+        "GPU_JOB_DEFINITION_JSON": dict(OBSERVED_GPU_JOB_DEFINITION),
         "RULE_JSON": dict(OBSERVED_RULE),
         "STATE_MACHINE_JSON": dict(OBSERVED_STATE_MACHINE),
         "OUTPUTS_JSON": dict(OBSERVED_OUTPUTS),
@@ -494,7 +578,42 @@ def test_the_verification_passes_against_the_account_the_templates_describe(
             {**OBSERVED_JOB_DEFINITION, "digestPinned": False, "tagged": True},
             "job definition",
         ),
+        # The GPU environment on the CPU AMI. This is the drift with no other symptom: the
+        # job runs, exits zero, bills GPU rates and trains on the CPU. If any refactor makes
+        # this case pass, the verification has stopped being worth running.
+        (
+            "GPU_COMPUTE_ENVIRONMENT_JSON",
+            {**OBSERVED_GPU_COMPUTE_ENVIRONMENT, "imageType": "ECS_AL2023"},
+            "gpu compute environment",
+        ),
+        (
+            "GPU_COMPUTE_ENVIRONMENT_JSON",
+            {**OBSERVED_GPU_COMPUTE_ENVIRONMENT, "minvCpus": 1},
+            "gpu compute environment",
+        ),
+        (
+            "GPU_JOB_QUEUE_JSON",
+            {**OBSERVED_GPU_JOB_QUEUE, "state": "DISABLED"},
+            "gpu job queue",
+        ),
+        # The other half of the AMI drift, reached by a different route: right AMI, no GPU
+        # in resourceRequirements, so ECS never selects the NVIDIA runtime for the task.
+        (
+            "GPU_JOB_DEFINITION_JSON",
+            {**OBSERVED_GPU_JOB_DEFINITION, "requestsAGpu": False},
+            "gpu job definition",
+        ),
+        (
+            "GPU_JOB_DEFINITION_JSON",
+            {**OBSERVED_GPU_JOB_DEFINITION, "injectsTheWandbKey": False},
+            "gpu job definition",
+        ),
         ("RULE_JSON", {**OBSERVED_RULE, "scopedToOurQueue": False}, "lifecycle rule"),
+        (
+            "RULE_JSON",
+            {**OBSERVED_RULE, "scopedToTheGpuQueue": False},
+            "lifecycle rule",
+        ),
         (
             "STATE_MACHINE_JSON",
             {**OBSERVED_STATE_MACHINE, "submitsToBatch": False},
@@ -520,7 +639,7 @@ def test_a_drifted_account_fails_the_run_and_says_which_check_moved(
 
     assert result.returncode != 0
     assert "PHASE3_BATCH_VERIFICATION_PASSED" not in result.stdout
-    assert "phase 3 batch verification failed" in result.stderr
+    assert "batch verification failed" in result.stderr
     assert label in result.stderr
 
 

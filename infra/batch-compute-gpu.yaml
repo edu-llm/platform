@@ -1,0 +1,285 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: The GPU compute environment, its job queue, the digest-pinned GPU job definition and the log group GPU jobs write to.
+
+# The CPU stack's sibling, and the differences from it are the whole content of this file.
+# Everything shared with infra/batch-compute.yaml -- nothing retained on delete,
+# ReplaceComputeEnvironment false so subnet edits update in place, DesiredvCpus absent
+# because Batch owns it, BEST_FIT_PROGRESSIVE -- is argued there and not repeated here.
+#
+# What is different, and why:
+#
+#   - Ec2Configuration names ECS_AL2023_NVIDIA. This is the single most important line in
+#     the file and it has no equivalent on the CPU side, which takes Batch's default.
+#   - One instance type rather than several, against the phase plan's own recommendation.
+#   - A Secrets block, which no CPU job definition has.
+#   - A GPU entry in ResourceRequirements, which is what makes ECS attach a device at all.
+#   - A separate role trio, per infra/iam/batch-gpu-roles.yaml.
+#
+# THE ROLLBACK PROPERTY THIS FILE EXISTS TO PRESERVE. Because the queue and the compute
+# environment here are their own, disabling them scales GPU spend to zero and does not touch
+# CPU execution. That separation is worth a duplicated template on the first phase that can
+# spend a dollar an hour by accident.
+
+Resources:
+  BatchGpuLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/batch/sbsandbox-intern-edullm-gpu
+      # Ninety days, matching the CPU group and the admission execution group, for the
+      # reason given there: a result manifest says a job ran and this group says what it
+      # printed, and the two have to remain readable together.
+      #
+      # A GPU group separate from the CPU group rather than one Batch group for both. The
+      # execution roles are scoped to one group each, so merging them would mean either
+      # principal could write into the record of the other's jobs -- and a training run's
+      # stdout is the evidence that it saw a GPU, which is the claim this phase rests on.
+      RetentionInDays: 90
+
+  BatchGpuComputeEnvironment:
+    Type: AWS::Batch::ComputeEnvironment
+    Properties:
+      ComputeEnvironmentName: sbsandbox-intern-edullm-gpu
+      Type: MANAGED
+      State: ENABLED
+      # No ServiceRole, so Batch uses AWSServiceRoleForBatch. It already exists, created by
+      # a person for the CPU environment; see infra/README.md.
+      ReplaceComputeEnvironment: false
+      UpdatePolicy:
+        TerminateJobsOnUpdate: false
+        # Sixty rather than the CPU stack's thirty. The bound has to exceed the longest job
+        # a template edit could interrupt, and the GPU workload's maximum_runtime_hours is
+        # one. At thirty, a deploy during the second half of a training run stops waiting
+        # and kills work that was about to checkpoint.
+        JobExecutionTimeoutMinutes: 60
+      ComputeResources:
+        Type: EC2
+        AllocationStrategy: BEST_FIT_PROGRESSIVE
+        # Zero, and here the number defends more than it does on the CPU side. An idle
+        # c7i.8xlarge is $1.428/hr; an idle g5.xlarge is $1.006/hr and buys nothing at all
+        # while it waits. tests pin it, and the live claim is read back from DesiredvCpus
+        # once the queue is quiet.
+        MinvCpus: 0
+        # Sixteen, which is four g5.xlarge and a ceiling of $4.02/hr. The CPU environment's
+        # 128 is sized so a fan-out of a few cells fits; this one is sized so a single-node
+        # phase cannot accidentally become a cluster. Raising it is a deliberate edit with a
+        # number attached.
+        MaxvCpus: 16
+        # ONE INSTANCE TYPE, AND THE PHASE PLAN ASKED FOR SEVERAL. §3.2 wants "multiple
+        # instance types for scheduler options", on the reasoning that gives the scheduler
+        # somewhere to go when capacity is short. That reasoning does not apply here and the
+        # cost of following it would be real.
+        #
+        # It does not apply because capacity is not short: G and VT on-demand is 768 vCPU
+        # against the 4 this asks for, and nothing else in the account holds a GPU.
+        #
+        # It would cost something because Batch places a job on any listed type that fits
+        # its ResourceRequirements. A job asking for 4 vCPU and 1 GPU fits a g5.2xlarge just
+        # as well as a g5.xlarge, and would then bill $1.515/hr against a decision record
+        # that says $1.006 -- computed from the catalog entry for the profile the submitter
+        # chose. The estimate in an approved record is only true if the shape that runs is
+        # the shape that was priced, and a second instance type here is how those two
+        # silently stop being the same. Phase 5 is where cost estimate meets actual spend;
+        # this list is one of the things that has to hold for that comparison to mean
+        # anything.
+        InstanceTypes:
+          - g5.xlarge
+        InstanceRole:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:instance-profile/sbsandbox-intern-edullm-batch-gpu-instance
+        # All five subnets, and unlike the CPU list this one had to be measured per instance
+        # type rather than inherited. describe-instance-type-offerings on 2026-07-28 reports
+        # g5.xlarge in us-east-1a, 1b, 1c, 1d and 1f, which is every subnet the network stack
+        # creates. It is not a general property of GPU shapes: g6e and p4d are absent from
+        # us-east-1f, so promoting an L40S or an A100 later means dropping a subnet here.
+        #
+        # A dry-run is not evidence for this and must never be used as one. --dry-run in
+        # this account returns DryRunOperation for g6e.12xlarge in us-east-1f, an AZ that
+        # does not offer it, because it answers "is this principal permitted" and not "can
+        # this succeed". A subnet Batch cannot place into produces a job that waits forever
+        # with no error anywhere.
+        Subnets:
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1a
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1b
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1c
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1d
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1f
+        SecurityGroupIds:
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-security-group-id
+        # THE LINE THE PHASE TURNS ON, AND ITS FAILURE IS SILENT.
+        #
+        # Omitted, this property defaults to the same ECS_AL2023 AMI the CPU environment
+        # runs. That AMI has no NVIDIA driver and no container runtime hook, so an instance
+        # launches, joins the cluster, accepts the job and runs it -- on the CPU, at GPU
+        # prices, producing a result that looks successful. Nothing fails. The job does not
+        # wait in RUNNABLE, no permission is denied, and the only trace is that the
+        # container could not see a device.
+        #
+        # That is the failure the plan calls the sharpest one available here, and this
+        # property is the whole of the fix. It is also why the phase's evidence is a log
+        # stream in which the container reports the device it found, rather than a template
+        # assertion: this line being correct is necessary and is not sufficient.
+        #
+        # No ImageId. Batch resolves the current NVIDIA AMI and UpdateToLatestImageVersion
+        # below moves it forward, which is how a driver or kernel fix reaches these hosts.
+        # Pinning would freeze the environment on whatever was current the day it was
+        # created and would diverge from the convention the CPU stack set.
+        Ec2Configuration:
+          - ImageType: ECS_AL2023_NVIDIA
+        UpdateToLatestImageVersion: true
+        Tags:
+          Name: sbsandbox-intern-edullm-batch-gpu
+          Project: edullm
+
+  BatchGpuJobQueue:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      # THE SAME NAME THAT BREAKS THREE FILES AT ONCE, now in a second copy.
+      # sbsandbox-intern-edullm-gpu appears here, in infra/batch-events.yaml's event pattern,
+      # and in the admission states role's batch:SubmitJob scope. No CloudFormation reference
+      # connects them and the failure mode is the CPU queue's: rename it here alone and
+      # submissions keep succeeding while the rule matches nothing, so jobs run to completion
+      # and no lifecycle event, attempt or result record is ever written.
+      # tests/test_phase3_infrastructure.py compares all three files across both queues.
+      JobQueueName: sbsandbox-intern-edullm-gpu
+      State: ENABLED
+      Priority: 1
+      # One compute environment, and deliberately not the CPU environment as a second entry.
+      # A queue spanning both with BEST_FIT_PROGRESSIVE would let a CPU job land on a GPU
+      # instance whenever the GPU environment had spare capacity, which is the most expensive
+      # silent failure available in this phase. Separate queues make the placement decision
+      # at submission time, from the compute profile the manifest names.
+      ComputeEnvironmentOrder:
+        - Order: 1
+          ComputeEnvironment:
+            Ref: BatchGpuComputeEnvironment
+
+  BatchGpuJobDefinition:
+    Type: AWS::Batch::JobDefinition
+    # The awslogs driver names a group and does not create one, and nothing in this
+    # definition's properties refers to the group resource, so CloudFormation infers no
+    # ordering without this.
+    DependsOn: BatchGpuLogGroup
+    Properties:
+      JobDefinitionName: sbsandbox-intern-edullm-gpu-run
+      Type: container
+      PlatformCapabilities:
+        - EC2
+      PropagateTags: true
+      RetryStrategy:
+        Attempts: 1
+      Timeout:
+        AttemptDurationSeconds: 3600
+      ContainerProperties:
+        # Pinned by digest, never by tag, for the reason infra/batch-compute.yaml gives.
+        # This is currently the same image the CPU definition runs -- the only image the
+        # platform has published -- and it carries no torch and no CUDA. That is deliberate
+        # for the capability run, which asks the container what devices it can see and
+        # nothing more. Repointing this at the training image is an edit here, and it is the
+        # diff a reviewer sees.
+        Image:
+          Fn::Sub: ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/sbsandbox-intern-edullm-olmo-core@sha256:4ebdba1ba3b57096efb4f4647ed41ed5ded4ac9e77e8c9038b7ff24db0bc6db8
+        ExecutionRoleArn:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-execution
+        JobRoleArn:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-workload
+        # 4 vCPU and 15360 MiB against a g5.xlarge's 4 vCPU and 16 GiB, leaving 1 GiB for the
+        # ECS agent and the host. The CPU definition leaves 4 GiB of 64; the proportion is
+        # what matters and a container asking for all 16384 never fits on the instance it was
+        # sized for, which Batch expresses as a job that stays in RUNNABLE rather than as an
+        # error.
+        #
+        # THE GPU ENTRY IS WHAT MAKES ECS ATTACH A DEVICE. Without it the NVIDIA runtime is
+        # not selected for the task, so even on the NVIDIA AMI the container sees no
+        # /dev/nvidia* and no driver libraries -- the same silent CPU-at-GPU-prices outcome
+        # the AMI comment above describes, reached by a different route. Both have to be
+        # right and neither reports the other being wrong.
+        #
+        # Value is "1" and this is a single-node, single-GPU phase. The count here and the
+        # nodes/accelerator shape in config/workload-catalog.yaml are two statements of the
+        # same fact with nothing connecting them, which is why a test compares them.
+        ResourceRequirements:
+          - Type: VCPU
+            Value: "4"
+          - Type: MEMORY
+            Value: "15360"
+          - Type: GPU
+            Value: "1"
+        # THE SECRET IS RESOLVED BY ECS, NOT BY THE CONTAINER.
+        #
+        # ValueFrom takes the secret's ARN and ECS reads it under the execution role while
+        # starting the task, then places the plaintext in the container's environment. The
+        # workload role holds no secretsmanager action at all, so the training command cannot
+        # read the secret under any other name or at any other version -- it gets the one
+        # value that was injected.
+        #
+        # The ARN carries the -fnwEVp suffix Secrets Manager assigned. Unlike the IAM grant
+        # in infra/iam/batch-gpu-roles.yaml, which uses a trailing -* because the suffix is
+        # not stable across a delete-and-recreate, this has to be the exact ARN: ValueFrom is
+        # a lookup and not a pattern. So recreating the secret means editing this line, and
+        # the symptom of forgetting is a task that fails to start with a resolution error --
+        # which is loud, and is the right direction to fail in.
+        #
+        # WANDB_API_KEY is the name the wandb client reads on its own. Nothing in this
+        # repository passes it onward, and SecretFreeStr refuses to serialise a record that
+        # contains it.
+        Secrets:
+          - Name: WANDB_API_KEY
+            ValueFrom:
+              Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sbsandbox-intern-edullm-wandb-api-key-fnwEVp
+        # The default command, which every real submission overrides. Declared rather than
+        # omitted because ContainerOverrides can only override a key the definition declares,
+        # and because the key names here and in src/edullm_platform/execution.py's submit
+        # request have to match exactly.
+        #
+        # The last element is quoted because it contains a colon followed by a space, which
+        # unquoted is YAML's mapping syntax; see the CPU definition, where that cost a
+        # rejected job definition to learn.
+        Command:
+          - python
+          - -c
+          - 'print("sbsandbox-intern-edullm-gpu-run: no command override was supplied")'
+        Environment:
+          - Name: EDULLM_OUTPUT_BUCKET
+            Value: sbsandbox-intern-edullm-outputs
+          # A DEFAULT THAT FAILS CLOSED, WHICH THE CPU DEFINITION'S DOES NOT.
+          #
+          # infra/batch-compute.yaml defaults this to `teams/data-prep/runs/` -- a relative
+          # path, naming a team that has never submitted, with no run id in it. Every real
+          # submission overrides it with the full s3:// URI that
+          # contracts/results.py::output_prefix builds, so the two are not even the same kind
+          # of string, and the default has never been exercised because the CPU smoke writes
+          # nothing.
+          #
+          # A GPU job writes checkpoints, so an unoverridden default here would be used. It
+          # is set to a URI that is deliberately outside the only prefix the workload role
+          # permits, so a job that reaches it is denied on the first write instead of quietly
+          # filling a location no lineage record names. The shape matches what the override
+          # sends, so the container parses one kind of value either way.
+          - Name: EDULLM_OUTPUT_PREFIX
+            Value: s3://sbsandbox-intern-edullm-outputs/no-submission-supplied-a-prefix/
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group: /aws/batch/sbsandbox-intern-edullm-gpu
+            awslogs-stream-prefix: gpu-run
+            awslogs-region:
+              Ref: AWS::Region
+        # Explicit rather than left to the default. It is worth stating twice as loudly here
+        # as on the CPU side: a privileged container shares the host's kernel capabilities,
+        # and the NVIDIA container runtime is sometimes configured with privilege in guides
+        # that predate device injection. It is not needed. The GPU reaches this container
+        # through ResourceRequirements above.
+        Privileged: false
+
+Outputs:
+  ComputeEnvironmentArn:
+    Value:
+      Ref: BatchGpuComputeEnvironment
+  JobQueueArn:
+    Value:
+      Ref: BatchGpuJobQueue
+  JobDefinitionArn:
+    Value:
+      Ref: BatchGpuJobDefinition
+  LogGroupName:
+    Value:
+      Ref: BatchGpuLogGroup

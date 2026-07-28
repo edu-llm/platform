@@ -4,7 +4,7 @@ The 22 Phase 3 acceptance criteria, mapped to the tests cited for each one by no
 
 This mapping is defined once, in `src/edullm_platform/phase3_criteria.py`. The acceptance gate reads the same definition and executes the same node ids, so this matrix and `tools/validate_phase3.py` cannot disagree.
 
-Verification run: 309 tests executed, 309 passed, 0 failed, 0 errored, pytest exit code 0.
+Verification run: 315 tests executed, 315 passed, 0 failed, 0 errored, pytest exit code 0.
 
 Three statuses exist and no more. **COVERED** means one or more cited tests prove the criterion as stated against the shipped configuration and all of them pass; the gate passes it. **DEFERRED** means an explicit recorded decision not to satisfy it yet, which requires both a written reason and a written trigger describing what makes it live again; the gate passes it. **GAP** is everything else, and the gate fails it. There is no in-between status, because an in-between status is what lets a gate be green and wrong at the same time.
 
@@ -26,7 +26,7 @@ Three statuses exist and no more. **COVERED** means one or more cited tests prov
 | 12 | GAP | 0 | 5 | No GitHub path can administer Batch or EC2. |
 | 13 | GAP | 0 | 3 | The workload role cannot write to the lineage store or start anything. |
 | 14 | GAP | 0 | 4 | The validator resolves the target and cannot submit; the state machine submits and cannot decide. |
-| 15 | COVERED | 1 | 3 | Exactly one compute profile is provisioned, and it is backed. |
+| 15 | COVERED | 1 | 3 | Every provisioned compute profile is backed by a compute environment that exists and is usable. |
 | 16 | COVERED | 1 | 1 | The compute environment holds no capacity when it is idle. |
 | 17 | COVERED | 1 | 4 | Every record written by this phase carries an S3-attested ChecksumSHA256 and a VersionId. |
 | 18 | GAP | 0 | 6 | The EventBridge rule receives only our queue's events. |
@@ -274,7 +274,8 @@ Supporting tests (8), all executed and passing, cited as evidence rather than as
 
 Scope:
 
-- One of the four the criterion names was exercised, and it is worth saying which rather than letting one refusal read as four. A live submission overrode the compute profile to gpu-1xa10g -- priced in the catalog, backed by nothing -- and admission refused it with reason no_execution_target before submission. An invalid queue, job definition or role has not been submitted to the account; those three are unreachable through the dispatch form, which resolves all three from deployed configuration the submitter never sees.
+- One of the four the criterion names was exercised, and it is worth saying which rather than letting one refusal read as four. A live submission overrode the compute profile to gpu-1xa10g, which on 2026-07-28 was priced in the catalog and backed by nothing, and admission refused it with reason no_execution_target before submission. An invalid queue, job definition or role has not been submitted to the account; those three are unreachable through the dispatch form, which resolves all three from deployed configuration the submitter never sees.
+- THAT PROFILE IS NOW PROVISIONED, so the refusal above is not reproducible by repeating it. Phase 4 promoted gpu-1xa10g and built the compute environment, queue and job definition behind it, which is the outcome the refusal was pointing at rather than a contradiction of it. The evidence still holds because it is a record of something that happened: the capture carries the decision, the reason code and the absence of any Batch job. What stopped being true is only the present tense, and this note exists because nothing else in the bundle would have caught that -- the status guard reads numbered claims, and a sentence describing an account is not one. Reproducing the refusal today needs a profile that is still unprovisioned; the catalog prices ten.
 - The absence of a Batch job is half the claim and it is recorded rather than implied. ListJobs answers one status at a time, so an absence established without naming the statuses searched is an absence established nowhere -- and the case that matters is a refused submission sitting in RUNNABLE, which a search of the terminal statuses would miss. The capture records all seven and the supporting citation fails if it stops.
 - This rests on a committed capture, and a capture is a statement about one moment. Every record is a FreshEvidenceModel, so thirty days after it was taken it stops loading, the cited tests fail and this criterion is a gap again with the gate red. The run does not need repeating -- every object is still in a write-once store -- so what renews it is re-running the capture, which is what the expiry is asking for.
 
@@ -405,14 +406,15 @@ Supporting tests (4), all executed and passing, cited as evidence rather than as
 - `tests/test_phase3_infrastructure.py::test_submit_to_batch_passes_the_request_through_and_names_no_field_of_it`
 - `tests/test_phase3_infrastructure.py::test_the_recorder_role_writes_lineage_and_cannot_make_anything_happen`
 
-### Check 15 — Exactly one compute profile is provisioned, and it is backed.
+### Check 15 — Every provisioned compute profile is backed by a compute environment that exists and is usable.
 
 **Status: COVERED**
 
 Scope:
 
 - Not pilot-blocking, and this is the judgement call in the phase most worth arguing with. The harmful half of this seam -- refusing a manifest that names a profile with nowhere to run, before anything is submitted -- belongs to the rejection check above and is marked there. What is left here is placement: a profile that is priced and not backed produces a job that cannot start, which is visible, bills nothing while it waits, and is bounded by the queue. Availability rather than harm.
-- Two claims, and the supporting citations carry the first: exactly one profile is provisioned in the catalog and exactly one target backs it, compared from both files. The proving citation carries the second -- that the environment named actually exists, is VALID and ENABLED, and is the one the job queue routes to. A template creating a compute environment is a request; an environment can be created and land INVALID, in which case every job queued to it waits forever with no error anywhere.
+- Two claims, and the supporting citations carry the first: the set of profiles the catalog marks provisioned is exactly the set of profiles the execution targets back, compared from both files in both directions. The proving citation carries the second -- that the environment named actually exists, is VALID and ENABLED, and is the one the job queue routes to. A template creating a compute environment is a request; an environment can be created and land INVALID, in which case every job queued to it waits forever with no error anywhere.
+- The proving citation reads Phase 3's committed capture, so it speaks for the CPU environment and for no other. Phase 4's GPU environment is covered by the supporting config-to-config comparison and by the deploy-time verification, and not yet by a capture of its own. That is the honest limit of this criterion after a second profile was promoted.
 - A VALID environment is still not evidence a job can run, which is why criterion 1 is separate from this one and rests on a container having actually reached SUCCEEDED.
 - This rests on a committed capture, and a capture is a statement about one moment. Every record is a FreshEvidenceModel, so thirty days after it was taken it stops loading, the cited tests fail and this criterion is a gap again with the gate red. The run does not need repeating -- every object is still in a write-once store -- so what renews it is re-running the capture, which is what the expiry is asking for.
 
@@ -539,7 +541,7 @@ Supporting tests (6), all executed and passing, cited as evidence rather than as
 - `tests/test_phase3_deployer_role.py::test_the_network_scope_can_change_egress_and_can_never_open_a_port`
 - `tests/test_phase3_deployer_role.py::test_the_batch_scopes_cover_all_three_resource_types_the_stack_creates`
 - `tests/test_phase3_deployer_role.py::test_iam_pass_role_is_still_the_only_iam_action_the_whole_role_holds`
-- `tests/test_phase3_deployer_role.py::test_pass_role_names_four_whole_roles_and_never_a_prefix`
+- `tests/test_phase3_deployer_role.py::test_pass_role_names_whole_roles_and_never_a_prefix`
 - `tests/test_phase3_ec2_authorization.py::test_the_declared_action_list_matches_the_probes_actually_built`
 
 ### Check 21 — The networking the compute environment uses is recorded, with its terms.

@@ -118,21 +118,34 @@ Resources:
         detail-type:
           - Batch Job State Change
         detail:
-          # SCOPED TO OUR QUEUE, and this filter is not a tidiness measure. This is a shared
+          # SCOPED TO OUR QUEUES, and this filter is not a tidiness measure. This is a shared
           # account and other teams' Batch usage is plausible at any time. An account-wide
           # aws.batch pattern would deliver foreign job state changes to our recorder, which
           # would then try to read a foreign job name as one of our run ids -- and write, or
           # fail to write, lineage records about somebody else's work. Filtering is cheaper
           # than defending against it downstream.
           #
-          # The queue is named here as a full ARN and the queue itself is created in
-          # infra/batch-compute.yaml, with nothing connecting the two. Renaming it there
-          # without changing this line is the worst failure in this phase because it
-          # half-works: jobs keep running and no lifecycle event, attempt or result record
-          # is ever written again. tests/test_phase3_infrastructure.py reads both files and
-          # compares them for exactly this reason.
+          # Each queue is named here as a full ARN and each is created in a compute template,
+          # with nothing connecting the two. Renaming one there without changing this list is
+          # the worst failure in the phase because it half-works: jobs keep running and no
+          # lifecycle event, attempt or result record is ever written again.
+          # tests/test_phase3_infrastructure.py reads all the files and compares them for
+          # exactly this reason.
+          #
+          # TWO ARNS RATHER THAN A SECOND RULE, which is what the Phase 4 plan assumed the
+          # GPU queue would cost. EventBridge matches a list of values as an OR, so a second
+          # queue is one line here. A second rule would need its own dead-letter target and
+          # its own delivery permission in the queue policy above, and would give the same
+          # recorder two independent paths to fall off. One rule, one target, one measured
+          # delivery path, now covering both queues.
+          #
+          # The recorder needs no change. project_batch_event reads the job name as the run
+          # id and never looks at which queue the event came from, so a GPU state change is
+          # projected by the same code that projects a CPU one -- which is the property that
+          # makes the run id the join for both.
           jobQueue:
             - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-cpu
+            - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu
       Targets:
         - Id: lifecycle-queue
           Arn:

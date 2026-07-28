@@ -25,3 +25,21 @@ targets:
     execution_role: sbsandbox-intern-edullm-batch-execution
     workload_role: sbsandbox-intern-edullm-batch-workload
     log_group: /aws/batch/sbsandbox-intern-edullm-cpu
+  # Every field differs from the CPU target above, including the two roles, and that is the
+  # point rather than an accident of naming. infra/iam/batch-gpu-roles.yaml explains why the
+  # GPU path has its own trio: only its execution role reads the W&B secret, and only its
+  # workload role may read an object back, because only a training job resumes from a
+  # checkpoint it wrote.
+  #
+  # Adding this row and setting provisioned: true on gpu-1xa10g are two halves of one change.
+  # Either alone is a contradiction between two files, which
+  # tests/test_phase3_execution.py::test_every_provisioned_profile_is_backed_and_every_target_names_a_provisioned_one
+  # refuses. Whether the queue named here is the queue the templates create is a different
+  # seam, checked in tests/test_phase3_infrastructure.py.
+  - compute_profile: gpu-1xa10g
+    region: us-east-1
+    job_queue: sbsandbox-intern-edullm-gpu
+    job_definition: sbsandbox-intern-edullm-gpu-run
+    execution_role: sbsandbox-intern-edullm-batch-gpu-execution
+    workload_role: sbsandbox-intern-edullm-batch-gpu-workload
+    log_group: /aws/batch/sbsandbox-intern-edullm-gpu
