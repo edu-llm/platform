@@ -651,6 +651,28 @@ def test_every_write_is_conditional_so_a_replay_cannot_overwrite_anything() -> N
     assert all(written["IfNoneMatch"] == "*" for written in store.written)
 
 
+def test_every_write_asks_the_store_to_attest_a_digest_over_what_it_received() -> None:
+    """Mutation: drop ``ChecksumAlgorithm``. This is not hypothetical; it shipped.
+
+    The first run through the whole path wrote three records from this handler, and
+    HeadObject returned a VersionId and no ``ChecksumSHA256`` for every one of them, while
+    the five records the state machine writes each came back attested. The ASL sets
+    ``ChecksumAlgorithm`` on all five and this handler set it on none.
+
+    Nothing anywhere reports it. Omitting the field is not an error, costs nothing at write
+    time, and leaves an object that reads exactly like an attested one until a reader asks
+    for the digest and finds no field -- by which point the bytes it would have attested
+    are the only copy. It fails here rather than there because the deployed bucket cannot
+    supply the algorithm on the writer's behalf and no bucket setting exists that would.
+    """
+    store = RecordingStore()
+
+    handler(sqs_batch(envelope("SUCCEEDED", attempts=[attempt_block()])), store=store)
+
+    assert store.written, "a test over every write must observe at least one"
+    assert all(written["ChecksumAlgorithm"] == "SHA256" for written in store.written)
+
+
 def test_a_redelivered_event_is_refused_by_the_store_and_that_is_success() -> None:
     """Mutation: treat the 412 as a failure.
 

@@ -93,6 +93,7 @@ from edullm_platform.lifecycle_projection import (
 __all__ = [
     "BATCH_ITEM_FAILURES_KEY",
     "BATCH_ITEM_FAILURES_RESPONSE_TYPE",
+    "CHECKSUM_ALGORITHM",
     "CONFLICT_ERROR_CODES",
     "LINEAGE_BUCKET_VARIABLE",
     "OUTPUTS_BUCKET_VARIABLE",
@@ -132,6 +133,19 @@ BATCH_ITEM_FAILURES_RESPONSE_TYPE: Final = "ReportBatchItemFailures"
 IF_NONE_MATCH: Final = "*"
 
 JSON_CONTENT_TYPE: Final = "application/json"
+
+#: Asks S3 to compute and store a SHA-256 over the bytes it received, which HeadObject then
+#: returns under ``ChecksumSHA256``. It is what makes a lineage record verifiable by a
+#: reader who was not there when it was written: the store attests the digest rather than
+#: the writer asserting it.
+#:
+#: Sending it is the writer's job and there is no bucket setting that supplies it. Omitting
+#: it costs nothing at write time, is invisible in every response, and produces an object
+#: that reads exactly like an attested one until somebody asks for the checksum and finds
+#: no field. That is how the first run through this path shipped: the five state machine
+#: writes each set ChecksumAlgorithm in the ASL, this handler did not, and the events, the
+#: attempt and the result came back from HeadObject carrying a VersionId and no digest.
+CHECKSUM_ALGORITHM: Final = "SHA256"
 
 
 class LifecycleEventError(ValueError):
@@ -218,6 +232,7 @@ def _put(store: ObjectStore, *, bucket: str, key: str, record: ContractModel) ->
             # without knowing how it was written.
             Body=canonical_json_bytes(record),
             ContentType=JSON_CONTENT_TYPE,
+            ChecksumAlgorithm=CHECKSUM_ALGORITHM,
             IfNoneMatch=IF_NONE_MATCH,
         )
     except Exception as error:
