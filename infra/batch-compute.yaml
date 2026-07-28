@@ -206,10 +206,16 @@ Resources:
         # The default prints and exits 0 rather than doing nothing, so a job submitted with
         # no overrides proves the image, the pull path and the log stream and changes
         # nothing.
+        #
+        # The last element is quoted, and it has to be. It contains a colon followed by a
+        # space, which unquoted is YAML's mapping syntax -- the element parsed as
+        # {'print("...cpu-run': 'no command override was supplied")'} rather than as a
+        # string, and Batch refused the job definition because Command must be a list of
+        # strings. Single quotes outside so the double quotes Python needs survive.
         Command:
           - python
           - -c
-          - print("sbsandbox-intern-edullm-cpu-run: no command override was supplied")
+          - 'print("sbsandbox-intern-edullm-cpu-run: no command override was supplied")'
         Environment:
           - Name: EDULLM_OUTPUT_BUCKET
             Value: sbsandbox-intern-edullm-outputs
