@@ -778,6 +778,41 @@ def test_the_container_override_keys_are_keys_the_job_definition_declares(
     )
 
 
+def test_the_default_command_is_a_list_of_strings_rather_than_yaml_of_some_other_shape() -> None:
+    """Mutation: unquote the ``print(...)`` element, which is how it was first written.
+
+    That element contains a colon followed by a space, and unquoted that is YAML's mapping
+    syntax rather than text. It parsed as
+    ``{'print("...cpu-run': 'no command override was supplied")'}`` -- a dict, in a property
+    Batch requires to be a list of strings -- and the stack was refused at change set
+    creation with ``AWS::EarlyValidation::PropertyValidation`` and no indication of which
+    property was wrong.
+
+    The test above this one already read ``Command`` and did not notice, because it compares
+    the override *keys* against the definition's keys and never looks at a value. A key
+    whose value is the wrong type is exactly the gap between the two, which is why this is a
+    separate test rather than an extra assertion there.
+
+    Types rather than contents: what the default command prints is not a contract, but that
+    the three elements are strings is.
+    """
+    container = properties_of(COMPUTE_PATH, "AWS::Batch::JobDefinition")["ContainerProperties"]
+    command = container["Command"]
+
+    assert isinstance(command, list) and command
+    offenders = {
+        index: type(element).__name__
+        for index, element in enumerate(command)
+        if not isinstance(element, str)
+    }
+    assert not offenders, f"Command elements must be strings; these are not: {offenders}"
+
+    # Environment is the other list here whose entries carry free text, and a colon in an
+    # unquoted Value would fail the same way.
+    for entry in container["Environment"]:
+        assert isinstance(entry["Name"], str) and isinstance(entry["Value"], str)
+
+
 def test_the_binding_record_the_state_machine_writes_is_the_contract_it_claims_to_be() -> None:
     """Reads the ASL and the contract. Mutation: add a field to ``BatchJobBinding``.
 
