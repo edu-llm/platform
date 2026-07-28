@@ -231,7 +231,12 @@ Resources:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupName: sbsandbox-intern-edullm-batch
-      GroupDescription: Egress-only group for the CPU Batch compute environment's container hosts.
+      # No apostrophe, and that is a constraint rather than a style choice. EC2 accepts a
+      # group description only from a-zA-Z0-9. _-:/()#,@[]+=&;{}!$* -- an apostrophe is
+      # outside it, and CreateSecurityGroup returns InvalidParameterValue naming the whole
+      # valid set. The first deploy of this stack failed there, after the VPC and before the
+      # subnets, and rolled the lot back.
+      GroupDescription: Egress-only group for the CPU Batch compute environment container hosts.
       VpcId:
         Ref: BatchVpc
       SecurityGroupEgress:
