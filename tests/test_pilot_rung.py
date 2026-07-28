@@ -629,9 +629,15 @@ def test_the_shipped_phases_reach_the_verdicts_their_criteria_support() -> None:
     assert verdicts["Phase 2"].readiness is PilotReadiness.BLOCKED
     assert verdicts["Phase 2"].unmet_criteria == ("2", "6", "7", "9", "12", "14", "19")
     assert verdicts["Phase 3"].readiness is PilotReadiness.BLOCKED
-    # Every criterion Phase 3 marks is a gap, so the rung is closed rather than partly
-    # open, and the first container run is what moves most of them at once.
-    assert verdicts["Phase 3"].unmet_criteria == verdicts["Phase 3"].blocking_criteria
+    # Phase 3's rung is now partly open rather than closed, and naming which five are left
+    # is the point. Four completed runs moved eight of the thirteen marked criteria at
+    # once; what remains is a duplicate submission, a committed capture of the denial
+    # matrix, the workload matrix from inside a container, the two Phase 2 roles the
+    # validator and state machine hold, and an inventory of the whole lineage store.
+    assert verdicts["Phase 3"].unmet_criteria == ("10", "12", "13", "14", "18")
+    assert set(verdicts["Phase 3"].unmet_criteria) < set(
+        verdicts["Phase 3"].blocking_criteria
+    ), "a strict subset, or the run evidence has stopped counting for anything"
 
 
 def test_the_phases_that_are_blocked_say_so_in_words_a_reader_can_act_on() -> None:

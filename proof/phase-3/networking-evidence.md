@@ -57,6 +57,17 @@ Recorded per subnet rather than as a list of ids, because the fact that matters 
 
 Not borrowed in the end. This VPC was the interim candidate while us-east-1 sat at 5/5 VPCs; the L-F678F1CE increase to 10 was filed and applied on 2026-07-27 and confirmed by creating and deleting a VPC, so Phase 3 builds its own in infra/batch-network.yaml. Recorded here because it is the VPC these probes named, and a probe needs a VPC that exists.
 
-## What is still open
+## What the compute environment actually landed on
 
-The network stack is not deployed. Nothing here records the VPC, subnet or security-group ids the compute environment actually uses, because there is no compute environment, and criterion 21 is a gap for exactly that reason. The measurements above describe the account and the candidate placement these probes were aimed at; they are premises rather than a description of a running system.
+Everything above is a premise: it describes the account and the placement these probes were aimed at, measured before any stack was applied. The table below is different in kind -- it is read back from the deployed compute environment, so it says where this project's jobs actually run rather than where a template asked for them to. A stack applied from a laptop can land somewhere other than its template says, and a record copied from the template would agree with itself forever.
+
+| fact | value |
+| --- | --- |
+| compute environment | `sbsandbox-intern-edullm-cpu` |
+| status | VALID, ENABLED |
+| VPC | `vpc-0622b8d314ff5f800` |
+| subnets | `subnet-01f4bf9a051404a37`, `subnet-08792525c62ba31c0`, `subnet-0a4235fb98b63930f`, `subnet-0bbe2b7870da13713`, `subnet-0fd5ed8accae254dc` |
+| security groups | `sg-087218d8c87aa8576` |
+| instance types | `c7i.8xlarge` |
+| vCPUs, min / desired / max | 0 / 0 / 128 |
+| observed | 2026-07-28 |

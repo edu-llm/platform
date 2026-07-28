@@ -2,49 +2,53 @@
 
 Phase: phase-3
 Bundle schema version: 1
-Source commit: 05bf389d1af8d25d5e069c01979bbce795b99d54
-Generated: 2026-07-28T15:37:04+00:00
+Source commit: 2cbc0e0f10bce90d9581e61f02bcfd84413d2e6a
+Generated: 2026-07-28T18:11:13+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 3 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase3_proof.py` at generation time. It is not done, and the Result table below says by how much.
 
-**Read this first.** Phase 3's claim is that one manifest becomes one container that runs on AWS Batch and lands its records in lineage. The software for that is built and tested. None of it has been deployed, and no Batch job has ever run in this account, because Wave 5 -- the laptop IAM stacks, the CI stacks and the live matrix -- is held. Seven of the documents below are therefore empty with a reason in each, and the Result table shows how few criteria that leaves standing.
+**Read this first.** Phase 3's claim is that one manifest becomes one container that runs on AWS Batch and lands its records in lineage. That has happened. Four submissions have gone from GitHub through OIDC, admission, Batch and EventBridge to S3: one succeeded, one exited non-zero deliberately, one was stopped by its own timeout, and one was refused before anything could be launched. What they left behind is captured and committed, and the checks that rest on it cite tests that read those records rather than describing what a run would show.
+
+What is not done is the other end of a run's life. Nothing in this account can stop a job once it has started, so the three cancellation checks need a component built before they need a run. Four more need a run aimed at them, and two need a shape of capture the per-run records cannot produce. The Result table below says which.
 
 ## Contents
 
 - `negative-case-matrix.md` — each of the 22 Phase 3 acceptance criteria mapped to the tests cited for it, by node id, with every gap stated. Read this one first.
 - `measurement-method.md` — the two probes this phase depends on and the controls that make them believable. Included because an earlier revision of the plan opened with a confidently wrong finding from an uncontrolled simulation, and the correction is worth less than the method that caught it.
 - `networking-evidence.md` — the dry-run authorization matrix for both regions, the VPC quota and its increase, the availability zones, and whose network the compute environment will run on.
-- `batch-denial-matrix.md` — the two matrices, what each probe is aimed at so a permitted call changes nothing, and what choosing a probe has cost. Neither has run.
+- `batch-denial-matrix.md` — the two matrices, what each probe is aimed at so a permitted call changes nothing, and what choosing a probe has cost. The admission matrix has run against real sessions; the workload one has not.
 - `open-decisions.md` — the question this phase answered and moved to where it is enforced, and the ones still open.
 - `serialization-goldens.md` and `serialization-goldens.json` — the recorded canonical digest of what each Phase 3 role template grants, and the tripwire that fails when one drifts.
 - `schema-compatibility.md` — the contract models Phase 3 added, with their structural digests.
 - `unit-test-report.md` — summarised pass and fail counts, per module and for the whole suite, with the commands to reproduce them.
-- `batch-execution-evidence.md`, `log-stream-evidence.md`, `event-evidence.md`, `lineage-record-evidence.md`, `cancellation-and-timeout-evidence.md`, `deployed-role-drift.md` and `rollback-evidence.md` — empty. Each says what it records, what would fill it, and which criteria are waiting on it.
+- `batch-execution-evidence.md`, `log-stream-evidence.md`, `lineage-record-evidence.md`, `cancellation-and-timeout-evidence.md` and `deployed-role-drift.md` — what four completed runs left behind, rendered from the captures committed under `fixtures/evidence/phase-3/`.
+- `rollback-evidence.md` — the rollback rehearsal, which has not been performed. It says so, and says why nothing in the acceptance list is waiting for it.
+- `event-evidence.md` — empty. It says what it records, what would fill it, and which criteria are waiting on it.
 
 ## Result
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3229 |
-| suite tests executed | 3067 |
-| suite passed | 3067 |
+| suite tests collected | 3265 |
+| suite tests executed | 3103 |
+| suite passed | 3103 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
-| matrix node ids executed | 274 |
-| matrix node ids passed | 274 |
+| matrix node ids executed | 309 |
+| matrix node ids passed | 309 |
 | matrix node ids failed | 0 |
 | phase criteria | 22 |
-| criteria COVERED | 2 (20, 22) |
+| criteria COVERED | 13 (1, 2, 3, 4, 8, 9, 15, 16, 17, 19, 20, 21, 22) |
 | criteria DEFERRED | 0 |
-| criteria GAP (each one fails the gate) | 20 (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 21) |
+| criteria GAP (each one fails the gate) | 9 (5, 6, 7, 10, 11, 12, 13, 14, 18) |
 | role templates with recorded digests | 4 |
 | roles compared to a capture | 0 |
 | Batch jobs run | 0 |
 | lineage records written by this phase | 0 |
 | denial matrices executed | 0 |
 | open decisions recorded | 0 |
-| contract models added by this phase | 18 |
+| contract models added by this phase | 24 |
 
 ## Verification commands
 
@@ -59,7 +63,7 @@ uv run python tools/validate_phase3.py
 uv run python tools/build_phase3_proof.py
 ```
 
-`tools/validate_phase3.py` exits 1 against this tree. Phase 3 is not accepted: criteria 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 21 are GAPs. That is the honest state of the phase, not a broken gate. Read the Gaps section of `negative-case-matrix.md` for what closes it.
+`tools/validate_phase3.py` exits 1 against this tree. Phase 3 is not accepted: criteria 5, 6, 7, 10, 11, 12, 13, 14, 18 are GAPs. That is the honest state of the phase, not a broken gate. Read the Gaps section of `negative-case-matrix.md` for what closes it.
 
 ## Inputs measured
 
@@ -85,14 +89,17 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 
 ## Known limitations
 
-- Nothing has been deployed and nothing has run. This is the limitation every other one below is a consequence of: no Phase 3 stack has been applied to the account, no Batch job has ever run in it, and no lifecycle record exists. Seven documents in this bundle are therefore empty with a reason rather than absent.
-- Check 1 -- that a valid run reaches SUCCEEDED -- is a gap, and it is the phase's central claim. A reviewer should read this bundle as a description of a system that has been built and not yet operated.
-- Check 20 is covered on a committed CloudFormation template, which is what the repository asks the account for rather than what the account holds. The four Phase 3 roles have no capture at all, so the comparison that catches a role widened in the console does not run for any of them, and check 14 is a gap for that reason.
-- Check 22 is covered because the open-decisions entry is gone and the answer is enforced in code and configuration this repository commits. Nothing here says the enforcement has ever refused a real submission.
-- A compute environment reporting VALID would not be evidence that a job can run. Batch does not fail a job it cannot place; it waits. Only a job observed in RUNNING and then SUCCEEDED establishes placement, egress and the image pull, which is why checks 1 and 15 are separate.
-- The account measurements this bundle's networking and method documents are rendered from expire thirty days after they were observed, and this generator refuses to build once they do. Nothing about the account will have changed on that date; what will have lapsed is anybody's knowledge of it.
-- The recorded role digests are over four templates nobody has deployed. They catch a template widened between now and the deploy, and they say nothing about the account, because there is no account state to say anything about yet.
-- The two denial matrices are written and have never run. Until a real session answers them, every claim about what these roles cannot do rests on a document rather than on a refusal.
+- Everything live here rests on four runs, and four is a small number. One succeeded, one exited non-zero deliberately, one was stopped by its timeout and one was refused before submission. That is enough to establish that each path works once; it is not a sample from which anything about reliability follows.
+- Check 1 -- that a valid run reaches SUCCEEDED -- is covered, and it is the phase's central claim. A reviewer should read this bundle as a description of a system that has been operated a handful of times rather than one in service.
+- This phase still cannot stop a job it has started. No component in the account holds `batch:TerminateJob`, so checks 5, 6 and 7 are a gaps that need a component built rather than a run taken. What bounds the exposure is the mandatory attempt duration, which has been observed stopping a real job.
+- Check 20 is covered on a committed CloudFormation template, which is what the repository asks the account for rather than what the account holds. The four Phase 3 roles are now captured from the account and compared, so that gap is closed for them; the two roles the validator and the state machine hold belong to Phase 2's registry and are not, which is why check 14 is a gap.
+- Check 22 is covered because the open-decisions entry is gone and the answer is enforced in code and configuration this repository commits. Every run so far named an image whose findings are carried by a recorded exception, so the gate has been evaluated and passed and has never had to refuse anything.
+- A compute environment reporting VALID is not on its own evidence that a job can run. Batch does not fail a job it cannot place; it waits. Only a job observed in RUNNING and then SUCCEEDED establishes placement, egress and the image pull, which is why checks 1 and 15 are separate and are cited separately.
+- Three lineage bindings will never load. They were written before the `"Result": null` fix in the admission state machine and carry an admission payload where a fan-out size belongs; the store is write-once, so they are permanent. The runs holding one are reported as not traceable end to end rather than as nearly traceable, and the corrupt bodies are described in the attestation rather than committed, because they carry an approver's name and a full image scan.
+- The captures every live check rests on expire thirty days after they were observed, and this generator refuses to build once they do. Nothing about the runs will have changed on that date -- every object is still in a write-once store -- and what will have lapsed is anybody's knowledge of the account they are in.
+- The admission denial matrix has run against a real session and its result lives in a GitHub Actions artifact with a thirty-day retention, which is somewhere this repository cannot cite. The workload matrix has not run at all: it executes inside the container, and no command run there has ever invoked it. So every claim about what the workload role cannot do rests on a policy, and check 13 is a gap.
+- The deployed workload role permits writes under `teams/*/runs/*` rather than under one team's prefix, so it can write into any team's output location. The template agrees, so this is deliberate rather than drift, and for a single-team pilot nothing is misattributed -- but the cross-team isolation the `teams/` segment exists to make expressible is not expressed yet.
+- The rollback rehearsal has not been performed. It is written down and no acceptance check is waiting on it, which is exactly the condition in which work stops being done and then stops being remembered.
 - The nested verification run excludes every test module that builds a proof bundle (tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py), because those tests invoke a generator and would recurse. They run in the reviewer's own `uv run pytest -q`.
 - This bundle describes the working tree at generation time, which may differ from the commit named above. The input digests recorded in the bundle index identify exactly what was measured.
 - Nothing forces this bundle to stay current. It is a snapshot, and its counts go stale as soon as a test is added or a template changes. Re-run `uv run python tools/build_phase3_proof.py` and read the diff before accepting a phase gate.

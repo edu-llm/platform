@@ -1,0 +1,13 @@
+{
+  "environment": "sandbox",
+  "lines": [
+    "edullm smoke ok 3.12.13 (main, Jul 14 2026, 02:09:00) [GCC 14.2.0]"
+  ],
+  "log_group_name": "/aws/batch/sbsandbox-intern-edullm-cpu",
+  "log_stream_name": "cpu-run/default/d64383e765184601b7c5bcf80a9de736",
+  "observed_at": "2026-07-28T16:58:10Z",
+  "region": "us-east-1",
+  "run_id": "run_019fa96f-8f10-705a-a7a9-69c42eafce16",
+  "source": "aws",
+  "truncated": false
+}

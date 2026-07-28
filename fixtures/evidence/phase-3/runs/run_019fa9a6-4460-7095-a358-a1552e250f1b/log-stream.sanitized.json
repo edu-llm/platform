@@ -1,0 +1,13 @@
+{
+  "environment": "sandbox",
+  "lines": [
+    "edullm runaway begins"
+  ],
+  "log_group_name": "/aws/batch/sbsandbox-intern-edullm-cpu",
+  "log_stream_name": "cpu-run/default/981f34c19cad4efca2de0c41a514590d",
+  "observed_at": "2026-07-28T17:15:22Z",
+  "region": "us-east-1",
+  "run_id": "run_019fa9a6-4460-7095-a358-a1552e250f1b",
+  "source": "aws",
+  "truncated": false
+}

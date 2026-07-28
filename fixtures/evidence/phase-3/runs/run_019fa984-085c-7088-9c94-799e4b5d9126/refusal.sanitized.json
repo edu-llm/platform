@@ -1,0 +1,22 @@
+{
+  "decision_accepted": false,
+  "decision_detail": "The submission was authorized and has nowhere to run: unprovisioned_compute_profile. Compute profile 'gpu-1xa10g' is registered and priced, and no compute environment deployed by this platform backs it.",
+  "decision_reason": "no_execution_target",
+  "environment": "sandbox",
+  "execution_error": "AdmissionRejected",
+  "execution_status": "FAILED",
+  "matching_batch_job_ids": [],
+  "observed_at": "2026-07-28T16:50:54Z",
+  "region": "us-east-1",
+  "run_id": "run_019fa984-085c-7088-9c94-799e4b5d9126",
+  "searched_job_statuses": [
+    "SUBMITTED",
+    "PENDING",
+    "RUNNABLE",
+    "STARTING",
+    "RUNNING",
+    "SUCCEEDED",
+    "FAILED"
+  ],
+  "source": "aws"
+}

@@ -1,0 +1,17 @@
+{
+  "assumed_at": "2026-07-28T16:55:16Z",
+  "environment": "sandbox",
+  "event_id": "8d4b359a-9c93-43e2-820a-c5ddfe9d77a0",
+  "event_name": "AssumeRoleWithWebIdentity",
+  "event_source": "sts.amazonaws.com",
+  "expires_at": "2026-07-28T17:10:16Z",
+  "observed_at": "2026-07-28T17:15:22Z",
+  "oidc_audience": "sts.amazonaws.com",
+  "oidc_issuer": "token.actions.githubusercontent.com",
+  "oidc_subject": "repo:edu-llm@306859726/platform@1311508598:environment:run-approval-lead",
+  "region": "us-east-1",
+  "role_name": "sbsandbox-intern-edullm-admission",
+  "session_name": "GitHubActions",
+  "source": "aws",
+  "status": "ok"
+}

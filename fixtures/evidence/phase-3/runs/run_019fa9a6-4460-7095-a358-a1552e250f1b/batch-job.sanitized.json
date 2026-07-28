@@ -1,0 +1,18 @@
+{
+  "attempt_count": 1,
+  "batch_job_id": "56b43cb9-abcc-4f74-bbf5-6f61f12d1981",
+  "batch_job_name": "run_019fa9a6-4460-7095-a358-a1552e250f1b",
+  "container_exit_code": null,
+  "environment": "sandbox",
+  "job_definition_name": "sbsandbox-intern-edullm-cpu-run:1",
+  "job_queue_name": "sbsandbox-intern-edullm-cpu",
+  "log_stream_name": "cpu-run/default/981f34c19cad4efca2de0c41a514590d",
+  "observed_at": "2026-07-28T17:15:22Z",
+  "region": "us-east-1",
+  "run_id": "run_019fa9a6-4460-7095-a358-a1552e250f1b",
+  "source": "aws",
+  "started_at": "2026-07-28T16:58:14.941000Z",
+  "status": "FAILED",
+  "status_reason": "Job attempt duration exceeded timeout",
+  "stopped_at": "2026-07-28T17:01:48.202000Z"
+}

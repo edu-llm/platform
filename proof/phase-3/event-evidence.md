@@ -1,6 +1,6 @@
 # Phase 3 EventBridge delivery evidence
 
-**This document is empty, and it is empty for one reason.** Wave 5 is held: no Phase 3 stack has been applied to this account, no compute environment or job queue exists, and no Batch job has ever run here. There is nothing to record. It is generated empty rather than omitted because a bundle missing a document reads as a phase with fewer claims, and a reviewer counting what is here should count this too.
+**This document is empty, and it is empty because nothing has produced what it records.** The stacks are applied and four runs have completed, so the reason is no longer that the phase is undeployed -- it is that the observations this document exists to hold are not observations an ordinary run produces. What would produce them is listed below. It is generated empty rather than omitted because a bundle missing a document reads as a phase with fewer claims, and a reviewer counting what is here should count this too.
 
 ## What this document records
 

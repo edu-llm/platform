@@ -1,6 +1,6 @@
 # Phase 3 schema compatibility report
 
-The eighteen contract models Phase 3 added. The structural digest is `sha256` over the model's JSON schema with sorted keys, so it changes when a field is added, removed, retyped or reconstrained, and does not change when unrelated code moves.
+The 24 contract models Phase 3 added. The structural digest is `sha256` over the model's JSON schema with sorted keys, so it changes when a field is added, removed, retyped or reconstrained, and does not change when unrelated code moves.
 
 Phase 3 also exported six models that Phase 0 defined and nothing had ever constructed: `LogicalRun`, `SchedulerAttempt`, `LifecycleEvent`, `CheckpointManifest`, `ResultManifest` and `BatchJobBinding`. They are not repeated here -- the repository-wide inventory is in `proof/phase-0/schema-compatibility.md`, and a second copy is a copy that goes stale -- but the export is what makes them reviewable by somebody who does not read Python.
 
@@ -18,8 +18,14 @@ Phase 3 also exported six models that Phase 0 defined and nothing had ever const
 | ActionVerdict | edullm_platform.phase3_evidence | record | unversioned | no | sha256:f52eda88bcd1ab4b8229db05097df2adf8120549ac32c8d9c5dedeff17b3a83f |
 | AuthorizationControl | edullm_platform.phase3_evidence | record | unversioned | no | sha256:30fab671ec96cf057ef841200b009f492cb19d3d023dbc0fc0cf28837103cb23 |
 | BatchInventory | edullm_platform.phase3_evidence | record | unversioned | no | sha256:c7a9bf1aa4905b1ba9991f59ff32e66417fa672cc298d18557e6156b627f9c06 |
+| BatchJobEvidence | edullm_platform.phase3_evidence | record | unversioned | no | sha256:0b612a13e37736e59976ce179caa61b94338fa7ca03db34329fe4061728198ee |
+| ComputeEnvironmentEvidence | edullm_platform.phase3_evidence | record | unversioned | no | sha256:dff8918f2822a1b1167b27b646d53c11fdb6cb5ee94f6700df6d38ab3a6e3d4a |
+| LineageObjectAttestation | edullm_platform.phase3_evidence | record | unversioned | no | sha256:e0803e81aadaa05ab566ea5dbe5adfe12022721a80fe3df45154a54ccb8d8f23 |
+| LogStreamEvidence | edullm_platform.phase3_evidence | record | unversioned | no | sha256:f7501f77b8ff258d880fe942207bf73880518870642703c6cb41a7e98c2cbd26 |
 | NetworkPlacement | edullm_platform.phase3_evidence | record | unversioned | no | sha256:0496bd671bdc88534cbbb467b95abcad1456cafb8ae2c1b771a77041afe6eb24 |
+| RefusedRunEvidence | edullm_platform.phase3_evidence | record | unversioned | no | sha256:79763c54cb9c9ff620675ae391fa65216ebfc61417d078a22ce36e7dafce2ee8 |
 | RegionAuthorization | edullm_platform.phase3_evidence | record | unversioned | no | sha256:c68439705e4f321d2950f16ba1764e01647ade1cadbe42aa0f4800368acfad60 |
+| RunLineageAttestation | edullm_platform.phase3_evidence | record | unversioned | no | sha256:cab19b085a23ba42f91f173ff76b0c8506d3982f90c0c5d2468148232075d27a |
 | ServiceLinkedRoleRecord | edullm_platform.phase3_evidence | record | unversioned | no | sha256:84e62d941950110a6fee3edd6b455c3e377e8a6bb12234ff8eb9ff448d861402 |
 | SubnetOffering | edullm_platform.phase3_evidence | record | unversioned | no | sha256:ab6f5c0b1a06a0a71328ecc73605f226a33c407a626d0cddd55fd337eccb8575 |
 | VpcQuotaRecord | edullm_platform.phase3_evidence | record | unversioned | no | sha256:43cd7c39a0e005ea23e5682e8e39b63473756d4c4cb05dcf7f24dc4b114bb994 |

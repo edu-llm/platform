@@ -1,21 +1,18 @@
 # Phase 3 deployed-role drift
 
-**This document is empty, and it is empty for one reason.** Wave 5 is held: no Phase 3 stack has been applied to this account, no compute environment or job queue exists, and no Batch job has ever run here. There is nothing to record. It is generated empty rather than omitted because a bundle missing a document reads as a phase with fewer claims, and a reviewer counting what is here should count this too.
+The four roles this phase creates, captured from the account and compared to the templates that declare them. This is the only check in the bundle that can see a role widened in a console: every other test of these roles reads a committed template, which is what the account was asked for rather than what it holds.
 
-## What this document records
+| role | template | verdict |
+| --- | --- | --- |
+| `sbsandbox-intern-edullm-batch-execution` | `infra/iam/batch-roles.yaml` | ok |
+| `sbsandbox-intern-edullm-batch-instance` | `infra/iam/batch-roles.yaml` | ok |
+| `sbsandbox-intern-edullm-batch-workload` | `infra/iam/batch-roles.yaml` | ok |
+| `sbsandbox-intern-edullm-lifecycle-lambda` | `infra/iam/lifecycle-lambda-role.yaml` | ok |
 
-The four new roles and the two amendments, compared against the templates that declare them.
+## What this does not cover
 
-## What would fill it
+Two roles the checks about separation of authority are actually about are not here. `sbsandbox-intern-edullm-admission-lambda` and `sbsandbox-intern-edullm-admission-states` are registered in `PHASE2_ROLE_TEMPLATES`, so a capture of them belongs to Phase 2's evidence and Phase 2's freshness window rather than being copied here. Until they are captured, the claim that the validator could not have submitted the job rests on a template.
 
-- The four Phase 3 roles deployed from a laptop, then captured with `tools/capture_phase3_evidence.py` and committed.
-- The two amended roles re-captured. The Phase 1 deployer capture is behind its template today and the difference is recorded as a pending amendment in `edullm_platform.pending_amendments`; that record has to be deleted in the same change as the re-capture, because its findings are compared for equality.
+A policy declining to permit an action is also not AWS refusing one. The workload role's deployed policy grants no lineage write and no way to start anything, and that is what these captures establish; the denial matrix is the only thing that shows a call being turned down, and the workload half of it has not run.
 
-## Criteria waiting on it
-
-| criterion | status today |
-| --- | --- |
-| 13 | a gap |
-| 14 | a gap |
-
-Each of those is recorded in `src/edullm_platform/phase3_criteria.py` with the same account of what is missing, and `uv run python tools/validate_phase3.py` reports it. This document and that definition are two views of one fact rather than two claims.
+One thing these captures did find, recorded here rather than left for a later phase to discover: the deployed workload role permits `s3:PutObject` under `teams/*/runs/*` rather than under one team's prefix. The template agrees, so it is deliberate rather than drift, and for a single-team pilot nothing is misattributed -- but the cross-team isolation the `teams/` segment exists to make expressible is not expressed yet.

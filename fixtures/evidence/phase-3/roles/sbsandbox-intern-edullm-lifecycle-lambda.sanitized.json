@@ -68,7 +68,7 @@
     }
   ],
   "max_session_duration_seconds": 3600,
-  "observed_at": "2026-07-27T21:36:20Z",
+  "observed_at": "2026-07-28T16:05:42Z",
   "permissions_boundary_policy_name": "InternSandboxBoundary",
   "role_name": "sbsandbox-intern-edullm-lifecycle-lambda",
   "source": "aws",

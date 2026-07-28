@@ -1,20 +1,49 @@
 # Phase 3 log stream evidence
 
-**This document is empty, and it is empty for one reason.** Wave 5 is held: no Phase 3 stack has been applied to this account, no compute environment or job queue exists, and no Batch job has ever run here. There is nothing to record. It is generated empty rather than omitted because a bundle missing a document reads as a phase with fewer claims, and a reviewer counting what is here should count this too.
+The stream each job recorded, fetched back and returning the line its container printed. The stream and not the group: a group name reads as complete and resolves to every job on the queue, so a record carrying one looks healthy and locates nothing.
 
-## What this document records
+The lines are reproduced here because these are smoke commands whose output this repository wrote. That is a deliberate exception to D8's rule that references travel rather than contents, and it does not generalise: a research workload's stdout is the least predictable text this platform handles and belongs behind a reference.
 
-The CloudWatch log group and stream reference for each job, and the retrieved line proving the stream resolves. References rather than contents, per D8: the lineage store is immutable and a workload's stdout is the least predictable text this platform handles.
+## run_019fa73d-be37-7066-984b-a4bacf194f49
 
-## What would fill it
-
-- The log stream name recorded on a captured binding, fetched back and returning the line the container printed.
-
-## Criteria waiting on it
-
-| criterion | status today |
+| fact | value |
 | --- | --- |
-| 2 | a gap |
-| 19 | a gap |
+| log group | `/aws/batch/sbsandbox-intern-edullm-cpu` |
+| log stream | `cpu-run/default/462480fa644f4112a85e292d07b0d3b6` |
+| lines retrieved | 1 |
+| truncated | no |
 
-Each of those is recorded in `src/edullm_platform/phase3_criteria.py` with the same account of what is missing, and `uv run python tools/validate_phase3.py` reports it. This document and that definition are two views of one fact rather than two claims.
+```
+edullm deliberate failure
+```
+
+## run_019fa96f-8f10-705a-a7a9-69c42eafce16
+
+| fact | value |
+| --- | --- |
+| log group | `/aws/batch/sbsandbox-intern-edullm-cpu` |
+| log stream | `cpu-run/default/d64383e765184601b7c5bcf80a9de736` |
+| lines retrieved | 1 |
+| truncated | no |
+
+```
+edullm smoke ok 3.12.13 (main, Jul 14 2026, 02:09:00) [GCC 14.2.0]
+```
+
+## run_019fa984-085c-7088-9c94-799e4b5d9126
+
+Refused before submission, so no container ran and no stream exists.
+
+## run_019fa9a6-4460-7095-a358-a1552e250f1b
+
+| fact | value |
+| --- | --- |
+| log group | `/aws/batch/sbsandbox-intern-edullm-cpu` |
+| log stream | `cpu-run/default/981f34c19cad4efca2de0c41a514590d` |
+| lines retrieved | 1 |
+| truncated | no |
+
+```
+edullm runaway begins
+```
+
