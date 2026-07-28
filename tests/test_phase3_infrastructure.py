@@ -29,6 +29,7 @@ only because the batch size happens to be one.
 from __future__ import annotations
 
 import json
+import string
 from pathlib import Path
 from typing import Any
 
@@ -468,6 +469,29 @@ def test_the_security_group_allows_egress_and_no_ingress_at_all() -> None:
     # visible; omitting it would leave the same access with nothing to read.
     assert properties["SecurityGroupEgress"]
     assert all(rule["IpProtocol"] == "tcp" for rule in properties["SecurityGroupEgress"])
+
+
+def test_the_security_group_description_uses_only_characters_ec2_accepts() -> None:
+    """Mutation: write an apostrophe in the description, as the first version did.
+
+    EC2 accepts a security group description only from ``a-zA-Z0-9. _-:/()#,@[]+=&;{}!$*``.
+    An apostrophe -- the obvious way to write "the compute environment's hosts" -- is not in
+    that set, and nothing catches it before the account does: the description is a plain
+    string to YAML, and ``cloudformation validate-template`` checks that a document is a
+    template rather than that a property is valid, so it passes too.
+
+    This cost a deploy. ``CreateSecurityGroup`` returned ``InvalidParameterValue`` partway
+    into the network stack, which cancelled the five subnets, the route table and the
+    gateway behind it and rolled the whole stack back to ``ROLLBACK_COMPLETE`` -- a state
+    that then blocks the stack name until somebody deletes it by hand. The failure is
+    trivial and the recovery is not, which is exactly the shape worth a test.
+    """
+    permitted = set(string.ascii_letters + string.digits + ". _-:/()#,@[]+=&;{}!$*")
+    description = properties_of(NETWORK_PATH, "AWS::EC2::SecurityGroup")["GroupDescription"]
+
+    assert len(description) < 256
+    rejected = sorted(set(description) - permitted)
+    assert not rejected, f"EC2 refuses these characters in a group description: {rejected}"
 
 
 # --------------------------------------------------------------------------------------
