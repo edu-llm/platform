@@ -7,7 +7,7 @@ Both Phase 1 roles were created once from a laptop and neither is redeployed by 
 | role | template | inline policies | max session (s) |
 | --- | --- | --- | --- |
 | sbsandbox-intern-edullm-ecr-publisher | `infra/iam/ecr-publisher-role.yaml` | 1 | 3600 |
-| sbsandbox-intern-edullm-infra-deployer | `infra/iam/infra-deployer-role.yaml` | 2 | 3600 |
+| sbsandbox-intern-edullm-infra-deployer | `infra/iam/infra-deployer-role.yaml` | 3 | 3600 |
 
 ## What is reported, and in which direction
 

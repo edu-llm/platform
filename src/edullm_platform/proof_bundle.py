@@ -91,7 +91,11 @@ BUNDLE_SCHEMA_VERSION: Final = 1
 
 #: Every test module that builds a proof bundle. Each generator excludes all of them from
 #: its verification run rather than only its own; see :func:`run_full_suite`.
-GENERATOR_TEST_PATHS: Final = ("tests/test_phase0_proof.py", "tests/test_phase1_proof.py")
+GENERATOR_TEST_PATHS: Final = (
+    "tests/test_phase0_proof.py",
+    "tests/test_phase1_proof.py",
+    "tests/test_phase2_proof.py",
+)
 
 #: Every generator's recursion guard, all of which are set on every nested run rather than
 #: only the one belonging to the generator that started it; see :func:`pytest_environment`.
@@ -100,6 +104,7 @@ GENERATOR_TEST_PATHS: Final = ("tests/test_phase0_proof.py", "tests/test_phase1_
 GENERATOR_NESTED_ENV_VARS: Final = (
     "EDULLM_PHASE0_PROOF_NESTED",
     "EDULLM_PHASE1_PROOF_NESTED",
+    "EDULLM_PHASE2_PROOF_NESTED",
 )
 
 STATUS_PROSE: Final = {

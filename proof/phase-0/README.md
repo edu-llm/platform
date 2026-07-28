@@ -2,8 +2,8 @@
 
 Phase: phase-0
 Bundle schema version: 1
-Source commit: 41c8f7a383d343f03e101e1e4d6f45897117ab52
-Generated: 2026-07-27T06:02:41+00:00
+Source commit: 263471d05f3edce2d93c47c6e9278d51a8747ab3
+Generated: 2026-07-27T22:41:20+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 0 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase0_proof.py` at generation time.
 
@@ -18,9 +18,9 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 2763 |
-| suite tests executed | 2677 |
-| suite passed | 2677 |
+| suite tests collected | 3167 |
+| suite tests executed | 3005 |
+| suite passed | 3005 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
@@ -33,20 +33,26 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 | criteria GAP (each one fails the gate) | 0 |
 | related recorded deferrals | 1 (D1) |
 | fixtures with recorded digests | 9 |
-| contract models inventoried | 80 |
-| JSON Schema files exported | 9 |
+| contract models inventoried | 108 |
+| JSON Schema files exported | 16 |
 
 ## Contract versions
 
 | contract | schema_version |
 | --- | --- |
+| AccountMeasurements | 1 |
 | AdmissionDenialMatrix | 1 |
 | AuthorizationScenario | 1 |
+| BatchDenialMatrix | 1 |
+| BatchJobBinding | 1 |
 | CheckpointManifest | 1 |
 | DatasetRegistry | 1 |
 | DatasetRelease | 1 |
 | DecisionRecord | 1 |
+| ExecutionTargetCatalog | 1 |
 | ImageProvenance | 1 |
+| ImageScanExceptionRegistry | 1 |
+| ImageScanSummary | 1 |
 | IntentRecord | 1 |
 | LifecycleEvent | 1 |
 | LocalRebuildComparison | 1 |
@@ -80,36 +86,43 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 
 | file | digest |
 | --- | --- |
-| config/organization.yaml | sha256:6236a7d673c3c2a534229e81a77c4fa25f2d93ef820239afd6b705b7896326bf |
-| config/policy.yaml | sha256:92eaa1184e11dfce0bbd7e9aaddd168f8bc15a7075f2d9270b5ad8f32ff0148d |
-| config/workload-catalog.yaml | sha256:31eacaa510964426782f8e5f8c7be431880538739ea3c5c7a94cc66340621ca9 |
-| fixtures/authorization/admin-exception.yaml | sha256:b7e70ff952819e51c4c033e7655db488fee51b0f0ea08c8a7a3b478c7b3efece |
-| fixtures/authorization/lead-self-authorization.yaml | sha256:2571d0f48577986f6bf7c7e0491ca791ff6e9eb7bac0444fbee2751bc1959ad2 |
-| fixtures/authorization/member-approval.yaml | sha256:55c4233cf0e037acc74e75a02943484a5df47c0bd5a24fd423eb95b415997db5 |
+| config/organization.yaml | sha256:bb6b836e679464f5870225439664b9f6dacbed2e0fd39d80fbfcc47751c720a1 |
+| config/policy.yaml | sha256:8efa2f00527f9ad1677ed27452a2b6093a6a8c9e8190cf3e0a583b0f68787b39 |
+| config/workload-catalog.yaml | sha256:9b0126893bd09f6befe6a598257104d1d58aaa4e040a8aad6442a25d3f167223 |
+| fixtures/authorization/admin-exception.yaml | sha256:4ad48b8ecd405d11428cf446f74d0a8aeabf904365f3fee7b599b6a7ed0b6fa0 |
+| fixtures/authorization/lead-self-authorization.yaml | sha256:0e65da633a3880b11e5f14d380d54497a2be7124da1121f34ec3d21d4b4e83d0 |
+| fixtures/authorization/member-approval.yaml | sha256:a39cbdcbec68bf2fd8067f624ee1cf08aac008757e9fdaf69d812b76ea44e2de |
 | fixtures/manifests/cpu-routine.yaml | sha256:57df534749b3ef621c67d7b7abd9d5d6822848ec2776953aa2f6c28f9a29b2fc |
 | fixtures/manifests/gpu-exception.yaml | sha256:ac493344c543e7ef49ac5368bb19b9f391afedf8675aeb29650ebd2b7f207db9 |
 | fixtures/manifests/gpu-routine.yaml | sha256:c32d8c289c1f2c6b568bda5cc43a8a35b3b52ff0c435a214b4cefd6f82d1dd6f |
 | fixtures/manifests/multiseed-routine.yaml | sha256:0241fc78bc6e165b4f06c0e0223607f39f4f1a4fee4700f56348b488619743bd |
 | fixtures/manifests/olmo-branch-routine.yaml | sha256:111be4025328f27d4f9d6d4a8b204bc5c26322cf2e4b66f4207a4ecc70d3db86 |
 | fixtures/manifests/sagemaker-routine.yaml | sha256:3a7277b614e990f9e1a827f272ff917603b8059f831abae1d4342d15be12956a |
+| schemas/batch-job-binding.schema.json | sha256:41a20845192e959dd91b32f87d57da0cf3b04e5a2177e0200f27aec2cece901c |
+| schemas/checkpoint-manifest.schema.json | sha256:f51cc8c500c81cd1d286dc86c59ff5f24b09a640127034f1527494251d76a07e |
 | schemas/datasets.schema.json | sha256:3f175ffd729d92eaba728bc459ca455a538bb5b5131840c11986f1548579ef9b |
-| schemas/decision-record.schema.json | sha256:344b5620a7dfda70671857e64e578895edaabc4f1f3556c84eb0432d2b7e449c |
+| schemas/decision-record.schema.json | sha256:852ee127b92bc2a592f5da86972e32ed50e949548951bd66fed94b237b6ce821 |
+| schemas/image-exceptions.schema.json | sha256:0c2c63980225a5c6e1097356b98f2fe535b8885e8da9ad1618e93697548da862 |
 | schemas/intent-record.schema.json | sha256:39b40c1375c470efe47179c52e898562a7623c1a79f429de8f078f46cf3ddc8d |
+| schemas/lifecycle-event.schema.json | sha256:f747e330743b4f471021b38e161d26e24ecda8fb47ab02b08939ee298a1921ab |
+| schemas/logical-run.schema.json | sha256:898f1d6b338ea810a75c0614035a49e0812147aef7816037c97447a602d37688 |
 | schemas/organization.schema.json | sha256:5caadb560ced32562f2673591717ce836f1831292cab16a4f9c3a22ba3c0c1f1 |
-| schemas/policy.schema.json | sha256:29cc11db46a87f328c77f113179765c6aa2a873f10cb9922f2a28b9a1dc29f61 |
+| schemas/policy.schema.json | sha256:e57443df3ebf18a1b1858a441f99aec2d41121a3f2110d05be30b530ff2b7f67 |
 | schemas/repositories.schema.json | sha256:ee5ef9172b9ab89aa0965cefda9d86fda855c4cd3f0eeda41ab50551327ff68e |
+| schemas/result-manifest.schema.json | sha256:7e7b6a5891444d9d13256202319f5be6e70addb81f0b0c077e5294c63529503b |
 | schemas/run-manifest.schema.json | sha256:62851f48df41a1dc270a525b44a8ef01eab660af9d5b60030d6c0a8776e196f2 |
+| schemas/scheduler-attempt.schema.json | sha256:91984a9fb1f7f9150f7799dc337807bd14b93b50908a56e0e230391546c9c4ac |
 | schemas/submission-inputs.schema.json | sha256:0cbe9a1bc42474266c0d217cf4dab4031fb3720408f1fe347a12e62e4abc1578 |
 | schemas/workload-catalog.schema.json | sha256:4039ead3f77c0949db2a701dae90461788ed6856838075a1f223f3d4b853fa06 |
 
 ## Known limitations
 
-- No compute profile is provisioned. All 12 profiles in the workload catalog are priced and dated but carry provisioned: false, so resolve_compute_profile_for_execution refuses every one of them. Phase 0 proves pricing and classification, not that anything can run.
+- 1 of 12 compute profiles are provisioned: cpu-32vcpu. Every other profile is priced and dated but carries provisioned: false, so resolve_compute_profile_for_execution refuses it. Phase 0 proves pricing and classification for all of them and that nothing can run is no longer true of the whole catalog.
 - Team bindings are empty. OrganizationInventory.team_bindings.teams is an empty tuple, so no submitter or lead is bound to a team. Every team-scoped rule is therefore either deferred or unenforceable today.
 - Approval scope is organization. Any team lead may approve any member's routine submission. Check D1 in the negative-case matrix is deferred for this reason.
 - Cross-team attribution is implemented but cannot reject anything yet. Every decision records the claimed team and a team_verified flag, and a submitter naming a team they do not belong to is denied as soon as team bindings exist. With bindings empty, every shipped decision records team_verified: false, which is the audit record's way of saying the attribution was accepted unchecked. Check 9 is deferred for this reason: no test can show a shipped rejection that the shipped configuration cannot produce.
 - The secret scan applied to this bundle masks its own content digests before scanning. A 64-character hexadecimal sha256 digest and a 40-character hexadecimal commit SHA both match the generic long-credential patterns in evidence.py, so the two exact token shapes this bundle emits are replaced with placeholders and everything else is scanned unchanged. No other exemption is applied.
-- The nested verification run excludes every test module that builds a proof bundle (tests/test_phase0_proof.py, tests/test_phase1_proof.py), because those tests invoke a generator and would recurse. They run in the reviewer's own `uv run pytest -q`, which is the command this bundle asks the reviewer to run.
+- The nested verification run excludes every test module that builds a proof bundle (tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py), because those tests invoke a generator and would recurse. They run in the reviewer's own `uv run pytest -q`, which is the command this bundle asks the reviewer to run.
 - This bundle describes the working tree at generation time, which may differ from the commit named above. The input digests recorded in the bundle index identify exactly what was measured.
 - Nothing forces this bundle to stay current. It is a snapshot, and its counts go stale as soon as a test is added or a contract changes. Re-run `uv run python tools/build_phase0_proof.py` and read the diff before accepting a phase gate. The recorded fixture digests are the one part that fails loudly on its own when it goes stale.
 

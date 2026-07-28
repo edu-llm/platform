@@ -1,0 +1,27 @@
+{
+  "fixtures": [
+    {
+      "canonical_json_bytes": 2044,
+      "contract": "TemplateRole",
+      "digest": "sha256:99f597e80519995aeaec203e2f460f7a487447f4f61dc218bf63c2708be42b4a",
+      "fixture": "sbsandbox-intern-edullm-admission",
+      "relative_path": "infra/iam/admission-role.yaml"
+    },
+    {
+      "canonical_json_bytes": 2386,
+      "contract": "TemplateRole",
+      "digest": "sha256:3306a63f552cbac9e59f858e744e2c37a77e055340f3af8ab6fac1c5b631108e",
+      "fixture": "sbsandbox-intern-edullm-admission-states",
+      "relative_path": "infra/iam/admission-service-roles.yaml"
+    },
+    {
+      "canonical_json_bytes": 918,
+      "contract": "TemplateRole",
+      "digest": "sha256:2eca3d6d95954cabaf13148f99c380a90d4fe6049c254c195928adee1f81ec4c",
+      "fixture": "sbsandbox-intern-edullm-admission-lambda",
+      "relative_path": "infra/iam/admission-service-roles.yaml"
+    }
+  ],
+  "phase": "phase-2",
+  "schema_version": 1
+}

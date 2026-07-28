@@ -2,8 +2,8 @@
 
 Phase: phase-1
 Bundle schema version: 1
-Source commit: 41c8f7a383d343f03e101e1e4d6f45897117ab52
-Generated: 2026-07-27T06:01:36+00:00
+Source commit: 263471d05f3edce2d93c47c6e9278d51a8747ab3
+Generated: 2026-07-27T22:42:21+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 1 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase1_proof.py` at generation time. Every criterion is covered and the gate is green, which is the state in which a bundle is most worth reading carefully: the Known limitations below say what each criterion does not cover, and `open-decisions.md` says what this phase surfaced and did not settle.
 
@@ -22,14 +22,14 @@ This bundle exists so that a reviewer can decide whether Phase 1 is done without
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 2763 |
-| suite tests executed | 2677 |
-| suite passed | 2677 |
+| suite tests collected | 3167 |
+| suite tests executed | 3005 |
+| suite passed | 3005 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
-| matrix node ids executed | 415 |
-| matrix node ids passed | 415 |
+| matrix node ids executed | 423 |
+| matrix node ids passed | 423 |
 | matrix node ids failed | 0 |
 | phase criteria | 8 |
 | criteria COVERED | 8 (1, 2, 3, 4, 5, 6, 7, 8) |
@@ -69,8 +69,8 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | .github/workflows/deploy-phase1-ecr.yml | sha256:8320eda8dcf143695ffbed148efadf9aceb8052d5e4b2c3578aeb92fb97cdf4a |
 | config/repositories.yaml | sha256:607b4e0db31f0f9e119f233ba019896b8ff3866bca50a048ea7d44d9d10e23d4 |
 | fixtures/evidence/phase-1/rebuild/local-rebuild-comparison.json | sha256:91966d61ec214e5c66a6ed801ed9a3271b834ff10a110afa600cf66981d7a33d |
-| fixtures/evidence/phase-1/roles/sbsandbox-intern-edullm-ecr-publisher.sanitized.json | sha256:89ac304883d65b1177a0a21b2a9dcfe97bcf34072730634ee4595a0b42338853 |
-| fixtures/evidence/phase-1/roles/sbsandbox-intern-edullm-infra-deployer.sanitized.json | sha256:ce6515e75225b7e6edef570cbdbc2277ea282c378a39238d34e6802e5cacb231 |
+| fixtures/evidence/phase-1/roles/sbsandbox-intern-edullm-ecr-publisher.sanitized.json | sha256:9f5fa1a22c321b826e7c70c2f197f74c4730b02b2e06d6fe285e57bac2939235 |
+| fixtures/evidence/phase-1/roles/sbsandbox-intern-edullm-infra-deployer.sanitized.json | sha256:14b046b5f734384cc4f83d2b9f25667ab911cbe1ab7c1545f3e1697da333e85e |
 | fixtures/evidence/phase-1/run/denials/batch-SubmitJob.sanitized.json | sha256:795febb8aa042ec85ab966e734c075ca2764f7d54da2da12819436dea4829654 |
 | fixtures/evidence/phase-1/run/denials/batch-UpdateComputeEnvironment.sanitized.json | sha256:b2af615431c6913856a402dd99961aacee2925fd3d1ed484e216d86cf2126e0d |
 | fixtures/evidence/phase-1/run/denials/ecr-DeleteRepository.sanitized.json | sha256:049d2fa4daeb7fdcfe1aae751d7f9c7829a9a9e256eae28d5605843430159481 |
@@ -83,7 +83,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | fixtures/evidence/phase-1/run/publisher-session.sanitized.json | sha256:dac2929a79f4712fdb6536e1ba50eddf38083263eb095161d061dfa9949ea095 |
 | infra/ecr-repositories.yaml | sha256:e376f3c0be68510e2c195c410738125cf67165d18b4a5e4289d0205bbb2547d9 |
 | infra/iam/ecr-publisher-role.yaml | sha256:9f117cb0262e2da221bacfce14251add3bc80596aac8fd36145355aacf72b5cb |
-| infra/iam/infra-deployer-role.yaml | sha256:db5dd9c0f4dbe76e16a03bdc3044acf8e44a77244840fc38863620adae30128c |
+| infra/iam/infra-deployer-role.yaml | sha256:d9161af33aa297dc2677d6f8b400e1078495846969ce72339fa3f6b640fa9540 |
 
 ## Known limitations
 
@@ -96,7 +96,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 - The records of the publish run under `fixtures/evidence/phase-1/run/` expire the same way and it means something different. They stop loading on 2026-08-25, and checks 1, 6 and 7 revert to gaps on that date. Nothing about the run will have changed — the image, its scan, the session and the five refusals are all still in the registry and in CloudTrail — but nobody will have confirmed lately that the repository is still immutable, the role is still refused, and the tag still resolves to this digest. Re-capturing costs a read of the account rather than another publish.
 - The drift comparison does not reason about IAM wildcards. A deployed resource of `repository/*` against a template's `repository/x` is reported as one resource gained and one lost, not as one being wider than the other.
 - The secret scan applied to this bundle masks its own content digests before scanning. A 64-character hexadecimal sha256 digest and a 40-character hexadecimal commit SHA both match the generic long-credential patterns in evidence.py, so the two exact token shapes this bundle emits are replaced with placeholders and everything else is scanned unchanged. No other exemption is applied.
-- The nested verification run excludes every test module that builds a proof bundle (tests/test_phase0_proof.py, tests/test_phase1_proof.py), because those tests invoke a generator and would recurse. They run in the reviewer's own `uv run pytest -q`.
+- The nested verification run excludes every test module that builds a proof bundle (tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py), because those tests invoke a generator and would recurse. They run in the reviewer's own `uv run pytest -q`.
 - This bundle describes the working tree at generation time, which may differ from the commit named above. The input digests recorded in the bundle index identify exactly what was measured.
 - Nothing forces this bundle to stay current. It is a snapshot, and its counts go stale as soon as a test is added or a template changes. Re-run `uv run python tools/build_phase1_proof.py` and read the diff before accepting a phase gate. The recorded role digests are the one part that fails loudly on its own when it goes stale.
 
