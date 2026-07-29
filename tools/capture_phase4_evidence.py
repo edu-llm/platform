@@ -64,8 +64,10 @@ from edullm_platform.phase4_evidence import (
     GpuJobEvidence,
     InstanceTypeOffering,
     InstanceTypeOfferingEvidence,
+    IsolationEvidence,
     OutputObject,
     OutputPrefixEvidence,
+    ResumeEvidence,
     SecretDeliveryEvidence,
     TrainingSummaryEvidence,
     WorkloadRoleScopeEvidence,
@@ -100,6 +102,12 @@ MAXIMUM_LOG_LINES: Final = 400
 #: The metric names the training program logs. Read out of the log's own W&B summary rather
 #: than asserted, but listed here so a capture that found none can say which it looked for.
 EXPECTED_METRIC_KEYS: Final = ("train/ce_loss", "train/step")
+
+#: What a freshly initialised olmo2_190M reported on its first step, measured on the run
+#: that had nothing to resume from. Carried here so a resume record can say what the number
+#: is being compared against rather than leaving it to a reader's memory: a model starting
+#: below this loaded weights, and nothing else explains it.
+COLD_START_FIRST_LOSS: Final = 11.009
 
 
 def _epoch_millis(value: object) -> datetime | None:
@@ -417,6 +425,55 @@ def capture_checkpoint(
     )
 
 
+def summary_isolation(run_id: str, summary: Mapping[str, Any]) -> IsolationEvidence | None:
+    """The four refusal codes the container recorded, if this run probed for them.
+
+    None for a run that predates the probes, rather than a record of four empty strings. A
+    run that did not ask has nothing to say about isolation, and a record saying so in a
+    field-shaped way would read as an answer.
+    """
+    probes = summary.get("isolation")
+    if not isinstance(probes, Mapping) or not probes:
+        return None
+    return IsolationEvidence.model_validate(
+        {
+            "observed_at": observed_now(),
+            "source": "aws",
+            "environment": "sandbox",
+            "run_id": run_id,
+            **{str(name): str(code) for name, code in probes.items()},
+        }
+    )
+
+
+def summary_resume(run_id: str, summary: Mapping[str, Any]) -> ResumeEvidence | None:
+    """What this run loaded before it trained, if it loaded anything."""
+    resumed = summary.get("resumed")
+    if not isinstance(resumed, Mapping) or not resumed:
+        return None
+    uri = str(resumed["uri"])
+    # The run whose checkpoint this was, read out of the URI rather than passed in. The
+    # prefix carries the run id by construction -- that is what D5's runs/{run_id} segment
+    # is for -- so the provenance of a resume needs no second source to be recorded.
+    predecessor = uri.split("/runs/", 1)[1].split("/", 1)[0]
+    return ResumeEvidence.model_validate(
+        {
+            "observed_at": observed_now(),
+            "source": "aws",
+            "environment": "sandbox",
+            "run_id": run_id,
+            "resumed_from_run_id": predecessor,
+            "uri": uri,
+            "checksum": _claimed_digest(resumed.get("sha256")),
+            "size_bytes": resumed["bytes"],
+            "step": resumed["step"],
+            "tensors": resumed["tensors"],
+            "first_loss": summary["first_loss"],
+            "cold_start_first_loss": COLD_START_FIRST_LOSS,
+        }
+    )
+
+
 def _claimed_digest(claimed: object) -> str | None:
     """The digest the container printed, normalised to the ``sha256:`` form.
 
@@ -593,8 +650,24 @@ def capture_secret_delivery(
 
     reference = secrets.get(WANDB_SECRET_VARIABLE, "")
     lines = _log_lines(log_stream, profile=profile, region=region) if log_stream else []
+    # Only the digests the log actually carries in bare form, deduplicated. Recording every
+    # digest that was *offered* as an exemption would overstate what had to be excused: this
+    # run prints the sha256:-prefixed form, which the ordinary digest mask already handles,
+    # so the honest answer for it is an empty list.
+    # Measured against the *masked* line, which is the whole subtlety. A bare digest is one
+    # that survives redact_content_digests; searching the raw line for the hex would match
+    # the sha256:-prefixed form too, and report an exemption as needed when the ordinary
+    # mask had already dealt with it.
+    masked = [redact_content_digests(line) for line in lines]
+    needed = sorted(
+        {
+            digest
+            for digest in exempted
+            if any(digest.removeprefix("sha256:") in line for line in masked)
+        }
+    )
     leaked = any(
-        pattern.search(_without_known_digests(line, exempted))
+        pattern.search(_without_known_digests(line, needed))
         for line in lines
         for pattern in NON_ACCOUNT_SECRET_PATTERNS
     )
@@ -613,7 +686,7 @@ def capture_secret_delivery(
         plain_environment_names=plain,
         log_lines_scanned=len(lines),
         log_holds_a_credential_shape=leaked,
-        exempted_content_digests=tuple(exempted),
+        exempted_content_digests=tuple(needed),
     )
 
 
@@ -711,6 +784,15 @@ def _run_target(arguments: argparse.Namespace) -> int:
 
         if not isinstance(summary, TrainingSummaryEvidence):
             continue
+        isolation = summary_isolation(run_id, raw)
+        if isolation is not None:
+            write_model(directory / f"isolation{CAPTURE_SUFFIX}", isolation, allow_content_digests=True)
+            written.append(f"runs/{run_id}/isolation{CAPTURE_SUFFIX}")
+        resumed = summary_resume(run_id, raw)
+        if resumed is not None:
+            write_model(directory / f"resume{CAPTURE_SUFFIX}", resumed, allow_content_digests=True)
+            written.append(f"runs/{run_id}/resume{CAPTURE_SUFFIX}")
+
         checkpoint = capture_checkpoint(
             run_id,
             checkpoint_uri=summary.checkpoint_uri,

@@ -67,9 +67,9 @@ from edullm_platform.criteria import (
 )
 
 __all__ = [
+    "A_REFUSAL_RATHER_THAN_A_POLICY",
     "CONFIGURATION_CAPTURES_EXPIRE",
     "PHASE4_CRITERION_COUNT",
-    "POLICY_NOT_A_REFUSAL",
     "phase4_criteria",
 ]
 
@@ -95,17 +95,23 @@ CONFIGURATION_CAPTURES_EXPIRE: Final = (
     "and the only thing establishing it has not been is somebody going and looking again."
 )
 
-#: Why reading a policy is not the same as being refused. Recorded on criterion 7 rather
-#: than hidden, because the difference is exactly what a reader of that criterion needs.
-POLICY_NOT_A_REFUSAL: Final = (
-    "Asserted from the deployed policy document rather than from a denial anybody "
-    "received. A live probe needs a principal that can assume the workload role, and its "
-    "trust policy names the Batch and ECS task services rather than any human, so no "
-    "laptop can take the role and be told no. Closing the gap between the two means a run "
-    "whose container tries to read another team's prefix and records the AccessDenied -- "
-    "which is one submission, not a component. iam:SimulatePrincipalPolicy is not the "
-    "answer: it reported ten EC2 actions as denied in both regions when seven are "
-    "authorized in one."
+#: How this criterion stopped resting on a policy document. Kept as prose rather than
+#: deleted, because the difference between the two is what a reader of it needs.
+A_REFUSAL_RATHER_THAN_A_POLICY: Final = (
+    "This used to be asserted from the deployed policy document, which says what a grant "
+    "is rather than what happened when something reached for it. It is now a refusal a "
+    "container actually received: a run whose program probed four prefixes it must not "
+    "reach and recorded what S3 said. All four came back AccessDenied.\n\n"
+    "The distinction that makes it worth anything is AccessDenied against NoSuchKey. The "
+    "second means the role was permitted to look and found nothing, which is exactly what a "
+    "role granting everything returns from an empty prefix -- so a probe recording 'the "
+    "call failed' would establish no isolation at all. The prefix probed belongs to a team "
+    "nobody has bound, so there is certainly nothing there and the two answers stay "
+    "distinguishable.\n\n"
+    "A container is the only principal that can produce this. The workload role's trust "
+    "policy names the Batch and ECS task services, so no human can assume it and be "
+    "refused. iam:SimulatePrincipalPolicy is not a substitute: it reported ten EC2 actions "
+    "as denied in both regions when seven are authorized in one."
 )
 
 #: What closes criterion 9. Written out because the shape of the work is not obvious from
@@ -278,6 +284,9 @@ def phase4_criteria() -> tuple[CriterionSpec, ...]:
                 *_ids(CHECKPOINTS, "test_the_payload_is_written_before_the_marker_that_certifies_it"),
                 *_ids(CHECKPOINTS, "test_a_manifest_with_no_marker_refuses_to_produce_a_resume_reference"),
                 *_ids(RUN_EVIDENCE, "test_what_the_run_said_it_wrote_is_what_the_store_says_it_holds"),
+                *_ids(RUN_EVIDENCE, "test_a_checkpoint_one_run_wrote_was_loaded_back_by_another"),
+                *_ids(RUN_EVIDENCE, "test_the_run_that_was_resumed_from_is_one_whose_checkpoint_is_committed"),
+                *_ids(RUN_EVIDENCE, "test_a_resume_restores_a_model_and_not_a_training_run"),
             ),
             scope_limits=(
                 (
@@ -294,10 +303,21 @@ def phase4_criteria() -> tuple[CriterionSpec, ...]:
                     "was never written."
                 ),
                 (
-                    "Nothing has resumed from it. What is established is that the platform's "
-                    "reader will hand back a resume reference for it, and that the digest in "
-                    "that reference is the one S3 attests -- not that torch has loaded the "
-                    "state dict back. That needs a second run."
+                    "A second run has now resumed from it, so this is no longer only a claim "
+                    "about the reader. A later run downloaded the 762MB payload, loaded 135 "
+                    "tensors with strict=True, and trained on. The evidence is the loss "
+                    "rather than the digest: a freshly initialised olmo2_190M on random "
+                    "tokens starts near 11.0 and that run started at 9.71, which nothing but "
+                    "trained weights in the model produces."
+                ),
+                (
+                    "A resume restores a MODEL AND NOT A TRAINING RUN, and the difference is "
+                    "worth stating because 'resumable checkpoint' reads as more than it is. "
+                    "The checkpoint carries the state dict and the step and no optimizer "
+                    "state, so a resumed AdamW begins with no moment estimates -- which is "
+                    "why that run's last loss is above its first. Closing the gap means "
+                    "checkpointing the optimizer, which is a change to the training program "
+                    "rather than to this platform."
                 ),
             ),
         ),
@@ -345,13 +365,16 @@ def phase4_criteria() -> tuple[CriterionSpec, ...]:
             status=CriterionStatus.COVERED,
             pilot_blocking=True,
             proving_node_ids=(
-                *_ids(RUN_EVIDENCE, "test_the_role_permits_exactly_the_prefix_shape_the_platform_derives"),
+                *_ids(RUN_EVIDENCE, "test_the_workload_role_was_refused_every_prefix_it_must_not_reach"),
+                *_ids(RUN_EVIDENCE, "test_the_container_could_not_write_to_the_store_that_records_what_it_did"),
             ),
             supporting_node_ids=(
+                *_ids(RUN_EVIDENCE, "test_the_role_permits_exactly_the_prefix_shape_the_platform_derives"),
                 *_ids(RUN_EVIDENCE, "test_the_prefix_the_container_was_given_is_the_one_the_platform_derives"),
+                *_ids(SUBMISSION, "test_all_four_probes_are_asserted_rather_than_merely_recorded"),
             ),
             scope_limits=(
-                POLICY_NOT_A_REFUSAL,
+                A_REFUSAL_RATHER_THAN_A_POLICY,
                 (
                     "The GPU workload role is scoped to teams/platform/runs/*, narrower than the "
                     "CPU role's teams/*/runs/*. One team exists, so the narrowing changes nothing "

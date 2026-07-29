@@ -1,0 +1,14 @@
+{
+  "checksum": "sha256:401b1b823d990db0c15e7364c9b98e5af1ca27d86be30fe4ee26edeab69837a6",
+  "container_claimed_checksum": "sha256:401b1b823d990db0c15e7364c9b98e5af1ca27d86be30fe4ee26edeab69837a6",
+  "detail": "model.pt is certified by its _SUCCESS and the store agrees",
+  "environment": "sandbox",
+  "observed_at": "2026-07-29T15:18:59Z",
+  "prefix": "s3://sbsandbox-intern-edullm-outputs/teams/platform/runs/run_019fae5e-3901-70f0-bd7b-2701a218de57/checkpoints/step-20/",
+  "run_id": "run_019fae5e-3901-70f0-bd7b-2701a218de57",
+  "size_bytes": 762258865,
+  "source": "aws",
+  "state": "committed",
+  "step": 20,
+  "success_marker_uri": "s3://sbsandbox-intern-edullm-outputs/teams/platform/runs/run_019fae5e-3901-70f0-bd7b-2701a218de57/checkpoints/step-20/_SUCCESS"
+}

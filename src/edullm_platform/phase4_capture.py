@@ -34,7 +34,9 @@ from edullm_platform.phase4_evidence import (
     GpuComputeEnvironmentEvidence,
     GpuJobEvidence,
     InstanceTypeOfferingEvidence,
+    IsolationEvidence,
     OutputPrefixEvidence,
+    ResumeEvidence,
     SecretDeliveryEvidence,
     TrainingSummaryEvidence,
     WorkloadRoleScopeEvidence,
@@ -46,8 +48,10 @@ __all__ = [
     "CHECKPOINT_RECORD",
     "COMPUTE_ENVIRONMENT_RECORD",
     "GPU_CAPABILITY_RECORD",
+    "ISOLATION_RECORD",
     "OFFERINGS_RECORD",
     "OUTPUTS_RECORD",
+    "RESUME_RECORD",
     "ROLE_SCOPE_RECORD",
     "SECRET_DELIVERY_RECORD",
     "TRAINING_SUMMARY_RECORD",
@@ -66,6 +70,8 @@ CAPTURE_ROOT = Path(__file__).resolve().parents[2] / "fixtures" / "evidence" / "
 BATCH_JOB_RECORD = f"batch-job{CAPTURE_SUFFIX}"
 CHECKPOINT_RECORD = f"checkpoint{CAPTURE_SUFFIX}"
 GPU_CAPABILITY_RECORD = f"gpu-capability{CAPTURE_SUFFIX}"
+ISOLATION_RECORD = f"isolation{CAPTURE_SUFFIX}"
+RESUME_RECORD = f"resume{CAPTURE_SUFFIX}"
 TRAINING_SUMMARY_RECORD = f"training-summary{CAPTURE_SUFFIX}"
 COMPUTE_ENVIRONMENT_RECORD = f"gpu-compute-environment{CAPTURE_SUFFIX}"
 OFFERINGS_RECORD = f"instance-offerings{CAPTURE_SUFFIX}"
@@ -129,6 +135,11 @@ class CapturedRun:
     training: TrainingSummaryEvidence | None
     capability: GpuCapabilityEvidence | None
     checkpoint: CheckpointObservation | None
+    #: Present only for a run whose program asked. The probes and the resume were added
+    #: after the first three runs, so absence here is a fact about when a run happened
+    #: rather than about what it found -- which is why they are optional beside the rest.
+    isolation: IsolationEvidence | None = None
+    resume: ResumeEvidence | None = None
 
     @property
     def is_a_training_run(self) -> bool:
@@ -169,24 +180,36 @@ def captured_runs(root: Path = CAPTURE_ROOT) -> tuple[CapturedRun, ...]:
                 training=_optional(entry / TRAINING_SUMMARY_RECORD, TrainingSummaryEvidence),
                 capability=_optional(entry / GPU_CAPABILITY_RECORD, GpuCapabilityEvidence),
                 checkpoint=_optional(entry / CHECKPOINT_RECORD, CheckpointObservation),
+                isolation=_optional(entry / ISOLATION_RECORD, IsolationEvidence),
+                resume=_optional(entry / RESUME_RECORD, ResumeEvidence),
             )
         )
     return tuple(found)
 
 
-def training_run(root: Path = CAPTURE_ROOT) -> CapturedRun:
-    """The one run that actually trained, refused loudly if there is not exactly one.
+def training_runs(root: Path = CAPTURE_ROOT) -> tuple[CapturedRun, ...]:
+    """Every committed run that trained, oldest first, refused if there are none."""
+    trained = tuple(run for run in captured_runs(root) if run.is_a_training_run)
+    if not trained:
+        raise MissingCaptureError("no committed run carries a training summary")
+    return trained
 
-    Not "the first training run found". Several criteria are statements about *the* GPU
-    training run, and if a second is ever committed those statements need re-reading rather
-    than silently applying to whichever sorted first.
+
+def training_run(root: Path = CAPTURE_ROOT) -> CapturedRun:
+    """The most recent run that trained, which is the one criteria are about.
+
+    THIS USED TO REFUSE ANYTHING BUT EXACTLY ONE, and the reasoning was that a criterion
+    saying "the GPU training run" should not silently start describing whichever sorted
+    first. The reasoning was right and the rule was wrong: a second training run is the
+    ordinary way this platform accumulates evidence, and refusing it would have meant
+    deleting the first one to commit the second.
+
+    The most recent, because these criteria are statements about what the platform does
+    now. What the older runs establish is separate and is read through
+    :func:`training_runs` -- the resume, in particular, is a claim about two runs and needs
+    both.
     """
-    trained = [run for run in captured_runs(root) if run.is_a_training_run]
-    if len(trained) != 1:
-        raise MissingCaptureError(
-            f"exactly one committed run must carry a training summary; found {len(trained)}"
-        )
-    return trained[0]
+    return training_runs(root)[-1]
 
 
 def compute_environment(root: Path = CAPTURE_ROOT) -> GpuComputeEnvironmentEvidence:

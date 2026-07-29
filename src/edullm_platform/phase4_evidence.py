@@ -36,6 +36,7 @@ from edullm_platform.evidence import (
 )
 
 __all__ = [
+    "ACCESS_DENIED",
     "GPU_RESOURCE_TYPE",
     "WANDB_SECRET_VARIABLE",
     "CheckpointObservation",
@@ -44,8 +45,10 @@ __all__ = [
     "GpuJobEvidence",
     "InstanceTypeOffering",
     "InstanceTypeOfferingEvidence",
+    "IsolationEvidence",
     "OutputObject",
     "OutputPrefixEvidence",
+    "ResumeEvidence",
     "SecretDeliveryEvidence",
     "TrainingSummaryEvidence",
     "WorkloadRoleScopeEvidence",
@@ -216,6 +219,97 @@ class GpuCapabilityEvidence(RecordedEventModel):
     @property
     def the_driver_can_see_a_gpu(self) -> bool:
         return bool(self.device_nodes) and "MiB" in self.nvidia_smi
+
+
+#: What S3 says when a role may not look, as against when it may look and found nothing.
+#: The distinction is the whole of the isolation check: ``NoSuchKey`` is what a role
+#: permitting everything returns from an empty prefix, and would establish nothing.
+ACCESS_DENIED: Final = "AccessDenied"
+
+
+class IsolationEvidence(RecordedEventModel):
+    """What the workload role was refused, recorded from inside the only thing that can be.
+
+    THE ONLY PRINCIPAL THAT CAN BE TOLD NO IS A CONTAINER. The workload role's trust policy
+    names the Batch and ECS task services, so no human can assume it; before this, the
+    cross-team criterion rested on reading the deployed policy document, which says what the
+    grant is rather than what happened when something reached for it.
+
+    ``s3:ListBucket`` is probed separately and is not redundant. It is a bucket-level action
+    that cannot be scoped by an object ARN, so a role whose object grants look perfectly
+    narrow can still enumerate every team's output if the prefix condition is missing.
+
+    The lineage probe is the sharpest of the four. Every other grant on this role is
+    arguable; the one that is not is that a workload cannot write to the store recording what
+    it did, because every other guarantee here is downstream of that record being something
+    only the platform writes.
+    """
+
+    source: Literal["aws"]
+    environment: EvidenceEnvironment
+    run_id: SecretFreeStr = Field(min_length=1)
+    read_another_teams_prefix: SecretFreeStr = Field(min_length=1)
+    write_to_another_teams_prefix: SecretFreeStr = Field(min_length=1)
+    list_the_whole_outputs_bucket: SecretFreeStr = Field(min_length=1)
+    write_to_the_lineage_bucket: SecretFreeStr = Field(min_length=1)
+
+    @property
+    def probes(self) -> dict[str, str]:
+        return {
+            "read_another_teams_prefix": self.read_another_teams_prefix,
+            "write_to_another_teams_prefix": self.write_to_another_teams_prefix,
+            "list_the_whole_outputs_bucket": self.list_the_whole_outputs_bucket,
+            "write_to_the_lineage_bucket": self.write_to_the_lineage_bucket,
+        }
+
+    @property
+    def everything_was_refused(self) -> bool:
+        """Refused, specifically -- not merely "did not succeed".
+
+        ``AccessDenied`` and nothing else. A ``NoSuchKey`` would mean the role was permitted
+        to look and there was nothing there, which is what a role granting everything returns
+        from an empty prefix and establishes no isolation whatsoever.
+        """
+        return all(code == ACCESS_DENIED for code in self.probes.values())
+
+
+class ResumeEvidence(RecordedEventModel):
+    """A checkpoint one run wrote, loaded back into another run's model.
+
+    ``inspect_checkpoint`` establishes that a marker certifies its payload and that the store
+    agrees with the marker. It says nothing about whether torch will accept the bytes, which
+    is the thing a researcher resuming a run actually needs, and the two are different
+    claims.
+
+    ``first_loss`` is the evidence and not a decoration. A freshly initialised olmo2_190M on
+    random tokens starts near 11.0; this run started at 9.71. That number can only come from
+    trained weights being in the model, which is a harder thing to fake than a digest match.
+
+    **What a resume here does not restore.** The checkpoint carries the model state dict and
+    the step, and no optimizer state. So this restores a *model*, not a training run: a
+    resumed AdamW starts with no moment estimates, and the loss moves accordingly. Recorded
+    because "resumable checkpoint" reads as more than it is, and the gap is the difference
+    between reproducing a result and continuing a run.
+    """
+
+    source: Literal["aws"]
+    environment: EvidenceEnvironment
+    run_id: SecretFreeStr = Field(min_length=1)
+    resumed_from_run_id: SecretFreeStr = Field(min_length=1)
+    uri: SecretFreeStr = Field(min_length=1)
+    checksum: Sha256Digest
+    size_bytes: int = Field(gt=0)
+    step: int = Field(ge=0)
+    tensors: int = Field(gt=0)
+    first_loss: float
+    #: What a run with no checkpoint to resume from began at, for comparison. Carried in the
+    #: record rather than left to a reader's memory, because the whole claim is the gap.
+    cold_start_first_loss: float
+    restores_optimizer_state: bool = False
+
+    @property
+    def loaded_trained_weights(self) -> bool:
+        return self.first_loss < self.cold_start_first_loss
 
 
 class CheckpointObservation(RecordedEventModel):

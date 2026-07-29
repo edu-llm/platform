@@ -1,7 +1,7 @@
 {
   "environment": "sandbox",
   "instance_type": "g5.xlarge",
-  "observed_at": "2026-07-29T07:21:01Z",
+  "observed_at": "2026-07-29T15:20:46Z",
   "offerings": [
     {
       "availability_zone": "us-east-1a",
