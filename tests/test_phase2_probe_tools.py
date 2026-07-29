@@ -563,10 +563,15 @@ def test_a_record_that_cannot_be_written_is_an_environment_failure(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    # A missing parent directory is no longer the way to make this happen: the shared
+    # writer creates one. A parent that exists and is a file cannot be created, which is
+    # the same class of failure and is still not the probe's to recover from.
     install_aws_stub(tmp_path, monkeypatch)
+    occupied = tmp_path / "occupied"
+    occupied.write_text("", encoding="utf-8")
 
     exit_code = conditional_write_main(
-        conditional_write_argv(tmp_path, **{"--output": str(tmp_path / "absent" / "record.json")})
+        conditional_write_argv(tmp_path, **{"--output": str(occupied / "record.json")})
     )
 
     assert exit_code == 2
@@ -847,9 +852,11 @@ def test_an_approvals_record_that_cannot_be_written_is_an_environment_failure(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     install_gh_stub(tmp_path, monkeypatch)
+    occupied = tmp_path / "occupied"
+    occupied.write_text("", encoding="utf-8")
 
     exit_code = approvals_main(
-        approvals_argv(tmp_path, **{"--output": str(tmp_path / "absent" / "record.json")})
+        approvals_argv(tmp_path, **{"--output": str(occupied / "record.json")})
     )
 
     assert exit_code == 2

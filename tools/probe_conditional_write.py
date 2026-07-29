@@ -47,6 +47,12 @@ and the two that delete it afterwards.
 without a call — the account in the role ARN, the state machine ARN and each execution
 ARN — and those print as named placeholders. Every other token is literal. Pass the same
 command line without ``--dry-run`` to execute it.
+
+**What it takes from the shared capture tooling.**
+:func:`~edullm_platform.capture_tooling.write_record`, and nothing else. The call wrapper
+stays local: it reads the operation and error code out of the CLI's stderr so a refusal
+names what was refused, and it is the same function the teardown uses to attempt a delete
+whose failure is recorded rather than raised.
 """
 
 from __future__ import annotations
@@ -65,6 +71,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
 
+from edullm_platform.capture_tooling import CaptureFailedError, write_record
 from edullm_platform.evidence import (
     AWS_ACCOUNT_ID_PLACEHOLDER,
     redact_aws_account_ids,
@@ -695,16 +702,6 @@ def build_record(
     }
 
 
-def write_record(path: Path, record: Mapping[str, Any]) -> None:
-    """Serialize the record, refuse it whole if anything in it would leak, then write."""
-    serialized = json.dumps(record, indent=2, sort_keys=True) + "\n"
-    try:
-        scan_for_secrets(serialized)
-    except ValueError as exc:
-        raise ProbeFailedError("record_holds_a_credential") from exc
-    path.write_text(serialized, encoding="utf-8")
-
-
 # --------------------------------------------------------------------------------------
 # The command
 # --------------------------------------------------------------------------------------
@@ -827,7 +824,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     record = build_record(context, run.observation, run.teardown)
     try:
         write_record(arguments.output, record)
-    except ProbeFailedError as exc:
+    except (ProbeFailedError, CaptureFailedError) as exc:
         print(exc.reason, file=sys.stderr)
         return 2
     except OSError:
