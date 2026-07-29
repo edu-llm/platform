@@ -937,7 +937,13 @@ def test_capture_phase0_evidence_writes_under_allowed_output_root(
         written.append(path)
         write_json(path, payload)
 
+    def record_write_model(path: Path, record: object) -> None:
+        written.append(path)
+
+    # Both writers, because this tool has two tiers and the claim is about every file it
+    # produces. Watching only the raw one would let the sanitized records land anywhere.
     monkeypatch.setattr("tools.capture_phase0_evidence.write_json", record_write_json)
+    monkeypatch.setattr("tools.capture_phase0_evidence.write_model", record_write_model)
 
     capture_phase0_evidence(
         github_org="edu-llm",
