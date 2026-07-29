@@ -35,6 +35,13 @@ people in evidence records it does not have to.
 repository's secret scan cannot tell a twelve-digit one from an AWS account ID. Rather
 than write a record that then fails to be committable, or mask the identifier the record
 is about, a twelve-digit run ID is refused up front with a reason that says so.
+
+**What it takes from the shared capture tooling, and what it does not.**
+:func:`~edullm_platform.capture_tooling.write_record`, which is the whole of the write
+path. Nothing else: this tool shells out to ``gh`` rather than to ``aws``, and what a
+refused ``gh api`` call prints is the service's own stderr, which is the value of the
+message to the operator and precisely what a reason token throws away -- so the call
+wrapper, the error type and the reasons stay here.
 """
 
 from __future__ import annotations
@@ -50,11 +57,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
 
-from edullm_platform.evidence import (
-    AWS_ACCOUNT_ID_PATTERN,
-    redact_aws_account_ids,
-    scan_for_secrets,
-)
+from edullm_platform.capture_tooling import CaptureFailedError, write_record
+from edullm_platform.evidence import AWS_ACCOUNT_ID_PATTERN
 
 #: The two endpoints read, in order. Both are GET; this tuple is the whole of what this
 #: tool touches, so a reader does not have to take the docstring's word for it.
@@ -263,15 +267,6 @@ def build_record(
     }
 
 
-def write_record(path: Path, record: Mapping[str, Any]) -> None:
-    serialized = json.dumps(record, indent=2, sort_keys=True) + "\n"
-    try:
-        scan_for_secrets(redact_aws_account_ids(serialized))
-    except ValueError as exc:
-        raise ProbeFailedError("record_holds_a_credential") from exc
-    path.write_text(serialized, encoding="utf-8")
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -332,7 +327,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     try:
         write_record(arguments.output, record)
-    except ProbeFailedError as exc:
+    except (ProbeFailedError, CaptureFailedError) as exc:
         print(exc.reason, file=sys.stderr)
         return 2
     except OSError:

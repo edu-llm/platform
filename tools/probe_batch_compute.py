@@ -44,6 +44,15 @@ literal. Pass the same command line without ``--dry-run`` to execute it.
 **The account never reaches the record.** The image reference is an argument because it
 carries the registry host, and the registry host is the account id with a suffix; only the
 repository and digest half of it is written down.
+
+**What it takes from the shared capture tooling.**
+:func:`~edullm_platform.capture_tooling.write_record`, with the digest exemption on. The
+record names the image by digest, which is what pinning it means, and sixty-four
+hexadecimal characters is also the shape of a long credential -- so the strict scan
+refused this tool's own record for carrying the identifier the record exists to carry.
+Everything else the scan refuses, an account id included, is still refused. The call
+wrapper stays local: it reads the operation and error code out of the CLI's stderr so a
+refusal names what was refused, which the shared wrapper does not do.
 """
 
 from __future__ import annotations
@@ -62,6 +71,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
 
+from edullm_platform.capture_tooling import CaptureFailedError, write_record
 from edullm_platform.evidence import (
     AWS_ACCOUNT_ID_PLACEHOLDER,
     redact_aws_account_ids,
@@ -930,16 +940,6 @@ def build_record(
     }
 
 
-def write_record(path: Path, record: Mapping[str, Any]) -> None:
-    """Serialize the record, refuse it whole if anything in it would leak, then write."""
-    serialized = json.dumps(record, indent=2, sort_keys=True) + "\n"
-    try:
-        scan_for_secrets(serialized)
-    except ValueError as exc:
-        raise ProbeFailedError("record_holds_a_credential") from exc
-    path.write_text(serialized, encoding="utf-8")
-
-
 # --------------------------------------------------------------------------------------
 # The command
 # --------------------------------------------------------------------------------------
@@ -1100,8 +1100,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     record = build_record(context, run.observation, run.teardown)
     try:
-        write_record(arguments.output, record)
-    except ProbeFailedError as exc:
+        write_record(arguments.output, record, allow_content_digests=True)
+    except (ProbeFailedError, CaptureFailedError) as exc:
         print(exc.reason, file=sys.stderr)
         return 2
     except OSError:

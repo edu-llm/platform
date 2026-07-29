@@ -15,6 +15,14 @@ exists to collect — so a fully denied region still exits 0.
 
 ``--dry-run`` here means "print the AWS calls and make none of them", which is a different
 thing from the ``--dry-run`` flag on the EC2 calls themselves. Those are always present.
+
+**What it takes from the shared capture tooling.**
+:func:`~edullm_platform.capture_tooling.write_record` and
+:func:`~edullm_platform.capture_tooling.check_output_location`, which between them are the
+whole of where this may write and what it may write there. The call wrapper stays local:
+every call here carries ``--dry-run`` and is read through its exit status and stderr, so a
+non-zero exit is the answer rather than a failure -- the opposite of what the shared
+wrapper is for.
 """
 
 from __future__ import annotations
@@ -30,6 +38,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
 
+from edullm_platform.capture_tooling import (
+    CaptureFailedError,
+    check_output_location,
+    write_record,
+)
 from edullm_platform.ec2_authorization import (
     CONTROL_OBSERVATIONS,
     Ec2AuthorizationProbe,
@@ -38,7 +51,6 @@ from edullm_platform.ec2_authorization import (
     classify_dry_run,
     phase3_ec2_probes,
 )
-from edullm_platform.evidence import scan_for_secrets
 
 AWS_CALL_TIMEOUT_SECONDS: Final = 60
 
@@ -238,22 +250,6 @@ def build_record(
     }
 
 
-def write_record(path: Path, record: Mapping[str, Any]) -> None:
-    serialized = json.dumps(record, indent=2, sort_keys=True) + "\n"
-    try:
-        scan_for_secrets(serialized)
-    except ValueError as exc:
-        raise ProbeFailedError("record_holds_a_credential") from exc
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(serialized, encoding="utf-8")
-
-
-def check_output_location(path: Path) -> None:
-    resolved = path.resolve()
-    if ALLOWED_OUTPUT_SUFFIX.as_posix() not in resolved.as_posix():
-        raise ProbeFailedError(f"output_must_be_under:{ALLOWED_OUTPUT_SUFFIX.as_posix()}")
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Ask EC2 which of Phase 3's calls it would allow, creating nothing."
@@ -295,9 +291,9 @@ def parse_region_argument(value: str) -> tuple[str, str, str]:
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
     try:
-        check_output_location(arguments.output)
+        check_output_location(arguments.output, allowed_suffix=ALLOWED_OUTPUT_SUFFIX)
         requested = [parse_region_argument(value) for value in arguments.regions]
-    except ProbeFailedError as exc:
+    except (ProbeFailedError, CaptureFailedError) as exc:
         print(exc.reason, file=sys.stderr)
         return 2
 
@@ -352,7 +348,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     try:
         write_record(arguments.output, record)
-    except ProbeFailedError as exc:
+    except (ProbeFailedError, CaptureFailedError) as exc:
         print(exc.reason, file=sys.stderr)
         return 2
     except OSError:
