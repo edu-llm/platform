@@ -5,23 +5,34 @@ contracts that decide whether a compute run is valid and who may approve it, the
 reviewed bindings those contracts are checked against, and the tooling that verifies
 the whole thing hangs together.
 
-Nothing here provisions cloud infrastructure or submits jobs. It defines and enforces
-the rules that later phases execute against.
+It also provisions the cloud infrastructure those rules run on, and submits runs to it.
+`infra/` holds the CloudFormation for the image registry, the three S3 buckets, the
+admission state machine and validator, and the CPU and GPU AWS Batch compute environments.
+`.github/workflows/` holds the workflow that builds and publishes a research image and the
+one that compiles a submission, routes it to an approval gate, and hands the approved
+manifest to admission. Eight submissions have been through that path in the sandbox account,
+four on the CPU queue and four on the GPU one. Seven reached AWS Batch and ran; the eighth
+was refused at admission before anything was launched, which is also a result worth keeping.
+What each of the eight left behind is committed under `fixtures/evidence/` and rendered in
+`proof/`.
 
 ## Layout
 
 | Path | Contents |
 | --- | --- |
 | `src/edullm_platform/` | The validation library: contracts, canonical hashing, config loading, evidence models, acceptance gate |
-| `config/` | Reviewed bindings — organization roster, approval policy, workload and compute catalog |
-| `fixtures/` | Representative run manifests and captured capacity evidence |
+| `config/` | Reviewed bindings — organization roster, approval policy, repository registry, workload and compute catalog, execution targets |
+| `infra/` | CloudFormation for everything this platform deploys, plus the runbook for the procedures that need a laptop |
+| `.github/workflows/` | Publishing an image, and submitting a run for admission |
+| `fixtures/` | Representative run manifests, and sanitized captures of what the account did |
 | `schemas/` | JSON Schemas generated from the models |
 | `proof/` | Phase acceptance bundles — what a reviewer reads instead of the test suite |
 | `tools/` | Maintainer scripts, run by hand |
 | `tests/` | The suite that keeps all of the above honest |
 
-The library is the single implementation. Later phases run these same contracts
-inside GitHub checks and AWS admission, rather than reimplementing the rules.
+The library is the single implementation. The submission workflow, the admission validator
+running inside AWS, and the acceptance gates all run these same contracts, rather than
+reimplementing the rules.
 
 ## Commands
 
@@ -120,19 +131,27 @@ three statuses through the same shared machinery in `src/edullm_platform/criteri
 uv run python tools/validate_phase1.py
 uv run python tools/validate_phase2.py
 uv run python tools/validate_phase3.py
+uv run python tools/validate_phase4.py
 ```
 
-All three exit `0` on a pass, `1` when the gate ran and a criterion failed, and `2` when the
+All four exit `0` on a pass, `1` when the gate ran and a criterion failed, and `2` when the
 inputs could not be read. They report criteria only; the `operational_inventory_checks`
 group is Phase 0's and exists because that phase predates the current definition.
 
-**Phase 2 and Phase 3 exit 1 today, and that is the report working rather than a broken
-gate.** Phase 2's path ran and almost nothing about those runs is committed, so no test
-reads them. Phase 3 has not been deployed at all: no compute environment exists and no Batch
-job has ever run in this account, so twenty of its twenty-two criteria are gaps. Both sets
-of gap texts say what was observed, what is missing, and what would close it. Recording them
-as deferrals instead would turn either gate green without anything changing in the account,
-which is exactly the move the three-status rule exists to make visible.
+**Phases 2, 3 and 4 exit 1 today, and that is the report working rather than a broken
+gate.** All three phases are deployed and have run. Phase 2 reports twelve of twenty-two
+criteria covered, one deferred and nine gaps; Phase 3 reports thirteen of twenty-two covered
+and nine gaps; Phase 4 reports nine of twelve covered, one deferred and two gaps. Run the
+gates for the current numbers — the ones above are what they printed when this paragraph was
+written, and a gate is the authority rather than this file.
+
+What the remaining gaps are about is worth knowing before reading them. They are not the
+submission path, which works end to end: they are mostly the other end of a run's life —
+nothing in this account can stop a job once it has started — plus captures nobody has taken
+and shapes of run nobody has aimed at a criterion yet. Each gap text says what was observed,
+what is missing, and what would close it. Recording them as deferrals instead would turn a
+gate green without anything changing in the account, which is exactly the move the
+three-status rule exists to make visible.
 
 ## Proof bundle
 
@@ -167,21 +186,34 @@ All four count the suite the same way and each excludes all four generator test 
 from its own verification run, so adding a generator moves a cell in every bundle. Any
 bundle recording three generator modules was written before Phase 2 had one and is stale.
 
-Most of the Phase 3 bundle is empty, deliberately. Seven of its documents hold live evidence
-and there is none, so each is generated saying why it is empty, what would fill it, and
-which criteria are waiting on it. A document omitted because there was nothing to put in it
+Phase 4 has an acceptance gate and no generator, so there is no `proof/phase-4/`. Its
+evidence is committed under `fixtures/evidence/phase-4/` and read by the tests the gate
+cites.
+
+The Phase 3 bundle is mostly full now and was mostly empty once. Its run documents —
+`batch-execution-evidence.md`, `log-stream-evidence.md`, `lineage-record-evidence.md`,
+`cancellation-and-timeout-evidence.md`, `deployed-role-drift.md` — are rendered from the
+captures under `fixtures/evidence/phase-3/`. Two are still generated saying why they are
+empty: `event-evidence.md`, which has no capture, and `rollback-evidence.md`, whose
+rehearsal has not been performed. A document omitted because there was nothing to put in it
 would make the phase look like it has fewer claims than it has.
 
 ## Captured evidence
 
-`fixtures/evidence/` holds sanitized, read-only observations of the account: the GitHub
-organization plan, applied AWS service quotas, under `phase-1/roles/` the two IAM roles
-Phase 1 depends on as IAM returned them, and under `phase-1/run/` what one completed
-publish left behind — the image, its scan, the publisher session that pushed it, the five
-refusals that session met, and a second push the registry turned away. Account IDs are
-masked, and this account is masked differently from any other so that a grant pointing
-somewhere else cannot be mistaken for a local one. An identity this repository does not
-declare is not named at all, because in a shared sandbox account those are people.
+`fixtures/evidence/` holds sanitized, read-only observations of the account, one directory
+per phase: the GitHub organization plan and applied AWS service quotas at the top level;
+under `phase-1/` the two IAM roles as IAM returned them and what one completed publish left
+behind — the image, its scan, the publisher session that pushed it, the five refusals that
+session met, and a second push the registry turned away; under `phase-2/` every admission
+execution the state machine has run and the lineage records those executions wrote; under
+`phase-3/` the CPU compute environment and one directory per run for the four CPU
+submissions; under `phase-4/` the GPU compute environment, the workload role's measured
+scope, and one directory per run for the four GPU submissions.
+
+Account IDs are masked, and this account is masked differently from any other so that a
+grant pointing somewhere else cannot be mistaken for a local one. An identity this
+repository does not declare is not named at all, because in a shared sandbox account those
+are people.
 
 Records expire after 30 days so a stale reading cannot pass as current. When that
 happens the Phase 0 gate reports `evidence_stale`, and in Phase 1 the tests that read the
