@@ -25,9 +25,12 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from edullm_platform.capture_tooling import CAPTURE_SUFFIX
 from edullm_platform.contracts.base import ContractModel
-from edullm_platform.evidence import EVIDENCE_STALE_CODE, evidence_load_reason_code
+from edullm_platform.evidence import (
+    CAPTURE_SUFFIX,
+    EVIDENCE_STALE_CODE,
+    evidence_load_reason_code,
+)
 from edullm_platform.phase4_evidence import (
     CheckpointObservation,
     GpuCapabilityEvidence,

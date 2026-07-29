@@ -46,7 +46,6 @@ from edullm_platform.evidence import (
 
 __all__ = [
     "AWS_CALL_TIMEOUT_SECONDS",
-    "CAPTURE_SUFFIX",
     "EXIT_OK",
     "EXIT_UNUSABLE",
     "CaptureFailedError",
@@ -65,11 +64,6 @@ __all__ = [
 #: Long enough for a CloudTrail lookup over a wide window, short enough that a hung call
 #: fails the capture rather than holding a terminal open until somebody notices.
 AWS_CALL_TIMEOUT_SECONDS: Final = 90
-
-#: What a committed capture is called. The word is load-bearing: a file named this way has
-#: had the account id masked and has been through the credential scan, and a reader that
-#: finds one is entitled to assume both.
-CAPTURE_SUFFIX: Final = ".sanitized.json"
 
 EXIT_OK: Final = 0
 EXIT_UNUSABLE: Final = 2

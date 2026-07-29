@@ -38,13 +38,14 @@ import pytest
 
 from edullm_platform.evidence import (
     AWS_ACCOUNT_ID_PATTERN,
+    CAPTURE_SUFFIX,
     FRESHNESS_WINDOW,
+    CaptureLoadVerdict,
     redact_content_digests,
     scan_for_secrets,
 )
 from edullm_platform.phase1_capture import CaptureVerdict, read_committed_role_captures
 from edullm_platform.phase3_capture import (
-    CAPTURE_SUFFIX,
     PHASE3_CAPTURE_DIR,
     RUNS_SUBDIR,
     TRACEABLE_ARTIFACTS,
@@ -869,7 +870,7 @@ def test_a_body_removed_from_an_object_that_loads_is_reported_as_absent(
 
     assert run is not None
     assert not run.holds
-    assert CaptureVerdict.ABSENT.value in reasons(run)
+    assert CaptureLoadVerdict.ABSENT.value in reasons(run)
     assert "result" in run.unresolved_artifacts
 
 
@@ -882,7 +883,7 @@ def test_a_directory_with_no_records_reports_every_one_as_absent(tmp_path: Path)
 
     assert not evidence.holds
     assert len(evidence.runs) == 1
-    assert reasons(evidence.runs[0]) == {CaptureVerdict.ABSENT.value}
+    assert reasons(evidence.runs[0]) == {CaptureLoadVerdict.ABSENT.value}
     assert evidence.runs[0].job is None
     assert evidence.compute_environment is None
 
@@ -903,5 +904,5 @@ def test_no_committed_run_at_all_is_reported_rather_than_read_as_nothing_to_prov
     assert not evidence.holds
     assert evidence.runs == ()
     assert {problem.reason for problem in evidence.problems} == {
-        CaptureVerdict.ABSENT.value
+        CaptureLoadVerdict.ABSENT.value
     }

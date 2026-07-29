@@ -24,6 +24,9 @@ responses are in :data:`RECAPTURE_GUIDANCE`, and neither of them is editing the 
 means nobody has looked; a stale one means somebody looked too long ago; an invalid one
 means what they wrote down is not a role capture. Collapsing the three would lose the
 only part a reader can act on, so each is its own verdict and each carries its own text.
+Those three are :class:`~edullm_platform.evidence.CaptureLoadVerdict` and are not Phase
+1's: every phase that reads a committed record asks them first, and two readers in this
+module ask them of things that are not roles at all.
 
 **Drift somebody has written down is not the same as drift nobody has.** The stacks that
 hold these roles are applied from a laptop, so a template amendment lands before the deploy
@@ -50,7 +53,9 @@ from typing import Final
 from pydantic import ValidationError
 
 from edullm_platform.evidence import (
+    CAPTURE_SUFFIX,
     FRESHNESS_WINDOW,
+    CaptureLoadVerdict,
     FreshEvidenceModel,
     evidence_load_reason_code,
 )
@@ -76,7 +81,6 @@ from edullm_platform.role_drift import (
 __all__ = [
     "CAPTURE_PARTITION",
     "CAPTURE_REGION",
-    "CAPTURE_SUFFIX",
     "RECAPTURE_GUIDANCE",
     "ROLE_CAPTURE_DIR",
     "RUN_CAPTURE_DIR",
@@ -95,7 +99,6 @@ __all__ = [
 #: Where a capture lives once somebody has read it and decided to commit it. Beside the
 #: Phase 0 evidence rather than under ``proof/``: a bundle is generated and this is not.
 ROLE_CAPTURE_DIR: Final = Path("fixtures") / "evidence" / "phase-1" / "roles"
-CAPTURE_SUFFIX: Final = ".sanitized.json"
 
 #: The partition and region the comparison is allowed to fold, which are the ones the
 #: account is in. Named here rather than defaulted inside ``role_drift``, which requires
@@ -114,20 +117,16 @@ RECAPTURE_GUIDANCE: Final = (
 
 
 class CaptureVerdict(StrEnum):
-    """What a committed capture is worth right now.
+    """What a role capture that loaded says about the role, once compared to its template.
 
-    ``STALE`` and ``INVALID`` carry the reason codes ``evidence_load_reason_code``
-    returns, so a Phase 1 capture failure reads the same as the Phase 0 inventory's.
+    Every member here is about that comparison, which is why three of the four spell
+    ``role_`` in their value. A capture that did not load says nothing about a template
+    and gets a :class:`~edullm_platform.evidence.CaptureLoadVerdict` instead; the two
+    together are what :attr:`CommittedRoleCapture.verdict` may hold.
     """
 
     #: Loaded, inside its window, and identical to the template that declares the role.
     OK = "ok"
-    #: No record is committed for a role a template declares.
-    ABSENT = "capture_absent"
-    #: A record is committed and is older than the freshness window.
-    STALE = "evidence_stale"
-    #: A record is committed and is not a role capture the contract accepts.
-    INVALID = "evidence_invalid"
     #: A record loaded and disagrees with the template that declares the role.
     DRIFTED = "role_drift"
     #: A record loaded and disagrees with its template in exactly the way a recorded
@@ -153,7 +152,7 @@ class CommittedRoleCapture:
     role_name: str
     template_path: str | None
     capture_path: str | None
-    verdict: CaptureVerdict
+    verdict: CaptureVerdict | CaptureLoadVerdict
     detail: str
     evidence: DeployedRoleEvidence | None = None
     report: RoleDriftReport | None = None
@@ -243,7 +242,7 @@ def _read_one(
             role_name=named,
             template_path=templates.get(named),
             capture_path=capture_path,
-            verdict=CaptureVerdict.INVALID,
+            verdict=CaptureLoadVerdict.INVALID,
             detail=f"{capture_path} is not readable JSON, so it records nothing.",
         )
     try:
@@ -252,12 +251,12 @@ def _read_one(
         # The filename is all there is to go on: a record that failed its contract may
         # not have a role name, and one that has one may have any string in the field.
         reason = evidence_load_reason_code(error)
-        stale = reason == CaptureVerdict.STALE.value
+        stale = reason == CaptureLoadVerdict.STALE.value
         return CommittedRoleCapture(
             role_name=named,
             template_path=templates.get(named),
             capture_path=capture_path,
-            verdict=CaptureVerdict.STALE if stale else CaptureVerdict.INVALID,
+            verdict=CaptureLoadVerdict.STALE if stale else CaptureLoadVerdict.INVALID,
             detail=(
                 _stale_detail(named)
                 if stale
@@ -352,7 +351,7 @@ def read_committed_role_captures(
             role_name=role_name,
             template_path=relative_path,
             capture_path=None,
-            verdict=CaptureVerdict.ABSENT,
+            verdict=CaptureLoadVerdict.ABSENT,
             detail=(
                 f"No capture of {role_name} is committed under {ROLE_CAPTURE_DIR}/, so "
                 f"{relative_path} is a claim about the account that nothing has checked. "
@@ -480,11 +479,11 @@ def _load_run_record(
     contract: type[FreshEvidenceModel],
 ) -> tuple[FreshEvidenceModel | None, RunEvidenceProblem | None]:
     """One committed file, whatever state it is in. Never raises for its contents."""
-    name = path.stem.removesuffix(".sanitized")
+    name = path.name.removesuffix(CAPTURE_SUFFIX)
     if not path.is_file():
         return None, RunEvidenceProblem(
             record=name,
-            reason=CaptureVerdict.ABSENT.value,
+            reason=CaptureLoadVerdict.ABSENT.value,
             detail=(
                 f"No {name} record is committed under {RUN_CAPTURE_DIR}/, so nothing here "
                 f"says what the run produced. {RUN_RECAPTURE_GUIDANCE}"
@@ -495,14 +494,14 @@ def _load_run_record(
     except (OSError, ValueError):
         return None, RunEvidenceProblem(
             record=name,
-            reason=CaptureVerdict.INVALID.value,
+            reason=CaptureLoadVerdict.INVALID.value,
             detail=f"{name} is not readable JSON, so it records nothing.",
         )
     try:
         return contract.model_validate(payload), None
     except ValidationError as error:
         reason = evidence_load_reason_code(error)
-        stale = reason == CaptureVerdict.STALE.value
+        stale = reason == CaptureLoadVerdict.STALE.value
         return None, RunEvidenceProblem(
             record=name,
             reason=reason,

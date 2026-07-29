@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from typing import Annotated, Final, Literal, Self, TypedDict
 
 from pydantic import (
@@ -75,6 +76,41 @@ ACCOUNT_ID_IN_FREE_TEXT = re.compile(
 
 FRESHNESS_WINDOW = timedelta(days=30)
 EVIDENCE_STALE_CODE: Final = "evidence_stale"
+
+#: What a committed capture is called. The word is load-bearing: a file named this way has
+#: had the account id masked and has been through the credential scan, and a reader that
+#: finds one is entitled to assume both. Here rather than with the capture tooling because
+#: the two functions that make the promise are here, and because three phase readers and
+#: four capture tools all have to agree on it; it was spelled out in three places once,
+#: and a file written under a name its reader does not look for is an absent record.
+CAPTURE_SUFFIX: Final = ".sanitized.json"
+
+
+class CaptureLoadVerdict(StrEnum):
+    """Why a committed record establishes nothing, in the three ways that can be true.
+
+    Every phase that reads committed captures asks this same question first, before any
+    question of its own: is the record there, is it recent enough, and is it what it says
+    it is. Phase 1 asks it of a role capture and again of a publish run, Phase 3 asks it
+    of a job and a lineage attestation, and none of those answers depends on what the
+    record is about.
+
+    There is no member for success. A record that loaded has said nothing yet about
+    whether it holds; what it then has to satisfy is the reading phase's own question, and
+    that answer belongs to the phase -- for Phase 1's role captures, to
+    :class:`~edullm_platform.phase1_capture.CaptureVerdict`.
+
+    ``STALE`` and ``INVALID`` are the codes :func:`evidence_load_reason_code` returns, and
+    they are these members rather than a parallel pair of literals so that a comparison
+    against one cannot go stale against the other.
+    """
+
+    #: Nobody committed a record here, so nobody has looked.
+    ABSENT = "capture_absent"
+    #: A record is committed and is older than :data:`FRESHNESS_WINDOW`.
+    STALE = EVIDENCE_STALE_CODE
+    #: A record is committed and is not what its contract accepts.
+    INVALID = "evidence_invalid"
 
 CapacityVerdict = Literal["verified", "increase_required", "blocked"]
 EvidenceEnvironment = Literal["sandbox"]
@@ -214,7 +250,7 @@ def evidence_load_reason_code(error: ValidationError) -> str:
             return EVIDENCE_STALE_CODE
         if item.get("msg") == EVIDENCE_STALE_CODE:
             return EVIDENCE_STALE_CODE
-    return "evidence_invalid"
+    return CaptureLoadVerdict.INVALID.value
 
 
 class FreshEvidenceModel(ContractModel):

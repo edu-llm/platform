@@ -43,11 +43,12 @@ from typing import Any, Final
 from pydantic import ValidationError
 
 from edullm_platform.evidence import (
+    CAPTURE_SUFFIX,
     FRESHNESS_WINDOW,
+    CaptureLoadVerdict,
     FreshEvidenceModel,
     evidence_load_reason_code,
 )
-from edullm_platform.phase1_capture import CAPTURE_SUFFIX, CaptureVerdict
 from edullm_platform.phase1_evidence import OidcSessionEvidence
 from edullm_platform.phase2_evidence import AdmissionExecution
 from edullm_platform.phase3_evidence import (
@@ -59,7 +60,6 @@ from edullm_platform.phase3_evidence import (
 )
 
 __all__ = [
-    "CAPTURE_SUFFIX",
     "COMPUTE_ENVIRONMENT_RECORD",
     "PHASE3_CAPTURE_DIR",
     "REFUSAL_RECORD",
@@ -265,7 +265,7 @@ def _load_record[T: FreshEvidenceModel](
     if not path.is_file():
         return None, Phase3EvidenceProblem(
             record=f"{run_id}/{name}",
-            reason=CaptureVerdict.ABSENT.value,
+            reason=CaptureLoadVerdict.ABSENT.value,
             detail=(
                 f"No {name} record is committed for {run_id}, so nothing here says what "
                 f"that part of the run produced. {RUN_RECAPTURE_GUIDANCE}"
@@ -276,14 +276,14 @@ def _load_record[T: FreshEvidenceModel](
     except (OSError, ValueError):
         return None, Phase3EvidenceProblem(
             record=f"{run_id}/{name}",
-            reason=CaptureVerdict.INVALID.value,
+            reason=CaptureLoadVerdict.INVALID.value,
             detail=f"{path.name} is not readable JSON, so it records nothing.",
         )
     try:
         return contract.model_validate(payload), None
     except ValidationError as error:
         reason = evidence_load_reason_code(error)
-        stale = reason == CaptureVerdict.STALE.value
+        stale = reason == CaptureLoadVerdict.STALE.value
         return None, Phase3EvidenceProblem(
             record=f"{run_id}/{name}",
             reason=reason,
@@ -498,7 +498,7 @@ def _read_run(directory: Path) -> CommittedPhase3Run:
                 problems.append(
                     Phase3EvidenceProblem(
                         record=attested.record_kind,
-                        reason=CaptureVerdict.ABSENT.value,
+                        reason=CaptureLoadVerdict.ABSENT.value,
                         detail=(
                             f"{attested.key} is attested in the committed capture of "
                             f"{run_id} and loads, but its body is not committed beside "
@@ -539,7 +539,7 @@ def read_committed_phase3_evidence(
         problems.append(
             Phase3EvidenceProblem(
                 record=RUNS_SUBDIR,
-                reason=CaptureVerdict.ABSENT.value,
+                reason=CaptureLoadVerdict.ABSENT.value,
                 detail=(
                     f"No run is committed under {PHASE3_CAPTURE_DIR}/{RUNS_SUBDIR}/, so "
                     "nothing here says that this platform has ever run a container. "

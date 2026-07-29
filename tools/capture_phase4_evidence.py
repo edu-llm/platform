@@ -41,7 +41,6 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from edullm_platform.capture_tooling import (
-    CAPTURE_SUFFIX,
     CaptureFailedError,
     account_identity,
     aws_json,
@@ -52,6 +51,7 @@ from edullm_platform.capture_tooling import (
 )
 from edullm_platform.checkpoints import inspect_checkpoint
 from edullm_platform.evidence import (
+    CAPTURE_SUFFIX,
     NON_ACCOUNT_SECRET_PATTERNS,
     redact_content_digests,
 )

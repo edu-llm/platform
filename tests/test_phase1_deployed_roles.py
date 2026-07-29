@@ -57,7 +57,12 @@ from typing import Any
 
 import pytest
 
-from edullm_platform.evidence import FRESHNESS_WINDOW, scan_for_secrets
+from edullm_platform.evidence import (
+    CAPTURE_SUFFIX,
+    FRESHNESS_WINDOW,
+    CaptureLoadVerdict,
+    scan_for_secrets,
+)
 from edullm_platform.pending_amendments import (
     PENDING_AMENDMENTS,
     PendingAmendment,
@@ -66,7 +71,6 @@ from edullm_platform.pending_amendments import (
     pending_for,
 )
 from edullm_platform.phase1_capture import (
-    CAPTURE_SUFFIX,
     ROLE_CAPTURE_DIR,
     CaptureVerdict,
     CommittedRoleCapture,
@@ -258,7 +262,7 @@ def test_a_capture_is_committed_for_every_role_a_template_declares(
 ) -> None:
     # Read off the template list rather than off the directory: a capture that was
     # deleted has to show up as a role nobody has looked at, not as a shorter list.
-    absent = [one.role_name for one in captures if one.verdict is CaptureVerdict.ABSENT]
+    absent = [one.role_name for one in captures if one.verdict is CaptureLoadVerdict.ABSENT]
 
     assert [capture.role_name for capture in captures] == sorted(
         role_name for role_name, _template in COMMITTED_ROLE_TEMPLATES
@@ -273,7 +277,7 @@ def test_every_committed_capture_is_inside_its_freshness_window(
     # nothing has gone wrong with the roles: the evidence has stopped being evidence, and
     # criteria 4 and 5 are gaps again until somebody looks at the account.
     for capture in captures:
-        assert capture.verdict is not CaptureVerdict.STALE, capture.detail
+        assert capture.verdict is not CaptureLoadVerdict.STALE, capture.detail
         assert capture.expires_at is not None
         assert capture.expires_at > datetime.now(tz=UTC), capture.detail
 
@@ -365,7 +369,7 @@ def test_the_window_is_the_boundary_and_a_second_past_it_is_over(
     verdicts = {capture.role_name: capture.verdict for capture in captures_aged(tmp_path, age)}
 
     assert verdicts == {
-        role_name: CaptureVerdict.STALE if stale else expected_verdict(role_name)
+        role_name: CaptureLoadVerdict.STALE if stale else expected_verdict(role_name)
         for role_name, _template in COMMITTED_ROLE_TEMPLATES
     }
 
@@ -377,7 +381,7 @@ def test_an_expired_capture_says_when_it_expired_rather_than_going_quiet(
 
     for capture in expired:
         assert not capture.holds
-        assert capture.verdict is CaptureVerdict.STALE
+        assert capture.verdict is CaptureLoadVerdict.STALE
         assert "tools/capture_phase1_evidence.py" in capture.detail
         # The record did not load, so nothing downstream can read a stale role as a role.
         assert capture.evidence is None
@@ -454,7 +458,7 @@ def test_a_capture_for_a_role_no_template_declares_is_refused(tmp_path: Path) ->
     assert undeclared.report is None
     # And the roles that do have templates are still reported as uncaptured.
     assert {capture.verdict for capture in captures if capture is not undeclared} == {
-        CaptureVerdict.ABSENT
+        CaptureLoadVerdict.ABSENT
     }
 
 
@@ -467,14 +471,14 @@ def test_a_file_that_is_not_a_role_capture_reads_as_invalid_rather_than_absent(
 
     capture = one(read_committed_role_captures(PROJECT_ROOT, capture_dir=tmp_path), PUBLISHER_ROLE)
 
-    assert capture.verdict is CaptureVerdict.INVALID
+    assert capture.verdict is CaptureLoadVerdict.INVALID
     assert not capture.holds
 
 
 def test_a_directory_with_no_captures_reports_every_role_as_absent(tmp_path: Path) -> None:
     captures = read_committed_role_captures(PROJECT_ROOT, capture_dir=tmp_path)
 
-    assert [capture.verdict for capture in captures] == [CaptureVerdict.ABSENT] * len(
+    assert [capture.verdict for capture in captures] == [CaptureLoadVerdict.ABSENT] * len(
         COMMITTED_ROLE_TEMPLATES
     )
     assert all(capture.template_path is not None for capture in captures)
