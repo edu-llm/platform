@@ -22,11 +22,14 @@ from __future__ import annotations
 import json
 import re
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from edullm_platform.canonical import canonical_json_bytes
+from edullm_platform.config import load_yaml
+from edullm_platform.contracts.execution import ExecutionTarget
 from edullm_platform.contracts.identity import ATTEMPT_ID_REGEX
 from edullm_platform.contracts.lifecycle import (
     EVENT_ID_PATTERN,
@@ -36,7 +39,9 @@ from edullm_platform.contracts.lifecycle import (
     deduplicate_lifecycle_events,
     new_event_id,
 )
+from edullm_platform.contracts.manifest import RunManifest
 from edullm_platform.contracts.vocabulary import RetentionClass
+from edullm_platform.execution import batch_submit_request
 from edullm_platform.lifecycle_handler import (
     LifecycleEventError,
     binding_key,
@@ -49,6 +54,7 @@ from edullm_platform.lifecycle_projection import (
     CANCELLATION_REASON_MARKERS,
     EVENTBRIDGE_BATCH_DETAIL_TYPE,
     EVENTBRIDGE_BATCH_SOURCE,
+    OUTPUT_PREFIX_VARIABLE,
     OUTPUTS_BUCKET,
     UnmappedBatchStatusError,
     UnreadableBatchEventError,
@@ -62,6 +68,9 @@ RUN_ID = "run_0198f0a1-2b3c-7d4e-8f01-23456789abcd"
 BATCH_JOB_ID = "3f9d1f1e-6b18-4a63-9c0d-2f6d4a1b8c70"
 EVENTBRIDGE_EVENT_ID = "9d2f0e5a-1c4b-4c8e-9a3d-7f5b2e6c1a04"
 OCCURRED_AT = "2026-07-27T20:15:30Z"
+#: The same instant as a datetime, for the tests that call the projection directly rather
+#: than through the envelope reader that parses it.
+OCCURRED_AT_INSTANT = datetime.fromisoformat(OCCURRED_AT)
 
 #: 2026-07-27T20:05:00Z and six minutes later, both before the envelope's own time, as
 #: Batch's epoch milliseconds. Integers, because that is what Batch sends and because a
@@ -70,6 +79,12 @@ STARTED_AT_MS = 1_785_182_700_000
 STOPPED_AT_MS = 1_785_183_060_000
 
 CANCELLATION_REASON = f"{CANCELLATION_REASON_MARKERS[0]}: the workflow run was cancelled"
+
+TEAM = "platform"
+#: Exactly what contracts/results.py::output_prefix builds and batch_submit_request sends.
+#: Written out rather than imported so that a change to that function shows up here as a
+#: failure to compare rather than as two sides moving together.
+CONTAINER_OUTPUT_PREFIX = f"s3://{OUTPUTS_BUCKET}/teams/{TEAM}/runs/{RUN_ID}/"
 
 
 def attempt_block(**overrides: Any) -> dict[str, Any]:
@@ -95,6 +110,21 @@ def detail(status: str, **overrides: Any) -> dict[str, Any]:
         "jobQueue": "arn:aws:batch:us-east-1:123456789012:job-queue/sbsandbox-intern-edullm-cpu",
         "status": status,
         "createdAt": STARTED_AT_MS - 5_000,
+        # THE TOP-LEVEL CONTAINER, WHICH THESE FIXTURES DID NOT HAVE AND THE REAL EVENT
+        # ALWAYS DOES. AWS lists it among the required properties of BatchJobStateChange,
+        # and its absence here is why nothing noticed that the projection was inventing an
+        # output prefix instead of reading the one the container was handed: a fixture
+        # cannot contradict a literal it does not carry.
+        #
+        # The environment is the one batch_submit_request sends, in the shape it sends it.
+        "container": {
+            "image": "123456789012.dkr.ecr.us-east-1.amazonaws.com/x@sha256:" + "0" * 64,
+            "environment": [
+                {"name": "EDULLM_RUN_ID", "value": RUN_ID},
+                {"name": "EDULLM_TEAM", "value": TEAM},
+                {"name": "EDULLM_OUTPUT_PREFIX", "value": CONTAINER_OUTPUT_PREFIX},
+            ],
+        },
     }
     payload.update(overrides)
     return payload
@@ -334,10 +364,135 @@ def test_a_successful_run_records_where_its_output_went() -> None:
     projected = succeeded()
 
     assert projected.result is not None
-    assert projected.result.output_prefixes == (f"s3://{OUTPUTS_BUCKET}/{RUN_ID}/",)
+    assert projected.result.output_prefixes == (CONTAINER_OUTPUT_PREFIX,)
     assert projected.result.retention_class is RetentionClass.STANDARD
+    # Both still empty, and both are limitations rather than descriptions. A Batch state
+    # change carries what the container was configured with, never what its process did,
+    # so the checkpoint it wrote and the W&B run it published are unreachable from here.
     assert projected.result.wandb_run is None
     assert projected.result.checkpoints == ()
+
+
+def test_the_prefix_recorded_is_the_prefix_the_container_was_handed() -> None:
+    """Reads BOTH sides. Mutation: rebuild the prefix here from the run id and the bucket.
+
+    That is what this did, and the literal was wrong for the entire life of the phase
+    without anything failing. ``batch_submit_request`` tells the container
+    ``teams/{team}/runs/{run_id}/``; the projection recorded ``{run_id}/``. Two answers to
+    where a run writes, one of them in an immutable lineage record, and the workload role
+    does not even permit the one lineage named. Nothing caught it because no run had
+    written an object -- the CPU smoke prints and exits.
+
+    Rebuilding it here would need the team, and the event does not carry one: AWS's
+    published schema for BatchJobStateChange lists attempts, container, createdAt,
+    dependsOn, jobDefinition, jobId, jobName, jobQueue, parameters, retryStrategy and
+    status, and no tags. So the value is read from the container the event describes,
+    which is the only place it exists and also the only place that cannot disagree with
+    what the job actually ran with.
+    """
+    manifest = load_yaml(
+        Path(__file__).resolve().parents[1] / "fixtures" / "manifests" / "cpu-routine.yaml",
+        RunManifest,
+    )
+    account = "123456789012"
+    submitted = batch_submit_request(
+        manifest=manifest,
+        target=ExecutionTarget(
+            compute_profile=manifest.compute_profile,
+            region="us-east-1",
+            job_queue_arn=f"arn:aws:batch:us-east-1:{account}:job-queue/q",
+            job_definition_arn=f"arn:aws:batch:us-east-1:{account}:job-definition/d",
+            execution_role_arn=f"arn:aws:iam::{account}:role/e",
+            workload_role_arn=f"arn:aws:iam::{account}:role/w",
+            log_group="/aws/batch/g",
+        ),
+        run_id=RUN_ID,
+    )
+    told = {
+        entry["Name"]: entry["Value"]
+        for entry in submitted["ContainerOverrides"]["Environment"]
+    }[OUTPUT_PREFIX_VARIABLE]
+
+    # The submitter's own event, carrying exactly what the submitter's own request sends.
+    # Comparing the projection against a constant would prove the projection self
+    # consistent; comparing it against the request is what holds the two modules together.
+    delivered = detail("SUCCEEDED", attempts=[attempt_block()])
+    delivered["container"] = {
+        "environment": [{"name": OUTPUT_PREFIX_VARIABLE, "value": told}]
+    }
+    projected = project_batch_state_change(
+        eventbridge_event_id=EVENTBRIDGE_EVENT_ID,
+        detail=delivered,
+        occurred_at=OCCURRED_AT_INSTANT,
+    )
+
+    assert told.startswith(f"s3://{OUTPUTS_BUCKET}/teams/{manifest.team}/runs/{RUN_ID}/")
+    assert projected.result is not None
+    assert projected.result.output_prefixes == (told,)
+
+
+@pytest.mark.parametrize(
+    ("label", "environment"),
+    [
+        ("the variable is absent", [{"name": "EDULLM_RUN_ID", "value": RUN_ID}]),
+        (
+            "the prefix names somebody else's bucket",
+            [{"name": OUTPUT_PREFIX_VARIABLE, "value": "s3://not-ours/teams/x/runs/y/"}],
+        ),
+    ],
+)
+def test_a_succeeded_job_whose_output_cannot_be_located_is_refused(
+    label: str, environment: list[dict[str, str]]
+) -> None:
+    """Mutation: fall back to a plausible prefix, or record an empty one.
+
+    ResultManifest already refuses a succeeded run with no output prefix, and is right to:
+    a run that finished and cannot be found is not a run anybody can use. Every job this
+    platform submits is handed the variable by batch_submit_request, so a succeeded job
+    without a readable one inside our own bucket is an event this record cannot honestly
+    complete.
+
+    Refusing is loud -- the event retries and then dead-letters, where an alarm is already
+    watching -- and loud is the right volume. A fallback literal would make the write
+    succeed and would be indistinguishable from a correct record, which is exactly the
+    defect this change removes. An empty tuple would trip the contract anyway, one layer
+    later and with a worse message.
+
+    A foreign bucket is refused on the same terms rather than recorded: the value is read
+    from the event, so it is only as trustworthy as whoever set the job definition, and
+    naming a location this platform neither controls nor can read back would be the record
+    endorsing it.
+    """
+    unlocatable = detail("SUCCEEDED", attempts=[attempt_block()])
+    unlocatable["container"] = {"environment": environment}
+
+    with pytest.raises(UnreadableBatchEventError, match=OUTPUT_PREFIX_VARIABLE):
+        project_batch_state_change(
+            eventbridge_event_id=EVENTBRIDGE_EVENT_ID,
+            detail=unlocatable,
+            occurred_at=OCCURRED_AT_INSTANT,
+        )
+
+
+def test_a_failed_job_with_no_prefix_is_still_recorded() -> None:
+    """Mutation: refuse every job whose prefix cannot be read, not only the succeeded ones.
+
+    A failed run may have produced nothing and the contract permits it to name nowhere. The
+    reason to record it anyway is that the failure itself is the evidence -- refusing here
+    would dead-letter the event and leave no lineage at all for a run that demonstrably
+    happened, which is a worse outcome than a result manifest with an empty prefix list.
+    """
+    failed = detail("FAILED", attempts=[attempt_block(container={"exitCode": 1})])
+    failed["container"] = {"environment": [{"name": "EDULLM_RUN_ID", "value": RUN_ID}]}
+
+    projected = project_batch_state_change(
+        eventbridge_event_id=EVENTBRIDGE_EVENT_ID,
+        detail=failed,
+        occurred_at=OCCURRED_AT_INSTANT,
+    )
+
+    assert projected.result is not None
+    assert projected.result.output_prefixes == ()
 
 
 def test_the_result_joins_to_the_attempt_and_the_attempt_to_the_batch_job() -> None:
