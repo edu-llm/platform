@@ -2,8 +2,8 @@
 
 Phase: phase-3
 Bundle schema version: 1
-Source commit: b12467925021dac993040d1b5fb13a3a315ed586
-Generated: 2026-07-28T22:57:34+00:00
+Source commit: 3222d67491e1e5de23940cbbb53c2f63c88654dd
+Generated: 2026-07-29T00:12:05+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 3 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase3_proof.py` at generation time. It is not done, and the Result table below says by how much.
 
@@ -74,10 +74,10 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | .github/workflows/deploy-phase3-batch.yml | sha256:166c42ea274581a605ef9179bc83189196afa163bb053fa43f35d16ea64d489d |
 | .github/workflows/submit-run.yml | sha256:389802db5f617673f77e7c9c7a918d0d941ea32c11428d02087f5b67fde37dae |
 | config/execution-targets.yaml | sha256:29ac71f9287e75d773cfd2b03de879eb26b20ea6709d2da68778956b8c5cc37e |
-| config/image-exceptions.yaml | sha256:0790a1dae907566399273eb2dd0aae3ffed36d2958b0b5bfeec557c4618491de |
+| config/image-exceptions.yaml | sha256:a23b7e7d54002124db9fddc5d49202ef7aef6b25f52da60fe0b6842a6dacb222 |
 | config/workload-catalog.yaml | sha256:dbd10c9d4655be66f829b8c43e150544ba17ca778988f86d14d22e51600feec6 |
 | fixtures/evidence/phase-3/account-measurements.sanitized.json | sha256:02a7cafae966f04037c13f4e2a57b958a7b5e2c435c46a0eba4a6839d4a4c127 |
-| infra/admission-state-machine.yaml | sha256:923238e56c53ad8bd32f3d776f2669990e3e0440b28e33ab55fb6dbbe768ebf8 |
+| infra/admission-state-machine.yaml | sha256:9aeb4800c8772d7db761b12eefb1178bebe5d930adf30bf0e631535c5458572c |
 | infra/batch-compute.yaml | sha256:d601bb1e6c4f605737d1107334ef654e65c5c7862cc614e2c0eeb4536b93ae1d |
 | infra/batch-events.yaml | sha256:ec6f793f8af4e9864d23079e80019ea1fead40949016f04566ca840f1e27f092 |
 | infra/batch-network.yaml | sha256:699a82646fa0d9d2a3446471c5451a2847d4c5d1d8978ebe7a2525fa98d2154d |

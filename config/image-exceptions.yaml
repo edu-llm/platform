@@ -13,6 +13,32 @@
 # blocking findings runs; an image with no entry and blocking findings does not.
 schema_version: 1
 exceptions:
+  - image_digest: "sha256:0c8a866e5bfc838292a1a645a05a7a1300b83d22d91f024d636e76df22c2badb"
+    reason: >-
+      The training image, and the first one this platform has published that can run a
+      model. Fifteen findings: four critical and eight high, which is the same profile the
+      CPU image below carries and for the same cause -- three criticals in perl, one in
+      glibc, highs in perl, glibc and sqlite3, mediums in perl and util-linux. Identical
+      package versions, because the registered base digest has not moved.
+      WHAT IS DIFFERENT FROM THE ENTRY BELOW, AND IT IS THE PART TO READ. That entry
+      reasoned that the Dockerfile installs nothing, so nothing in the image came from this
+      project. That is no longer true: the Dockerfile now installs torch pinned at 2.6.0,
+      the project and its dependencies, boto3 and wandb, which is about three gigabytes of
+      Python that was not there before. None of it appears above. This registry is on BASIC
+      scanning, which reads the operating system package database and does not look at
+      Python distributions at all, so the scan being quiet about those three gigabytes is
+      an absence of looking rather than an absence of findings. Enhanced scanning is what
+      would cover them and is not enabled; that is recorded as a residual rather than
+      claimed here.
+      So this entry accepts two different things. The twelve blocking OS findings are
+      inherited from a digest-pinned Debian base, are unfixable from this repository, and
+      are not reachable by a training entrypoint that invokes neither perl nor sqlite3. The
+      Python dependency tree is accepted unscanned, on the narrower ground that it is the
+      declared dependency set of a published research library installed from immutable
+      pinned versions, and that the container it runs in holds one role that may write one
+      team's output prefix and read it back.
+    recorded_by: philote
+    recorded_at: "2026-07-28T19:05:00.000000Z"
   - image_digest: "sha256:4ebdba1ba3b57096efb4f4647ed41ed5ded4ac9e77e8c9038b7ff24db0bc6db8"
     reason: >-
       Four critical and eight high findings, all of them Debian base-OS packages inherited
