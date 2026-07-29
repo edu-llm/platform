@@ -21,6 +21,7 @@ import hashlib
 import json
 import shlex
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -37,6 +38,7 @@ from tools.build_gpu_training_submission import (
     LINEAGE_BUCKET,
     TRAINING_IMAGE_DIGEST,
     dispatch_form,
+    dispatch_inputs,
     marker_writer_source,
     training_program,
     workflow_inputs,
@@ -104,8 +106,6 @@ def test_the_form_names_the_image_the_gpu_job_definition_is_pinned_to() -> None:
     the definition does not carry is refused at admission, which is the right answer and a
     slow way to learn it: the refusal names the image, not the disagreement.
     """
-    from pathlib import Path
-
     template = (Path(__file__).resolve().parents[1] / "infra" / "batch-compute-gpu.yaml").read_text()
 
     assert TRAINING_IMAGE_DIGEST in template
@@ -384,18 +384,42 @@ def test_the_summary_carries_both_new_sections_so_the_capture_can_read_them() ->
     assert '"resumed": resumed,' in program
 
 
-def test_the_command_is_the_only_field_the_workflow_receives_as_a_list() -> None:
-    """Mutation: send the command as a string.
+def test_the_dispatch_payload_is_every_field_as_a_string_including_the_command() -> None:
+    """Reads BOTH sides. Mutation: send the command as a list, which is what this did.
 
-    ``gh workflow run --json`` delivers what it is given, and a string command is a single
-    argument the container never splits -- so the whole program becomes the name of a file
-    Python is asked to find.
+    ``workflow_dispatch`` declares every input as ``type: string``, so gh refuses an array
+    before the run starts -- with "cannot unmarshal array into Go value of type string",
+    which reads like a malformed payload rather than one field of the wrong type. Asserted
+    against the workflow's own declarations rather than against a remembered rule.
     """
-    inputs = workflow_inputs(dispatch_form(commit_sha=COMMIT))
+    workflow = (
+        Path(__file__).resolve().parents[1] / ".github" / "workflows" / "submit-run.yml"
+    ).read_text()
+    payload = dispatch_inputs(dispatch_form(commit_sha=COMMIT))
 
-    listed = [name for name, value in inputs.items() if isinstance(value, list)]
-    assert listed == ["command"]
-    assert all(isinstance(value, str | int | list) for value in inputs.values())
+    assert all(isinstance(value, str) for value in payload.values())
+    for name in payload:
+        declared = workflow.split(f"{name}:", 1)[1].split("type:", 1)[1].split("\n", 1)[0]
+        assert declared.strip() == "string", f"{name} is declared {declared.strip()}"
+
+
+def test_the_split_the_workflow_performs_is_mirrored_here_and_not_guessed() -> None:
+    """Mutation: split the command differently from the runner does.
+
+    The payload carries one shell command line and the workflow splits it with
+    ``shlex.split``. Validating locally against a different split would prove a payload
+    correct that the runner then builds into something else -- which is the failure the
+    local validation exists to prevent.
+    """
+    workflow = (
+        Path(__file__).resolve().parents[1] / ".github" / "workflows" / "submit-run.yml"
+    ).read_text()
+    form = dispatch_form(commit_sha=COMMIT)
+
+    assert 'shlex.split(os.environ.get("FORM_COMMAND", ""))' in workflow
+    assert workflow_inputs(form)["command"] == shlex.split(
+        dispatch_inputs(form)["command"]
+    )
 
 
 def test_the_form_carries_no_field_the_submission_workflow_would_not_read() -> None:
@@ -404,8 +428,6 @@ def test_the_form_carries_no_field_the_submission_workflow_would_not_read() -> N
     A field the workflow does not declare is dropped silently by ``gh workflow run``, so a
     submission built here would dispatch and mean something different from what it says.
     """
-    from pathlib import Path
-
     workflow = (
         Path(__file__).resolve().parents[1] / ".github" / "workflows" / "submit-run.yml"
     ).read_text()

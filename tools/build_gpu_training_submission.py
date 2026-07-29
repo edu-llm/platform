@@ -348,8 +348,34 @@ TEXT_FIELDS: Final = (
 WHOLE_FIELDS: Final = ("maximum_attempts", "fanout_size", "fanout_parallelism")
 
 
+def dispatch_inputs(form: dict[str, str]) -> dict[str, str]:
+    """What ``gh workflow run --json`` is given. Every value a string, including the command.
+
+    THIS AND :func:`workflow_inputs` ARE DIFFERENT SHAPES AND CONFLATING THEM COSTS A
+    DISPATCH. ``workflow_dispatch`` declares every input as ``type: string``, so a JSON array
+    is refused before the run starts -- "cannot unmarshal array into Go value of type
+    string", which reads like a malformed payload rather than a field of the wrong type.
+
+    The command is therefore one shell command line, POSIX-quoted, and the workflow splits
+    it on the runner. That split is the workflow's and is mirrored in
+    :func:`workflow_inputs` so the payload can be validated here against what will actually
+    be built there.
+    """
+    return {
+        field: str(form[field]).strip()
+        for field in (*TEXT_FIELDS, *WHOLE_FIELDS, "command")
+        if str(form.get(field, "")).strip()
+    }
+
+
 def workflow_inputs(form: dict[str, str]) -> dict[str, object]:
-    """The form as ``gh workflow run --json`` would deliver it, command already split."""
+    """The form the *workflow* assembles from those inputs, with the command already split.
+
+    Mirrors the inline script in ``.github/workflows/submit-run.yml``: text fields stripped
+    and dropped when empty, the three bounds parsed as whole numbers, and the command run
+    through ``shlex.split``. It exists so a payload can be validated against
+    ``SubmissionInputs`` on a laptop rather than discovered to be wrong by a runner.
+    """
     inputs: dict[str, object] = {}
     for field in TEXT_FIELDS:
         value = str(form.get(field, "")).strip()
@@ -406,11 +432,15 @@ def main(argv: list[str] | None = None) -> int:
     form = dispatch_form(
         commit_sha=commit, steps=arguments.steps, resume_from=arguments.resume_from
     )
-    inputs = workflow_inputs(form)
-    arguments.output.write_text(json.dumps(inputs, indent=2, sort_keys=True) + "\n")
+    # The dispatch payload is what gets written; the split form is only ever used to
+    # check it here. Writing the split one was a real defect: gh refused it, and the
+    # message named the JSON rather than the field.
+    arguments.output.write_text(
+        json.dumps(dispatch_inputs(form), indent=2, sort_keys=True) + "\n"
+    )
 
     program = training_program(steps=arguments.steps, resume_from=arguments.resume_from)
-    command = inputs["command"]
+    command = workflow_inputs(form)["command"]
     # The program must survive the round trip the workflow puts it through, or the container
     # runs something that merely parses.
     assert isinstance(command, list), "the command must reach the workflow as a list of words"
@@ -423,6 +453,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"resume from    {arguments.resume_from or '(nothing)'}")
     print(f"program bytes  {len(program)}")
     print(f"written        {arguments.output}")
+    print(f"dispatch with  gh workflow run submit-run.yml --ref main --json < {arguments.output}")
     print("the program compiles and round-trips through shlex")
     return 0
 
