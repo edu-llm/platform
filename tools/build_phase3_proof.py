@@ -1052,8 +1052,11 @@ def render_cancellation_and_timeout(repo_root: Path) -> str:
             (
                 "Every Phase 3 role deliberately excludes `batch:TerminateJob`, and the state "
                 "machine the plan routes cancellation through has not been written. So this "
-                "half needs a component built before it needs a run, and the three checks "
-                "waiting on it say so rather than describing a capture somebody could take."
+                "half needs a component built before it needs a run, which is why the three "
+                "checks that used to wait on it are no longer Phase 3's. They moved to the "
+                "phase that will build cancellation, on the reasoning that a check nobody in "
+                "this phase can close is a gate held permanently red rather than a measurement, "
+                "and that cancellation is better owned by the work that will deliver it."
             ),
             "",
             (
@@ -1066,7 +1069,10 @@ def render_cancellation_and_timeout(repo_root: Path) -> str:
             (
                 "Cancelling the GitHub workflow does not stop the Batch job. The submit job "
                 "records that where an operator will read it rather than implying otherwise by "
-                "silence, and it is on the pilot limitations page in those words."
+                "silence, and the tests over that notice are still in the suite. Where it does "
+                "not yet appear is a pilot limitations page, which this repository does not "
+                "have -- and with no check in this phase left to fail over it, that page is now "
+                "the only thing that would put the absence in front of a user."
             ),
         ]
     )
@@ -1654,10 +1660,14 @@ def known_limitations(
             "a system that has been operated a handful of times rather than one in service."
         ),
         (
-            "This phase still cannot stop a job it has started. No component in the account "
-            f"holds `batch:TerminateJob`, so checks 5, 6 and 7 are {status_of('5')}s that need "
-            "a component built rather than a run taken. What bounds the exposure is the "
-            "mandatory attempt duration, which has been observed stopping a real job."
+            "This phase still cannot stop a job it has started, and nothing in the list of "
+            "checks below says so any more. No component in the account holds "
+            "`batch:TerminateJob`, and the three checks that used to record the absence "
+            "moved to the phase that will build cancellation -- so the acceptance list is a "
+            "measure of what Phase 3 can be held to, and this sentence is the only thing in "
+            "the bundle that tells a reviewer the capability is missing. What bounds the "
+            "exposure is the mandatory attempt duration, which has been observed stopping a "
+            "real job."
         ),
         (
             f"Check 20 is {status_of('20')} on a committed CloudFormation template, which is "
@@ -1778,11 +1788,13 @@ def render_index(
                 ),
                 "",
                 (
-                    "What is not done is the other end of a run's life. Nothing in this account "
-                    "can stop a job once it has started, so the three cancellation checks need a "
-                    "component built before they need a run. Four more need a run aimed at them, "
-                    "and two need a shape of capture the per-run records cannot produce. The "
-                    "Result table below says which."
+                    "What is not done is captures rather than mechanism, which is a change in "
+                    "this bundle rather than only in the account. Four checks name an "
+                    "observation no completed run produced, and two need a shape of capture the "
+                    "per-run records cannot make; nothing left in the list waits on code being "
+                    "written. The Result table below says which. Cancellation is the one "
+                    "capability this phase describes and does not have, and it is no longer "
+                    "measured here -- read the Known limitations for where it went."
                 ),
                 "",
                 "## Contents",

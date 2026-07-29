@@ -2,19 +2,25 @@
 
 The gate executes citations, so most of the discipline is enforced there. What is left for
 this module is the part a gate run cannot tell you: whether the definition describes Phase 3
-rather than some other set of twenty-two statements, whether the gaps say enough to be acted
+rather than some other set of nineteen statements, whether the gaps say enough to be acted
 on, and -- the one that matters most in this phase -- whether the honest status has been
 kept.
 
-**The pressure this module exists to resist.** Nine of the twenty-two criteria are still
-gaps -- three cancellation checks with no component behind them, four scenarios nobody has
-run, and two observations a per-run capture cannot make -- so ``tools/validate_phase3.py``
-exits 1 and will go on exiting 1 until a job can be stopped. That is uncomfortable in
-exactly the way that invites the wrong fix: relabel the remaining ones as deferrals, and
-the gate goes green without anything changing in the account. A deferral is a decision not
-to do something with a trigger that makes it live again; unfinished work is a gap. The
-cases below hold that line, and one of them holds it in the direction that will matter
-later -- a deferral, if one is ever added, must carry a trigger nobody has to remember.
+**The pressure this module exists to resist.** Six of the nineteen criteria are still
+gaps -- four scenarios nobody has run and two observations a per-run capture cannot make --
+so ``tools/validate_phase3.py`` exits 1 and will go on exiting 1 until somebody takes those
+captures. That is uncomfortable in exactly the way that invites the wrong fix: relabel the
+remaining ones as deferrals, and the gate goes green without anything changing in the
+account. A deferral is a decision not to do something with a trigger that makes it live
+again; unfinished work is a gap. The cases below hold that line, and one of them holds it
+in the direction that will matter later -- a deferral, if one is ever added, must carry a
+trigger nobody has to remember.
+
+**The list is numbered 1 to 22 with 5, 6 and 7 absent, and that is asserted rather than
+tolerated.** Those three were cancellation and moved to the phase that will build it; the
+numbers were left as a hole because they are cited elsewhere, so closing the hole would
+change what an existing citation names. The first case below pins the exact number list,
+which is what makes a tidy-up of the numbering fail here rather than in a reader's head.
 
 **The pressure in the other direction, now that thirteen are covered.** A criterion covered
 on a capture is only as good as the capture, and the failure mode is a citation that
@@ -60,8 +66,10 @@ CRITERIA_THAT_DO_NOT_WAIT_FOR_A_DEPLOY = ("20", "22")
 #: captures expire.
 COVERED_ON_A_CAPTURED_RUN = ("1", "2", "3", "4", "8", "9", "15", "16", "17", "19", "21")
 
-#: The three criteria that need a cancellation path built before anything can be observed.
-NEEDING_A_COMPONENT_BUILT = ("5", "6", "7")
+#: The numbers no criterion carries. Cancellation moved to the phase that will build it,
+#: and the numbers were not reused, so a citation written against the old list still names
+#: what it named. Recorded here so that reinstating one is a change to this file too.
+MOVED_TO_A_LATER_PHASE = ("5", "6", "7")
 
 #: The four that need a run aimed at them and no new infrastructure.
 NEEDING_A_RUN_AIMED_AT_THEM = ("10", "11", "12", "13")
@@ -72,10 +80,20 @@ NEEDING_A_DIFFERENT_SHAPE_OF_CAPTURE = ("14", "18")
 
 
 def test_the_definition_lists_every_check_the_phase_plan_names() -> None:
-    specs = phase3_criteria()
+    """Mutation: renumber the list to close the hole where cancellation used to be.
 
-    assert len(specs) == PHASE3_CRITERION_COUNT == 22
-    assert [spec.number for spec in specs] == [str(n) for n in range(1, 23)]
+    It would read as a tidy-up and it would be a silent rewrite of every citation. The
+    numbers are identifiers -- proof bundles, plan documents and decisions already written
+    down name Phase 3 criteria by number -- so moving 8 down to 5 changes what "criterion
+    10" means in text nobody is going to re-read. The shared contract requires the numbers
+    to be unique and says nothing about them being contiguous, which is what permits the
+    hole; this is what keeps it open.
+    """
+    specs = phase3_criteria()
+    expected = [str(n) for n in range(1, 23) if str(n) not in MOVED_TO_A_LATER_PHASE]
+
+    assert len(specs) == PHASE3_CRITERION_COUNT == 19
+    assert [spec.number for spec in specs] == expected
     assert all(spec.statement.strip() for spec in specs)
 
 
@@ -84,22 +102,18 @@ def test_the_covered_criteria_are_exactly_the_ones_the_evidence_reaches() -> Non
 
     Every criterion is in exactly one of four groups, and each group is named rather than
     counted so that moving one between them is visible in a diff. Two rest on committed
-    artifacts alone; eleven rest on what four completed runs left behind; nine are still
-    open, for three different reasons that decide what closing each one costs.
+    artifacts alone; eleven rest on what four completed runs left behind; six are still
+    open, for two different reasons that decide what closing each one costs.
 
     The count is asserted too, but only as a cross-check on the naming. A test that
-    asserted "thirteen are covered" would go on passing after somebody covered a
-    cancellation criterion and un-covered the timeout one.
+    asserted "thirteen are covered" would go on passing after somebody covered the
+    duplicate-submission criterion and un-covered the timeout one.
     """
     specs = phase3_criteria()
     covered = [spec.number for spec in specs if spec.status is CriterionStatus.COVERED]
     gaps = [spec.number for spec in specs if spec.status is CriterionStatus.GAP]
     expected_gaps = sorted(
-        [
-            *NEEDING_A_COMPONENT_BUILT,
-            *NEEDING_A_RUN_AIMED_AT_THEM,
-            *NEEDING_A_DIFFERENT_SHAPE_OF_CAPTURE,
-        ],
+        [*NEEDING_A_RUN_AIMED_AT_THEM, *NEEDING_A_DIFFERENT_SHAPE_OF_CAPTURE],
         key=int,
     )
 
@@ -160,9 +174,9 @@ def test_nothing_is_deferred_because_nothing_here_is_postponed() -> None:
 
 def test_every_gap_says_what_would_close_it() -> None:
     # A gap with no written explanation is refused at construction, so what this adds is
-    # that the explanation is long enough to act on. Nineteen of these exist because
-    # nothing is deployed, and the difference between "not proved" and "not proved, here
-    # is the artifact to capture" is the difference between a scoreboard and a checklist.
+    # that the explanation is long enough to act on. Each of these is now an observation
+    # nobody has made, and the difference between "not proved" and "not proved, here is
+    # the artifact to capture" is the difference between a scoreboard and a checklist.
     gaps = [spec for spec in phase3_criteria() if spec.status is CriterionStatus.GAP]
 
     assert gaps, "a Phase 3 with no gaps has either finished or stopped being honest"
@@ -171,45 +185,57 @@ def test_every_gap_says_what_would_close_it() -> None:
         assert len(written) > 200, f"criterion {spec.number}'s gap text is too thin to act on"
 
 
-def test_every_gap_says_how_to_close_it_and_says_it_the_same_way() -> None:
-    """Two shared sentences, and which one a gap carries is the estimate.
+def test_every_gap_closes_with_a_capture_rather_than_with_code_nobody_has_written() -> None:
+    """Every remaining Phase 3 gap is closable without building anything, and that is new.
 
-    Mutation: write a per-criterion variation of "capture it and cite a test". Slightly
-    different sentences read as different procedures, and the one that differed by accident
-    would be indistinguishable from the one that differed for a reason.
+    **What this case used to be, and why it changed.** It partitioned the gaps by which of
+    two shared sentences each one carried. ``NEEDS_A_COMPONENT_BUILT`` meant code had to be
+    written and deployed before a run could show anything; ``CAPTURE_A_RUN_AIMED_AT_IT``
+    meant the mechanism was there and nobody had pointed a run at it. Keeping the two
+    visible was the point, because collapsing them would have told somebody planning the
+    next session that cancellation and a duplicate submission cost the same.
 
-    Two sentences rather than one, because the gaps are not all the same size and saying so
-    is the point. ``NEEDS_A_COMPONENT_BUILT`` means code has to be written and deployed
-    before a run could show anything; ``CAPTURE_A_RUN_AIMED_AT_IT`` means the mechanism is
-    there and nobody has pointed a run at it. Collapsing them would tell a reader planning
-    the next session that cancellation and a duplicate submission cost the same.
+    Only the three cancellation criteria ever carried the first sentence, and they have
+    moved to the phase that will build cancellation. So the distinction the old case
+    defended has one side and nothing on the other, and asserting an empty list is a
+    control that cannot fail.
 
-    Two criteria carry neither, and each says why in its own words: 14 needs two roles that
-    belong to another phase's registry captured, and 18 needs an inventory of the whole
-    lineage store rather than of one run. Naming them here is what stops a third exception
-    being added because the shared sentences were slightly awkward.
+    What replaces it is the stronger claim the move bought: **nothing left in this phase
+    needs a component built.** Every remaining gap closes by going and observing something
+    -- four by a run aimed at the case, two by a capture of a shape the per-run records
+    cannot produce -- and none of them waits on code. That is what makes Phase 3's gate a
+    measure of Phase 3 rather than a standing report on work owned elsewhere, and it is
+    worth failing a build over: a gap arriving here that needs a mechanism written is a gap
+    that belongs to whichever phase is building the mechanism.
+
+    Two other properties the old case carried are kept, because neither depended on the
+    taxonomy having two populated sides. The shared sentence has to be the shared sentence,
+    verbatim -- the mutation is a per-criterion variation of "capture it and cite a test",
+    where the one that differed by accident is indistinguishable from the one that differed
+    for a reason. And the two criteria that state their own reason are named: 14 needs two
+    roles belonging to another phase's registry captured, and 18 needs an inventory of the
+    whole lineage store rather than of one run. Naming them is what stops a third exception
+    being added because the shared sentence was slightly awkward.
     """
-    from edullm_platform.phase3_criteria import (
-        CAPTURE_A_RUN_AIMED_AT_IT,
-        NEEDS_A_COMPONENT_BUILT,
-    )
+    from edullm_platform.phase3_criteria import CAPTURE_A_RUN_AIMED_AT_IT
 
     gaps = [spec for spec in phase3_criteria() if spec.status is CriterionStatus.GAP]
-    needing_a_build = [spec.number for spec in gaps if NEEDS_A_COMPONENT_BUILT in spec.gaps]
     needing_a_run = [spec.number for spec in gaps if CAPTURE_A_RUN_AIMED_AT_IT in spec.gaps]
     stating_their_own_reason = [
-        spec.number
-        for spec in gaps
-        if NEEDS_A_COMPONENT_BUILT not in spec.gaps
-        and CAPTURE_A_RUN_AIMED_AT_IT not in spec.gaps
+        spec.number for spec in gaps if CAPTURE_A_RUN_AIMED_AT_IT not in spec.gaps
     ]
 
-    assert needing_a_build == list(NEEDING_A_COMPONENT_BUILT)
     assert needing_a_run == list(NEEDING_A_RUN_AIMED_AT_THEM)
     assert stating_their_own_reason == list(NEEDING_A_DIFFERENT_SHAPE_OF_CAPTURE)
-    # No gap carries both, which would say a component has to be built and that nothing
-    # needs building.
-    assert set(needing_a_build).isdisjoint(needing_a_run)
+    # Exhaustive rather than two lists that happen to be right, so a gap of a third shape
+    # cannot arrive without somebody editing this case and arguing for it.
+    assert sorted([*needing_a_run, *stating_their_own_reason], key=int) == [
+        spec.number for spec in gaps
+    ]
+    # The claim itself. A gap that named the action no role holds would be a gap waiting on
+    # a state machine, which is the one kind this phase no longer owns.
+    for spec in gaps:
+        assert "batch:TerminateJob" not in " ".join(spec.gaps), spec.number
 
 
 def test_a_covered_criterion_never_rests_on_evidence_that_is_not_committed() -> None:

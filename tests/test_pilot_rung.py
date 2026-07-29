@@ -447,6 +447,14 @@ class PlanRecord:
     plan puts on it. ``judged_here`` holds every remaining criterion, which had no
     counterpart in the plan's list at all and whose flag was decided by the ladder's own
     test, with the argument recorded in that criterion's ``scope_limits``.
+
+    ``moved_to_a_later_phase`` holds the plan checks whose criterion this module no longer
+    carries, because the work they describe was reassigned to a phase that will build it.
+    They are listed rather than subtracted from ``plan_checks``, for two reasons. The
+    plan's list is still the size the plan records, and a table that quietly got shorter
+    would make a check disappearing from a phase indistinguishable from a transcription
+    error. And the numbers are not reused, so naming them here is what says the hole in
+    the criterion list is intended.
     """
 
     label: str
@@ -456,6 +464,7 @@ class PlanRecord:
     pilot_criteria: int
     from_the_plan: Mapping[str, bool]
     judged_here: Mapping[str, bool]
+    moved_to_a_later_phase: tuple[str, ...] = ()
 
     @property
     def expected(self) -> dict[str, bool]:
@@ -502,10 +511,13 @@ PLAN = (
         plan_checks=11,
         plan_pilot_checks=6,
         pilot_criteria=13,
-        # The plan's eleven checks are criteria 1 to 11. The five it does not mark are the
+        # The plan's eleven checks were criteria 1 to 11. The five it does not mark are the
         # log stream and the four cancellation and duplicate-event cases, each bounded by
-        # something else in the list.
-        from_the_plan={**marked(1, 3, 4, 8, 9, 10), **unmarked(2, 5, 6, 7, 11)},
+        # something else in the list. Three of the five have since left the phase with the
+        # cancellation work, and none of them was marked, which is why the pilot count did
+        # not move when they went.
+        from_the_plan={**marked(1, 3, 4, 8, 9, 10), **unmarked(2, 11)},
+        moved_to_a_later_phase=("5", "6", "7"),
         # Eleven criteria the plan's list never reached. Seven are marked; the four that
         # are not are argued one by one in their own scope limits.
         judged_here={**marked(12, 13, 14, 16, 17, 18, 19), **unmarked(15, 20, 21, 22)},
@@ -523,12 +535,17 @@ def test_the_plan_check_list_is_transcribed_at_the_size_the_plan_records(
     own check list and its own markers, and the two counts beside it are what a reader of
     the plan would count. A check that disappears from here disappears from every
     assertion below it, so the size is asserted before anything is compared.
+
+    A check whose criterion has left the phase is accounted for rather than dropped. It
+    still came out of the plan's list and the plan's list is still that long, so the two
+    tables together have to add up to the size the plan records -- which is what stops a
+    reassigned check and a mistyped one looking the same here.
     """
-    assert len(record.from_the_plan) == record.plan_checks
+    assert len(record.from_the_plan) + len(record.moved_to_a_later_phase) == record.plan_checks
     assert sum(record.from_the_plan.values()) == record.plan_pilot_checks
     # The plan's checks are the first criteria of each module, in the plan's order, which
     # is what makes a positional mapping honest rather than convenient.
-    assert sorted(record.from_the_plan, key=int) == [
+    assert sorted([*record.from_the_plan, *record.moved_to_a_later_phase], key=int) == [
         str(n) for n in range(1, record.plan_checks + 1)
     ]
 
@@ -542,11 +559,16 @@ def test_every_criterion_is_either_a_plan_check_or_a_recorded_judgement(
     A criterion in neither table has had no decision taken about it, and the default it
     would fall to is the one that reads as safe while sorting nothing. This is what makes
     a new criterion a decision somebody has to write down.
+
+    The third table is held to the opposite claim. A number listed as moved to a later
+    phase has to be absent from the module, or the table is describing a removal that did
+    not happen while the criterion goes on failing the gate here.
     """
     shipped = [spec.number for spec in record.criteria()]
 
     assert set(record.from_the_plan).isdisjoint(record.judged_here)
     assert sorted(record.expected, key=int) == shipped
+    assert set(record.moved_to_a_later_phase).isdisjoint(shipped)
 
 
 @pytest.mark.parametrize("record", PLAN, ids=lambda record: record.label)

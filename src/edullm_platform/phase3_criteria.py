@@ -3,7 +3,7 @@
 Phase 3 takes one manifest Phase 2 admits and turns the accepted decision into one
 digest-pinned CPU container on AWS Batch, with the binding, the lifecycle events, the
 attempt and the result landing write-once in the lineage bucket beside the intent and the
-decision. This module records the twenty-two checks the phase must satisfy, against the
+decision. This module records the nineteen checks the phase must satisfy, against the
 contract in :mod:`edullm_platform.criteria`.
 
 **The phase is deployed and has run.** Every stack is applied, and four submissions have
@@ -11,16 +11,12 @@ gone GitHub to OIDC to admission to Batch to EventBridge to S3: one that succeed
 whose command exited three deliberately, one stopped by its own timeout, and one that
 admission refused before anything could be launched. What those runs left behind is
 captured, sanitized and committed under ``fixtures/evidence/phase-3/``, and thirteen of the
-twenty-two criteria are covered by tests that read it. This module used to say that nothing
-had been deployed and that nineteen criteria were blocked behind that; that sentence was
-true when it was written and is not now.
+nineteen criteria are covered by tests that read it. This module used to say that nothing
+had been deployed and that almost every criterion was blocked behind that; that sentence
+was true when it was written and is not now.
 
-**Nine criteria remain gaps, and they are not one gap repeated.** They fall into three
-kinds, and the difference decides what closing each one costs.
-
-Three are a component nobody has built. Criteria 5, 6 and 7 are cancellation, and no
-cancellation state machine exists: every role Phase 3 declares deliberately excludes
-``batch:TerminateJob``, so these need code written before a run could demonstrate anything.
+**Six criteria remain gaps, and they are not one gap repeated.** They fall into two kinds,
+and the difference decides what closing each one costs.
 
 Four are a scenario nobody has run. Criteria 10, 11, 12 and 13 each name an observation
 that the four completed runs did not produce -- a second submission under one run id, a
@@ -35,13 +31,34 @@ roles the validator and state machine actually hold still match their templates,
 whether every lifecycle record in the bucket belongs to a run this platform submitted. A
 capture scoped to one run id can say nothing about either by construction.
 
+**There is no criterion 5, 6 or 7, and the absence is the record rather than a mistake.**
+Those three were cancellation: that a cancellation is authorized, applied and recorded,
+that cancelling the GitHub workflow forwards cancellation to the running job, and that
+cancelling a fan-out stops every child rather than only the parent. All three needed a
+state machine holding ``batch:TerminateJob`` that nobody has written and that no role in
+this account is permitted to use, so none of them could be closed by any run Phase 3 is
+able to make. A plan migration moved cancellation into the later phase that will build it,
+and the three checks went with the work rather than staying here as entries that could
+only ever be red. What that costs is real and worth stating: this phase's gate no longer
+asks whether a job can be stopped, and nothing in this module will notice if the answer
+stays no. What it buys is a gate that measures what Phase 3 can be held to, and an owner
+for cancellation who is not "nobody, indefinitely".
+
+The numbers were left as a hole rather than closed up, and that is deliberate rather than
+untidy. A criterion number is an identifier: proof bundles, plan documents and decisions
+already written down cite Phase 3 criteria by number, so renumbering 8 to 5 would change
+what every one of those citations means without touching the sentence it appears in. The
+contract in :mod:`edullm_platform.criteria` requires numbers to be unique and says nothing
+about them being contiguous, which is what makes the hole possible; the hole is what makes
+"Phase 3 criterion 10" go on meaning what it meant when somebody wrote it.
+
 They are ``GAP`` and not ``DEFERRED``, and the distinction is the whole point of having two
 words. A deferral is a decision not to do something, with a written trigger that makes it
 live again; the ``team_verified`` deferral Phase 0 and Phase 2 both carry is one, because
-nothing about it is unfinished -- the configuration is empty on purpose. These nine are
+nothing about it is unfinished -- the configuration is empty on purpose. These six are
 unfinished work, and recording them as deferrals would make ``tools/validate_phase3.py``
-exit 0 against a phase that cannot yet stop a job it has started. **The gate exiting 1
-today is the report working.**
+exit 0 against a phase whose duplicate submissions, redelivered events and workload
+denials have never been observed. **The gate exiting 1 today is the report working.**
 
 **A criterion cites a test, never an evidence file.** The thirteen covered criteria cite
 tests in ``tests/test_phase3_run_evidence.py``, which read the committed captures through
@@ -85,10 +102,12 @@ a profile the catalog prices and no compute environment backs. The criterion bel
 covered on that basis and its ``scope_limits`` says which of the four the run reached, so
 that a reader does not take one refusal as four.
 
-**Thirteen of the twenty-two are pilot-blocking, and five of those thirteen are still gaps,
+**Thirteen of the nineteen are pilot-blocking, and five of those thirteen are still gaps,
 so this phase is not pilot-ready.** The master plan resolves Phase 3 into eleven checks and
-marks six; those eleven are criteria 1 to 11 here, in order, so that part of the split is
-the plan's markers carried across rather than a judgement. The remaining eleven criteria
+marks six; those eleven were criteria 1 to 11 here, in the plan's order, of which eight
+remain, so that part of the split is the plan's markers carried across rather than a
+judgement. None of the three that left was marked, which is why the pilot count did not
+move when they went. The remaining eleven criteria
 had no counterpart in the plan's list, and seven of them are marked here: the four that
 keep a GitHub path, a container, a validator and a state machine inside their own
 authority; the one that stops an idle compute environment billing; the one that attests
@@ -116,14 +135,13 @@ from edullm_platform.criteria import (
 
 __all__ = [
     "CAPTURE_A_RUN_AIMED_AT_IT",
-    "NEEDS_A_COMPONENT_BUILT",
     "PHASE3_CRITERION_COUNT",
     "TEMPLATE_NOT_CAPTURE",
     "THE_CAPTURES_EXPIRE",
     "phase3_criteria",
 ]
 
-PHASE3_CRITERION_COUNT: Final = 22
+PHASE3_CRITERION_COUNT: Final = 19
 
 EXECUTION = "tests/test_phase3_execution.py"
 PROJECTION = "tests/test_phase3_lifecycle_projection.py"
@@ -149,16 +167,6 @@ CAPTURE_A_RUN_AIMED_AT_IT: Final = (
     "capturing what it leaves behind with tools/capture_phase3_evidence.py --target run, "
     "committing the sanitized records under fixtures/evidence/phase-3/runs/, and citing a "
     "test that reads them. A criterion may not cite an evidence file; it cites the test."
-)
-
-#: What closes a criterion that has no mechanism behind it yet. Distinct from the sentence
-#: above because the two are different amounts of work, and a reader deciding what to do
-#: next is choosing between them.
-NEEDS_A_COMPONENT_BUILT: Final = (
-    "This one cannot be closed by running anything, because the mechanism does not exist. "
-    "It needs a cancellation path built and deployed first -- a state machine holding "
-    "batch:TerminateJob, which no role Phase 3 declares is permitted today -- and only then "
-    "a run that exercises it and a test over the capture."
 )
 
 #: Why the covered criteria are not settled forever. Attached to the scope limits of the
@@ -199,7 +207,11 @@ def _ids(module: str, name: str, *params: str) -> tuple[str, ...]:
 
 
 def phase3_criteria() -> tuple[CriterionSpec, ...]:
-    """The twenty-two Phase 3 acceptance criteria, in the phase plan's order."""
+    """The nineteen Phase 3 acceptance criteria, in the phase plan's order.
+
+    Numbered 1 to 22 with 5, 6 and 7 absent. See the module docstring for why the hole is
+    left open rather than closed up.
+    """
     specs = (
         CriterionSpec(
             number="1",
@@ -323,102 +335,9 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                 THE_CAPTURES_EXPIRE,
             ),
         ),
-        CriterionSpec(
-            number="5",
-            statement="Cancellation is authorized, applied, and recorded.",
-            status=CriterionStatus.GAP,
-            supporting_node_ids=(
-                *_ids(PROJECTION, "test_a_termination_this_platform_asked_for_is_recorded_as_cancelled"),
-                *_ids(PROJECTION, "test_a_failure_that_merely_mentions_cancellation_is_still_a_failure"),
-                *_ids(PROJECTION, "test_a_termination_from_outside_this_platform_understates_rather_than_guesses"),
-                *_ids(INFRA, "test_the_states_role_gains_batch_and_ecr_reads_and_no_way_to_stop_a_job"),
-            ),
-            scope_limits=(
-                (
-                    "Not pilot-blocking, and the plan's own call. It is bounded by the mandatory "
-                    "timeout, which is marked: with a timeout in force, the absence of cancellation "
-                    "costs the remainder of one job rather than an open-ended amount, and that bound "
-                    "is the whole of what makes this gap survivable."
-                ),
-            ),
-            gaps=(
-                (
-                    "Nothing in this account may terminate a job today, and the deploy did not "
-                    "change that. The plan routes cancellation through a state machine holding "
-                    "batch:TerminateJob; no such state machine is written, and every role "
-                    "Phase 3 declares deliberately excludes the action. Four runs have "
-                    "completed and none of them could have been stopped."
-                ),
-                NEEDS_A_COMPONENT_BUILT,
-            ),
-        ),
-        CriterionSpec(
-            number="6",
-            statement="Cancelling the GitHub workflow forwards cancellation to the running job.",
-            status=CriterionStatus.GAP,
-            supporting_node_ids=(
-                *_ids(SUBMIT_WORKFLOW, "test_the_cancellation_step_runs_only_on_a_cancellation_and_last"),
-                *_ids(SUBMIT_WORKFLOW, "test_the_cancellation_step_neither_claims_to_stop_a_job_nor_can"),
-                *_ids(SUBMIT_WORKFLOW, "test_the_cancellation_notice_is_written_where_a_person_will_find_it"),
-            ),
-            scope_limits=(
-                (
-                    "Not pilot-blocking, and the plan requires this one on the pilot limitations "
-                    "page in exactly its own words: cancelling the GitHub workflow does not stop the "
-                    "Batch job. The harm is not the missing mechanism, it is that the default belief "
-                    "is wrong -- somebody who cancels in GitHub believes they have stopped the "
-                    "spend. Correcting the belief is what makes the gap survivable, and it is the "
-                    "clearest case in the phase of a limitation that works only because a reader can "
-                    "act on it."
-                ),
-            ),
-            gaps=(
-                (
-                    "It does not forward it, and the workflow now says so where an operator "
-                    "will read it. The submit job's if: cancelled() step records the run id and "
-                    "points at the runbook; it stops nothing, because the admission role holds "
-                    "no batch:TerminateJob and the cancellation state machine the plan "
-                    "describes has not been built."
-                ),
-                (
-                    "Even once it is built, this check is as much about GitHub's grace period "
-                    "being long enough as about the wiring, and the grace period is bounded, "
-                    "not configurable, and not guaranteed to be reached at all. That half can "
-                    "only be answered by cancelling a real dispatched run mid-job."
-                ),
-                NEEDS_A_COMPONENT_BUILT,
-            ),
-        ),
-        CriterionSpec(
-            number="7",
-            statement="Cancelling a fan-out stops every child, not only the parent.",
-            status=CriterionStatus.GAP,
-            supporting_node_ids=(
-                *_ids(EXECUTION, "test_a_fan_out_submits_its_size_and_nothing_else_changes"),
-                *_ids(EXECUTION, "test_a_single_container_submits_no_array_properties"),
-                *_ids(INFRA, "test_a_fan_out_binding_records_its_size_and_a_single_container_omits_the_key"),
-            ),
-            scope_limits=(
-                (
-                    "Not pilot-blocking. A pilot user running a fan-out before this passes is "
-                    "running one they intend to let finish, which is a limitation a reader can act "
-                    "on, and the per-child timeout bounds what happens when they forget. Batch "
-                    "imposes no timeout on an array parent, so the bound is per cell rather than on "
-                    "the sweep."
-                ),
-            ),
-            gaps=(
-                (
-                    "The mutation is asserting only the parent, which is what a single "
-                    "DescribeJobs on the parent id returns and which would pass while both "
-                    "children ran on. Distinguishing them needs a two-cell array job, "
-                    "terminated at the parent, with both child job ids observed terminal. All "
-                    "four completed runs were single containers, so no array job has ever been "
-                    "submitted here, and none of them could have been terminated anyway."
-                ),
-                NEEDS_A_COMPONENT_BUILT,
-            ),
-        ),
+        # There is no criterion 5, 6 or 7. Cancellation moved to the phase that will build
+        # it, and the numbers are a deliberate hole so that every citation written against
+        # this list goes on naming what it named. The module docstring says why.
         CriterionSpec(
             number="8",
             statement="A mandatory timeout terminates a runaway job.",

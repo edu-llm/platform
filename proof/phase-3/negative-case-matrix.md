@@ -1,10 +1,10 @@
 # Phase 3 negative-case matrix
 
-The 22 Phase 3 acceptance criteria, mapped to the tests cited for each one by node id. Each cited node id was collected and executed by this generator before the bundle was written; a citation pytest cannot collect aborts generation rather than being printed.
+The nineteen Phase 3 acceptance criteria, mapped to the tests cited for each one by node id. Each cited node id was collected and executed by this generator before the bundle was written; a citation pytest cannot collect aborts generation rather than being printed.
 
 This mapping is defined once, in `src/edullm_platform/phase3_criteria.py`. The acceptance gate reads the same definition and executes the same node ids, so this matrix and `tools/validate_phase3.py` cannot disagree.
 
-Verification run: 324 tests executed, 324 passed, 0 failed, 0 errored, pytest exit code 0.
+Verification run: 321 tests executed, 321 passed, 0 failed, 0 errored, pytest exit code 0.
 
 Three statuses exist and no more. **COVERED** means one or more cited tests prove the criterion as stated against the shipped configuration and all of them pass; the gate passes it. **DEFERRED** means an explicit recorded decision not to satisfy it yet, which requires both a written reason and a written trigger describing what makes it live again; the gate passes it. **GAP** is everything else, and the gate fails it. There is no in-between status, because an in-between status is what lets a gate be green and wrong at the same time.
 
@@ -16,9 +16,6 @@ Three statuses exist and no more. **COVERED** means one or more cited tests prov
 | 2 | COVERED | 2 | 2 | Stdout and stderr are available through the recorded log stream. |
 | 3 | COVERED | 1 | 3 | The S3 result manifest matches the logical run and the Batch job. |
 | 4 | COVERED | 1 | 3 | A failed command reaches FAILED with its reason preserved. |
-| 5 | GAP | 0 | 4 | Cancellation is authorized, applied, and recorded. |
-| 6 | GAP | 0 | 3 | Cancelling the GitHub workflow forwards cancellation to the running job. |
-| 7 | GAP | 0 | 3 | Cancelling a fan-out stops every child, not only the parent. |
 | 8 | COVERED | 1 | 8 | A mandatory timeout terminates a runaway job. |
 | 9 | COVERED | 2 | 6 | An invalid queue, job definition, role or override is rejected before submission. |
 | 10 | GAP | 0 | 3 | Duplicate or ambiguous submission handling does not silently create an untracked job. |
@@ -38,22 +35,6 @@ Three statuses exist and no more. **COVERED** means one or more cited tests prov
 ## Gaps
 
 Read these first. A matrix that overstates coverage is worse than no matrix. Every gap here fails the acceptance gate, and each one is unfinished work rather than a recorded decision to postpone: a deferral needs a written reason and a written trigger, and neither exists for any of these. Relabelling them would turn the gate green without anything changing in the account, which is the one thing this matrix exists to make impossible to do quietly.
-
-### Check 5 (GAP) — Cancellation is authorized, applied, and recorded.
-
-- Nothing in this account may terminate a job today, and the deploy did not change that. The plan routes cancellation through a state machine holding batch:TerminateJob; no such state machine is written, and every role Phase 3 declares deliberately excludes the action. Four runs have completed and none of them could have been stopped.
-- This one cannot be closed by running anything, because the mechanism does not exist. It needs a cancellation path built and deployed first -- a state machine holding batch:TerminateJob, which no role Phase 3 declares is permitted today -- and only then a run that exercises it and a test over the capture.
-
-### Check 6 (GAP) — Cancelling the GitHub workflow forwards cancellation to the running job.
-
-- It does not forward it, and the workflow now says so where an operator will read it. The submit job's if: cancelled() step records the run id and points at the runbook; it stops nothing, because the admission role holds no batch:TerminateJob and the cancellation state machine the plan describes has not been built.
-- Even once it is built, this check is as much about GitHub's grace period being long enough as about the wiring, and the grace period is bounded, not configurable, and not guaranteed to be reached at all. That half can only be answered by cancelling a real dispatched run mid-job.
-- This one cannot be closed by running anything, because the mechanism does not exist. It needs a cancellation path built and deployed first -- a state machine holding batch:TerminateJob, which no role Phase 3 declares is permitted today -- and only then a run that exercises it and a test over the capture.
-
-### Check 7 (GAP) — Cancelling a fan-out stops every child, not only the parent.
-
-- The mutation is asserting only the parent, which is what a single DescribeJobs on the parent id returns and which would pass while both children ran on. Distinguishing them needs a two-cell array job, terminated at the parent, with both child job ids observed terminal. All four completed runs were single containers, so no array job has ever been submitted here, and none of them could have been terminated anyway.
-- This one cannot be closed by running anything, because the mechanism does not exist. It needs a cancellation path built and deployed first -- a state machine holding batch:TerminateJob, which no role Phase 3 declares is permitted today -- and only then a run that exercises it and a test over the capture.
 
 ### Check 10 (GAP) — Duplicate or ambiguous submission handling does not silently create an untracked job.
 
@@ -176,71 +157,6 @@ Supporting tests (3), all executed and passing, cited as evidence rather than as
 - `tests/test_phase3_lifecycle_projection.py::test_a_failed_run_records_the_failure_rather_than_the_nearest_success`
 - `tests/test_phase3_lifecycle_projection.py::test_a_job_stopped_before_any_attempt_began_still_records_that_it_stopped`
 - `tests/test_phase3_run_evidence.py::test_a_timeout_and_a_non_zero_exit_are_distinguishable_in_the_record`
-
-### Check 5 — Cancellation is authorized, applied, and recorded.
-
-**Status: GAP**
-
-Gap:
-
-- Nothing in this account may terminate a job today, and the deploy did not change that. The plan routes cancellation through a state machine holding batch:TerminateJob; no such state machine is written, and every role Phase 3 declares deliberately excludes the action. Four runs have completed and none of them could have been stopped.
-- This one cannot be closed by running anything, because the mechanism does not exist. It needs a cancellation path built and deployed first -- a state machine holding batch:TerminateJob, which no role Phase 3 declares is permitted today -- and only then a run that exercises it and a test over the capture.
-
-Scope:
-
-- Not pilot-blocking, and the plan's own call. It is bounded by the mandatory timeout, which is marked: with a timeout in force, the absence of cancellation costs the remainder of one job rather than an open-ended amount, and that bound is the whole of what makes this gap survivable.
-
-No test proves this check.
-
-Supporting tests (4), all executed and passing, cited as evidence rather than as proof:
-
-- `tests/test_phase3_lifecycle_projection.py::test_a_termination_this_platform_asked_for_is_recorded_as_cancelled`
-- `tests/test_phase3_lifecycle_projection.py::test_a_failure_that_merely_mentions_cancellation_is_still_a_failure`
-- `tests/test_phase3_lifecycle_projection.py::test_a_termination_from_outside_this_platform_understates_rather_than_guesses`
-- `tests/test_phase3_infrastructure.py::test_the_states_role_gains_batch_and_ecr_reads_and_no_way_to_stop_a_job`
-
-### Check 6 — Cancelling the GitHub workflow forwards cancellation to the running job.
-
-**Status: GAP**
-
-Gap:
-
-- It does not forward it, and the workflow now says so where an operator will read it. The submit job's if: cancelled() step records the run id and points at the runbook; it stops nothing, because the admission role holds no batch:TerminateJob and the cancellation state machine the plan describes has not been built.
-- Even once it is built, this check is as much about GitHub's grace period being long enough as about the wiring, and the grace period is bounded, not configurable, and not guaranteed to be reached at all. That half can only be answered by cancelling a real dispatched run mid-job.
-- This one cannot be closed by running anything, because the mechanism does not exist. It needs a cancellation path built and deployed first -- a state machine holding batch:TerminateJob, which no role Phase 3 declares is permitted today -- and only then a run that exercises it and a test over the capture.
-
-Scope:
-
-- Not pilot-blocking, and the plan requires this one on the pilot limitations page in exactly its own words: cancelling the GitHub workflow does not stop the Batch job. The harm is not the missing mechanism, it is that the default belief is wrong -- somebody who cancels in GitHub believes they have stopped the spend. Correcting the belief is what makes the gap survivable, and it is the clearest case in the phase of a limitation that works only because a reader can act on it.
-
-No test proves this check.
-
-Supporting tests (3), all executed and passing, cited as evidence rather than as proof:
-
-- `tests/test_phase2_submit_run_workflow.py::test_the_cancellation_step_runs_only_on_a_cancellation_and_last`
-- `tests/test_phase2_submit_run_workflow.py::test_the_cancellation_step_neither_claims_to_stop_a_job_nor_can`
-- `tests/test_phase2_submit_run_workflow.py::test_the_cancellation_notice_is_written_where_a_person_will_find_it`
-
-### Check 7 — Cancelling a fan-out stops every child, not only the parent.
-
-**Status: GAP**
-
-Gap:
-
-- The mutation is asserting only the parent, which is what a single DescribeJobs on the parent id returns and which would pass while both children ran on. Distinguishing them needs a two-cell array job, terminated at the parent, with both child job ids observed terminal. All four completed runs were single containers, so no array job has ever been submitted here, and none of them could have been terminated anyway.
-- This one cannot be closed by running anything, because the mechanism does not exist. It needs a cancellation path built and deployed first -- a state machine holding batch:TerminateJob, which no role Phase 3 declares is permitted today -- and only then a run that exercises it and a test over the capture.
-
-Scope:
-
-- Not pilot-blocking. A pilot user running a fan-out before this passes is running one they intend to let finish, which is a limitation a reader can act on, and the per-child timeout bounds what happens when they forget. Batch imposes no timeout on an array parent, so the bound is per cell rather than on the sweep.
-
-No test proves this check.
-
-Supporting tests (3), all executed and passing, cited as evidence rather than as proof:
-
-- `tests/test_phase3_execution.py::test_a_fan_out_submits_its_size_and_nothing_else_changes`
-- `tests/test_phase3_execution.py::test_a_single_container_submits_no_array_properties`
-- `tests/test_phase3_infrastructure.py::test_a_fan_out_binding_records_its_size_and_a_single_container_omits_the_key`
 
 ### Check 8 — A mandatory timeout terminates a runaway job.
 
