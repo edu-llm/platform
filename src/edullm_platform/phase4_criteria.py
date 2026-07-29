@@ -1,0 +1,542 @@
+"""The Phase 4 acceptance criteria and the tests that are cited for each one.
+
+Phase 4 takes the path Phase 3 proved for a CPU container and puts a real single-node GPU
+training run through it: a model on an A10G, metrics in W&B, and a checkpoint in S3 that
+this platform will resume from. This module records the twelve checks the phase must
+satisfy, against the contract in :mod:`edullm_platform.criteria`.
+
+**The capability is deployed and has run.** Three jobs have gone through the GPU queue: a
+capability probe that reported the device nodes it was given, a training run that put
+olmo2_190M through twenty optimizer steps and wrote a 762MB checkpoint with a success
+marker, and one that failed. What all three left behind is captured, sanitized and
+committed under ``fixtures/evidence/phase-4/``.
+
+**Eleven of the twelve come from the master plan; the twelfth was added by this phase.**
+The plan lists eleven checks and marks nine as pilot-blocking, which is the highest
+proportion of any capability phase -- the reason is the hardware, because a GPU instance
+bills whether or not the container is using it. The twelfth is the prefix-agreement check,
+added when Phase 4 inherited a three-way disagreement about where a run writes its output.
+
+**Two remain gaps and they are different kinds of open.**
+
+Criterion 9 is capacity failure, and it is a gap because nobody has caused one. AWS Batch
+leaves a job in ``RUNNABLE`` indefinitely rather than failing it, so "surfaced without
+losing the run intent" needs a mechanism that notices the waiting -- and that mechanism is
+criterion 10, which is deliberately deferred. The intent record survives regardless, which
+is the half that is already true and is why this is a gap rather than a defect.
+
+Criterion 11 is alternate instance placement, and it is a gap on purpose rather than for
+want of effort. The GPU compute environment lists exactly one instance type. Widening it is
+one line, and the same line is what stops a submission for a cheap shape landing on an
+expensive one, so it is a cost decision somebody should take deliberately rather than a
+typo to fix overnight.
+
+**Criterion 10 is DEFERRED and not a gap, and the distinction is the point of two words.**
+A queued job bills nothing, so nothing is at risk while it waits; the trigger that makes it
+live again is the first time a run sits in ``RUNNABLE`` long enough for anybody to notice.
+It also needs a detector *built* rather than an alarm configured -- AWS Batch publishes no
+CloudWatch metric for queue depth or job state, so there is no series to threshold.
+
+**A criterion cites a test, never an evidence file.** Every criterion here that is about
+the account cites tests in ``tests/test_phase4_run_evidence.py``, which read the committed
+captures through :mod:`edullm_platform.phase4_capture`.
+
+**The run records do not expire and the configuration records do.** That split is new in
+this phase and is deliberate. A ``RecordedEventModel`` says a job ran and wrote a
+checkpoint whose digest is in the bucket; nothing about the passage of time makes that less
+true. A ``FreshEvidenceModel`` says a compute environment is configured a certain way
+today, which is one console click from being false -- so criteria 8, 10 and 11 go red
+thirty days after their capture, and re-running the capture is what the window is asking
+for.
+
+**Criterion 7 rests on a policy statement rather than on a refusal somebody received, and
+says so.** A live cross-team denial needs a principal that can assume the workload role,
+and the trust policy names the Batch and ECS task services rather than any human. What is
+asserted is what the deployed grant permits, read from the account. That is honest and is
+one step weaker than a container being told no.
+"""
+
+from __future__ import annotations
+
+from typing import Final
+
+from edullm_platform.criteria import (
+    CriterionSpec,
+    CriterionStatus,
+    validate_criterion_specs,
+)
+
+__all__ = [
+    "CONFIGURATION_CAPTURES_EXPIRE",
+    "PHASE4_CRITERION_COUNT",
+    "POLICY_NOT_A_REFUSAL",
+    "phase4_criteria",
+]
+
+PHASE4_CRITERION_COUNT: Final = 12
+
+#: The tests that read the committed captures of the three GPU jobs. Every criterion that
+#: is about the account rather than about a template or a pure function cites this module.
+RUN_EVIDENCE = "tests/test_phase4_run_evidence.py"
+CHECKPOINTS = "tests/test_phase4_checkpoints.py"
+SUBMISSION = "tests/test_phase4_training_submission.py"
+EXECUTION = "tests/test_phase3_execution.py"
+INFRA = "tests/test_phase3_infrastructure.py"
+PROFILES = "tests/test_compute_profiles.py"
+
+#: Why the configuration-derived criteria are not settled forever. Attached only to the
+#: criteria that rest on a ``FreshEvidenceModel``; the run records carry no such note,
+#: because a run that happened does not stop having happened.
+CONFIGURATION_CAPTURES_EXPIRE: Final = (
+    "This rests on a capture of how the account is configured, which is a statement about "
+    "one moment. The record is a FreshEvidenceModel, so thirty days after it was taken it "
+    "stops loading, the cited tests fail and this criterion is a gap again with the gate "
+    "red. That is the window working: a compute environment can be edited in a console, "
+    "and the only thing establishing it has not been is somebody going and looking again."
+)
+
+#: Why reading a policy is not the same as being refused. Recorded on criterion 7 rather
+#: than hidden, because the difference is exactly what a reader of that criterion needs.
+POLICY_NOT_A_REFUSAL: Final = (
+    "Asserted from the deployed policy document rather than from a denial anybody "
+    "received. A live probe needs a principal that can assume the workload role, and its "
+    "trust policy names the Batch and ECS task services rather than any human, so no "
+    "laptop can take the role and be told no. Closing the gap between the two means a run "
+    "whose container tries to read another team's prefix and records the AccessDenied -- "
+    "which is one submission, not a component. iam:SimulatePrincipalPolicy is not the "
+    "answer: it reported ten EC2 actions as denied in both regions when seven are "
+    "authorized in one."
+)
+
+#: What closes criterion 9. Written out because the shape of the work is not obvious from
+#: the criterion's own wording, and a reader deciding what to do next needs it.
+NEEDS_THE_DETECTOR_FIRST: Final = (
+    "Batch does not fail a job it cannot place; it leaves it RUNNABLE indefinitely. So "
+    "'surfaced' has no mechanism behind it until the queue-wait detector of criterion 10 "
+    "exists, and this cannot be closed by running anything before then. The other half is "
+    "already true and is worth separating: the intent record is written before Batch is "
+    "reached at all, so a run that never places loses nothing but time."
+)
+
+
+def _ids(module: str, name: str, *params: str) -> tuple[str, ...]:
+    """Node ids for one test, with its parametrizations spelled out.
+
+    A parametrized test collects only under its full node id, so citing the bare name names
+    nothing at all -- which the gate reports as ``cited_test_missing`` rather than passing.
+    """
+    if not params:
+        return (f"{module}::{name}",)
+    return tuple(f"{module}::{name}[{param}]" for param in params)
+
+
+def phase4_criteria() -> tuple[CriterionSpec, ...]:
+    """The twelve Phase 4 acceptance criteria, in the master plan's order."""
+    specs = (
+        CriterionSpec(
+            number="1",
+            statement="The container detects the expected GPU.",
+            status=CriterionStatus.COVERED,
+            pilot_blocking=True,
+            proving_node_ids=(
+                *_ids(RUN_EVIDENCE, "test_the_process_itself_found_a_cuda_device_rather_than_being_offered_one"),
+                *_ids(RUN_EVIDENCE, "test_the_driver_saw_the_shape_the_promoted_profile_asked_for"),
+            ),
+            supporting_node_ids=(
+                *_ids(RUN_EVIDENCE, "test_the_job_that_trained_asked_for_a_gpu_and_the_scheduler_gave_it_one"),
+                *_ids(RUN_EVIDENCE, "test_the_gpu_environment_uses_the_nvidia_ami_rather_than_the_default_one"),
+                *_ids(SUBMISSION, "test_the_program_refuses_to_train_on_a_processor_it_was_not_asked_for"),
+            ),
+            scope_limits=(
+                (
+                    "The sharpest check in the phase, and the reason nine of twelve are "
+                    "pilot-blocking. A container that fails to detect its GPU and trains on the "
+                    "CPU produces a run that looks successful, costs GPU rates, and yields a "
+                    "result nobody can trust. There is no symptom: the logs, the lineage records "
+                    "and the exit code are all indistinguishable from a correct run."
+                ),
+                (
+                    "Three independent answers, because each one alone is satisfiable by a "
+                    "different failure. Batch says a GPU was requested; nvidia-smi says a device "
+                    "is on the other side of the injected nodes; torch says it allocated on it. A "
+                    "CPU build passes the first two, and a missing resource requirement passes "
+                    "none -- but a wrong AMI passes the first."
+                ),
+                (
+                    "The device is asserted to be an A10G rather than any GPU. The catalog "
+                    "prices gpu-1xa10g on the basis that it is one A10G with 24GB, so a job that "
+                    "landed on a T4 would run, would train, and would make the cost estimate in "
+                    "the decision record wrong in a store nothing rewrites."
+                ),
+            ),
+        ),
+        CriterionSpec(
+            number="2",
+            statement="A short training step completes.",
+            status=CriterionStatus.COVERED,
+            pilot_blocking=True,
+            proving_node_ids=(
+                *_ids(RUN_EVIDENCE, "test_a_real_model_went_through_a_real_optimizer_and_the_loss_moved"),
+            ),
+            supporting_node_ids=(
+                *_ids(RUN_EVIDENCE, "test_the_process_itself_found_a_cuda_device_rather_than_being_offered_one"),
+                *_ids(SUBMISSION, "test_the_step_count_reaches_the_checkpoint_prefix_and_the_loop_together", "1", "20", "500"),
+            ),
+            scope_limits=(
+                (
+                    "Twenty steps of olmo2_190M on synthetic tokens, and the loss is not "
+                    "asserted to have fallen. Twenty steps on random tokens is not a claim about "
+                    "learning and dressing it as one would be evidence this repository exists to "
+                    "remove. What the movement establishes is that the backward pass did "
+                    "something: a loss identical at step one and step twenty is an optimizer that "
+                    "never applied a gradient."
+                ),
+                (
+                    "Synthetic tokens rather than a corpus, deliberately. The claim is that this "
+                    "platform can run a real model through a real optimizer on real device "
+                    "memory; which corpus it read is a research question, and downloading one "
+                    "would spend GPU minutes on bandwidth."
+                ),
+            ),
+        ),
+        CriterionSpec(
+            number="3",
+            statement=(
+                "W&B receives the expected run ID, config, metrics, and system telemetry."
+            ),
+            status=CriterionStatus.COVERED,
+            pilot_blocking=True,
+            proving_node_ids=(
+                *_ids(RUN_EVIDENCE, "test_the_wandb_run_is_named_for_the_run_id_and_lives_in_the_platforms_project"),
+            ),
+            supporting_node_ids=(
+                *_ids(EXECUTION, "test_the_wandb_project_comes_from_the_manifest_and_not_from_the_command"),
+                *_ids(SUBMISSION, "test_the_form_lets_the_platform_choose_the_identity_it_will_be_charged_under"),
+            ),
+            scope_limits=(
+                (
+                    "Read from the container's own log rather than from the W&B API. The run "
+                    "URL, the project and the metric keys are what the process reported "
+                    "publishing; confirming they arrived would need a W&B credential in this "
+                    "repository, which is the one thing D4 keeps out of it."
+                ),
+                (
+                    "System telemetry is W&B's own, collected by its client rather than emitted "
+                    "by this platform. What is asserted is that the run exists under the "
+                    "platform's project with the platform's run id; the GPU and process series "
+                    "beside it are the client's doing and are not separately captured."
+                ),
+                (
+                    "The project comes from the manifest and not from the command, which is the "
+                    "half that matters for attribution. A shared W&B account authenticates and "
+                    "does not attribute, so a program that named its own project would let a "
+                    "submitter file spend under somebody else's budget with lineage and W&B "
+                    "disagreeing and nothing able to detect it."
+                ),
+            ),
+        ),
+        CriterionSpec(
+            number="4",
+            statement="S3 receives outputs only under the authorized run prefix.",
+            status=CriterionStatus.COVERED,
+            pilot_blocking=True,
+            proving_node_ids=(
+                *_ids(RUN_EVIDENCE, "test_nothing_in_the_outputs_bucket_sits_outside_an_authorized_prefix"),
+            ),
+            supporting_node_ids=(
+                *_ids(RUN_EVIDENCE, "test_the_role_permits_exactly_the_prefix_shape_the_platform_derives"),
+                *_ids(RUN_EVIDENCE, "test_the_prefix_the_container_was_given_is_the_one_the_platform_derives"),
+            ),
+            scope_limits=(
+                (
+                    "The capture lists the whole bucket rather than the run's own prefix, and it "
+                    "has to. This is a claim about what is *absent* elsewhere, and a record "
+                    "scoped to the authorized prefix could only ever report that what is there "
+                    "is there."
+                ),
+                (
+                    "One team exists, so 'only under the authorized prefix' is currently a claim "
+                    "about one prefix. It becomes a stronger claim, not a different one, when a "
+                    "second team is bound."
+                ),
+                CONFIGURATION_CAPTURES_EXPIRE,
+            ),
+        ),
+        CriterionSpec(
+            number="5",
+            statement=(
+                "A checkpoint is resumable only after its manifest and success marker exist."
+            ),
+            status=CriterionStatus.COVERED,
+            pilot_blocking=True,
+            proving_node_ids=(
+                *_ids(CHECKPOINTS, "test_a_payload_with_no_marker_beside_it_is_not_resumable"),
+                *_ids(CHECKPOINTS, "test_the_manifest_is_populated_for_the_committed_state_and_for_no_other"),
+                *_ids(RUN_EVIDENCE, "test_the_checkpoint_the_run_wrote_is_one_this_platform_will_resume_from"),
+            ),
+            supporting_node_ids=(
+                *_ids(CHECKPOINTS, "test_the_payload_is_written_before_the_marker_that_certifies_it"),
+                *_ids(CHECKPOINTS, "test_a_manifest_with_no_marker_refuses_to_produce_a_resume_reference"),
+                *_ids(RUN_EVIDENCE, "test_what_the_run_said_it_wrote_is_what_the_store_says_it_holds"),
+            ),
+            scope_limits=(
+                (
+                    "Proved twice over, and the two are doing different work. The unit tests "
+                    "establish that the reader never returns a resumable manifest for a prefix "
+                    "with no marker -- the property -- against a store that attests its own "
+                    "digests. The run evidence establishes that a real 762MB checkpoint in the "
+                    "real bucket is one that reader accepts."
+                ),
+                (
+                    "The ordering is the mechanism and is asserted separately. Payload then "
+                    "marker means an interruption leaves a checkpoint that reads unusable; "
+                    "reversed, the same interruption leaves a marker certifying a payload that "
+                    "was never written."
+                ),
+                (
+                    "Nothing has resumed from it. What is established is that the platform's "
+                    "reader will hand back a resume reference for it, and that the digest in "
+                    "that reference is the one S3 attests -- not that torch has loaded the "
+                    "state dict back. That needs a second run."
+                ),
+            ),
+        ),
+        CriterionSpec(
+            number="6",
+            statement="An incomplete checkpoint is ignored.",
+            status=CriterionStatus.COVERED,
+            pilot_blocking=True,
+            proving_node_ids=(
+                *_ids(CHECKPOINTS, "test_a_marker_with_no_payload_beside_it_is_not_resumable"),
+                *_ids(CHECKPOINTS, "test_a_marker_certifying_bytes_the_store_does_not_hold_is_refused"),
+                *_ids(CHECKPOINTS, "test_the_resume_helper_answers_nothing_for_every_state_that_is_not_committed"),
+            ),
+            supporting_node_ids=(
+                *_ids(CHECKPOINTS, "test_a_payload_the_store_will_not_attest_is_refused_rather_than_assumed_good"),
+                *_ids(CHECKPOINTS, "test_a_marker_whose_byte_count_disagrees_with_the_store_is_refused"),
+                *_ids(CHECKPOINTS, "test_an_empty_prefix_is_absent_rather_than_incomplete"),
+                *_ids(CHECKPOINTS, "test_a_store_failure_that_is_not_a_missing_object_is_raised_rather_than_read_as_absence", "model.pt", "_SUCCESS"),
+            ),
+            scope_limits=(
+                (
+                    "Four ways a checkpoint can be incomplete, and they are not one case "
+                    "repeated. Nothing there; a payload nobody certified; a marker whose payload "
+                    "is gone; a marker and a payload that describe different bytes. The last is "
+                    "the one a naive reader passes, and it is what a retry after a half-finished "
+                    "commit actually produces."
+                ),
+                (
+                    "The reader verifies rather than trusts, and that is what makes the "
+                    "unconditional write safe. A write-once rule would refuse a retry's payload "
+                    "and then let the retry's marker certify the dead attempt's -- fail-closed, "
+                    "by losing a good checkpoint and keeping a bad one."
+                ),
+                (
+                    "A store failure that is not an absence is raised rather than read as 'no "
+                    "checkpoint'. Without that, a throttle sends a resuming job back to step "
+                    "zero on a bad afternoon, spending the training budget a second time and "
+                    "looking from outside exactly like a first run."
+                ),
+            ),
+        ),
+        CriterionSpec(
+            number="7",
+            statement="The workload role cannot read another team's restricted prefix.",
+            status=CriterionStatus.COVERED,
+            pilot_blocking=True,
+            proving_node_ids=(
+                *_ids(RUN_EVIDENCE, "test_the_role_permits_exactly_the_prefix_shape_the_platform_derives"),
+            ),
+            supporting_node_ids=(
+                *_ids(RUN_EVIDENCE, "test_the_prefix_the_container_was_given_is_the_one_the_platform_derives"),
+            ),
+            scope_limits=(
+                POLICY_NOT_A_REFUSAL,
+                (
+                    "The GPU workload role is scoped to teams/platform/runs/*, narrower than the "
+                    "CPU role's teams/*/runs/*. One team exists, so the narrowing changes nothing "
+                    "anybody can see today -- and it is what makes this criterion closeable at "
+                    "all, because a role permitting every team cannot fail to reach another "
+                    "team's prefix."
+                ),
+                (
+                    "A separate GPU role trio exists rather than the CPU roles being tightened. "
+                    "Tightening them would have drifted every committed Phase 3 role capture, "
+                    "and a phase should not invalidate the previous phase's evidence to close "
+                    "its own check."
+                ),
+                CONFIGURATION_CAPTURES_EXPIRE,
+            ),
+        ),
+        CriterionSpec(
+            number="8",
+            statement=(
+                "Secrets do not appear in GitHub, Batch, CloudWatch, W&B, or S3 records."
+            ),
+            status=CriterionStatus.COVERED,
+            pilot_blocking=True,
+            proving_node_ids=(
+                *_ids(RUN_EVIDENCE, "test_the_wandb_key_reaches_the_container_without_passing_through_any_record"),
+                *_ids(RUN_EVIDENCE, "test_the_key_did_not_turn_up_in_the_log_the_run_wrote"),
+            ),
+            supporting_node_ids=(
+                *_ids(RUN_EVIDENCE, "test_a_capture_that_is_not_there_is_reported_rather_than_read_as_nothing_to_prove"),
+            ),
+            scope_limits=(
+                (
+                    "The mechanism is what carries this rather than the scan. The job definition "
+                    "names the secret under secrets/valueFrom and Batch resolves it at container "
+                    "start, so the value exists in the running container's memory and nowhere "
+                    "else -- not in the definition, not in a DescribeJobs answer, not in the log."
+                ),
+                (
+                    "The log scan is shape-based and therefore imperfect in both directions. It "
+                    "cannot recognise every secret, and it cannot tell a bare sixty-four "
+                    "character digest from a credential. The digests it was told to ignore are "
+                    "listed in the record by value, each one verified against what the store "
+                    "attests, so a reader can check every exemption rather than trust a pattern."
+                ),
+                (
+                    "GitHub and W&B are not scanned here. The GitHub half is Phase 2's captured "
+                    "secret inventory, and W&B's stored config is what this platform sent it, "
+                    "which is the container environment already read."
+                ),
+                CONFIGURATION_CAPTURES_EXPIRE,
+            ),
+        ),
+        CriterionSpec(
+            number="9",
+            statement="Capacity failure is surfaced without losing the run intent.",
+            status=CriterionStatus.GAP,
+            pilot_blocking=True,
+            gaps=(
+                (
+                    "Nobody has caused a capacity failure. The account holds 768 vCPU of G and "
+                    "VT quota against a four-vCPU job, and no GPU instance was contending when "
+                    "any of the three runs was submitted, so there is no observation to capture."
+                ),
+                NEEDS_THE_DETECTOR_FIRST,
+            ),
+            scope_limits=(
+                (
+                    "The 'without losing the run intent' half is already structurally true and "
+                    "is worth separating from the 'surfaced' half. The intent record is written "
+                    "by admission before Batch is reached at all, so a run that never places "
+                    "still has its intent and decision in the lineage store."
+                ),
+            ),
+        ),
+        CriterionSpec(
+            number="10",
+            statement=(
+                "A job held in RUNNABLE past the queue-wait threshold is detected, and the "
+                "queue timeout ends it rather than leaving it queued indefinitely."
+            ),
+            status=CriterionStatus.DEFERRED,
+            deferral_trigger=(
+                "The first run that sits in RUNNABLE long enough for somebody to notice, or a "
+                "second team being bound -- whichever comes first. Both change the same thing: "
+                "today a pilot of three watches their own job and a wait is visible to the "
+                "person who caused it, and neither stays true once somebody is waiting on "
+                "capacity a run they did not submit is holding."
+            ),
+            deferral_reason=(
+                "Deferred past the first GPU run, deliberately, and this is a decision rather "
+                "than unfinished work. A queued job bills nothing, so nothing is at risk while "
+                "it waits, and a pilot of three watches their own job.\n\n"
+                "It also cannot be closed the way the master plan first assumed. AWS Batch "
+                "publishes no CloudWatch metric for queue depth or job state, so there is no "
+                "series to threshold and no alarm to configure. The detector has to be built -- "
+                "a scheduled ListJobs poll, or an absence-of-expected-lifecycle-event check over "
+                "a window -- which is a rule and a Lambda, sized and tested like anything else. "
+                "Marking it pilot-blocking would have put that in front of the first GPU run for "
+                "no proportionate gain."
+            ),
+            scope_limits=(
+                (
+                    "The queue-timeout half is a Batch job attribute rather than an observation "
+                    "and could be set today. It is deferred with the detector because a timeout "
+                    "that ends a job nobody was watching converts silence into a different "
+                    "silence."
+                ),
+            ),
+        ),
+        CriterionSpec(
+            number="11",
+            statement=(
+                "A job whose preferred instance type is unavailable is placed on an alternate "
+                "permitted type rather than waiting for the one shape."
+            ),
+            status=CriterionStatus.GAP,
+            gaps=(
+                (
+                    "The GPU compute environment lists exactly one instance type, so there is no "
+                    "alternate to place onto. Closing this is one line in "
+                    "infra/batch-compute-gpu.yaml and a redeploy."
+                ),
+                (
+                    "It is left open rather than fixed because the same list is what stops a "
+                    "submission for a cheap shape landing on an expensive one. g5.xlarge is "
+                    "$1.006/hr and g5.12xlarge is $5.672; adding the second means a job that "
+                    "asked for one A10G can be given four. That is a cost decision somebody "
+                    "takes deliberately, not a typo."
+                ),
+            ),
+            scope_limits=(
+                (
+                    "Availability rather than harm, which is why it is not pilot-blocking: a job "
+                    "that waits costs nothing and a pilot user of three notices. It matters more "
+                    "than it looks because us-east-2 denies RunInstances, so instance-type "
+                    "breadth inside us-east-1 is the only lever on availability the account has."
+                ),
+                (
+                    "All five subnets are usable for this shape, so placement breadth across "
+                    "zones is not the constraint. That is asserted from "
+                    "describe-instance-type-offerings and never from a dry-run, which answers "
+                    "authorization and returned DryRunOperation for two shapes in a zone that "
+                    "offers neither."
+                ),
+                CONFIGURATION_CAPTURES_EXPIRE,
+            ),
+        ),
+        CriterionSpec(
+            number="12",
+            statement=(
+                "The prefix in the result manifest, the prefix in the workload role, and the "
+                "prefix the container is given are the same prefix."
+            ),
+            status=CriterionStatus.COVERED,
+            pilot_blocking=True,
+            proving_node_ids=(
+                *_ids(RUN_EVIDENCE, "test_the_prefix_the_container_was_given_is_the_one_the_platform_derives"),
+                *_ids(RUN_EVIDENCE, "test_the_role_permits_exactly_the_prefix_shape_the_platform_derives"),
+            ),
+            supporting_node_ids=(
+                *_ids("tests/test_phase3_lifecycle_projection.py", "test_the_prefix_recorded_is_the_prefix_the_container_was_handed"),
+                *_ids("tests/test_phase3_lifecycle_projection.py", "test_a_succeeded_job_whose_output_cannot_be_located_is_refused", "the variable is absent-environment0", "the prefix names somebody else's bucket-environment1"),
+            ),
+            scope_limits=(
+                (
+                    "Added by this phase rather than taken from the master plan, because Phase 4 "
+                    "inherited three answers to where a run writes and two of them agreed. The "
+                    "result manifest said {bucket}/{run_id}/, the role permitted "
+                    "{bucket}/teams/data-prep/runs/*, and the container was told the third. "
+                    "Nothing failed, because the CPU smoke command wrote no output at all."
+                ),
+                (
+                    "There is now one function, contracts/results.py::output_prefix, and the "
+                    "manifest no longer derives anything -- the recorder reads the prefix out of "
+                    "the container's own environment in the Batch event. Two sources that read "
+                    "the same value cannot disagree; three literals that happen to match can, "
+                    "and did."
+                ),
+                (
+                    "The team segment is real now. All four Phase 3 runs declared team platform "
+                    "while every prefix said data-prep, which was a placeholder that happened to "
+                    "be self-consistent."
+                ),
+            ),
+        ),
+    )
+    validate_criterion_specs(specs)
+    return specs

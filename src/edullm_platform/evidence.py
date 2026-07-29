@@ -170,6 +170,29 @@ def scan_for_secrets(value: str) -> str:
 SecretFreeStr = Annotated[str, AfterValidator(scan_for_secrets)]
 
 
+def scan_allowing_content_digests(value: str) -> str:
+    """Refuse a credential, but not a digest or a commit SHA that merely looks like one.
+
+    ``scan_for_secrets`` reads forty hexadecimal characters as an AWS secret access key,
+    which is right for free text and wrong for a field whose whole job is to carry a commit
+    SHA. A Phase 4 capture found this immediately: the container is told
+    ``EDULLM_COMMIT_SHA=b067a31e...``, forty hex characters, and the record refused itself.
+
+    Masking the identifiers before scanning is the same order the proof bundle uses, and it
+    keeps every other pattern intact -- an account id, a GitHub token, a JWT and a PEM block
+    in one of these fields are all still refused. What it gives up is the ability to notice
+    a real secret access key sitting in a field that also legitimately holds commit SHAs,
+    which is a trade this makes knowingly and only for fields that have that job.
+    """
+    scan_for_secrets(redact_content_digests(value))
+    return value
+
+
+#: For a field that legitimately carries a content digest or a commit SHA. Never use it for
+#: free text: the point of the plain scan is that text nobody composed gets the strict read.
+DigestBearingStr = Annotated[str, AfterValidator(scan_allowing_content_digests)]
+
+
 def validate_observed_at(value: datetime) -> datetime:
     if value.tzinfo is None:
         raise ValueError("observation timestamps must be timezone-aware")
@@ -195,6 +218,13 @@ def evidence_load_reason_code(error: ValidationError) -> str:
 
 
 class FreshEvidenceModel(ContractModel):
+    """A statement about how something is configured *now*, which therefore expires.
+
+    The window is what stops a capture reading as a statement about the present. A GitHub
+    environment's reviewer list can be changed in a browser in ten seconds leaving no
+    artifact anywhere, so a record of it is only worth what its age says it is.
+    """
+
     observed_at: datetime = Field(strict=False)
 
     @field_validator("observed_at")
@@ -204,6 +234,44 @@ class FreshEvidenceModel(ContractModel):
             return validate_observed_at(value)
         except StaleEvidenceError as exc:
             raise ValueError(str(exc)) from exc
+
+
+def validate_occurrence(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        raise ValueError("observation timestamps must be timezone-aware")
+    observed_at = value.astimezone(UTC)
+    if observed_at > datetime.now(tz=UTC):
+        raise ValueError("observation timestamps must not be in the future")
+    return observed_at
+
+
+class RecordedEventModel(ContractModel):
+    """A record of something that happened, which does not expire because it cannot.
+
+    THE DISTINCTION THIS DRAWS IS THE ONE ``FRESHNESS_WINDOW`` WAS MISSING. Applied
+    uniformly, the window says a capture of a GPU job that ran on 29 July stops being
+    evidence on 28 August -- but the job still ran, the checkpoint it wrote is still in the
+    bucket with the digest the record names, and nothing about the passage of time makes
+    any of that less true. What expires is a claim about configuration; what happened is
+    settled.
+
+    Getting this wrong is not merely untidy. Several Phase 3 criteria rest on captures of
+    four live runs, and under a single window they all start reporting themselves stale
+    thirty days on -- so a gate goes red for a reason unrelated to any change, and a gate
+    that does that gets routed around rather than read.
+
+    Being in the future is still refused, and is the whole of what is checked. A record
+    claiming to describe something that has not happened yet is not a record of an event;
+    it is a clock that is wrong, or a fabrication, and either way nothing downstream should
+    read it.
+    """
+
+    observed_at: datetime = Field(strict=False)
+
+    @field_validator("observed_at")
+    @classmethod
+    def validate_occurrence_time(cls, value: datetime) -> datetime:
+        return validate_occurrence(value)
 
 
 class GitHubPlanEvidence(FreshEvidenceModel):

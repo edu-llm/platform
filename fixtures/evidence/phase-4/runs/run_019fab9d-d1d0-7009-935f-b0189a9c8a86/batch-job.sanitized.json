@@ -1,0 +1,49 @@
+{
+  "batch_job_id": "06826036-e845-4f31-9002-f751fd579f09",
+  "container_environment": [
+    {
+      "name": "EDULLM_COMMIT_SHA",
+      "value": "b067a31e48c4038416d179fc85e5f12b05c8d2a9"
+    },
+    {
+      "name": "EDULLM_DATASET_RELEASE",
+      "value": "dolma-2026-07"
+    },
+    {
+      "name": "EDULLM_OUTPUT_BUCKET",
+      "value": "sbsandbox-intern-edullm-outputs"
+    },
+    {
+      "name": "EDULLM_OUTPUT_PREFIX",
+      "value": "s3://sbsandbox-intern-edullm-outputs/teams/platform/runs/run_019fab9d-d1d0-7009-935f-b0189a9c8a86/"
+    },
+    {
+      "name": "EDULLM_RUN_ID",
+      "value": "run_019fab9d-d1d0-7009-935f-b0189a9c8a86"
+    },
+    {
+      "name": "EDULLM_TEAM",
+      "value": "platform"
+    },
+    {
+      "name": "EDULLM_WANDB_PROJECT",
+      "value": "edullm-platform-smoke"
+    }
+  ],
+  "environment": "sandbox",
+  "gpu_count": 1,
+  "image_digest": "sha256:e8f4d5aaea4c7a6e0f723f9b49fccf406ee63017baab4cea4e8b94b8e23e079f",
+  "job_definition_name": "sbsandbox-intern-edullm-gpu-run:3",
+  "job_queue_name": "sbsandbox-intern-edullm-gpu",
+  "log_stream_name": "gpu-run/default/084f724a6e4841ba9fc96811d481cd93",
+  "memory_mib": 15360,
+  "observed_at": "2026-07-29T07:20:13Z",
+  "region": "us-east-1",
+  "run_id": "run_019fab9d-d1d0-7009-935f-b0189a9c8a86",
+  "source": "aws",
+  "started_at": "2026-07-29T02:14:34.000000Z",
+  "status": "SUCCEEDED",
+  "status_reason": "Essential container in task exited",
+  "stopped_at": "2026-07-29T02:14:52.000000Z",
+  "vcpus": 4
+}

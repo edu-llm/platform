@@ -1,0 +1,33 @@
+{
+  "environment": "sandbox",
+  "instance_type": "g5.xlarge",
+  "observed_at": "2026-07-29T07:21:01Z",
+  "offerings": [
+    {
+      "availability_zone": "us-east-1a",
+      "offered": true
+    },
+    {
+      "availability_zone": "us-east-1b",
+      "offered": true
+    },
+    {
+      "availability_zone": "us-east-1c",
+      "offered": true
+    },
+    {
+      "availability_zone": "us-east-1d",
+      "offered": true
+    },
+    {
+      "availability_zone": "us-east-1e",
+      "offered": false
+    },
+    {
+      "availability_zone": "us-east-1f",
+      "offered": true
+    }
+  ],
+  "region": "us-east-1",
+  "source": "aws"
+}

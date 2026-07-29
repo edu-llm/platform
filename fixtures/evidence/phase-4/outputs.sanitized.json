@@ -1,0 +1,21 @@
+{
+  "authorized_prefixes": [
+    "teams/platform/runs/"
+  ],
+  "bucket": "sbsandbox-intern-edullm-outputs",
+  "environment": "sandbox",
+  "objects": [
+    {
+      "checksum_sha256": "sha256:0a0f3698ae594ed2986efbd5b7185ecce96789c8f204593f9baa95021b37b0de",
+      "key": "teams/platform/runs/run_019fab9d-d1d0-7009-935f-b0189a9c8a86/checkpoints/step-20/_SUCCESS",
+      "size_bytes": 110
+    },
+    {
+      "checksum_sha256": "sha256:dc5bc83a6fab003301022ed2c09d83f87c250f33ee19a863d47b0a7eba36736b",
+      "key": "teams/platform/runs/run_019fab9d-d1d0-7009-935f-b0189a9c8a86/checkpoints/step-20/model.pt",
+      "size_bytes": 762258865
+    }
+  ],
+  "observed_at": "2026-07-29T07:20:39Z",
+  "source": "aws"
+}

@@ -1,6 +1,6 @@
 # Phase 0 schema compatibility report
 
-115 contract models. The structural digest is `sha256` over the model's JSON schema with sorted keys, so it changes when a field is added, removed, retyped, or reconstrained, and does not change when unrelated code moves. Comparing this table between phases answers whether a schema changed.
+129 contract models. The structural digest is `sha256` over the model's JSON schema with sorted keys, so it changes when a field is added, removed, retyped, or reconstrained, and does not change when unrelated code moves. Comparing this table between phases answers whether a schema changed.
 
 The kind column separates a `record`, which some payload is validated against, from a `base`, which exists only for other models to inherit from and which no payload names directly.
 
@@ -48,7 +48,7 @@ The kind column separates a `record`, which some payload is validated against, f
 
 ## Runtime records
 
-80 models are not exported to `schemas/`. These are produced while work runs or while a decision is made: lineage, results, datasets, authorization outcomes, operational evidence, and gate results. They carry a `schema_version` field where they are persisted, and they are deliberately not published as repository configuration, because no human authors them by hand.
+94 models are not exported to `schemas/`. These are produced while work runs or while a decision is made: lineage, results, datasets, authorization outcomes, operational evidence, and gate results. They carry a `schema_version` field where they are persisted, and they are deliberately not published as repository configuration, because no human authors them by hand.
 
 | model | module | kind | schema_version | structural digest |
 | --- | --- | --- | --- | --- |
@@ -72,9 +72,10 @@ The kind column separates a `record`, which some payload is validated against, f
 | PilotVerdict | edullm_platform.criteria | record | unversioned | sha256:ca942afc4f5bc9cd57d1f215ddd65aa166fd6d572c26e88f9f1d81d3a5074488 |
 | BatchQuotaRecord | edullm_platform.evidence | record | unversioned | sha256:b315f8a70fe1fa3933ca365ae89f2af41e0ac4a4470c176f7b80890a19ead92c |
 | CapturedServiceQuotasEvidence | edullm_platform.evidence | record | unversioned | sha256:2e3c2d6b13fa402c242534f5edbcac96eee3dd8fba2431787b5800051b63ba99 |
-| FreshEvidenceModel | edullm_platform.evidence | base | unversioned | sha256:7c123a5ee3ee892e28cf3aa1cc32ae98ac83cec63944475bb8a4830d24e02549 |
+| FreshEvidenceModel | edullm_platform.evidence | base | unversioned | sha256:8c0c624f5d3cfe3da33c28f804dc2e62b086b3af56a6a43de2f624c0498eed8b |
 | GitHubPlanEvidence | edullm_platform.evidence | record | unversioned | sha256:16df1c81fffe080590c4606d9ebf0bd5fe2e9dd388a75f0f2ba3736cbeb83b9a |
 | QuotaRecord | edullm_platform.evidence | record | unversioned | sha256:1d12f0f55e61c12b0d042871513637406b2d9bfeb8f8735fbd6d245ef5553af9 |
+| RecordedEventModel | edullm_platform.evidence | base | unversioned | sha256:7ab65f3d99fa7da1d47424a7b7314f24eb2c8d62dac4462ebccde0a68b086f81 |
 | ServiceQuotasEvidence | edullm_platform.evidence | base | unversioned | sha256:3b532f5c59cab1982631ea3f179c60b1fbcbab791546565deb4b8bdcdc0d1d42 |
 | GateCheck | edullm_platform.phase0_gate | record | unversioned | sha256:3dbb91b49e418557346c57de4ddf6fbfc2ecbd44056b3767df7d897e4a35f487 |
 | Phase0GateReport | edullm_platform.phase0_gate | record | unversioned | sha256:2e045fc7fd5ffd738c8977378e6532c736c147b589d5794881500e93b583a59d |
@@ -124,6 +125,19 @@ The kind column separates a `record`, which some payload is validated against, f
 | SubnetOffering | edullm_platform.phase3_evidence | record | unversioned | sha256:ab6f5c0b1a06a0a71328ecc73605f226a33c407a626d0cddd55fd337eccb8575 |
 | VpcQuotaRecord | edullm_platform.phase3_evidence | record | unversioned | sha256:43cd7c39a0e005ea23e5682e8e39b63473756d4c4cb05dcf7f24dc4b114bb994 |
 | Phase3GateReport | edullm_platform.phase3_gate | record | unversioned | sha256:afae329619a08322914bc407920ae1991006d4a48547dc46f71bc21f742c7af5 |
+| CheckpointObservation | edullm_platform.phase4_evidence | record | unversioned | sha256:75a9326923285e8e5fdb3fc78a3e6cdf4b82503fee8c1219f7ad71e5cc131736 |
+| ContainerVariable | edullm_platform.phase4_evidence | record | unversioned | sha256:a14df17755c20204d9ddbf482b1fe1e34edc795699b5aa6e15a722bf420eb851 |
+| GpuCapabilityEvidence | edullm_platform.phase4_evidence | record | unversioned | sha256:3045fb93c5f1197a81095cf1da65d1d67cd4e666ff7097c2428cd2dfde3d6966 |
+| GpuComputeEnvironmentEvidence | edullm_platform.phase4_evidence | record | unversioned | sha256:a4839a5d4d881dd67e137a64821ddaced0b340466179ba05fd1eb4dd15b6a200 |
+| GpuJobEvidence | edullm_platform.phase4_evidence | record | unversioned | sha256:33d7f935aaa4e55c72cfbbe55862d481ccead69818aa621d1a06f5e8c37a8bbe |
+| InstanceTypeOffering | edullm_platform.phase4_evidence | record | unversioned | sha256:152e8f5d436183f1a86854e2e0f1bc2fe0408f1308375a32cd2efec5f6278cab |
+| InstanceTypeOfferingEvidence | edullm_platform.phase4_evidence | record | unversioned | sha256:aa619a8e63e530f18f9ae3b3f34b9b673f06b81e4fb4bfe25623916d75f2e7b1 |
+| OutputObject | edullm_platform.phase4_evidence | record | unversioned | sha256:c192781749f07310ed5d8ae5a6ee7c836c6cb117f56e0f384c5f993c9a314df7 |
+| OutputPrefixEvidence | edullm_platform.phase4_evidence | record | unversioned | sha256:2ce39e867aae6ad02d833068aa0e68aa7498016be9cb18c0bbebe6822768483d |
+| SecretDeliveryEvidence | edullm_platform.phase4_evidence | record | unversioned | sha256:1b4eb420671c5194307b71dcdd37ec700d2768b7c97a5c5103cdfd110a421eff |
+| TrainingSummaryEvidence | edullm_platform.phase4_evidence | record | unversioned | sha256:2e97f2b0ed364df6afaf8139f6cebfbd8137094ce7828ad8f2af146924d4fb91 |
+| WorkloadRoleScopeEvidence | edullm_platform.phase4_evidence | record | unversioned | sha256:a291e05094714bdd08465a239732a666b76186e600748a6cea6126d75e05780a |
+| Phase4GateReport | edullm_platform.phase4_gate | record | unversioned | sha256:f54277fa159962aaeaa5920f63f691bf06745fee71b093f1442c6d127fbc514a |
 | AttemptedDenial | edullm_platform.publisher_denials | record | unversioned | sha256:f0b497787467fde6f343ddec8552ead542f393a7ed111e59cc7b74041107fe69 |
 | PublisherDenialMatrix | edullm_platform.publisher_denials | record | 1 | sha256:66bcc2645e9e044e23cd10338e2041e7a236528989f5ad2013f0d1d292d354da |
 | ConfigurationField | edullm_platform.rebuild_comparison | record | unversioned | sha256:04c684f0cfe10bf5d4afbc0a8885fc89150cf49966d76690a30f104c132478c1 |
