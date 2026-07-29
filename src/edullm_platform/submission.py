@@ -35,7 +35,6 @@ from edullm_platform.contracts.image_scan import (
     ImageScanExceptionRegistry,
     ImageScanSummary,
 )
-from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.manifest import (
     COMMIT_SHA_PATTERN,
     IMAGE_DIGEST_PATTERN,
@@ -48,6 +47,7 @@ from edullm_platform.contracts.policy import (
     RequestFacts,
     classify_request,
 )
+from edullm_platform.contracts.repository_registry import RepositoryRegistry
 from edullm_platform.contracts.workload import CostInputs, WorkloadCatalog, WorkloadProfile
 from edullm_platform.manifest_helpers import (
     build_request_facts,
@@ -152,7 +152,7 @@ def compile_submission(
     *,
     run_id: str,
     policy: ApprovalPolicy,
-    inventory: OrganizationInventory,
+    repositories: RepositoryRegistry,
     catalog: WorkloadCatalog,
     dataset_registry: DatasetRegistry,
     image_scan_registry: ImageScanExceptionRegistry,
@@ -235,7 +235,7 @@ def compile_submission(
 
     facts = build_request_facts(
         manifest,
-        inventory=inventory,
+        repositories=repositories,
         catalog=catalog,
         dataset_registry=dataset_registry,
         estimated_cost_usd=cost.maximum_compute_cost_usd,

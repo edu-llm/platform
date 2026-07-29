@@ -20,6 +20,7 @@ from edullm_platform.contracts.image_scan import (
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.manifest import RunManifest
 from edullm_platform.contracts.policy import ApprovalClass, ApprovalPolicy
+from edullm_platform.contracts.repository_registry import RepositoryRegistry
 from edullm_platform.contracts.workload import WorkloadCatalog
 from edullm_platform.manifest_helpers import load_manifest
 
@@ -49,12 +50,16 @@ ACCOUNT_ID = "123456789012"
 EXCEPTION_COMPUTE_PROFILE = "gpu-4xa10g"
 
 UNREGISTERED_DATASET = "dolma-2026-99"
-UNREGISTERED_REPOSITORY = "not-a-pilot-repository"
+UNREGISTERED_REPOSITORY = "not-a-registered-repository"
 UNREGISTERED_COMPUTE_PROFILE = "cpu-1024vcpu"
 
 
 def load_organization_inventory() -> OrganizationInventory:
     return load_yaml(PROJECT_ROOT / "config" / "organization.yaml", OrganizationInventory)
+
+
+def load_repository_registry() -> RepositoryRegistry:
+    return load_yaml(PROJECT_ROOT / "config" / "repositories.yaml", RepositoryRegistry)
 
 
 def load_approval_policy() -> ApprovalPolicy:
@@ -198,6 +203,7 @@ def admit_submission(
         workflow_run=workflow_run(),
         policy=policy if policy is not None else load_approval_policy(),
         inventory=load_organization_inventory(),
+        repositories=load_repository_registry(),
         catalog=catalog if catalog is not None else load_workload_catalog(),
         execution_targets=(
             execution_targets if execution_targets is not None else load_execution_targets()
@@ -451,6 +457,46 @@ def test_an_input_that_cannot_be_resolved_is_denied_outright_and_the_condition_n
         "this submission is also at the wrong gate for its class, and it is still denied "
         "outright: an unresolvable input is not an expensive request somebody may approve"
     )
+
+
+def test_a_pilot_repository_with_no_registration_is_refused_rather_than_admitted() -> None:
+    """MEASURED BY PROBE BEFORE IT WAS FIXED, AND IT WAS ACCEPTED.
+
+    ``repository_registered`` used to be membership of ``config/organization.yaml``'s
+    ``pilot_repositories``, which lists OLMo-core and dolma. So a submission naming
+    ``repository: dolma`` was a fact-for-fact valid one: it compiled, classified routine,
+    routed to a lead, and admission accepted it -- and the state machine would then have
+    submitted it to the CPU queue, where it would have run the OLMo-core image, because the
+    image is pinned in the job definition rather than chosen by the submission.
+
+    Nothing about that failure is visible from the outside. The job starts, the image runs,
+    and the lineage record says a dolma run happened.
+    """
+    outcome = admit_submission(manifest_overrides={"repository": "dolma"})
+    decision = outcome.decision
+
+    assert decision.accepted is False
+    assert decision.reason is AdmissionReason.DENIED_OUTRIGHT
+    assert "unregistered_repository" in decision.detail
+    # And the pilot list still says dolma, which is the point: the two files disagree and
+    # only one of them is being asked.
+    assert "dolma" in load_organization_inventory().pilot_repositories
+
+
+def test_a_registered_repository_that_is_not_a_pilot_is_admitted() -> None:
+    """The quieter direction of the same defect, which had not arrived yet.
+
+    ``edullm-data`` is registered -- it has an ECR repository, a reviewed base image and a
+    Dockerfile path -- and is not in the pilot list. Under the old derivation the first
+    workload written against it would have been denied outright as an unregistered
+    repository, and the reader would have gone to look at ``config/repositories.yaml``,
+    where the registration was sitting.
+    """
+    outcome = admit_submission(manifest_overrides={"repository": "edullm-data"})
+
+    assert outcome.decision.accepted is True
+    assert "unregistered_repository" not in outcome.decision.detail
+    assert "edullm-data" not in load_organization_inventory().pilot_repositories
 
 
 def test_every_tripped_condition_is_named_in_the_order_policy_lists_them() -> None:

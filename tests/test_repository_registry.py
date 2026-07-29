@@ -1,3 +1,6 @@
+import ast
+import inspect
+import textwrap
 from pathlib import Path
 from typing import Any
 
@@ -5,7 +8,9 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+from edullm_platform import admission, manifest_helpers, submission
 from edullm_platform.config import load_yaml
+from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.repository_registry import (
     RegisteredRepository,
     RepositoryRegistry,
@@ -13,6 +18,16 @@ from edullm_platform.contracts.repository_registry import (
 )
 
 BASE_DIGEST = "sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de"
+
+
+def function_body_source(target: Any) -> str:
+    """One function's code without its docstring, so prose cannot satisfy a code check."""
+    tree = ast.parse(textwrap.dedent(inspect.getsource(target)))
+    definition = tree.body[0]
+    assert isinstance(definition, ast.FunctionDef)
+    if ast.get_docstring(definition) is not None:
+        definition.body = definition.body[1:]
+    return ast.unparse(definition)
 
 
 def repository_payload(**overrides: object) -> dict[str, object]:
@@ -58,6 +73,89 @@ def test_the_shipped_registry_registers_olmo_core_exactly_as_it_was_reviewed() -
         "dockerfile_path": ".edullm/Dockerfile",
         "build_context": ".",
     }
+
+
+def test_the_registry_and_the_pilot_list_are_asked_different_questions() -> None:
+    """TWO FILES LIST REPOSITORIES AND ONLY ONE OF THEM ANSWERS THIS. Mutation: derive
+    ``repository_registered`` from the roster again.
+
+    ``config/organization.yaml``'s ``pilot_repositories`` is a declaration of what the pilot
+    programme covers, which is why the Phase 0 inventory check holds it to exactly OLMo-core
+    and dolma. ``config/repositories.yaml`` is where a repository acquires an ECR repository,
+    a registered base image and a Dockerfile path -- the things that let an image exist for
+    it. They were the same list once and are not the same question, and admission derived
+    "is this repository registered" from the first of them.
+
+    Both directions were live at once. ``dolma`` is a pilot with no registration, and a
+    submission naming it with ``dolma-tokenize-smoke`` was accepted, routed to a lead and
+    would have been submitted to the CPU queue -- where it would have run the OLMo-core
+    image, because the image is pinned in the job definition rather than chosen by the
+    submission. ``edullm-data`` is registered and is not a pilot, so the first workload
+    written against it would have been denied outright.
+
+    The two lists are left as they are, because the fix is not to make them equal: the
+    programme's scope and the build registry can legitimately differ. What must not happen
+    again is a fact reading the one that does not answer it, and the assertion below is over
+    the derivation rather than over the files.
+    """
+    root = Path(__file__).resolve().parents[1]
+    registry = load_yaml(root / "config" / "repositories.yaml", RepositoryRegistry)
+    inventory = load_yaml(root / "config" / "organization.yaml", OrganizationInventory)
+    registered = {entry.repository for entry in registry.repositories}
+    pilots = set(inventory.pilot_repositories)
+
+    # Recorded rather than asserted away. The day these coincide again this still passes,
+    # and the derivation below is what keeps the answer right either way.
+    assert pilots - registered == {"dolma"}
+    assert registered - pilots == {"edullm-data"}
+
+    derivation = manifest_helpers.build_request_facts
+    assert "repositories.is_registered(manifest.repository)" in inspect.getsource(derivation)
+    assert "inventory" not in inspect.signature(derivation).parameters
+    # Over the code rather than over the file. The docstring records the defect and
+    # therefore quotes the expression that caused it, so a text search would fail for
+    # describing what it prevents.
+    assert "pilot_repositories" not in function_body_source(derivation)
+
+
+def test_both_production_callers_derive_registration_from_the_repository_registry() -> None:
+    """The seam, written the way the image-scan gate's is. Mutation: read a set elsewhere.
+
+    Nothing stops a caller passing a registry it built itself, and a registry assembled
+    beside a caller makes that caller -- rather than reviewed configuration -- the authority
+    on what admission accepts. Both production paths take the argument and both pass it
+    through, and the compile step and admission have to agree or an approval is spent on a
+    submission the far side will refuse.
+    """
+    for module, function in ((admission, "admit"), (submission, "compile_submission")):
+        target = getattr(module, function)
+        assert "repositories" in inspect.signature(target).parameters
+        assert "repositories=repositories" in inspect.getsource(target), (
+            f"{module.__name__}.{function} no longer passes the repository registry into "
+            "build_request_facts, so its answer to 'is this repository registered' comes "
+            "from somewhere else"
+        )
+
+
+def test_is_registered_answers_for_every_repository_the_catalog_names() -> None:
+    """Mutation: let a workload name a repository nothing registers and call it fine.
+
+    ``is_registered`` is the one answer, so this checks it against the file rather than
+    against a remembered list, and names the one workload repository that fails it -- which
+    is why ``dolma-tokenize-smoke`` is absent from the submission form.
+    """
+    root = Path(__file__).resolve().parents[1]
+    registry = load_yaml(root / "config" / "repositories.yaml", RepositoryRegistry)
+    catalog = yaml.safe_load(
+        (root / "config" / "workload-catalog.yaml").read_text(encoding="utf-8")
+    )
+    named = {workload["repository"] for workload in catalog["workloads"]}
+
+    assert {name for name in named if not registry.is_registered(name)} == {"dolma"}
+    assert registry.is_registered("OLMo-core")
+    assert registry.is_registered("edullm-data")
+    assert not registry.is_registered("Olmo-Core"), "registration is not case insensitive"
+    assert not registry.is_registered("")
 
 
 def test_every_registration_names_a_distinct_ecr_repository() -> None:

@@ -21,6 +21,7 @@ from tests.test_policy import (
     load_approval_policy,
     load_dataset_registry,
     load_organization_inventory,
+    load_repository_registry,
 )
 
 AUTHORIZATION_FIXTURES_DIR = PROJECT_ROOT / "fixtures" / "authorization"
@@ -113,7 +114,7 @@ def test_authorization_fixture_facts_come_from_a_reviewed_manifest(
     catalog = load_workload_catalog()
     facts = request_facts_from_manifest(
         manifest,
-        inventory=load_organization_inventory(),
+        repositories=load_repository_registry(),
         catalog=catalog,
         dataset_registry=load_dataset_registry(),
         estimated_cost_usd=compute_manifest_maximum_cost(manifest, catalog),

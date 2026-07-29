@@ -1,5 +1,12 @@
 schema_version: 1
-repository: dolma
+# REPOINTED FROM dolma, AND NOT BECAUSE THE FIXTURE WAS WRONG WHEN IT WAS WRITTEN.
+# repository_registered was membership of config/organization.yaml's pilot_repositories,
+# which lists OLMo-core and dolma; it now reads config/repositories.yaml, which is where a
+# repository acquires the ECR repository, base image and Dockerfile that let an image exist
+# for it at all. dolma is in the first list and not the second, so a submission naming it is
+# denied outright -- which is the correct answer and makes it unusable as the representative
+# routine submission. The file name says routine and the shape has to match it.
+repository: OLMo-core
 # NON-RUNNABLE FIXTURE IDENTITY — do not execute
 commit_sha: "0000000000000000000000000000000000000001"
 image_digest: "sha256:0000000000000000000000000000000000000000000000000000000000000001"
@@ -7,14 +14,18 @@ dataset_release: dolma-2026-07
 command:
   - python
   - -m
-  - dolma.tokenize
+  - olmo_core.data.tokenize
   - --input
   - s3://sbsandbox-intern-edullm-datasets/dolma-2026-07/raw/
   - --output
   - s3://sbsandbox-intern-edullm-datasets/dolma-2026-07/tokenized/
 team: data-prep
-wandb_project: dolma-tokenize
-workload_profile: dolma-tokenize-smoke
+wandb_project: olmo-core-tokenize
+# The CPU workload Phase 3 actually runs, so the two fields agree the way compile_submission
+# now requires of a real submission. Its registered runtime bound is one hour; this manifest
+# overrides nothing, and the reviewed cost in REPRESENTATIVE_MANIFEST_COSTS is two hours of
+# c7i.8xlarge, which is the bound this fixture declares rather than the profile's default.
+workload_profile: olmo-core-cpu-smoke
 compute_profile: cpu-32vcpu
 maximum_runtime_hours: "2"
 maximum_attempts: 1

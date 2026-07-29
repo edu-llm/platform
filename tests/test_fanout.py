@@ -29,7 +29,7 @@ from tests.test_manifest import (
 from tests.test_policy import (
     load_approval_policy,
     load_dataset_registry,
-    load_organization_inventory,
+    load_repository_registry,
     numeric_bound_violations,
 )
 
@@ -52,16 +52,21 @@ def fanout_payload(**overrides: object) -> dict[str, object]:
 
 
 def sweep_manifest_payload(**overrides: object) -> dict[str, object]:
+    # A registered repository, and it has to be one. Every classification assertion below
+    # expects routine, and an unregistered repository is denied outright before a threshold
+    # is consulted -- so a sweep from dolma would classify as an exception for a reason
+    # that has nothing to do with fan-out. It named dolma until ``repository_registered``
+    # started reading config/repositories.yaml rather than the roster's pilot list.
     payload: dict[str, object] = {
         "schema_version": 1,
-        "repository": "dolma",
+        "repository": "OLMo-core",
         "commit_sha": "a" * 40,
         "image_digest": "sha256:" + "b" * 64,
         "dataset_release": "dolma-2026-07",
-        "command": ["python", "-m", "dolma.tokenize", "--shard-index"],
+        "command": ["python", "-m", "olmo_core.data.tokenize", "--shard-index"],
         "team": "data-prep",
-        "wandb_project": "dolma-sweep",
-        "workload_profile": "dolma-tokenize-smoke",
+        "wandb_project": "olmo-core-sweep",
+        "workload_profile": "olmo-core-cpu-smoke",
         "compute_profile": "cpu-32vcpu",
         "maximum_runtime_hours": "2.5",
         "maximum_attempts": 1,
@@ -84,7 +89,7 @@ def facts_for(manifest: RunManifest) -> RequestFacts:
     catalog = load_workload_catalog()
     return request_facts_from_manifest(
         manifest,
-        inventory=load_organization_inventory(),
+        repositories=load_repository_registry(),
         catalog=catalog,
         dataset_registry=load_dataset_registry(),
         estimated_cost_usd=compute_manifest_maximum_cost(manifest, catalog),
@@ -338,7 +343,7 @@ def test_a_sweep_is_priced_as_one_submission_so_it_cannot_hide_behind_cheap_cell
         sweep_manifest(
             fanout=None,
             maximum_runtime_hours="10",
-            command=["python", "-m", "dolma.tokenize", "--shard", str(index)],
+            command=["python", "-m", "olmo_core.data.tokenize", "--shard", str(index)],
         )
         for index in range(cells)
     )

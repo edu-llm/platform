@@ -13,13 +13,13 @@ from edullm_platform.contracts.image_scan import (
     ImageScanSummary,
     image_scan_is_reviewed,
 )
-from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.manifest import (
     COMMIT_SHA_PATTERN,
     IMAGE_DIGEST_PATTERN,
     RunManifest,
 )
 from edullm_platform.contracts.policy import RequestFacts
+from edullm_platform.contracts.repository_registry import RepositoryRegistry
 from edullm_platform.contracts.workload import (
     CostInputs,
     UnregisteredComputeProfileError,
@@ -99,7 +99,7 @@ def compute_manifest_maximum_cost(manifest: RunManifest, catalog: WorkloadCatalo
 def build_request_facts(
     manifest: RunManifest,
     *,
-    inventory: OrganizationInventory,
+    repositories: RepositoryRegistry,
     catalog: WorkloadCatalog,
     dataset_registry: DatasetRegistry,
     estimated_cost_usd: Decimal,
@@ -117,6 +117,24 @@ def build_request_facts(
     no input that says "this is routine". That asymmetry is what makes classification a
     boundary rather than a formality, and it is why this function takes the registry as an
     argument instead of reading a set defined next to a caller.
+
+    **``repository_registered`` reads the repository registry, and used to read the roster.**
+    It was ``manifest.repository in inventory.pilot_repositories``, and
+    ``config/organization.yaml`` sets that to ``OLMo-core`` and ``dolma``. Those two lists
+    are not the same question. ``pilot_repositories`` is a declaration of what the pilot
+    programme covers, which is why the Phase 0 inventory check holds it to exactly those
+    two; ``config/repositories.yaml`` is where a repository acquires an ECR repository, a
+    registered base image and a Dockerfile path, which is what "can be built and run here"
+    consists of.
+
+    Reading the wrong one was wrong in both directions at once, and a probe confirmed the
+    expensive direction: ``repository: dolma`` with ``workload_profile:
+    dolma-tokenize-smoke`` was *accepted*, routed to a lead, and would have been submitted
+    to the CPU queue -- where it would have run the OLMo-core image, because the image is
+    pinned in the job definition rather than chosen by the submission. The other direction
+    is quieter and would have arrived next: ``edullm-data`` is registered, has a published
+    image, and the first workload written against it would have been denied outright as an
+    unregistered repository.
 
     **The three image-scan arguments and what their absence means.**
     ``image_scan_summary=None`` means "no scan result is in hand", which resolves to
@@ -148,7 +166,7 @@ def build_request_facts(
         )
     return RequestFacts(
         claimed_team=manifest.team,
-        repository_registered=manifest.repository in inventory.pilot_repositories,
+        repository_registered=repositories.is_registered(manifest.repository),
         dataset_registered=dataset_registry.is_registered(manifest.dataset_release),
         compute_profile_registered=is_compute_profile_registered(manifest, catalog),
         immutable_revision=manifest_has_immutable_revision(manifest),

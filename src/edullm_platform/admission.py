@@ -70,6 +70,7 @@ from edullm_platform.contracts.policy import (
     RequestFacts,
     classify_request,
 )
+from edullm_platform.contracts.repository_registry import RepositoryRegistry
 from edullm_platform.contracts.workload import (
     ComputeProfileResolutionError,
     CostInputs,
@@ -170,6 +171,7 @@ def admit(
     workflow_run: GitHubWorkflowRunReference,
     policy: ApprovalPolicy,
     inventory: OrganizationInventory,
+    repositories: RepositoryRegistry,
     catalog: WorkloadCatalog,
     execution_targets: ExecutionTargetCatalog,
     account_id: str,
@@ -245,7 +247,7 @@ def admit(
 
     facts = build_request_facts(
         manifest,
-        inventory=inventory,
+        repositories=repositories,
         catalog=catalog,
         dataset_registry=dataset_registry,
         estimated_cost_usd=estimated_cost_usd,
