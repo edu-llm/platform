@@ -1,23 +1,51 @@
-"""What every capture tool does the same way, extracted once rather than a fifth time.
+"""What the five capture tools do the same way, and only what all of them can use.
 
-Four capture tools exist -- Phase 0 at 456 lines, Phase 1 at 1,186, Phase 2 at 409 and
-Phase 3 at 1,729 -- and they differ in what they gather while being near-identical in how
-they gather it. Each shells out to a CLI and parses JSON, each refuses to write outside the
-working directory, each serializes a contract model the same way, each scans what it wrote
-for a credential, and each ends in a ``main`` whose four arms repeat the same
-``except CaptureFailedError / except OSError`` pair.
+Five capture tools exist -- Phase 0, 1, 2, 3 and 4 -- and they differ in what they gather
+while overlapping in how they gather it. Each shells out to a CLI and parses JSON, each
+refuses to write outside its phase's working directory, each serializes a contract model,
+each has to keep a credential out of what it commits, and each ends in a ``main`` whose
+arms repeat the same ``except CaptureFailedError / except OSError`` pair.
 
-**The standing rule is to consolidate before a fifth copy is written, and Phase 4 is that
-fifth.** This module is the part of the answer that Phase 4 actually needs: the mechanics,
-not a framework. What a phase supplies is still what it should supply -- which facts to
-gather, and where they land.
+**This was extracted for five callers and had one for a while, which is worth recording.**
+Phase 4 adopted it; the other four went on carrying their own copies under other names.
+That made it a module whose interface a reader had to learn and then mostly could not use,
+and it put the rule that matters most -- never write into ``fixtures/``, and scan before
+writing -- in several places, which is how one copy drifts without anybody noticing. All
+five now call in, and what each takes is a measurement rather than a design:
+
+``aws``, ``aws_json``
+    Phase 3 and Phase 4. Phase 1 keeps its own, which reads the operation and error code
+    out of the CLI's stderr and lets a caller nominate an error code that means an expected
+    absence -- neither of which this does, and folding both in would take four parameters
+    to serve one caller.
+``write_record``, ``write_model``
+    Phase 0's sanitized tier, Phase 1, Phase 3, Phase 4. Not Phase 0's raw tier, which
+    keeps API answers exactly as the services gave them and would be refused by its own
+    scan. Not Phase 2, which writes ``canonical_json_bytes`` because its inventory is
+    byte-compared against the store.
+``write_sanitized_text``
+    Phase 2 and Phase 3, the two that commit bodies nobody in this repository composed.
+``run_capture``, ``check_output_location``
+    Phase 3 and Phase 4. Phase 0 and Phase 1 resolve a relative path against the checkout
+    and answer a refusal with a paragraph rather than a token, which is a different
+    function doing a stricter job.
+``account_identity``, ``observed_now``, ``report``, ``CaptureFailedError``
+    Between three and four of the five each.
 
 **What is deliberately not here.** No registry of phases, no base class a tool inherits
-from, no declarative description of a capture. Each of the four tools does something
-genuinely different in the middle, and a design that pretended otherwise would push the
-differences into configuration that reads worse than the code it replaced. The line is:
-anything that talks to a CLI, a filesystem or an exit code belongs here; anything that
-knows what a Phase 3 role or a Phase 4 GPU job *is* does not.
+from, no declarative description of a capture. Each tool does something genuinely
+different in the middle, and a design that pretended otherwise would push the differences
+into configuration that reads worse than the code it replaced. The line is: anything that
+talks to a CLI, a filesystem or an exit code belongs here; anything that knows what a
+Phase 3 role or a Phase 4 GPU job *is* does not. Nothing here takes an argument whose only
+job is to switch it between two callers -- where that would be needed, there are two
+functions and the paragraphs above say which caller has which.
+
+**There is no GitHub CLI wrapper here, and that is measured rather than an oversight.**
+One tool shells out to ``gh``, and what its failures print is the service's own stderr --
+which is the whole value of the message to an operator whose ``gh api`` call was refused,
+and precisely what a machine-readable reason token throws away. A wrapper that served it
+would have to be a different function from the one that serves ``aws``.
 
 **Why the write path scans.** A capture reads a live account, and the difference between a
 record and a leak is one field. ``scan_for_secrets`` refuses a serialization that looks like
@@ -33,6 +61,7 @@ import json
 import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
@@ -46,14 +75,13 @@ from edullm_platform.evidence import (
 
 __all__ = [
     "AWS_CALL_TIMEOUT_SECONDS",
-    "EXIT_OK",
     "EXIT_UNUSABLE",
+    "AccountIdentity",
     "CaptureFailedError",
     "account_identity",
     "aws",
     "aws_json",
     "check_output_location",
-    "gh_json",
     "observed_now",
     "run_capture",
     "write_model",
@@ -65,7 +93,9 @@ __all__ = [
 #: fails the capture rather than holding a terminal open until somebody notices.
 AWS_CALL_TIMEOUT_SECONDS: Final = 90
 
-EXIT_OK: Final = 0
+#: What a capture that could not be taken exits with. There is no matching ``EXIT_OK``,
+#: because no tool here returns a constant for success -- three of them return a verdict
+#: that is 0, 1 or 2 depending on what they found.
 EXIT_UNUSABLE: Final = 2
 
 
@@ -142,29 +172,20 @@ def aws_json(arguments: Sequence[str], *, profile: str, region: str | None = Non
         raise CaptureFailedError(f"aws_answer_unreadable:{arguments[0]}") from error
 
 
-def gh_json(arguments: Sequence[str]) -> Any:
-    """One ``gh api`` call, parsed, with the same refusal to invent an empty answer."""
-    try:
-        completed = subprocess.run(
-            ["gh", "api", *arguments],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=AWS_CALL_TIMEOUT_SECONDS,
-            shell=False,
-        )
-    except subprocess.TimeoutExpired as error:
-        raise CaptureFailedError(f"gh_call_timed_out:{arguments[0] if arguments else ''}") from error
-    except OSError as error:
-        raise CaptureFailedError("gh_cli_unavailable") from error
-    if completed.returncode != 0:
-        raise CaptureFailedError(
-            f"gh_call_failed:{arguments[0] if arguments else ''}:{completed.returncode}"
-        )
-    return json.loads(completed.stdout or "null")
+@dataclass(frozen=True)
+class AccountIdentity:
+    """Who a capture is running as. Neither field is ever written to a file.
+
+    The ARN is carried beside the account id rather than parsed here, because what a
+    caller wants out of it is the partition, and which partition spellings may be folded
+    together is a question the role-drift comparison owns rather than this module.
+    """
+
+    account_id: str
+    arn: str
 
 
-def account_identity(*, profile: str, region: str) -> str:
+def account_identity(*, profile: str, region: str) -> AccountIdentity:
     """The account this is running against. Never written to a file.
 
     Returned because a captured ARN naming *this* account has to be distinguishable from
@@ -173,9 +194,10 @@ def account_identity(*, profile: str, region: str) -> str:
     """
     identity = aws_json(["sts", "get-caller-identity"], profile=profile, region=region)
     account_id = identity.get("Account")
-    if not isinstance(account_id, str) or not account_id:
+    arn = identity.get("Arn")
+    if not isinstance(account_id, str) or not account_id or not isinstance(arn, str):
         raise CaptureFailedError("caller_identity_unreadable")
-    return account_id
+    return AccountIdentity(account_id=account_id, arn=arn)
 
 
 def check_output_location(path: Path, *, allowed_suffix: Path) -> None:

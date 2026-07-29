@@ -4,12 +4,11 @@ import argparse
 import json
 import subprocess
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import TypedDict
 
+from edullm_platform.capture_tooling import observed_now, write_model
 from edullm_platform.config import load_yaml
-from edullm_platform.contracts.base import ContractModel
 from edullm_platform.contracts.workload import WorkloadCatalog
 from edullm_platform.evidence import (
     BATCH_QUOTA_TARGETS,
@@ -300,7 +299,7 @@ def capture_github_plan(
     github_org: str,
     github_repo: str = "platform",
 ) -> tuple[GitHubPlanEvidence, dict[str, object]]:
-    observed_at = datetime.now(tz=UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    observed_at = observed_now().isoformat().replace("+00:00", "Z")
     org_raw = run_command(["gh", "api", f"orgs/{github_org}"])
     if not isinstance(org_raw, dict):
         raise TypeError("GitHub organization response must be a JSON object")
@@ -326,7 +325,7 @@ def capture_service_quotas(
     environment: EvidenceEnvironment,
     catalog: WorkloadCatalog | None = None,
 ) -> tuple[CapturedServiceQuotasEvidence, dict[str, object]]:
-    observed_at = datetime.now(tz=UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    observed_at = observed_now().isoformat().replace("+00:00", "Z")
     workload_catalog = catalog if catalog is not None else load_workload_catalog()
     ec2_targets = ec2_quota_targets_from_catalog(workload_catalog)
     account_alias = fetch_account_alias(aws_profile=aws_profile, aws_region=aws_region)
@@ -383,13 +382,17 @@ def capture_service_quotas(
 
 
 def write_json(path: Path, payload: object) -> None:
+    """One raw API answer, exactly as the service gave it.
+
+    Deliberately not scanned, which is what separates this from the sanitized tier and is
+    the reason this tool cannot write everything through the shared record writer. A raw
+    GitHub organization response and a raw service-quota answer carry the account and
+    whatever else the service felt like including; that is the point of keeping them, and
+    it is why they stay in ``raw/`` under the working directory and never reach
+    ``fixtures/``. What gets committed is the projection beside them, and that is scanned.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
-def write_sanitized_evidence(path: Path, evidence: ContractModel) -> None:
-    payload = evidence.model_dump(mode="json", by_alias=True, exclude_none=False)
-    write_json(path, payload)
 
 
 def capture_phase0_evidence(
@@ -415,8 +418,8 @@ def capture_phase0_evidence(
     write_json(raw_dir / "github-org.json", github_raw["organization"])
     write_json(raw_dir / "github-repository.json", github_raw["repository"])
     write_json(raw_dir / "service-quotas.json", quotas_raw)
-    write_sanitized_evidence(sanitized_dir / "github-plan.sanitized.json", github_evidence)
-    write_sanitized_evidence(sanitized_dir / "service-quotas.sanitized.json", quotas_evidence)
+    write_model(sanitized_dir / "github-plan.sanitized.json", github_evidence)
+    write_model(sanitized_dir / "service-quotas.sanitized.json", quotas_evidence)
     return github_evidence, quotas_evidence
 
 

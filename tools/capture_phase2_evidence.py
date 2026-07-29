@@ -20,6 +20,15 @@ reads it and copies what they want into ``fixtures/``, which is a review step ra
 formality: this reads a live account, and the difference between what it found and what the
 repository already claims is exactly what a reader is there to notice.
 
+**What is shared with the other capture tools, and what cannot be.** The stored lineage
+bodies go out through :func:`edullm_platform.capture_tooling.write_sanitized_text`, which
+is the one write here that carries text nobody in this repository composed and therefore
+the one that could commit an account id. Everything else this writes is
+``canonical_json_bytes`` -- compact, key-sorted, no trailing structure -- because the
+inventory has to be byte-comparable against what the store holds, and that is a different
+serialization from the indented one the shared record writer produces. The two cannot be
+the same function without one of them changing what it commits.
+
 The GitHub CLI is invoked through ``subprocess`` rather than an SDK, matching Phase 1's use
 of the AWS CLI. It also means the tool inherits whatever session the operator already has,
 so there is no credential for it to store or mishandle.
@@ -42,6 +51,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from edullm_platform.canonical import canonical_json_bytes
+from edullm_platform.capture_tooling import CaptureFailedError, write_sanitized_text
 from edullm_platform.phase2_evidence import (
     AdmissionExecution,
     AdmissionExecutionInventory,
@@ -383,9 +393,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 # attests about each object; only the body says what the platform decided,
                 # and the criteria about record content have to read one.
                 for key, body in bodies.items():
-                    body_path = output_dir / "records" / key
-                    body_path.parent.mkdir(parents=True, exist_ok=True)
-                    body_path.write_bytes(body)
+                    write_sanitized_text(output_dir / "records" / key, body.decode("utf-8"))
                     written.append(f"records/{key}")
             else:
                 record = capture_executions(
@@ -394,7 +402,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             path = output_dir / f"{target}.sanitized.json"
             path.write_bytes(canonical_json_bytes(record) + b"\n")
             written.append(path.name)
-    except CaptureError as error:
+    except (CaptureError, CaptureFailedError) as error:
         print(str(error), file=sys.stderr)
         return 2
     except Exception as error:  # noqa: BLE001 - CLI maps unexpected failures to exit 2
