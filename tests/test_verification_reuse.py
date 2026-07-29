@@ -1,4 +1,4 @@
-"""One tree is verified once per process, and the shortcut cannot skip a verification.
+"""One tree is verified once per process, and no shortcut can skip a verification.
 
 Every proof generator verifies the tree it is describing by running the whole suite in a
 child pytest, and one session runs several generators against one unchanged tree. The
@@ -10,6 +10,12 @@ process-local and never written to disk, so a pass recorded before a change can 
 found again after it. And it is keyed on the resolved repository root together with the
 ignore list, so a run against a different tree — including the temporary ones these tests
 build — always misses and measures for itself.
+
+The suite reproduces a recorded suite result only when asked, and nightly rather than on
+every pull request. That saving is bounded to the *tests*: a generator writing a bundle
+always measures, because nothing on its command line can ask it not to. That is asserted
+here too, beside the memory, because the two are the only ways a written bundle could come
+to carry a count nobody took.
 
 Nothing here starts a real pytest child. The child is replaced by a recorder, so what
 these tests observe is how many times the generator machinery *would* have spawned one.
@@ -32,6 +38,7 @@ from edullm_platform.proof_bundle import (
     pytest_environment,
     run_full_suite,
 )
+from edullm_platform.proof_generator import parse_generator_args
 from tools import (
     build_phase0_proof,
     build_phase1_proof,
@@ -228,6 +235,23 @@ def test_every_generators_guard_is_one_of_the_variables_that_gets_set() -> None:
     }
 
     assert guards == set(GENERATOR_NESTED_ENV_VARS)
+
+
+def test_no_generator_cli_can_be_asked_to_skip_reproduction() -> None:
+    """A bundle a generator writes always carries counts that generator measured.
+
+    The tests reproduce only when asked; the generators never get the choice, and the way
+    that is kept true is that there is no option to. A ``--no-verify`` or a
+    ``--reuse-verification`` appearing here would make the committed bundles stop being
+    evidence that anybody ran anything, and this is the only place that would notice.
+    """
+    accepted = {"output_dir", "generated_at", "regenerate_goldens"}
+
+    shared = parse_generator_args([], description="phases 1 to 3")
+    phase0 = build_phase0_proof.parse_args([])
+
+    assert set(vars(shared)) == accepted
+    assert set(vars(phase0)) == accepted
 
 
 def test_every_generator_module_is_listed_as_one() -> None:

@@ -114,7 +114,28 @@ class FixtureCoverage:
 
 
 @dataclass(frozen=True)
+class Coherence:
+    """What the tree says about Phase 0's citations, established without running a test.
+
+    The Phase 1 to 3 counterpart lives in ``edullm_platform.proof_generator``. This is a
+    second copy for the same reason ``Verification`` is: Phase 0 scopes its coverage by
+    *fixture* rather than by test module, which is a real difference rather than an
+    accident, and one shared record with two meanings for one field would hide it.
+    """
+
+    collected_node_ids: tuple[str, ...]
+    selected_node_ids: tuple[str, ...]
+    fixture_coverage: tuple[FixtureCoverage, ...]
+
+
+@dataclass(frozen=True)
 class Verification:
+    """A coherent tree whose recorded suite result was also reproduced by running it.
+
+    Only one of these may render a bundle. The counts below are measured, and a document
+    that printed one nobody measured is the failure this package exists to prevent.
+    """
+
     collected_node_ids: tuple[str, ...]
     selected_node_ids: tuple[str, ...]
     failed_node_ids: tuple[str, ...]
@@ -170,10 +191,17 @@ def fixture_scoped_node_ids(
     )
 
 
-def verify_repository(
+def establish_coherence(
     repo_root: Path,
     references: Sequence[FixtureReference] | None = None,
-) -> Verification:
+) -> Coherence:
+    """Collect, check the citations resolve, and work out what a run would select.
+
+    One ``--collect-only`` child and nothing else. Both refusals live here, before
+    anything is executed: a citation the tree cannot collect claims coverage it cannot
+    run, and a selection that would re-enter the generator has to be stopped before
+    pytest is handed it.
+    """
     fixtures = discover_fixtures(repo_root) if references is None else tuple(references)
     collected = collect_node_ids(repo_root, nested_env=NESTED_RUN_ENV)
     checks = recorded_checks(fixtures)
@@ -198,14 +226,32 @@ def verify_repository(
             "the proof generator must not select a test that invokes the generator or the "
             "acceptance gate, which would recurse:\n  " + "\n  ".join(reentrant)
         )
-    outcome, failed = run_test_selection(repo_root, selected, nested_env=NESTED_RUN_ENV)
-    return Verification(
+    return Coherence(
         collected_node_ids=collected,
         selected_node_ids=selected,
+        fixture_coverage=coverage,
+    )
+
+
+def verify_repository(
+    repo_root: Path,
+    references: Sequence[FixtureReference] | None = None,
+) -> Verification:
+    """Establish coherence, then reproduce: run the selection and the whole suite.
+
+    This is the expensive half and the only half that executes anything.
+    """
+    found = establish_coherence(repo_root, references)
+    outcome, failed = run_test_selection(
+        repo_root, found.selected_node_ids, nested_env=NESTED_RUN_ENV
+    )
+    return Verification(
+        collected_node_ids=found.collected_node_ids,
+        selected_node_ids=found.selected_node_ids,
         failed_node_ids=failed,
         selected=outcome,
         full_suite=run_full_suite(repo_root, nested_env=NESTED_RUN_ENV),
-        fixture_coverage=coverage,
+        fixture_coverage=found.fixture_coverage,
     )
 def known_limitations(repo_root: Path, checks: Sequence[CriterionSpec]) -> tuple[str, ...]:
     """What this bundle does not establish, read off the tree rather than remembered.

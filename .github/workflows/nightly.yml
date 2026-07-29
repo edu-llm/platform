@@ -1,0 +1,114 @@
+name: Nightly (the checks that are not about one change)
+
+# Three checks that answer a question about the repository rather than about a change,
+# and that either cost too much or fail too unpredictably to sit on the pull-request
+# path. Nothing here is continue-on-error, and that is the whole point of moving them:
+# there is no alerting infrastructure, so a red scheduled run is the signal, and a job
+# that cannot go red is not one.
+#
+# Why each is here rather than in ci.yml:
+#
+#   proof-bundles-reproduce — reproducing a recorded suite result runs the whole suite
+#     inside the suite. It cost 120s of a 235s serial run and re-executed tests the pull
+#     request had already run: every node id a generator selects is a test in this
+#     repository, and `checks (python 3.12)` runs the whole repository on the same
+#     commit. The half of the proof check that can catch something that check cannot —
+#     a citation that no longer resolves, criteria that disagree with their module,
+#     golden digests that no longer match the tree — is collection-only, costs about a
+#     second, and stayed on the pull request. tests/proof_support.py makes the argument
+#     in full.
+#
+#   contract-and-manifest-gate and branch-to-image-gate — they read captured AWS and
+#     GitHub evidence that expires after 30 days, so they can legitimately go red for
+#     reasons that have nothing to do with the change under review. As pull-request jobs
+#     they had to be
+#     continue-on-error for that reason, which made them unable to fail anything. Here,
+#     an expiry lands as a red scheduled run on an ordinary morning, which is what the
+#     comment in ci.yml wanted from them and never got. Both are also red whenever a
+#     criterion of theirs is a recorded gap; that is a statement about the phase, and it
+#     is a statement worth waking up to rather than one worth suppressing.
+#
+# The contract rules the gates enforce are covered by the test suite in ci.yml, which is
+# what blocks a merge. Nothing here is a required check and nothing here should become
+# one: the two required contexts are `checks (python 3.12)` and `checks (python 3.13)`,
+# pinned in branch protection.
+
+on:
+  schedule:
+    # 05:00 UTC, so a failure is waiting rather than arriving mid-morning.
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  proof-bundles-reproduce:
+    name: proof bundles reproduce
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      # The whole suite, with the nested runs the pull-request path skips. Serial and
+      # not -n4: the reproduction spawns pytest children of its own, and the point of
+      # this job is the measurement rather than the minutes.
+      - name: Tests, reproducing every recorded suite result
+        env:
+          EDULLM_REPRODUCE_PROOFS: "1"
+        run: uv run --frozen pytest -q
+
+  contract-and-manifest-gate:
+    name: contract and manifest compilation gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      # Reads committed records only. It needs no credentials and reaches no AWS API.
+      # The filename is cited by proof/phase-0 as the command that reproduces its
+      # verdict, so it is not renameable even though the job is.
+      - name: Run the acceptance gate
+        run: uv run --frozen python tools/validate_phase0.py
+
+  branch-to-image-gate:
+    name: branch to image gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      # Reads committed records only. It needs no credentials and reaches no AWS API.
+      # The records of the one live publish run expire on 2026-08-25 and nothing renews
+      # them; when they lapse this job goes red, which is the intended behaviour and the
+      # reason it is here rather than on the pull-request path.
+      - name: Run the acceptance gate
+        run: uv run --frozen python tools/validate_phase1.py

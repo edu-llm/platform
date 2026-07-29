@@ -34,14 +34,17 @@ from edullm_platform.proof_bundle import (
     contradicting_status_claims,
     load_recorded_goldens,
 )
+from tests.proof_support import skip_unless_reproducing
 from tools.build_phase3_proof import (
     BUNDLE_FILENAMES,
     EMPTY_SECTIONS,
     GENERATOR_TEST_PATH,
     NESTED_RUN_ENV,
+    Coherence,
     Verification,
     build_bundle,
     compute_goldens,
+    establish_coherence,
     goldens_path,
     known_limitations,
     main,
@@ -55,7 +58,19 @@ GENERATED_AT_PREFIX = "Generated: "
 
 
 @pytest.fixture(scope="session")
+def coherence() -> Coherence:
+    """One collection child, and every question that can be answered from it."""
+    return establish_coherence(PROJECT_ROOT)
+
+
+@pytest.fixture(scope="session")
 def verification() -> Verification:
+    """The nested runs. Requesting this is what opts a test into the expensive half.
+
+    The skip is here rather than on each test so that the cost and the decision to pay
+    it are the same thing. See ``tests/proof_support.py`` for why the default is not to.
+    """
+    skip_unless_reproducing()
     return verify_repository(PROJECT_ROOT)
 
 
@@ -519,27 +534,36 @@ def test_main_reports_a_drifted_digest_as_a_failure(
 # --------------------------------------------------------------------------------------
 
 
-@pytest.mark.slow
 def test_the_verification_run_never_selects_a_module_that_would_recurse(
-    verification: Verification,
+    coherence: Coherence,
 ) -> None:
     assert any(
-        node_id.startswith(GENERATOR_TEST_PATH) for node_id in verification.collected_node_ids
+        node_id.startswith(GENERATOR_TEST_PATH) for node_id in coherence.collected_node_ids
     )
     assert not any(
-        node_id.startswith(GENERATOR_TEST_PATH) for node_id in verification.selected_node_ids
+        node_id.startswith(GENERATOR_TEST_PATH) for node_id in coherence.selected_node_ids
     )
     assert not any(
         node_id.startswith("tests/test_phase3_criteria.py")
-        for node_id in verification.selected_node_ids
+        for node_id in coherence.selected_node_ids
     )
 
 
-@pytest.mark.slow
-def test_the_verification_run_executed_every_cited_node_id(verification: Verification) -> None:
+def test_the_selection_covers_every_cited_node_id(coherence: Coherence) -> None:
+    """Which tests would run, answered from the collection rather than from running them.
+
+    A citation the selection would leave out is a criterion whose proof was never going
+    to be executed, and the collection says so. That the selection then runs green is
+    the other half, below, and it is reproduced nightly.
+    """
     cited = {node_id for check in shipped_checks() for node_id in check.cited_node_ids}
 
-    assert cited <= set(verification.selected_node_ids)
+    assert cited
+    assert cited <= set(coherence.selected_node_ids)
+
+
+@pytest.mark.slow
+def test_the_selection_ran_green(verification: Verification) -> None:
     assert verification.failed_node_ids == ()
     assert verification.selected.green
 
@@ -565,7 +589,7 @@ def test_a_citation_pytest_cannot_collect_aborts_generation(
     )
 
     with pytest.raises(MissingTestNodeError, match="may not claim coverage it cannot run"):
-        verify_repository(PROJECT_ROOT)
+        establish_coherence(PROJECT_ROOT)
 
 
 def test_the_generator_refuses_to_run_from_inside_its_own_verification(

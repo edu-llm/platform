@@ -64,12 +64,16 @@ from edullm_platform.proof_bundle import (
     table,
 )
 from edullm_platform.proof_generator import (
+    Coherence,
     Verification,
     bundle_directory,
     gate_verdict,
     goldens_path,
     run_generator_cli,
     standing,
+)
+from edullm_platform.proof_generator import (
+    establish_coherence as shared_establish_coherence,
 )
 from edullm_platform.proof_generator import (
     render_unit_test_report as shared_render_unit_test_report,
@@ -1410,6 +1414,15 @@ def build_bundle(
 
 def default_output_dir(repo_root: Path) -> Path:
     return bundle_directory(repo_root, PHASE)
+
+
+def establish_coherence(repo_root: Path) -> Coherence:
+    return shared_establish_coherence(
+        repo_root,
+        criteria=phase1_criteria(),
+        nested_env=NESTED_RUN_ENV,
+        test_prefixes=PHASE1_TEST_PREFIXES,
+    )
 
 
 def verify_repository(repo_root: Path) -> Verification:

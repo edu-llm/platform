@@ -1,5 +1,10 @@
 name: Checks (CI)
 
+# Everything here can fail a build, and everything here answers a question about the
+# change under review. What used to sit below the test job and could not fail a build —
+# the two acceptance gates — now lives in nightly.yml, where it is load-bearing. See the
+# argument at the top of that file before moving either of them back.
+#
 # pull_request (not pull_request_target) is deliberate: fork pull requests run with a
 # read-only token and no access to secrets. Do not change this without understanding
 # that pull_request_target grants write access and secrets to code from forks.
@@ -60,60 +65,3 @@ jobs:
         run: |
           uv run --frozen python tools/export_schemas.py
           git diff --exit-code schemas
-
-  gate:
-    name: phase 0 gate (informational)
-    runs-on: ubuntu-latest
-    # Not a required check. The gate reads captured AWS and GitHub evidence that
-    # expires after 30 days, so it can legitimately go red for reasons unrelated to
-    # the change under review. It is also red whenever a Phase 0 criterion is a
-    # recorded gap, which is a statement about the phase rather than about the
-    # change. The contract rules it enforces are covered by the test suite above,
-    # which is what blocks a merge.
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
-        with:
-          python-version: "3.12"
-          enable-cache: true
-
-      - name: Install dependencies
-        run: uv sync --locked
-
-      - name: Run the acceptance gate
-        run: uv run --frozen python tools/validate_phase0.py
-
-  phase1-gate:
-    name: phase 1 gate (informational)
-    runs-on: ubuntu-latest
-    # Not a required check, for the same reason as the Phase 0 gate above. It reads
-    # captured AWS evidence that expires — the records of the one live publish run
-    # expire on 2026-08-25 and nothing renews them — so it can legitimately go red for
-    # reasons unrelated to the change under review, and a required check that does that
-    # gets routed around rather than read. The contract rules it enforces are covered by
-    # the test suite above, which is what blocks a merge.
-    #
-    # Informational is not the same as unwatched. Running here is the point: the expiry
-    # of live evidence should surface as a red job on an ordinary morning rather than
-    # wait for somebody to remember to run the gate by hand. Do not promote this to a
-    # required check without accepting that it will block unrelated work the day the
-    # evidence lapses.
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
-        with:
-          python-version: "3.12"
-          enable-cache: true
-
-      - name: Install dependencies
-        run: uv sync --locked
-
-      # Reads committed records only. It needs no credentials and reaches no AWS API.
-      - name: Run the acceptance gate
-        run: uv run --frozen python tools/validate_phase1.py
