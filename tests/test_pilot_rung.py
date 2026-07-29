@@ -11,7 +11,7 @@ silently.
 Every case below names the mutation it exists to fail on, because a control that would
 survive its own defect is the thing this repository keeps finding and repairing.
 
-Nothing here starts a gate. The three command-line entry points are exercised with their
+Nothing here starts a gate. The four command-line entry points are exercised with their
 evaluation replaced, so what is measured is what they print and what they return, not a
 second execution of a suite that is already running. That is why the entry points are
 reached through a module name built from a phase number rather than spelled out: a module
@@ -47,6 +47,8 @@ from edullm_platform.phase2_criteria import phase2_criteria
 from edullm_platform.phase2_gate import Phase2GateReport
 from edullm_platform.phase3_criteria import phase3_criteria
 from edullm_platform.phase3_gate import Phase3GateReport
+from edullm_platform.phase4_criteria import phase4_criteria
+from edullm_platform.phase4_gate import Phase4GateReport
 from edullm_platform.status_prose import gate_and_pilot_line, status_claims, status_count_claims
 
 A_REAL_NODE_ID = "tests/test_canonical.py::test_canonical_json_bytes_sorts_keys"
@@ -324,7 +326,7 @@ def test_the_pilot_note_makes_no_criterion_status_claim(verdict: PilotVerdict) -
 
 
 # --------------------------------------------------------------------------------------
-# The three gates report both verdicts, and the exit code stays the gate's
+# The four gates report both verdicts, and the exit code stays the gate's
 # --------------------------------------------------------------------------------------
 
 
@@ -340,6 +342,7 @@ PHASES = (
     PhaseUnderTest(1, "Phase 1", phase1_criteria, Phase1GateReport),
     PhaseUnderTest(2, "Phase 2", phase2_criteria, Phase2GateReport),
     PhaseUnderTest(3, "Phase 3", phase3_criteria, Phase3GateReport),
+    PhaseUnderTest(4, "Phase 4", phase4_criteria, Phase4GateReport),
 )
 
 
@@ -479,6 +482,10 @@ def unmarked(*numbers: int) -> dict[str, bool]:
     return {str(number): False for number in numbers}
 
 
+#: Three phases, not the four above. Phase 4's markers are held to the plan's list in
+#: ``tests/test_phase4_criteria.py``, which was written after this table and reads the
+#: definition directly; transcribing them here too would be a second copy of the plan's
+#: list, and a second copy is what this table exists to make unnecessary.
 PLAN = (
     PlanRecord(
         label="Phase 1",
