@@ -1,0 +1,18 @@
+{
+  "compute_environment_name": "sbsandbox-intern-edullm-gpu",
+  "desired_vcpus": 0,
+  "environment": "sandbox",
+  "image_type": "ECS_AL2023_NVIDIA",
+  "instance_types": [
+    "g5.xlarge"
+  ],
+  "live_instance_count": 0,
+  "maximum_vcpus": 16,
+  "minimum_vcpus": 0,
+  "observed_at": "2026-07-29T07:20:53Z",
+  "region": "us-east-1",
+  "source": "aws",
+  "state": "ENABLED",
+  "status": "VALID",
+  "subnet_count": 5
+}

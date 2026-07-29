@@ -1,0 +1,20 @@
+{
+  "device_nodes": [
+    "/dev/nvidia-modeset",
+    "/dev/nvidia-uvm",
+    "/dev/nvidia-uvm-tools",
+    "/dev/nvidia0",
+    "/dev/nvidiactl"
+  ],
+  "environment": "sandbox",
+  "log_group": "/aws/batch/sbsandbox-intern-edullm-gpu",
+  "log_stream": "gpu-run/default/991a9077d6454d098dc707dbf821e5e0",
+  "nvidia_smi": "NVIDIA A10G, 23028 MiB, 580.159.03",
+  "nvidia_visible_devices": "void",
+  "observed_at": "2026-07-29T07:20:28Z",
+  "output_prefix": "s3://sbsandbox-intern-edullm-outputs/teams/platform/runs/run_019faad5-1d99-702a-b089-00936cb0cc45/",
+  "run_id": "run_019faad5-1d99-702a-b089-00936cb0cc45",
+  "source": "aws",
+  "team": "platform",
+  "wandb_key_injected": true
+}
