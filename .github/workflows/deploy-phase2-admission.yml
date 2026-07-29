@@ -1,4 +1,4 @@
-name: Deploy Phase 2 admission control plane
+name: "Deploy: admission control plane"
 
 # The deployer role trust policy pins job_workflow_ref to
 # edu-llm/platform/.github/workflows/deploy-phase2-admission.yml@refs/heads/main.

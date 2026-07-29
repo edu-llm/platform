@@ -109,6 +109,29 @@ class RepositoryRegistry(ContractModel):
             raise ValueError("ECR repository names must be unique")
         return self
 
+    def is_registered(self, repository_name: str) -> bool:
+        """Whether this repository is registered, as a question rather than an exception.
+
+        THIS IS THE ONE ANSWER TO "IS THIS REPOSITORY REGISTERED", and it is a method here
+        so that it cannot be a set defined next to a caller. Admission's
+        ``repository_registered`` fact used to be membership of
+        ``organization.yaml::pilot_repositories``, which is a declaration of what the pilot
+        is for rather than a statement about what can be built and run -- and the two
+        disagreed in both directions at once. ``dolma`` is a pilot repository with no
+        registration, so a submission naming it was accepted, routed to a lead and would
+        have been submitted to the CPU queue, where the job definition pins another
+        repository's image. ``edullm-data`` is registered and is not a pilot repository, so
+        the first workload written for it would have been denied outright.
+
+        The registry is authoritative because it is the file that carries the consequences:
+        the ECR repository the image is published to, the base image it is built from and
+        the Dockerfile it is built by. A repository absent from here has nowhere for an
+        image to go, whatever any other file says about it.
+        """
+        return any(
+            repository.repository == repository_name for repository in self.repositories
+        )
+
     def repository_by_name(self, repository_name: str) -> RegisteredRepository:
         for repository in self.repositories:
             if repository.repository == repository_name:

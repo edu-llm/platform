@@ -22,6 +22,7 @@ from edullm_platform.contracts.policy import (
     RequestFacts,
     classify_request,
 )
+from edullm_platform.contracts.repository_registry import RepositoryRegistry
 from edullm_platform.manifest_helpers import compute_manifest_maximum_cost
 from edullm_platform.phase0_gate import (
     expected_manifest_classification,
@@ -64,6 +65,10 @@ def load_approval_policy() -> ApprovalPolicy:
 
 def load_dataset_registry() -> DatasetRegistry:
     return load_yaml(PROJECT_ROOT / "config" / "datasets.yaml", DatasetRegistry)
+
+
+def load_repository_registry() -> RepositoryRegistry:
+    return load_yaml(PROJECT_ROOT / "config" / "repositories.yaml", RepositoryRegistry)
 
 
 def approval_policy_payload(approval_scope: ApprovalScope) -> dict[str, object]:
@@ -917,7 +922,7 @@ def test_attribution_changes_no_classification_outcome(filename: str) -> None:
     thresholds = load_approval_policy().thresholds
     facts = request_facts_from_manifest(
         manifest,
-        inventory=load_organization_inventory(),
+        repositories=load_repository_registry(),
         catalog=catalog,
         dataset_registry=load_dataset_registry(),
         estimated_cost_usd=compute_manifest_maximum_cost(manifest, catalog),

@@ -631,13 +631,12 @@ def test_representative_manifest_classifications_match_policy_expectations() -> 
     inputs = loaded_inputs()
     policy = inputs.policy
     catalog = inputs.catalog
-    inventory = inputs.inventory
     for filename, manifest in inputs.manifests:
         estimated_cost = compute_manifest_maximum_cost(manifest, catalog)
         assert estimated_cost == REPRESENTATIVE_MANIFEST_COSTS[filename]
         facts = request_facts_from_manifest(
             manifest,
-            inventory=inventory,
+            repositories=inputs.repositories,
             catalog=catalog,
             dataset_registry=inputs.dataset_registry,
             estimated_cost_usd=estimated_cost,

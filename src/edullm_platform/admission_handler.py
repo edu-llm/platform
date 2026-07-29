@@ -50,6 +50,7 @@ from edullm_platform.contracts.image_scan import (
 )
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.policy import ApprovalPolicy
+from edullm_platform.contracts.repository_registry import RepositoryRegistry
 from edullm_platform.contracts.workload import WorkloadCatalog
 from edullm_platform.execution import batch_submit_request
 
@@ -143,6 +144,10 @@ def handler(event: Mapping[str, Any], context: object = None) -> dict[str, Any]:
     config = config_directory()
     policy = load_yaml(config / "policy.yaml", ApprovalPolicy)
     inventory = load_yaml(config / "organization.yaml", OrganizationInventory)
+    # The registry that answers "is this repository registered". It has always been in the
+    # packaged set -- the builder copies config/*.yaml -- and nothing read it, while the
+    # fact it answers was derived from the roster's pilot list instead.
+    repositories = load_yaml(config / "repositories.yaml", RepositoryRegistry)
     catalog = load_yaml(config / "workload-catalog.yaml", WorkloadCatalog)
     dataset_registry = load_yaml(config / "datasets.yaml", DatasetRegistry)
     image_scan_registry = load_yaml(
@@ -174,6 +179,7 @@ def handler(event: Mapping[str, Any], context: object = None) -> dict[str, Any]:
         workflow_run=workflow_run,
         policy=policy,
         inventory=inventory,
+        repositories=repositories,
         catalog=catalog,
         execution_targets=execution_targets,
         account_id=account_id,

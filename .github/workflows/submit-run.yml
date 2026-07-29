@@ -1,4 +1,4 @@
-name: Submit a run for admission
+name: Submit a run
 
 # The admission role trust policy pins job_workflow_ref to
 # edu-llm/platform/.github/workflows/submit-run.yml@refs/heads/main, and pins the subject
@@ -35,7 +35,6 @@ on:
         options:
           - olmo-core-cpu-smoke
           - olmo-core-gpu-smoke
-          - olmo-core-train-smoke
       dataset_release:
         description: Dataset release this run reads.
         required: true
@@ -776,6 +775,28 @@ jobs:
       # StartExecution answers as soon as the execution is created, so without this the
       # job would report success for a submission admission was still judging, and a
       # rejected one would be indistinguishable from an accepted one.
+      #
+      # A STATUS IS NOT A REASON, AND THE STATUS IS ALL A SUBMITTER USED TO GET. This step
+      # ended a refused submission with `admission_execution_FAILED` and nothing else, which
+      # is the same line a state machine that crashed produces. The response already carries
+      # two more fields and they are read out of the same call rather than a second one:
+      # `error` separates the four ways this can end -- AdmissionRejected is the validator
+      # refusing, AdmissionConflict is a lineage record that already existed,
+      # BatchSubmissionFailed is Batch turning an admitted run away, and anything else is
+      # the machine itself failing -- and `cause` says where the reasons were written down.
+      #
+      # WHAT THE CAUSE DOES NOT CARRY, SAID HERE SO NOBODY GOES LOOKING. Every Fail state in
+      # infra/admission-state-machine.yaml declares a static Cause naming the lineage prefix
+      # to read; none of them interpolates the decision record. So this reports which
+      # refusal and where to read it, and the reason code itself is in the decision record.
+      # Putting the detail in the Cause is a change to the state machine and a redeploy.
+      #
+      # The cause is masked before it reaches anything, through the helpers every committed
+      # capture already goes through. The static causes carry no account id, but an
+      # unmodelled task failure puts raw AWS error text there and AWS error text routinely
+      # names an ARN -- and while the credentials step masks the account id in this job's
+      # log, a step summary is not log output and is not masked. Text that cannot be masked
+      # safely is withheld rather than printed.
       - name: Wait for the admission decision
         env:
           ADMISSION_ACCOUNT_ID: ${{ steps.credentials.outputs.aws-account-id }}
@@ -788,15 +809,18 @@ jobs:
           # Derivable rather than read back from StartExecution, because the already-exists
           # path above has no response to read one out of and still has to be polled.
           execution_arn="arn:aws:states:${ADMISSION_REGION}:${ADMISSION_ACCOUNT_ID}:execution:sbsandbox-intern-edullm-admission:${RUN_ID}"
-          status_file="${RUNNER_TEMP}/execution-status.txt"
+          # Three fields and no more. The full response carries the execution ARN, the state
+          # machine ARN and the submitted manifest, none of which this step has any use for
+          # and two of which carry the account id.
+          decision_file="${RUNNER_TEMP}/execution-decision.json"
           status="RUNNING"
           attempt=0
           while [[ "${attempt}" -lt "${MAXIMUM_POLL_ATTEMPTS}" ]]; do
             aws stepfunctions describe-execution \
               --execution-arn "${execution_arn}" \
-              --query status \
-              --output text > "${status_file}"
-            status="$(cat "${status_file}")"
+              --query '{status: status, error: error, cause: cause}' \
+              --output json > "${decision_file}"
+            status="$(jq -r '.status // empty' "${decision_file}")"
             if [[ "${status}" != "RUNNING" ]]; then
               break
             fi
@@ -813,11 +837,166 @@ jobs:
               exit 1
               ;;
             *)
+              refusal_file="${RUNNER_TEMP}/admission-refusal.md"
+              uv run --frozen python - "${decision_file}" "${refusal_file}" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          from edullm_platform.evidence import (
+              AWS_ACCOUNT_ID_PATTERN,
+              redact_aws_account_ids,
+              redact_content_digests,
+          )
+
+          # Never the text itself. redact_aws_account_ids refuses text carrying anything
+          # that looks like another credential, because masking a digit run inside one
+          # would break the shape that identifies it and launder a live secret.
+          WITHHELD = "withheld: this text could not be masked, so it was not printed"
+
+
+          def masked(text: str) -> str:
+              if not text:
+                  return "none"
+              try:
+                  candidate = redact_aws_account_ids(text)
+              except ValueError:
+                  return WITHHELD
+              # The same second look every committed capture gets. Digests are removed
+              # before the check because a sha256 digest routinely contains twelve
+              # consecutive decimal characters and would otherwise read as an account id.
+              if AWS_ACCOUNT_ID_PATTERN.search(redact_content_digests(candidate)):
+                  return WITHHELD
+              return candidate
+
+
+          decision = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          report = [
+              "## Admission did not accept this submission",
+              "",
+              f"Run id: `{os.environ['RUN_ID']}`",
+              "",
+              f"Execution status: `{decision.get('status') or 'unknown'}`",
+              "",
+              f"Error: `{masked(str(decision.get('error') or ''))}`",
+              "",
+              "Cause:",
+              "",
+              "```",
+              masked(str(decision.get("cause") or "")),
+              "```",
+              "",
+              "The reason code and its detail are in this run id's decision record, under",
+              "`decision/` in the lineage bucket. Nothing was submitted to Batch: the state",
+              "machine reaches Batch only through the accepted branch.",
+              "",
+          ]
+          Path(sys.argv[2]).write_text("\n".join(report) + "\n", encoding="utf-8")
+          PY
+              # The same bytes twice, so the log and the summary cannot describe different
+              # refusals, and neither is a re-render of the other.
+              cat "${refusal_file}"
+              cat "${refusal_file}" >> "${GITHUB_STEP_SUMMARY}"
               echo "admission_execution_${status}" >&2
               echo "Admission did not accept this submission. The decision and its reasons are recorded under decision/ in the lineage bucket." >&2
               exit 1
               ;;
           esac
+
+      # WHERE THE RUN WENT, WRITTEN DOWN ONCE, BECAUSE OTHERWISE NOBODY IS TOLD. A submission
+      # that succeeded printed a single line and left the submitter to discover from this
+      # repository that the run id is also the execution name, the Batch job name and the S3
+      # key -- which is true, and is the sort of thing only the person who built it knows.
+      #
+      # Everything here is derived rather than written down again. The queue and the log
+      # group come from the execution target the manifest's compute profile resolves to, so
+      # a new queue changes one configuration file rather than one file and this workflow.
+      # The output prefix comes from contracts/results.py, which exists precisely because
+      # three places once answered that question and two of them agreed; a fourth answer
+      # spelled out here would be the defect it was written to close.
+      #
+      # THE W&B ENTRY IS NOT A LINK, AND THAT IS DELIBERATE. A run is named for its run id,
+      # but W&B mints an id of its own for the URL, so the run URL is not derivable from
+      # anything known here. Nor is the entity: it belongs to the API key the job definition
+      # reads out of Secrets Manager, and no reviewed configuration in this repository names
+      # it. What can be stated truthfully is the project and the name to search for, so that
+      # is what is stated and no URL is invented.
+      #
+      # No `if:`. A step with no condition does not run after a failed one, which is exactly
+      # the wanted behaviour: a refused submission gets the refusal block above instead.
+      - name: Say where this run went
+        env:
+          RUN_ID: ${{ needs.compile.outputs.run_id }}
+          STATE_MACHINE_NAME: sbsandbox-intern-edullm-admission
+        run: |
+          set -euo pipefail
+          uv run --frozen python - \
+            "${RUNNER_TEMP}/compiled-submission/compiled-submission.json" \
+            "${GITHUB_STEP_SUMMARY}" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          from edullm_platform.config import load_yaml
+          from edullm_platform.contracts.execution import ExecutionTargetCatalog
+          from edullm_platform.contracts.manifest import RunManifest
+          from edullm_platform.contracts.results import output_prefix
+
+          run_id = os.environ["RUN_ID"]
+          document = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          manifest = RunManifest.model_validate(document["manifest"])
+          targets = load_yaml(
+              Path("config/execution-targets.yaml"), ExecutionTargetCatalog
+          )
+          # Absent only if the deployed validator resolved this profile against a catalog
+          # this checkout no longer holds, which is a release that has moved on rather than
+          # a run that went nowhere. Said as unknown rather than guessed at.
+          binding = targets.binding_for(manifest.compute_profile)
+          unknown = "not resolvable from this checkout"
+          queue = binding.job_queue if binding is not None else unknown
+          log_group = binding.log_group if binding is not None else unknown
+
+          rows = [
+              ("Run id", run_id),
+              ("Step Functions execution", f"{run_id} on {os.environ['STATE_MACHINE_NAME']}"),
+              ("Batch job name", run_id),
+              ("Batch job queue", queue),
+              ("CloudWatch log group", log_group),
+              ("S3 output prefix", output_prefix(team=manifest.team, run_id=run_id)),
+              ("W&B project", manifest.wandb_project),
+          ]
+          report = [
+              "## Your run",
+              "",
+              "| where to look | what to look for |",
+              "| --- | --- |",
+              *[f"| {label} | `{value}` |" for label, value in rows],
+              "",
+              (
+                  "The run id is the execution name, the Batch job name and the last "
+                  "segment of the output prefix, so any two of those disagreeing is visible."
+              ),
+              "",
+              (
+                  f"In Weights and Biases the run is **named** `{run_id}`. Search the "
+                  "project for that name: the run URL uses an id W&B generates, and the "
+                  "entity belongs to the platform API key rather than to anything this "
+                  "repository declares, so neither is derivable here."
+              ),
+              "",
+              (
+                  "Admission accepted the submission and the state machine submitted it. "
+                  "Reaching a queue is not the same as running: read the log group above "
+                  "for what the container did."
+              ),
+              "",
+          ]
+          with Path(sys.argv[2]).open("a", encoding="utf-8") as summary:
+              summary.write("\n".join(report) + "\n")
+          print(f"Run {run_id} was submitted. The step summary says where to find it.")
+          PY
 
       # WHAT CANCELLING THIS WORKFLOW DOES, AND THE THREE THINGS IT DOES NOT GUARANTEE.
       #

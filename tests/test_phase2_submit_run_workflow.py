@@ -13,6 +13,7 @@ import ast
 import itertools
 import json
 import re
+import shutil
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -43,9 +44,13 @@ from edullm_platform.admission_denials import (
 )
 from edullm_platform.batch_denials import ADMISSION_BATCH_DENIED_ACTIONS
 from edullm_platform.build_tooling import load_registry
+from edullm_platform.config import load_yaml
 from edullm_platform.contracts.admission import ApprovalEnvironment
+from edullm_platform.contracts.execution import ExecutionTargetCatalog
 from edullm_platform.contracts.image import GitHubWorkflowRunReference
+from edullm_platform.contracts.results import output_prefix
 from edullm_platform.submission import SubmissionInputs
+from tests.test_manifest import load_representative_manifest
 
 #: How a dropdown spells 'leave this empty'. A choice option cannot be blank.
 INHERIT_SENTINEL = "inherit"
@@ -479,7 +484,7 @@ def test_no_run_body_interpolates_a_github_expression() -> None:
 def test_every_run_body_enables_strict_bash() -> None:
     bodies = list(_run_bodies())
 
-    assert len(bodies) == 15
+    assert len(bodies) == 16
     for name, script in bodies:
         assert script.startswith("set -euo pipefail\n"), name
 
@@ -1533,6 +1538,11 @@ def test_any_other_start_execution_error_fails_without_echoing_the_account_id(
 # ships 3.2, where the expansion yields an empty string instead of failing. The poll would
 # then read "" as a terminal status and break after one iteration -- green on a runner,
 # failing here, and for a reason that looks like a bug in the workflow rather than the stub.
+#
+# The answer is the projection the step asks describe-execution for -- status, error and
+# cause -- rather than a bare status word, because reading the reason out of the same
+# response is the property under test. The two diagnostic fields arrive already JSON
+# encoded, so a stub can answer with either a string or a null the way the service does.
 POLLING_AWS_STUB = """
 counter_file="${RUNNER_TEMP}/poll-count.txt"
 index=0
@@ -1542,55 +1552,78 @@ fi
 echo "$((index + 1))" > "${counter_file}"
 read -r -a statuses <<< "${EXECUTION_STATUSES}"
 if [[ "${index}" -lt "${#statuses[@]}" ]]; then
-  echo "${statuses[${index}]}"
+  status="${statuses[${index}]}"
 else
-  echo "${statuses[$((${#statuses[@]} - 1))]}"
+  status="${statuses[$((${#statuses[@]} - 1))]}"
 fi
+printf '{"status": "%s", "error": %s, "cause": %s}\\n' \\
+  "${status}" "${EXECUTION_ERROR}" "${EXECUTION_CAUSE}"
 """
+
+#: A cause of the shape the deployed state machine produces. Every Fail state in
+#: infra/admission-state-machine.yaml declares a static Cause naming the lineage prefix to
+#: read, so this is prose the step has to carry through rather than parse.
+REJECTED_CAUSE = (
+    "The validator refused this run. The refusal and its reasons are recorded under "
+    "decision/ in the lineage bucket."
+)
 
 
 def _run_wait_step(
     tmp_path: Path,
     *,
     statuses: str,
+    error: str | None = None,
+    cause: str | None = None,
     maximum_attempts: str | None = None,
-) -> tuple[subprocess.CompletedProcess[str], int]:
+) -> tuple[subprocess.CompletedProcess[str], int, str]:
     wait_step = step(_job("submit"), WAIT_STEP)
     stub_bin = tmp_path / "bin"
     slept = tmp_path / "sleeps.txt"
+    summary = tmp_path / "summary.md"
+    summary.touch()
     write_stub(stub_bin, "aws", POLLING_AWS_STUB)
     write_stub(stub_bin, "sleep", f'echo "$1" >> "{slept}"\n')
+    write_stub(stub_bin, "uv", UV_PASSTHROUGH)
     result = run_step_script(
         wait_step["run"],
         cwd=tmp_path,
         env={
             "RUNNER_TEMP": str(tmp_path),
+            "PYTHON_EXECUTABLE": sys.executable,
+            "PYTHONPATH": str(PROJECT_ROOT / "src"),
+            "GITHUB_STEP_SUMMARY": str(summary),
             "ADMISSION_ACCOUNT_ID": EXAMPLE_ACCOUNT_ID,
             "ADMISSION_REGION": "us-east-1",
             "RUN_ID": RUN_ID,
             "EXECUTION_STATUSES": statuses,
+            "EXECUTION_ERROR": json.dumps(error),
+            "EXECUTION_CAUSE": json.dumps(cause),
             "MAXIMUM_POLL_ATTEMPTS": maximum_attempts or wait_step["env"]["MAXIMUM_POLL_ATTEMPTS"],
             "POLL_INTERVAL_SECONDS": wait_step["env"]["POLL_INTERVAL_SECONDS"],
         },
         stub_bin=stub_bin,
     )
     sleeps = len(slept.read_text(encoding="utf-8").splitlines()) if slept.exists() else 0
-    return result, sleeps
+    return result, sleeps, summary.read_text(encoding="utf-8")
 
 
 def test_the_job_waits_for_the_execution_to_leave_running(tmp_path: Path) -> None:
     # StartExecution answers as soon as the execution is created, so without this a
     # rejected submission would be indistinguishable from an accepted one.
-    result, sleeps = _run_wait_step(tmp_path, statuses="RUNNING RUNNING SUCCEEDED")
+    result, sleeps, summary = _run_wait_step(tmp_path, statuses="RUNNING RUNNING SUCCEEDED")
 
     assert result.returncode == 0, result.stderr
     assert sleeps == 2
     assert "Admission accepted this submission" in result.stdout
+    # An accepted submission earns no refusal block, and the step that says where the run
+    # went writes the summary instead.
+    assert summary == ""
 
 
 @pytest.mark.parametrize("status", ["FAILED", "TIMED_OUT", "ABORTED"])
 def test_an_execution_that_did_not_succeed_fails_the_job(tmp_path: Path, status: str) -> None:
-    result, _sleeps = _run_wait_step(tmp_path, statuses=status)
+    result, _sleeps, _summary = _run_wait_step(tmp_path, statuses=status)
 
     assert result.returncode == 1
     assert f"admission_execution_{status}" in result.stderr
@@ -1600,9 +1633,236 @@ def test_an_execution_that_did_not_succeed_fails_the_job(tmp_path: Path, status:
 def test_the_poll_is_bounded_and_says_so_rather_than_claiming_a_decision(
     tmp_path: Path,
 ) -> None:
-    result, sleeps = _run_wait_step(tmp_path, statuses="RUNNING", maximum_attempts="3")
+    result, sleeps, _summary = _run_wait_step(
+        tmp_path, statuses="RUNNING", maximum_attempts="3"
+    )
 
     assert result.returncode == 1
     assert sleeps == 3
     assert "admission_execution_did_not_settle" in result.stderr
     assert "Nothing has been decided either way" in result.stderr
+
+
+def test_a_refused_submission_tells_the_submitter_which_refusal_and_where_to_read_it(
+    tmp_path: Path,
+) -> None:
+    """Mutation: read only ``status`` out of describe-execution, as this step once did.
+
+    ``admission_execution_FAILED`` is what a refused submitter used to be left with, and it
+    is the same line an execution that crashed produces. ``error`` is what separates them,
+    and it costs nothing: the response the poll already reads carries it.
+
+    Both the log and the step summary get it, and they get the same bytes -- a summary is
+    rendered in the run page and exposed by no REST endpoint, so a submitter reading the
+    log and a reviewer reading the page have to be reading one refusal rather than two
+    renderings of one.
+    """
+    result, _sleeps, summary = _run_wait_step(
+        tmp_path,
+        statuses="FAILED",
+        error="AdmissionRejected",
+        cause=REJECTED_CAUSE,
+    )
+
+    assert result.returncode == 1
+    for written in (result.stdout, summary):
+        assert "Admission did not accept this submission" in written
+        assert RUN_ID in written
+        assert "AdmissionRejected" in written
+        assert REJECTED_CAUSE in written
+        assert "decision/" in written
+    assert summary in result.stdout
+
+
+def test_the_cause_of_a_refusal_is_masked_before_it_reaches_the_step_summary(
+    tmp_path: Path,
+) -> None:
+    """Mutation: print the cause as it arrived.
+
+    ``mask-aws-account-id`` masks this job's *log*, and a step summary is not log output.
+    The three Fail states this state machine declares carry static prose, but an unmodelled
+    task failure puts raw AWS error text in the cause and AWS error text routinely names an
+    ARN -- so the account would reach a page anybody can read.
+    """
+    result, _sleeps, summary = _run_wait_step(
+        tmp_path,
+        statuses="FAILED",
+        error="States.Runtime",
+        cause=(
+            "An error occurred: User is not authorized to perform states:StartExecution on "
+            f"arn:aws:states:us-east-1:{EXAMPLE_ACCOUNT_ID}:stateMachine:{STATE_MACHINE_NAME}"
+        ),
+    )
+
+    assert result.returncode == 1
+    assert EXAMPLE_ACCOUNT_ID not in summary
+    assert EXAMPLE_ACCOUNT_ID not in result.stdout + result.stderr
+    # Masked rather than dropped: the rest of the sentence is the part worth reading.
+    assert "states:StartExecution" in summary
+    assert "States.Runtime" in summary
+
+
+def test_a_cause_that_cannot_be_masked_is_withheld_rather_than_printed(
+    tmp_path: Path,
+) -> None:
+    """Mutation: fall back to the raw text when redaction refuses it.
+
+    ``redact_aws_account_ids`` refuses text carrying anything shaped like another
+    credential, because masking a digit run inside a secret access key would break the
+    shape that identifies it and launder a live credential into a page anybody can read.
+    A refusal to mask has to end in nothing being printed, not in printing it anyway.
+    """
+    secret_shaped = "AKIA" + "I" * 16 + " wJalrXUtnFEMI0K7MDENG1bPxRfiCYEXAMPLEKEY"
+    result, _sleeps, summary = _run_wait_step(
+        tmp_path,
+        statuses="FAILED",
+        error="States.Runtime",
+        cause=f"the task failed carrying {secret_shaped}",
+    )
+
+    assert result.returncode == 1
+    assert secret_shaped not in summary + result.stdout + result.stderr
+    assert "could not be masked" in summary
+
+
+def test_a_refusal_with_no_error_or_cause_says_none_rather_than_printing_null(
+    tmp_path: Path,
+) -> None:
+    # describe-execution omits both on some terminal states, and the CLI projection turns
+    # an absent field into a JSON null. `None` in a step summary reads like a value.
+    _result, _sleeps, summary = _run_wait_step(tmp_path, statuses="ABORTED")
+
+    assert "Error: `none`" in summary
+    assert "None" not in summary
+    assert "null" not in summary
+
+
+SUBMITTED_STEP = "Say where this run went"
+
+
+def _run_where_it_went(
+    tmp_path: Path,
+    *,
+    compute_profile: str = "gpu-1xa10g",
+) -> tuple[subprocess.CompletedProcess[str], str]:
+    downloaded = tmp_path / "compiled-submission"
+    downloaded.mkdir(exist_ok=True)
+    manifest = load_representative_manifest("gpu-routine.yaml").model_copy(
+        update={"compute_profile": compute_profile}
+    )
+    (downloaded / "compiled-submission.json").write_text(
+        json.dumps({"run_id": RUN_ID, "manifest": manifest.model_dump(mode="json")}),
+        encoding="utf-8",
+    )
+    summary = tmp_path / "summary.md"
+    summary.touch()
+    stub_bin = tmp_path / "bin"
+    write_stub(stub_bin, "uv", UV_PASSTHROUGH)
+    # The step reads config/execution-targets.yaml relative to the working directory, the
+    # way the registry lookup above reads config/repositories.yaml. The committed file is
+    # copied beside the script rather than the script being run in the checkout, because a
+    # run body writes itself to disk before it executes and would leave a stray file in the
+    # repository root every time this ran.
+    (tmp_path / "config").mkdir(exist_ok=True)
+    shutil.copy2(
+        PROJECT_ROOT / "config" / "execution-targets.yaml",
+        tmp_path / "config" / "execution-targets.yaml",
+    )
+    submitted = step(_job("submit"), SUBMITTED_STEP)
+    result = run_step_script(
+        submitted["run"],
+        cwd=tmp_path,
+        env={
+            "RUNNER_TEMP": str(tmp_path),
+            "PYTHON_EXECUTABLE": sys.executable,
+            "PYTHONPATH": str(PROJECT_ROOT / "src"),
+            "GITHUB_STEP_SUMMARY": str(summary),
+            "RUN_ID": RUN_ID,
+            "STATE_MACHINE_NAME": submitted["env"]["STATE_MACHINE_NAME"],
+        },
+        stub_bin=stub_bin,
+    )
+    return result, summary.read_text(encoding="utf-8")
+
+
+def test_an_accepted_submission_says_where_every_trace_of_it_will_be(
+    tmp_path: Path,
+) -> None:
+    """Mutation: print one line and let the submitter work the rest out.
+
+    Seven places carry a trace of one run and the run id joins six of them, which is a fact
+    about this repository rather than about AWS. A submitter who has to learn it by reading
+    the source is a submitter who does not learn it.
+
+    The queue and the log group are read from the execution target rather than written down
+    here, so this fails if the two configuration files stop agreeing about where a profile
+    goes -- which is the same seam admission resolves against.
+    """
+    binding = load_yaml(
+        PROJECT_ROOT / "config" / "execution-targets.yaml", ExecutionTargetCatalog
+    ).binding_for("gpu-1xa10g")
+    manifest = load_representative_manifest("gpu-routine.yaml")
+    result, summary = _run_where_it_went(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert binding is not None
+    assert f"| Run id | `{RUN_ID}` |" in summary
+    assert f"`{RUN_ID} on {STATE_MACHINE_NAME}`" in summary
+    assert f"| Batch job name | `{RUN_ID}` |" in summary
+    assert f"| Batch job queue | `{binding.job_queue}` |" in summary
+    assert f"| CloudWatch log group | `{binding.log_group}` |" in summary
+    assert f"| W&B project | `{manifest.wandb_project}` |" in summary
+    assert RUN_ID in result.stdout
+
+
+def test_the_output_prefix_it_prints_is_the_one_the_container_is_told(
+    tmp_path: Path,
+) -> None:
+    """Reads the workflow and the contract. Mutation: compose the prefix in the workflow.
+
+    ``contracts/results.py::output_prefix`` exists because three places once answered
+    "where does a run write" and only two of them agreed, and the one that was wrong was
+    the record a reader would have followed. A prefix assembled in this step would be the
+    fourth answer and would drift the same way.
+    """
+    manifest = load_representative_manifest("gpu-routine.yaml")
+    _result, summary = _run_where_it_went(tmp_path)
+
+    expected = output_prefix(team=manifest.team, run_id=RUN_ID)
+    assert f"| S3 output prefix | `{expected}` |" in summary
+    assert expected.endswith(f"/runs/{RUN_ID}/")
+    assert "output_prefix" in step(_job("submit"), SUBMITTED_STEP)["run"]
+
+
+def test_no_weights_and_biases_url_is_invented(tmp_path: Path) -> None:
+    """Mutation: write a wandb.ai link.
+
+    A W&B run is named for the run id and addressed by an id W&B generates, so the run URL
+    is not derivable. Nor is the entity: it belongs to the API key the GPU job definition
+    reads out of Secrets Manager, and no reviewed configuration in this repository names
+    one. A plausible link that 404s is worse than the search instruction, because it reads
+    as though somebody checked.
+    """
+    _result, summary = _run_where_it_went(tmp_path)
+
+    assert "wandb.ai" not in summary
+    assert "http" not in summary
+    assert f"named** `{RUN_ID}`" in summary
+    assert "Search the project for that name" in summary
+
+
+def test_a_profile_this_checkout_cannot_resolve_is_reported_as_unknown(
+    tmp_path: Path,
+) -> None:
+    """Mutation: index the binding and let a KeyError fail the step.
+
+    The deployed validator resolves against the catalog inside its own release zip, and
+    this step resolves against the checkout. They are usually the same file and they are
+    not guaranteed to be, so a run can legitimately be accepted on a profile this tree has
+    no target for. Failing here would report a submitted run as a broken workflow.
+    """
+    result, summary = _run_where_it_went(tmp_path, compute_profile="gpu-4xa10g")
+
+    assert result.returncode == 0, result.stderr
+    assert "| Batch job queue | `not resolvable from this checkout` |" in summary
+    assert f"| Run id | `{RUN_ID}` |" in summary

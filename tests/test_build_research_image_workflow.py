@@ -39,6 +39,8 @@ PREFLIGHT_STEP = "Look for an already published image"
 RESUME_STEP = "Verify the published image is the one this run would have built"
 DECREDENTIAL_STEP = "Remove the source checkout credentials"
 BASE_GATE_STEP = "Require the registered base image"
+DIGEST_STEP = "Read published digest from the registry"
+DIGEST_SUMMARY_STEP = "Publish the digest where a person can copy it"
 # Written by whichever of the build step and the resume step ran, read by provenance.
 IMAGE_CREATED_FILE = "image-created.txt"
 JOB_WORKFLOW_REF = f"{PLATFORM_REPOSITORY}/{WORKFLOW_PATH_INPUT}@refs/heads/main"
@@ -1224,6 +1226,65 @@ def test_publish_job_takes_the_digest_from_an_ecr_read_back_not_the_local_build(
     assert "RepoDigests" not in script
 
 
+def test_the_published_digest_is_written_where_a_person_can_copy_it(tmp_path: Path) -> None:
+    """Executed rather than read. Mutation: leave the digest in the job log only.
+
+    ``image_digest`` is a ``workflow_call`` output, which serves a caller and serves nobody
+    who is about to fill in a submission form: that form takes the digest as free text,
+    because a digest is per-build and no dropdown can hold one. Before this step the value
+    existed only as a line inside a step whose name does not suggest it holds one.
+
+    Run rather than read because a ``{ ... } >> "${GITHUB_STEP_SUMMARY}"`` block with a
+    heredoc in it is easy to get subtly wrong and exits 0 while getting it wrong, which is
+    how the cancellation notice one file over is tested for the same reason.
+    """
+    summary = tmp_path / "summary.md"
+    summary.touch()
+
+    result = run_step_script(
+        step(_job("publish"), DIGEST_SUMMARY_STEP)["run"],
+        cwd=tmp_path,
+        env={
+            "GITHUB_STEP_SUMMARY": str(summary),
+            "RESEARCH_REPOSITORY": "OLMo-core",
+            "COMMIT_SHA": "a" * 40,
+            "IMAGE_DIGEST": PUBLISHED_IMAGE_DIGEST,
+        },
+    )
+
+    written = summary.read_text(encoding="utf-8")
+    assert result.returncode == 0, result.stderr
+    assert "| Repository | `OLMo-core` |" in written
+    assert f"| Commit | `{'a' * 40}` |" in written
+    assert f"| Digest | `{PUBLISHED_IMAGE_DIGEST}` |" in written
+    # The fenced block is what GitHub renders a copy button on, and the digest has to be
+    # the whole of its content: a line with anything else on it copies that too.
+    assert f"```\n{PUBLISHED_IMAGE_DIGEST}\n```" in written
+    # The prose is prose. A shell that expanded something would have eaten the backticks,
+    # which is how it would first be noticed.
+    assert "image_digest field of the submission form" in written
+
+
+def test_the_digest_summary_comes_after_the_read_back_that_establishes_it() -> None:
+    """Mutation: move it above the read-back, or make it conditional.
+
+    Written before the digest is read it would publish the previous image's, and a summary
+    is the one artefact a person copies from without checking. It is also deliberately
+    unconditional and deliberately not last: a failure writing provenance still leaves the
+    digest of an image that is already in the registry somewhere reachable.
+    """
+    names = [candidate.get("name") for candidate in _job("publish")["steps"]]
+
+    assert names.index(DIGEST_STEP) < names.index(DIGEST_SUMMARY_STEP)
+    assert names.index(DIGEST_SUMMARY_STEP) < names.index("Write image provenance")
+    assert "if" not in step(_job("publish"), DIGEST_SUMMARY_STEP)
+    assert step(_job("publish"), DIGEST_SUMMARY_STEP)["env"] == {
+        "RESEARCH_REPOSITORY": "${{ inputs.repository }}",
+        "COMMIT_SHA": "${{ needs.verify.outputs.commit_sha }}",
+        "IMAGE_DIGEST": "${{ steps.digest.outputs.image_digest }}",
+    }
+
+
 def test_publish_job_reverifies_the_source_before_it_holds_aws_credentials() -> None:
     steps = _job("publish")["steps"]
     names = [candidate.get("name") for candidate in steps]
@@ -1412,6 +1473,7 @@ def test_every_run_step_declares_the_directory_its_tooling_lives_in() -> None:
         "publish:Log in to Amazon ECR": None,
         "publish:Build and push image": "source",
         "publish:Read published digest from the registry": None,
+        f"publish:{DIGEST_SUMMARY_STEP}": None,
         "publish:Write image provenance": "platform",
     }
 

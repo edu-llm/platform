@@ -19,6 +19,7 @@ from edullm_platform.contracts.image_scan import (
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.manifest import FanOut
 from edullm_platform.contracts.policy import ApprovalClass, ApprovalPolicy
+from edullm_platform.contracts.repository_registry import RepositoryRegistry
 from edullm_platform.contracts.workload import WorkloadCatalog, WorkloadProfile
 from edullm_platform.submission import (
     CompiledSubmission,
@@ -41,6 +42,13 @@ REPOSITORY_URL = "https://github.com/edu-llm/dolma"
 COMMIT_SHA = "a" * 40
 IMAGE_DIGEST = "sha256:" + "b" * 64
 
+#: The registered workload most of this module compiles against. It was
+#: ``dolma-tokenize-smoke`` until ``repository_registered`` started reading
+#: ``config/repositories.yaml`` rather than the roster's pilot list: dolma is a pilot
+#: repository and has no registration, so a submission naming it is now denied outright and
+#: cannot stand in for an ordinary one. ``DOLMA_WORKLOAD`` is kept below for the tests that
+#: are about the catalog rather than about a submission that compiles.
+CPU_WORKLOAD = "olmo-core-cpu-smoke"
 DOLMA_WORKLOAD = "dolma-tokenize-smoke"
 OLMO_WORKLOAD = "olmo-core-train-smoke"
 REGISTERED_DATASET = "dolma-2026-07"
@@ -132,6 +140,10 @@ def load_dataset_registry() -> DatasetRegistry:
     return load_yaml(PROJECT_ROOT / "config" / "datasets.yaml", DatasetRegistry)
 
 
+def load_repository_registry() -> RepositoryRegistry:
+    return load_yaml(PROJECT_ROOT / "config" / "repositories.yaml", RepositoryRegistry)
+
+
 #: A scan with nothing in it, for the tests that are about admission rather than about
 #: scanning. Passing a clean summary rather than omitting the arguments keeps these tests
 #: on the same code path production uses; omitting them would take the opt-out branch and
@@ -154,23 +166,23 @@ def workload_profile(name: str) -> WorkloadProfile:
     return next(workload for workload in load_workload_catalog().workloads if workload.name == name)
 
 
-def dolma_payload(**overrides: object) -> dict[str, object]:
+def cpu_payload(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
-        "repository": "dolma",
+        "repository": "OLMo-core",
         "commit_sha": COMMIT_SHA,
         "image_digest": IMAGE_DIGEST,
-        "workload_profile": DOLMA_WORKLOAD,
+        "workload_profile": CPU_WORKLOAD,
         "dataset_release": REGISTERED_DATASET,
         "team": "data-prep",
-        "wandb_project": "dolma-tokenize",
-        "command": ["python", "-m", "dolma.tokenize"],
+        "wandb_project": "olmo-core-tokenize",
+        "command": ["python", "-m", "olmo_core.data.tokenize"],
     }
     payload.update(overrides)
     return payload
 
 
 def olmo_payload(**overrides: object) -> dict[str, object]:
-    return dolma_payload(
+    return cpu_payload(
         **{
             "repository": "OLMo-core",
             "workload_profile": OLMO_WORKLOAD,
@@ -197,7 +209,7 @@ def compile_payload(
         submission_inputs(payload),
         run_id=RUN_ID,
         policy=policy if policy is not None else load_approval_policy(),
-        inventory=load_organization_inventory(),
+        repositories=load_repository_registry(),
         catalog=load_workload_catalog(),
         dataset_registry=load_dataset_registry(),
         image_scan_registry=(
@@ -272,7 +284,7 @@ def exception_bullets(summary: str) -> list[str]:
 def test_a_partially_declared_fanout_is_rejected(declared: tuple[str, ...]) -> None:
     overrides = {field: FANOUT_FIELDS[field] for field in declared}
     with pytest.raises(ValidationError) as exc_info:
-        submission_inputs(dolma_payload(**overrides))
+        submission_inputs(cpu_payload(**overrides))
     assert any(
         "a fan-out must declare its size, its parallelism and what its index varies" in item["msg"]
         for item in exc_info.value.errors()
@@ -280,7 +292,7 @@ def test_a_partially_declared_fanout_is_rejected(declared: tuple[str, ...]) -> N
 
 
 def test_a_fanout_declared_in_full_is_accepted() -> None:
-    inputs = submission_inputs(dolma_payload(**FANOUT_FIELDS))
+    inputs = submission_inputs(cpu_payload(**FANOUT_FIELDS))
 
     assert inputs.fanout_size == 4
     assert inputs.fanout_parallelism == 2
@@ -288,7 +300,7 @@ def test_a_fanout_declared_in_full_is_accepted() -> None:
 
 
 def test_a_form_that_declares_no_fanout_is_accepted() -> None:
-    inputs = submission_inputs(dolma_payload())
+    inputs = submission_inputs(cpu_payload())
 
     assert inputs.fanout_size is None
     assert inputs.fanout_parallelism is None
@@ -310,7 +322,7 @@ def test_the_checkpoint_contract_is_not_something_a_submitter_can_contradict() -
 
 def test_the_form_rejects_a_property_it_does_not_define() -> None:
     with pytest.raises(ValidationError) as exc_info:
-        submission_inputs(dolma_payload(approval_class="routine"))
+        submission_inputs(cpu_payload(approval_class="routine"))
     assert any(item["type"] == "extra_forbidden" for item in exc_info.value.errors())
 
 
@@ -338,14 +350,14 @@ def test_the_form_rejects_a_value_outside_the_range_it_declares(
     value: object,
 ) -> None:
     with pytest.raises(ValidationError) as exc_info:
-        submission_inputs(dolma_payload(**{field: value}))
+        submission_inputs(cpu_payload(**{field: value}))
     assert exc_info.value.errors()[0]["loc"] == (field,)
 
 
 @pytest.mark.parametrize(
     ("payload_factory", "workload_name"),
-    [(dolma_payload, DOLMA_WORKLOAD), (olmo_payload, OLMO_WORKLOAD)],
-    ids=[DOLMA_WORKLOAD, OLMO_WORKLOAD],
+    [(cpu_payload, CPU_WORKLOAD), (olmo_payload, OLMO_WORKLOAD)],
+    ids=[CPU_WORKLOAD, OLMO_WORKLOAD],
 )
 def test_the_workload_profile_supplies_what_the_form_did_not_ask_for(
     payload_factory: Callable[[], dict[str, object]],
@@ -395,7 +407,7 @@ def test_an_overridden_runtime_is_what_the_submission_is_priced_on() -> None:
 
 
 def test_the_cost_is_recomputed_from_the_rate_the_catalog_records() -> None:
-    compiled = compile_payload(dolma_payload())
+    compiled = compile_payload(cpu_payload())
     profile = next(
         candidate
         for candidate in load_workload_catalog().compute_profiles
@@ -404,13 +416,16 @@ def test_the_cost_is_recomputed_from_the_rate_the_catalog_records() -> None:
 
     assert compiled.cost.hourly_rate_usd == profile.hourly_rate_usd
     assert compiled.cost.nodes == profile.nodes
-    assert compiled.cost.maximum_compute_cost_usd == Decimal("2.86")
+    # One hour on c7i.8xlarge at the rate the catalog records, quantized once. The number
+    # is written out rather than recomputed, because a test that repeats the arithmetic
+    # under test would agree with any arithmetic.
+    assert compiled.cost.maximum_compute_cost_usd == Decimal("1.43")
     assert compiled.facts.estimated_cost_usd == compiled.cost.maximum_compute_cost_usd
 
 
 def test_a_fanout_declared_on_the_form_reaches_the_manifest_and_the_price() -> None:
     compiled = compile_payload(
-        dolma_payload(fanout_size=5, fanout_parallelism=5, fanout_index_parameter="seed")
+        cpu_payload(fanout_size=5, fanout_parallelism=5, fanout_index_parameter="seed")
     )
 
     assert compiled.manifest.fanout == FanOut(size=5, max_parallel=5, index_parameter="seed")
@@ -420,7 +435,7 @@ def test_a_fanout_declared_on_the_form_reaches_the_manifest_and_the_price() -> N
 
 
 def test_a_form_without_a_fanout_compiles_to_a_manifest_without_one() -> None:
-    compiled = compile_payload(dolma_payload())
+    compiled = compile_payload(cpu_payload())
 
     assert compiled.manifest.fanout is None
     assert compiled.cost.cells == 1
@@ -428,7 +443,7 @@ def test_a_form_without_a_fanout_compiles_to_a_manifest_without_one() -> None:
 
 def test_an_unregistered_workload_profile_is_refused_and_the_catalog_is_quoted() -> None:
     with pytest.raises(SubmissionRefusedError) as exc_info:
-        compile_payload(dolma_payload(workload_profile="dolma-tokenize-enormous"))
+        compile_payload(cpu_payload(workload_profile="dolma-tokenize-enormous"))
 
     message = str(exc_info.value)
     assert "unregistered workload profile 'dolma-tokenize-enormous'" in message
@@ -438,7 +453,7 @@ def test_an_unregistered_workload_profile_is_refused_and_the_catalog_is_quoted()
 
 def test_an_unregistered_dataset_is_refused_before_a_reviewer_is_asked() -> None:
     with pytest.raises(SubmissionRefusedError) as exc_info:
-        compile_payload(dolma_payload(dataset_release=UNREGISTERED_DATASET))
+        compile_payload(cpu_payload(dataset_release=UNREGISTERED_DATASET))
     assert "unregistered_dataset" in str(exc_info.value)
 
 
@@ -455,13 +470,13 @@ def test_a_refusal_that_policy_would_only_have_classified_still_happens_at_compi
     lenient = load_approval_policy().model_copy(
         update={"denied_outright": ("mutable_image_reference",)}
     )
-    classified = compile_payload(dolma_payload(dataset_release=UNREGISTERED_DATASET), policy=lenient)
+    classified = compile_payload(cpu_payload(dataset_release=UNREGISTERED_DATASET), policy=lenient)
 
     assert classified.approval_class is ApprovalClass.EXCEPTION
     assert classified.facts.dataset_registered is False
 
     with pytest.raises(SubmissionRefusedError):
-        compile_payload(dolma_payload(dataset_release=UNREGISTERED_DATASET))
+        compile_payload(cpu_payload(dataset_release=UNREGISTERED_DATASET))
 
 
 def test_compiling_is_given_nothing_that_would_let_it_ask_a_reviewer() -> None:
@@ -474,8 +489,8 @@ def test_compiling_is_given_nothing_that_would_let_it_ask_a_reviewer() -> None:
 
 
 def test_the_same_inputs_compile_to_the_same_manifest_digest_twice() -> None:
-    first = compile_payload(dolma_payload())
-    second = compile_payload(dolma_payload())
+    first = compile_payload(cpu_payload())
+    second = compile_payload(cpu_payload())
 
     assert first.manifest == second.manifest
     assert first.manifest_sha256 == second.manifest_sha256
@@ -483,7 +498,7 @@ def test_the_same_inputs_compile_to_the_same_manifest_digest_twice() -> None:
 
 
 def test_the_order_of_the_form_fields_does_not_change_the_manifest_digest() -> None:
-    payload = dolma_payload()
+    payload = cpu_payload()
     reordered = dict(reversed(list(payload.items())))
     assert list(reordered) != list(payload)
 
@@ -493,7 +508,7 @@ def test_the_order_of_the_form_fields_does_not_change_the_manifest_digest() -> N
 @pytest.mark.parametrize(
     ("payload", "approval_class", "environment"),
     [
-        (dolma_payload(), ApprovalClass.ROUTINE, ApprovalEnvironment.LEAD),
+        (cpu_payload(), ApprovalClass.ROUTINE, ApprovalEnvironment.LEAD),
         (
             olmo_payload(maximum_runtime_hours="13"),
             ApprovalClass.EXCEPTION,
@@ -515,7 +530,7 @@ def test_the_compiled_submission_names_the_gate_its_class_demands(
 
 
 def test_the_fragment_table_this_module_uses_covers_every_field_it_names() -> None:
-    compiled = compile_payload(dolma_payload())
+    compiled = compile_payload(cpu_payload())
 
     assert set(context_fragments(compiled, policy=load_approval_policy())) == set(
         REQUIRED_CONTEXT_FIELDS
@@ -525,7 +540,7 @@ def test_the_fragment_table_this_module_uses_covers_every_field_it_names() -> No
 @pytest.mark.parametrize("field", REQUIRED_CONTEXT_FIELDS)
 def test_the_summary_states_every_field_the_reviewer_must_see(field: str) -> None:
     policy = load_approval_policy()
-    compiled = compile_payload(dolma_payload())
+    compiled = compile_payload(cpu_payload())
     summary = render(compiled, policy=policy)
 
     assert context_fragments(compiled, policy=policy)[field] in summary
@@ -533,7 +548,7 @@ def test_the_summary_states_every_field_the_reviewer_must_see(field: str) -> Non
 
 def test_the_cost_is_shown_as_a_product_rather_than_only_a_total() -> None:
     compiled = compile_payload(
-        dolma_payload(fanout_size=4, fanout_parallelism=2, fanout_index_parameter="seed")
+        cpu_payload(fanout_size=4, fanout_parallelism=2, fanout_index_parameter="seed")
     )
     summary = render(compiled)
     cost = compiled.cost
@@ -551,7 +566,7 @@ def test_the_cost_is_shown_as_a_product_rather_than_only_a_total() -> None:
 
 
 def test_the_summary_states_the_hash_that_will_be_rechecked_inside_aws() -> None:
-    compiled = compile_payload(dolma_payload())
+    compiled = compile_payload(cpu_payload())
     summary = render(compiled)
 
     assert f"Manifest SHA-256 `{compiled.manifest_sha256}`" in summary
@@ -559,7 +574,7 @@ def test_the_summary_states_the_hash_that_will_be_rechecked_inside_aws() -> None
 
 
 def test_a_routine_summary_carries_no_exception_section() -> None:
-    summary = render(compile_payload(dolma_payload()))
+    summary = render(compile_payload(cpu_payload()))
 
     assert "## Why this is an exception" not in summary
     assert "**ROUTINE**" in summary
@@ -595,7 +610,7 @@ def test_an_exception_no_ceiling_explains_says_that_in_words_too() -> None:
     lenient = load_approval_policy().model_copy(
         update={"denied_outright": ("mutable_image_reference",)}
     )
-    compiled = compile_payload(dolma_payload(dataset_release=UNREGISTERED_DATASET), policy=lenient)
+    compiled = compile_payload(cpu_payload(dataset_release=UNREGISTERED_DATASET), policy=lenient)
     bullets = exception_bullets(render(compiled, policy=lenient))
 
     assert compiled.approval_class is ApprovalClass.EXCEPTION

@@ -46,6 +46,7 @@ from edullm_platform.contracts.image_scan import (
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.manifest import RunManifest
 from edullm_platform.contracts.policy import ApprovalPolicy
+from edullm_platform.contracts.repository_registry import RepositoryRegistry
 from edullm_platform.contracts.results import output_prefix
 from edullm_platform.contracts.workload import (
     UnprovisionedComputeProfileError,
@@ -154,6 +155,7 @@ def admit_manifest(
         ),
         policy=load_yaml(CONFIG_DIR / "policy.yaml", ApprovalPolicy),
         inventory=load_yaml(CONFIG_DIR / "organization.yaml", OrganizationInventory),
+        repositories=load_yaml(CONFIG_DIR / "repositories.yaml", RepositoryRegistry),
         catalog=catalog if catalog is not None else workload_catalog(),
         execution_targets=targets if targets is not None else execution_targets(),
         account_id=ACCOUNT_ID,

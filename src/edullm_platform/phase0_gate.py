@@ -23,6 +23,7 @@ from edullm_platform.contracts.policy import (
     RequestFacts,
     classify_request,
 )
+from edullm_platform.contracts.repository_registry import RepositoryRegistry
 from edullm_platform.contracts.workload import WorkloadCatalog
 from edullm_platform.criteria import CriterionResult, execute_criteria
 from edullm_platform.evidence import (
@@ -52,7 +53,8 @@ EXPECTED_TEAM_LEADS: Final = (
     "ericrcwu001",
     "alsy7009",
     "meric233",
-    "syz2026",
+    # VS-code-cloud leads the Memory group, in place of syz2026 who no longer does.
+    "VS-code-cloud",
     "gorpyshortlegs",
     "hiyasvyas",
     "pianomaster99",
@@ -194,6 +196,7 @@ class Phase0GateReport(ContractModel):
 @dataclass(frozen=True)
 class Phase0Inputs:
     inventory: OrganizationInventory
+    repositories: RepositoryRegistry
     catalog: WorkloadCatalog
     policy: ApprovalPolicy
     dataset_registry: DatasetRegistry
@@ -257,6 +260,9 @@ def load_phase0_inputs(repo_root: Path) -> Phase0Inputs:
     )
     return Phase0Inputs(
         inventory=load_yaml(repo_root / "config" / "organization.yaml", OrganizationInventory),
+        repositories=load_yaml(
+            repo_root / "config" / "repositories.yaml", RepositoryRegistry
+        ),
         catalog=load_yaml(repo_root / "config" / "workload-catalog.yaml", WorkloadCatalog),
         policy=load_yaml(repo_root / "config" / "policy.yaml", ApprovalPolicy),
         dataset_registry=load_yaml(repo_root / "config" / "datasets.yaml", DatasetRegistry),
@@ -279,7 +285,7 @@ def expected_manifest_classification(filename: str) -> ApprovalClass:
 def request_facts_from_manifest(
     manifest: RunManifest,
     *,
-    inventory: OrganizationInventory,
+    repositories: RepositoryRegistry,
     catalog: WorkloadCatalog,
     dataset_registry: DatasetRegistry,
     estimated_cost_usd: Decimal,
@@ -288,15 +294,19 @@ def request_facts_from_manifest(
     :func:`~edullm_platform.manifest_helpers.build_request_facts`.
 
     Admission evaluates the same facts inside AWS and must not import a gate module to do
-    it, so the one implementation lives somewhere both callers can reach. The registry is
-    an argument for the same reason the inventory and catalog already were: the set of
-    registered datasets is reviewed configuration, and it used to be a literal defined here
-    — which made the verification tooling, rather than the configuration, the authority on
-    what admission would accept.
+    it, so the one implementation lives somewhere both callers can reach. Each registry is
+    an argument for the same reason the catalog already was: what is registered is reviewed
+    configuration, and a set defined beside a caller makes the verification tooling, rather
+    than the configuration, the authority on what admission would accept.
+
+    The roster used to be one of those arguments, because ``repository_registered`` was
+    membership of its pilot list. It is not one now: the pilot list says what the programme
+    covers and ``config/repositories.yaml`` says what has somewhere to publish an image to,
+    and only the second of those is the question this fact asks.
     """
     return build_request_facts(
         manifest,
-        inventory=inventory,
+        repositories=repositories,
         catalog=catalog,
         dataset_registry=dataset_registry,
         estimated_cost_usd=estimated_cost_usd,
@@ -522,7 +532,7 @@ def check_aws_capacity(
 
 def check_representative_manifests(
     *,
-    inventory: OrganizationInventory,
+    repositories: RepositoryRegistry,
     catalog: WorkloadCatalog,
     policy: ApprovalPolicy,
     dataset_registry: DatasetRegistry,
@@ -577,7 +587,7 @@ def check_representative_manifests(
         estimated_cost = compute_manifest_maximum_cost(manifest, catalog)
         facts = request_facts_from_manifest(
             manifest,
-            inventory=inventory,
+            repositories=repositories,
             catalog=catalog,
             dataset_registry=dataset_registry,
             estimated_cost_usd=estimated_cost,
@@ -660,7 +670,7 @@ def evaluate_phase0(inputs: Phase0Inputs) -> Phase0GateResult:
         check_github_plan(inputs.github_plan, inputs.github_plan_load_error),
         check_aws_capacity(inputs.aws_capacity, inputs.aws_capacity_load_error, inputs.catalog),
         check_representative_manifests(
-            inventory=inputs.inventory,
+            repositories=inputs.repositories,
             catalog=inputs.catalog,
             policy=inputs.policy,
             dataset_registry=inputs.dataset_registry,

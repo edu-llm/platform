@@ -1,12 +1,26 @@
 admins:
   - philote-dev
   - BritishAmericqn
+# WHO MAY RELEASE A ROUTINE RUN, AND NOTHING ELSE DECIDES IT. inventory.is_team_lead reads
+# this list, and policy.yaml sets approval_scope to organization, so every name here can
+# release any team's routine submission. A name that has left is therefore a live approval
+# authority, and a lead who is absent cannot approve their own group's work.
+#
+# VS-code-cloud replaced syz2026 as the Memory group's lead. Both halves of that mattered:
+# a Memory submission routed to its own lead was refused because the lead was not on this
+# list, and someone who leads no group could release anyone's routine run because they
+# still were. syz2026 stays in members below -- leaving the organization is a separate fact
+# from ceasing to lead a group, and this file has not been told the first one.
+#
+# The GitHub `team-leads` team gates the run-approval-lead environment and is what actually
+# stops a job. It is not in this repository and does not follow this edit; changing it is an
+# owner action in the organization settings, and until it happens the two disagree.
 team_leads:
   - philote-dev
   - ericrcwu001
   - alsy7009
   - meric233
-  - syz2026
+  - VS-code-cloud
   - gorpyshortlegs
   - hiyasvyas
   - pianomaster99

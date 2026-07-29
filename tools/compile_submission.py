@@ -25,8 +25,8 @@ from edullm_platform.contracts.dataset_registry import DatasetRegistry
 from edullm_platform.contracts.identity import new_run_id
 from edullm_platform.contracts.image import ImageProvenance
 from edullm_platform.contracts.image_scan import ImageScanExceptionRegistry
-from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.policy import ApprovalPolicy
+from edullm_platform.contracts.repository_registry import RepositoryRegistry
 from edullm_platform.contracts.workload import WorkloadCatalog
 from edullm_platform.submission import (
     SubmissionInputs,
@@ -87,7 +87,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         policy = load_yaml(args.config_dir / "policy.yaml", ApprovalPolicy)
-        inventory = load_yaml(args.config_dir / "organization.yaml", OrganizationInventory)
+        repositories = load_yaml(args.config_dir / "repositories.yaml", RepositoryRegistry)
         catalog = load_yaml(args.config_dir / "workload-catalog.yaml", WorkloadCatalog)
         registry = load_yaml(args.config_dir / "datasets.yaml", DatasetRegistry)
         image_scan_registry = load_yaml(
@@ -117,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
             inputs,
             run_id=args.run_id or new_run_id(),
             policy=policy,
-            inventory=inventory,
+            repositories=repositories,
             catalog=catalog,
             dataset_registry=registry,
             image_scan_registry=image_scan_registry,

@@ -15,6 +15,7 @@ from edullm_platform.contracts.policy import (
     RequestFacts,
     classify_request,
 )
+from edullm_platform.contracts.repository_registry import RepositoryRegistry
 from edullm_platform.phase0_gate import (
     expected_manifest_classification,
     request_facts_from_manifest,
@@ -61,6 +62,10 @@ def load_approval_policy() -> ApprovalPolicy:
 
 def load_dataset_registry() -> DatasetRegistry:
     return load_yaml(PROJECT_ROOT / "config" / "datasets.yaml", DatasetRegistry)
+
+
+def load_repository_registry() -> RepositoryRegistry:
+    return load_yaml(PROJECT_ROOT / "config" / "repositories.yaml", RepositoryRegistry)
 
 
 def assert_validation_error(
@@ -446,13 +451,12 @@ def test_approval_policy_rejects_empty_denied_outright() -> None:
 @pytest.mark.parametrize("filename", REPRESENTATIVE_MANIFEST_FILENAMES)
 def test_representative_manifest_classifies_as_expected(filename: str) -> None:
     manifest = load_representative_manifest(filename)
-    inventory = load_organization_inventory()
     catalog = load_workload_catalog()
     policy = load_approval_policy()
     estimated_cost_usd = compute_manifest_maximum_cost(manifest, catalog)
     facts = request_facts_from_manifest(
         manifest,
-        inventory=inventory,
+        repositories=load_repository_registry(),
         catalog=catalog,
         dataset_registry=load_dataset_registry(),
         estimated_cost_usd=estimated_cost_usd,
@@ -466,13 +470,12 @@ def test_representative_manifest_classifies_as_expected(filename: str) -> None:
 def test_gpu_exception_has_full_registration_and_only_runtime_violation() -> None:
     filename = "gpu-exception.yaml"
     manifest = load_representative_manifest(filename)
-    inventory = load_organization_inventory()
     catalog = load_workload_catalog()
     policy = load_approval_policy()
     estimated_cost_usd = compute_manifest_maximum_cost(manifest, catalog)
     facts = request_facts_from_manifest(
         manifest,
-        inventory=inventory,
+        repositories=load_repository_registry(),
         catalog=catalog,
         dataset_registry=load_dataset_registry(),
         estimated_cost_usd=estimated_cost_usd,
@@ -495,13 +498,12 @@ def test_routine_manifest_has_full_registration_and_no_bound_violations(
     filename: str,
 ) -> None:
     manifest = load_representative_manifest(filename)
-    inventory = load_organization_inventory()
     catalog = load_workload_catalog()
     policy = load_approval_policy()
     estimated_cost_usd = compute_manifest_maximum_cost(manifest, catalog)
     facts = request_facts_from_manifest(
         manifest,
-        inventory=inventory,
+        repositories=load_repository_registry(),
         catalog=catalog,
         dataset_registry=load_dataset_registry(),
         estimated_cost_usd=estimated_cost_usd,
@@ -518,12 +520,11 @@ def test_routine_manifest_has_full_registration_and_no_bound_violations(
 
 def test_request_facts_from_manifest_rejects_unregistered_repository() -> None:
     manifest = load_representative_manifest("cpu-routine.yaml")
-    inventory = load_organization_inventory()
     catalog = load_workload_catalog()
-    broken_manifest = manifest.model_copy(update={"repository": "not-a-pilot-repository"})
+    broken_manifest = manifest.model_copy(update={"repository": "not-a-registered-repository"})
     facts = request_facts_from_manifest(
         broken_manifest,
-        inventory=inventory,
+        repositories=load_repository_registry(),
         catalog=catalog,
         dataset_registry=load_dataset_registry(),
         estimated_cost_usd=Decimal(1),

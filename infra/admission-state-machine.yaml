@@ -78,10 +78,19 @@ Resources:
       #
       # So: promoting a compute profile is a Lambda release. Nothing in a config diff says
       # so, and the failure it produces names the profile rather than the release.
+      #
+      # The fourth release narrowed the package from 66 modules to 28 and left no note here.
+      # This is the fifth, and it moves which file answers "is this repository registered":
+      # build_request_facts asked config/organization.yaml's pilot_repositories, which lists
+      # dolma, while config/repositories.yaml -- the registry carrying the ECR repository and
+      # base image -- does not register it. A dolma submission was therefore accepted, routed
+      # to a lead, approved, and would have run the OLMo-core image, because the image is
+      # pinned in the job definition rather than chosen by the submission. Until this deploys,
+      # that is still what the account does; the tree refuses it and the account does not.
       Code:
         S3Bucket: sbsandbox-intern-edullm-artifacts
         S3Key: admission-validator/admission-validator.zip
-        S3ObjectVersion: ZdegRl.aBROarwovPp9dgxlo9zOeyU03
+        S3ObjectVersion: zKeACsN6lKJyAOK8KJtMGwfmUohzGRMR
       Timeout: 30
       MemorySize: 512
 

@@ -2,8 +2,8 @@
 
 Phase: phase-0
 Bundle schema version: 1
-Source commit: 5e1b74a6010c04024e71262369a37e015a781f10
-Generated: 2026-07-29T19:37:04+00:00
+Source commit: d0a5d12a24232a7f47106c0a8531711e7976b6d3
+Generated: 2026-07-29T20:30:48+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 0 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase0_proof.py` at generation time.
 
@@ -18,9 +18,9 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3412 |
-| suite tests executed | 3250 |
-| suite passed | 3250 |
+| suite tests collected | 3430 |
+| suite tests executed | 3268 |
+| suite passed | 3268 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
@@ -86,13 +86,13 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 
 | file | digest |
 | --- | --- |
-| config/organization.yaml | sha256:bb6b836e679464f5870225439664b9f6dacbed2e0fd39d80fbfcc47751c720a1 |
+| config/organization.yaml | sha256:c20f775a586005475853d2d80192b9e7b98666a3c9092ebf10a3f69869cc612b |
 | config/policy.yaml | sha256:8efa2f00527f9ad1677ed27452a2b6093a6a8c9e8190cf3e0a583b0f68787b39 |
 | config/workload-catalog.yaml | sha256:dbd10c9d4655be66f829b8c43e150544ba17ca778988f86d14d22e51600feec6 |
 | fixtures/authorization/admin-exception.yaml | sha256:4ad48b8ecd405d11428cf446f74d0a8aeabf904365f3fee7b599b6a7ed0b6fa0 |
 | fixtures/authorization/lead-self-authorization.yaml | sha256:0e65da633a3880b11e5f14d380d54497a2be7124da1121f34ec3d21d4b4e83d0 |
 | fixtures/authorization/member-approval.yaml | sha256:a39cbdcbec68bf2fd8067f624ee1cf08aac008757e9fdaf69d812b76ea44e2de |
-| fixtures/manifests/cpu-routine.yaml | sha256:57df534749b3ef621c67d7b7abd9d5d6822848ec2776953aa2f6c28f9a29b2fc |
+| fixtures/manifests/cpu-routine.yaml | sha256:51044b73c9b10163a817454f42949ac011b449d126bcfdafbe2b457026694491 |
 | fixtures/manifests/gpu-exception.yaml | sha256:ac493344c543e7ef49ac5368bb19b9f391afedf8675aeb29650ebd2b7f207db9 |
 | fixtures/manifests/gpu-routine.yaml | sha256:c32d8c289c1f2c6b568bda5cc43a8a35b3b52ff0c435a214b4cefd6f82d1dd6f |
 | fixtures/manifests/multiseed-routine.yaml | sha256:0241fc78bc6e165b4f06c0e0223607f39f4f1a4fee4700f56348b488619743bd |

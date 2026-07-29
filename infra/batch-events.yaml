@@ -195,10 +195,20 @@ Resources:
       # for the events, the attempt and the result, while the five the state machine writes
       # each came back attested. Nothing reported it -- an unattested object reads exactly
       # like an attested one until a reader asks for the digest.
+      #
+      # Fourth release, sha256
+      # 7847f5148fef4fb0477d2c6f984b713d9ce46bf07edf294acccca30013bc26ca. The third narrowed
+      # the package to the fifteen modules this handler actually loads. This one carries no
+      # change this handler can observe -- the roster edit is in config/organization.yaml,
+      # which the projection never reads -- and it is released anyway, because the builder
+      # packages config and the digest therefore moved. Unlike the validator, nothing here
+      # compares this digest against the tree, so this release rests on the rule rather than
+      # on a test: a moved digest means the account is not running the tree, whether or not
+      # the moved bytes are ones this function reaches.
       Code:
         S3Bucket: sbsandbox-intern-edullm-artifacts
         S3Key: lifecycle-recorder/lifecycle-recorder.zip
-        S3ObjectVersion: x9YJp6gu7gfU.4uLfcy5qALNEyckhIJT
+        S3ObjectVersion: ylnuTxhc97kO.IdJRSrKun5owdQbhSc7
       # Sixty seconds against a function that makes up to three conditional writes and no
       # other AWS call. The queue's visibility timeout above is six times this and has to
       # be changed with it.
