@@ -15,6 +15,13 @@ a file like that gets committed by accident. So there is no raw tier at all. Wha
 written is the projection, field by chosen field, and everything else is read and
 dropped.
 
+**The write is the shared one, the AWS call is not.** Records go out through
+:func:`edullm_platform.capture_tooling.write_model`, so the credential scan that stands
+behind every field's own annotation runs here too. ``aws_json`` below stays local, because
+it does two things the shared wrapper deliberately does not: it reads the operation and
+error code out of the CLI's stderr so a refusal names what was refused, and it lets a
+caller nominate an error code that means "there is no such thing" and is an answer.
+
 **Two placeholders for accounts, not one.** Everything captured goes through
 ``redact_account_ids_in_document`` before a contract sees it, which masks this account
 and any other account differently. One placeholder for both would be simpler and would
@@ -74,6 +81,12 @@ from typing import Any, Final
 from pydantic import ValidationError
 
 from edullm_platform.build_tooling import RegistryUnreadableError, load_registry
+from edullm_platform.capture_tooling import (
+    CaptureFailedError,
+    observed_now,
+    report,
+    write_model,
+)
 from edullm_platform.contracts.base import ContractModel
 from edullm_platform.contracts.repository_registry import UnknownRepositoryError
 from edullm_platform.evidence import (
@@ -146,19 +159,6 @@ IMAGE_TAG_LENGTH: Final = 12
 #: The prefix an OIDC provider ARN carries before the issuer's host name. The host is
 #: what the record keeps; the ARN in front of it is the account ID with a name attached.
 OIDC_PROVIDER_ARN_MARKER: Final = ":oidc-provider/"
-
-
-class CaptureFailedError(RuntimeError):
-    """The account could not be read, so there is nothing honest to write down.
-
-    Carries a machine-readable reason and, where AWS gave one, the operation and error
-    code. Never the service's message: it names the account, and this is raised from a
-    process whose output a reader may well paste somewhere.
-    """
-
-    def __init__(self, reason: str) -> None:
-        self.reason = reason
-        super().__init__(reason)
 
 
 class OutputDirectoryRefusedError(CaptureFailedError, ValueError):
@@ -969,12 +969,6 @@ DEFAULT_CAPTURE_TARGET_NAMES: Final = ("roles", "repository")
 # --------------------------------------------------------------------------------------
 
 
-def write_record(path: Path, record: ContractModel) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = record.model_dump(mode="json", by_alias=True, exclude_none=False)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
 def require_target_arguments(targets: Sequence[str], context: CaptureContext) -> None:
     """Refuse a target whose input is missing, before anything reaches the account."""
     for reason, attribute, needing in TARGET_REQUIREMENTS:
@@ -998,7 +992,7 @@ def capture_phase1_evidence(
     lookup_since: datetime | None = None,
 ) -> CapturedEvidence:
     resolved = resolve_output_dir(output_dir, base_dir=base_dir)
-    observed_at = datetime.now(tz=UTC).replace(microsecond=0)
+    observed_at = observed_now()
     requirements = CaptureContext(
         aws_profile=aws_profile,
         aws_region=aws_region,
@@ -1024,7 +1018,13 @@ def capture_phase1_evidence(
     written: list[Path] = []
     for relative, record in records:
         path = resolved / relative
-        write_record(path, record)
+        # The digest exemption, for the whole set rather than per record. Three of these
+        # records legitimately carry a commit sha, which is forty hexadecimal characters
+        # and therefore the shape of a secret access key, so the strict scan refuses the
+        # evidence for being valid. Nothing this tool writes carries a bare digest that is
+        # not an identifier, so the exemption costs the ability to notice a real key in a
+        # record that also holds a commit sha, and buys the scan running at all.
+        write_model(path, record, allow_content_digests=True)
         written.append(path)
     return CapturedEvidence(
         roles=tuple(one for _, one in records if isinstance(one, DeployedRoleEvidence)),
@@ -1147,10 +1147,11 @@ def main(argv: Sequence[str] | None = None, *, base_dir: Path | None = None) -> 
         print(f"capture_unwritable:{type(exc).__name__}", file=sys.stderr)
         return 2
 
-    for report in captured.drift:
-        for finding in report.findings:
+    for drift_report in captured.drift:
+        for finding in drift_report.findings:
             print(
-                f"role_drift:{report.role_name}:{finding.direction.value}:{finding.element}",
+                f"role_drift:{drift_report.role_name}:{finding.direction.value}:"
+                f"{finding.element}",
                 file=sys.stderr,
             )
     findings = captured.drift_findings
@@ -1158,18 +1159,14 @@ def main(argv: Sequence[str] | None = None, *, base_dir: Path | None = None) -> 
     # so the summary is printed for a failed comparison too. It carries the verdict so
     # that a reader of the summary alone is told, rather than being left to notice a
     # count and infer what it meant from the exit code.
-    print(
-        json.dumps(
-            {
-                "targets": list(arguments.target or DEFAULT_CAPTURE_TARGET_NAMES),
-                "written": sorted(path.name for path in captured.written),
-                "roles_compared": len(captured.drift),
-                "drift_findings": findings,
-                "verdict": "role_drift" if findings else "ok",
-            },
-            indent=2,
-            sort_keys=True,
-        )
+    report(
+        {
+            "targets": list(arguments.target or DEFAULT_CAPTURE_TARGET_NAMES),
+            "written": sorted(path.name for path in captured.written),
+            "roles_compared": len(captured.drift),
+            "drift_findings": findings,
+            "verdict": "role_drift" if findings else "ok",
+        }
     )
     if not findings:
         return 0
