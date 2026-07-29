@@ -686,6 +686,52 @@ jobs:
           fi
           echo "image_digest=${image_digest}" >> "${GITHUB_OUTPUT}"
 
+      # SEVENTY-ONE CHARACTERS A PERSON HAS TO RETYPE, AND NOWHERE TO COPY THEM FROM. The
+      # digest is a workflow_call output, which serves a caller and serves nobody who is
+      # about to fill in a submission form by hand: the submit workflow asks for the digest
+      # as free text, because a digest is per-build and no menu can hold one. Until this
+      # step the only place it appeared was a log line inside a step whose name gives no
+      # hint that it holds the value, so getting it meant opening the job, finding the step,
+      # expanding it, and selecting a hex run out of console output.
+      #
+      # The fenced block is the point rather than decoration. A step summary renders it with
+      # a copy button, so the value the submission form needs is one click rather than one
+      # careful selection -- and a digest transcribed by eye is refused at admission as a
+      # mutable image reference or accepted against the wrong image entirely.
+      #
+      # Placed immediately after the read-back rather than at the end of the job, so a
+      # failure writing provenance still leaves the digest of an image that is already
+      # published where somebody can reach it.
+      - name: Publish the digest where a person can copy it
+        env:
+          RESEARCH_REPOSITORY: ${{ inputs.repository }}
+          COMMIT_SHA: ${{ needs.verify.outputs.commit_sha }}
+          IMAGE_DIGEST: ${{ steps.digest.outputs.image_digest }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Published image"
+            echo
+            echo "| field | value |"
+            echo "| --- | --- |"
+            echo "| Repository | \`${RESEARCH_REPOSITORY}\` |"
+            echo "| Commit | \`${COMMIT_SHA}\` |"
+            echo "| Digest | \`${IMAGE_DIGEST}\` |"
+            echo
+            cat <<'NOTICE'
+          The digest is what a submission names, and the tag is not: ECR tags are immutable
+          here but a tag is still a label, and the admission contract accepts only a digest.
+          Copy this into the image_digest field of the submission form, together with the
+          full commit above:
+          NOTICE
+            echo
+            echo '```'
+            echo "${IMAGE_DIGEST}"
+            echo '```'
+            echo
+          } >> "${GITHUB_STEP_SUMMARY}"
+          echo "The step summary carries the published digest for this commit."
+
       # The recorded workflow_ref is the ref half of job.workflow_ref, never a commit SHA.
       # ImageProvenance composes job_workflow_ref from these three fields, and the
       # publisher role matches that claim with StringEquals against @refs/heads/main, so a
