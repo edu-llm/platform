@@ -33,6 +33,8 @@ from edullm_platform.checkpoints import (
 )
 from tests.fake_object_store import FakeObjectStore
 from tools.build_gpu_training_submission import (
+    FOREIGN_TEAM_PREFIX,
+    LINEAGE_BUCKET,
     TRAINING_IMAGE_DIGEST,
     dispatch_form,
     marker_writer_source,
@@ -42,6 +44,7 @@ from tools.build_gpu_training_submission import (
 
 COMMIT = "b067a31e48c4038416d179fc85e5f12b05c8d2a9"
 BUCKET = "sbsandbox-intern-edullm-outputs"
+OUTPUTS_BUCKET = BUCKET
 RUN_ID = "run_019fab9d-d1d0-7009-935f-b0189a9c8a86"
 PREFIX = f"s3://{BUCKET}/teams/platform/runs/{RUN_ID}/checkpoints/step-20/"
 PAYLOAD = b"the weights, or something the size of them"
@@ -255,6 +258,130 @@ def test_the_step_count_reaches_the_checkpoint_prefix_and_the_loop_together(step
     assert f"checkpoints/step-{steps}/" in program
     assert f"for step in range(1, {steps} + 1):" in program
     assert f'torch.save({{"step": {steps}' in program
+
+
+# ---------------------------------------------------------------------------------------
+# The two things only a container can establish
+# ---------------------------------------------------------------------------------------
+
+
+def test_the_isolation_probe_reads_the_code_rather_than_whether_the_call_threw() -> None:
+    """Mutation: record the probe as a boolean, or catch every exception as a refusal.
+
+    ``AccessDenied`` means the role may not look. ``NoSuchKey`` means it may look and found
+    nothing, which establishes no isolation whatsoever -- and is exactly what a probe
+    against an empty prefix returns from a role that permits everything. A boolean cannot
+    tell those apart, so the code is what gets recorded.
+    """
+    program = training_program()
+
+    assert 'return error.response["Error"]["Code"]' in program
+    assert 'return "allowed"' in program
+    assert "botocore.exceptions.ClientError" in program
+
+
+def test_the_probe_reaches_for_a_team_nobody_has_bound() -> None:
+    """Mutation: probe a team that exists, or one whose prefix might hold an object.
+
+    The probe has to be against a prefix where the two outcomes are distinguishable. A real
+    team's prefix could legitimately be empty, so a 404 there would be ambiguous; a team
+    nobody has bound certainly holds nothing, which makes anything other than AccessDenied
+    a statement that the grant is wider than it reads.
+    """
+    program = training_program()
+
+    assert FOREIGN_TEAM_PREFIX in program
+    assert "not-a-bound-team" in FOREIGN_TEAM_PREFIX
+
+
+def test_all_four_probes_are_asserted_rather_than_merely_recorded() -> None:
+    """Mutation: print the probe results and let the run succeed anyway.
+
+    Recording a refusal that did not happen is worse than not probing at all: the capture
+    would say the boundary holds, and a criterion would cite it. The run has to fail if any
+    probe came back allowed, which is the difference between evidence and a log line.
+    """
+    program = training_program()
+
+    for probe in (
+        "read_another_teams_prefix",
+        "write_to_another_teams_prefix",
+        "list_the_whole_outputs_bucket",
+        "write_to_the_lineage_bucket",
+    ):
+        assert probe in program, probe
+    assert 'assert not reachable, "this role reached something it must not: "' in program
+
+
+def test_the_lineage_bucket_probe_names_the_bucket_the_platform_alone_writes_to() -> None:
+    """Reads BOTH sides. Mutation: probe the outputs bucket twice.
+
+    The sharpest of the four. Every other grant on this role is arguable; the one that is
+    not is that a workload cannot write to the store recording what it did. A probe that
+    named the wrong bucket would pass, prove nothing, and read as though it had.
+    """
+    program = training_program()
+
+    assert OUTPUTS_BUCKET != LINEAGE_BUCKET
+    assert f"Bucket={LINEAGE_BUCKET!r}" in program
+    assert 'Key="result/" + run_id + ".json"' in program, (
+        "the key has to be one the lifecycle recorder itself writes, or the probe tests a "
+        "prefix nothing was ever going to grant"
+    )
+
+
+def test_a_resume_loads_the_state_dict_rather_than_only_downloading_it() -> None:
+    """Mutation: download the payload and check its digest, without loading it.
+
+    That is the claim the committed evidence already makes -- inspect_checkpoint says the
+    marker certifies the payload and the store agrees. What it cannot say is whether torch
+    will accept the bytes into this architecture, which is the thing a researcher resuming
+    a run actually needs.
+    """
+    program = training_program(resume_from=f"s3://{BUCKET}/teams/platform/runs/x/model.pt")
+
+    assert "torch.load(" in program
+    assert 'model.load_state_dict(restored["model"], strict=True)' in program
+
+
+def test_a_resume_refuses_a_checkpoint_from_a_different_architecture() -> None:
+    """Mutation: pass strict=False.
+
+    A non-strict load accepts a state dict that is missing tensors or carries unexpected
+    ones, leaving a model that is silently part somebody else's -- and it trains, and the
+    loss looks plausible, and nothing anywhere says which weights came from where.
+    """
+    program = training_program(resume_from=f"s3://{BUCKET}/teams/platform/runs/x/model.pt")
+
+    assert "strict=True" in program
+    assert "strict=False" not in program
+
+
+def test_a_run_with_nothing_to_resume_from_carries_no_resume_code_at_all() -> None:
+    """Mutation: emit the resume block with an empty URI and let it fail at runtime.
+
+    A first run has nothing to resume from, and that is the ordinary case rather than an
+    error. Emitting the block with an empty URI would make every first run fail on a
+    download of nothing -- on a paid GPU instance, after the image pull.
+    """
+    program = training_program()
+
+    assert "resumed = {}" in program
+    assert "download_fileobj" not in program
+    assert "load_state_dict" not in program
+
+
+def test_the_summary_carries_both_new_sections_so_the_capture_can_read_them() -> None:
+    """Mutation: probe and resume, and print neither.
+
+    CloudWatch is the only channel out of the container. A probe whose result never reaches
+    the log is a probe nobody can capture, and the criterion would be resting on the fact
+    that somebody once watched it happen.
+    """
+    program = training_program(resume_from=f"s3://{BUCKET}/teams/platform/runs/x/model.pt")
+
+    assert '"isolation": isolation,' in program
+    assert '"resumed": resumed,' in program
 
 
 def test_the_command_is_the_only_field_the_workflow_receives_as_a_list() -> None:

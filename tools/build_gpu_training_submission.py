@@ -50,10 +50,23 @@ TRAINING_IMAGE_DIGEST: Final = (
 
 OLMO_CORE_CHECKOUT: Final = Path.home() / "projects-local" / "OLMo-core"
 
+#: The bucket only the platform writes to. Named here so the probe that this role cannot
+#: reach it has something to reach for.
+LINEAGE_BUCKET: Final = "sbsandbox-intern-edullm-lineage"
+
 #: How far the run trains. Twenty steps on synthetic tokens is not a claim about learning
 #: and is not dressed as one -- it is the smallest thing that exercises a real model, a real
 #: optimizer and real device memory, which is what the phase is about.
 TRAINING_STEPS: Final = 20
+
+#: A prefix belonging to a team that does not exist, which is the point. The workload role
+#: is scoped to ``teams/platform/runs/*``, so a read here must come back AccessDenied rather
+#: than NoSuchKey -- and the difference between those two answers is the whole check.
+#:
+#: NoSuchKey would mean the role *may* look and there is nothing there, which establishes no
+#: isolation at all. A team name nobody has bound makes the two outcomes distinguishable:
+#: there is certainly no object, so a 404 could only mean the grant is wider than it reads.
+FOREIGN_TEAM_PREFIX: Final = "teams/not-a-bound-team/runs/isolation-probe/"
 
 
 def marker_writer_source() -> str:
@@ -69,24 +82,82 @@ def marker_writer_source() -> str:
     )
 
 
-def training_program(*, steps: int = TRAINING_STEPS) -> str:
+def training_program(*, steps: int = TRAINING_STEPS, resume_from: str = "") -> str:
     """The program the container runs, with the platform's marker writer inside it.
 
     Every identity it uses comes from the environment the platform sets, never from this
     text: run id, team, output prefix and W&B project are all told to the container by
     ``batch_submit_request`` from the approved manifest. A project named here would be a
     submitter choosing their own attribution, which is the thing D4 exists to prevent.
+
+    Two things beyond training, both of which need a container and cannot be established
+    from a laptop.
+
+    ``resume_from`` loads a previous run's checkpoint back into this run's model. Until
+    something does, "a checkpoint is resumable" means the platform's reader will hand back a
+    reference to it -- not that torch will accept the bytes. Those are different claims and
+    only the second is what a researcher needs.
+
+    The isolation probe reads a prefix belonging to a team that does not exist. The workload
+    role's trust policy names the Batch and ECS task services, so no human can assume it and
+    be refused; the only principal that can be told no is a container. Without this, the
+    cross-team criterion rests on reading a policy document.
     """
+    resume_block = (
+        f'''
+# RESUMING FROM A CHECKPOINT A DIFFERENT RUN WROTE, which is the claim that had not been
+# tested. inspect_checkpoint establishes that the marker certifies the payload and that the
+# store agrees with the marker; it says nothing about whether torch can load the result.
+resumed = {{}}
+resume_uri = {resume_from!r}
+location = urlparse(resume_uri)
+buffer = io.BytesIO()
+s3 = boto3.client("s3")
+s3.download_fileobj(location.netloc, location.path.lstrip("/"), buffer)
+payload = buffer.getvalue()
+restored = torch.load(io.BytesIO(payload), map_location="cuda", weights_only=True)
+# load_state_dict is what makes this a resume rather than a download. strict=True so a
+# checkpoint from a different architecture is refused here rather than producing a model
+# that is silently part someone else's.
+model.load_state_dict(restored["model"], strict=True)
+resumed = {{
+    "uri": resume_uri,
+    "bytes": len(payload),
+    "sha256": "sha256:" + hashlib.sha256(payload).hexdigest(),
+    "step": restored["step"],
+    "tensors": len(restored["model"]),
+}}
+print(json.dumps({{"resumed": resumed}}, sort_keys=True))
+'''
+        if resume_from
+        else '\nresumed = {}\n'
+    )
+
     return f'''
 import hashlib, io, json, os, time
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
-import boto3, torch, wandb
+import boto3, botocore, torch, wandb
 from olmo_core.data import TokenizerConfig
 from olmo_core.nn.transformer import TransformerConfig
 
 {marker_writer_source()}
+
+
+def refusal_for(call, **arguments):
+    """What S3 said when this role reached for something, as a code rather than a boolean.
+
+    THE CODE IS THE EVIDENCE AND A BOOLEAN WOULD NOT BE. AccessDenied means the role may not
+    look. NoSuchKey or 404 means it may look and found nothing, which establishes no
+    isolation at all -- and is exactly what a probe against a prefix that happens to be
+    empty would return from a role permitting everything.
+    """
+    try:
+        call(**arguments)
+    except botocore.exceptions.ClientError as error:
+        return error.response["Error"]["Code"]
+    return "allowed"
 
 # Both halves of the silent failure this phase is about, asserted before anything is spent.
 # A CPU build reports no cuda version; a CUDA build with no device is a driver or a
@@ -107,6 +178,7 @@ model = TransformerConfig.olmo2_190M(vocab_size=vocab).build(init_device="cuda")
 model.train()
 parameters = sum(p.numel() for p in model.parameters())
 optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
+{resume_block}
 
 tracker = wandb.init(
     project=os.environ["EDULLM_WANDB_PROJECT"],
@@ -181,7 +253,34 @@ s3.put_object(
 # works.
 marker = s3.get_object(Bucket=bucket, Key=key + {MARKER_OBJECT!r})["Body"].read().decode()
 
+# WHAT THIS ROLE CANNOT REACH, established from inside the only principal that can be
+# refused. Four probes, because the interesting failures are asymmetric: a role that can
+# read another team's outputs leaks research, a role that can write there corrupts it, and
+# a role that can touch the lineage bucket at all can rewrite the record of what it did.
+#
+# The lineage probe is the sharpest of the four. Every other grant in this platform is
+# arguable; that one is the property the whole write-once design rests on.
+isolation = {{
+    "read_another_teams_prefix": refusal_for(
+        s3.get_object, Bucket=bucket, Key={FOREIGN_TEAM_PREFIX!r} + "model.pt"
+    ),
+    "write_to_another_teams_prefix": refusal_for(
+        s3.put_object, Bucket=bucket, Key={FOREIGN_TEAM_PREFIX!r} + "written.txt", Body=b"x"
+    ),
+    "list_the_whole_outputs_bucket": refusal_for(
+        s3.list_objects_v2, Bucket=bucket, Prefix=""
+    ),
+    "write_to_the_lineage_bucket": refusal_for(
+        s3.put_object,
+        Bucket={LINEAGE_BUCKET!r},
+        Key="result/" + run_id + ".json",
+        Body=b"{{}}",
+    ),
+}}
+
 summary = {{
+    "isolation": isolation,
+    "resumed": resumed,
     "gpu": gpu,
     "torch": torch.__version__,
     "cuda": torch.version.cuda,
@@ -205,10 +304,18 @@ tracker.finish()
 # learning, and dressing it as one would be the kind of evidence this repository spends its
 # time removing.
 assert torch.cuda.max_memory_allocated() > 0, "nothing was ever allocated on the GPU"
+
+# The isolation probes ARE asserted, and the run fails if any of them came back allowed.
+# Recording a refusal that did not happen would be worse than not probing: the capture would
+# say the boundary holds, and the criterion would cite it.
+reachable = sorted(name for name, code in isolation.items() if code == "allowed")
+assert not reachable, "this role reached something it must not: " + ", ".join(reachable)
 '''
 
 
-def dispatch_form(*, commit_sha: str, steps: int = TRAINING_STEPS) -> dict[str, str]:
+def dispatch_form(
+    *, commit_sha: str, steps: int = TRAINING_STEPS, resume_from: str = ""
+) -> dict[str, str]:
     return {
         "repository": "OLMo-core",
         "commit_sha": commit_sha,
@@ -218,7 +325,8 @@ def dispatch_form(*, commit_sha: str, steps: int = TRAINING_STEPS) -> dict[str, 
         "team": "platform",
         "wandb_project": "edullm-platform-smoke",
         "maximum_runtime_hours": "0.5",
-        "command": "python -c " + shlex.quote(training_program(steps=steps)),
+        "command": "python -c "
+        + shlex.quote(training_program(steps=steps, resume_from=resume_from)),
     }
 
 
@@ -280,17 +388,28 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--checkout", type=Path, default=OLMO_CORE_CHECKOUT)
+    parser.add_argument(
+        "--resume-from",
+        default="",
+        help=(
+            "an s3:// URI of a checkpoint payload a previous run wrote. Given, the program "
+            "loads it back into this run's model before training, which is the only way to "
+            "establish that a checkpoint is resumable rather than merely certified."
+        ),
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
     commit = arguments.commit_sha or head_of(arguments.checkout)
-    form = dispatch_form(commit_sha=commit, steps=arguments.steps)
+    form = dispatch_form(
+        commit_sha=commit, steps=arguments.steps, resume_from=arguments.resume_from
+    )
     inputs = workflow_inputs(form)
     arguments.output.write_text(json.dumps(inputs, indent=2, sort_keys=True) + "\n")
 
-    program = training_program(steps=arguments.steps)
+    program = training_program(steps=arguments.steps, resume_from=arguments.resume_from)
     command = inputs["command"]
     # The program must survive the round trip the workflow puts it through, or the container
     # runs something that merely parses.
@@ -301,6 +420,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"commit         {commit}")
     print(f"steps          {arguments.steps}")
+    print(f"resume from    {arguments.resume_from or '(nothing)'}")
     print(f"program bytes  {len(program)}")
     print(f"written        {arguments.output}")
     print("the program compiles and round-trips through shlex")
