@@ -2,11 +2,12 @@
 
 Every rule this gate applies is the shared one. The three statuses, what a citation may
 be, and the decision that execution overrules the recorded table all live in
-``edullm_platform.criteria``, and the nested-execution guard and the refusal to hand
-pytest anything but explicit node ids live in ``edullm_platform.criteria_runner``. This
-module holds what is specific to Phase 1, which is the criteria definition it reads and
-the report it renders. There is deliberately no second copy of any of the above: a phase
-that could restate the rule could restate it more kindly.
+``edullm_platform.criteria``; the nested-execution guard and the refusal to hand pytest
+anything but explicit node ids live in ``edullm_platform.criteria_runner``; and what a
+phase report computes and what its command prints live in ``edullm_platform.phase_gate``.
+This module holds what is specific to Phase 1, which is the criteria definition it reads
+and the number of criteria it holds the report to. There is deliberately no second copy of
+any of the above: a phase that could restate the rule could restate it more kindly.
 
 Phase 1 has no counterpart to Phase 0's operational inventory checks. Those were retained
 there because they came from an earlier definition of that phase and are useful; nothing
@@ -24,59 +25,25 @@ that refuses a proof bundle whose prose disagrees with the gate is run over it h
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Final
+from typing import ClassVar, Final
 
-from pydantic import BeforeValidator, Field, computed_field, model_validator
+from pydantic import Field
 
-from edullm_platform.contracts.base import ContractModel, require_ordered_sequence
-from edullm_platform.criteria import (
-    CriterionResult,
-    PilotVerdict,
-    execute_criteria,
-    pilot_verdict,
-)
+from edullm_platform.criteria import CriterionResult, execute_criteria
 from edullm_platform.phase1_criteria import PHASE1_CRITERION_COUNT, phase1_criteria
-from edullm_platform.status_prose import checked_phase_criteria_note
+from edullm_platform.phase_gate import OrderedCriteria, PhaseGateReport
 
 __all__ = ["PHASE", "Phase1GateReport", "evaluate_phase1_criteria", "evaluate_repository"]
 
 PHASE: Final = "Phase 1"
 
 
-class Phase1GateReport(ContractModel):
+class Phase1GateReport(PhaseGateReport):
     """The whole Phase 1 gate. Criteria only; see the module docstring for why."""
 
-    phase_criteria: Annotated[
-        tuple[CriterionResult, ...], BeforeValidator(require_ordered_sequence)
-    ] = Field(min_length=PHASE1_CRITERION_COUNT, strict=False)
-    phase_criteria_note: str = ""
+    phase: ClassVar[str] = PHASE
 
-    @model_validator(mode="after")
-    def _derive_and_check_the_note(self) -> Phase1GateReport:
-        # The note is derived rather than defaulted, so a caller cannot supply one and the
-        # field cannot hold a sentence nothing computed. The model is frozen, which is why
-        # this is written through object.__setattr__ at the end of validation.
-        object.__setattr__(
-            self,
-            "phase_criteria_note",
-            checked_phase_criteria_note(self.phase_criteria, phase=PHASE),
-        )
-        return self
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def passed(self) -> bool:
-        return all(criterion.passed for criterion in self.phase_criteria)
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def pilot(self) -> PilotVerdict:
-        """The adoption verdict, computed beside the gate's and never folded into it.
-
-        Derived rather than stored, for the reason the note is: a field a caller could
-        supply is a field that can disagree with the criteria printed beside it.
-        """
-        return pilot_verdict(self.phase_criteria)
+    phase_criteria: OrderedCriteria = Field(min_length=PHASE1_CRITERION_COUNT, strict=False)
 
 
 def evaluate_phase1_criteria(repo_root: Path) -> tuple[CriterionResult, ...]:
