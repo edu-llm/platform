@@ -1,4 +1,4 @@
-name: Deploy the Batch execution estate
+name: "Deploy: Batch execution estate"
 
 # The deployer role trust policy pins job_workflow_ref to
 # edu-llm/platform/.github/workflows/deploy-phase3-batch.yml@refs/heads/main.

@@ -1,4 +1,4 @@
-name: Deploy Phase 1 ECR repository
+name: "Deploy: ECR registry"
 
 # The deployer role trust policy pins job_workflow_ref to
 # edu-llm/platform/.github/workflows/deploy-phase1-ecr.yml@refs/heads/main.

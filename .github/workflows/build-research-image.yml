@@ -1,4 +1,4 @@
-name: Build research image
+name: "Platform: build research image (called by research repos)"
 
 # The publisher role trust policy pins job_workflow_ref to
 # edu-llm/platform/.github/workflows/build-research-image.yml@refs/heads/main.

@@ -1,4 +1,4 @@
-name: CI
+name: Checks (CI)
 
 # pull_request (not pull_request_target) is deliberate: fork pull requests run with a
 # read-only token and no access to secrets. Do not change this without understanding

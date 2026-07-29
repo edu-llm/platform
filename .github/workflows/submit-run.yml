@@ -1,4 +1,4 @@
-name: Submit a run for admission
+name: Submit a run
 
 # The admission role trust policy pins job_workflow_ref to
 # edu-llm/platform/.github/workflows/submit-run.yml@refs/heads/main, and pins the subject
