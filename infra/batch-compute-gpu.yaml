@@ -170,13 +170,22 @@ Resources:
         AttemptDurationSeconds: 3600
       ContainerProperties:
         # Pinned by digest, never by tag, for the reason infra/batch-compute.yaml gives.
-        # This is currently the same image the CPU definition runs -- the only image the
-        # platform has published -- and it carries no torch and no CUDA. That is deliberate
-        # for the capability run, which asks the container what devices it can see and
-        # nothing more. Repointing this at the training image is an edit here, and it is the
-        # diff a reviewer sees.
+        #
+        # The training image, built from OLMo-core a61e3dc and 3.28 GB against the CPU
+        # image's 45 MB. It carries torch pinned at 2.6.0 with CUDA, the project, boto3 and
+        # wandb, and the build asserts inside the image that torch is on the pin and is a
+        # CUDA build rather than a CPU wheel -- because a CPU torch here produces a run that
+        # trains slowly, costs GPU rates, and reports nothing wrong.
+        #
+        # This previously named the CPU image, deliberately, so the capability run could ask
+        # what devices it could see without depending on any of the above. That run answered
+        # it: NVIDIA A10G, 23028 MiB, driver 580.159.03.
+        #
+        # Its findings are recorded as reviewed in config/image-exceptions.yaml, and that
+        # entry is worth reading rather than assuming, because what it accepts changed when
+        # the image did.
         Image:
-          Fn::Sub: ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/sbsandbox-intern-edullm-olmo-core@sha256:4ebdba1ba3b57096efb4f4647ed41ed5ded4ac9e77e8c9038b7ff24db0bc6db8
+          Fn::Sub: ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/sbsandbox-intern-edullm-olmo-core@sha256:0c8a866e5bfc838292a1a645a05a7a1300b83d22d91f024d636e76df22c2badb
         ExecutionRoleArn:
           Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-execution
         JobRoleArn:
@@ -256,6 +265,20 @@ Resources:
           # sends, so the container parses one kind of value either way.
           - Name: EDULLM_OUTPUT_PREFIX
             Value: s3://sbsandbox-intern-edullm-outputs/no-submission-supplied-a-prefix/
+        # FOUR GIB OF /dev/shm, BECAUSE THE DEFAULT IS 64 MIB AND TORCH FAILS ON IT OBSCURELY.
+        #
+        # A PyTorch DataLoader with worker processes moves batches between them through
+        # shared memory. ECS gives a container 64 MiB of /dev/shm unless told otherwise,
+        # which is enough for the first few batches and not for a real one, so the failure
+        # arrives partway into training as "DataLoader worker (pid N) is killed by signal:
+        # Bus error" -- a message that names neither shared memory nor the setting that
+        # fixes it, on an instance billing $1.006/hour while somebody reads it.
+        #
+        # Four GiB of a g5.xlarge's sixteen, which is the conventional allowance and leaves
+        # the container's memory reservation above intact. This is a tmpfs, so it costs
+        # nothing until it is used.
+        LinuxParameters:
+          SharedMemorySize: 4096
         LogConfiguration:
           LogDriver: awslogs
           Options:

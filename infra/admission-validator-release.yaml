@@ -25,6 +25,15 @@
 # and needs no edit here. Releasing means running the procedure in infra/README.md and
 # updating both fields below in the same commit as the change that caused them to move.
 #
+# WHAT IT CAUGHT, TWICE, ON THE DAY IT WAS WRITTEN. The second time is the one that
+# justifies it. config/image-exceptions.yaml is packaged too, and it is the file the
+# validator reads to decide whether an image carrying blocking scan findings may run. The
+# training image was published, its findings read, its exception written and the job
+# definition repointed at it -- and none of that would have reached the validator. The next
+# submission would have been refused by a principal that had never heard of the digest,
+# which is the same shape as the refusal that cost the first GPU run: correct for the bytes
+# that produced it, wrong about the account, and naming the image rather than the release.
+#
 # THIS CONTROL IS COARSER THAN THE DEFECT IT CATCHES, AND THAT IS A CHOICE RATHER THAN AN
 # OVERSIGHT. The builder packages all of src/edullm_platform, so the digest moves for any
 # change to the package -- including modules the validator never imports. It moved within
@@ -45,8 +54,8 @@ schema_version: 1
 #: compared: a version id edited in one place and not the other is a template pointing at
 #: a zip nobody recorded, or a record describing a zip nobody deployed.
 s3_key: admission-validator/admission-validator.zip
-s3_object_version: zWJNnB6ixITetRhst_hOs0t_.KTZA84M
+s3_object_version: UHiPFSefv1Ae_6h9FHi9CLBwRBzn7K2Q
 
 #: sha256 of the uploaded zip, as tools/build_admission_lambda.py reports it. This is the
 #: field that ties the release to a tree rather than to a moment.
-sha256: 6c7a741532590c326db85f6c51721c0f145f3f56fae29284e208c25f6d80f49a
+sha256: 2e9aa6660cf6db396c9006b37108858f850ceebe446249a7ccacd8c28e27e698
