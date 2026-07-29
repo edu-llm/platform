@@ -28,9 +28,11 @@ from __future__ import annotations
 
 import argparse
 import inspect
+import io
 import json
 import shlex
 import subprocess
+import tokenize
 from pathlib import Path
 from typing import Final
 
@@ -40,6 +42,10 @@ from edullm_platform.checkpoints import (
     MARKER_SCHEMA_VERSION,
     success_marker_bytes,
 )
+from edullm_platform.config import load_yaml
+from edullm_platform.contracts.execution import ExecutionTarget
+from edullm_platform.contracts.manifest import RunManifest
+from edullm_platform.execution import batch_submit_request, refuse_an_oversized_override
 
 #: The image the GPU job definition is pinned to. Named here so the form this tool writes
 #: cannot drift from the definition that will run it; a submission naming a different digest
@@ -48,12 +54,27 @@ TRAINING_IMAGE_DIGEST: Final = (
     "sha256:e8f4d5aaea4c7a6e0f723f9b49fccf406ee63017baab4cea4e8b94b8e23e079f"
 )
 
+PROJECT_ROOT: Final = Path(__file__).resolve().parents[1]
+
 OLMO_CORE_CHECKOUT: Final = Path.home() / "projects-local" / "OLMo-core"
+
+#: The bucket only the platform writes to. Named here so the probe that this role cannot
+#: reach it has something to reach for.
+LINEAGE_BUCKET: Final = "sbsandbox-intern-edullm-lineage"
 
 #: How far the run trains. Twenty steps on synthetic tokens is not a claim about learning
 #: and is not dressed as one -- it is the smallest thing that exercises a real model, a real
 #: optimizer and real device memory, which is what the phase is about.
 TRAINING_STEPS: Final = 20
+
+#: A prefix belonging to a team that does not exist, which is the point. The workload role
+#: is scoped to ``teams/platform/runs/*``, so a read here must come back AccessDenied rather
+#: than NoSuchKey -- and the difference between those two answers is the whole check.
+#:
+#: NoSuchKey would mean the role *may* look and there is nothing there, which establishes no
+#: isolation at all. A team name nobody has bound makes the two outcomes distinguishable:
+#: there is certainly no object, so a 404 could only mean the grant is wider than it reads.
+FOREIGN_TEAM_PREFIX: Final = "teams/not-a-bound-team/runs/isolation-probe/"
 
 
 def marker_writer_source() -> str:
@@ -69,24 +90,82 @@ def marker_writer_source() -> str:
     )
 
 
-def training_program(*, steps: int = TRAINING_STEPS) -> str:
+def training_program(*, steps: int = TRAINING_STEPS, resume_from: str = "") -> str:
     """The program the container runs, with the platform's marker writer inside it.
 
     Every identity it uses comes from the environment the platform sets, never from this
     text: run id, team, output prefix and W&B project are all told to the container by
     ``batch_submit_request`` from the approved manifest. A project named here would be a
     submitter choosing their own attribution, which is the thing D4 exists to prevent.
+
+    Two things beyond training, both of which need a container and cannot be established
+    from a laptop.
+
+    ``resume_from`` loads a previous run's checkpoint back into this run's model. Until
+    something does, "a checkpoint is resumable" means the platform's reader will hand back a
+    reference to it -- not that torch will accept the bytes. Those are different claims and
+    only the second is what a researcher needs.
+
+    The isolation probe reads a prefix belonging to a team that does not exist. The workload
+    role's trust policy names the Batch and ECS task services, so no human can assume it and
+    be refused; the only principal that can be told no is a container. Without this, the
+    cross-team criterion rests on reading a policy document.
     """
+    resume_block = (
+        f'''
+# RESUMING FROM A CHECKPOINT A DIFFERENT RUN WROTE, which is the claim that had not been
+# tested. inspect_checkpoint establishes that the marker certifies the payload and that the
+# store agrees with the marker; it says nothing about whether torch can load the result.
+resumed = {{}}
+resume_uri = {resume_from!r}
+location = urlparse(resume_uri)
+buffer = io.BytesIO()
+s3 = boto3.client("s3")
+s3.download_fileobj(location.netloc, location.path.lstrip("/"), buffer)
+payload = buffer.getvalue()
+restored = torch.load(io.BytesIO(payload), map_location="cuda", weights_only=True)
+# load_state_dict is what makes this a resume rather than a download. strict=True so a
+# checkpoint from a different architecture is refused here rather than producing a model
+# that is silently part someone else's.
+model.load_state_dict(restored["model"], strict=True)
+resumed = {{
+    "uri": resume_uri,
+    "bytes": len(payload),
+    "sha256": "sha256:" + hashlib.sha256(payload).hexdigest(),
+    "step": restored["step"],
+    "tensors": len(restored["model"]),
+}}
+print(json.dumps({{"resumed": resumed}}, sort_keys=True))
+'''
+        if resume_from
+        else '\nresumed = {}\n'
+    )
+
     return f'''
 import hashlib, io, json, os, time
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
-import boto3, torch, wandb
+import boto3, botocore, torch, wandb
 from olmo_core.data import TokenizerConfig
 from olmo_core.nn.transformer import TransformerConfig
 
 {marker_writer_source()}
+
+
+def refusal_for(call, **arguments):
+    """What S3 said when this role reached for something, as a code rather than a boolean.
+
+    THE CODE IS THE EVIDENCE AND A BOOLEAN WOULD NOT BE. AccessDenied means the role may not
+    look. NoSuchKey or 404 means it may look and found nothing, which establishes no
+    isolation at all -- and is exactly what a probe against a prefix that happens to be
+    empty would return from a role permitting everything.
+    """
+    try:
+        call(**arguments)
+    except botocore.exceptions.ClientError as error:
+        return error.response["Error"]["Code"]
+    return "allowed"
 
 # Both halves of the silent failure this phase is about, asserted before anything is spent.
 # A CPU build reports no cuda version; a CUDA build with no device is a driver or a
@@ -107,6 +186,7 @@ model = TransformerConfig.olmo2_190M(vocab_size=vocab).build(init_device="cuda")
 model.train()
 parameters = sum(p.numel() for p in model.parameters())
 optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
+{resume_block}
 
 tracker = wandb.init(
     project=os.environ["EDULLM_WANDB_PROJECT"],
@@ -181,7 +261,34 @@ s3.put_object(
 # works.
 marker = s3.get_object(Bucket=bucket, Key=key + {MARKER_OBJECT!r})["Body"].read().decode()
 
+# WHAT THIS ROLE CANNOT REACH, established from inside the only principal that can be
+# refused. Four probes, because the interesting failures are asymmetric: a role that can
+# read another team's outputs leaks research, a role that can write there corrupts it, and
+# a role that can touch the lineage bucket at all can rewrite the record of what it did.
+#
+# The lineage probe is the sharpest of the four. Every other grant in this platform is
+# arguable; that one is the property the whole write-once design rests on.
+isolation = {{
+    "read_another_teams_prefix": refusal_for(
+        s3.get_object, Bucket=bucket, Key={FOREIGN_TEAM_PREFIX!r} + "model.pt"
+    ),
+    "write_to_another_teams_prefix": refusal_for(
+        s3.put_object, Bucket=bucket, Key={FOREIGN_TEAM_PREFIX!r} + "written.txt", Body=b"x"
+    ),
+    "list_the_whole_outputs_bucket": refusal_for(
+        s3.list_objects_v2, Bucket=bucket, Prefix=""
+    ),
+    "write_to_the_lineage_bucket": refusal_for(
+        s3.put_object,
+        Bucket={LINEAGE_BUCKET!r},
+        Key="result/" + run_id + ".json",
+        Body=b"{{}}",
+    ),
+}}
+
 summary = {{
+    "isolation": isolation,
+    "resumed": resumed,
     "gpu": gpu,
     "torch": torch.__version__,
     "cuda": torch.version.cuda,
@@ -205,10 +312,79 @@ tracker.finish()
 # learning, and dressing it as one would be the kind of evidence this repository spends its
 # time removing.
 assert torch.cuda.max_memory_allocated() > 0, "nothing was ever allocated on the GPU"
+
+# The isolation probes ARE asserted, and the run fails if any of them came back allowed.
+# Recording a refusal that did not happen would be worse than not probing: the capture would
+# say the boundary holds, and the criterion would cite it.
+reachable = sorted(name for name, code in isolation.items() if code == "allowed")
+assert not reachable, "this role reached something it must not: " + ", ".join(reachable)
 '''
 
 
-def dispatch_form(*, commit_sha: str, steps: int = TRAINING_STEPS) -> dict[str, str]:
+def _measuring_target() -> ExecutionTarget:
+    """A target that exists only to be measured, with the longest plausible ARNs.
+
+    The override's size depends on the environment ``batch_submit_request`` adds, and that
+    depends on the run id and the team rather than on anything here -- but building a real
+    request is the only way to measure what the platform will actually send, rather than a
+    reconstruction of it that can drift. The ARNs below are never used to submit anything.
+    """
+    account = "0" * 12
+    return ExecutionTarget(
+        compute_profile="gpu-1xa10g",
+        region="us-east-1",
+        job_queue_arn=f"arn:aws:batch:us-east-1:{account}:job-queue/sbsandbox-intern-edullm-gpu",
+        job_definition_arn=(
+            f"arn:aws:batch:us-east-1:{account}:job-definition/sbsandbox-intern-edullm-gpu-run"
+        ),
+        execution_role_arn=f"arn:aws:iam::{account}:role/sbsandbox-intern-edullm-batch-gpu-execution",
+        workload_role_arn=f"arn:aws:iam::{account}:role/sbsandbox-intern-edullm-batch-gpu-workload",
+        log_group="/aws/batch/sbsandbox-intern-edullm-gpu",
+    )
+
+
+def for_the_wire(program: str) -> str:
+    """The program with its comments removed, which is what actually gets submitted.
+
+    **BATCH CAPS ``containerOverrides`` AT 8,192 BYTES AND THIS PROGRAM DID NOT FIT.** The
+    version carrying the resume block and the four isolation probes came to 9,121 bytes,
+    which is 10,063 once the environment and the JSON are counted. It compiled, it validated
+    locally, it was dispatched, it was approved at the environment gate, it was admitted --
+    and Batch refused it with "Container Overrides length must be at most 8192", a message
+    that names neither the command nor the field that overran.
+
+    Comments are 2,581 of those bytes, and they are the right 2,581 to cut. They exist for
+    somebody reading this file, and this file is what gets reviewed; nobody reads the
+    command string in a Batch job description. Docstrings are kept -- they are 962 more and
+    are not needed, but they travel inside
+    :func:`edullm_platform.checkpoints.success_marker_bytes`, and stripping them would break
+    the property that what runs is the platform's function rather than a copy of it.
+
+    Tokenised rather than pattern-matched. A ``#`` inside a string literal is not a comment,
+    and the program contains several -- an S3 key fragment among them.
+    """
+    lines = program.splitlines(keepends=True)
+    starts_at: dict[int, int] = {}
+    for token in tokenize.generate_tokens(io.StringIO(program).readline):
+        if token.type == tokenize.COMMENT:
+            row, column = token.start
+            starts_at[row] = min(starts_at.get(row, column), column)
+    kept: list[str] = []
+    for number, line in enumerate(lines, start=1):
+        if number not in starts_at:
+            kept.append(line)
+            continue
+        # A trailing comment leaves its code; a whole-line comment leaves nothing, and the
+        # line goes with it rather than becoming a blank one.
+        remainder = line[: starts_at[number]].rstrip()
+        if remainder:
+            kept.append(remainder + "\n")
+    return "".join(kept)
+
+
+def dispatch_form(
+    *, commit_sha: str, steps: int = TRAINING_STEPS, resume_from: str = ""
+) -> dict[str, str]:
     return {
         "repository": "OLMo-core",
         "commit_sha": commit_sha,
@@ -218,7 +394,8 @@ def dispatch_form(*, commit_sha: str, steps: int = TRAINING_STEPS) -> dict[str, 
         "team": "platform",
         "wandb_project": "edullm-platform-smoke",
         "maximum_runtime_hours": "0.5",
-        "command": "python -c " + shlex.quote(training_program(steps=steps)),
+        "command": "python -c "
+        + shlex.quote(for_the_wire(training_program(steps=steps, resume_from=resume_from))),
     }
 
 
@@ -240,8 +417,34 @@ TEXT_FIELDS: Final = (
 WHOLE_FIELDS: Final = ("maximum_attempts", "fanout_size", "fanout_parallelism")
 
 
+def dispatch_inputs(form: dict[str, str]) -> dict[str, str]:
+    """What ``gh workflow run --json`` is given. Every value a string, including the command.
+
+    THIS AND :func:`workflow_inputs` ARE DIFFERENT SHAPES AND CONFLATING THEM COSTS A
+    DISPATCH. ``workflow_dispatch`` declares every input as ``type: string``, so a JSON array
+    is refused before the run starts -- "cannot unmarshal array into Go value of type
+    string", which reads like a malformed payload rather than a field of the wrong type.
+
+    The command is therefore one shell command line, POSIX-quoted, and the workflow splits
+    it on the runner. That split is the workflow's and is mirrored in
+    :func:`workflow_inputs` so the payload can be validated here against what will actually
+    be built there.
+    """
+    return {
+        field: str(form[field]).strip()
+        for field in (*TEXT_FIELDS, *WHOLE_FIELDS, "command")
+        if str(form.get(field, "")).strip()
+    }
+
+
 def workflow_inputs(form: dict[str, str]) -> dict[str, object]:
-    """The form as ``gh workflow run --json`` would deliver it, command already split."""
+    """The form the *workflow* assembles from those inputs, with the command already split.
+
+    Mirrors the inline script in ``.github/workflows/submit-run.yml``: text fields stripped
+    and dropped when empty, the three bounds parsed as whole numbers, and the command run
+    through ``shlex.split``. It exists so a payload can be validated against
+    ``SubmissionInputs`` on a laptop rather than discovered to be wrong by a runner.
+    """
     inputs: dict[str, object] = {}
     for field in TEXT_FIELDS:
         value = str(form.get(field, "")).strip()
@@ -280,18 +483,35 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--checkout", type=Path, default=OLMO_CORE_CHECKOUT)
+    parser.add_argument(
+        "--resume-from",
+        default="",
+        help=(
+            "an s3:// URI of a checkpoint payload a previous run wrote. Given, the program "
+            "loads it back into this run's model before training, which is the only way to "
+            "establish that a checkpoint is resumable rather than merely certified."
+        ),
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
     commit = arguments.commit_sha or head_of(arguments.checkout)
-    form = dispatch_form(commit_sha=commit, steps=arguments.steps)
-    inputs = workflow_inputs(form)
-    arguments.output.write_text(json.dumps(inputs, indent=2, sort_keys=True) + "\n")
+    form = dispatch_form(
+        commit_sha=commit, steps=arguments.steps, resume_from=arguments.resume_from
+    )
+    # The dispatch payload is what gets written; the split form is only ever used to
+    # check it here. Writing the split one was a real defect: gh refused it, and the
+    # message named the JSON rather than the field.
+    arguments.output.write_text(
+        json.dumps(dispatch_inputs(form), indent=2, sort_keys=True) + "\n"
+    )
 
-    program = training_program(steps=arguments.steps)
-    command = inputs["command"]
+    program = for_the_wire(
+        training_program(steps=arguments.steps, resume_from=arguments.resume_from)
+    )
+    command = workflow_inputs(form)["command"]
     # The program must survive the round trip the workflow puts it through, or the container
     # runs something that merely parses.
     assert isinstance(command, list), "the command must reach the workflow as a list of words"
@@ -299,10 +519,25 @@ def main(argv: list[str] | None = None) -> int:
     assert command[-1] == program, "shlex did not round-trip the program"
     compile(program, "<training>", "exec")
 
+    # The same refusal the platform applies, applied here, so an oversized submission costs
+    # a local error rather than a dispatch, an approval and a Batch rejection.
+    refuse_an_oversized_override(
+        batch_submit_request(
+            manifest=load_yaml(
+                PROJECT_ROOT / "fixtures" / "manifests" / "gpu-routine.yaml", RunManifest
+            ).model_copy(update={"command": tuple(command)}),
+            target=_measuring_target(),
+            run_id="run_" + "0" * 36,
+        )["ContainerOverrides"]
+    )
+
     print(f"commit         {commit}")
     print(f"steps          {arguments.steps}")
-    print(f"program bytes  {len(program)}")
+    print(f"resume from    {arguments.resume_from or '(nothing)'}")
+    print(f"program bytes  {len(program)} on the wire, "
+          f"{len(training_program(steps=arguments.steps, resume_from=arguments.resume_from))} as written")
     print(f"written        {arguments.output}")
+    print(f"dispatch with  gh workflow run submit-run.yml --ref main --json < {arguments.output}")
     print("the program compiles and round-trips through shlex")
     return 0
 

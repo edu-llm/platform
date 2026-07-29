@@ -154,20 +154,27 @@ def test_the_two_checkpoint_criteria_are_proved_on_functions_rather_than_on_one_
     }, "the resumable half is also proved against the checkpoint a real run wrote"
 
 
-def test_the_cross_team_criterion_admits_it_reads_a_policy_rather_than_a_refusal() -> None:
-    """Mutation: state it as though a container had been told no.
+def test_the_cross_team_criterion_rests_on_a_refusal_and_says_which_one() -> None:
+    """Mutation: leave it citing the policy reader after a container was refused.
 
-    It has not. The workload role's trust policy names the Batch and ECS task services, so
-    no laptop can assume it and be refused. Overstating this is the exact failure mode a
-    security check has -- it reads as stronger than it is, and nobody rechecks a criterion
-    that says covered.
+    This criterion rested on the deployed policy document until a run probed four prefixes
+    and recorded what S3 said. The upgrade has to reach the citations, not just the prose:
+    a criterion whose scope limits describe a refusal while its proving tests read a
+    template is claiming the stronger thing and checking the weaker one.
+
+    The distinction the prose has to keep is AccessDenied against NoSuchKey. The second
+    means the role was permitted to look and found nothing -- which is what a role granting
+    everything returns from an empty prefix, and establishes no isolation at all.
     """
     (isolation,) = [spec for spec in phase4_criteria() if spec.number == "7"]
     written = " ".join(isolation.scope_limits)
 
     assert isolation.status is CriterionStatus.COVERED
-    assert "rather than from a denial anybody" in written
+    assert "AccessDenied" in written and "NoSuchKey" in written
     assert "SimulatePrincipalPolicy" in written
+    assert any(
+        "was_refused" in node_id for node_id in isolation.proving_node_ids
+    ), "the proving citation must read the refusal, not the grant"
 
 
 def test_no_criterion_cites_an_evidence_file_instead_of_a_test() -> None:
@@ -192,7 +199,8 @@ def test_a_covered_criterion_never_rests_on_evidence_that_is_not_committed() -> 
     runs = sorted(path.name for path in (CAPTURE_ROOT / "runs").iterdir() if path.is_dir())
 
     assert committed, "no covered criterion may rest on captures nobody committed"
-    assert len(runs) == 3
+    # Not a count: runs accumulate, and a number here becomes something somebody bumps.
+    assert runs, "no run capture is committed, so every criterion citing one proves nothing"
 
 
 @pytest.mark.slow

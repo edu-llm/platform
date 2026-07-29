@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: ECR repository for finished OLMo-core commit images.
+Description: One ECR repository per registered research repository, for finished commit images.
 
 Resources:
   OlmoCoreRepository:
@@ -46,7 +46,54 @@ Resources:
             ]
           }
 
+  EdullmDataRepository:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      RepositoryName: sbsandbox-intern-edullm-data
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: IMMUTABLE
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Expire untagged images older than 7 days",
+                "selection": {
+                  "tagStatus": "untagged",
+                  "countType": "sinceImagePushed",
+                  "countUnit": "days",
+                  "countNumber": 7
+                },
+                "action": {
+                  "type": "expire"
+                }
+              },
+              {
+                "rulePriority": 2,
+                "description": "Retain at most 50 tagged images",
+                "selection": {
+                  "tagStatus": "tagged",
+                  "tagPatternList": ["*"],
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 50
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+
 Outputs:
   RepositoryName:
     Value:
       Ref: OlmoCoreRepository
+  EdullmDataRepositoryName:
+    Value:
+      Ref: EdullmDataRepository

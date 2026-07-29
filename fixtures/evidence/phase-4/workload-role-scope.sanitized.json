@@ -1,7 +1,7 @@
 {
   "environment": "sandbox",
   "grants_delete": false,
-  "observed_at": "2026-07-29T07:21:17Z",
+  "observed_at": "2026-07-29T15:20:37Z",
   "reaches_the_lineage_bucket": false,
   "readable_prefixes": [
     "teams/platform/runs/*"

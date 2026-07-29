@@ -622,3 +622,50 @@ def test_an_exception_summary_still_carries_everything_a_routine_one_does(
     assert "**EXCEPTION**" in summary
     for field in REQUIRED_CONTEXT_FIELDS:
         assert fragments[field] in summary, f"{ceiling} summary omitted {field}"
+
+
+# ---------------------------------------------------------------------------------------
+# The repository and the workload profile have to be the same repository
+# ---------------------------------------------------------------------------------------
+
+
+def test_a_workload_profile_from_another_repository_is_refused() -> None:
+    """Mutation: drop the comparison and let the two fields disagree.
+
+    MEASURED BEFORE IT WAS FIXED: a submission naming repository OLMo-core with workload
+    profile dolma-tokenize-smoke compiled cleanly, classified routine, and routed to a
+    lead. Two fields that must agree, and nothing compared them -- the same defect shape as
+    the three-way output-prefix disagreement Phase 4 inherited.
+
+    What would have run is whichever image the digest named, under a workload contract
+    written for a different codebase: the runtime bound, the attempt bound and the
+    checkpoint contract would all have been the other repository's.
+    """
+    with pytest.raises(SubmissionRefusedError, match="belongs to repository"):
+        compile_payload(olmo_payload(workload_profile="dolma-tokenize-smoke"))
+
+
+def test_the_refusal_names_both_repositories_so_the_reader_knows_which_to_change() -> None:
+    """Mutation: refuse with a message naming only the workload.
+
+    Either field could be the wrong one. A message saying only that the workload is wrong
+    sends somebody to change the workload when they meant to change the repository, and
+    the second attempt fails for the same reason with the same message.
+    """
+    with pytest.raises(SubmissionRefusedError) as refusal:
+        compile_payload(olmo_payload(workload_profile="dolma-tokenize-smoke"))
+
+    assert "dolma" in str(refusal.value)
+    assert "OLMo-core" in str(refusal.value)
+
+
+def test_a_workload_profile_from_the_declared_repository_is_accepted() -> None:
+    """The other half. Mutation: compare the wrong way round, or always refuse.
+
+    A check that refused everything would pass the two tests above and stop the platform
+    working, which is why the agreeing case is asserted beside the disagreeing ones.
+    """
+    compiled = compile_payload(olmo_payload())
+
+    assert compiled.manifest.repository == "OLMo-core"
+    assert compiled.manifest.workload_profile == OLMO_WORKLOAD

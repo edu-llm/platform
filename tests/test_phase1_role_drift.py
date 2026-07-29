@@ -171,7 +171,7 @@ def test_the_publisher_projection_is_the_role_the_template_declares(
 
     assert len(publisher_template.inline_policies) == 1
     policy = publisher_template.inline_policies[0]
-    assert policy.policy_name == "publish-olmo-core-images"
+    assert policy.policy_name == "publish-research-images"
     assert policy.policy_version == "2012-10-17"
     assert len(policy.statements) == 2
     assert policy.statements[0].action_match.actions == ("ecr:GetAuthorizationToken",)
@@ -612,7 +612,7 @@ def test_an_inline_policy_the_template_declares_and_the_role_lacks_is_narrower(
     report = compare(deployed, publisher_template)
 
     assert directions(report) == [DriftDirection.NARROWER]
-    assert "publish-olmo-core-images" in details(report)
+    assert "publish-research-images" in details(report)
 
 
 def test_a_deny_statement_the_role_added_is_narrower_not_wider(

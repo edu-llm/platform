@@ -17,6 +17,7 @@ capacity that does not exist.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -52,7 +53,9 @@ from edullm_platform.contracts.workload import (
     WorkloadCatalog,
 )
 from edullm_platform.execution import (
+    MAXIMUM_CONTAINER_OVERRIDES_BYTES,
     MINIMUM_ATTEMPT_DURATION_SECONDS,
+    ContainerOverridesTooLargeError,
     attempt_duration_seconds,
     batch_submit_request,
     resolve_execution_target,
@@ -586,3 +589,53 @@ def test_an_execution_target_must_name_two_different_roles() -> None:
             targets=ExecutionTargetCatalog(schema_version=1, targets=(collapsed,)),
             account_id=ACCOUNT_ID,
         )
+
+
+# ---------------------------------------------------------------------------------------
+# The service limit the submission path has to know about
+# ---------------------------------------------------------------------------------------
+
+
+def test_a_submission_batch_would_reject_for_size_is_refused_before_it_is_sent() -> None:
+    """Mutation: drop the check and let Batch answer.
+
+    IT DID, AND THE ANSWER ARRIVED TOO LATE TO BE USEFUL. A 9,121-byte training program was
+    compiled, validated locally, dispatched, approved at the environment gate, admitted by
+    the state machine, and submitted -- and Batch refused it with "Container Overrides
+    length must be at most 8192". Everything before Batch is cheap and reversible; the
+    approval is a person's attention, and spending it on a submission that cannot be
+    accepted is the one thing this path should never do.
+
+    The message names the limit, the measured size and the command's share of it, because
+    the AWS message names none of those and reads like a problem with the job definition.
+    """
+    with pytest.raises(ContainerOverridesTooLargeError, match="8192"):
+        request_for(command=["python", "-c", "x" * 9000])
+
+
+def test_the_budget_counts_the_environment_and_not_only_the_command() -> None:
+    """Mutation: measure the command's length instead of the serialized override.
+
+    The environment, the JSON punctuation and the key names are all inside the same limit,
+    and this platform adds six variables to every submission -- one of which is a full S3
+    URI containing the run id. A command comfortably under 8,192 can still overrun, and a
+    check that only weighed the command would pass it.
+    """
+    just_under_on_its_own = "y" * (MAXIMUM_CONTAINER_OVERRIDES_BYTES - 120)
+
+    with pytest.raises(ContainerOverridesTooLargeError):
+        request_for(command=["python", "-c", just_under_on_its_own])
+
+
+def test_an_ordinary_submission_is_nowhere_near_the_limit() -> None:
+    """Mutation: set the limit to something the normal path trips.
+
+    A guard that fired on ordinary work would be routed around within a week, so the
+    headroom is asserted rather than assumed.
+    """
+    request = request_for(command=["python", "-c", "print('hello')"])
+    serialized = len(
+        json.dumps(request["ContainerOverrides"], separators=(",", ":")).encode("utf-8")
+    )
+
+    assert serialized < MAXIMUM_CONTAINER_OVERRIDES_BYTES // 4

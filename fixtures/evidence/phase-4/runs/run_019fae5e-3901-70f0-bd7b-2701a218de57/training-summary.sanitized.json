@@ -1,0 +1,24 @@
+{
+  "checkpoint_uri": "s3://sbsandbox-intern-edullm-outputs/teams/platform/runs/run_019fae5e-3901-70f0-bd7b-2701a218de57/checkpoints/step-20/",
+  "cuda_version": "12.8",
+  "environment": "sandbox",
+  "first_loss": 9.7138,
+  "gpu_name": "NVIDIA A10G",
+  "last_loss": 10.7073,
+  "log_group": "/aws/batch/sbsandbox-intern-edullm-gpu",
+  "log_stream": "gpu-run/default/2804ccf75bdf46d3a8cb772e8161ba67",
+  "metric_keys": [
+    "train/ce_loss",
+    "train/step"
+  ],
+  "observed_at": "2026-07-29T15:18:54Z",
+  "parameters": 190550784,
+  "peak_memory_gib": 4.7,
+  "run_id": "run_019fae5e-3901-70f0-bd7b-2701a218de57",
+  "seconds": 2.51,
+  "source": "aws",
+  "steps": 20,
+  "torch_version": "2.9.0+cu128",
+  "wandb_project": "edullm-platform-smoke",
+  "wandb_run_url": "https://wandb.ai/eduLLM/edullm-platform-smoke/runs/xvmjhabb"
+}

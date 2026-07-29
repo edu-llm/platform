@@ -342,7 +342,7 @@ def permission_statement_payload(**overrides: object) -> dict[str, object]:
 
 def inline_policy_payload(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
-        "policy_name": "publish-olmo-core-images",
+        "policy_name": "publish-research-images",
         "policy_version": "2012-10-17",
         "statements": [
             permission_statement_payload(
@@ -1126,7 +1126,7 @@ def test_the_deployed_role_carries_what_a_template_comparison_needs() -> None:
         "token.actions.githubusercontent.com:sub",
     ]
     policy = evidence.inline_policies[0]
-    assert policy.policy_name == "publish-olmo-core-images"
+    assert policy.policy_name == "publish-research-images"
     assert policy.statements[1].resource_match.element == "Resource"
     assert policy.statements[1].resource_match.resources == (REDACTED_REPOSITORY_ARN,)
 

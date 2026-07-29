@@ -21,6 +21,7 @@ import hashlib
 import json
 import shlex
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -31,17 +32,29 @@ from edullm_platform.checkpoints import (
     inspect_checkpoint,
     success_marker_bytes,
 )
+from edullm_platform.config import load_yaml
+from edullm_platform.contracts.manifest import RunManifest
+from edullm_platform.execution import (
+    MAXIMUM_CONTAINER_OVERRIDES_BYTES,
+    batch_submit_request,
+)
 from tests.fake_object_store import FakeObjectStore
 from tools.build_gpu_training_submission import (
+    FOREIGN_TEAM_PREFIX,
+    LINEAGE_BUCKET,
     TRAINING_IMAGE_DIGEST,
     dispatch_form,
+    dispatch_inputs,
+    for_the_wire,
     marker_writer_source,
     training_program,
     workflow_inputs,
 )
+from tools.build_gpu_training_submission import _measuring_target as measuring_target
 
 COMMIT = "b067a31e48c4038416d179fc85e5f12b05c8d2a9"
 BUCKET = "sbsandbox-intern-edullm-outputs"
+OUTPUTS_BUCKET = BUCKET
 RUN_ID = "run_019fab9d-d1d0-7009-935f-b0189a9c8a86"
 PREFIX = f"s3://{BUCKET}/teams/platform/runs/{RUN_ID}/checkpoints/step-20/"
 PAYLOAD = b"the weights, or something the size of them"
@@ -81,7 +94,7 @@ def test_the_program_survives_the_split_the_workflow_puts_it_through() -> None:
 
     assert isinstance(command, list)
     assert command[:2] == ["python", "-c"]
-    assert command[-1] == training_program()
+    assert command[-1] == for_the_wire(training_program())
     assert len(command) == 3, "the program must be one word, not several"
 
 
@@ -101,8 +114,6 @@ def test_the_form_names_the_image_the_gpu_job_definition_is_pinned_to() -> None:
     the definition does not carry is refused at admission, which is the right answer and a
     slow way to learn it: the refusal names the image, not the disagreement.
     """
-    from pathlib import Path
-
     template = (Path(__file__).resolve().parents[1] / "infra" / "batch-compute-gpu.yaml").read_text()
 
     assert TRAINING_IMAGE_DIGEST in template
@@ -257,18 +268,253 @@ def test_the_step_count_reaches_the_checkpoint_prefix_and_the_loop_together(step
     assert f'torch.save({{"step": {steps}' in program
 
 
-def test_the_command_is_the_only_field_the_workflow_receives_as_a_list() -> None:
-    """Mutation: send the command as a string.
+# ---------------------------------------------------------------------------------------
+# The limit that cost a run, an approval and a submission
+# ---------------------------------------------------------------------------------------
 
-    ``gh workflow run --json`` delivers what it is given, and a string command is a single
-    argument the container never splits -- so the whole program becomes the name of a file
-    Python is asked to find.
+
+def test_the_submitted_program_fits_inside_what_batch_will_accept() -> None:
+    """Mutation: submit the program as written.
+
+    NOT HYPOTHETICAL. The version carrying the resume block and the four probes came to
+    9,121 bytes, 10,063 once the environment and the JSON were counted. It compiled, it
+    validated, it was dispatched, it was approved at the environment gate, it was admitted
+    -- and Batch refused it with "Container Overrides length must be at most 8192", naming
+    neither the command nor the field that overran.
+
+    Measured through ``batch_submit_request`` rather than over the command's characters,
+    because the environment and the JSON punctuation are inside the same budget: a command
+    comfortably under the limit can still push the override over it.
     """
-    inputs = workflow_inputs(dispatch_form(commit_sha=COMMIT))
+    manifest = load_yaml(
+        Path(__file__).resolve().parents[1] / "fixtures" / "manifests" / "gpu-routine.yaml",
+        RunManifest,
+    )
+    command = workflow_inputs(dispatch_form(commit_sha=COMMIT))["command"]
+    assert isinstance(command, list)
 
-    listed = [name for name, value in inputs.items() if isinstance(value, list)]
-    assert listed == ["command"]
-    assert all(isinstance(value, str | int | list) for value in inputs.values())
+    request = batch_submit_request(
+        manifest=manifest.model_copy(update={"command": tuple(command)}),
+        target=measuring_target(),
+        run_id=RUN_ID,
+    )
+    serialized = len(
+        json.dumps(request["ContainerOverrides"], separators=(",", ":")).encode("utf-8")
+    )
+
+    assert serialized <= MAXIMUM_CONTAINER_OVERRIDES_BYTES, (
+        f"the override is {serialized} bytes and Batch accepts "
+        f"{MAXIMUM_CONTAINER_OVERRIDES_BYTES}"
+    )
+
+
+def test_the_wire_form_removes_comments_and_changes_nothing_else() -> None:
+    """Mutation: strip docstrings too, or strip nothing.
+
+    Comments are 2,581 bytes of this program and exist for somebody reading the tool, which
+    is what gets reviewed; nobody reads the command string in a Batch job description.
+    Docstrings are kept because they travel inside the platform's own marker writer, and
+    removing them would break the property that what runs is that function rather than a
+    copy of it.
+    """
+    written = training_program(resume_from=f"s3://{BUCKET}/teams/platform/runs/x/model.pt")
+    wire = for_the_wire(written)
+
+    assert len(wire) < len(written)
+    assert "# Both halves of the silent failure" not in wire
+    assert "# WHAT THIS ROLE CANNOT REACH" not in wire
+    assert '"""' in wire, "docstrings stay; they carry the platform's own function"
+    compile(wire, "<wire>", "exec")
+
+
+def test_a_hash_inside_a_string_is_not_treated_as_a_comment() -> None:
+    """Mutation: strip comments with a regex on ``#``.
+
+    The program contains hashes inside string literals, and a pattern-matching stripper
+    would truncate the line at the first one -- producing a program that still compiles,
+    still runs, and does something different. Tokenising is what makes the distinction.
+    """
+    source = 'value = "a # b"  # this is the comment\nother = 1\n'
+
+    assert for_the_wire(source) == 'value = "a # b"\nother = 1\n'
+
+
+def test_the_wire_form_still_carries_the_platforms_marker_writer() -> None:
+    """Reads BOTH sides. Mutation: strip docstrings, which would silently break this.
+
+    The embedding is only worth anything if the bytes survive the transformation applied on
+    the way to the wire. A stripper that removed docstrings would leave a function that
+    behaves the same and is no longer the same source, and the test asserting it *is* the
+    same source is checking the unstripped form.
+    """
+    wire = for_the_wire(training_program())
+
+    assert marker_writer_source() in wire
+
+
+# ---------------------------------------------------------------------------------------
+# The two things only a container can establish
+# ---------------------------------------------------------------------------------------
+
+
+def test_the_isolation_probe_reads_the_code_rather_than_whether_the_call_threw() -> None:
+    """Mutation: record the probe as a boolean, or catch every exception as a refusal.
+
+    ``AccessDenied`` means the role may not look. ``NoSuchKey`` means it may look and found
+    nothing, which establishes no isolation whatsoever -- and is exactly what a probe
+    against an empty prefix returns from a role that permits everything. A boolean cannot
+    tell those apart, so the code is what gets recorded.
+    """
+    program = training_program()
+
+    assert 'return error.response["Error"]["Code"]' in program
+    assert 'return "allowed"' in program
+    assert "botocore.exceptions.ClientError" in program
+
+
+def test_the_probe_reaches_for_a_team_nobody_has_bound() -> None:
+    """Mutation: probe a team that exists, or one whose prefix might hold an object.
+
+    The probe has to be against a prefix where the two outcomes are distinguishable. A real
+    team's prefix could legitimately be empty, so a 404 there would be ambiguous; a team
+    nobody has bound certainly holds nothing, which makes anything other than AccessDenied
+    a statement that the grant is wider than it reads.
+    """
+    program = training_program()
+
+    assert FOREIGN_TEAM_PREFIX in program
+    assert "not-a-bound-team" in FOREIGN_TEAM_PREFIX
+
+
+def test_all_four_probes_are_asserted_rather_than_merely_recorded() -> None:
+    """Mutation: print the probe results and let the run succeed anyway.
+
+    Recording a refusal that did not happen is worse than not probing at all: the capture
+    would say the boundary holds, and a criterion would cite it. The run has to fail if any
+    probe came back allowed, which is the difference between evidence and a log line.
+    """
+    program = training_program()
+
+    for probe in (
+        "read_another_teams_prefix",
+        "write_to_another_teams_prefix",
+        "list_the_whole_outputs_bucket",
+        "write_to_the_lineage_bucket",
+    ):
+        assert probe in program, probe
+    assert 'assert not reachable, "this role reached something it must not: "' in program
+
+
+def test_the_lineage_bucket_probe_names_the_bucket_the_platform_alone_writes_to() -> None:
+    """Reads BOTH sides. Mutation: probe the outputs bucket twice.
+
+    The sharpest of the four. Every other grant on this role is arguable; the one that is
+    not is that a workload cannot write to the store recording what it did. A probe that
+    named the wrong bucket would pass, prove nothing, and read as though it had.
+    """
+    program = training_program()
+
+    assert OUTPUTS_BUCKET != LINEAGE_BUCKET
+    assert f"Bucket={LINEAGE_BUCKET!r}" in program
+    assert 'Key="result/" + run_id + ".json"' in program, (
+        "the key has to be one the lifecycle recorder itself writes, or the probe tests a "
+        "prefix nothing was ever going to grant"
+    )
+
+
+def test_a_resume_loads_the_state_dict_rather_than_only_downloading_it() -> None:
+    """Mutation: download the payload and check its digest, without loading it.
+
+    That is the claim the committed evidence already makes -- inspect_checkpoint says the
+    marker certifies the payload and the store agrees. What it cannot say is whether torch
+    will accept the bytes into this architecture, which is the thing a researcher resuming
+    a run actually needs.
+    """
+    program = training_program(resume_from=f"s3://{BUCKET}/teams/platform/runs/x/model.pt")
+
+    assert "torch.load(" in program
+    assert 'model.load_state_dict(restored["model"], strict=True)' in program
+
+
+def test_a_resume_refuses_a_checkpoint_from_a_different_architecture() -> None:
+    """Mutation: pass strict=False.
+
+    A non-strict load accepts a state dict that is missing tensors or carries unexpected
+    ones, leaving a model that is silently part somebody else's -- and it trains, and the
+    loss looks plausible, and nothing anywhere says which weights came from where.
+    """
+    program = training_program(resume_from=f"s3://{BUCKET}/teams/platform/runs/x/model.pt")
+
+    assert "strict=True" in program
+    assert "strict=False" not in program
+
+
+def test_a_run_with_nothing_to_resume_from_carries_no_resume_code_at_all() -> None:
+    """Mutation: emit the resume block with an empty URI and let it fail at runtime.
+
+    A first run has nothing to resume from, and that is the ordinary case rather than an
+    error. Emitting the block with an empty URI would make every first run fail on a
+    download of nothing -- on a paid GPU instance, after the image pull.
+    """
+    program = training_program()
+
+    assert "resumed = {}" in program
+    assert "download_fileobj" not in program
+    assert "load_state_dict" not in program
+
+
+def test_the_summary_carries_both_new_sections_so_the_capture_can_read_them() -> None:
+    """Mutation: probe and resume, and print neither.
+
+    CloudWatch is the only channel out of the container. A probe whose result never reaches
+    the log is a probe nobody can capture, and the criterion would be resting on the fact
+    that somebody once watched it happen.
+    """
+    program = training_program(resume_from=f"s3://{BUCKET}/teams/platform/runs/x/model.pt")
+
+    assert '"isolation": isolation,' in program
+    assert '"resumed": resumed,' in program
+
+
+def test_the_dispatch_payload_is_every_field_as_a_string_including_the_command() -> None:
+    """Reads BOTH sides. Mutation: send the command as a list, which is what this did.
+
+    ``workflow_dispatch`` declares every input as ``type: string``, so gh refuses an array
+    before the run starts -- with "cannot unmarshal array into Go value of type string",
+    which reads like a malformed payload rather than one field of the wrong type. Asserted
+    against the workflow's own declarations rather than against a remembered rule.
+    """
+    workflow = (
+        Path(__file__).resolve().parents[1] / ".github" / "workflows" / "submit-run.yml"
+    ).read_text()
+    payload = dispatch_inputs(dispatch_form(commit_sha=COMMIT))
+
+    assert all(isinstance(value, str) for value in payload.values())
+    for name in payload:
+        declared = workflow.split(f"{name}:", 1)[1].split("type:", 1)[1].split("\n", 1)[0]
+        # choice as well as string: GitHub resolves a choice to a string on the wire, so
+        # both are single strings in the payload. What must not appear is boolean or number,
+        # which arrive as their own JSON types and would be refused the same way an array is.
+        assert declared.strip() in ("string", "choice"), f"{name} is declared {declared.strip()}"
+
+
+def test_the_split_the_workflow_performs_is_mirrored_here_and_not_guessed() -> None:
+    """Mutation: split the command differently from the runner does.
+
+    The payload carries one shell command line and the workflow splits it with
+    ``shlex.split``. Validating locally against a different split would prove a payload
+    correct that the runner then builds into something else -- which is the failure the
+    local validation exists to prevent.
+    """
+    workflow = (
+        Path(__file__).resolve().parents[1] / ".github" / "workflows" / "submit-run.yml"
+    ).read_text()
+    form = dispatch_form(commit_sha=COMMIT)
+
+    assert 'shlex.split(os.environ.get("FORM_COMMAND", ""))' in workflow
+    assert workflow_inputs(form)["command"] == shlex.split(
+        dispatch_inputs(form)["command"]
+    )
 
 
 def test_the_form_carries_no_field_the_submission_workflow_would_not_read() -> None:
@@ -277,8 +523,6 @@ def test_the_form_carries_no_field_the_submission_workflow_would_not_read() -> N
     A field the workflow does not declare is dropped silently by ``gh workflow run``, so a
     submission built here would dispatch and mean something different from what it says.
     """
-    from pathlib import Path
-
     workflow = (
         Path(__file__).resolve().parents[1] / ".github" / "workflows" / "submit-run.yml"
     ).read_text()
@@ -297,5 +541,5 @@ def test_the_program_round_trips_when_the_form_is_serialized_and_read_back() -> 
     inputs = workflow_inputs(dispatch_form(commit_sha=COMMIT))
     round_tripped = json.loads(json.dumps(inputs))
 
-    assert round_tripped["command"][-1] == training_program()
+    assert round_tripped["command"][-1] == for_the_wire(training_program())
     assert shlex.split(shlex.join(round_tripped["command"])) == round_tripped["command"]

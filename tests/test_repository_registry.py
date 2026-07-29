@@ -1,6 +1,8 @@
 from pathlib import Path
+from typing import Any
 
 import pytest
+import yaml
 from pydantic import ValidationError
 
 from edullm_platform.config import load_yaml
@@ -32,24 +34,49 @@ def registry_payload(*repositories: dict[str, object]) -> dict[str, object]:
     return {"repositories": list(repositories or (repository_payload(),))}
 
 
-def test_shipped_repository_registry_contains_exact_olmo_core_registration() -> None:
+def test_the_shipped_registry_registers_olmo_core_exactly_as_it_was_reviewed() -> None:
+    """Mutation: change any field of the registration that is deployed and running.
+
+    Pinned field for field rather than by count. This used to assert the whole registry
+    equalled one entry, which was the same thing while one repository was registered and
+    became a barrier to registering a second -- the invariant was never "there is one
+    repository", it was "this repository's registration is what was reviewed".
+    """
+    root = Path(__file__).resolve().parents[1]
+    registry = load_yaml(root / "config" / "repositories.yaml", RepositoryRegistry)
+    olmo = next(
+        entry for entry in registry.repositories if entry.repository == "OLMo-core"
+    )
+
+    assert olmo.model_dump() == {
+        "repository": "OLMo-core",
+        "github_repository_id": 1306868157,
+        "default_branch": "main",
+        "ecr_repository": "sbsandbox-intern-edullm-olmo-core",
+        "base_image_repository": "docker.io/library/python",
+        "base_image_digest": BASE_DIGEST,
+        "dockerfile_path": ".edullm/Dockerfile",
+        "build_context": ".",
+    }
+
+
+def test_every_registration_names_a_distinct_ecr_repository() -> None:
+    """Mutation: copy a registration and forget to change where its images go.
+
+    Two repositories pushing to one ECR repository is not an error anywhere -- the tags
+    are per-commit and would not collide -- so nothing fails. What is lost is that the
+    repository an image came from stops being answerable from where it is stored, and the
+    image tag immutability that the whole provenance chain rests on is protecting one
+    namespace shared by two codebases.
+    """
     root = Path(__file__).resolve().parents[1]
     registry = load_yaml(root / "config" / "repositories.yaml", RepositoryRegistry)
 
-    assert registry.model_dump() == {
-        "repositories": (
-            {
-                "repository": "OLMo-core",
-                "github_repository_id": 1306868157,
-                "default_branch": "main",
-                "ecr_repository": "sbsandbox-intern-edullm-olmo-core",
-                "base_image_repository": "docker.io/library/python",
-                "base_image_digest": BASE_DIGEST,
-                "dockerfile_path": ".edullm/Dockerfile",
-                "build_context": ".",
-            },
-        )
-    }
+    destinations = [entry.ecr_repository for entry in registry.repositories]
+    identifiers = [entry.github_repository_id for entry in registry.repositories]
+
+    assert len(set(destinations)) == len(destinations)
+    assert len(set(identifiers)) == len(identifiers)
 
 
 def test_registered_repository_exposes_full_immutable_base_reference() -> None:
@@ -230,3 +257,82 @@ def test_repository_registry_unknown_lookups_raise_domain_error() -> None:
         registry.repository_by_name("missing")
     with pytest.raises(UnknownRepositoryError, match="999"):
         registry.repository_by_id(999)
+
+
+# ---------------------------------------------------------------------------------------
+# A registration is inert unless the publisher role can act on it
+# ---------------------------------------------------------------------------------------
+
+
+def publisher_role() -> dict[str, Any]:
+    root = Path(__file__).resolve().parents[1]
+    template = yaml.safe_load(
+        (root / "infra" / "iam" / "ecr-publisher-role.yaml").read_text(encoding="utf-8")
+    )
+    role = next(
+        resource
+        for resource in template["Resources"].values()
+        if resource.get("Type") == "AWS::IAM::Role"
+    )
+    return dict(role["Properties"])
+
+
+def as_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else [value]
+
+
+def arn_text(resource: Any) -> str:
+    """One Resource entry as text, whether it is a literal or an ``Fn::Sub``.
+
+    ``ecr:GetAuthorizationToken`` is granted on a plain ``"*"`` because it is not a
+    resource-level action, so a reader that assumed every Resource is a mapping trips on
+    the first statement.
+    """
+    return str(resource.get("Fn::Sub", resource)) if isinstance(resource, dict) else str(resource)
+
+
+def test_the_publisher_role_trusts_every_registered_repository() -> None:
+    """Reads BOTH sides. Mutation: register a repository and leave the role alone.
+
+    THIS WAS SHIPPED AND THIS TEST IS WHY IT WAS FOUND. `edullm-data` was added to
+    `config/repositories.yaml` with its ECR repository created and its base pinned, and the
+    registration was inert: the trust policy matches `repository_id` against OLMo-core's
+    `1306868157` with StringEquals, so no other repository's token can assume the role at
+    all.
+
+    The failure is the worst shape available. It is not a refusal anybody reads -- it is an
+    AssumeRole denial inside a publish job, which reads like a broken role ARN rather than
+    like a repository nobody authorised. Registration says where images go; this says who
+    may put them there, and one without the other is a repository that looks onboarded.
+    """
+    root = Path(__file__).resolve().parents[1]
+    registry = load_yaml(root / "config" / "repositories.yaml", RepositoryRegistry)
+    condition = publisher_role()["AssumeRolePolicyDocument"]["Statement"][0]["Condition"]
+    trusted = {
+        str(value)
+        for value in as_list(
+            condition["StringEquals"]["token.actions.githubusercontent.com:repository_id"]
+        )
+    }
+
+    assert trusted == {str(entry.github_repository_id) for entry in registry.repositories}
+
+
+def test_the_publisher_role_may_push_to_every_registered_destination() -> None:
+    """Reads BOTH sides. Mutation: trust a repository and not grant it its ECR repository.
+
+    The half that fails later and reads even less like its cause. A token that assumes the
+    role successfully and is then denied `ecr:PutImage` produces an access-denied deep in a
+    docker push, after the image has already been built.
+    """
+    root = Path(__file__).resolve().parents[1]
+    registry = load_yaml(root / "config" / "repositories.yaml", RepositoryRegistry)
+    statements = publisher_role()["Policies"][0]["PolicyDocument"]["Statement"]
+    granted = {
+        arn_text(resource).rsplit("repository/", 1)[-1]
+        for statement in statements
+        for resource in as_list(statement["Resource"])
+        if "repository/" in arn_text(resource)
+    }
+
+    assert granted == {entry.ecr_repository for entry in registry.repositories}

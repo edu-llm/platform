@@ -15,9 +15,11 @@ on:
   workflow_dispatch:
     inputs:
       repository:
-        description: Registry key of the research repository, such as OLMo-core.
+        description: Research repository this run comes from.
         required: true
-        type: string
+        type: choice
+        options:
+          - OLMo-core
       commit_sha:
         description: Full forty-character commit SHA the image was built from.
         required: true
@@ -27,13 +29,19 @@ on:
         required: true
         type: string
       workload_profile:
-        description: Registered workload profile. It fixes the compute profile, the runtime and attempt bounds, and the checkpoint contract.
+        description: Workload profile. It fixes the compute profile, the runtime and attempt bounds, and the checkpoint contract.
         required: true
-        type: string
+        type: choice
+        options:
+          - olmo-core-cpu-smoke
+          - olmo-core-gpu-smoke
+          - olmo-core-train-smoke
       dataset_release:
-        description: Registered dataset release this run reads.
+        description: Dataset release this run reads.
         required: true
-        type: string
+        type: choice
+        options:
+          - dolma-2026-07
       team:
         description: Team the run is charged to and whose lead may approve it.
         required: true
@@ -47,10 +55,14 @@ on:
         required: true
         type: string
       compute_profile:
-        description: Override the workload profile's compute profile. Leave empty to take the registered default.
+        description: Override the workload profile's compute profile. Leave as inherit to take the registered default.
         required: false
-        type: string
-        default: ""
+        type: choice
+        default: inherit
+        options:
+          - inherit
+          - cpu-32vcpu
+          - gpu-1xa10g
       maximum_runtime_hours:
         description: Override the runtime bound, in hours, written in base ten. Leave empty to take the registered default.
         required: false
@@ -177,9 +189,16 @@ jobs:
           )
 
           form: dict[str, object] = {}
+          # INHERIT IS NOT A VALUE, IT IS THE ABSENCE OF ONE. A choice input cannot offer a
+          # blank option, so the override dropdowns spell "take the registered default" as
+          # "inherit" and it is translated back here. Left untranslated it reaches admission
+          # as the name of a compute profile nothing has ever registered, and the refusal
+          # names the profile rather than the form.
+          INHERIT = "inherit"
+
           for field, variable in TEXT_FIELDS:
               text = os.environ.get(variable, "").strip()
-              if text:
+              if text and text != INHERIT:
                   form[field] = text
           for field, variable in WHOLE_FIELDS:
               text = os.environ.get(variable, "").strip()

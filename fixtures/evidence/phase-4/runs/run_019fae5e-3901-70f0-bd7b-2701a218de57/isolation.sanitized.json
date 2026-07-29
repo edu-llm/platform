@@ -1,0 +1,10 @@
+{
+  "environment": "sandbox",
+  "list_the_whole_outputs_bucket": "AccessDenied",
+  "observed_at": "2026-07-29T15:18:54Z",
+  "read_another_teams_prefix": "AccessDenied",
+  "run_id": "run_019fae5e-3901-70f0-bd7b-2701a218de57",
+  "source": "aws",
+  "write_to_another_teams_prefix": "AccessDenied",
+  "write_to_the_lineage_bucket": "AccessDenied"
+}

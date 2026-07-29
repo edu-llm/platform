@@ -84,10 +84,13 @@ def test_every_committed_run_loads_as_the_records_its_directory_says_it_holds() 
     """
     runs = captured_runs()
 
-    assert len(runs) == 3, "three GPU jobs ran and all three are committed"
+    assert runs, "a check over every committed run must observe at least one"
     assert all(run.job.run_id == run.run_id for run in runs), (
         "the directory a record sits in and the run id inside it must be the same run"
     )
+    # Not a count. The number of committed runs goes up whenever one is worth keeping, and
+    # a test asserting it becomes a number somebody bumps rather than a claim anybody reads.
+    # What has to hold is that every directory loads as what its name says.
 
 
 # ---------------------------------------------------------------------------------------
@@ -407,6 +410,109 @@ def test_the_gpu_environment_has_only_one_shape_to_fall_back_on() -> None:
 # ---------------------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------------------
+# Isolation and resume, which only a container could establish
+# ---------------------------------------------------------------------------------------
+
+
+def test_the_workload_role_was_refused_every_prefix_it_must_not_reach() -> None:
+    """Mutation: accept any failure as a refusal.
+
+    ``AccessDenied`` and nothing else. ``NoSuchKey`` would mean the role was permitted to
+    look and found nothing, which is exactly what a role granting everything returns from an
+    empty prefix -- so a check that accepted "the call did not succeed" would pass against
+    no isolation at all.
+
+    This is what turns the cross-team criterion from a reading of a policy document into a
+    refusal a container actually received. No human can produce one: the workload role's
+    trust policy names the Batch and ECS task services.
+    """
+    probed = [run for run in captured_runs() if run.isolation is not None]
+
+    assert probed, "no committed run carries the probes, so nothing here establishes anything"
+    for run in probed:
+        assert run.isolation is not None
+        assert run.isolation.everything_was_refused, run.isolation.probes
+        assert set(run.isolation.probes.values()) == {"AccessDenied"}
+
+
+def test_the_container_could_not_write_to_the_store_that_records_what_it_did() -> None:
+    """The sharpest of the four, asserted on its own.
+
+    Mutation: drop this probe and keep the other three. Every other grant on this role is
+    arguable; the one that is not is that a workload cannot rewrite the record of what it
+    did, because every other guarantee in this platform is downstream of that record being
+    something only the platform writes.
+    """
+    probed = [run for run in captured_runs() if run.isolation is not None]
+
+    for run in probed:
+        assert run.isolation is not None
+        assert run.isolation.write_to_the_lineage_bucket == "AccessDenied"
+
+
+def test_a_checkpoint_one_run_wrote_was_loaded_back_by_another() -> None:
+    """Mutation: assert the download rather than the load.
+
+    ``inspect_checkpoint`` already establishes that the marker certifies the payload and
+    that the store agrees. What it cannot say is whether torch accepts the bytes, and that
+    is the thing a researcher resuming a run needs.
+
+    The evidence is the loss, not the digest. A freshly initialised olmo2_190M on random
+    tokens starts near 11.0; this run started at 9.71. Nothing but trained weights in the
+    model produces that number, which is a harder thing to fake than a checksum match.
+    """
+    resumed = [run for run in captured_runs() if run.resume is not None]
+
+    assert resumed, "no committed run resumed from anything"
+    for run in resumed:
+        assert run.resume is not None
+        assert run.resume.resumed_from_run_id != run.run_id, "a resume is from another run"
+        assert run.resume.tensors > 0
+        assert run.resume.loaded_trained_weights, (
+            f"first loss {run.resume.first_loss} is not below the cold-start "
+            f"{run.resume.cold_start_first_loss}, so nothing says the weights were loaded"
+        )
+
+
+def test_the_run_that_was_resumed_from_is_one_whose_checkpoint_is_committed() -> None:
+    """Reads BOTH sides. Mutation: record the resume without checking its source exists.
+
+    A resume record naming a run nothing else knows about would be a claim with no other
+    side. The URI carries the run id by construction -- that is what D5's ``runs/{run_id}``
+    segment bought -- so the predecessor is checkable rather than asserted.
+    """
+    by_id = {run.run_id: run for run in captured_runs()}
+
+    for run in captured_runs():
+        if run.resume is None:
+            continue
+        source = by_id.get(run.resume.resumed_from_run_id)
+        assert source is not None, run.resume.resumed_from_run_id
+        assert source.checkpoint is not None
+        assert source.checkpoint.checksum == run.resume.checksum, (
+            "the digest the resuming run loaded is not the digest the store attests for the "
+            "checkpoint it named"
+        )
+
+
+def test_a_resume_restores_a_model_and_not_a_training_run() -> None:
+    """A recorded limitation rather than a guard. Mutation: none.
+
+    The checkpoint carries the model state dict and the step, and no optimizer state. So a
+    resumed AdamW starts with no moment estimates and the loss moves accordingly -- this
+    run's last loss is above its first, which is what that looks like and is not a defect.
+
+    Asserted so that "resumable checkpoint" cannot quietly come to mean more than it does.
+    The difference is between reproducing a result and continuing a run, and closing it
+    means checkpointing the optimizer, which is a change to the training program.
+    """
+    for run in captured_runs():
+        if run.resume is None:
+            continue
+        assert run.resume.restores_optimizer_state is False
+
+
 def test_the_run_that_failed_is_committed_beside_the_ones_that_worked() -> None:
     """Mutation: capture only the successes.
 
@@ -438,32 +544,41 @@ def test_no_committed_job_ran_an_image_named_by_anything_but_a_digest() -> None:
         assert run.job.image_digest.startswith("sha256:"), run.run_id
 
 
-def test_the_three_runs_used_three_images_and_the_last_one_is_what_is_deployed() -> None:
-    """Reads BOTH sides. Mutation: assert the three runs agree, or read only the template.
+def test_the_run_that_trained_most_recently_ran_the_image_that_is_deployed() -> None:
+    """Reads BOTH sides. Mutation: assert every run used one image, or read only the template.
 
-    They do not agree, and that is the true history rather than a defect: the image was
-    rebuilt twice between the first probe and the training run, once because the published
-    image installed nothing and could not import torch, and once because the torch it then
-    pinned did not support a keyword OLMo-core calls. A test asserting one digest across
-    all three would have to be satisfied by throwing away two thirds of the evidence.
+    They did not all use one, and that is the true history rather than a defect: the image
+    was rebuilt twice between the first probe and the first training run -- once because the
+    published image installed nothing and could not import torch, and once because the torch
+    it then pinned did not support a keyword OLMo-core calls. A test asserting one digest
+    across every run could only be satisfied by throwing most of the evidence away.
 
-    What must hold is the narrower thing: the run that trained ran the digest the deployed
-    definition still names. Read from the template, so a re-pin without a re-run fails here
-    rather than at the next submission.
+    What must hold is narrower and is the thing that matters: the most recent training run
+    ran the digest the deployed definition still names. Read from the template, so a re-pin
+    without a re-run fails here rather than at the next submission.
     """
     template = (
         Path(__file__).resolve().parents[1] / "infra" / "batch-compute-gpu.yaml"
     ).read_text()
-    runs = captured_runs()
 
-    assert len({run.job.image_digest for run in runs}) == 3
     assert training_run().job.image_digest in template
-    # One definition, three revisions, in the order the images were pinned. Batch registers
-    # a new revision for every change, so the suffix is the account's own record of how many
-    # times the image moved -- and it agreeing with the digest count is what says each of
-    # those moves was a deliberate re-pin rather than a tag quietly resolving somewhere else.
-    assert [run.job.job_definition_name for run in runs] == [
-        "sbsandbox-intern-edullm-gpu-run:1",
-        "sbsandbox-intern-edullm-gpu-run:2",
-        "sbsandbox-intern-edullm-gpu-run:3",
-    ]
+
+
+def test_the_job_definition_revision_moved_once_per_image_and_no_more() -> None:
+    """Batch's own count of how many times the image was re-pinned, read against ours.
+
+    Mutation: let the definition be re-registered without the digest changing, or the
+    reverse. A revision that moved for something other than an image is a change to how jobs
+    run that nobody attributed to anything; a digest that changed without a revision would
+    mean a job ran an image its definition does not name.
+
+    Not one revision per run. Two runs sharing a revision is the ordinary case -- it is what
+    running the same image twice looks like -- so what is compared is the number of distinct
+    revisions against the number of distinct digests.
+    """
+    runs = captured_runs()
+    revisions = {run.job.job_definition_name for run in runs}
+    digests = {run.job.image_digest for run in runs}
+
+    assert len(revisions) == len(digests)
+    assert all(name.startswith("sbsandbox-intern-edullm-gpu-run:") for name in revisions)

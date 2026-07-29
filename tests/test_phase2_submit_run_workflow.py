@@ -47,6 +47,9 @@ from edullm_platform.contracts.admission import ApprovalEnvironment
 from edullm_platform.contracts.image import GitHubWorkflowRunReference
 from edullm_platform.submission import SubmissionInputs
 
+#: How a dropdown spells 'leave this empty'. A choice option cannot be blank.
+INHERIT_SENTINEL = "inherit"
+
 WORKFLOW_FILE = ".github/workflows/submit-run.yml"
 WORKFLOW_PATH = WORKFLOWS_ROOT / "submit-run.yml"
 BUILD_WORKFLOW_PATH = WORKFLOWS_ROOT / "build-research-image.yml"
@@ -195,20 +198,39 @@ def test_the_form_is_the_submission_inputs_contract_field_for_field() -> None:
     # never asked for something the workload profile already fixes.
     for name, field in SubmissionInputs.model_fields.items():
         assert declared[name]["required"] is field.is_required(), name
-        assert declared[name]["type"] == "string", name
+        # string or choice, and nothing else. Both arrive as a single string, which is what
+        # SubmissionInputs reads; boolean and number arrive as their own JSON types and
+        # would be refused at parse. A choice is a string with a menu in front of it.
+        assert declared[name]["type"] in ("string", "choice"), name
         assert declared[name]["description"].strip(), name
 
 
-def test_the_optional_fields_default_to_empty_rather_than_to_a_value() -> None:
-    # A default other than empty would put a number in front of an approver that nobody
-    # chose, and the whole reason the overrides exist is that an override is visible in a
-    # way a silently different default is not.
+def test_no_optional_field_defaults_to_a_value_somebody_could_have_meant() -> None:
+    """Mutation: default an override to a real profile, a real number, a real anything.
+
+    The whole reason the overrides exist is that an override is visible in a way a silently
+    different default is not. A default that names something real puts a choice in front of
+    an approver that nobody made.
+
+    This used to require the default be exactly empty, and that was the right invariant
+    written too literally. A ``choice`` input cannot offer a blank option, so an override
+    rendered as a dropdown has to spell absence as a word. ``inherit`` is that word, and it
+    is only safe because the workflow translates it back to nothing before assembling the
+    form -- which is asserted separately, because a sentinel that reached admission would be
+    the name of a compute profile nothing has registered.
+    """
     declared = _load()["on"]["workflow_dispatch"]["inputs"]
     optional = [name for name, field in SubmissionInputs.model_fields.items() if not field.is_required()]
 
     assert len(optional) == 6
     for name in optional:
-        assert declared[name]["default"] == "", name
+        default = declared[name]["default"]
+        assert default in ("", INHERIT_SENTINEL), name
+        if default == INHERIT_SENTINEL:
+            assert declared[name]["type"] == "choice", (
+                f"{name} spells absence as a word without being a dropdown, which is the "
+                "one situation that needs no sentinel at all"
+            )
 
 
 def test_the_three_jobs_carry_exactly_these_permission_maps() -> None:

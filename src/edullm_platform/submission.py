@@ -159,6 +159,25 @@ def compile_submission(
     image_scan_summary: ImageScanSummary | None = None,
 ) -> CompiledSubmission:
     workload = _resolve_workload(catalog, inputs.workload_profile)
+    if workload.repository != inputs.repository:
+        # TWO FIELDS THAT MUST AGREE, AND NOTHING COMPARED THEM. A submission naming
+        # repository OLMo-core with workload profile dolma-tokenize-smoke was accepted,
+        # compiled, classified routine and routed to a lead. What would then have run is
+        # whichever image the digest named, under a workload contract written for a
+        # different codebase -- so the runtime bound, the attempt bound and the checkpoint
+        # contract would all be the other repository's.
+        #
+        # Refused here rather than at admission because this needs nothing from the
+        # account: both sides are in the catalog the compile job already reads. Everything
+        # before Batch is cheap, and an approval spent on a submission that cannot be
+        # coherent is the expensive thing to avoid.
+        raise SubmissionRefusedError(
+            f"workload profile {workload.name!r} belongs to repository "
+            f"{workload.repository!r} and this submission names {inputs.repository!r}. A "
+            "workload profile fixes the runtime bound, the attempt bound and the checkpoint "
+            "contract for the codebase it was written against, so the two have to be the "
+            "same repository."
+        )
 
     fanout = (
         FanOut(
