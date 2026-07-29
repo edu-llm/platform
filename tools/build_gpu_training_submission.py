@@ -28,9 +28,11 @@ from __future__ import annotations
 
 import argparse
 import inspect
+import io
 import json
 import shlex
 import subprocess
+import tokenize
 from pathlib import Path
 from typing import Final
 
@@ -40,6 +42,10 @@ from edullm_platform.checkpoints import (
     MARKER_SCHEMA_VERSION,
     success_marker_bytes,
 )
+from edullm_platform.config import load_yaml
+from edullm_platform.contracts.execution import ExecutionTarget
+from edullm_platform.contracts.manifest import RunManifest
+from edullm_platform.execution import batch_submit_request, refuse_an_oversized_override
 
 #: The image the GPU job definition is pinned to. Named here so the form this tool writes
 #: cannot drift from the definition that will run it; a submission naming a different digest
@@ -47,6 +53,8 @@ from edullm_platform.checkpoints import (
 TRAINING_IMAGE_DIGEST: Final = (
     "sha256:e8f4d5aaea4c7a6e0f723f9b49fccf406ee63017baab4cea4e8b94b8e23e079f"
 )
+
+PROJECT_ROOT: Final = Path(__file__).resolve().parents[1]
 
 OLMO_CORE_CHECKOUT: Final = Path.home() / "projects-local" / "OLMo-core"
 
@@ -313,6 +321,67 @@ assert not reachable, "this role reached something it must not: " + ", ".join(re
 '''
 
 
+def _measuring_target() -> ExecutionTarget:
+    """A target that exists only to be measured, with the longest plausible ARNs.
+
+    The override's size depends on the environment ``batch_submit_request`` adds, and that
+    depends on the run id and the team rather than on anything here -- but building a real
+    request is the only way to measure what the platform will actually send, rather than a
+    reconstruction of it that can drift. The ARNs below are never used to submit anything.
+    """
+    account = "0" * 12
+    return ExecutionTarget(
+        compute_profile="gpu-1xa10g",
+        region="us-east-1",
+        job_queue_arn=f"arn:aws:batch:us-east-1:{account}:job-queue/sbsandbox-intern-edullm-gpu",
+        job_definition_arn=(
+            f"arn:aws:batch:us-east-1:{account}:job-definition/sbsandbox-intern-edullm-gpu-run"
+        ),
+        execution_role_arn=f"arn:aws:iam::{account}:role/sbsandbox-intern-edullm-batch-gpu-execution",
+        workload_role_arn=f"arn:aws:iam::{account}:role/sbsandbox-intern-edullm-batch-gpu-workload",
+        log_group="/aws/batch/sbsandbox-intern-edullm-gpu",
+    )
+
+
+def for_the_wire(program: str) -> str:
+    """The program with its comments removed, which is what actually gets submitted.
+
+    **BATCH CAPS ``containerOverrides`` AT 8,192 BYTES AND THIS PROGRAM DID NOT FIT.** The
+    version carrying the resume block and the four isolation probes came to 9,121 bytes,
+    which is 10,063 once the environment and the JSON are counted. It compiled, it validated
+    locally, it was dispatched, it was approved at the environment gate, it was admitted --
+    and Batch refused it with "Container Overrides length must be at most 8192", a message
+    that names neither the command nor the field that overran.
+
+    Comments are 2,581 of those bytes, and they are the right 2,581 to cut. They exist for
+    somebody reading this file, and this file is what gets reviewed; nobody reads the
+    command string in a Batch job description. Docstrings are kept -- they are 962 more and
+    are not needed, but they travel inside
+    :func:`edullm_platform.checkpoints.success_marker_bytes`, and stripping them would break
+    the property that what runs is the platform's function rather than a copy of it.
+
+    Tokenised rather than pattern-matched. A ``#`` inside a string literal is not a comment,
+    and the program contains several -- an S3 key fragment among them.
+    """
+    lines = program.splitlines(keepends=True)
+    starts_at: dict[int, int] = {}
+    for token in tokenize.generate_tokens(io.StringIO(program).readline):
+        if token.type == tokenize.COMMENT:
+            row, column = token.start
+            starts_at[row] = min(starts_at.get(row, column), column)
+    kept: list[str] = []
+    for number, line in enumerate(lines, start=1):
+        if number not in starts_at:
+            kept.append(line)
+            continue
+        # A trailing comment leaves its code; a whole-line comment leaves nothing, and the
+        # line goes with it rather than becoming a blank one.
+        remainder = line[: starts_at[number]].rstrip()
+        if remainder:
+            kept.append(remainder + "\n")
+    return "".join(kept)
+
+
 def dispatch_form(
     *, commit_sha: str, steps: int = TRAINING_STEPS, resume_from: str = ""
 ) -> dict[str, str]:
@@ -326,7 +395,7 @@ def dispatch_form(
         "wandb_project": "edullm-platform-smoke",
         "maximum_runtime_hours": "0.5",
         "command": "python -c "
-        + shlex.quote(training_program(steps=steps, resume_from=resume_from)),
+        + shlex.quote(for_the_wire(training_program(steps=steps, resume_from=resume_from))),
     }
 
 
@@ -439,7 +508,9 @@ def main(argv: list[str] | None = None) -> int:
         json.dumps(dispatch_inputs(form), indent=2, sort_keys=True) + "\n"
     )
 
-    program = training_program(steps=arguments.steps, resume_from=arguments.resume_from)
+    program = for_the_wire(
+        training_program(steps=arguments.steps, resume_from=arguments.resume_from)
+    )
     command = workflow_inputs(form)["command"]
     # The program must survive the round trip the workflow puts it through, or the container
     # runs something that merely parses.
@@ -448,10 +519,23 @@ def main(argv: list[str] | None = None) -> int:
     assert command[-1] == program, "shlex did not round-trip the program"
     compile(program, "<training>", "exec")
 
+    # The same refusal the platform applies, applied here, so an oversized submission costs
+    # a local error rather than a dispatch, an approval and a Batch rejection.
+    refuse_an_oversized_override(
+        batch_submit_request(
+            manifest=load_yaml(
+                PROJECT_ROOT / "fixtures" / "manifests" / "gpu-routine.yaml", RunManifest
+            ).model_copy(update={"command": tuple(command)}),
+            target=_measuring_target(),
+            run_id="run_" + "0" * 36,
+        )["ContainerOverrides"]
+    )
+
     print(f"commit         {commit}")
     print(f"steps          {arguments.steps}")
     print(f"resume from    {arguments.resume_from or '(nothing)'}")
-    print(f"program bytes  {len(program)}")
+    print(f"program bytes  {len(program)} on the wire, "
+          f"{len(training_program(steps=arguments.steps, resume_from=arguments.resume_from))} as written")
     print(f"written        {arguments.output}")
     print(f"dispatch with  gh workflow run submit-run.yml --ref main --json < {arguments.output}")
     print("the program compiles and round-trips through shlex")

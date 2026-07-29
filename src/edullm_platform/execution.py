@@ -30,6 +30,8 @@ there is no case where the bound is unknown, and this function has no branch tha
 
 from __future__ import annotations
 
+import json
+from collections.abc import Mapping
 from decimal import Decimal
 from typing import Any, Final
 
@@ -189,4 +191,56 @@ def batch_submit_request(
         # array job of size one, so emitting ArrayProperties unconditionally would fail
         # every non-fan-out submission -- and no fan-out fixture would catch it.
         request["ArrayProperties"] = {"Size": manifest.fanout.size}
+    refuse_an_oversized_override(request["ContainerOverrides"])
     return request
+
+
+#: What Batch will accept as one job's ``containerOverrides``, serialized. An AWS service
+#: limit rather than a choice of ours, and not adjustable.
+MAXIMUM_CONTAINER_OVERRIDES_BYTES: Final = 8192
+
+
+class ContainerOverridesTooLargeError(ValueError):
+    """The command and its environment exceed what Batch will accept in one submission.
+
+    THIS COST A RUN AND AN APPROVAL BEFORE IT EXISTED. A training program of 9,230 bytes
+    was compiled, validated locally, dispatched, approved at the environment gate, admitted,
+    and submitted -- and Batch refused it with "Container Overrides length must be at most
+    8192". The message names neither the command nor the fact that a limit was reached by
+    the field the submitter controls, so the obvious reading is that something is wrong with
+    the job definition.
+
+    The cost of finding it late is the whole reason this is checked here. Everything before
+    Batch is cheap and reversible; the approval is a person's attention, and spending it on
+    a submission that cannot be accepted is the one thing this path should never do.
+
+    Refused at request-build time rather than at compile time, because the environment is
+    part of the budget and is added here. A check over the command alone would pass a
+    command that fits and an override that does not.
+    """
+
+    reason_code = "container_overrides_too_large"
+
+
+def refuse_an_oversized_override(overrides: Mapping[str, Any]) -> None:
+    """Refuse a submission Batch would reject, with the numbers that explain why.
+
+    Measured over the serialized block rather than over the command's characters, because
+    the environment, the JSON punctuation and the key names are all inside the same limit --
+    a command comfortably under 8,192 can still push the override over it.
+
+    Compact separators, matching what an SDK puts on the wire. This will not agree with
+    Batch to the byte for every input, and does not need to: it is an early refusal with a
+    readable reason, and Batch remains the authority. What it must not do is pass something
+    Batch will reject, which is why the budget below is spent conservatively.
+    """
+    serialized = len(json.dumps(overrides, separators=(",", ":")).encode("utf-8"))
+    if serialized <= MAXIMUM_CONTAINER_OVERRIDES_BYTES:
+        return
+    command = sum(len(word) for word in overrides.get("Command", []))
+    raise ContainerOverridesTooLargeError(
+        f"this submission's container overrides serialize to {serialized} bytes and Batch "
+        f"accepts at most {MAXIMUM_CONTAINER_OVERRIDES_BYTES}. The command accounts for "
+        f"{command} of them. A program this long belongs in the image, or in an object the "
+        "container fetches, rather than in the command line."
+    )

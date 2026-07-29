@@ -32,6 +32,12 @@ from edullm_platform.checkpoints import (
     inspect_checkpoint,
     success_marker_bytes,
 )
+from edullm_platform.config import load_yaml
+from edullm_platform.contracts.manifest import RunManifest
+from edullm_platform.execution import (
+    MAXIMUM_CONTAINER_OVERRIDES_BYTES,
+    batch_submit_request,
+)
 from tests.fake_object_store import FakeObjectStore
 from tools.build_gpu_training_submission import (
     FOREIGN_TEAM_PREFIX,
@@ -39,10 +45,12 @@ from tools.build_gpu_training_submission import (
     TRAINING_IMAGE_DIGEST,
     dispatch_form,
     dispatch_inputs,
+    for_the_wire,
     marker_writer_source,
     training_program,
     workflow_inputs,
 )
+from tools.build_gpu_training_submission import _measuring_target as measuring_target
 
 COMMIT = "b067a31e48c4038416d179fc85e5f12b05c8d2a9"
 BUCKET = "sbsandbox-intern-edullm-outputs"
@@ -86,7 +94,7 @@ def test_the_program_survives_the_split_the_workflow_puts_it_through() -> None:
 
     assert isinstance(command, list)
     assert command[:2] == ["python", "-c"]
-    assert command[-1] == training_program()
+    assert command[-1] == for_the_wire(training_program())
     assert len(command) == 3, "the program must be one word, not several"
 
 
@@ -258,6 +266,90 @@ def test_the_step_count_reaches_the_checkpoint_prefix_and_the_loop_together(step
     assert f"checkpoints/step-{steps}/" in program
     assert f"for step in range(1, {steps} + 1):" in program
     assert f'torch.save({{"step": {steps}' in program
+
+
+# ---------------------------------------------------------------------------------------
+# The limit that cost a run, an approval and a submission
+# ---------------------------------------------------------------------------------------
+
+
+def test_the_submitted_program_fits_inside_what_batch_will_accept() -> None:
+    """Mutation: submit the program as written.
+
+    NOT HYPOTHETICAL. The version carrying the resume block and the four probes came to
+    9,121 bytes, 10,063 once the environment and the JSON were counted. It compiled, it
+    validated, it was dispatched, it was approved at the environment gate, it was admitted
+    -- and Batch refused it with "Container Overrides length must be at most 8192", naming
+    neither the command nor the field that overran.
+
+    Measured through ``batch_submit_request`` rather than over the command's characters,
+    because the environment and the JSON punctuation are inside the same budget: a command
+    comfortably under the limit can still push the override over it.
+    """
+    manifest = load_yaml(
+        Path(__file__).resolve().parents[1] / "fixtures" / "manifests" / "gpu-routine.yaml",
+        RunManifest,
+    )
+    command = workflow_inputs(dispatch_form(commit_sha=COMMIT))["command"]
+    assert isinstance(command, list)
+
+    request = batch_submit_request(
+        manifest=manifest.model_copy(update={"command": tuple(command)}),
+        target=measuring_target(),
+        run_id=RUN_ID,
+    )
+    serialized = len(
+        json.dumps(request["ContainerOverrides"], separators=(",", ":")).encode("utf-8")
+    )
+
+    assert serialized <= MAXIMUM_CONTAINER_OVERRIDES_BYTES, (
+        f"the override is {serialized} bytes and Batch accepts "
+        f"{MAXIMUM_CONTAINER_OVERRIDES_BYTES}"
+    )
+
+
+def test_the_wire_form_removes_comments_and_changes_nothing_else() -> None:
+    """Mutation: strip docstrings too, or strip nothing.
+
+    Comments are 2,581 bytes of this program and exist for somebody reading the tool, which
+    is what gets reviewed; nobody reads the command string in a Batch job description.
+    Docstrings are kept because they travel inside the platform's own marker writer, and
+    removing them would break the property that what runs is that function rather than a
+    copy of it.
+    """
+    written = training_program(resume_from=f"s3://{BUCKET}/teams/platform/runs/x/model.pt")
+    wire = for_the_wire(written)
+
+    assert len(wire) < len(written)
+    assert "# Both halves of the silent failure" not in wire
+    assert "# WHAT THIS ROLE CANNOT REACH" not in wire
+    assert '"""' in wire, "docstrings stay; they carry the platform's own function"
+    compile(wire, "<wire>", "exec")
+
+
+def test_a_hash_inside_a_string_is_not_treated_as_a_comment() -> None:
+    """Mutation: strip comments with a regex on ``#``.
+
+    The program contains hashes inside string literals, and a pattern-matching stripper
+    would truncate the line at the first one -- producing a program that still compiles,
+    still runs, and does something different. Tokenising is what makes the distinction.
+    """
+    source = 'value = "a # b"  # this is the comment\nother = 1\n'
+
+    assert for_the_wire(source) == 'value = "a # b"\nother = 1\n'
+
+
+def test_the_wire_form_still_carries_the_platforms_marker_writer() -> None:
+    """Reads BOTH sides. Mutation: strip docstrings, which would silently break this.
+
+    The embedding is only worth anything if the bytes survive the transformation applied on
+    the way to the wire. A stripper that removed docstrings would leave a function that
+    behaves the same and is no longer the same source, and the test asserting it *is* the
+    same source is checking the unstripped form.
+    """
+    wire = for_the_wire(training_program())
+
+    assert marker_writer_source() in wire
 
 
 # ---------------------------------------------------------------------------------------
@@ -446,5 +538,5 @@ def test_the_program_round_trips_when_the_form_is_serialized_and_read_back() -> 
     inputs = workflow_inputs(dispatch_form(commit_sha=COMMIT))
     round_tripped = json.loads(json.dumps(inputs))
 
-    assert round_tripped["command"][-1] == training_program()
+    assert round_tripped["command"][-1] == for_the_wire(training_program())
     assert shlex.split(shlex.join(round_tripped["command"])) == round_tripped["command"]

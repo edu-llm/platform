@@ -2,8 +2,8 @@
 
 Phase: phase-3
 Bundle schema version: 1
-Source commit: b0852a4e3a8b277c472ffc14603561d98df1b694
-Generated: 2026-07-29T08:04:05+00:00
+Source commit: 830ff358895bff4c030922036078a1abc6a584a5
+Generated: 2026-07-29T14:57:00+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 3 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase3_proof.py` at generation time. It is not done, and the Result table below says by how much.
 
@@ -29,14 +29,14 @@ What is not done is the other end of a run's life. Nothing in this account can s
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3353 |
-| suite tests executed | 3191 |
-| suite passed | 3191 |
+| suite tests collected | 3388 |
+| suite tests executed | 3226 |
+| suite passed | 3226 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
-| matrix node ids executed | 321 |
-| matrix node ids passed | 321 |
+| matrix node ids executed | 324 |
+| matrix node ids passed | 324 |
 | matrix node ids failed | 0 |
 | phase criteria | 22 |
 | criteria COVERED | 13 (1, 2, 3, 4, 8, 9, 15, 16, 17, 19, 20, 21, 22) |
@@ -77,9 +77,9 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | config/image-exceptions.yaml | sha256:37c241396e3e4b2b45188ca9f12e11724bc2a1fe57660eb4e26463de4b6d4f7e |
 | config/workload-catalog.yaml | sha256:dbd10c9d4655be66f829b8c43e150544ba17ca778988f86d14d22e51600feec6 |
 | fixtures/evidence/phase-3/account-measurements.sanitized.json | sha256:02a7cafae966f04037c13f4e2a57b958a7b5e2c435c46a0eba4a6839d4a4c127 |
-| infra/admission-state-machine.yaml | sha256:560f21bc0361d37806f8fe3e04176ef26dcec949663a6c20c2ccc307ce4e186e |
+| infra/admission-state-machine.yaml | sha256:eab8433469a93d3569868e3b3c9cfca684696bdd385d102477f832d5b11ce7ab |
 | infra/batch-compute.yaml | sha256:d601bb1e6c4f605737d1107334ef654e65c5c7862cc614e2c0eeb4536b93ae1d |
-| infra/batch-events.yaml | sha256:ebc85be8d307c676233b0c94abefd3fc51304b0ee8c1ebca59aef7d73f07a88f |
+| infra/batch-events.yaml | sha256:9685e13e505959633cedcaa8bb6f91924ef7f613bdf92e7c12b35cd8568d6d53 |
 | infra/batch-network.yaml | sha256:699a82646fa0d9d2a3446471c5451a2847d4c5d1d8978ebe7a2525fa98d2154d |
 | infra/iam/admission-service-roles.yaml | sha256:6aeb0d2091c79dd6c4c4a42fed0796c612e88438655db97fcbc0c94860e0893d |
 | infra/iam/batch-roles.yaml | sha256:7d6b3dbd1c870d01c969137ffc4a45a4f49e0563efa7aeb1c26ec16288478b18 |

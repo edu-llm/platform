@@ -52,7 +52,7 @@ from build_admission_lambda import (
     build_package,
 )
 
-__all__ = ["ARTIFACT_KEY", "HANDLER_ENTRY_POINT", "main"]
+__all__ = ["ARTIFACT_KEY", "HANDLER_ENTRY_POINT", "RECORDER_ENTRYPOINT", "main"]
 
 #: Where the artifact is uploaded, and what `infra/batch-events.yaml` names as `S3Key`.
 #: Its own prefix rather than a second file beside the validator's, so the two functions'
@@ -62,6 +62,12 @@ ARTIFACT_KEY = "lifecycle-recorder/lifecycle-recorder.zip"
 #: What the template's `Handler` must be. Printed with the digest so a release that
 #: uploaded the right bytes under the wrong handler is visible in the same output.
 HANDLER_ENTRY_POINT = "edullm_platform.lifecycle_handler.handler"
+
+#: What this function imports, which is what its zip carries. Different from the
+#: validator's, and deliberately passed rather than defaulted: the two handlers reach
+#: different parts of the package, and a shared default would put each one's
+#: dependencies into the other's release.
+RECORDER_ENTRYPOINT = "edullm_platform.lifecycle_handler"
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -75,6 +81,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         record = build_package(
             PROJECT_ROOT,
             arguments.output,
+            entrypoint=RECORDER_ENTRYPOINT,
             python_platform=arguments.python_platform,
             python_version=arguments.python_version,
         )
