@@ -253,7 +253,7 @@ def policy_payload() -> dict[str, object]:
                 "ericrcwu001",
                 "alsy7009",
                 "meric233",
-                "syz2026",
+                "VS-code-cloud",
                 "gorpyshortlegs",
                 "hiyasvyas",
                 "pianomaster99",

@@ -275,3 +275,35 @@ def test_organization_yaml_validates_against_inventory_contract() -> None:
     assert {normalize_github_login(login) for login in inventory.team_leads} <= member_logins
     assert inventory.team_bindings.teams == ()
     assert inventory.teams_led_by(inventory.team_leads[0]) == ()
+
+
+def test_the_shipped_roster_names_the_person_who_leads_the_memory_group() -> None:
+    """A ROSTER THAT HAS NOT KEPT UP IS WRONG IN TWO DIRECTIONS AT ONCE. Mutation: revert
+    the roster and leave the person who stopped leading on it.
+
+    ``is_team_lead`` reads ``team_leads`` and nothing else, and ``config/policy.yaml`` sets
+    ``approval_scope`` to ``organization``, so a name on this list can release any team's
+    routine submission and a name off it can release none.
+
+    Both halves were live. ``syz2026`` no longer leads a group and could still release
+    anybody's routine run, which is authority nobody granted. ``VS-code-cloud`` leads the
+    Memory group and was carried only as a member, so a Memory submission routed to its own
+    lead was refused at admission with ``approver_lacks_lead_or_admin_role`` -- after the
+    lead had already released the gate, because GitHub's ``team-leads`` team and this file
+    are two different lists.
+
+    That second list is the one this test cannot reach. The GitHub team gating the
+    ``run-approval-lead`` environment lives in organization settings, and changing it is an
+    owner action; until it is changed the two disagree in the other direction.
+    """
+    inventory = load_yaml(
+        Path(__file__).resolve().parents[1] / "config" / "organization.yaml",
+        OrganizationInventory,
+    )
+
+    assert inventory.is_team_lead("VS-code-cloud")
+    assert not inventory.is_team_lead("syz2026")
+    # Still a member, because leaving a group and leaving the organization are different
+    # facts and only the first of them has been recorded.
+    assert any(member.github_login == "syz2026" for member in inventory.members)
+    assert len(inventory.team_leads) == 8
