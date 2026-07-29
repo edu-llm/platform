@@ -117,28 +117,33 @@ EXPORTED_DECIMAL_FIELDS: tuple[tuple[str, type[BaseModel], str, bool, dict[str, 
     ("manifest-runtime", RunManifest, "maximum_runtime_hours", True, RUN_MANIFEST_PAYLOAD),
 )
 
+#: One probe per decision the two decimal aliases encode, and nothing else.
+#:
+#: Each of these was the only probe to catch at least one deliberate regression; seven
+#: others were removed for catching nothing a survivor did not. ``"0"`` is the whole of
+#: what separates ``ge=0`` from ``gt=0``, and the field-level constraint is read by
+#: nothing else here. ``"0.001"`` is the positive pattern's second branch, without which
+#: it could be written ``[1-9][0-9]*`` and silently refuse every rate below a dollar.
+#: ``"1.428"`` is the fraction. ``"01"`` and ``"-1"`` are the two things ``Decimal``
+#: accepts and neither pattern may, and ``"-1"`` is also the only probe that reads the
+#: sign. ``"500"`` and the integer ``500`` are one value on either side of the wire
+#: format: the schema says ``type: string``, and what the validator does with a number
+#: has to agree with that.
 SHARED_DECIMAL_PROBES: tuple[object, ...] = (
     "0",
-    "0.0",
-    "0.00",
     "0.001",
-    "1",
     "1.428",
     "500",
     "01",
     "-1",
-    "+1",
-    "1.",
-    "abc",
-    "",
     500,
 )
 
 
 def decimal_probe_should_accept(value: object, *, positive_only: bool) -> bool:
     if positive_only:
-        return value in {"0.001", "1", "1.428", "500"}
-    return value in {"0", "0.0", "0.00", "0.001", "1", "1.428", "500"}
+        return value in {"0.001", "1.428", "500"}
+    return value in {"0", "0.001", "1.428", "500"}
 
 
 def test_checked_in_schemas_match_contract_models() -> None:
@@ -323,6 +328,29 @@ def test_exported_decimal_schema_matches_model_validation(
     base_payload: dict[str, object],
     value: object,
 ) -> None:
+    """The published shape of a decimal and the validator that reads one agree.
+
+    Mutation: move one without the other. ``StrictDecimal`` and ``PositiveStrictDecimal``
+    carry their schema as a literal ``WithJsonSchema`` dict and their behaviour as
+    ``BeforeValidator(parse_decimal)`` plus a ``ge`` or ``gt`` written at each field.
+    Neither is derived from the other, so nothing but this holds the two together.
+
+    **This is not the byte comparison, and the two are easy to mistake for each other.**
+    ``tools/export_schemas.py`` followed by ``git diff --exit-code schemas`` says that the
+    committed file is what the models render today. It says nothing about what the models
+    accept, so it is green while a published schema and the validator behind it disagree.
+    Six regressions were tried that neither it nor
+    ``test_exported_decimal_schemas_use_distinct_non_negative_and_positive_patterns``
+    notices at all: dropping ``Field(gt=0)`` from each of the four positive fields in
+    turn, letting ``parse_decimal`` take any string ``Decimal`` will parse, and letting it
+    take an integer. This catches five of the six.
+
+    The sixth is ``Field(ge=0)`` on the cost threshold, which no probe here can reach:
+    every string the non-negative pattern admits is already non-negative, so that
+    constraint only guards a ``Decimal`` built in Python, which is not a JSON value and
+    has no schema side to disagree with. ``gt=0`` is reachable only because zero is
+    spellable as a string both patterns' validator accepts.
+    """
     field_schema = model_type.model_json_schema()["properties"][field_name]
     validator = jsonschema.Draft202012Validator(field_schema)
     schema_accepts = validator.is_valid(value)
