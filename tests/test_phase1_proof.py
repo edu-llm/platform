@@ -21,10 +21,9 @@ from typing import Any
 import pytest
 
 from edullm_platform.criteria import CriterionSpec, CriterionStatus
-from edullm_platform.evidence import FRESHNESS_WINDOW
+from edullm_platform.evidence import CAPTURE_SUFFIX, FRESHNESS_WINDOW
 from edullm_platform.open_decisions import open_decisions
 from edullm_platform.phase1_capture import (
-    CAPTURE_SUFFIX,
     ROLE_CAPTURE_DIR,
     RUN_CAPTURE_DIR,
     only_a_pending_deploy_stands_in_the_way,

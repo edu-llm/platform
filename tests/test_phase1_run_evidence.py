@@ -34,12 +34,12 @@ import pytest
 
 from edullm_platform.build_tooling import load_registry
 from edullm_platform.evidence import (
+    CAPTURE_SUFFIX,
     FRESHNESS_WINDOW,
     redact_content_digests,
     scan_for_secrets,
 )
 from edullm_platform.phase1_capture import (
-    CAPTURE_SUFFIX,
     RUN_CAPTURE_DIR,
     CommittedRunEvidence,
     read_committed_run_evidence,

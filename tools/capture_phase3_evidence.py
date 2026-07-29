@@ -60,6 +60,7 @@ from edullm_platform.ec2_authorization import (
 )
 from edullm_platform.evidence import (
     AWS_ACCOUNT_ID_PATTERN,
+    CAPTURE_SUFFIX,
     redact_aws_account_ids,
     redact_content_digests,
     scan_for_secrets,
@@ -67,12 +68,12 @@ from edullm_platform.evidence import (
 from edullm_platform.phase1_evidence import OidcSessionEvidence
 from edullm_platform.phase2_evidence import AdmissionExecution
 
-#: The reader's own names for the file this tool writes. Imported rather than restated,
+#: The reader's own name for the file this tool writes. Imported rather than restated,
 #: because the writer spelled "compute-environment.sanitized.json" as a literal in two
 #: places and the reader looked for it through a constant -- three spellings of one
 #: filename, agreeing today. A capture written under a name the reader does not look for is
 #: an absent record, and an absent record reads as a run that never happened.
-from edullm_platform.phase3_capture import CAPTURE_SUFFIX, COMPUTE_ENVIRONMENT_RECORD
+from edullm_platform.phase3_capture import COMPUTE_ENVIRONMENT_RECORD
 from edullm_platform.phase3_evidence import (
     EVERY_BATCH_JOB_STATUS,
     BatchJobEvidence,

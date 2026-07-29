@@ -65,9 +65,8 @@ from edullm_platform.evidence import (
     SecretFreeStr,
     redact_aws_account_ids,
 )
-from edullm_platform.phase1_evidence import (
+from edullm_platform.iam_documents import (
     IAM_NAME_PATTERN,
-    DeployedRoleEvidence,
     IamActionMatch,
     IamAttachedPolicy,
     IamConditionEntry,
@@ -82,6 +81,7 @@ from edullm_platform.phase1_evidence import (
     ManagedPolicyScope,
     parse_condition_value,
 )
+from edullm_platform.phase1_evidence import DeployedRoleEvidence
 
 __all__ = [
     "COMMITTED_ROLE_TEMPLATES",
