@@ -26,7 +26,10 @@ attestation already says is the wrong trade.
 Writes only under ``docs-frank/working/phase-3-evidence/`` and refuses anywhere else, so a
 capture stays local until somebody reads it and copies what they want into ``fixtures/``.
 That is the same rule the Phase 1 and Phase 2 capture tools apply and it exists for the same
-reason: a capture is raw account output until a human has looked at it.
+reason: a capture is raw account output until a human has looked at it. The rule itself now
+lives once, in :mod:`edullm_platform.capture_tooling`, along with the CLI wrappers, the
+credential scan on every write and the exit-code mapping -- this module had its own copy of
+all four, and the copy of ``aws`` was 69% the same text as the shared one.
 
 Exit 0 when the capture is complete and its controls agree, 2 when it could not be taken or
 a control disagreed. A control that disagrees means the classifier is wrong, which makes the
@@ -37,16 +40,27 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Final
 
 from pydantic import ValidationError
 
+from edullm_platform.capture_tooling import (
+    CaptureFailedError,
+    account_identity,
+    aws,
+    aws_json,
+    observed_now,
+    report,
+    run_capture,
+    write_model,
+    write_record,
+    write_sanitized_text,
+)
 from edullm_platform.contracts.admission import DecisionRecord, IntentRecord
 from edullm_platform.contracts.base import ContractModel
 from edullm_platform.contracts.execution import BatchJobBinding
@@ -58,13 +72,7 @@ from edullm_platform.ec2_authorization import (
     classify_dry_run,
     phase3_ec2_probes,
 )
-from edullm_platform.evidence import (
-    AWS_ACCOUNT_ID_PATTERN,
-    CAPTURE_SUFFIX,
-    redact_aws_account_ids,
-    redact_content_digests,
-    scan_for_secrets,
-)
+from edullm_platform.evidence import CAPTURE_SUFFIX
 from edullm_platform.phase1_evidence import OidcSessionEvidence
 from edullm_platform.phase2_evidence import AdmissionExecution
 
@@ -106,7 +114,6 @@ __all__ = [
 PROJECT_ROOT: Final = Path(__file__).resolve().parents[1]
 
 ALLOWED_OUTPUT_SUFFIX: Final = Path("docs-frank/working/phase-3-evidence")
-AWS_CALL_TIMEOUT_SECONDS: Final = 90
 
 VPC_QUOTA_CODE: Final = "L-F678F1CE"
 STANDARD_VCPU_QUOTA_CODE: Final = "L-1216C47A"
@@ -170,47 +177,6 @@ CAPTURE_METHOD: Final = (
     "actions as denied in both regions when seven are authorized in us-east-1, which is "
     "why the method is recorded here rather than assumed."
 )
-
-
-class CaptureFailedError(RuntimeError):
-    def __init__(self, reason: str) -> None:
-        self.reason = reason
-        super().__init__(reason)
-
-
-def aws(
-    arguments: Sequence[str], *, profile: str, region: str | None = None
-) -> subprocess.CompletedProcess[str]:
-    command = ["aws", *arguments, "--profile", profile, "--output", "json"]
-    if region is not None:
-        command += ["--region", region]
-    try:
-        return subprocess.run(
-            command,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=AWS_CALL_TIMEOUT_SECONDS,
-            shell=False,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise CaptureFailedError(f"aws_call_timed_out:{arguments[0]}:{arguments[1]}") from exc
-    except OSError as exc:
-        raise CaptureFailedError("aws_cli_unavailable") from exc
-
-
-def aws_json(
-    arguments: Sequence[str], *, profile: str, region: str | None = None
-) -> Any:
-    completed = aws(arguments, profile=profile, region=region)
-    if completed.returncode != 0:
-        raise CaptureFailedError(f"aws_call_failed:{arguments[0]}:{arguments[1]}")
-    if not completed.stdout.strip():
-        return {}
-    try:
-        return json.loads(completed.stdout)
-    except ValueError as exc:
-        raise CaptureFailedError(f"aws_answer_unreadable:{arguments[0]}") from exc
 
 
 def resolve_ami(*, profile: str, region: str) -> str:
@@ -522,19 +488,20 @@ def capture_account(
 # --------------------------------------------------------------------------------------
 
 
-def account_identity(*, profile: str, region: str) -> tuple[str, str]:
+def account_and_partition(*, profile: str, region: str) -> tuple[str, str]:
     """The account this is running against, and its partition.
 
     Neither is ever written to a file. The account ID is what tells a captured ARN naming
     *this* account from one naming another, and the partition is what the drift
-    comparison is allowed to fold.
+    comparison is allowed to fold. The partition is read here rather than by
+    :func:`~edullm_platform.capture_tooling.account_identity`, because which spellings of
+    a partition may be folded together is the drift comparison's question.
     """
-    identity = aws_json(["sts", "get-caller-identity"], profile=profile, region=region)
-    account_id = identity.get("Account")
-    fields = split_arn_fields(str(identity.get("Arn", "")))
-    if not isinstance(account_id, str) or not account_id or fields is None:
+    identity = account_identity(profile=profile, region=region)
+    fields = split_arn_fields(identity.arn)
+    if fields is None:
         raise CaptureFailedError("caller_identity_unreadable")
-    return account_id, fields[1]
+    return identity.account_id, fields[1]
 
 
 def capture_role(role_name: str, *, profile: str, region: str, account_id: str,
@@ -575,7 +542,7 @@ def capture_roles(*, profile: str, region: str, observed_at: datetime) -> list[t
     only which registry is walked: ``PHASE3_ROLE_TEMPLATES`` rather than
     ``COMMITTED_ROLE_TEMPLATES``, so a Phase 3 role drifting cannot fail a Phase 1 capture.
     """
-    account_id, partition = account_identity(profile=profile, region=region)
+    account_id, partition = account_and_partition(profile=profile, region=region)
     records: list[tuple[str, Any]] = []
     for role_name, relative_path in PHASE3_ROLE_TEMPLATES:
         evidence = capture_role(
@@ -1314,7 +1281,7 @@ def capture_run(
     something the account answers, not something the operator should have to know before
     asking.
     """
-    account_id, _partition = account_identity(profile=profile, region=region)
+    account_id = account_identity(profile=profile, region=region).account_id
     attestation, bodies = capture_run_lineage(
         run_id, profile=profile, region=region, observed_at=observed_at
     )
@@ -1394,53 +1361,6 @@ def capture_run(
     return records, bodies
 
 
-def write_lineage_body(path: Path, body: bytes) -> None:
-    """One lineage object as committed: the stored bytes with the account id masked.
-
-    Not put through ``scan_for_secrets``. A lineage record legitimately carries a manifest
-    digest, and the shape-based scan cannot tell sixty-four hexadecimal characters from a
-    credential, so scanning here would refuse the evidence for being what it is. What is
-    checked instead is the thing that actually must not be committed, by the pattern that
-    defines it: an account id surviving the mask fails the capture.
-
-    **The check removes digests before it looks, and must.** ``redact_aws_account_ids``
-    deliberately leaves a ``sha256:``-prefixed digest and a commit sha intact -- masking
-    them would destroy the identifiers the record exists to carry -- and roughly one
-    manifest digest in six contains twelve consecutive decimal characters. Searching the
-    masked text directly therefore reports a digest as a surviving account id, which is a
-    capture that fails on evidence for being valid. Three runs were captured before one
-    turned up whose digest happened to trip it.
-    """
-    text = body.decode("utf-8")
-    masked = redact_aws_account_ids(text)
-    if AWS_ACCOUNT_ID_PATTERN.search(redact_content_digests(masked)):
-        raise CaptureFailedError(f"account_id_survived_redaction:{path.name}")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(masked, encoding="utf-8")
-
-
-def check_output_location(path: Path) -> None:
-    if ALLOWED_OUTPUT_SUFFIX.as_posix() not in path.resolve().as_posix():
-        raise CaptureFailedError(
-            f"output_must_be_under:{ALLOWED_OUTPUT_SUFFIX.as_posix()}"
-        )
-
-
-def write_record(path: Path, record: Mapping[str, Any]) -> None:
-    serialized = json.dumps(record, indent=2, sort_keys=True) + "\n"
-    try:
-        scan_for_secrets(serialized)
-    except ValueError as exc:
-        raise CaptureFailedError("record_holds_a_credential") from exc
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(serialized, encoding="utf-8")
-
-
-def write_model(path: Path, record: Any) -> None:
-    """One contract model, in the same serialization the Phase 1 capture writes."""
-    write_record(path, record.model_dump(mode="json", by_alias=True, exclude_none=False))
-
-
 #: What the account target needs and the roles target does not. Checked after parsing
 #: rather than by ``required=True``, so a capture of the roles alone does not have to name
 #: a VPC that has nothing to do with them -- the same split the Phase 1 tool draws between
@@ -1496,7 +1416,7 @@ def capture_roles_target(arguments: argparse.Namespace) -> int:
     finding rather than a broken capture, so the records are written either way -- what
     drifted is the account, and reading it is how anybody finds out.
     """
-    observed_at = datetime.now(tz=UTC).replace(microsecond=0)
+    observed_at = observed_now()
     records = capture_roles(
         profile=arguments.aws_profile,
         region=arguments.home_region,
@@ -1507,25 +1427,22 @@ def capture_roles_target(arguments: argparse.Namespace) -> int:
         path = arguments.output_dir / relative_name
         write_model(path, record)
         written.append(path.name)
-    reports = [record for _name, record in records if hasattr(record, "findings")]
-    findings = sum(len(report.findings) for report in reports)
-    print(
-        json.dumps(
-            {
-                "targets": ["roles"],
-                "written": sorted(written),
-                "roles_compared": len(reports),
-                "drift_findings": findings,
-                "verdict": "role_drift" if findings else "ok",
-            },
-            indent=2,
-            sort_keys=True,
-        )
+    drift_reports = [record for _name, record in records if hasattr(record, "findings")]
+    findings = sum(len(one.findings) for one in drift_reports)
+    report(
+        {
+            "targets": ["roles"],
+            "written": sorted(written),
+            "roles_compared": len(drift_reports),
+            "drift_findings": findings,
+            "verdict": "role_drift" if findings else "ok",
+        }
     )
-    for report in reports:
-        for finding in report.findings:
+    for drift_report in drift_reports:
+        for finding in drift_report.findings:
             print(
-                f"role_drift:{report.role_name}:{finding.direction.value}:{finding.element}",
+                f"role_drift:{drift_report.role_name}:{finding.direction.value}:"
+                f"{finding.element}",
                 file=sys.stderr,
             )
     return 1 if findings else 0
@@ -1547,7 +1464,7 @@ def capture_compute_environment_target(arguments: argparse.Namespace) -> int:
 
     Exit 0 when the environment was read, 2 when it could not be.
     """
-    observed_at = datetime.now(tz=UTC).replace(microsecond=0)
+    observed_at = observed_now()
     environment = capture_compute_environment(
         profile=arguments.aws_profile,
         region=arguments.home_region,
@@ -1555,24 +1472,20 @@ def capture_compute_environment_target(arguments: argparse.Namespace) -> int:
     )
     path = arguments.output_dir / f"{COMPUTE_ENVIRONMENT_RECORD}{CAPTURE_SUFFIX}"
     write_model(path, environment)
-    print(
-        json.dumps(
-            {
-                "targets": ["compute-environment"],
-                "written": [path.name],
-                "compute_environment": environment.compute_environment_name,
-                "desired_vcpus": environment.desired_vcpus,
-                "live_instance_count": environment.live_instance_count,
-                # Reported rather than enforced. A capture taken while the environment is
-                # busy is a true record of a busy environment, and refusing to write it
-                # would leave the only way to record that state unavailable. What must not
-                # happen is committing it as evidence for the idle criterion, which is why
-                # the verdict says which one this is.
-                "verdict": "idle" if environment.idle_and_holding_nothing else "holding",
-            },
-            indent=2,
-            sort_keys=True,
-        )
+    report(
+        {
+            "targets": ["compute-environment"],
+            "written": [path.name],
+            "compute_environment": environment.compute_environment_name,
+            "desired_vcpus": environment.desired_vcpus,
+            "live_instance_count": environment.live_instance_count,
+            # Reported rather than enforced. A capture taken while the environment is
+            # busy is a true record of a busy environment, and refusing to write it
+            # would leave the only way to record that state unavailable. What must not
+            # happen is committing it as evidence for the idle criterion, which is why
+            # the verdict says which one this is.
+            "verdict": "idle" if environment.idle_and_holding_nothing else "holding",
+        }
     )
     return 0
 
@@ -1587,7 +1500,7 @@ def capture_run_target(arguments: argparse.Namespace) -> int:
     """
     if not arguments.run_id:
         raise CaptureFailedError("run_target_needs:--run-id")
-    observed_at = datetime.now(tz=UTC).replace(microsecond=0)
+    observed_at = observed_now()
     written: list[str] = []
     unloadable: list[str] = []
     for run_id in arguments.run_id:
@@ -1617,7 +1530,7 @@ def capture_run_target(arguments: argparse.Namespace) -> int:
             if key in refused:
                 continue
             path = arguments.output_dir / "runs" / run_id / "records" / key
-            write_lineage_body(path, body)
+            write_sanitized_text(path, body.decode("utf-8"))
             written.append(f"runs/{run_id}/records/{key}")
 
     environment = capture_compute_environment(
@@ -1629,20 +1542,16 @@ def capture_run_target(arguments: argparse.Namespace) -> int:
     write_model(arguments.output_dir / environment_record, environment)
     written.append(environment_record)
 
-    print(
-        json.dumps(
-            {
-                "targets": ["run"],
-                "runs": sorted(arguments.run_id),
-                "written": sorted(written),
-                "objects_that_do_not_load": sorted(unloadable),
-                "bodies_withheld_because_they_do_not_load": len(unloadable),
-                "compute_environment_desired_vcpus": environment.desired_vcpus,
-                "verdict": "ok",
-            },
-            indent=2,
-            sort_keys=True,
-        )
+    report(
+        {
+            "targets": ["run"],
+            "runs": sorted(arguments.run_id),
+            "written": sorted(written),
+            "objects_that_do_not_load": sorted(unloadable),
+            "bodies_withheld_because_they_do_not_load": len(unloadable),
+            "compute_environment_desired_vcpus": environment.desired_vcpus,
+            "verdict": "ok",
+        }
     )
     # Printed rather than returned as a failure. A corrupt record is a fact about the
     # store, and the store is write-once, so there is no version of this capture that
@@ -1652,69 +1561,33 @@ def capture_run_target(arguments: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    arguments = build_parser().parse_args(argv)
-    if arguments.target == "compute-environment":
-        try:
-            check_output_location(arguments.output_dir)
-            return capture_compute_environment_target(arguments)
-        except CaptureFailedError as exc:
-            print(exc.reason, file=sys.stderr)
-            return 2
-        except OSError:
-            print("output_unwritable", file=sys.stderr)
-            return 2
+def capture_account_target(arguments: argparse.Namespace) -> int:
+    """The standing account facts, and whether the classifier still agrees with itself.
 
-    if arguments.target == "run":
-        try:
-            check_output_location(arguments.output_dir)
-            return capture_run_target(arguments)
-        except CaptureFailedError as exc:
-            print(exc.reason, file=sys.stderr)
-            return 2
-        except OSError:
-            print("output_unwritable", file=sys.stderr)
-            return 2
-
-    if arguments.target == "roles":
-        try:
-            check_output_location(arguments.output_dir)
-            return capture_roles_target(arguments)
-        except CaptureFailedError as exc:
-            print(exc.reason, file=sys.stderr)
-            return 2
-        except OSError:
-            print("output_unwritable", file=sys.stderr)
-            return 2
-
+    Exit 2 for a disagreeing control rather than 0 with a warning. A control that
+    disagrees means the classifier is wrong, which makes the whole authorization matrix
+    untrustworthy rather than one row of it.
+    """
+    missing = [name for name in ACCOUNT_TARGET_ARGUMENTS if not getattr(arguments, name)]
+    if missing:
+        raise CaptureFailedError(f"account_target_needs:{','.join(sorted(missing))}")
+    if not arguments.vpc_is_ours and not arguments.borrowing_terms.strip():
+        raise CaptureFailedError("borrowed_vpc_needs_terms")
+    record = capture_account(
+        profile=arguments.aws_profile,
+        home_region=arguments.home_region,
+        second_region=arguments.second_region,
+        home_vpc=arguments.home_vpc,
+        home_subnet=arguments.home_subnet,
+        second_vpc=arguments.second_vpc,
+        second_subnet=arguments.second_subnet,
+        instance_type=arguments.instance_type,
+        vpc_is_ours=arguments.vpc_is_ours,
+        borrowing_terms=arguments.borrowing_terms,
+        observed_at=observed_now(),
+    )
     output = arguments.output_dir / "account-measurements.json"
-    try:
-        check_output_location(arguments.output_dir)
-        missing = [name for name in ACCOUNT_TARGET_ARGUMENTS if not getattr(arguments, name)]
-        if missing:
-            raise CaptureFailedError(f"account_target_needs:{','.join(sorted(missing))}")
-        if not arguments.vpc_is_ours and not arguments.borrowing_terms.strip():
-            raise CaptureFailedError("borrowed_vpc_needs_terms")
-        record = capture_account(
-            profile=arguments.aws_profile,
-            home_region=arguments.home_region,
-            second_region=arguments.second_region,
-            home_vpc=arguments.home_vpc,
-            home_subnet=arguments.home_subnet,
-            second_vpc=arguments.second_vpc,
-            second_subnet=arguments.second_subnet,
-            instance_type=arguments.instance_type,
-            vpc_is_ours=arguments.vpc_is_ours,
-            borrowing_terms=arguments.borrowing_terms,
-            observed_at=datetime.now(tz=UTC).replace(microsecond=0),
-        )
-        write_record(output, record)
-    except CaptureFailedError as exc:
-        print(exc.reason, file=sys.stderr)
-        return 2
-    except OSError:
-        print("output_unwritable", file=sys.stderr)
-        return 2
+    write_record(output, record)
 
     disagreeing = [entry for entry in record["controls"] if not entry["agrees"]]
     for entry in disagreeing:
@@ -1724,6 +1597,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     print(f"wrote {output}")
     return 2 if disagreeing else 0
+
+
+CAPTURE_TARGETS: Final[dict[str, Callable[[argparse.Namespace], int]]] = {
+    "account": capture_account_target,
+    "compute-environment": capture_compute_environment_target,
+    "roles": capture_roles_target,
+    "run": capture_run_target,
+}
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    arguments = build_parser().parse_args(argv)
+    target = CAPTURE_TARGETS[arguments.target]
+    return run_capture(
+        lambda: target(arguments),
+        output_dir=arguments.output_dir,
+        allowed_suffix=ALLOWED_OUTPUT_SUFFIX,
+    )
 
 
 if __name__ == "__main__":
