@@ -48,19 +48,18 @@ REGION = "us-east-1"
 ALLOWED_SUFFIX = Path("docs-frank/working/phase-9-evidence")
 
 #: A real twelve-digit number, because what these tests are for is that none of it reaches
-#: a file. Reversed rather than written out, matching the tracked-tree tripwire in
-#: tests/test_evidence.py.
-ACCOUNT_ID = "210987654321"[::-1]
+#: a file. AWS's own documentation example, which is the one value the tracked-tree
+#: tripwire in tests/test_evidence.py exempts.
+ACCOUNT_ID = "123456789012"
 
 #: Forty hexadecimal characters, which is both a commit SHA and the shape of an AWS secret
 #: access key. Which one this module decides it is, is the whole of ``allow_content_digests``.
 COMMIT_SHA = "b067a31e4c9d8f2a15e3b7c04d6a89f1e2c3b4a5"
 
 #: A digest holding twelve consecutive decimal characters, which roughly one in six do.
-#: Written to contain them on purpose: the masking pass has to consume the digest whole
+#: Built to contain them on purpose: the masking pass has to consume the digest whole
 #: before the account-id pattern can reach inside it.
-DIGITS_INSIDE_A_DIGEST = "210987654321"
-SHA256_DIGEST = "sha256:" + "a" * 20 + DIGITS_INSIDE_A_DIGEST + "b" * 32
+SHA256_DIGEST = "sha256:" + "a" * 20 + ACCOUNT_ID + "b" * 32
 
 
 class Recorded(ContractModel):
