@@ -171,8 +171,8 @@ Resources:
       ContainerProperties:
         # Pinned by digest, never by tag, for the reason infra/batch-compute.yaml gives.
         #
-        # The training image, built from OLMo-core a61e3dc and 3.28 GB against the CPU
-        # image's 45 MB. It carries torch pinned at 2.6.0 with CUDA, the project, boto3 and
+        # The training image, built from OLMo-core b067a31 and 4.29 GB against the CPU
+        # image's 45 MB. It carries torch pinned at 2.9.0 with CUDA, the project, boto3 and
         # wandb, and the build asserts inside the image that torch is on the pin and is a
         # CUDA build rather than a CPU wheel -- because a CPU torch here produces a run that
         # trains slowly, costs GPU rates, and reports nothing wrong.
@@ -185,7 +185,7 @@ Resources:
         # entry is worth reading rather than assuming, because what it accepts changed when
         # the image did.
         Image:
-          Fn::Sub: ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/sbsandbox-intern-edullm-olmo-core@sha256:0c8a866e5bfc838292a1a645a05a7a1300b83d22d91f024d636e76df22c2badb
+          Fn::Sub: ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/sbsandbox-intern-edullm-olmo-core@sha256:e8f4d5aaea4c7a6e0f723f9b49fccf406ee63017baab4cea4e8b94b8e23e079f
         ExecutionRoleArn:
           Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-execution
         JobRoleArn:

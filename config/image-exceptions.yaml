@@ -13,10 +13,12 @@
 # blocking findings runs; an image with no entry and blocking findings does not.
 schema_version: 1
 exceptions:
-  - image_digest: "sha256:0c8a866e5bfc838292a1a645a05a7a1300b83d22d91f024d636e76df22c2badb"
+  - image_digest: "sha256:e8f4d5aaea4c7a6e0f723f9b49fccf406ee63017baab4cea4e8b94b8e23e079f"
     reason: >-
-      The training image, and the first one this platform has published that can run a
-      model. Fifteen findings: four critical and eight high, which is the same profile the
+      The training image, rebuilt from OLMo-core b067a31 after the first attempt could not
+      import the library it exists to run: the project declared torch>=2.6.0 and its own
+      code needs the torch.compiler.disable(reason=...) keyword that arrived in 2.8.0, so
+      the pin is now 2.9.0 and the image is 4.29 GB rather than 3.28. Fifteen findings: four critical and eight high, which is the same profile the
       CPU image below carries and for the same cause -- three criticals in perl, one in
       glibc, highs in perl, glibc and sqlite3, mediums in perl and util-linux. Identical
       package versions, because the registered base digest has not moved.
