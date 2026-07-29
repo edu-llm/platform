@@ -174,6 +174,21 @@ def terminal_envelope() -> dict[str, Any]:
             ),
             "status": "SUCCEEDED",
             "createdAt": 1_785_182_695_000,
+            # The top-level container, which AWS lists among BatchJobStateChange's required
+            # properties and this fixture did not have. The recorder reads the output prefix
+            # out of it, so a succeeded event without one is refused -- which is the right
+            # behaviour and made this fixture's omission visible.
+            "container": {
+                "environment": [
+                    {"name": "EDULLM_RUN_ID", "value": SEAM_RUN_ID},
+                    {
+                        "name": "EDULLM_OUTPUT_PREFIX",
+                        "value": (
+                            f"s3://{OUTPUTS_BUCKET}/teams/platform/runs/{SEAM_RUN_ID}/"
+                        ),
+                    },
+                ]
+            },
             "attempts": [
                 {
                     "container": {"exitCode": 0},

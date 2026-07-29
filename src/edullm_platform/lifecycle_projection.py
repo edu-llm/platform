@@ -136,6 +136,12 @@ EVENTBRIDGE_BATCH_DETAIL_TYPE: Final = "Batch Job State Change"
 #: without this module acquiring a way to read one.
 OUTPUTS_BUCKET: Final = "sbsandbox-intern-edullm-outputs"
 
+#: The container environment variable ``batch_submit_request`` sets to the run's output
+#: prefix, and the name this projection reads it back under. Spelled in two modules with
+#: nothing connecting them, which is why a test compares the two rather than each against
+#: a constant: a rename on one side leaves every result manifest silently prefix-less.
+OUTPUT_PREFIX_VARIABLE: Final = "EDULLM_OUTPUT_PREFIX"
+
 #: Every status Batch reports for a job, and nothing else. A status outside this set is an
 #: error rather than a default, which is what makes an eighth one detectable.
 BATCH_JOB_STATUSES: Final = (
@@ -336,6 +342,48 @@ def _required_text(detail: Mapping[str, Any], field: str) -> str:
     return value
 
 
+def container_output_prefix(detail: Mapping[str, Any]) -> str | None:
+    """The output prefix this job's container was actually given, or None if it was not.
+
+    READ FROM THE EVENT RATHER THAN REBUILT, AND THE DIFFERENCE IS THE WHOLE POINT. This
+    used to be a literal here -- ``s3://{bucket}/{run_id}/`` -- which was wrong in a way
+    nothing could see until a run wrote something. The container is told
+    ``teams/{team}/runs/{run_id}/`` by ``batch_submit_request``, so the result manifest
+    claimed one location while the checkpoint went to another, and the workload role does
+    not even permit the one lineage named.
+
+    Rebuilding it here would need the team, and the obvious source for that was the
+    ``edullm:team`` job tag. AWS's published schema for ``BatchJobStateChange`` settles
+    that: the detail carries attempts, container, createdAt, dependsOn, jobDefinition,
+    jobId, jobName, jobQueue, parameters, retryStrategy and status -- and **no tags**. A
+    recorder written against that assumption would have found nothing.
+
+    ``container.environment`` is in the schema, so the value the container was handed is
+    readable directly. That is better than any reconstruction: what gets recorded is the
+    location the job was actually pointed at, so the manifest and the container cannot
+    disagree even if the derivation changes underneath them.
+
+    None rather than a guess when it is absent. A job submitted by hand, or by a future
+    path that forgets the variable, has no prefix anybody can name -- and an empty
+    ``output_prefixes`` says so, where a plausible literal would not.
+    """
+    container = detail.get("container")
+    if not isinstance(container, Mapping):
+        return None
+    environment = container.get("environment")
+    if not isinstance(environment, list):
+        return None
+    for entry in environment:
+        if not isinstance(entry, Mapping):
+            continue
+        if entry.get("name") != OUTPUT_PREFIX_VARIABLE:
+            continue
+        value = entry.get("value")
+        if isinstance(value, str) and value.startswith("s3://"):
+            return value
+    return None
+
+
 def project_batch_state_change(
     *,
     eventbridge_event_id: str,
@@ -365,6 +413,30 @@ def project_batch_state_change(
     state = _run_state_for(
         status, cancelled=_is_cancellation(detail, None if last is None else last[1])
     )
+
+    # Bounded by the bucket this platform owns, which is what ``output_bucket`` is for now
+    # that the prefix is read rather than assembled. A container pointed somewhere else did
+    # not write this platform's output, and a result manifest naming a foreign bucket would
+    # be this record endorsing a location nothing here controls or can read back.
+    written_under = container_output_prefix(detail)
+    if written_under is not None and not written_under.startswith(f"s3://{output_bucket}/"):
+        written_under = None
+    if written_under is None and _terminal_state(state) is AttemptTerminalState.SUCCEEDED:
+        # REFUSED RATHER THAN RECORDED EMPTY, because ResultManifest already says a
+        # succeeded run must name where it wrote and it is right to. Every job this
+        # platform submits is handed the variable by batch_submit_request, so a succeeded
+        # job without a readable one inside our own bucket is not a job whose output this
+        # record can honestly locate.
+        #
+        # This is loud on purpose. The event goes round the retry loop and then to the
+        # dead-letter queue, where an alarm is already watching, which is the behaviour a
+        # run that succeeded and cannot be found deserves. The alternative -- recording a
+        # plausible prefix so the write succeeds -- is precisely the defect being removed.
+        raise UnreadableBatchEventError(
+            "a succeeded Batch job carried no readable "
+            f"{OUTPUT_PREFIX_VARIABLE} inside {output_bucket}, so where its output went "
+            "cannot be recorded"
+        )
 
     attempt: SchedulerAttempt | None = None
     result: ResultManifest | None = None
@@ -410,11 +482,34 @@ def project_batch_state_change(
                     # would be, which is as true of a job that failed halfway as of one
                     # that finished, and a reader chasing partial output of a failed run
                     # would otherwise have nothing to follow.
-                    output_prefixes=(f"s3://{output_bucket}/{run_id}/",),
+                    #
+                    # Read out of the event rather than rebuilt here; see
+                    # container_output_prefix for why, and for what the schema does and
+                    # does not carry. Empty when the job carried no prefix, because a
+                    # location nobody named is not a location this record should invent.
+                    output_prefixes=tuple(prefix for prefix in (written_under,) if prefix),
+                    # STILL EMPTY, AND NOW THAT IS A LIMITATION RATHER THAN A DESCRIPTION.
+                    #
+                    # This said "Phase 3 runs one CPU container with no W&B and no
+                    # checkpoint", which was true of Phase 3 and stopped being true the
+                    # moment a GPU run trained: that run published a W&B run and wrote a
+                    # 762 MB checkpoint with a success marker, and this record says it did
+                    # neither.
+                    #
+                    # Nothing here can fix that, and it is worth being precise about why. A
+                    # Batch job state change carries the container's image, command,
+                    # environment, exit code and log stream. It does not carry what the
+                    # process did. The checkpoint's uri, step, size and checksum, and the
+                    # W&B entity and run id, are known only inside the container -- so a
+                    # recorder projecting an event cannot learn them, however carefully it
+                    # reads.
+                    #
+                    # Closing it needs a second source: the container writing a manifest
+                    # the recorder reads back, or a capture that joins the two after the
+                    # fact. That is a design decision with an IAM consequence -- the
+                    # recorder currently reads nothing -- and it is deliberately not made
+                    # here.
                     checkpoints=(),
-                    # Phase 3 runs one CPU container with no W&B and no checkpoint. Both
-                    # are left null rather than filled with an empty shape, so a later
-                    # phase adding them is visible as a change in the record.
                     wandb_run=None,
                     retention_class=retention_class,
                     completed_at=ended_at,
