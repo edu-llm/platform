@@ -19,6 +19,12 @@ differences into configuration that reads worse than the code it replaced. The l
 anything that talks to a CLI, a filesystem or an exit code belongs here; anything that
 knows what a Phase 3 role or a Phase 4 GPU job *is* does not.
 
+**There is no GitHub CLI wrapper here, and that is measured rather than an oversight.**
+One tool shells out to ``gh``, and what its failures print is the service's own stderr --
+which is the whole value of the message to an operator whose ``gh api`` call was refused,
+and precisely what a machine-readable reason token throws away. A wrapper that served it
+would have to be a different function from the one that serves ``aws``.
+
 **Why the write path scans.** A capture reads a live account, and the difference between a
 record and a leak is one field. ``scan_for_secrets`` refuses a serialization that looks like
 it carries a credential, which is a shape test and therefore both imperfect and cheap: it
@@ -53,7 +59,6 @@ __all__ = [
     "aws",
     "aws_json",
     "check_output_location",
-    "gh_json",
     "observed_now",
     "run_capture",
     "write_model",
@@ -140,28 +145,6 @@ def aws_json(arguments: Sequence[str], *, profile: str, region: str | None = Non
         return json.loads(completed.stdout)
     except ValueError as error:
         raise CaptureFailedError(f"aws_answer_unreadable:{arguments[0]}") from error
-
-
-def gh_json(arguments: Sequence[str]) -> Any:
-    """One ``gh api`` call, parsed, with the same refusal to invent an empty answer."""
-    try:
-        completed = subprocess.run(
-            ["gh", "api", *arguments],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=AWS_CALL_TIMEOUT_SECONDS,
-            shell=False,
-        )
-    except subprocess.TimeoutExpired as error:
-        raise CaptureFailedError(f"gh_call_timed_out:{arguments[0] if arguments else ''}") from error
-    except OSError as error:
-        raise CaptureFailedError("gh_cli_unavailable") from error
-    if completed.returncode != 0:
-        raise CaptureFailedError(
-            f"gh_call_failed:{arguments[0] if arguments else ''}:{completed.returncode}"
-        )
-    return json.loads(completed.stdout or "null")
 
 
 def account_identity(*, profile: str, region: str) -> str:
