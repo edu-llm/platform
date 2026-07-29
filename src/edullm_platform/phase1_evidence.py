@@ -27,12 +27,15 @@ refuse those commits; not scanning it would leave a field an account ID fits exa
 requires the tag to be its leading characters, so the digits are demonstrably a commit
 prefix. The cross-check, not the scan, is what licenses them, and a pair that does not
 agree still fails.
+
+The shape of a policy document is not here. :class:`DeployedRoleEvidence` is a Phase 1
+capture of an account fact and stays; the vocabulary it is built out of describes IAM
+rather than this phase, and four modules read it, so it lives in
+:mod:`edullm_platform.iam_documents`.
 """
 
 from __future__ import annotations
 
-import json
-import re
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Final, Literal, Self
 
@@ -55,6 +58,15 @@ from edullm_platform.evidence import (
     redact_content_digests,
     scan_for_secrets,
 )
+from edullm_platform.iam_documents import (
+    IAM_NAME_PATTERN,
+    IAM_POLICY_VERSION_PATTERN,
+    IamAttachedPolicy,
+    IamInlinePolicy,
+    IamRoleName,
+    IamSessionName,
+    IamTrustStatement,
+)
 
 __all__ = [
     "BuildProvenanceEvidence",
@@ -63,15 +75,6 @@ __all__ = [
     "EcrImageEvidence",
     "EcrLifecycleRule",
     "EcrRepositoryEvidence",
-    "IamActionMatch",
-    "IamAttachedPolicy",
-    "IamConditionEntry",
-    "IamInlinePolicy",
-    "IamPermissionStatement",
-    "IamPrincipal",
-    "IamPrincipalMatch",
-    "IamResourceMatch",
-    "IamTrustStatement",
     "ImageScanEvidence",
     "ImageScanFindingCounts",
     "ImmutableTagRefusalEvidence",
@@ -85,18 +88,13 @@ AWS_REGION_PATTERN: Final = r"^[a-z]{2}(?:-[a-z]+)+-[0-9]$"
 CLOUDTRAIL_EVENT_ID_PATTERN: Final = (
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 )
-#: The characters IAM allows in a role name, and separately in a session name.
-IAM_NAME_PATTERN: Final = r"^[A-Za-z0-9+=,.@_-]+$"
 #: One concrete API call, service prefix and operation. No wildcard: an action that was
 #: attempted is a single call, and ``batch:*`` is a policy statement rather than a call.
+#: :data:`~edullm_platform.iam_documents.IAM_POLICY_ACTION_PATTERN` is the other one, and
+#: the two are deliberately not the same pattern.
 IAM_ACTION_PATTERN: Final = r"^[a-z0-9-]{2,64}:[A-Z][A-Za-z0-9]{0,127}$"
 AWS_ERROR_CODE_PATTERN: Final = r"^[A-Za-z][A-Za-z0-9.]{0,127}$"
 AWS_SERVICE_PRINCIPAL_PATTERN: Final = r"^[a-z0-9.-]{2,64}\.amazonaws\.com$"
-#: An action as a deployed policy spells it, wildcards included. A record that could
-#: not hold ``ecr:*`` or ``*`` could not report the drift most worth reporting.
-IAM_POLICY_ACTION_PATTERN: Final = r"^(?:\*|[a-z0-9-]{2,64}:[A-Za-z0-9*?]{1,128})$"
-IAM_POLICY_VERSION_PATTERN: Final = r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
-IAM_CONDITION_OPERATOR_PATTERN: Final = r"^(?:ForAllValues:|ForAnyValue:)?[A-Za-z]{2,48}$"
 
 #: What stands in for an identity this repository does not declare. The sandbox account
 #: is shared with other teams and its per-person roles carry personal names, which an
@@ -107,12 +105,6 @@ UNDECLARED_IDENTITY_PLACEHOLDER: Final = "<another-identity-in-this-account>"
 #: floor; the ceiling is here so a role widened to twelve hours can be written down.
 MINIMUM_SESSION_DURATION_SECONDS: Final = 3600
 MAXIMUM_SESSION_DURATION_SECONDS: Final = 43200
-
-IamEffect = Literal["Allow", "Deny"]
-IamPrincipalType = Literal["*", "AWS", "CanonicalUser", "Federated", "Service"]
-#: Who manages an attached policy, in AWS's own terms: an AWS managed policy or a
-#: customer managed one. Recorded because the two can share a name.
-ManagedPolicyScope = Literal["aws", "customer"]
 
 #: Every state ECR reports for an image scan, basic and enhanced alike. A record that
 #: could not spell what the registry returned would force either a lie or a crash.
@@ -181,32 +173,11 @@ AwsRegion = Annotated[
     Field(pattern=AWS_REGION_PATTERN),
     AfterValidator(scan_for_secrets),
 ]
-IamRoleName = Annotated[
-    str,
-    Field(min_length=1, max_length=64, pattern=IAM_NAME_PATTERN),
-    AfterValidator(scan_for_secrets),
-]
-IamSessionName = Annotated[
-    str,
-    Field(min_length=2, max_length=64, pattern=IAM_NAME_PATTERN),
-    AfterValidator(scan_for_secrets),
-]
 CloudTrailEventId = Annotated[
     str,
     Field(pattern=CLOUDTRAIL_EVENT_ID_PATTERN),
     AfterValidator(scan_for_secrets),
 ]
-
-
-def validate_policy_action(value: str) -> str:
-    if re.fullmatch(IAM_POLICY_ACTION_PATTERN, value) is None:
-        raise ValueError("a policy action must be a service action or a wildcard")
-    return value
-
-
-#: An action as a deployed policy spells it. Applied per element rather than as a field
-#: pattern so a failure names the action rather than the list it came from.
-IamPolicyAction = Annotated[SecretFreeStr, AfterValidator(validate_policy_action)]
 
 
 def scan_reused_contract_strings(*values: str) -> None:
@@ -549,171 +520,6 @@ class DenialEvidence(FreshEvidenceModel):
     event_source: SecretFreeStr = Field(pattern=AWS_SERVICE_PRINCIPAL_PATTERN)
 
 
-def parse_condition_value(value: object) -> object:
-    """Spell a condition value the way a JSON policy document does.
-
-    IAM's grammar makes quotation marks optional around numbers and booleans, so
-    ``{"Bool": {"aws:SecureTransport": true}}`` is a policy IAM accepts and returns
-    unquoted. The quoted and unquoted spellings mean the same thing to IAM, so the
-    unquoted one is normalised rather than refused: refusing it would fail capture on a
-    valid policy, and comparing punctuation against the template would report drift that
-    is not there. A value that is not a JSON scalar is left alone for the field to refuse.
-    """
-    if isinstance(value, bool | int | float):
-        return json.dumps(value, allow_nan=False)
-    return value
-
-
-#: One value of one condition, as the document spells it once numbers and booleans are
-#: quoted. Scanned, because a condition value can hold anything a policy author typed.
-IamConditionValue = Annotated[SecretFreeStr, BeforeValidator(parse_condition_value)]
-
-
-class IamConditionEntry(ContractModel):
-    """One condition an IAM statement carries, flattened to operator, key and values.
-
-    IAM writes conditions as a map of maps. Flattened they compare element by element,
-    so a comparison against the template can say which condition went missing rather
-    than that two nested dictionaries differ.
-
-    The operator is patterned, not enumerated. IAM has around thirty operators, each with
-    an optional ``IfExists`` suffix and an optional ``ForAllValues:`` or ``ForAnyValue:``
-    prefix, and a list of the ones these templates use would refuse the rest. IAM will
-    not store an operator it does not recognise, so the pattern is the useful bound.
-    """
-
-    operator: SecretFreeStr = Field(pattern=IAM_CONDITION_OPERATOR_PATTERN)
-    condition_key: SecretFreeStr = Field(min_length=1, max_length=256)
-    values: Annotated[tuple[IamConditionValue, ...], BeforeValidator(require_ordered_sequence)] = (
-        Field(min_length=1, strict=False)
-    )
-
-
-class IamActionMatch(ContractModel):
-    """The actions a statement selects, and whether it selects them by exclusion.
-
-    IAM's grammar offers ``Action`` or ``NotAction`` and never both or neither, and the
-    two mean opposite things: ``NotAction`` with ``Allow`` permits every action that is
-    not listed. Naming the element beside the list is what stops a reader or a comparison
-    from taking one for the other, and the list is unreachable without passing the name.
-
-    This exists because refusing the negated form would have made the record useless in
-    the case it was built for. Neither committed template uses ``NotAction``, so a
-    statement that has one is drift by construction, and drift is what this must describe.
-    """
-
-    element: Literal["Action", "NotAction"]
-    actions: Annotated[tuple[IamPolicyAction, ...], BeforeValidator(require_ordered_sequence)] = (
-        Field(min_length=1, strict=False)
-    )
-
-
-class IamResourceMatch(ContractModel):
-    """The resources a statement selects, negated or not, on the terms above.
-
-    ``NotResource`` with ``Allow`` reaches every resource except those listed, which is
-    a wider grant than any spelling of ``Resource`` in either template.
-    """
-
-    element: Literal["Resource", "NotResource"]
-    resources: Annotated[tuple[SecretFreeStr, ...], BeforeValidator(require_ordered_sequence)] = (
-        Field(min_length=1, strict=False)
-    )
-
-
-class IamPrincipal(ContractModel):
-    """Who a trust statement names.
-
-    ``identifier`` is a name wherever one exists: the provider host for a federated
-    principal, the service principal for a service. Where only an ARN exists it is
-    recorded with its account ID redacted, which is also how the template spells it.
-    """
-
-    principal_type: IamPrincipalType
-    identifier: SecretFreeStr = Field(min_length=1, max_length=2048)
-
-
-class IamPrincipalMatch(ContractModel):
-    """Who a trust statement admits, negated or not, on the terms above.
-
-    ``NotPrincipal`` with ``Allow`` is the form IAM Access Analyzer reports as
-    ``ALLOW_WITH_NOT_PRINCIPAL``, because it can admit anonymous callers. A trust policy
-    edited by hand is where it would appear, and this record has to be able to say so.
-    """
-
-    element: Literal["Principal", "NotPrincipal"]
-    principals: Annotated[tuple[IamPrincipal, ...], BeforeValidator(require_ordered_sequence)] = (
-        Field(min_length=1, strict=False)
-    )
-
-
-class IamTrustStatement(ContractModel):
-    """One statement of a deployed role's trust policy.
-
-    ``conditions`` may be empty, and an empty tuple is a finding rather than a gap in
-    the capture: a trust statement with no conditions admits its principal outright.
-
-    No resource element: IAM refuses one in a role's trust policy.
-    """
-
-    sid: SecretFreeStr | None = Field(min_length=1, max_length=128)
-    effect: IamEffect
-    action_match: IamActionMatch
-    principal_match: IamPrincipalMatch
-    conditions: Annotated[
-        tuple[IamConditionEntry, ...], BeforeValidator(require_ordered_sequence)
-    ] = Field(strict=False)
-
-
-class IamPermissionStatement(ContractModel):
-    """One statement of a deployed role's inline policy.
-
-    Both elements IAM requires are present and each names at least one value, so a
-    capture that dropped a list fails here rather than recording a statement that grants
-    less than the role does.
-    """
-
-    sid: SecretFreeStr | None = Field(min_length=1, max_length=128)
-    effect: IamEffect
-    action_match: IamActionMatch
-    resource_match: IamResourceMatch
-    conditions: Annotated[
-        tuple[IamConditionEntry, ...], BeforeValidator(require_ordered_sequence)
-    ] = Field(strict=False)
-
-
-class IamInlinePolicy(ContractModel):
-    """One inline policy on the role, by name and statement.
-
-    ``policy_version`` is the document's ``Version`` element, which IAM's grammar makes
-    optional; a document without one is evaluated as ``2008-10-17``. It is nullable so
-    that absence can be written down, and required so an uncaptured version cannot be
-    read as an absent one. Recording the default IAM would have applied would put a fact
-    in the record that the account never returned.
-    """
-
-    policy_name: SecretFreeStr = Field(min_length=1, max_length=128, pattern=IAM_NAME_PATTERN)
-    policy_version: SecretFreeStr | None = Field(pattern=IAM_POLICY_VERSION_PATTERN)
-    statements: Annotated[
-        tuple[IamPermissionStatement, ...], BeforeValidator(require_ordered_sequence)
-    ] = Field(min_length=1, strict=False)
-
-
-class IamAttachedPolicy(ContractModel):
-    """One managed policy attached to the role, by name and by who manages it.
-
-    A name alone does not identify a managed policy. ``arn:aws:iam::aws:policy/X`` and
-    ``arn:aws:iam::<account>:policy/X`` are different policies with the same name, and a
-    role may carry both, so a record of names alone refused that role outright and lost
-    the distinction that matters most: the AWS-managed ``AdministratorAccess`` is the
-    attachment worth noticing. ``scope`` is that distinction, and it is a name for the
-    policy's owner rather than the account ID the ARN would carry.
-    """
-
-    policy_name: SecretFreeStr = Field(min_length=1, max_length=128, pattern=IAM_NAME_PATTERN)
-    scope: ManagedPolicyScope
-
-
 class DeployedRoleEvidence(FreshEvidenceModel):
     """What a role in the account actually is, in terms a template can be compared to.
 
@@ -729,10 +535,13 @@ class DeployedRoleEvidence(FreshEvidenceModel):
     ``permissions_boundary_policy_name`` is nullable so a detached boundary can be
     written down, and required so an uncaptured one cannot be mistaken for a detached
     one. ``trust_policy_version`` is nullable on the same terms, for the reason
-    :class:`IamInlinePolicy` gives.     ``max_session_duration_seconds`` accepts IAM's full range rather than the 3600
+    :class:`~edullm_platform.iam_documents.IamInlinePolicy` gives.
+
+    ``max_session_duration_seconds`` accepts IAM's full range rather than the 3600
     the templates ask for. Actions accept wildcards. Trust conditions may be empty. A
     statement may select by exclusion, which no template here does; see
-    :class:`IamActionMatch` for why that is recorded rather than refused.
+    :class:`~edullm_platform.iam_documents.IamActionMatch` for why that is recorded
+    rather than refused.
 
     Everything is required, so a capture that stopped halfway fails here rather than
     producing a record that reads like a narrow role. Names are recorded rather than

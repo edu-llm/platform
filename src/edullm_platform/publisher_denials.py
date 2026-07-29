@@ -94,6 +94,7 @@ from edullm_platform.evidence import (
     redact_aws_account_ids,
     redact_content_digests,
 )
+from edullm_platform.iam_documents import IamRoleName, IamSessionName
 from edullm_platform.phase1_evidence import (
     AWS_ERROR_CODE_PATTERN,
     AWS_SERVICE_PRINCIPAL_PATTERN,
@@ -101,8 +102,6 @@ from edullm_platform.phase1_evidence import (
     AwsRegion,
     DenialEvidence,
     EvidenceInstant,
-    IamRoleName,
-    IamSessionName,
 )
 
 __all__ = [

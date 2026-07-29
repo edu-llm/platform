@@ -21,7 +21,7 @@ import pytest
 from workflow_support import write_stub
 
 from edullm_platform.evidence import AWS_ACCOUNT_ID_PLACEHOLDER, scan_for_secrets
-from edullm_platform.phase1_evidence import IamPermissionStatement, IamTrustStatement
+from edullm_platform.iam_documents import IamPermissionStatement, IamTrustStatement
 from edullm_platform.role_drift import (
     COMMITTED_ROLE_TEMPLATES,
     FOREIGN_ACCOUNT_PLACEHOLDER,
