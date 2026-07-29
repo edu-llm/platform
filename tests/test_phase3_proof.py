@@ -555,8 +555,12 @@ def test_a_citation_pytest_cannot_collect_aborts_generation(
 ) -> None:
     # A matrix may not print a citation nothing ran. Writing the bundle anyway is how a
     # renamed test turns into a green tick beside a claim nobody checked.
+    #
+    # Patched on the shared module rather than on this generator, because the collection
+    # call moved there. Patching a name the generator no longer imports would raise
+    # rather than substitute, which is the failure that caught this.
     monkeypatch.setattr(
-        "tools.build_phase3_proof.collect_node_ids",
+        "edullm_platform.proof_generator.collect_node_ids",
         lambda repo_root, *, nested_env: ("tests/test_manifest.py::test_something_else",),
     )
 
