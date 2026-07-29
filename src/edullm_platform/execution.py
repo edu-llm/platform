@@ -152,6 +152,24 @@ def batch_submit_request(
                     "Name": "EDULLM_OUTPUT_PREFIX",
                     "Value": output_prefix(team=manifest.team, run_id=run_id),
                 },
+                # THE PROJECT COMES FROM THE MANIFEST, NOT FROM THE COMMAND, AND THAT IS
+                # THE WHOLE OF D4 IN ONE LINE.
+                #
+                # A training command needs a W&B project to write to and could perfectly
+                # well carry one in its own argv. It must not. The key in the container
+                # authenticates a shared platform-owned account; it does not attribute. What
+                # a run is labelled with is our assertion, derived from the same admission
+                # record that was approved -- so a submitter who wrote a different project
+                # into their command would be attributing their spend somewhere the decision
+                # record does not say, and nothing downstream would notice.
+                #
+                # This is the same reasoning that has the state machine read the image scan
+                # itself rather than accept findings from a caller.
+                #
+                # The container still has to be trusted to use it, which this cannot force.
+                # What it removes is the need to supply it, which is the difference between
+                # a submitter choosing an attribution and a submitter overriding one.
+                {"Name": "EDULLM_WANDB_PROJECT", "Value": manifest.wandb_project},
             ],
         },
         # Unconditional. See the module docstring for why there is no branch here.

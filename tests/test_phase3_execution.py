@@ -412,7 +412,7 @@ def test_the_submitted_target_is_the_resolved_one_and_not_anything_from_the_mani
     assert request["JobDefinition"] == resolved.job_definition_arn
 
 
-def test_the_container_environment_is_exactly_these_five_variables() -> None:
+def test_the_container_environment_is_exactly_these_six_variables() -> None:
     """Mutation: add, drop or rename a variable the container reads.
 
     Nothing else in the repository pins this list, which was measured rather than assumed:
@@ -435,7 +435,32 @@ def test_the_container_environment_is_exactly_these_five_variables() -> None:
         "EDULLM_DATASET_RELEASE",
         "EDULLM_COMMIT_SHA",
         "EDULLM_OUTPUT_PREFIX",
+        "EDULLM_WANDB_PROJECT",
     ]
+
+
+def test_the_wandb_project_comes_from_the_manifest_and_not_from_the_command() -> None:
+    """Mutation: drop the variable and let the training command name its own project.
+
+    The key in the container authenticates a shared platform-owned W&B account; it does not
+    attribute. What a run is labelled with is this platform's assertion, derived from the
+    admission record that was approved -- so a submitter who wrote a different project into
+    their own argv would attribute their spend somewhere the decision record does not say,
+    and nothing downstream would notice, because the write would succeed.
+
+    This cannot force a container to use the value. What it removes is the need to supply
+    one, which is the difference between a submitter choosing an attribution and a submitter
+    overriding one. It is the same reasoning that has the state machine read the image scan
+    itself rather than accept findings from a caller.
+    """
+    declared = manifest()
+    request = batch_submit_request(manifest=declared, target=target(), run_id=RUN_ID)
+    environment = {entry["Name"]: entry["Value"] for entry in request["ContainerOverrides"]["Environment"]}
+
+    assert environment["EDULLM_WANDB_PROJECT"] == declared.wandb_project
+    # Not assembled from anything the command carries, and not defaulted when the manifest
+    # is silent -- the field is required on a manifest, so there is no silent case.
+    assert declared.wandb_project not in " ".join(declared.command)
 
 
 def test_the_prefix_the_container_is_told_is_the_one_the_shared_function_builds() -> None:
