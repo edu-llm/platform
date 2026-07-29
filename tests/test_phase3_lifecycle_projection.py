@@ -68,6 +68,9 @@ RUN_ID = "run_0198f0a1-2b3c-7d4e-8f01-23456789abcd"
 BATCH_JOB_ID = "3f9d1f1e-6b18-4a63-9c0d-2f6d4a1b8c70"
 EVENTBRIDGE_EVENT_ID = "9d2f0e5a-1c4b-4c8e-9a3d-7f5b2e6c1a04"
 OCCURRED_AT = "2026-07-27T20:15:30Z"
+#: The same instant as a datetime, for the tests that call the projection directly rather
+#: than through the envelope reader that parses it.
+OCCURRED_AT_INSTANT = datetime.fromisoformat(OCCURRED_AT)
 
 #: 2026-07-27T20:05:00Z and six minutes later, both before the envelope's own time, as
 #: Batch's epoch milliseconds. Integers, because that is what Batch sends and because a
@@ -420,7 +423,7 @@ def test_the_prefix_recorded_is_the_prefix_the_container_was_handed() -> None:
     projected = project_batch_state_change(
         eventbridge_event_id=EVENTBRIDGE_EVENT_ID,
         detail=delivered,
-        occurred_at=datetime.fromisoformat(OCCURRED_AT.replace("Z", "+00:00")),
+        occurred_at=OCCURRED_AT_INSTANT,
     )
 
     assert told.startswith(f"s3://{OUTPUTS_BUCKET}/teams/{manifest.team}/runs/{RUN_ID}/")
@@ -467,7 +470,7 @@ def test_a_succeeded_job_whose_output_cannot_be_located_is_refused(
         project_batch_state_change(
             eventbridge_event_id=EVENTBRIDGE_EVENT_ID,
             detail=unlocatable,
-            occurred_at=datetime.fromisoformat(OCCURRED_AT.replace("Z", "+00:00")),
+            occurred_at=OCCURRED_AT_INSTANT,
         )
 
 
@@ -485,7 +488,7 @@ def test_a_failed_job_with_no_prefix_is_still_recorded() -> None:
     projected = project_batch_state_change(
         eventbridge_event_id=EVENTBRIDGE_EVENT_ID,
         detail=failed,
-        occurred_at=datetime.fromisoformat(OCCURRED_AT.replace("Z", "+00:00")),
+        occurred_at=OCCURRED_AT_INSTANT,
     )
 
     assert projected.result is not None
