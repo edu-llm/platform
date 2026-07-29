@@ -1,6 +1,6 @@
 # Phase 0 schema compatibility report
 
-129 contract models. The structural digest is `sha256` over the model's JSON schema with sorted keys, so it changes when a field is added, removed, retyped, or reconstrained, and does not change when unrelated code moves. Comparing this table between phases answers whether a schema changed.
+131 contract models. The structural digest is `sha256` over the model's JSON schema with sorted keys, so it changes when a field is added, removed, retyped, or reconstrained, and does not change when unrelated code moves. Comparing this table between phases answers whether a schema changed.
 
 The kind column separates a `record`, which some payload is validated against, from a `base`, which exists only for other models to inherit from and which no payload names directly.
 
@@ -48,7 +48,7 @@ The kind column separates a `record`, which some payload is validated against, f
 
 ## Runtime records
 
-94 models are not exported to `schemas/`. These are produced while work runs or while a decision is made: lineage, results, datasets, authorization outcomes, operational evidence, and gate results. They carry a `schema_version` field where they are persisted, and they are deliberately not published as repository configuration, because no human authors them by hand.
+96 models are not exported to `schemas/`. These are produced while work runs or while a decision is made: lineage, results, datasets, authorization outcomes, operational evidence, and gate results. They carry a `schema_version` field where they are persisted, and they are deliberately not published as repository configuration, because no human authors them by hand.
 
 | model | module | kind | schema_version | structural digest |
 | --- | --- | --- | --- | --- |
@@ -132,8 +132,10 @@ The kind column separates a `record`, which some payload is validated against, f
 | GpuJobEvidence | edullm_platform.phase4_evidence | record | unversioned | sha256:33d7f935aaa4e55c72cfbbe55862d481ccead69818aa621d1a06f5e8c37a8bbe |
 | InstanceTypeOffering | edullm_platform.phase4_evidence | record | unversioned | sha256:152e8f5d436183f1a86854e2e0f1bc2fe0408f1308375a32cd2efec5f6278cab |
 | InstanceTypeOfferingEvidence | edullm_platform.phase4_evidence | record | unversioned | sha256:aa619a8e63e530f18f9ae3b3f34b9b673f06b81e4fb4bfe25623916d75f2e7b1 |
+| IsolationEvidence | edullm_platform.phase4_evidence | record | unversioned | sha256:27d2318ae24565019ee808a90da295dfa724e98a8113a00847ffe56efbd5afdd |
 | OutputObject | edullm_platform.phase4_evidence | record | unversioned | sha256:c192781749f07310ed5d8ae5a6ee7c836c6cb117f56e0f384c5f993c9a314df7 |
 | OutputPrefixEvidence | edullm_platform.phase4_evidence | record | unversioned | sha256:2ce39e867aae6ad02d833068aa0e68aa7498016be9cb18c0bbebe6822768483d |
+| ResumeEvidence | edullm_platform.phase4_evidence | record | unversioned | sha256:8ad8f5f65f6a1f7aef5d36d049c4a1d09269a0bb217fa2ed5f092a9e220ad96d |
 | SecretDeliveryEvidence | edullm_platform.phase4_evidence | record | unversioned | sha256:1b4eb420671c5194307b71dcdd37ec700d2768b7c97a5c5103cdfd110a421eff |
 | TrainingSummaryEvidence | edullm_platform.phase4_evidence | record | unversioned | sha256:2e97f2b0ed364df6afaf8139f6cebfbd8137094ce7828ad8f2af146924d4fb91 |
 | WorkloadRoleScopeEvidence | edullm_platform.phase4_evidence | record | unversioned | sha256:a291e05094714bdd08465a239732a666b76186e600748a6cea6126d75e05780a |

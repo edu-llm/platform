@@ -2,8 +2,8 @@
 
 Phase: phase-2
 Bundle schema version: 1
-Source commit: 830ff358895bff4c030922036078a1abc6a584a5
-Generated: 2026-07-29T14:55:33+00:00
+Source commit: 186e8873f13f5c11298a402dc02be36741a7f348
+Generated: 2026-07-29T15:28:49+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 2 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase2_proof.py` at generation time. It is not done, and the Result table below says by how much.
 
@@ -45,9 +45,9 @@ This run evaluated 22 acceptance criteria: twelve criteria are covered, one crit
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3388 |
-| suite tests executed | 3226 |
-| suite passed | 3226 |
+| suite tests collected | 3394 |
+| suite tests executed | 3232 |
+| suite passed | 3232 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
