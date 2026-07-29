@@ -140,18 +140,25 @@ group is Phase 0's and exists because that phase predates the current definition
 
 **Phases 2, 3 and 4 exit 1 today, and that is the report working rather than a broken
 gate.** All three phases are deployed and have run. Phase 2 reports twelve of twenty-two
-criteria covered, one deferred and nine gaps; Phase 3 reports thirteen of twenty-two covered
-and nine gaps; Phase 4 reports nine of twelve covered, one deferred and two gaps. Run the
+criteria covered, one deferred and nine gaps; Phase 3 reports thirteen of nineteen covered
+and six gaps; Phase 4 reports nine of twelve covered, one deferred and two gaps. Run the
 gates for the current numbers — the ones above are what they printed when this paragraph was
 written, and a gate is the authority rather than this file.
 
 What the remaining gaps are about is worth knowing before reading them. They are not the
-submission path, which works end to end: they are mostly the other end of a run's life —
-nothing in this account can stop a job once it has started — plus captures nobody has taken
-and shapes of run nobody has aimed at a criterion yet. Each gap text says what was observed,
-what is missing, and what would close it. Recording them as deferrals instead would turn a
-gate green without anything changing in the account, which is exactly the move the
-three-status rule exists to make visible.
+submission path, which works end to end: they are captures nobody has taken and shapes of
+run nobody has aimed at a criterion yet. Each gap text says what was observed, what is
+missing, and what would close it. Recording them as deferrals instead would turn a gate
+green without anything changing in the account, which is exactly the move the three-status
+rule exists to make visible.
+
+One capability is missing rather than unobserved, and no gate measures it: **nothing here
+can stop a job once it has started.** Cancelling the submission workflow in GitHub does not
+cancel the Batch job — the workflow says so where an operator will see it, and the job runs
+on. What bounds the cost is the mandatory per-attempt timeout, which every submission
+carries and which has been observed stopping a real job. Building cancellation belongs to a
+later phase, so Phase 3's criteria no longer carry it and its numbering skips 5, 6 and 7
+where those checks used to be.
 
 ## Proof bundle
 

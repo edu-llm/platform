@@ -1,4 +1,4 @@
-"""The Phase 3 acceptance gate: the twenty-two criteria, executed rather than read.
+"""The Phase 3 acceptance gate: the nineteen criteria, executed rather than read.
 
 Every rule this gate applies is the shared one. The three statuses, what a citation may be,
 and the decision that execution overrules the recorded table all live in
@@ -10,14 +10,16 @@ gives and Phase 2 repeats: a phase that could restate the rule could restate it 
 
 Criteria only, matching Phase 1 and Phase 2. Phase 0 retains a group of operational
 inventory checks because they came from an earlier definition of that phase; nothing similar
-exists here, and adding one would give a reader something green to look at while twenty
-criteria were red.
+exists here, and adding one would give a reader something green to look at while the checks
+the phase is about were red.
 
-**This gate fails today, by a wide margin, and that is the report working.** Wave 5 is held:
-nothing Phase 3 describes has been deployed and no Batch job has ever run in this account.
-Twenty of the twenty-two criteria are therefore recorded as gaps whose text says what is
-missing and what would close it. A gate that passed on the strength of templates would be
-reporting that a container ran, which nothing has observed.
+**This gate fails today, and that is the report working.** The phase is deployed and four
+runs have completed, so most of the criteria now rest on captures of what those runs left
+behind. Every one still open names an observation nobody has made -- a case no run has been
+aimed at, or a capture of a shape the per-run records cannot produce by construction -- and
+each one's text says what is missing and what would close it. No count is repeated here,
+because a count in a docstring is a count nothing recomputes; the definition holds them and
+``tests/test_phase3_criteria.py`` asserts them.
 """
 
 from __future__ import annotations
