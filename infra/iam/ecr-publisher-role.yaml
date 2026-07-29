@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: GitHub Actions role for publishing finished OLMo-core images to ECR.
+Description: GitHub Actions role for publishing finished research images to ECR, one registered repository at a time.
 
 Resources:
   EcrPublisherRole:
@@ -22,15 +22,35 @@ Resources:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
                 token.actions.githubusercontent.com:job_workflow_ref: edu-llm/platform/.github/workflows/build-research-image.yml@refs/heads/main
                 token.actions.githubusercontent.com:repository_owner_id: "306859726"
-                token.actions.githubusercontent.com:repository_id: "1306868157"
+                # ONE ENTRY PER REGISTERED REPOSITORY, and a list here means "any of"
+                # rather than "all of". Registering a repository in
+                # config/repositories.yaml does nothing until its id appears here: the
+                # token of any other repository fails this condition and the build dies at
+                # AssumeRole, which reads like a broken role ARN rather than like a
+                # repository nobody authorised.
+                #
+                # edullm-data was registered, given an ECR repository and a pinned base
+                # before anybody noticed the registration was inert.
+                # tests/test_repository_registry.py compares this list against the registry
+                # in both directions so the next one cannot be.
+                token.actions.githubusercontent.com:repository_id:
+                  - "1306868157"  # OLMo-core
+                  - "1315813778"  # edullm-data
               StringLike:
-                token.actions.githubusercontent.com:sub: repo:edu-llm@306859726/OLMo-core@1306868157:ref:refs/heads/*
+                # Belt and braces with the id above rather than a substitute for it. The id
+                # is immutable and the path is not, so a repository renamed after this was
+                # written still matches its id; the path is here because a subject claim
+                # naming a repository this role has never heard of should not match on the
+                # strength of a numeric field alone.
+                token.actions.githubusercontent.com:sub:
+                  - repo:edu-llm@306859726/OLMo-core@1306868157:ref:refs/heads/*
+                  - repo:edu-llm@306859726/edullm-data@1315813778:ref:refs/heads/*
       # Inline rather than a customer managed policy. InternSandboxBoundary denies
       # iam:CreatePolicyVersion on every policy, so a managed policy could be created once
       # and never amended; the first permission change would fail the stack update. Inline
       # policies go through iam:PutRolePolicy, which the boundary permits on this name.
       Policies:
-        - PolicyName: publish-olmo-core-images
+        - PolicyName: publish-research-images
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
@@ -48,8 +68,13 @@ Resources:
                   - ecr:GetDownloadUrlForLayer
                   - ecr:DescribeImages
                   - ecr:DescribeImageScanFindings
+                # One destination per registered repository, and no wildcard. A single
+                # arn ending in repository/sbsandbox-intern-edullm-* would cover every
+                # future repository without anybody deciding to, which is precisely the
+                # decision this list exists to make visible.
                 Resource:
-                  Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-olmo-core
+                  - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-olmo-core
+                  - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-data
 
 Outputs:
   RoleName:

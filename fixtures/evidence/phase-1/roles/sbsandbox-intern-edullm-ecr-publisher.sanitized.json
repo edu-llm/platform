@@ -3,7 +3,7 @@
   "environment": "sandbox",
   "inline_policies": [
     {
-      "policy_name": "publish-olmo-core-images",
+      "policy_name": "publish-research-images",
       "policy_version": "2012-10-17",
       "statements": [
         {
@@ -43,7 +43,8 @@
           "resource_match": {
             "element": "Resource",
             "resources": [
-              "arn:aws:ecr:us-east-1:<aws-account-id>:repository/sbsandbox-intern-edullm-olmo-core"
+              "arn:aws:ecr:us-east-1:<aws-account-id>:repository/sbsandbox-intern-edullm-olmo-core",
+              "arn:aws:ecr:us-east-1:<aws-account-id>:repository/sbsandbox-intern-edullm-data"
             ]
           },
           "sid": null
@@ -52,7 +53,7 @@
     }
   ],
   "max_session_duration_seconds": 3600,
-  "observed_at": "2026-07-28T20:28:02Z",
+  "observed_at": "2026-07-29T19:11:36Z",
   "permissions_boundary_policy_name": "InternSandboxBoundary",
   "role_name": "sbsandbox-intern-edullm-ecr-publisher",
   "source": "aws",
@@ -85,7 +86,8 @@
           "condition_key": "token.actions.githubusercontent.com:repository_id",
           "operator": "StringEquals",
           "values": [
-            "1306868157"
+            "1306868157",
+            "1315813778"
           ]
         },
         {
@@ -99,7 +101,8 @@
           "condition_key": "token.actions.githubusercontent.com:sub",
           "operator": "StringLike",
           "values": [
-            "repo:edu-llm@306859726/OLMo-core@1306868157:ref:refs/heads/*"
+            "repo:edu-llm@306859726/OLMo-core@1306868157:ref:refs/heads/*",
+            "repo:edu-llm@306859726/edullm-data@1315813778:ref:refs/heads/*"
           ]
         }
       ],

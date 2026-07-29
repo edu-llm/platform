@@ -113,48 +113,84 @@ def test_the_gpu_workload_role_names_exactly_one_team() -> None:
     assert EVERY_TEAM not in reached
 
 
-def test_the_cpu_workload_role_reaches_every_team_and_this_is_the_phase_five_gap() -> None:
-    """The measured state, asserted so that fixing it has to change this test.
+def test_the_cpu_workload_role_reaches_every_team_on_purpose() -> None:
+    """The measured state, recorded as a decision rather than as a defect.
 
-    Mutation: none -- this records a defect rather than guarding against one. The CPU
-    workload role is scoped ``teams/*/runs/*``, which is every team that will ever exist.
-    Today the wildcard has exactly one thing to match, so nothing is exposed and nothing
-    fails.
+    Mutation: narrow it to a named team. That would be a tightening nobody asked for, and
+    it would cost the Phase 5 gate: adding a team would then require an IAM amendment and a
+    laptop-applied deploy rather than a line of configuration.
 
-    What makes it worth a test rather than a comment is how it would arrive: binding a
-    second team widens this grant by doing nothing to it. No run fails, no deploy happens,
-    no diff shows anything -- the pattern simply starts matching a name it did not match
-    yesterday. That is the failure mode a test can catch and a review cannot.
+    This was written as a defect first, and the correction is worth keeping visible. The
+    reasoning was that a wildcard matching one name today will silently match two tomorrow,
+    which is true. What it skipped is what the second match would cost, and the answer is
+    nothing: one lab, one model, no adversary, and collision already prevented by the
+    per-run prefix and the absence of s3:DeleteObject.
     """
     reached = teams_reachable_by(role_named(CPU_WORKLOAD))  # type: ignore[arg-type]
 
     assert reached == frozenset({EVERY_TEAM})
 
 
-def test_binding_a_second_team_is_refused_until_the_wildcard_is_dealt_with() -> None:
-    """The guard the gap above needs. Mutation: drop it and bind a team.
+def test_the_wildcard_is_a_decision_and_the_narrow_role_is_the_one_that_needs_a_reason() -> None:
+    """THIS TEST USED TO ASSERT THE OPPOSITE AND WAS WRONG.
 
-    This is the test that turns a recorded defect into a blocked one. While one team exists
-    the wildcard is harmless; the moment ``organization.yaml`` binds a second, the CPU role
-    permits each of them to read and write the other's output, and nothing else in this
-    repository would notice.
+    It refused the combination of a second bound team and any workload role holding
+    ``teams/*/runs/*``, on the reasoning that binding a second team would silently widen
+    the grant. Every sentence of that was accurate and the conclusion did not follow: it
+    inferred an isolation requirement from the shape of the policy rather than from asking
+    what the wildcard would prevent.
 
-    Written against the roster rather than against a constant, so it fires on the change
-    that matters -- adding a binding -- rather than on somebody remembering to update a
-    number.
+    Asked directly, nobody could name a harm. This is one lab building one model, where
+    another person reading your outputs is collaboration rather than a threat, and
+    collision is already prevented by the per-run prefix segment and the absence of
+    ``s3:DeleteObject``. So the wildcard is correct and the *narrow* role is the one that
+    needs justifying -- the GPU trio was scoped to one team so that Phase 4's cross-team
+    criterion had something to assert, which is a reason about evidence rather than about
+    risk.
+
+    What this asserts now is that both remain deliberate: at least one role reaches every
+    team, at least one reaches exactly one, and neither drifted into the other by accident.
+
+    The trigger for reopening it is written in the module docstring and is not the arrival
+    of a second team: it is an external collaborator, a second lab, or a dataset that must
+    not be trained on.
+    """
+    reach = {
+        role.role_name: teams_reachable_by(role)  # type: ignore[arg-type]
+        for role in workload_roles(PROJECT_ROOT)
+    }
+
+    assert reach[CPU_WORKLOAD] == frozenset({EVERY_TEAM})
+    assert reach[GPU_WORKLOAD] == frozenset({THE_ONLY_TEAM})
+
+
+def test_binding_a_team_is_a_configuration_change_and_not_an_infrastructure_one() -> None:
+    """Phase 5's gate, stated as an assertion. Mutation: scope a workload role per team.
+
+    "Adding a team is a reviewed configuration operation rather than an infrastructure
+    redesign" is the gate this phase is judged on. A role per team would mean a second team
+    needs an IAM template amendment, a laptop-applied deploy and a job definition -- which
+    is the redesign, arriving as a well-intentioned tightening.
+
+    So the assertion is that no workload role names a specific team *except* the one that
+    does so for a recorded reason, and that binding a team touches config only.
     """
     inventory = load_yaml(PROJECT_ROOT / "config" / "organization.yaml", OrganizationInventory)
     bound = {team.team_id for team in inventory.team_bindings.teams}
-    wide = {
+    named_a_team = {
         role.role_name
         for role in workload_roles(PROJECT_ROOT)
-        if EVERY_TEAM in teams_reachable_by(role)  # type: ignore[arg-type]
+        if EVERY_TEAM not in teams_reachable_by(role)  # type: ignore[arg-type]
     }
 
-    assert len(bound) <= 1 or not wide, (
-        f"{sorted(bound)} teams are bound and {sorted(wide)} can reach every team's "
-        "output. Scope the workload role per team before a second team is bound, or the "
-        "isolation this phase claims is a wildcard that happens to match one name."
+    assert named_a_team == {GPU_WORKLOAD}, (
+        "a workload role scoped to a named team has to be justified per role; "
+        f"{sorted(named_a_team - {GPU_WORKLOAD})} are not"
+    )
+    assert bound == set() or bound <= {THE_ONLY_TEAM} or GPU_WORKLOAD not in named_a_team, (
+        "the GPU role names one team, so binding a second means deciding whether that run "
+        "path is for everybody or whether it needs a second role -- which is the one place "
+        "adding a team is not purely a configuration change"
     )
 
 

@@ -349,7 +349,7 @@ def test_the_captured_role_is_the_role_the_template_declares(
     assert role["max_session_duration_seconds"] == 3600
     assert role["attached_managed_policies"] == []
     assert [policy["policy_name"] for policy in role["inline_policies"]] == [
-        "publish-olmo-core-images"
+        "publish-research-images"
     ]
     assert role["source"] == "aws"
     assert role["environment"] == "sandbox"
@@ -441,7 +441,7 @@ def test_a_grant_pointed_at_another_account_is_masked_so_it_stays_visible(
         tmp_path,
         monkeypatch,
         answers=mutated_answers(
-            f"iam get-role-policy {PUBLISHER_ROLE} publish-olmo-core-images", repoint
+            f"iam get-role-policy {PUBLISHER_ROLE} publish-research-images", repoint
         ),
     )
 
@@ -470,7 +470,7 @@ def test_a_role_widened_in_the_console_is_reported_and_fails_the_capture(
         tmp_path,
         monkeypatch,
         answers=mutated_answers(
-            f"iam get-role-policy {PUBLISHER_ROLE} publish-olmo-core-images",
+            f"iam get-role-policy {PUBLISHER_ROLE} publish-research-images",
             lambda answer: answer["PolicyDocument"]["Statement"][1]["Action"].append(
                 "ecr:DeleteRepository"
             ),
@@ -503,7 +503,7 @@ def test_a_summary_written_after_drift_says_the_capture_is_not_clean(
         tmp_path,
         monkeypatch,
         answers=mutated_answers(
-            f"iam get-role-policy {PUBLISHER_ROLE} publish-olmo-core-images",
+            f"iam get-role-policy {PUBLISHER_ROLE} publish-research-images",
             lambda answer: answer["PolicyDocument"]["Statement"][1]["Action"].append(
                 "ecr:DeleteRepository"
             ),
@@ -535,7 +535,7 @@ def test_a_role_narrowed_in_the_console_also_fails_the_capture(
         tmp_path,
         monkeypatch,
         answers=mutated_answers(
-            f"iam get-role-policy {PUBLISHER_ROLE} publish-olmo-core-images",
+            f"iam get-role-policy {PUBLISHER_ROLE} publish-research-images",
             lambda answer: answer["PolicyDocument"]["Statement"][1]["Action"].remove(
                 "ecr:PutImage"
             ),

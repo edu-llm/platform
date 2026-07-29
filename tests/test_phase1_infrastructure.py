@@ -19,7 +19,7 @@ PUBLISHER_TEMPLATE_PATH = IAM_ROOT / "ecr-publisher-role.yaml"
 ECR_TEMPLATE_PATH = INFRA_ROOT / "ecr-repositories.yaml"
 
 ROLE_NAME = "sbsandbox-intern-edullm-ecr-publisher"
-INLINE_POLICY_NAME = "publish-olmo-core-images"
+INLINE_POLICY_NAME = "publish-research-images"
 OLMO_CORE_REPOSITORY_NAME = "sbsandbox-intern-edullm-olmo-core"
 OLMO_CORE_REPOSITORY = {
     "Fn::Sub": (
@@ -52,6 +52,28 @@ FORBIDDEN_ACTION_FRAGMENTS = {
 }
 
 
+def registered_repositories() -> list[dict[str, Any]]:
+    """The research repositories this platform publishes images for, read once.
+
+    Every publisher-role assertion below is derived from this rather than restating a
+    literal, because the failure being guarded against is the two drifting apart: a
+    repository registered and not trusted is inert, and a repository trusted and not
+    registered is a grant nobody reviewed.
+    """
+    return list(
+        yaml.safe_load(
+            (PROJECT_ROOT / "config" / "repositories.yaml").read_text(encoding="utf-8")
+        )["repositories"]
+    )
+
+
+def sub_pattern_for(entry: dict[str, Any]) -> str:
+    return (
+        f"repo:edu-llm@306859726/{entry['repository']}@{entry['github_repository_id']}"
+        ":ref:refs/heads/*"
+    )
+
+
 def test_publisher_template_creates_only_the_inline_scoped_role() -> None:
     template = load_template(PUBLISHER_TEMPLATE_PATH)
 
@@ -65,7 +87,9 @@ def test_publisher_template_creates_only_the_inline_scoped_role() -> None:
 
     policies = role_properties["Policies"]
     assert len(policies) == 1
-    assert policies[0]["PolicyName"] == INLINE_POLICY_NAME
+    # The name is not load-bearing and is asserted only to be one name rather than two:
+    # a second inline policy is a second place permissions can be added.
+    assert isinstance(policies[0]["PolicyName"], str)
 
 
 def test_no_laptop_template_uses_a_managed_policy_it_could_never_update() -> None:
@@ -91,26 +115,30 @@ def test_publisher_trusts_only_the_existing_github_oidc_provider() -> None:
     assert trust["Version"] == "2012-10-17"
     assert len(trust["Statement"]) == 1
     statement = trust["Statement"][0]
-    assert statement == {
-        "Effect": "Allow",
-        "Principal": {"Federated": OIDC_PROVIDER},
-        "Action": "sts:AssumeRoleWithWebIdentity",
-        "Condition": {
-            "StringEquals": {
-                "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-                "token.actions.githubusercontent.com:job_workflow_ref": (
-                    "edu-llm/platform/.github/workflows/build-research-image.yml@refs/heads/main"
-                ),
-                "token.actions.githubusercontent.com:repository_owner_id": "306859726",
-                "token.actions.githubusercontent.com:repository_id": "1306868157",
-            },
-            "StringLike": {
-                "token.actions.githubusercontent.com:sub": (
-                    "repo:edu-llm@306859726/OLMo-core@1306868157:ref:refs/heads/*"
-                )
-            },
-        },
-    }
+    registered = registered_repositories()
+    assert statement["Effect"] == "Allow"
+    assert statement["Principal"] == {"Federated": OIDC_PROVIDER}
+    assert statement["Action"] == "sts:AssumeRoleWithWebIdentity"
+
+    equals = statement["Condition"]["StringEquals"]
+    # The three that must never become a list, because each one is a single fact about
+    # where a token may come from. Widening any of them is how this role stops being about
+    # this organisation, this workflow file, or this audience.
+    assert equals["token.actions.githubusercontent.com:aud"] == "sts.amazonaws.com"
+    assert equals["token.actions.githubusercontent.com:job_workflow_ref"] == (
+        "edu-llm/platform/.github/workflows/build-research-image.yml@refs/heads/main"
+    )
+    assert equals["token.actions.githubusercontent.com:repository_owner_id"] == "306859726"
+
+    # The one that grows, and grows only with the registry. A list under StringEquals means
+    # "any of", so an id here that nothing registers is a repository authorised to publish
+    # that no review ever saw.
+    trusted = equals["token.actions.githubusercontent.com:repository_id"]
+    assert set(as_list(trusted)) == {str(entry["github_repository_id"]) for entry in registered}
+    assert set(as_list(statement["Condition"]["StringLike"][
+        "token.actions.githubusercontent.com:sub"
+    ])) == {sub_pattern_for(entry) for entry in registered}
+    assert set(statement["Condition"]) == {"StringEquals", "StringLike"}
 
 
 def test_publisher_permissions_are_the_exact_phase1_ecr_permissions() -> None:
@@ -136,7 +164,13 @@ def test_publisher_permissions_are_the_exact_phase1_ecr_permissions() -> None:
     assert repository_statement["Effect"] == "Allow"
     assert set(repository_statement["Action"]) == EXPECTED_REPOSITORY_ACTIONS
     assert len(repository_statement["Action"]) == len(EXPECTED_REPOSITORY_ACTIONS)
-    assert repository_statement["Resource"] == OLMO_CORE_REPOSITORY
+    # One destination per registered repository and no wildcard. A single ARN ending
+    # `repository/sbsandbox-intern-edullm-*` would cover every future repository without
+    # anybody deciding to, which is the decision this list exists to make visible.
+    assert {
+        str(resource["Fn::Sub"]).rsplit("repository/", 1)[-1]
+        for resource in as_list(repository_statement["Resource"])
+    } == {entry["ecr_repository"] for entry in registered_repositories()}
 
     actions = [
         action
@@ -157,10 +191,15 @@ def test_template_has_only_the_two_required_wildcards_and_no_account_literal() -
     template = load_template(PUBLISHER_TEMPLATE_PATH)
     strings = list(walk_strings(template))
 
-    assert [value for value in strings if "*" in value] == [
-        "repo:edu-llm@306859726/OLMo-core@1306868157:ref:refs/heads/*",
-        "*",
-    ]
+    # Two kinds of wildcard and no third. One `ref:refs/heads/*` per registered repository,
+    # because a build may run from any branch of a repository this platform trusts; and
+    # exactly one bare `*`, for ecr:GetAuthorizationToken, which is not a resource-level
+    # action. Anything else is a wildcard nobody argued for.
+    wildcards = [value for value in strings if "*" in value]
+    expected = sorted(sub_pattern_for(entry) for entry in registered_repositories())
+
+    assert sorted(value for value in wildcards if value != "*") == expected
+    assert wildcards.count("*") == 1
     assert not ACCOUNT_LITERAL.search(PUBLISHER_TEMPLATE_PATH.read_text(encoding="utf-8"))
 
 
@@ -172,6 +211,10 @@ def test_publisher_outputs_only_the_role_name_and_arn() -> None:
         "RoleName": {"Value": {"Ref": logical_id}},
         "RoleArn": {"Value": {"Fn::GetAtt": [logical_id, "Arn"]}},
     }
+
+
+def as_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else [value]
 
 
 def ecr_repositories() -> dict[str, dict[str, Any]]:

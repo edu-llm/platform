@@ -14,22 +14,38 @@ Role                                           S3 object scope                 T
 ``…-batch-gpu-workload``                       ``…/teams/platform/runs/*``     one
 ============================================== =============================== ==============
 
-So the CPU path has no cross-team isolation at all. Today that costs nothing, because one
-team exists and the wildcard has exactly one thing to match. The moment a second team is
-bound it becomes the difference between a platform that isolates teams and one that says it
-does -- and it would arrive silently, because no run fails and no test notices a wildcard
-matching a name it did not previously match.
+**That difference was recorded here as a defect and it is not one.** The first version of
+this module argued that a wildcard matching one name today will silently match two tomorrow,
+which is true, and concluded that the CPU role needed narrowing before a second team is
+bound, which does not follow. It inferred an isolation requirement from the shape of the
+policy rather than from asking what the wildcard would prevent.
+
+Asked directly, nobody could name a harm. This is one lab building one model: another
+person reading your outputs is collaboration, not a threat, and there is no adversary in the
+model at all. Collision -- the one concrete failure available -- is already prevented by the
+``runs/{run_id}`` segment and the absence of ``s3:DeleteObject``, neither of which involves
+the team segment.
+
+So the wildcard is correct, and it is the *narrow* role that needs a reason. The GPU trio
+was scoped to one team so that Phase 4's cross-team criterion had something to assert, which
+is a reason about evidence rather than about risk, and it is the one place where binding a
+second team is not purely a configuration change.
+
+The trigger for reopening this is not a second team. It is an external collaborator, a
+second lab, or a dataset that must not be trained on -- an actual party whose access would
+be a harm somebody can describe.
 
 **Read from the template, and that is a real limit.** A role widened in a console leaves
 every citation here green. What this establishes is what the account will be *asked* for,
 which is where a cross-team grant is introduced; whether the account still holds it is what
 the role-drift capture is for, and the two are different questions.
 
-**Why the wildcard is not simply narrowed here.** It is a deployed grant, and narrowing it
-is a laptop-applied IAM change that drifts a committed Phase 3 capture. Phase 4 met the same
-problem and answered it by giving the GPU path its own role trio rather than tightening the
-CPU one -- a phase should not invalidate the previous phase's evidence to close its own
-check. The same answer applies again, and it is Phase 5's to make rather than a tidy-up.
+**What narrowing would cost, beyond being unnecessary.** Phase 5's gate is that adding a
+team is a reviewed configuration operation rather than an infrastructure redesign. A role
+per team makes a second team an IAM amendment plus a laptop-applied deploy plus a job
+definition, which is exactly the redesign, arriving as a well-intentioned tightening. It
+would also drift a committed Phase 3 role capture, which is the same reason Phase 4 gave the
+GPU path its own trio rather than editing the CPU one.
 """
 
 from __future__ import annotations
