@@ -22,9 +22,9 @@
       "relative_path": "fixtures/authorization/member-approval.yaml"
     },
     {
-      "canonical_json_bytes": 614,
+      "canonical_json_bytes": 630,
       "contract": "RunManifest",
-      "digest": "sha256:cb8eb2f73f14707478e457a31ca30a58b954b2109c86a444c841adc6661cf277",
+      "digest": "sha256:72765c07573cd46c02de850cce217b3cb2ce9a91d2e8a6abb51533e4ea886954",
       "fixture": "cpu-routine.yaml",
       "relative_path": "fixtures/manifests/cpu-routine.yaml"
     },

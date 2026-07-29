@@ -34,28 +34,32 @@
 # which is the same shape as the refusal that cost the first GPU run: correct for the bytes
 # that produced it, wrong about the account, and naming the image rather than the release.
 #
-# THIS CONTROL IS COARSER THAN THE DEFECT IT CATCHES, AND THAT IS A CHOICE RATHER THAN AN
-# OVERSIGHT. The builder packages all of src/edullm_platform, so the digest moves for any
-# change to the package -- including modules the validator never imports. It moved within
-# the hour on a change to phase3_evidence.py, which the handler does not touch.
+# THIS CONTROL WAS COARSER THAN THE DEFECT IT CATCHES, AND THE FIX WAS THE ONE THIS COMMENT
+# ARGUED FOR. The builder used to package all of src/edullm_platform, so the digest moved for
+# any change to the package -- including modules the validator never imports. It moved four
+# times in one session, once on a change to phase3_evidence.py, which the handler does not
+# touch. The recorded reasoning was that narrowing means computing reachability and that
+# getting reachability wrong reintroduces this failure while looking covered, so the fix
+# should be to package less rather than to check less.
 #
-# The tax is one rebuild, one upload and one edit per change to the package, and it needs
-# laptop AWS credentials, so a contributor without them is blocked on somebody who has.
-# That is a real cost and the alternative is worse in the direction that matters: narrowing
-# the digest to the modules the handler imports means computing reachability, and getting
-# that wrong reintroduces exactly this failure while looking like it is covered.
+# Packaging less is what happened. tools/build_admission_lambda.py now decides the module
+# list by importing the entrypoint in a clean interpreter and recording what Python actually
+# loaded, rather than by reading imports statically -- so a module reachable only through a
+# runtime import is carried, and the failure mode the old comment feared needs the import to
+# not happen during startup at all. The package went from 66 modules to 28.
 #
-# The honest reading of a moved digest is what it says -- the deployed zip is not the zip
-# this tree builds -- which is true whether or not the changed module is reachable. If the
-# tax becomes the thing that hurts, the fix is to package less rather than to check less.
+# The tax that remains is one rebuild, one upload and one edit per change to a module the
+# handler reaches, and it needs laptop AWS credentials, so a contributor without them is
+# blocked on somebody who has. The honest reading of a moved digest is unchanged: the
+# deployed zip is not the zip this tree builds.
 schema_version: 1
 
 #: The object the template's Code block names. Kept here as well so the two can be
 #: compared: a version id edited in one place and not the other is a template pointing at
 #: a zip nobody recorded, or a record describing a zip nobody deployed.
 s3_key: admission-validator/admission-validator.zip
-s3_object_version: ZdegRl.aBROarwovPp9dgxlo9zOeyU03
+s3_object_version: zKeACsN6lKJyAOK8KJtMGwfmUohzGRMR
 
 #: sha256 of the uploaded zip, as tools/build_admission_lambda.py reports it. This is the
 #: field that ties the release to a tree rather than to a moment.
-sha256: 8a7687a42688d5d87ce557b8d2eada59b4d70a2499f76d0c0598aa883d9b5c83
+sha256: f982472013ba4fcb17072ae9baaefb282ef524b3c963461846ef0c93d3369ceb
