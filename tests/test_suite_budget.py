@@ -6,11 +6,19 @@ one generator per phase. Three phases meant three full runs of the same unchange
 and 78% of the wall clock, which nobody noticed happening because each generator was
 individually reasonable.
 
+The multiplier is gone and so, by default, is the run. Reproducing a recorded suite
+result is now opt-in: it happens nightly, and an ordinary session starts no full-suite
+child at all. ``tests/proof_support.py`` argues why that is safe. The budget therefore
+bounds two things rather than one — that a default session reproduces nothing, and that
+a reproducing session reproduces once — because both directions are ways for the cost to
+come back.
+
 That is the failure this module exists to catch, and it is a budget rather than a unit
 test because the defect is not in any one place. A fourth phase that copies the third,
 a cache key that grows a field nobody meant it to depend on, an environment variable
-that stops matching: each of those is a sensible-looking change that quietly puts the
-multiplier back, and the only symptom is that CI takes seven minutes again.
+that stops matching, a fixture that stops asking whether it was invited: each of those is
+a sensible-looking change that quietly puts the cost back, and the only symptom is that
+CI takes seven minutes again.
 
 These run last. ``tests/conftest.py`` moves anything marked ``session_budget`` to the end
 of the session, because a budget read in the middle reports a number that is still
@@ -43,6 +51,7 @@ from edullm_platform.proof_bundle import (
     collection_child_runs,
     full_suite_child_runs,
 )
+from tests.proof_support import REPRODUCE_ENV, reproducing
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -53,8 +62,24 @@ OTHER_CONFIG_FILES = ("pytest.ini", "setup.cfg", "tox.ini")
 pytestmark = pytest.mark.session_budget
 
 
-def test_a_session_runs_the_full_suite_at_most_once() -> None:
+def test_a_session_runs_the_full_suite_only_when_it_was_asked_to() -> None:
+    """Nobody pays for a nested full suite without saying so, and nobody pays twice.
+
+    The lower bound is the new half and the one that keeps the pull-request path cheap. A
+    generator whose session fixture stops consulting ``skip_unless_reproducing`` puts 66
+    seconds back onto every pull request and fails nothing else while it does.
+    """
     started = full_suite_child_runs()
+
+    if not reproducing():
+        assert started == 0, (
+            f"this session started {started} full-suite pytest children without being "
+            f"asked to. Reproducing a recorded suite result costs a nested run of every "
+            f"test in the repository and belongs in the nightly workflow; set "
+            f"{REPRODUCE_ENV} to ask for it here. Something is reaching the expensive "
+            "half without going through the fixture that guards it."
+        )
+        return
 
     assert started <= 1, (
         f"this session started {started} full-suite pytest children. Each one runs every "

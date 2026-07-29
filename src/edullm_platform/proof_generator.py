@@ -74,9 +74,11 @@ __all__ = [
     "BUNDLE_SCHEMA_VERSION",
     "GOLDENS_FILENAME",
     "GOLDENS_REPORT_FILENAME",
+    "Coherence",
     "ModuleCoverage",
     "Verification",
     "bundle_directory",
+    "establish_coherence",
     "gate_verdict",
     "goldens_path",
     "module_scoped_node_ids",
@@ -100,13 +102,38 @@ class ModuleCoverage:
 
 
 @dataclass(frozen=True)
-class Verification:
-    """What one nested verification run found, in the shape phases 1 to 3 all record it.
+class Coherence:
+    """What the tree says about a phase's citations, established without running a test.
 
-    Two outcomes rather than one, because they answer different questions. ``selected`` is
-    the targeted run over every cited node id plus every test the phase added, which is what
-    the bundle's coverage claims rest on. ``full_suite`` is the whole tree, which is what
-    stops a phase reporting itself green while breaking somebody else's tests.
+    Everything here comes from one ``--collect-only`` child, which costs about a second
+    against a tree that takes minutes to execute. That is the whole reason the split
+    exists: the questions this answers -- do the cited node ids resolve, which tests does
+    the phase own, what would the targeted run select -- are the questions a change is
+    most likely to get wrong, and none of them needs a test to be executed to answer.
+
+    A citation that no longer resolves is refused here rather than reported, because a
+    matrix claiming coverage it cannot run is wrong before anybody runs anything.
+    """
+
+    collected_node_ids: tuple[str, ...]
+    selected_node_ids: tuple[str, ...]
+    module_coverage: tuple[ModuleCoverage, ...]
+
+
+@dataclass(frozen=True)
+class Verification:
+    """A coherent phase whose recorded suite result was also reproduced by running it.
+
+    The coherence fields are carried flat rather than nested so that every renderer keeps
+    reading them the way it always has. What this adds over :class:`Coherence` is the two
+    outcomes, and they answer different questions. ``selected`` is the targeted run over
+    every cited node id plus every test the phase added, which is what the bundle's
+    coverage claims rest on. ``full_suite`` is the whole tree, which is what stops a phase
+    reporting itself green while breaking somebody else's tests.
+
+    A bundle may only be rendered from one of these, never from a :class:`Coherence`. A
+    document that printed a suite count nobody measured would be the exact failure the
+    rest of this package is built to prevent.
     """
 
     collected_node_ids: tuple[str, ...]
@@ -152,18 +179,21 @@ def module_scoped_node_ids(
     )
 
 
-def verify_repository(
+def establish_coherence(
     repo_root: Path,
     *,
     criteria: Sequence[CriterionSpec],
     nested_env: str,
     test_prefixes: tuple[str, ...],
-) -> Verification:
-    """Collect, check the citations resolve, then run the selection and the whole suite.
+) -> Coherence:
+    """Collect, check the citations resolve, and work out what a run would select.
 
-    The citation check comes before anything is executed, and refuses rather than reports.
-    A matrix citing a node id pytest does not collect is claiming coverage it cannot run,
-    and the only useful moment to say so is before the bundle exists to be believed.
+    Both refusals live here rather than after the run, and refuse rather than report. A
+    matrix citing a node id pytest does not collect is claiming coverage it cannot run,
+    and the only useful moment to say so is before the bundle exists to be believed. A
+    selection that would re-enter the generator has to be stopped before it is handed to
+    pytest, because that failure presents as a machine that has stopped responding rather
+    than as an error.
     """
     collected = collect_node_ids(repo_root, nested_env=nested_env)
     cited = {node_id for check in criteria for node_id in check.cited_node_ids}
@@ -183,14 +213,39 @@ def verify_repository(
             "the proof generator must not select a test that invokes the generator or the "
             "acceptance gate, which would recurse:\n  " + "\n  ".join(reentrant)
         )
-    outcome, failed = run_test_selection(repo_root, selected, nested_env=nested_env)
-    return Verification(
+    return Coherence(
         collected_node_ids=collected,
         selected_node_ids=selected,
+        module_coverage=coverage,
+    )
+
+
+def verify_repository(
+    repo_root: Path,
+    *,
+    criteria: Sequence[CriterionSpec],
+    nested_env: str,
+    test_prefixes: tuple[str, ...],
+) -> Verification:
+    """Establish coherence, then reproduce: run the selection and the whole suite.
+
+    This is the expensive half and the only half that executes anything. Everything a
+    caller can learn without running a test has already been learned, and refused on,
+    by :func:`establish_coherence`.
+    """
+    found = establish_coherence(
+        repo_root, criteria=criteria, nested_env=nested_env, test_prefixes=test_prefixes
+    )
+    outcome, failed = run_test_selection(
+        repo_root, found.selected_node_ids, nested_env=nested_env
+    )
+    return Verification(
+        collected_node_ids=found.collected_node_ids,
+        selected_node_ids=found.selected_node_ids,
         failed_node_ids=failed,
         selected=outcome,
         full_suite=run_full_suite(repo_root, nested_env=nested_env),
-        module_coverage=coverage,
+        module_coverage=found.module_coverage,
     )
 
 

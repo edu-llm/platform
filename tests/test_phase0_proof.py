@@ -23,15 +23,18 @@ from edullm_platform.proof_bundle import (
     pytest_environment,
     redact_own_digests,
 )
+from tests.proof_support import skip_unless_reproducing
 from tools.build_phase0_proof import (
     BUNDLE_FILENAMES,
     GENERATOR_TEST_PATH,
     GOLDENS_FILENAME,
     NESTED_RUN_ENV,
+    Coherence,
     Verification,
     build_bundle,
     compute_goldens,
     discover_fixtures,
+    establish_coherence,
     goldens_path,
     known_limitations,
     main,
@@ -54,7 +57,19 @@ def fixtures() -> tuple[object, ...]:
 
 
 @pytest.fixture(scope="session")
+def coherence() -> Coherence:
+    """One collection child, and every question that can be answered from it."""
+    return establish_coherence(PROJECT_ROOT)
+
+
+@pytest.fixture(scope="session")
 def verification() -> Verification:
+    """The nested runs. Requesting this is what opts a test into the expensive half.
+
+    The skip is here rather than on each test so that the cost and the decision to pay it
+    are the same thing. See ``tests/proof_support.py`` for why the default is not to.
+    """
+    skip_unless_reproducing()
     return verify_repository(PROJECT_ROOT)
 
 
@@ -268,27 +283,38 @@ def test_the_nested_guard_is_set_for_every_pytest_subprocess() -> None:
     assert pytest_environment(NESTED_RUN_ENV)[NESTED_RUN_ENV] == "1"
 
 
-@pytest.mark.slow
 def test_the_verification_run_never_selects_the_generators_own_tests(
-    verification: Verification,
+    coherence: Coherence,
 ) -> None:
     assert any(
-        node_id.startswith(GENERATOR_TEST_PATH) for node_id in verification.collected_node_ids
+        node_id.startswith(GENERATOR_TEST_PATH) for node_id in coherence.collected_node_ids
     )
     assert not any(
-        node_id.startswith(GENERATOR_TEST_PATH) for node_id in verification.selected_node_ids
+        node_id.startswith(GENERATOR_TEST_PATH) for node_id in coherence.selected_node_ids
     )
 
 
-@pytest.mark.slow
-def test_the_verification_run_executed_every_cited_node_id(verification: Verification) -> None:
+def test_the_selection_covers_every_cited_node_id(coherence: Coherence) -> None:
+    """Which tests would run, answered from the collection rather than from running them.
+
+    This is the half of the old executed-every-citation check that does not need a nested
+    run: a citation the selection would leave out is a criterion whose proof was never
+    going to be executed, and the collection says so. That the selection then runs green
+    is the other half, and it is reproduced nightly.
+    """
     cited = {
         node_id
         for check in recorded_checks(discover_fixtures(PROJECT_ROOT))
         for node_id in check.cited_node_ids
     }
     assert cited
-    assert cited <= set(verification.selected_node_ids)
+    assert cited <= set(coherence.selected_node_ids)
+
+
+@pytest.mark.slow
+def test_the_selection_ran_green_and_executed_exactly_what_was_selected(
+    verification: Verification,
+) -> None:
     assert verification.selected.tests == len(verification.selected_node_ids)
     assert verification.selected.green
     assert verification.failed_node_ids == ()
@@ -301,7 +327,6 @@ def test_the_full_suite_ran_green_inside_the_generator(verification: Verificatio
     assert verification.full_suite.tests < len(verification.collected_node_ids)
 
 
-@pytest.mark.slow
 def test_a_citation_pytest_cannot_collect_aborts_generation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -313,10 +338,9 @@ def test_a_citation_pytest_cannot_collect_aborts_generation(
     )
     monkeypatch.setattr("tools.build_phase0_proof.recorded_checks", lambda _refs: (invented,))
     with pytest.raises(MissingTestNodeError, match="test_this_test_does_not_exist"):
-        verify_repository(PROJECT_ROOT)
+        establish_coherence(PROJECT_ROOT)
 
 
-@pytest.mark.slow
 def test_the_generator_refuses_to_select_a_test_that_would_re_enter_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -333,7 +357,7 @@ def test_the_generator_refuses_to_select_a_test_that_would_re_enter_it(
     )
     monkeypatch.setattr("tools.build_phase0_proof.recorded_checks", lambda _refs: (reentrant,))
     with pytest.raises(ProofBundleError, match="would recurse"):
-        verify_repository(PROJECT_ROOT)
+        establish_coherence(PROJECT_ROOT)
 
 
 def test_the_shipped_specs_load_without_raising() -> None:
@@ -561,6 +585,11 @@ def test_the_generator_refuses_to_write_a_bundle_whose_prose_contradicts_the_gat
 
 @pytest.mark.slow
 def test_main_writes_a_complete_bundle_to_a_chosen_directory(tmp_path: Path) -> None:
+    # Driving the CLI is driving a reproduction: main builds its own Verification, and
+    # there is no flag that would let it build a cheaper one. That is the property
+    # test_no_generator_cli_can_be_asked_to_skip_reproduction pins, and it is why this
+    # test asks to be skipped rather than asking for the fixture it does not use.
+    skip_unless_reproducing()
     output_dir = tmp_path / "bundle"
     exit_code = main(
         [

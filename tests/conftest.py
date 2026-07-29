@@ -7,8 +7,9 @@ put it somewhere in the middle and have it report a number that was still going 
 The second arrangement only matters under ``-n``. Each xdist worker is its own process
 with its own memory of what it has verified, so where a test runs decides what the run
 costs. Every test is given a group naming its module, which keeps a module's session
-fixtures on one worker; the three modules that share one verification are given the same
-group, so they share it in parallel too rather than paying for it twice.
+fixtures on one worker; the four modules that share one collection — and, on a nightly
+run, one nested full-suite verification — are given the same group, so they share it in
+parallel too rather than paying for it once each.
 
 Nothing here changes what any test asserts or which tests run. ``uv run pytest -q`` runs
 every test either way, and run serially the groups have no effect at all.
@@ -21,12 +22,13 @@ import pytest
 SESSION_BUDGET_MARKER = "session_budget"
 GROUP_MARKER = "xdist_group"
 
-#: The modules that must run in one process, and why. Both generators verify the same
-#: tree, and the first to run pays for the nested full-suite pytest while the second
-#: reads the answer. On separate workers there is no answer to read and the second pays
-#: again — the multiplier that run_full_suite's memory exists to remove, reappearing
-#: because the two halves of it are no longer in the same process. The budget joins them
-#: so that it is measuring a worker that actually verified something.
+#: The modules that must run in one process, and why. Every generator asks the same
+#: question of the same tree, and the first to run pays for the answer while the rest read
+#: it: a collection child on every run, and a full-suite child on a run that reproduces.
+#: On separate workers there is no answer to read and each pays again — the multiplier
+#: that proof_bundle's memory exists to remove, reappearing because the halves of it are
+#: no longer in the same process. The budget joins them so that it is measuring a worker
+#: that actually did the work it bounds.
 SHARED_VERIFICATION_GROUP = "proof-verification"
 SHARE_ONE_WORKER = frozenset(
     {
