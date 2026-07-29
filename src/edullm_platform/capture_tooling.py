@@ -39,6 +39,7 @@ import json
 import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
@@ -54,6 +55,7 @@ __all__ = [
     "AWS_CALL_TIMEOUT_SECONDS",
     "EXIT_OK",
     "EXIT_UNUSABLE",
+    "AccountIdentity",
     "CaptureFailedError",
     "account_identity",
     "aws",
@@ -147,7 +149,20 @@ def aws_json(arguments: Sequence[str], *, profile: str, region: str | None = Non
         raise CaptureFailedError(f"aws_answer_unreadable:{arguments[0]}") from error
 
 
-def account_identity(*, profile: str, region: str) -> str:
+@dataclass(frozen=True)
+class AccountIdentity:
+    """Who a capture is running as. Neither field is ever written to a file.
+
+    The ARN is carried beside the account id rather than parsed here, because what a
+    caller wants out of it is the partition, and which partition spellings may be folded
+    together is a question the role-drift comparison owns rather than this module.
+    """
+
+    account_id: str
+    arn: str
+
+
+def account_identity(*, profile: str, region: str) -> AccountIdentity:
     """The account this is running against. Never written to a file.
 
     Returned because a captured ARN naming *this* account has to be distinguishable from
@@ -156,9 +171,10 @@ def account_identity(*, profile: str, region: str) -> str:
     """
     identity = aws_json(["sts", "get-caller-identity"], profile=profile, region=region)
     account_id = identity.get("Account")
-    if not isinstance(account_id, str) or not account_id:
+    arn = identity.get("Arn")
+    if not isinstance(account_id, str) or not account_id or not isinstance(arn, str):
         raise CaptureFailedError("caller_identity_unreadable")
-    return account_id
+    return AccountIdentity(account_id=account_id, arn=arn)
 
 
 def check_output_location(path: Path, *, allowed_suffix: Path) -> None:
