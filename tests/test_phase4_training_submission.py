@@ -492,7 +492,10 @@ def test_the_dispatch_payload_is_every_field_as_a_string_including_the_command()
     assert all(isinstance(value, str) for value in payload.values())
     for name in payload:
         declared = workflow.split(f"{name}:", 1)[1].split("type:", 1)[1].split("\n", 1)[0]
-        assert declared.strip() == "string", f"{name} is declared {declared.strip()}"
+        # choice as well as string: GitHub resolves a choice to a string on the wire, so
+        # both are single strings in the payload. What must not appear is boolean or number,
+        # which arrive as their own JSON types and would be refused the same way an array is.
+        assert declared.strip() in ("string", "choice"), f"{name} is declared {declared.strip()}"
 
 
 def test_the_split_the_workflow_performs_is_mirrored_here_and_not_guessed() -> None:

@@ -7,3 +7,17 @@ repositories:
     base_image_digest: sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
     dockerfile_path: .edullm/Dockerfile
     build_context: .
+  # edullm-data: the publisher, validator and reader for the eduLLM Dataset Standard. Pure
+  # Python on boto3 and numpy, with a console entry point of its own -- which is why it is
+  # the first repository onboarded after OLMo-core. It needs no compiler, so the one
+  # registered base is enough, and its command is a subcommand rather than a program.
+  - repository: edullm-data
+    github_repository_id: 1315813778
+    default_branch: main
+    ecr_repository: sbsandbox-intern-edullm-data
+    # The same base OLMo-core registers, deliberately. python 3.12.13 clears this project's
+    # >=3.11 floor, and a second base would be a second thing to review, scan and re-pin.
+    base_image_repository: docker.io/library/python
+    base_image_digest: sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+    dockerfile_path: .edullm/Dockerfile
+    build_context: .

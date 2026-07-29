@@ -32,24 +32,49 @@ def registry_payload(*repositories: dict[str, object]) -> dict[str, object]:
     return {"repositories": list(repositories or (repository_payload(),))}
 
 
-def test_shipped_repository_registry_contains_exact_olmo_core_registration() -> None:
+def test_the_shipped_registry_registers_olmo_core_exactly_as_it_was_reviewed() -> None:
+    """Mutation: change any field of the registration that is deployed and running.
+
+    Pinned field for field rather than by count. This used to assert the whole registry
+    equalled one entry, which was the same thing while one repository was registered and
+    became a barrier to registering a second -- the invariant was never "there is one
+    repository", it was "this repository's registration is what was reviewed".
+    """
+    root = Path(__file__).resolve().parents[1]
+    registry = load_yaml(root / "config" / "repositories.yaml", RepositoryRegistry)
+    olmo = next(
+        entry for entry in registry.repositories if entry.repository == "OLMo-core"
+    )
+
+    assert olmo.model_dump() == {
+        "repository": "OLMo-core",
+        "github_repository_id": 1306868157,
+        "default_branch": "main",
+        "ecr_repository": "sbsandbox-intern-edullm-olmo-core",
+        "base_image_repository": "docker.io/library/python",
+        "base_image_digest": BASE_DIGEST,
+        "dockerfile_path": ".edullm/Dockerfile",
+        "build_context": ".",
+    }
+
+
+def test_every_registration_names_a_distinct_ecr_repository() -> None:
+    """Mutation: copy a registration and forget to change where its images go.
+
+    Two repositories pushing to one ECR repository is not an error anywhere -- the tags
+    are per-commit and would not collide -- so nothing fails. What is lost is that the
+    repository an image came from stops being answerable from where it is stored, and the
+    image tag immutability that the whole provenance chain rests on is protecting one
+    namespace shared by two codebases.
+    """
     root = Path(__file__).resolve().parents[1]
     registry = load_yaml(root / "config" / "repositories.yaml", RepositoryRegistry)
 
-    assert registry.model_dump() == {
-        "repositories": (
-            {
-                "repository": "OLMo-core",
-                "github_repository_id": 1306868157,
-                "default_branch": "main",
-                "ecr_repository": "sbsandbox-intern-edullm-olmo-core",
-                "base_image_repository": "docker.io/library/python",
-                "base_image_digest": BASE_DIGEST,
-                "dockerfile_path": ".edullm/Dockerfile",
-                "build_context": ".",
-            },
-        )
-    }
+    destinations = [entry.ecr_repository for entry in registry.repositories]
+    identifiers = [entry.github_repository_id for entry in registry.repositories]
+
+    assert len(set(destinations)) == len(destinations)
+    assert len(set(identifiers)) == len(identifiers)
 
 
 def test_registered_repository_exposes_full_immutable_base_reference() -> None:

@@ -116,7 +116,7 @@ Proving tests (7), all executed and passing:
 - `tests/test_source_identity.py::test_wrong_repository_id_fails`
 - `tests/test_verify_source_identity_cli.py::test_rejected_identities_exit_non_zero_with_only_a_machine_readable_reason[overrides0-unregistered_repository]`
 - `tests/test_verify_source_identity_cli.py::test_rejected_identities_exit_non_zero_with_only_a_machine_readable_reason[overrides1-repository_id_mismatch]`
-- `tests/test_repository_registry.py::test_shipped_repository_registry_contains_exact_olmo_core_registration`
+- `tests/test_repository_registry.py::test_the_shipped_registry_registers_olmo_core_exactly_as_it_was_reviewed`
 - `tests/test_repository_registry.py::test_repository_registry_unknown_lookups_raise_domain_error`
 - `tests/test_build_research_image_workflow.py::test_publish_job_reverifies_the_source_before_it_holds_aws_credentials`
 
@@ -196,7 +196,7 @@ Proving tests (2), all executed and passing:
 
 Supporting tests (2), all executed and passing, cited as evidence rather than as proof:
 
-- `tests/test_phase1_infrastructure.py::test_ecr_repository_is_encrypted_scanned_immutable_and_retained`
+- `tests/test_phase1_infrastructure.py::test_every_ecr_repository_is_encrypted_scanned_immutable_and_retained`
 - `tests/test_build_research_image_workflow.py::test_a_published_tag_short_circuits_to_the_digest_the_registry_already_holds`
 
 ### Check 8 — A run manifest using a tag instead of a digest is rejected.

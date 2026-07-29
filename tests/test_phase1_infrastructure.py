@@ -1,5 +1,7 @@
 import json
+from typing import Any
 
+import yaml
 from infrastructure_support import (
     ACCOUNT_LITERAL,
     BOUNDARY,
@@ -172,34 +174,77 @@ def test_publisher_outputs_only_the_role_name_and_arn() -> None:
     }
 
 
-def test_ecr_template_creates_exactly_one_finished_image_repository() -> None:
+def ecr_repositories() -> dict[str, dict[str, Any]]:
+    """Every ECR repository the template creates, by logical id.
+
+    This used to be ``resource_of_type``, which asserts there is exactly one. That was
+    right while one research repository was registered and became wrong the moment a
+    second was: the invariant was never "there is one repository", it was "every
+    repository has these properties", and the count was standing in for it.
+    """
     template = load_template(ECR_TEMPLATE_PATH)
+    found = {
+        logical_id: resource
+        for logical_id, resource in template["Resources"].items()
+        if isinstance(resource, dict) and resource.get("Type") == "AWS::ECR::Repository"
+    }
+    assert found, "a check over every repository must observe at least one"
+    return found
 
-    resources = template["Resources"]
-    assert len(resources) == 1
-    logical_id, repository = resource_of_type(template, "AWS::ECR::Repository")
-    assert list(resources) == [logical_id]
-    assert repository["Properties"]["RepositoryName"] == OLMO_CORE_REPOSITORY_NAME
+
+def test_the_template_creates_one_repository_for_every_registered_research_repository() -> None:
+    """Reads BOTH sides. Mutation: register a repository and not create its ECR repository.
+
+    The failure of forgetting is not an error anybody sees. The registration says where
+    images go, the build pushes there, and the push fails with a repository-not-found deep
+    inside a publish job -- long after the reviewer who approved the registration has
+    stopped looking.
+    """
+    registered = {
+        entry["ecr_repository"]
+        for entry in yaml.safe_load(
+            (PROJECT_ROOT / "config" / "repositories.yaml").read_text(encoding="utf-8")
+        )["repositories"]
+    }
+    created = {
+        resource["Properties"]["RepositoryName"] for resource in ecr_repositories().values()
+    }
+
+    assert created == registered
 
 
-def test_ecr_repository_is_encrypted_scanned_immutable_and_retained() -> None:
-    template = load_template(ECR_TEMPLATE_PATH)
-    _, repository = resource_of_type(template, "AWS::ECR::Repository")
+def test_every_ecr_repository_is_encrypted_scanned_immutable_and_retained() -> None:
+    """Mutation: add a second repository without the properties the first one has.
 
-    assert repository["DeletionPolicy"] == "Retain"
-    assert repository["UpdateReplacePolicy"] == "Retain"
-    assert repository["Properties"]["EncryptionConfiguration"] == {"EncryptionType": "AES256"}
-    assert repository["Properties"]["ImageScanningConfiguration"] == {"ScanOnPush": True}
-    assert repository["Properties"]["ImageTagMutability"] == "IMMUTABLE"
+    Copying a block is how a second repository gets created, and dropping one line while
+    copying is how it gets created without immutability -- which is the property the whole
+    digest-pinning design rests on, and the only one whose absence is invisible until
+    somebody overwrites a tag.
+    """
+    for logical_id, repository in ecr_repositories().items():
+        assert repository["DeletionPolicy"] == "Retain", logical_id
+        assert repository["UpdateReplacePolicy"] == "Retain", logical_id
+        assert repository["Properties"]["EncryptionConfiguration"] == {
+            "EncryptionType": "AES256"
+        }, logical_id
+        assert repository["Properties"]["ImageScanningConfiguration"] == {
+            "ScanOnPush": True
+        }, logical_id
+        assert repository["Properties"]["ImageTagMutability"] == "IMMUTABLE", logical_id
 
 
 def test_ecr_lifecycle_expires_old_untagged_and_caps_all_tagged_images() -> None:
-    template = load_template(ECR_TEMPLATE_PATH)
-    _, repository = resource_of_type(template, "AWS::ECR::Repository")
-    policy_text = repository["Properties"]["LifecyclePolicy"]["LifecyclePolicyText"]
-    assert isinstance(policy_text, str)
-
-    policy = json.loads(policy_text)
+    # Every repository, not the first one. A repository added without a lifecycle policy
+    # keeps untagged layers for ever, which costs money quietly rather than failing.
+    policies = [
+        json.loads(repository["Properties"]["LifecyclePolicy"]["LifecyclePolicyText"])
+        for repository in ecr_repositories().values()
+    ]
+    assert len({json.dumps(entry, sort_keys=True) for entry in policies}) == 1, (
+        "every repository should expire and cap on the same terms; two policies here means "
+        "one of them was edited and the other was not"
+    )
+    policy = policies[0]
     assert policy == {
         "rules": [
             {
@@ -230,10 +275,12 @@ def test_ecr_lifecycle_expires_old_untagged_and_caps_all_tagged_images() -> None
 
 def test_ecr_template_has_no_iam_policy_principal_or_account_literal() -> None:
     template = load_template(ECR_TEMPLATE_PATH)
-    _, repository = resource_of_type(template, "AWS::ECR::Repository")
     strings = list(walk_strings(template))
 
-    assert "RepositoryPolicyText" not in repository["Properties"]
+    # Every repository. A resource policy on the second one grants cross-account access
+    # that the first one's absence of a policy says nothing about.
+    for logical_id, repository in ecr_repositories().items():
+        assert "RepositoryPolicyText" not in repository["Properties"], logical_id
     assert not any(value.startswith("AWS::IAM::") for value in strings)
     assert "AWS::ECR::RepositoryPolicy" not in strings
     assert "Principal" not in strings
@@ -241,13 +288,18 @@ def test_ecr_template_has_no_iam_policy_principal_or_account_literal() -> None:
     assert not ACCOUNT_LITERAL.search(ECR_TEMPLATE_PATH.read_text(encoding="utf-8"))
 
 
-def test_ecr_template_outputs_only_the_repository_name() -> None:
-    template = load_template(ECR_TEMPLATE_PATH)
-    logical_id, _ = resource_of_type(template, "AWS::ECR::Repository")
+def test_the_template_outputs_every_repository_it_creates_and_nothing_else() -> None:
+    """Mutation: create a repository and not output it.
 
-    assert template["Outputs"] == {
-        "RepositoryName": {"Value": {"Ref": logical_id}},
+    An output is how anything downstream refers to the repository by name rather than by
+    repeating the literal, so one that is missing is a second spelling waiting to happen.
+    """
+    template = load_template(ECR_TEMPLATE_PATH)
+    referenced = {
+        value["Value"]["Ref"] for value in template["Outputs"].values() if "Ref" in value["Value"]
     }
+
+    assert referenced == set(ecr_repositories())
 
 
 def test_iam_resources_are_confined_and_all_roles_have_boundaries() -> None:

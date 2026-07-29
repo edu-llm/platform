@@ -209,7 +209,7 @@ PROBES_OBEY_THE_FIRST_LESSON: Final = (
 )
 ECR_REPOSITORY_IS_IMMUTABLE: Final = (
     "tests/test_phase1_infrastructure.py"
-    "::test_ecr_repository_is_encrypted_scanned_immutable_and_retained"
+    "::test_every_ecr_repository_is_encrypted_scanned_immutable_and_retained"
 )
 REBUILD_OF_IDENTICAL_INPUTS: Final = (
     f"{REBUILD_MODULE}::test_two_builds_of_identical_inputs_differ_only_in_two_clock_readings"
@@ -386,7 +386,7 @@ def phase1_criteria() -> tuple[CriterionSpec, ...]:
                 "tests/test_source_identity.py::test_wrong_repository_id_fails",
                 f"{IDENTITY_CLI_REJECTION}[overrides0-unregistered_repository]",
                 f"{IDENTITY_CLI_REJECTION}[overrides1-repository_id_mismatch]",
-                "tests/test_repository_registry.py::test_shipped_repository_registry_contains_exact_olmo_core_registration",
+                "tests/test_repository_registry.py::test_the_shipped_registry_registers_olmo_core_exactly_as_it_was_reviewed",
                 "tests/test_repository_registry.py::test_repository_registry_unknown_lookups_raise_domain_error",
                 SOURCE_IDENTITY_RUNS_ON_THE_PUBLISH_PATH,
             ),
