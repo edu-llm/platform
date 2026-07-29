@@ -38,11 +38,9 @@ phase look like it has fewer claims than it has.
 
 from __future__ import annotations
 
-import argparse
 import base64
 import binascii
 import json
-import os
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -67,8 +65,6 @@ from edullm_platform.contracts.decision_matrix import AuthorizationScenario
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.policy import ApprovalPolicy, RequestFacts
 from edullm_platform.criteria import (
-    REENTRANT_TEST_MODULES,
-    CriteriaDefinitionError,
     CriterionSpec,
     CriterionStatus,
 )
@@ -88,14 +84,11 @@ from edullm_platform.proof_bundle import (
     STATUS_LEGEND,
     STATUS_PROSE,
     GoldenDigestDriftError,
-    MissingTestNodeError,
     ModelRecord,
     ProofBundleError,
     RecordedGolden,
-    SuiteOutcome,
     assert_secret_free,
     bullets,
-    collect_node_ids,
     command_block,
     contradicting_status_claims,
     count_naming,
@@ -108,11 +101,23 @@ from edullm_platform.proof_bundle import (
     recorded_status,
     render_check_detail,
     render_goldens_document,
-    run_full_suite,
-    run_test_selection,
     source_commit_sha,
     status_label,
     table,
+)
+from edullm_platform.proof_generator import (
+    Verification,
+    bundle_directory,
+    gate_verdict,
+    goldens_path,
+    run_generator_cli,
+    standing,
+)
+from edullm_platform.proof_generator import (
+    render_unit_test_report as shared_render_unit_test_report,
+)
+from edullm_platform.proof_generator import (
+    verify_repository as shared_verify_repository,
 )
 from edullm_platform.role_drift import TemplateRole, load_template_roles
 from edullm_platform.status_prose import spell, status_summary_sentence
@@ -279,22 +284,6 @@ EMPTY_SECTIONS: Final[tuple[EmptySection, ...]] = (
 
 
 @dataclass(frozen=True)
-class ModuleCoverage:
-    module: str
-    node_ids: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class Verification:
-    collected_node_ids: tuple[str, ...]
-    selected_node_ids: tuple[str, ...]
-    failed_node_ids: tuple[str, ...]
-    selected: SuiteOutcome
-    full_suite: SuiteOutcome
-    module_coverage: tuple[ModuleCoverage, ...]
-
-
-@dataclass(frozen=True)
 class CommittedEvidence:
     """Everything Phase 2 captured, loaded, with the records beside their inventory."""
 
@@ -315,14 +304,6 @@ class CommittedEvidence:
             self.lineage.observed_at,
         ]
         return (min(observed) + FRESHNESS_WINDOW).date().isoformat()
-
-
-def default_output_dir(repo_root: Path) -> Path:
-    return repo_root / BUNDLE_RELATIVE_DIR
-
-
-def goldens_path(output_dir: Path) -> Path:
-    return output_dir / GOLDENS_FILENAME
 
 
 # --------------------------------------------------------------------------------------
@@ -372,56 +353,6 @@ def compute_goldens(repo_root: Path) -> tuple[RecordedGolden, ...]:
 # --------------------------------------------------------------------------------------
 # Verifying the tree
 # --------------------------------------------------------------------------------------
-
-
-def phase2_test_modules(collected: Sequence[str]) -> tuple[str, ...]:
-    modules = {
-        node_id.split("::", 1)[0]
-        for node_id in collected
-        if node_id.startswith(PHASE2_TEST_PREFIXES)
-    }
-    return tuple(sorted(modules - set(REENTRANT_TEST_MODULES)))
-
-
-def module_scoped_node_ids(collected: Sequence[str]) -> tuple[ModuleCoverage, ...]:
-    return tuple(
-        ModuleCoverage(
-            module=module,
-            node_ids=tuple(node_id for node_id in collected if node_id.split("::", 1)[0] == module),
-        )
-        for module in phase2_test_modules(collected)
-    )
-
-
-def verify_repository(repo_root: Path) -> Verification:
-    criteria = phase2_criteria()
-    collected = collect_node_ids(repo_root, nested_env=NESTED_RUN_ENV)
-    cited = {node_id for check in criteria for node_id in check.cited_node_ids}
-    missing = sorted(cited - set(collected))
-    if missing:
-        raise MissingTestNodeError(
-            "the negative-case matrix cites test node ids that pytest does not collect; "
-            "a matrix may not claim coverage it cannot run:\n  " + "\n  ".join(missing)
-        )
-    coverage = module_scoped_node_ids(collected)
-    selected = tuple(sorted(cited | {node_id for entry in coverage for node_id in entry.node_ids}))
-    reentrant = sorted(
-        node_id for node_id in selected if node_id.split("::", 1)[0] in REENTRANT_TEST_MODULES
-    )
-    if reentrant:
-        raise ProofBundleError(
-            "the proof generator must not select a test that invokes the generator or the "
-            "acceptance gate, which would recurse:\n  " + "\n  ".join(reentrant)
-        )
-    outcome, failed = run_test_selection(repo_root, selected, nested_env=NESTED_RUN_ENV)
-    return Verification(
-        collected_node_ids=collected,
-        selected_node_ids=selected,
-        failed_node_ids=failed,
-        selected=outcome,
-        full_suite=run_full_suite(repo_root, nested_env=NESTED_RUN_ENV),
-        module_coverage=coverage,
-    )
 
 
 # --------------------------------------------------------------------------------------
@@ -1475,82 +1406,6 @@ def render_open_decisions(decisions: Sequence[OpenDecision]) -> str:
     return "\n".join(sections).rstrip() + "\n"
 
 
-def render_unit_test_report(verification: Verification) -> str:
-    full = verification.full_suite
-    selected = verification.selected
-    rows = [
-        [entry.module, str(len(entry.node_ids)), "pass" if selected.green else "see below"]
-        for entry in verification.module_coverage
-    ]
-    sections = [
-        "# Phase 2 unit-test report",
-        "",
-        (
-            "Summarised counts only. Raw pytest output is not copied here; the commands below "
-            "reproduce it in full."
-        ),
-        "",
-        "## Commands a reviewer can re-run",
-        "",
-        command_block(VERIFICATION_COMMANDS),
-        "",
-        "## Whole suite",
-        "",
-        table(
-            ["measure", "count"],
-            [
-                ["collected by pytest", str(len(verification.collected_node_ids))],
-                [f"executed (excluding {', '.join(GENERATOR_TEST_PATHS)})", str(full.tests)],
-                ["passed", str(full.passed)],
-                ["failed", str(full.failures)],
-                ["errored", str(full.errors)],
-                ["skipped", str(full.skipped)],
-                ["pytest exit code", str(full.exit_code)],
-            ],
-        ),
-        "",
-        "## Targeted verification run",
-        "",
-        (
-            "Every test node id cited by the negative-case matrix, plus every test in the "
-            "modules Phase 2 added, executed as one selection."
-        ),
-        "",
-        table(
-            ["measure", "count"],
-            [
-                ["selected node ids", str(len(verification.selected_node_ids))],
-                ["executed", str(selected.tests)],
-                ["passed", str(selected.passed)],
-                ["failed", str(selected.failures)],
-                ["errored", str(selected.errors)],
-                ["skipped", str(selected.skipped)],
-                ["pytest exit code", str(selected.exit_code)],
-            ],
-        ),
-        "",
-        "## Per-module coverage",
-        "",
-        (
-            "The test modules Phase 2 added, excluding the ones that invoke a gate or this "
-            "generator; those run in the reviewer's own `uv run pytest -q`."
-        ),
-        "",
-        table(["module", "tests", "result"], rows),
-        "",
-        (
-            "**A green suite is not evidence that the path works.** Phase 1 shipped one over a "
-            "workflow that could not complete a run, because every assertion compared the "
-            "literal text of expressions rather than checking whether they named anything "
-            "real. The counts above say the tests pass; `negative-case-matrix.md` says what "
-            "they establish, which for nine of this phase's criteria is not the criterion."
-        ),
-    ]
-    if verification.failed_node_ids:
-        sections.extend(["", "## Failures", "", bullets(verification.failed_node_ids)])
-    return "\n".join(sections) + "\n"
-
-
 def render_goldens_report(goldens: Sequence[RecordedGolden]) -> str:
     rows = [
         [record.fixture, record.relative_path, str(record.canonical_json_bytes), record.digest]
@@ -1858,34 +1713,6 @@ def known_limitations(
     )
 
 
-def standing(gap_numbers: Sequence[str]) -> str:
-    if gap_numbers:
-        return "It is not done, and the Result table below says by how much."
-    return (
-        "Every criterion is covered and the gate is green, which is the state in which a "
-        "bundle is most worth reading carefully: the Known limitations below say what each "
-        "criterion does not cover, and `open-decisions.md` says what this phase surfaced and "
-        "did not settle."
-    )
-
-
-def gate_verdict(gap_numbers: Sequence[str]) -> str:
-    if not gap_numbers:
-        return (
-            "`tools/validate_phase2.py` exits 0 against this tree: every phase criterion is "
-            "covered or explicitly deferred."
-        )
-    if len(gap_numbers) == 1:
-        subject = f"criterion {gap_numbers[0]} is a GAP"
-    else:
-        subject = f"criteria {', '.join(gap_numbers)} are GAPs"
-    return (
-        "`tools/validate_phase2.py` exits 1 against this tree. Phase 2 is not accepted: "
-        f"{subject}. That is the honest state of the phase, not a broken gate. Read the Gaps "
-        "section of `negative-case-matrix.md` for what closes it."
-    )
-
-
 def input_digest_table(repo_root: Path) -> tuple[tuple[str, str], ...]:
     """Everything this bundle was generated from, including every committed record.
 
@@ -1953,7 +1780,7 @@ def render_index(
                 "",
                 "## Read this first",
                 "",
-                gate_verdict(gap_numbers),
+                gate_verdict(gap_numbers, phase_number=2),
                 "",
                 status_summary_sentence(criteria),
                 "",
@@ -2191,45 +2018,56 @@ def build_bundle(
         written.append(path)
     return tuple(sorted(written))
 
+    sys.exit(main())
 
-def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Build the Phase 2 proof bundle under proof/phase-2/."
+
+# --------------------------------------------------------------------------------------
+# The shared generator machinery, named locally so call sites and tests read unchanged.
+#
+# What moved is the part that was identical across phases 1 to 3: the CLI, the nested
+# verification run, the per-module scoping, the unit-test report, and the two verdict
+# sentences. What stayed is every renderer whose content is this phase's rather than
+# every phase's -- measured at 20% to 60% textually common, which is not duplication.
+# --------------------------------------------------------------------------------------
+
+
+def default_output_dir(repo_root: Path) -> Path:
+    return bundle_directory(repo_root, PHASE)
+
+
+def verify_repository(repo_root: Path) -> Verification:
+    return shared_verify_repository(
+        repo_root,
+        criteria=phase2_criteria(),
+        nested_env=NESTED_RUN_ENV,
+        test_prefixes=PHASE2_TEST_PREFIXES,
     )
-    parser.add_argument("--output-dir", default=None)
-    parser.add_argument("--generated-at", default=None)
-    parser.add_argument("--regenerate-goldens", action="store_true")
-    return parser.parse_args(argv)
+
+
+def render_unit_test_report(verification: Verification) -> str:
+    return shared_render_unit_test_report(
+        verification,
+        phase_number=2,
+        verification_commands=VERIFICATION_COMMANDS,
+        caveat=(
+            "**A green suite is not evidence that the path works.** Phase 1 shipped one over a "
+            "workflow that could not complete a run, because every assertion compared the "
+            "literal text of expressions rather than checking whether they named anything "
+            "real. The counts above say the tests pass; `negative-case-matrix.md` says what "
+            "they establish, which for nine of this phase's criteria is not the criterion."
+        ),
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    if os.environ.get(NESTED_RUN_ENV):
-        print(
-            "refusing to build the proof bundle from inside its own verification run",
-            file=sys.stderr,
-        )
-        return 2
-    args = parse_args(argv)
-    repo_root = PROJECT_ROOT
-    output_dir = default_output_dir(repo_root) if args.output_dir is None else Path(args.output_dir)
-    generated_at = (
-        datetime.now(tz=UTC)
-        if args.generated_at is None
-        else datetime.fromisoformat(args.generated_at)
+    return run_generator_cli(
+        argv,
+        description="Build the Phase 2 proof bundle under proof/phase-2/.",
+        repo_root=PROJECT_ROOT,
+        nested_env=NESTED_RUN_ENV,
+        default_output_dir=default_output_dir,
+        build=build_bundle,
     )
-    try:
-        written = build_bundle(
-            repo_root,
-            output_dir,
-            generated_at=generated_at,
-            regenerate_goldens=args.regenerate_goldens,
-        )
-    except (ProofBundleError, CriteriaDefinitionError) as error:
-        print(str(error), file=sys.stderr)
-        return 1
-    for path in written:
-        print(path.relative_to(repo_root) if path.is_relative_to(repo_root) else path)
-    return 0
 
 
 if __name__ == "__main__":
