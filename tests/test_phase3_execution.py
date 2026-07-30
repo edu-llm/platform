@@ -764,6 +764,109 @@ def test_the_image_is_pulled_from_the_repository_whose_scan_admission_read() -> 
     assert image.split("@", maxsplit=1)[0].endswith(f"/{PUBLISHED_IMAGE_REPOSITORY}")
 
 
+def submittable_ecr_repositories() -> dict[str, str]:
+    """Every repository a submission can actually name, mapped to where its images live.
+
+    Submittable is the intersection of two files, because it takes both to reach Batch.
+    ``config/repositories.yaml`` is what gives a repository an ECR repository at all, and
+    ``config/workload-catalog.yaml`` is what gives it a profile a manifest can name -- a
+    submission naming a repository with no workload profile cannot be compiled. Two
+    repositories are registered and one of them has a profile, and that one-member set is
+    the only reason the repository name hardcoded in four places has never been wrong.
+
+    Duplicated verbatim in ``tests/test_phase3_infrastructure.py`` rather than lifted into
+    ``tests/infrastructure_support.py``. Both modules already load both of these files, and
+    three lines repeated once is a smaller thing to keep true than a shared support module
+    that neither of them owns.
+    """
+    registry = load_yaml(CONFIG_DIR / "repositories.yaml", RepositoryRegistry)
+    named = {workload.repository for workload in workload_catalog().workloads}
+    submittable = {
+        entry.repository: entry.ecr_repository
+        for entry in registry.repositories
+        if entry.repository in named
+    }
+    assert submittable, "no registered repository has a workload profile to be named by"
+    return submittable
+
+
+def test_admission_can_read_a_scan_for_every_submittable_repository() -> None:
+    """Reads the state machine against the registry. Mutation: give a second registered
+    repository a workload profile and leave ``ReadImageScan`` naming the first.
+
+    Different in kind from the seam test above, and both are wanted. That one binds
+    ``ReadImageScan`` to ``PUBLISHED_IMAGE_REPOSITORY`` and to nothing else, so two
+    hardcoded names agreeing with each other keep it green however many repositories are
+    registered -- it is a consistency check. This one compares the hardcoded name against
+    the set of repositories a submission can actually name, so it is a coverage check, and
+    it goes red on the day the fix is needed rather than on the day somebody notices.
+
+    Where it lands if nothing catches it, which is why the coverage half matters. The
+    ``resolve`` job reads the scan from the right repository, because
+    ``tools/resolve_published_image.py`` takes ``ecr_repository`` out of the registry, so
+    compile evaluates the image-scan gate against a real answer, passes, and a lead
+    approves. Only then does this state ask the wrong repository, get
+    ``ImageNotFoundException``, and fall into its ``States.ALL`` catch -- and
+    ``image_scan_is_reviewed`` consults ``config/image-exceptions.yaml`` before it looks at
+    the summary, so a digest with an exception is admitted anyway, after the approval and
+    into the lineage record. An exception is the ordinary case rather than the exotic one:
+    the registry is on BASIC scanning and both registrations pin the same base digest,
+    whose four critical findings are what the two entries in that file exist to accept.
+    """
+    definition = json.loads(
+        load_template(STATE_MACHINE_TEMPLATE_PATH)["Resources"]["AdmissionStateMachine"][
+            "Properties"
+        ]["DefinitionString"]["Fn::Sub"]
+    )
+    scanned = definition["States"]["ReadImageScan"]["Parameters"]["RepositoryName"]
+    unreadable = sorted(
+        f"{repository} (images in {ecr_repository})"
+        for repository, ecr_repository in submittable_ecr_repositories().items()
+        if ecr_repository != scanned
+    )
+
+    assert not unreadable, (
+        f"ReadImageScan reads scan findings from {scanned} and from nowhere else, so an "
+        f"approved submission naming {', '.join(unreadable)} would be admitted against "
+        "findings for an image that repository never published. "
+        "infra/admission-state-machine.yaml, the ReadImageScan state's "
+        "Parameters.RepositoryName, is what would have to change."
+    )
+
+
+def test_a_run_can_pin_an_image_from_every_submittable_repository() -> None:
+    """Reads the Python against the registry. Mutation: give a second registered repository
+    a workload profile and leave this constant naming the first.
+
+    The other half of the seam test above, asked as coverage rather than as consistency.
+    That test proves this constant and the state machine name the same repository, which
+    they would still do if that repository were the wrong one for the submission in hand;
+    this proves the name is right for every submission that can be made.
+
+    ``PUBLISHED_IMAGE_REPOSITORY`` is not a fact about the platform. It is a fact about the
+    submission's source repository -- ``config/repositories.yaml`` maps each registration to
+    an ``ecr_repository`` and the mapping is not derivable from the name -- so the constant
+    is only correct while one repository is submittable. The digest a second repository's
+    manifest declares does not exist under this name, so the reference composed here is a
+    reference to nothing, and Batch validates no image at registration: the run is accepted,
+    the definition registers, the job is submitted and an instance scales before anything
+    notices.
+    """
+    unreachable = sorted(
+        f"{repository} (images in {ecr_repository})"
+        for repository, ecr_repository in submittable_ecr_repositories().items()
+        if ecr_repository != PUBLISHED_IMAGE_REPOSITORY
+    )
+
+    assert not unreachable, (
+        "the job definition an accepted run registers for itself composes its image "
+        f"reference against {PUBLISHED_IMAGE_REPOSITORY}, so a submission naming "
+        f"{', '.join(unreachable)} would pin a digest that repository does not hold. "
+        "src/edullm_platform/execution.py, the PUBLISHED_IMAGE_REPOSITORY constant, is "
+        "what would have to change."
+    )
+
+
 def test_a_profile_with_a_target_and_no_container_shape_is_refused_rather_than_guessed() -> None:
     """Mutation: fall back to some default shape.
 
