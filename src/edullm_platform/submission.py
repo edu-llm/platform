@@ -49,6 +49,7 @@ from edullm_platform.contracts.policy import (
 )
 from edullm_platform.contracts.repository_registry import RepositoryRegistry
 from edullm_platform.contracts.workload import CostInputs, WorkloadCatalog, WorkloadProfile
+from edullm_platform.errors import SubmissionRefusedError
 from edullm_platform.manifest_helpers import (
     build_request_facts,
     compute_manifest_cost_inputs,
@@ -57,7 +58,6 @@ from edullm_platform.manifest_helpers import (
 __all__ = [
     "CompiledSubmission",
     "SubmissionInputs",
-    "SubmissionRefusedError",
     "compile_submission",
     "render_approver_context",
 ]
@@ -73,17 +73,6 @@ def _plain(value: Decimal) -> str:
     serialization; this is the same answer, applied where a human reads it.
     """
     return serialize_decimal(value)
-
-
-class SubmissionRefusedError(ValueError):
-    """The form describes something that cannot be resolved into a manifest.
-
-    Raised in the credential-free compile job, before a reviewer is asked for anything.
-    Refusing here rather than letting the request reach a gate is deliberate: a submission
-    naming an unregistered dataset is going to be denied by admission whatever a reviewer
-    says, and spending a human's attention on it first teaches reviewers that approving is
-    a formality.
-    """
 
 
 class SubmissionInputs(ContractModel):

@@ -21,10 +21,10 @@ from edullm_platform.contracts.manifest import FanOut
 from edullm_platform.contracts.policy import ApprovalClass, ApprovalPolicy
 from edullm_platform.contracts.repository_registry import RepositoryRegistry
 from edullm_platform.contracts.workload import WorkloadCatalog, WorkloadProfile
+from edullm_platform.errors import SubmissionRefusedError
 from edullm_platform.submission import (
     CompiledSubmission,
     SubmissionInputs,
-    SubmissionRefusedError,
     compile_submission,
     render_approver_context,
 )
