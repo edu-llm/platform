@@ -217,6 +217,17 @@ Resources:
       #   WriteBinding    records the Batch job id write-once, the instant Batch accepts
       #                   the submission and before anything has started.
       #
+      # WHY THE BINDING READS job_definition_arn OUT OF THE SUBMIT REQUEST RATHER THAN OUT OF
+      # THE TARGET. It used to read $.execution.target.job_definition_arn, which was right
+      # while the target's definition was the one every job ran on. It stopped being right
+      # the moment a run registers its own: the target still names the CloudFormation-owned
+      # cpu-run or gpu-run definition, and the job runs on the revision RegisterJobDefinition
+      # just minted. Left alone, the one lineage record that says which definition a job ran
+      # on would name a definition it did not run on -- the same class of untruth this whole
+      # change exists to remove, one field along and in the record rather than in the image.
+      # The submit request is where the answer is, and the two fields beside this one already
+      # read from it.
+      #
       # And the Succeed state moved. AdmissionAccepted's true branch used to end at
       # "Admitted"; it now continues into submission and ends at "Submitted". An execution
       # that reaches Submitted has admitted a run AND launched it, and there is no longer
@@ -606,7 +617,7 @@ Resources:
                     "batch_job_arn.$": "$.submission.JobArn",
                     "batch_job_name.$": "$.submission.JobName",
                     "job_queue_arn.$": "$.execution.target.job_queue_arn",
-                    "job_definition_arn.$": "$.execution.target.job_definition_arn",
+                    "job_definition_arn.$": "$.execution.submit_request.JobDefinition",
                     "compute_profile.$": "$.execution.target.compute_profile",
                     "log_group.$": "$.execution.target.log_group",
                     "attempt_duration_seconds.$": "$.execution.submit_request.Timeout.AttemptDurationSeconds",
@@ -641,7 +652,7 @@ Resources:
                     "batch_job_arn.$": "$.submission.JobArn",
                     "batch_job_name.$": "$.submission.JobName",
                     "job_queue_arn.$": "$.execution.target.job_queue_arn",
-                    "job_definition_arn.$": "$.execution.target.job_definition_arn",
+                    "job_definition_arn.$": "$.execution.submit_request.JobDefinition",
                     "compute_profile.$": "$.execution.target.compute_profile",
                     "log_group.$": "$.execution.target.log_group",
                     "attempt_duration_seconds.$": "$.execution.submit_request.Timeout.AttemptDurationSeconds",

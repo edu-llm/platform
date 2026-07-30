@@ -99,6 +99,11 @@ COMPUTE_PATHS = (COMPUTE_PATH, GPU_COMPUTE_PATH)
 GPU_COMPUTE_ENVIRONMENT_NAME = "sbsandbox-intern-edullm-gpu"
 GPU_JOB_QUEUE_NAME = "sbsandbox-intern-edullm-gpu"
 GPU_JOB_DEFINITION_NAME = "sbsandbox-intern-edullm-gpu-run"
+
+#: The definition an accepted run registers for itself, as the states role's grants name it.
+#: No template creates it -- it is minted at admission from the run id, which is why it is a
+#: pattern here rather than a name read out of a template like the two above.
+PER_RUN_JOB_DEFINITION_NAME = "sbsandbox-intern-edullm-run_*"
 GPU_BATCH_LOG_GROUP = "/aws/batch/sbsandbox-intern-edullm-gpu"
 GPU_EXECUTION_ROLE_NAME = "sbsandbox-intern-edullm-batch-gpu-execution"
 GPU_WORKLOAD_ROLE_NAME = "sbsandbox-intern-edullm-batch-gpu-workload"
@@ -715,6 +720,16 @@ def test_the_job_definition_the_states_role_may_submit_is_the_one_that_is_regist
     on one side denies every submission -- which fails closed and still costs a live run to
     diagnose. Both ARN forms are required because RegisterJobDefinition mints a revision on
     every deploy and the revision is part of the ARN.
+
+    **A third name the templates do not create, and it is the point of this phase.** An
+    accepted run registers a definition of its own so that the digest its manifest declared
+    is the image its container is given -- AWS Batch has no submit-time image override, so
+    registering is the only mechanism. That definition is minted at admission and appears in
+    no template, so this can no longer assert that the role submits only to what the
+    templates deploy. What it asserts instead is that the role submits to those two and to
+    the minted shape and to nothing else: ``run_`` is what ``job_definition_name`` produces
+    and is a prefix neither deployed definition begins with, so a fourth name is still a
+    visible edit here.
     """
     registered = names_across_compute_templates("AWS::Batch::JobDefinition", "JobDefinitionName")
     from_the_role = {
@@ -725,10 +740,10 @@ def test_the_job_definition_the_states_role_may_submit_is_the_one_that_is_regist
     revisions = [arn for arn in states_role_submit_arns() if arn.endswith(":*")]
 
     assert registered == {JOB_DEFINITION_NAME, GPU_JOB_DEFINITION_NAME}
-    assert from_the_role == registered
-    assert len(revisions) == len(registered), (
+    assert from_the_role == registered | {PER_RUN_JOB_DEFINITION_NAME}
+    assert len(revisions) == len(from_the_role), (
         "a grant on the bare definition name authorizes nothing once a second revision "
-        "exists, so every registered definition needs both ARN forms"
+        "exists, so every definition this role may submit to needs both ARN forms"
     )
 
 

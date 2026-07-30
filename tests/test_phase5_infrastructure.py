@@ -116,12 +116,19 @@ STATES_ROLE_NAME = "sbsandbox-intern-edullm-admission-states"
 #: a dozen literals that could each be updated separately.
 REGISTER_STATE = "RegisterJobDefinition"
 
-#: What ``batch:RegisterJobDefinition`` may name. Every definition this platform registers
-#: -- the two the compute templates deploy and the one an accepted run mints for itself --
-#: is under this prefix, and nothing outside it is ours to create.
+#: What ``batch:RegisterJobDefinition`` may name: the shape an accepted run mints for itself
+#: and nothing else. ``job_definition_name`` puts the run id under this project's prefix and
+#: a run id is ``run_<uuid7>``, so this matches every definition a registration can produce.
+#:
+#: Narrower than the project prefix on purpose, and the difference is not cosmetic. Under
+#: ``sbsandbox-intern-edullm-*`` this role could register a revision of
+#: ``sbsandbox-intern-edullm-cpu-run`` or ``-gpu-run``, which are the CloudFormation-owned
+#: definitions every earlier run was submitted against -- replacing the image on one of them
+#: from inside an execution. ``run_`` cannot match either, because neither begins with it, so
+#: the deployed definitions can only be changed by the template that declares them.
 REGISTER_SCOPE = (
     "arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:"
-    "job-definition/sbsandbox-intern-edullm-*"
+    "job-definition/sbsandbox-intern-edullm-run_*"
 )
 
 #: Twelve digits that are not this account's, so the ARNs the register request is built

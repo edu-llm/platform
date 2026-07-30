@@ -96,6 +96,21 @@ Resources:
                   - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu
                   - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-run
                   - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-run:*
+                  # THE PER-RUN DEFINITION, WITHOUT WHICH THIS ROLE CAN REGISTER A JOB
+                  # DEFINITION AND NOT SUBMIT TO IT. SubmitJob authorizes against the
+                  # definition as well as the queue, so a submission naming the revision
+                  # registered a state earlier is denied with a 403 naming the definition --
+                  # the same denial batch:TagResource produced on the first run through this
+                  # path. It fails closed into a submission-failure record rather than
+                  # launching anything, and it fails on every accepted submission.
+                  #
+                  # Scoped to the minted shape rather than to the project prefix. A run id
+                  # is run_<uuid7> and job_definition_name puts it under this prefix, so
+                  # sbsandbox-intern-edullm-run_* matches exactly what a registration can
+                  # produce and matches neither cpu-run nor gpu-run, which do not begin
+                  # run_. A definition named anything else stays a visible edit here.
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-run_*
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-run_*:*
               # batch:TagResource is here to serve the SubmitJob above and for no other
               # reason. batch_submit_request always sends Tags -- the run id, the team and
               # the compute profile, which is what Phase 5's cost attribution reads -- and
@@ -125,6 +140,12 @@ Resources:
                   - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu
                   - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-run
                   - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-run:*
+                  # Mirrors SubmitJob's list exactly, for the reason the comment above gives:
+                  # it is the same call against the same resources, billed to a second action
+                  # name, and a list widened on one and not the other produces a role that
+                  # can submit and cannot.
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-run_*
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-run_*:*
               # THE FIRST GRANT THAT LETS THIS ROLE CREATE A BATCH RESOURCE RATHER THAN USE
               # ONE, AND THE REASON IS THAT AWS BATCH HAS NO SUBMIT-TIME IMAGE OVERRIDE.
               # ContainerOverrides carries command, environment, instanceType and
@@ -162,8 +183,15 @@ Resources:
               # Granting a verb nothing calls widens the role for nothing.
               - Effect: Allow
                 Action: batch:RegisterJobDefinition
+                # Narrowed to the shape a registration can actually mint, matching the two
+                # lists above. The project prefix would also let this role register a
+                # revision of sbsandbox-intern-edullm-cpu-run or -gpu-run, replacing the
+                # image on a definition the CloudFormation stack owns and that every earlier
+                # run was submitted against. Nothing needs that, and the narrower scope means
+                # the deployed definitions can only be changed by the template that declares
+                # them.
                 Resource:
-                  Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-*
+                  Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-run_*
               # The other half of RegisterJobDefinition, and the one to argue about rather
               # than skim. A job definition names an execution role and a job role, so
               # registering one passes both -- that call is where a container's two
