@@ -1,6 +1,6 @@
 {
   "additionalProperties": false,
-  "description": "The ``workflow_dispatch`` form.\n\nFourteen properties against a ceiling of twenty-five, so the count is a usability\nquestion rather than a platform constraint. Eight are required and six are overrides a\nsubmitter can leave alone.",
+  "description": "The ``workflow_dispatch`` form.\n\nFourteen properties against a ceiling of twenty-five, so the count is a usability\nquestion rather than a platform constraint. Seven are required and seven are overrides a\nsubmitter can leave alone. The newest of the seven is the image digest, which stopped\nbeing required when it started being derived, and which was the hardest of the eight to\nfill in by some distance.",
   "properties": {
     "command": {
       "items": {
@@ -73,9 +73,17 @@
       "title": "Fanout Size"
     },
     "image_digest": {
-      "pattern": "^sha256:[0-9a-f]{64}$",
-      "title": "Image Digest",
-      "type": "string"
+      "anyOf": [
+        {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Image Digest"
     },
     "maximum_attempts": {
       "anyOf": [
@@ -128,7 +136,6 @@
   "required": [
     "repository",
     "commit_sha",
-    "image_digest",
     "workload_profile",
     "dataset_release",
     "team",

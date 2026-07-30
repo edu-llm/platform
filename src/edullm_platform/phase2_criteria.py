@@ -389,7 +389,7 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
         CriterionSpec(
             number="8",
             statement=(
-                "A dispatched run obtains no OIDC token, credential, or secret before a "
+                "A dispatched run obtains nothing that can start, submit or write before a "
                 "reviewer approves."
             ),
             status=CriterionStatus.COVERED,
@@ -403,8 +403,39 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                     WORKFLOW,
                     "test_the_submit_job_takes_its_gate_from_needs_and_never_from_the_form",
                 ),
+                *_ids(
+                    WORKFLOW,
+                    "test_the_only_aws_a_dispatch_reaches_before_an_approval_is_a_read_and_a_refusal",
+                ),
             ),
             scope_limits=(
+                (
+                    "THE STATEMENT WAS REWRITTEN RATHER THAN SCOPED, AND THE OLD ONE IS HERE "
+                    "SO THE CHANGE IS LEGIBLE. It read: 'A dispatched run obtains no OIDC "
+                    "token, credential, or secret before a reviewer approves.' That was "
+                    "already false when it was written -- deny-unapproved holds id-token: "
+                    "write and mints a token on every dispatch, spending it to prove the "
+                    "admission role refuses a subject with no environment on it, where the "
+                    "refusal is the check. Adding a resolve job that assumes "
+                    "sbsandbox-intern-edullm-image-resolver made it false a second way. "
+                    "Keeping the sentence and explaining underneath that it is narrower than "
+                    "it reads would be a criterion whose scope limit contradicts its "
+                    "statement, which is the shape the three-status rule exists to prevent. "
+                    "The property that is true, tested and worth having is the one now "
+                    "stated: what a dispatch can reach before approval starts nothing, "
+                    "submits nothing and writes nothing -- no admission role, no state "
+                    "machine, no queue, no lineage. Same move as Phase 5 item 5.5 makes on "
+                    "Phase 4 criterion 7, and for the same reason."
+                ),
+                (
+                    "The two pre-gate jobs, named so the statement can be checked against "
+                    "them. deny-unapproved mints a token and is refused. resolve assumes a "
+                    "role holding exactly ecr:DescribeImages and ecr:DescribeImageScanFindings, "
+                    "which is how the image a commit published and its scan findings reach a "
+                    "job that holds no credential of its own. infra/iam/image-resolver-role.yaml "
+                    "argues that in full, and tests/test_phase5_infrastructure.py holds the "
+                    "grant to exactly those two read actions."
+                ),
                 (
                     "Covered on the committed workflow rather than on a capture, and that is "
                     "sufficient here for a reason the other live criteria do not share: the "

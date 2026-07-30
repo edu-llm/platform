@@ -14,10 +14,12 @@ writing -- in several places, which is how one copy drifts without anybody notic
 five now call in, and what each takes is a measurement rather than a design:
 
 ``aws``, ``aws_json``
-    Phase 3 and Phase 4. Phase 1 keeps its own, which reads the operation and error code
-    out of the CLI's stderr and lets a caller nominate an error code that means an expected
-    absence -- neither of which this does, and folding both in would take four parameters
-    to serve one caller.
+    Phase 3, Phase 4, and the submission workflow's image resolver. Phase 1 keeps its own,
+    which reads the operation and error code out of the CLI's stderr and lets a caller
+    nominate an error code that means an expected absence -- neither of which this does,
+    and folding both in would take four parameters to serve one caller. The resolver needs
+    the first of those two and reads the stderr itself with ``parse_aws_cli_error``, which
+    is where three other modules already read one.
 ``write_record``, ``write_model``
     Phase 0's sanitized tier, Phase 1, Phase 3, Phase 4. Not Phase 0's raw tier, which
     keeps API answers exactly as the services gave them and would be refused by its own
@@ -123,7 +125,7 @@ def observed_now() -> datetime:
 
 
 def aws(
-    arguments: Sequence[str], *, profile: str, region: str | None = None
+    arguments: Sequence[str], *, profile: str | None = None, region: str | None = None
 ) -> subprocess.CompletedProcess[str]:
     """One AWS CLI call, returned whole so a caller can read a non-zero exit deliberately.
 
@@ -135,8 +137,20 @@ def aws(
 
     ``shell=False`` and a list, so an argument containing a space is an argument rather
     than two.
+
+    **``profile`` is optional because one caller has no profile to name, and a default
+    would be worse than the absence.** The five capture tools run from a laptop and inherit
+    an SSO session, which is what a profile selects. ``tools/resolve_published_image.py``
+    runs on a GitHub Actions runner under a role the workflow assumed, so its credentials
+    arrive in the environment and there is no config file to select from -- and the CLI
+    answers a profile it cannot find with ProfileNotFound before the call leaves the
+    runner, which presents as a broken role rather than as an argument nobody should have
+    passed.
     """
-    command = ["aws", *arguments, "--profile", profile, "--output", "json"]
+    command = ["aws", *arguments]
+    if profile is not None:
+        command += ["--profile", profile]
+    command += ["--output", "json"]
     if region is not None:
         command += ["--region", region]
     try:
@@ -154,7 +168,9 @@ def aws(
         raise CaptureFailedError("aws_cli_unavailable") from error
 
 
-def aws_json(arguments: Sequence[str], *, profile: str, region: str | None = None) -> Any:
+def aws_json(
+    arguments: Sequence[str], *, profile: str | None = None, region: str | None = None
+) -> Any:
     """One AWS CLI call whose answer is required, parsed.
 
     A non-zero exit is a capture failure and never an empty record. That distinction is the

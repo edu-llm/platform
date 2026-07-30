@@ -12,10 +12,18 @@ contract, so asking for them again invites a submitter to contradict the catalog
 available as explicit overrides, because a sweep that needs longer than its profile's
 default is ordinary — and an override is visible to the approver in a way a silently
 different default would not be.
+
+The image is the same question in its sharpest form. It used to be a required
+seventy-one-character field that had to agree with the declared commit and was compared with
+nothing, so a submission could name commit A beside an image built from commit B and be
+faultless on every field. It is derived from the commit now, by
+:mod:`edullm_platform.image_resolution`, out of what the resolve job read back from the
+registry — and what survives is an override with the same visibility as the other six.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Annotated, Self
@@ -50,6 +58,7 @@ from edullm_platform.contracts.policy import (
 from edullm_platform.contracts.repository_registry import RepositoryRegistry
 from edullm_platform.contracts.workload import CostInputs, WorkloadCatalog, WorkloadProfile
 from edullm_platform.errors import SubmissionRefusedError
+from edullm_platform.image_resolution import PublishedImage, ResolvedImage, resolve_image
 from edullm_platform.manifest_helpers import (
     build_request_facts,
     compute_manifest_cost_inputs,
@@ -79,13 +88,21 @@ class SubmissionInputs(ContractModel):
     """The ``workflow_dispatch`` form.
 
     Fourteen properties against a ceiling of twenty-five, so the count is a usability
-    question rather than a platform constraint. Eight are required and six are overrides a
-    submitter can leave alone.
+    question rather than a platform constraint. Seven are required and seven are overrides a
+    submitter can leave alone. The newest of the seven is the image digest, which stopped
+    being required when it started being derived, and which was the hardest of the eight to
+    fill in by some distance.
     """
 
     repository: str = Field(min_length=1)
     commit_sha: str = Field(pattern=COMMIT_SHA_PATTERN)
-    image_digest: str = Field(pattern=IMAGE_DIGEST_PATTERN)
+    # A run's image is derived from the commit it declares and is never supplied beside it.
+    # What survives here is an override for a deliberate rebuild-and-pin -- a researcher
+    # reproducing an earlier result needs the image that produced it rather than the newest
+    # one -- and it is checked against the digests published from the declared commit, so a
+    # digest built somewhere else has nowhere to go. Optional rather than removed, and
+    # still patterned, because the shape a pin has to have has not changed.
+    image_digest: str | None = Field(default=None, pattern=IMAGE_DIGEST_PATTERN)
     workload_profile: str = Field(min_length=1)
     dataset_release: str = Field(min_length=1)
     team: str = Field(min_length=1)
@@ -124,6 +141,11 @@ class CompiledSubmission:
     approval_class: ApprovalClass
     approving_environment: ApprovalEnvironment
     cost: CostInputs
+    # Carried beside the manifest rather than folded into it. The manifest records which
+    # image ran; this records how that image was arrived at -- derived or pinned, and out
+    # of how many candidates -- which is the difference between a commit built once and a
+    # commit built four times, and reads identically in the manifest either way.
+    resolved_image: ResolvedImage
 
 
 def _resolve_workload(catalog: WorkloadCatalog, name: str) -> WorkloadProfile:
@@ -146,6 +168,11 @@ def compile_submission(
     dataset_registry: DatasetRegistry,
     image_scan_registry: ImageScanExceptionRegistry,
     image_scan_summary: ImageScanSummary | None = None,
+    # Every image the registry holds for the declared commit, as the resolve job read them.
+    # Defaulted to nothing rather than made required, and the default is the fail-closed
+    # one: a caller that never passes this gets the unbuilt-commit refusal rather than a
+    # manifest whose image nobody established.
+    published_images: Sequence[PublishedImage] = (),
 ) -> CompiledSubmission:
     workload = _resolve_workload(catalog, inputs.workload_profile)
     if workload.repository != inputs.repository:
@@ -167,6 +194,16 @@ def compile_submission(
             "contract for the codebase it was written against, so the two have to be the "
             "same repository."
         )
+
+    # After the repository check and before anything else, because the images below were
+    # read out of whichever ECR repository the declared one resolves to: a submission whose
+    # repository and workload disagree has already named the wrong registry, and resolving
+    # against it first would refuse the image before saying which of the two fields to fix.
+    resolved_image = resolve_image(
+        commit_sha=inputs.commit_sha,
+        published=published_images,
+        override=inputs.image_digest,
+    )
 
     fanout = (
         FanOut(
@@ -193,11 +230,22 @@ def compile_submission(
             "or add a checkpoint contract to this one."
         )
 
+    # THE FORM'S IMAGE FIELD IS OPTIONAL AND THE MANIFEST'S IS NOT, AND THE ASYMMETRY IS
+    # THE POINT. It is tempting to relax contracts/manifest.py to match the form and stop
+    # having two spellings of one field. Two reasons not to, and the second is the real
+    # one. Mechanically, RunManifest is the model every phase's proof bundle records a
+    # structural digest for and the model the canonical hash is taken over, so making the
+    # field optional moves that hash, the schema version and a cell in four committed
+    # bundles. Substantively, what it would buy is the ability to express a run whose image
+    # is unknown -- and the lineage record is the one document in this system that must
+    # never be able to say that. A form may leave the image to be derived; a record of what
+    # ran may not leave it undetermined. So the field is filled in here, from the
+    # resolution above, on every path.
     manifest = RunManifest(
         schema_version=1,
         repository=inputs.repository,
         commit_sha=inputs.commit_sha,
-        image_digest=inputs.image_digest,
+        image_digest=resolved_image.image_digest,
         dataset_release=inputs.dataset_release,
         command=inputs.command,
         team=inputs.team,
@@ -257,6 +305,7 @@ def compile_submission(
         approval_class=approval_class,
         approving_environment=ApprovalEnvironment.for_approval_class(approval_class),
         cost=cost,
+        resolved_image=resolved_image,
     )
 
 
