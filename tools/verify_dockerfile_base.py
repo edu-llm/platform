@@ -2,10 +2,11 @@
 
 The registered base digest reaches ``docker build`` only as ``--build-arg BASE_IMAGE``,
 which a Dockerfile is free to ignore by hardcoding its own ``FROM``. Nothing downstream
-would notice: ``write_image_provenance`` records ``base_image_digest`` from the registry,
-so the provenance record would assert a fact about the image that nothing established.
-An unverified assertion in a provenance record is worse than an absent field, and
-provenance is the deliverable, so this gate runs before the build and fails closed.
+would notice: :class:`~edullm_platform.phase1_evidence.EcrImageEvidence` takes
+``base_image_digest`` from the registry rather than from the image, so a committed
+evidence record would assert a fact about the image that nothing established. An
+unverified assertion in a record nothing rewrites is worse than an absent field, so this
+gate runs before the build and fails closed.
 
 ``FROM`` is not the only instruction that reaches outside the build: ``COPY --from=`` and
 ``RUN --mount=type=bind,from=`` name an image too, and what they pull in ends up in a
