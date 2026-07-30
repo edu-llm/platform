@@ -1,0 +1,41 @@
+{
+  "authorization": {
+    "approval_class": "routine",
+    "approval_scope": "organization",
+    "approver": "pianomaster99",
+    "claimed_team": "tokenizer",
+    "granted": true,
+    "reason": "routine_approved_by_lead_or_admin",
+    "submitter": "aryanjverma",
+    "team_verified": false
+  },
+  "batch_job_id": "61471079-a5de-4b6e-a488-a4b60bd696e2",
+  "compute_profile": "cpu-32vcpu",
+  "container_image_digest": "sha256:1cd62aca4ed4599b96d96728b41958b732196b993ea6c57be045de97185185a9",
+  "declared_commit_sha": "8da0d6aa45b297feb25625fc9edf390b030c5c21",
+  "declared_image_digest": "sha256:1cd62aca4ed4599b96d96728b41958b732196b993ea6c57be045de97185185a9",
+  "environment": "sandbox",
+  "exit_code": null,
+  "job_definition_name": "sbsandbox-intern-edullm-run_019fb4ce-cf24-7028-8eed-a32a28ec2493:1",
+  "manifest_sha256": "sha256:af52899d90022b4e22eced3a38d4c21a3b72e6c4f155e6cadca5f746475a93e9",
+  "observed_at": "2026-07-30T20:58:36.607317Z",
+  "output_prefixes": [],
+  "recorded_states": [
+    "runnable",
+    "runnable",
+    "failed"
+  ],
+  "region": "us-east-1",
+  "repository": "OLMo-core",
+  "result_outcome": null,
+  "run_id": "run_019fb4ce-cf24-7028-8eed-a32a28ec2493",
+  "scheduler_status": "FAILED",
+  "source": "aws",
+  "submitter": "aryanjverma",
+  "team": "tokenizer",
+  "wandb_run": null,
+  "workflow_path": ".github/workflows/submit-run.yml",
+  "workflow_ref": "refs/heads/main",
+  "workflow_run_id": 30581160653,
+  "workload_profile": "olmo-core-cpu-smoke"
+}
