@@ -141,6 +141,24 @@ def resolve_image(
             was_overridden=True,
         )
 
+    # NOTHING REACHES THE TWO BRANCHES BELOW TODAY, AND THAT IS A FACT ABOUT THREE
+    # CONFIGURATION CHOICES RATHER THAN ABOUT THESE RULES. One commit can have at most one
+    # published image while all three hold: the tag is twelve characters of the commit and
+    # carries nothing that varies between builds; both ECR repositories are declared
+    # ImageTagMutability: IMMUTABLE in infra/ecr-repositories.yaml, so a tag cannot be
+    # moved onto a second image; and the build workflow's pre-flight lookup skips the build
+    # entirely when the tag already exists, so a re-run resumes onto the published digest
+    # instead of pushing beside it. So `published` arrives here with one element, always.
+    #
+    # Kept rather than deleted, and written down rather than left to be rediscovered,
+    # because a rule with no live caller invites two opposite mistakes. Read as exercised
+    # behaviour it is a claim this platform cannot support: nothing has ever chosen between
+    # two images of one commit. Read as dead code it looks safe to delete, and it is one
+    # relaxed setting away from being the only thing standing between a rebuild and a
+    # silently reverted run. Their tests are in the same position -- correct, and currently
+    # proving a property of this function rather than of the platform -- and one of them
+    # asserts the three mechanisms above still hold, so the day one is relaxed this
+    # paragraph fails rather than misleads.
     latest = max(candidate.pushed_at for candidate in published)
     tied = [candidate for candidate in published if candidate.pushed_at == latest]
     if len(tied) > 1:

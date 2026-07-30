@@ -1,5 +1,5 @@
 import inspect
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
 from itertools import combinations
@@ -17,11 +17,12 @@ from edullm_platform.contracts.image_scan import (
     ImageScanSummary,
 )
 from edullm_platform.contracts.inventory import OrganizationInventory
-from edullm_platform.contracts.manifest import FanOut
+from edullm_platform.contracts.manifest import FanOut, RunManifest
 from edullm_platform.contracts.policy import ApprovalClass, ApprovalPolicy
 from edullm_platform.contracts.repository_registry import RepositoryRegistry
 from edullm_platform.contracts.workload import WorkloadCatalog, WorkloadProfile
 from edullm_platform.errors import SubmissionRefusedError
+from edullm_platform.image_resolution import PublishedImage
 from edullm_platform.submission import (
     CompiledSubmission,
     SubmissionInputs,
@@ -41,6 +42,18 @@ REPOSITORY_URL = "https://github.com/edu-llm/dolma"
 
 COMMIT_SHA = "a" * 40
 IMAGE_DIGEST = "sha256:" + "b" * 64
+
+#: A second image published from the same commit, which is what a rebuild leaves behind. A
+#: single commit has been measured built four times in this project.
+REBUILT_DIGEST = "sha256:" + "c" * 64
+
+#: Well-formed, genuinely published, and not from ``COMMIT_SHA``. This is what the
+#: surviving ``image_digest`` field can still carry, and the only thing standing in front
+#: of it is the override check.
+DIGEST_FROM_ANOTHER_COMMIT = "sha256:" + "d" * 64
+
+FIRST_PUSH = datetime(2026, 7, 26, 9, 2, tzinfo=UTC)
+SECOND_PUSH = datetime(2026, 7, 26, 18, 30, tzinfo=UTC)
 
 #: The registered workload most of this module compiles against. It was
 #: ``dolma-tokenize-smoke`` until ``repository_registered`` started reading
@@ -166,11 +179,18 @@ def workload_profile(name: str) -> WorkloadProfile:
     return next(workload for workload in load_workload_catalog().workloads if workload.name == name)
 
 
+#: What the registry holds for ``COMMIT_SHA`` unless a test says otherwise: one image,
+#: which is all one commit can have while the tag is twelve characters of it and both ECR
+#: repositories are IMMUTABLE. The form below names no digest, because deriving one is what
+#: a submission does now and pinning one is the exception.
+def published_from_the_commit() -> tuple[PublishedImage, ...]:
+    return (PublishedImage(image_digest=IMAGE_DIGEST, pushed_at=FIRST_PUSH),)
+
+
 def cpu_payload(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
         "repository": "OLMo-core",
         "commit_sha": COMMIT_SHA,
-        "image_digest": IMAGE_DIGEST,
         "workload_profile": CPU_WORKLOAD,
         "dataset_release": REGISTERED_DATASET,
         "team": "data-prep",
@@ -204,6 +224,7 @@ def compile_payload(
     policy: ApprovalPolicy | None = None,
     image_scan_registry: ImageScanExceptionRegistry | None = None,
     image_scan_summary: ImageScanSummary | None = None,
+    published_images: Sequence[PublishedImage] | None = None,
 ) -> CompiledSubmission:
     return compile_submission(
         submission_inputs(payload),
@@ -219,6 +240,9 @@ def compile_payload(
         ),
         image_scan_summary=(
             image_scan_summary if image_scan_summary is not None else clean_image_scan()
+        ),
+        published_images=(
+            published_images if published_images is not None else published_from_the_commit()
         ),
     )
 
@@ -684,3 +708,133 @@ def test_a_workload_profile_from_the_declared_repository_is_accepted() -> None:
 
     assert compiled.manifest.repository == "OLMo-core"
     assert compiled.manifest.workload_profile == OLMO_WORKLOAD
+
+
+# ---------------------------------------------------------------------------------------
+# The image a run uses is derived from the commit it declares
+# ---------------------------------------------------------------------------------------
+
+
+def test_the_form_no_longer_asks_for_a_digest_copied_out_of_a_build_log() -> None:
+    """Mutation: leave the field required.
+
+    Seventy-one characters transcribed by hand out of another repository's build output was
+    the hardest field on the form, and the only reason it was required is that nothing
+    derived it. What survives is an override, so the shape it must have has not moved.
+    """
+    field = SubmissionInputs.model_fields["image_digest"]
+
+    assert field.is_required() is False
+    assert submission_inputs(cpu_payload()).image_digest is None
+    with pytest.raises(ValidationError):
+        submission_inputs(cpu_payload(image_digest="latest"))
+
+
+def test_a_submission_that_names_no_digest_runs_the_image_its_commit_published() -> None:
+    """Mutation: leave the manifest reading ``inputs.image_digest``.
+
+    That is what it did, and it is how a lineage record could name commit A beside an image
+    built from commit B: two required fields, both well formed, and nothing anywhere holding
+    them up against each other.
+    """
+    compiled = compile_payload(cpu_payload())
+
+    assert compiled.manifest.image_digest == IMAGE_DIGEST
+    assert compiled.resolved_image.image_digest == IMAGE_DIGEST
+    assert compiled.resolved_image.was_overridden is False
+    assert compiled.resolved_image.chosen_from == 1
+
+
+def test_a_commit_built_twice_runs_the_image_the_registry_took_most_recently() -> None:
+    # A rebuild happens because the previous build was wrong, so an older image is a silent
+    # revert of whatever the rebuild fixed. The pair is handed over in the order the
+    # registry answered rather than in the order they were pushed.
+    compiled = compile_payload(
+        cpu_payload(),
+        published_images=(
+            PublishedImage(image_digest=REBUILT_DIGEST, pushed_at=SECOND_PUSH),
+            PublishedImage(image_digest=IMAGE_DIGEST, pushed_at=FIRST_PUSH),
+        ),
+    )
+
+    assert compiled.manifest.image_digest == REBUILT_DIGEST
+    assert compiled.resolved_image.chosen_from == 2
+    assert compiled.resolved_image.was_overridden is False
+
+
+def test_a_digest_the_declared_commit_published_is_honoured_and_recorded_as_a_pin() -> None:
+    """The rebuild-and-pin path, which is the reason the field survives at all.
+
+    A researcher reproducing an earlier result needs the image that produced it rather than
+    the newest one, and ``was_overridden`` is what lets a reader of the record tell the two
+    apart -- without it a pinned older build and a derived newest one read identically.
+    """
+    compiled = compile_payload(
+        cpu_payload(image_digest=IMAGE_DIGEST),
+        published_images=(
+            PublishedImage(image_digest=IMAGE_DIGEST, pushed_at=FIRST_PUSH),
+            PublishedImage(image_digest=REBUILT_DIGEST, pushed_at=SECOND_PUSH),
+        ),
+    )
+
+    assert compiled.manifest.image_digest == IMAGE_DIGEST
+    assert compiled.resolved_image.was_overridden is True
+    assert compiled.resolved_image.chosen_from == 2
+
+
+def test_a_digest_from_another_commit_is_refused_before_a_reviewer_is_asked() -> None:
+    # The defect the derivation closes for anybody who leaves the field alone, arriving
+    # through the field that survives. Refused here rather than at admission because
+    # nothing about it needs the account.
+    with pytest.raises(SubmissionRefusedError) as refusal:
+        compile_payload(cpu_payload(image_digest=DIGEST_FROM_ANOTHER_COMMIT))
+
+    message = str(refusal.value)
+    assert DIGEST_FROM_ANOTHER_COMMIT in message
+    assert COMMIT_SHA in message
+
+
+def test_a_commit_nothing_has_been_built_from_is_refused_and_told_to_build_it() -> None:
+    """Mutation: compile it anyway and let admission refuse it.
+
+    It does reach admission today, and comes back refused for unreviewed image-scan
+    findings -- true, and pointing at the wrong thing, because there is no scan of an image
+    nobody built. A refusal naming the wrong next step costs more than none, since it gets
+    followed.
+    """
+    with pytest.raises(SubmissionRefusedError) as refusal:
+        compile_payload(cpu_payload(), published_images=())
+
+    assert "build-research-image.yml" in str(refusal.value)
+
+
+def test_the_manifest_names_an_image_even_though_the_form_no_longer_has_to() -> None:
+    """Mutation: make ``RunManifest.image_digest`` optional to match the form.
+
+    The two fields answer different questions. A form may leave the image to be derived; a
+    lineage record must never be able to say that the image a run used is unknown, and the
+    field being required is the whole of how it cannot. Relaxing it would also move the
+    canonical hash, the schema version and the structural digests recorded in four
+    committed proof bundles, in order to express a state the record exists to exclude.
+    """
+    field = RunManifest.model_fields["image_digest"]
+    compiled = compile_payload(cpu_payload())
+
+    assert field.is_required() is True
+    assert compiled.manifest.image_digest == compiled.resolved_image.image_digest
+    with pytest.raises(ValidationError):
+        RunManifest.model_validate(
+            {
+                key: value
+                for key, value in compiled.manifest.model_dump(mode="json").items()
+                if key != "image_digest"
+            }
+        )
+
+
+def test_the_derived_image_is_what_the_reviewer_is_shown() -> None:
+    # The approver reads a digest nobody typed in, so the summary has to carry the resolved
+    # one rather than the field it replaced -- which is empty on almost every submission.
+    compiled = compile_payload(cpu_payload())
+
+    assert f"| Image digest | `{IMAGE_DIGEST}` |" in render(compiled)

@@ -2,8 +2,8 @@
 
 Phase: phase-0
 Bundle schema version: 1
-Source commit: 4f259c8735793ee9c769421af3dde50861100bad
-Generated: 2026-07-30T00:39:18+00:00
+Source commit: 53e1302ef6229d0c67960308643b0031f41191f9
+Generated: 2026-07-30T07:13:10+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 0 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase0_proof.py` at generation time.
 
@@ -18,9 +18,9 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3542 |
-| suite tests executed | 3376 |
-| suite passed | 3376 |
+| suite tests collected | 3621 |
+| suite tests executed | 3455 |
+| suite passed | 3455 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
@@ -112,7 +112,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | schemas/result-manifest.schema.json | sha256:7e7b6a5891444d9d13256202319f5be6e70addb81f0b0c077e5294c63529503b |
 | schemas/run-manifest.schema.json | sha256:62851f48df41a1dc270a525b44a8ef01eab660af9d5b60030d6c0a8776e196f2 |
 | schemas/scheduler-attempt.schema.json | sha256:91984a9fb1f7f9150f7799dc337807bd14b93b50908a56e0e230391546c9c4ac |
-| schemas/submission-inputs.schema.json | sha256:0cbe9a1bc42474266c0d217cf4dab4031fb3720408f1fe347a12e62e4abc1578 |
+| schemas/submission-inputs.schema.json | sha256:1b4cb859d29e2efd305fe8477fcc20d8297bbfff64a9cdb958939661e71fb709 |
 | schemas/workload-catalog.schema.json | sha256:4039ead3f77c0949db2a701dae90461788ed6856838075a1f223f3d4b853fa06 |
 
 ## Known limitations

@@ -9,8 +9,9 @@ name: Submit a run
 #
 # The form below is SubmissionInputs field for field. Fourteen properties against a
 # workflow_dispatch ceiling of twenty-five, so the length is a usability question rather
-# than a platform constraint. Eight are required; six are overrides that take the workload
-# profile's registered default when left empty.
+# than a platform constraint. Seven are required; seven are overrides that take a
+# registered default when left empty -- six from the workload profile, and the image digest
+# from whatever the declared commit published.
 on:
   workflow_dispatch:
     inputs:
@@ -25,9 +26,10 @@ on:
         required: true
         type: string
       image_digest:
-        description: Digest of the published image, written as sha256 followed by sixty-four hex characters.
-        required: true
+        description: Override the image with a digest this commit already published, written as sha256 followed by sixty-four hex characters. Leave blank to run the image built from the commit above.
+        required: false
         type: string
+        default: ""
       workload_profile:
         description: Workload profile. It fixes the compute profile, the runtime and attempt bounds, and the checkpoint contract.
         required: true
@@ -92,14 +94,121 @@ permissions:
   contents: read
 
 jobs:
+  # A JOB HOLDING AWS CREDENTIALS, AHEAD OF THE APPROVAL GATE, AND WHY THAT IS ALL RIGHT.
+  #
+  # The invariant this file maintains is not "an unapproved dispatch never reaches AWS".
+  # The deny-unapproved job below already holds id-token: write and calls STS on every
+  # dispatch, by design. The invariant is that an unapproved dispatch cannot obtain the
+  # *admission* role: it cannot start an execution, cannot submit a job, and cannot write
+  # lineage. The role assumed here starts nothing and writes nothing. It holds two ECR
+  # reads and returns what build-research-image.yml already prints into a step summary.
+  #
+  # What it does relax is a weaker second property, and that is worth stating plainly: the
+  # approval gate used to be chosen before the run reached AWS at all, and the scan summary
+  # this job reads is what picks that gate. The compensating control already exists and is
+  # written out in tools/compile_submission.py -- admission re-derives the findings from the
+  # registry itself and fails closed on disagreement, so an understated summary buys a
+  # submitter a gate they still cannot pass.
+  #
+  # infra/iam/image-resolver-role.yaml carries the argument in full, beside the two actions
+  # it is an argument about, including why a trust policy cannot tell this job from any
+  # other job in this file. Read it there rather than trusting this summary of it.
+  resolve:
+    name: Read which image the declared commit published
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the platform
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install the platform tooling
+        env:
+          UV_VERSION: "0.11.32"
+        run: |
+          set -euo pipefail
+          pipx install "uv==${UV_VERSION}"
+          installed="$(uv --version)"
+          if [[ "${installed}" != "uv ${UV_VERSION}" && "${installed}" != "uv ${UV_VERSION} "* ]]; then
+            echo "unexpected_uv_version" >&2
+            echo "Expected uv ${UV_VERSION} but PATH answers with: ${installed}" >&2
+            exit 1
+          fi
+          uv sync --locked
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ vars.AWS_IMAGE_RESOLVER_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          # Two describes. The role's maximum is an hour and this has no use for one, so it
+          # asks for the shortest session STS issues.
+          role-duration-seconds: 900
+          # Defaults to false in v6, and every ECR error names the registry id, which is
+          # the account. The tool never prints an error body either; this is the second of
+          # the two, because one of them is a property of code in this repository and the
+          # other is a property of the runner.
+          mask-aws-account-id: true
+
+      # The ECR repository name is not passed in. The tool reads it out of
+      # config/repositories.yaml for the reason the deleted write_image_provenance.py did:
+      # this role may describe every sbsandbox-intern-edullm-* repository, so a name from
+      # the caller would be the caller choosing whose images a submission resolves against
+      # while the manifest went on naming the repository the form declared.
+      #
+      # A commit with nothing published is not a failure here and does not fail this job.
+      # It writes an empty answer, and the compile job refuses the submission with a message
+      # that names the build workflow -- which is a refusal a submitter can act on, where a
+      # red job in the middle of a credentialed step is not.
+      - name: Read which image this commit published
+        env:
+          RESEARCH_REPOSITORY: ${{ inputs.repository }}
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+          RESOLVE_AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          resolve_status=0
+          uv run --frozen python tools/resolve_published_image.py \
+            --registry config/repositories.yaml \
+            --repository "${RESEARCH_REPOSITORY}" \
+            --commit-sha "${COMMIT_SHA}" \
+            --aws-region "${RESOLVE_AWS_REGION}" \
+            --output "${RUNNER_TEMP}/published-image.json" || resolve_status=$?
+          if [[ "${resolve_status}" -ne 0 ]]; then
+            echo "published_image_unresolved" >&2
+            echo "The registry could not be asked which image this commit published, so nothing was compiled and no reviewer was asked. This is not a refusal on the merits. The reason token is printed above; the error body is deliberately withheld because it names the account." >&2
+            exit 1
+          fi
+
+      # An artifact rather than a job output, and the reason is the job below. Compiling
+      # holds no id-token permission by construction, so what crosses between the two has
+      # to be a document rather than a credential -- and a document is also what lets a
+      # reader of a finished run see exactly what the registry answered.
+      - name: Upload what the registry answered
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: published-image
+          path: ${{ runner.temp }}/published-image.json
+          if-no-files-found: error
+          retention-days: 30
+
   # Credential free by construction. There is no id-token permission and no environment
   # key here, so this job cannot request an OIDC token at all: a job that cannot mint a
   # token cannot leak one, which is a stronger claim than trusting it not to. It is also
   # what makes the classification below worth anything, because the decision that picks
-  # which approval gate a submission faces is computed before this run can reach AWS.
+  # which approval gate a submission faces is computed before this job can reach AWS.
+  #
+  # `needs: [resolve]` orders the two and transfers nothing. The job above holds the token
+  # that reaches ECR; this one reads the file it left behind.
   compile:
     name: Compile the submission and classify it
     runs-on: ubuntu-latest
+    needs: [resolve]
     timeout-minutes: 15
     permissions:
       contents: read
@@ -221,6 +330,12 @@ jobs:
           print(f"The form declares {len(form)} of the fourteen fields.")
           PY
 
+      - name: Download what the registry answered
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: published-image
+          path: ${{ runner.temp }}/published-image
+
       - name: Compile the submission
         id: compile
         env:
@@ -234,6 +349,7 @@ jobs:
           uv run --frozen python tools/compile_submission.py \
             --inputs "${RUNNER_TEMP}/submission-form.json" \
             --config-dir config \
+            --published-images "${RUNNER_TEMP}/published-image/published-image.json" \
             --submitter "${SUBMITTER}" \
             --repository-url "${SERVER_URL}/${REPOSITORY_OWNER}/${RESEARCH_REPOSITORY}" \
             --output "${RUNNER_TEMP}/compiled-submission.json" \

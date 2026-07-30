@@ -4,7 +4,7 @@ The 22 Phase 2 acceptance criteria, mapped to the tests cited for each one by no
 
 This mapping is defined once, in `src/edullm_platform/phase2_criteria.py`. The acceptance gate reads the same definition and executes the same node ids, so this matrix and `tools/validate_phase2.py` cannot disagree.
 
-Verification run: 581 tests executed, 581 passed, 0 failed, 0 errored, pytest exit code 0.
+Verification run: 599 tests executed, 599 passed, 0 failed, 0 errored, pytest exit code 0.
 
 Three statuses exist and no more. **COVERED** means one or more cited tests prove the criterion as stated against the shipped configuration and all of them pass; the gate passes it. **DEFERRED** means an explicit recorded decision not to satisfy it yet, which requires both a written reason and a written trigger describing what makes it live again; the gate passes it. **GAP** is everything else, and the gate fails it. There is no in-between status, because an in-between status is what lets a gate be green and wrong at the same time.
 
@@ -19,7 +19,7 @@ Three statuses exist and no more. **COVERED** means one or more cited tests prov
 | 5 | COVERED | 3 | 2 | Admin exception succeeds only through the admin path. |
 | 6 | GAP | 0 | 2 | Wrong repository, ref, audience, or manifest hash cannot assume or use the role. |
 | 7 | GAP | 0 | 2 | A job that omits the approval environment cannot assume the admission role, even from main. |
-| 8 | COVERED | 2 | 1 | A dispatched run obtains no OIDC token, credential, or secret before a reviewer approves. |
+| 8 | COVERED | 2 | 2 | A dispatched run obtains nothing that can start, submit or write before a reviewer approves. |
 | 9 | GAP | 0 | 5 | A member cannot approve their own submission. |
 | 10 | COVERED | 4 | 2 | A submitter cannot influence their own classification to route to the weaker approval path. |
 | 11 | GAP | 0 | 1 | The approver sees submitter, team, repository, branch, short SHA, image digest, dataset release, compute profile and rate, the worst-case cost arithmetic, the classification, and the exceeded bound before the gate opens. |
@@ -232,12 +232,14 @@ Supporting tests (2), all executed and passing, cited as evidence rather than as
 - `tests/test_phase2_submit_run_workflow.py::test_the_deny_probe_holds_a_token_and_deliberately_names_no_environment`
 - `tests/test_phase2_infrastructure.py::test_admission_role_trusts_exactly_the_two_protected_environment_subjects`
 
-### Check 8 — A dispatched run obtains no OIDC token, credential, or secret before a reviewer approves.
+### Check 8 — A dispatched run obtains nothing that can start, submit or write before a reviewer approves.
 
 **Status: COVERED**
 
 Scope:
 
+- THE STATEMENT WAS REWRITTEN RATHER THAN SCOPED, AND THE OLD ONE IS HERE SO THE CHANGE IS LEGIBLE. It read: 'A dispatched run obtains no OIDC token, credential, or secret before a reviewer approves.' That was already false when it was written -- deny-unapproved holds id-token: write and mints a token on every dispatch, spending it to prove the admission role refuses a subject with no environment on it, where the refusal is the check. Adding a resolve job that assumes sbsandbox-intern-edullm-image-resolver made it false a second way. Keeping the sentence and explaining underneath that it is narrower than it reads would be a criterion whose scope limit contradicts its statement, which is the shape the three-status rule exists to prevent. The property that is true, tested and worth having is the one now stated: what a dispatch can reach before approval starts nothing, submits nothing and writes nothing -- no admission role, no state machine, no queue, no lineage. Same move as Phase 5 item 5.5 makes on Phase 4 criterion 7, and for the same reason.
+- The two pre-gate jobs, named so the statement can be checked against them. deny-unapproved mints a token and is refused. resolve assumes a role holding exactly ecr:DescribeImages and ecr:DescribeImageScanFindings, which is how the image a commit published and its scan findings reach a job that holds no credential of its own. infra/iam/image-resolver-role.yaml argues that in full, and tests/test_phase5_infrastructure.py holds the grant to exactly those two read actions.
 - Covered on the committed workflow rather than on a capture, and that is sufficient here for a reason the other live criteria do not share: the claim is about what a job is permitted to ask for, and permissions are declared in the file GitHub reads. The compile job holds no id-token permission by any spelling, so it cannot request a token rather than being trusted not to.
 - The documented mechanics carry the rest. A job pending approval is never dispatched to a runner, so ACTIONS_ID_TOKEN_REQUEST_URL exists in no process. That was observed on every run, with the submit job reporting no runner while the run sat in waiting, but the observation corroborates the permission map rather than being what proves it.
 - Not claimed: that CloudTrail shows no AssumeRoleWithWebIdentity for a run before its approval timestamp. That is a stronger statement resting on a capture nobody has taken, and it belongs to criterion 7's evidence.
@@ -247,9 +249,10 @@ Proving tests (2), all executed and passing:
 - `tests/test_phase2_submit_run_workflow.py::test_the_compile_job_cannot_request_a_token_by_any_spelling`
 - `tests/test_phase2_submit_run_workflow.py::test_the_three_jobs_carry_exactly_these_permission_maps`
 
-Supporting tests (1), all executed and passing, cited as evidence rather than as proof:
+Supporting tests (2), all executed and passing, cited as evidence rather than as proof:
 
 - `tests/test_phase2_submit_run_workflow.py::test_the_submit_job_takes_its_gate_from_needs_and_never_from_the_form`
+- `tests/test_phase2_submit_run_workflow.py::test_the_only_aws_a_dispatch_reaches_before_an_approval_is_a_read_and_a_refusal`
 
 ### Check 9 — A member cannot approve their own submission.
 
