@@ -325,6 +325,115 @@ def test_the_blocking_findings_are_read_off_the_describe_result() -> None:
     )
 
 
+#: The same answer as the payload above, in the casing the Step Functions AWS SDK integration
+#: actually returns. Copied from a real execution's ReadImageScan output rather than written
+#: from the API reference, because the API reference documents the wire shape and the
+#: integration re-cases it.
+PASCAL_CASE_DESCRIBE_RESULT = {
+    "ImageId": {"ImageDigest": OTHER_DIGEST},
+    "RegistryId": "example",
+    "RepositoryName": "sbsandbox-intern-edullm-olmo-core",
+    "ImageScanStatus": {"Status": "COMPLETE", "Description": "The scan was completed."},
+    "ImageScanFindings": {
+        "ImageScanCompletedAt": "2026-07-30T18:23:46Z",
+        "FindingSeverityCounts": {"CRITICAL": 1, "HIGH": 8, "MEDIUM": 3},
+        "Findings": [
+            {
+                "Name": GLIBC_CVE,
+                "Severity": "CRITICAL",
+                "Attributes": [
+                    {"Key": "CVSS3_SCORE", "Value": "9.8"},
+                    {"Key": "package_name", "Value": "glibc"},
+                ],
+            },
+            {
+                "Name": "CVE-2026-48962",
+                "Severity": "HIGH",
+                "Attributes": [{"Key": "package_name", "Value": "perl"}],
+            },
+        ],
+    },
+}
+
+
+def test_the_summary_reads_the_casing_the_state_machine_actually_returns() -> None:
+    """THIS WAS BROKEN FOR AS LONG AS IT HAS EXISTED AND NOTHING NOTICED.
+
+    ``aws ecr describe-image-scan-findings`` answers in camelCase and the Step Functions AWS
+    SDK integration answers in PascalCase, all the way down to ``Key`` and ``Value`` on a
+    finding's attributes. This mapping read camelCase, so on the admission side it returned
+    ``None`` every time -- which the gate reads as nobody having seen the findings.
+
+    It was invisible because it fails closed and because the only digests that could be
+    submitted were covered by a per-digest exception, and an exception is consulted before
+    the summary. Retiring those exceptions is what surfaced it: the first submission of an
+    image whose findings were reviewed rather than whose digest was blessed was refused by
+    admission while compile accepted it, which is the two sides disagreeing -- the one thing
+    the shared mapping exists to prevent.
+
+    Measured from a real execution rather than from the API reference, which documents the
+    wire shape and not the integration's re-casing.
+    """
+    summary = image_scan_summary_from_ecr(PASCAL_CASE_DESCRIBE_RESULT)
+
+    assert summary is not None
+    assert summary.complete
+    assert summary.critical == 1
+    assert summary.high == 8
+    assert summary.medium == 3
+
+
+def test_the_findings_read_the_casing_the_state_machine_actually_returns() -> None:
+    """The same defect one field further in, and it would have been the next one.
+
+    Attributes carry ``Key`` and ``Value`` rather than ``key`` and ``value``, so a mapping
+    that handled the outer casing and not this one would find every finding and know the
+    package of none -- and refuse the whole answer, because a finding it cannot name a
+    package for makes the result unreadable rather than shorter.
+    """
+    findings = blocking_findings_from_ecr(
+        PASCAL_CASE_DESCRIBE_RESULT, policy=critical_only_policy()
+    )
+
+    assert findings == (finding(GLIBC_CVE, "glibc"),)
+
+
+def test_both_casings_of_one_answer_read_the_same() -> None:
+    """One mapping, two wire shapes, and the point is that they cannot diverge.
+
+    The compile side reads the CLI and the admission side reads the integration, and
+    admission refuses a run whose findings disagree with what compile saw. Two mappings would
+    make that disagreement reachable; this asserts it is not.
+    """
+    camel = {
+        "imageScanStatus": {"status": "COMPLETE"},
+        "imageScanFindings": {
+            "imageScanCompletedAt": "2026-07-30T18:23:46Z",
+            "findingSeverityCounts": {"CRITICAL": 1, "HIGH": 8, "MEDIUM": 3},
+            "findings": [
+                {
+                    "name": GLIBC_CVE,
+                    "severity": "CRITICAL",
+                    "attributes": [{"key": "package_name", "value": "glibc"}],
+                },
+                {
+                    "name": "CVE-2026-48962",
+                    "severity": "HIGH",
+                    "attributes": [{"key": "package_name", "value": "perl"}],
+                },
+            ],
+        },
+    }
+    policy = critical_only_policy()
+
+    assert image_scan_summary_from_ecr(camel) == image_scan_summary_from_ecr(
+        PASCAL_CASE_DESCRIBE_RESULT
+    )
+    assert blocking_findings_from_ecr(camel, policy=policy) == blocking_findings_from_ecr(
+        PASCAL_CASE_DESCRIBE_RESULT, policy=policy
+    )
+
+
 def test_an_unreadable_describe_result_yields_no_findings_rather_than_an_empty_pass() -> None:
     """``None``, not ``()``, and the difference is the whole guard above.
 
