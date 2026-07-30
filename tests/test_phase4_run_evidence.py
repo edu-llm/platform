@@ -245,16 +245,26 @@ def test_the_prefix_the_container_was_given_is_the_one_the_platform_derives() ->
 def test_the_role_permits_exactly_the_prefix_shape_the_platform_derives() -> None:
     """The third side of the same agreement, read off the deployed policy.
 
-    Mutation: widen the role to ``teams/*/runs/*``. It was that, and one team exists, so
-    the widening changes nothing anybody can see today and makes the cross-team check
-    impossible to close honestly tomorrow.
+    Mutation: scope the role to a named team. Every run so far declared ``platform``, so a
+    narrow grant looks identical from here and fails only for the first researcher who
+    claims a team of their own -- at write time, inside a training run that has already
+    spent its GPU hours.
+
+    **This asserted the opposite until the role was widened, and the reversal is the
+    point.** It required that another team's prefix be unreachable, which was true and was
+    a property shaped to make a cross-team criterion closeable rather than to prevent a
+    harm. What is asserted now is the shape rather than the team: any team's run prefix is
+    reachable, and anything that is not a run prefix is not.
     """
     run = training_run()
     scope = role_scope()
-    key = f"teams/{TEAM}/runs/{run.run_id}/checkpoints/step-20/model.pt"
 
-    assert scope.may_reach(key)
-    assert not scope.may_reach(f"teams/other-team/runs/{run.run_id}/anything")
+    assert scope.may_reach(f"teams/{TEAM}/runs/{run.run_id}/checkpoints/step-20/model.pt")
+    assert scope.may_reach(f"teams/evaluation/runs/{run.run_id}/checkpoints/step-20/model.pt")
+    # Still refused, and these two are what the grant is actually bounded by: the outputs
+    # bucket's non-run keys, and anything outside the shape entirely.
+    assert not scope.may_reach("teams/platform/scratch/anything")
+    assert not scope.may_reach("some-other-prefix/runs/anything")
 
 
 # ---------------------------------------------------------------------------------------
@@ -415,8 +425,50 @@ def test_the_gpu_environment_has_only_one_shape_to_fall_back_on() -> None:
 # ---------------------------------------------------------------------------------------
 
 
+def test_the_workload_role_was_refused_the_two_reaches_widening_did_not_grant() -> None:
+    """The half of the probe set that still describes the deployed role.
+
+    Two of the four probes stopped describing it when the GPU role was widened to
+    ``teams/*/runs/*``: reading and writing another team's prefix were refused when captured
+    and would now succeed, deliberately, because isolation between the groups sharing this
+    account is not a goal. Citing all four to prove a criterion would be claiming a property
+    the platform decided against, on the strength of a capture of a role that no longer
+    exists.
+
+    These two survive, and the evidence model's own docstring calls them the load-bearing
+    pair. ``s3:ListBucket`` is a bucket-level action that no object ARN can scope, so a role
+    whose object grants look narrow can still enumerate every team's output if the prefix
+    condition is missing -- widening the prefix from one team to any team left that condition
+    in place, so the whole-bucket listing is still refused. And the lineage probe is the one
+    grant on this role that is not arguable: a workload that could write to the store
+    recording what it did could rewrite it, and every other guarantee here is downstream of
+    that record being something only the platform writes.
+
+    ``AccessDenied`` and nothing else, for the reason the four-probe test below gives.
+    """
+    probed = [run for run in captured_runs() if run.isolation is not None]
+
+    assert probed, "no committed run carries the probes, so nothing here establishes anything"
+    for run in probed:
+        assert run.isolation is not None
+        assert run.isolation.list_the_whole_outputs_bucket == "AccessDenied"
+        assert run.isolation.write_to_the_lineage_bucket == "AccessDenied"
+
+
 def test_the_workload_role_was_refused_every_prefix_it_must_not_reach() -> None:
-    """Mutation: accept any failure as a refusal.
+    """What the capture recorded, which is no longer what the deployed role would do.
+
+    Kept because it is a true statement about an event: on the runs captured here, a real
+    container reached for four prefixes and S3 refused all four. Records of events do not
+    expire and re-capturing establishes nothing the first capture did not.
+
+    **It is no longer cited as proving anything**, because two of the four -- reading and
+    writing another team's prefix -- describe a role that was narrowed to make a cross-team
+    criterion closeable and has since been widened to match the CPU role. Asserting them
+    against a frozen capture would keep passing forever while the world changed underneath,
+    which is the shape of a test that lies by implication.
+
+    Mutation: accept any failure as a refusal.
 
     ``AccessDenied`` and nothing else. ``NoSuchKey`` would mean the role was permitted to
     look and found nothing, which is exactly what a role granting everything returns from an
