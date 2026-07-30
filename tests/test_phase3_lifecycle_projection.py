@@ -395,18 +395,20 @@ def test_the_prefix_recorded_is_the_prefix_the_container_was_handed() -> None:
         RunManifest,
     )
     account = "123456789012"
+    target = ExecutionTarget(
+        compute_profile=manifest.compute_profile,
+        region="us-east-1",
+        job_queue_arn=f"arn:aws:batch:us-east-1:{account}:job-queue/q",
+        job_definition_arn=f"arn:aws:batch:us-east-1:{account}:job-definition/d",
+        execution_role_arn=f"arn:aws:iam::{account}:role/e",
+        workload_role_arn=f"arn:aws:iam::{account}:role/w",
+        log_group="/aws/batch/g",
+    )
     submitted = batch_submit_request(
         manifest=manifest,
-        target=ExecutionTarget(
-            compute_profile=manifest.compute_profile,
-            region="us-east-1",
-            job_queue_arn=f"arn:aws:batch:us-east-1:{account}:job-queue/q",
-            job_definition_arn=f"arn:aws:batch:us-east-1:{account}:job-definition/d",
-            execution_role_arn=f"arn:aws:iam::{account}:role/e",
-            workload_role_arn=f"arn:aws:iam::{account}:role/w",
-            log_group="/aws/batch/g",
-        ),
+        target=target,
         run_id=RUN_ID,
+        job_definition_arn=target.job_definition_arn,
     )
     told = {
         entry["Name"]: entry["Value"]

@@ -293,10 +293,12 @@ def test_the_submitted_program_fits_inside_what_batch_will_accept() -> None:
     command = workflow_inputs(dispatch_form(commit_sha=COMMIT))["command"]
     assert isinstance(command, list)
 
+    target = measuring_target()
     request = batch_submit_request(
         manifest=manifest.model_copy(update={"command": tuple(command)}),
-        target=measuring_target(),
+        target=target,
         run_id=RUN_ID,
+        job_definition_arn=target.job_definition_arn,
     )
     serialized = len(
         json.dumps(request["ContainerOverrides"], separators=(",", ":")).encode("utf-8")

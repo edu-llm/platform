@@ -521,13 +521,18 @@ def main(argv: list[str] | None = None) -> int:
 
     # The same refusal the platform applies, applied here, so an oversized submission costs
     # a local error rather than a dispatch, an approval and a Batch rejection.
+    measuring_target = _measuring_target()
     refuse_an_oversized_override(
         batch_submit_request(
             manifest=load_yaml(
                 PROJECT_ROOT / "fixtures" / "manifests" / "gpu-routine.yaml", RunManifest
             ).model_copy(update={"command": tuple(command)}),
-            target=_measuring_target(),
+            target=measuring_target,
             run_id="run_" + "0" * 36,
+            # Whichever definition a run is submitted against, the override this measures
+            # is the same size: the ARN is a sibling of ContainerOverrides and not inside
+            # the budget. The target's own is passed because it is the one that exists.
+            job_definition_arn=measuring_target.job_definition_arn,
         )["ContainerOverrides"]
     )
 

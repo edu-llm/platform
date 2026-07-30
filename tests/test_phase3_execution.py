@@ -18,6 +18,7 @@ capacity that does not exist.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -25,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from infrastructure_support import INFRA_ROOT, load_template
 
 from edullm_platform.admission import AdmissionOutcome, admit
 from edullm_platform.canonical import sha256_digest
@@ -32,6 +34,7 @@ from edullm_platform.config import load_yaml
 from edullm_platform.contracts.admission import AdmissionReason, ApprovalEnvironment
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
 from edullm_platform.contracts.execution import (
+    SANDBOX_RESOURCE_PREFIX,
     ExecutionTarget,
     ExecutionTargetBinding,
     ExecutionTargetCatalog,
@@ -56,8 +59,11 @@ from edullm_platform.contracts.workload import (
 from edullm_platform.execution import (
     MAXIMUM_CONTAINER_OVERRIDES_BYTES,
     MINIMUM_ATTEMPT_DURATION_SECONDS,
+    PUBLISHED_IMAGE_REPOSITORY,
     ContainerOverridesTooLargeError,
+    UnshapedComputeProfileError,
     attempt_duration_seconds,
+    batch_register_job_definition_request,
     batch_submit_request,
     resolve_execution_target,
 )
@@ -65,6 +71,15 @@ from edullm_platform.execution import (
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR = PROJECT_ROOT / "config"
 MANIFEST_FIXTURES_DIR = PROJECT_ROOT / "fixtures" / "manifests"
+
+#: Every template that registers a job definition, so the comparison below is against the
+#: whole set of deployed shapes rather than against the CPU one -- which is the half of
+#: this seam that would go green while the GPU definition was wrong.
+COMPUTE_TEMPLATE_PATHS = (
+    INFRA_ROOT / "batch-compute.yaml",
+    INFRA_ROOT / "batch-compute-gpu.yaml",
+)
+STATE_MACHINE_TEMPLATE_PATH = INFRA_ROOT / "admission-state-machine.yaml"
 
 #: Twelve digits that are not this account's. Every ARN below is assembled from it, and a
 #: real account id in a committed test is the value every capture tool has to redact.
@@ -288,7 +303,12 @@ def test_every_target_names_infrastructure_this_project_owns() -> None:
 
 def request_for(**overrides: Any) -> Mapping[str, Any]:
     run_manifest = manifest(**overrides)
-    return batch_submit_request(manifest=run_manifest, target=target(), run_id=RUN_ID)
+    return batch_submit_request(
+        manifest=run_manifest,
+        target=target(),
+        run_id=RUN_ID,
+        job_definition_arn=target().job_definition_arn,
+    )
 
 
 @pytest.mark.parametrize(
@@ -411,7 +431,12 @@ def test_the_submitted_target_is_the_resolved_one_and_not_anything_from_the_mani
     else, which is why the target is resolved from deployed configuration.
     """
     resolved = target()
-    request = batch_submit_request(manifest=manifest(), target=resolved, run_id=RUN_ID)
+    request = batch_submit_request(
+        manifest=manifest(),
+        target=resolved,
+        run_id=RUN_ID,
+        job_definition_arn=resolved.job_definition_arn,
+    )
 
     assert request["JobQueue"] == resolved.job_queue_arn
     assert request["JobDefinition"] == resolved.job_definition_arn
@@ -431,7 +456,12 @@ def test_the_container_environment_is_exactly_these_six_variables() -> None:
     empty string for something it was told it would have, and a variable that arrives
     unannounced is one nothing downstream was written to expect.
     """
-    request = batch_submit_request(manifest=manifest(), target=target(), run_id=RUN_ID)
+    request = batch_submit_request(
+        manifest=manifest(),
+        target=target(),
+        run_id=RUN_ID,
+        job_definition_arn=target().job_definition_arn,
+    )
     environment = request["ContainerOverrides"]["Environment"]
 
     assert [entry["Name"] for entry in environment] == [
@@ -459,7 +489,12 @@ def test_the_wandb_project_comes_from_the_manifest_and_not_from_the_command() ->
     itself rather than accept findings from a caller.
     """
     declared = manifest()
-    request = batch_submit_request(manifest=declared, target=target(), run_id=RUN_ID)
+    request = batch_submit_request(
+        manifest=declared,
+        target=target(),
+        run_id=RUN_ID,
+        job_definition_arn=target().job_definition_arn,
+    )
     environment = {entry["Name"]: entry["Value"] for entry in request["ContainerOverrides"]["Environment"]}
 
     assert environment["EDULLM_WANDB_PROJECT"] == declared.wandb_project
@@ -477,7 +512,12 @@ def test_the_prefix_the_container_is_told_is_the_one_the_shared_function_builds(
     one.
     """
     subject = manifest()
-    request = batch_submit_request(manifest=subject, target=target(), run_id=RUN_ID)
+    request = batch_submit_request(
+        manifest=subject,
+        target=target(),
+        run_id=RUN_ID,
+        job_definition_arn=target().job_definition_arn,
+    )
     told = next(
         entry["Value"]
         for entry in request["ContainerOverrides"]["Environment"]
@@ -489,6 +529,256 @@ def test_the_prefix_the_container_is_told_is_the_one_the_shared_function_builds(
     # every run write over every other one and would still satisfy the line above.
     assert told.endswith(f"/runs/{RUN_ID}/")
     assert f"/teams/{subject.team}/" in told
+
+
+# ---------------------------------------------------------------------------------------
+# The job definition a run registers for itself
+# ---------------------------------------------------------------------------------------
+
+
+def registration_for(
+    compute_profile: str = PROMOTED_PROFILE, **overrides: Any
+) -> dict[str, Any]:
+    return batch_register_job_definition_request(
+        manifest=manifest(compute_profile=compute_profile, **overrides),
+        target=target(compute_profile),
+        run_id=RUN_ID,
+    )
+
+
+def deployed_job_definition(name: str) -> dict[str, Any]:
+    """The job definition the compute templates register under this name.
+
+    Read from ``infra/`` rather than restated here, because the whole claim a registered
+    definition makes is that it is the deployed one with the image swapped -- and a
+    restated copy of the deployed shape would be a third statement of it that agrees with
+    the template only until somebody edits one of them.
+    """
+    matching = [
+        resource["Properties"]
+        for path in COMPUTE_TEMPLATE_PATHS
+        for resource in load_template(path)["Resources"].values()
+        if isinstance(resource, dict)
+        and resource.get("Type") == "AWS::Batch::JobDefinition"
+        and resource["Properties"]["JobDefinitionName"] == name
+    ]
+    assert len(matching) == 1, f"expected exactly one deployed job definition named {name}"
+    return matching[0]
+
+
+def deployed_container_properties(resolved: ExecutionTarget) -> dict[str, Any]:
+    name = resolved.job_definition_arn.rsplit("/", maxsplit=1)[1]
+    container = deployed_job_definition(name)["ContainerProperties"]
+    assert isinstance(container, dict)
+    return container
+
+
+def test_the_registered_definition_runs_the_image_the_manifest_declares() -> None:
+    """Mutation: register the digest the template pins instead of the declared one.
+
+    THIS IS THE WHOLE REASON THE FUNCTION EXISTS. Batch has no submit-time image override,
+    so a submission whose job definition is the deployed one runs whatever that definition
+    pins -- while the digest the submitter declared is validated, gates admission through
+    the ECR scan, and is written immutably into the S3 lineage record. The two coincide
+    today only because ``config/image-exceptions.yaml`` happens to hold exactly the two
+    digests the templates pin, which makes the lineage record's image provenance true by
+    convention rather than by mechanism, and every other guarantee this platform makes is
+    read back off that record.
+
+    The digest is asserted as the end of the reference rather than as the whole of it, so
+    that publishing a new image is a manifest edit and not a test failure.
+    """
+    declared = manifest()
+    request = batch_register_job_definition_request(
+        manifest=declared, target=target(), run_id=RUN_ID
+    )
+    image = request["ContainerProperties"]["Image"]
+
+    assert image.endswith(f"@{declared.image_digest}")
+    # A reference may carry a tag and a digest at once and only the digest decides which
+    # bytes run, so a tag here would be decoration that reads as the source of truth.
+    assert ":" not in image.split("@", maxsplit=1)[0].rsplit("/", maxsplit=1)[1]
+
+
+def test_the_registered_definition_carries_both_of_the_containers_identities() -> None:
+    """Mutation: drop either role, or point both at the same one.
+
+    A container has two identities and they are fixed at registration rather than at
+    submission: the execution role pulls the image and opens the log stream, and the
+    workload role is what the container's own process runs as. Omitting either gives the
+    job the account's defaults instead of the reviewed roles, and the run then fails on its
+    first S3 write in a way that names the bucket rather than the role -- which sends
+    whoever reads it to go and look at bucket policy.
+    """
+    resolved = target()
+    container = registration_for()["ContainerProperties"]
+
+    assert container["ExecutionRoleArn"] == resolved.execution_role_arn
+    assert container["JobRoleArn"] == resolved.workload_role_arn
+    assert container["ExecutionRoleArn"] != container["JobRoleArn"]
+
+
+def test_the_registered_definition_is_named_for_the_run_that_asked_for_it() -> None:
+    """Mutation: mint a name inside AWS, or reuse the deployed definition's name.
+
+    The run id is the S3 key, the Step Functions execution name and the Batch job name, and
+    this makes it the job definition name too -- so a definition registered for a run that
+    then vanished is findable the way everything else in this platform is. Reusing the
+    deployed name would be worse than a random one: it registers a new revision of the
+    shared definition, so one run's image becomes the default every hand-submitted job
+    afterwards picks up.
+    """
+    request = registration_for()
+    name = request["JobDefinitionName"]
+
+    assert RUN_ID in name
+    assert name.startswith(SANDBOX_RESOURCE_PREFIX)
+    # Batch's own bound on the field, and what it accepts in it.
+    assert len(name) <= 128
+    assert re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", name) is not None
+
+
+def test_a_submission_goes_to_the_definition_just_registered_and_not_the_static_one() -> None:
+    """Mutation: keep reading ``target.job_definition_arn``.
+
+    That is today's behaviour and it is what makes the declared digest decorative: the run
+    is admitted on one image and executed on another, and nothing anywhere reports a
+    disagreement. The submitted ARN has to be the revision the registration returned, which
+    is why the argument is required rather than defaulted -- a default would let this
+    mutation survive as an omission at a call site rather than a change to this function.
+    """
+    resolved = target()
+    registered = (
+        f"arn:aws:batch:{resolved.region}:{ACCOUNT_ID}:job-definition/"
+        f"{registration_for()['JobDefinitionName']}:1"
+    )
+    request = batch_submit_request(
+        manifest=manifest(),
+        target=resolved,
+        run_id=RUN_ID,
+        job_definition_arn=registered,
+    )
+
+    assert request["JobDefinition"] == registered
+    assert request["JobDefinition"] != resolved.job_definition_arn
+    # The queue is still the resolved one. Only the definition moves.
+    assert request["JobQueue"] == resolved.job_queue_arn
+
+
+@pytest.mark.parametrize("compute_profile", PROMOTED_PROFILES)
+def test_the_registered_definition_asks_for_the_shape_its_profile_was_priced_at(
+    compute_profile: str,
+) -> None:
+    """Mutation: register one shape for every profile.
+
+    A registered definition that contradicts the compute profile it was resolved for is the
+    expensive silent failure of this change. Without a GPU entry in the resource
+    requirements ECS does not select the NVIDIA runtime for the task, so the container sees
+    no device and trains on the CPU at GPU prices, reporting nothing wrong -- and a CPU
+    shape asking for 32 vCPU on a g5.xlarge is a job that stays in RUNNABLE rather than one
+    that errors.
+
+    Compared against the deployed definition rather than against numbers written out here,
+    because a restated expectation is regenerated from whatever the code does.
+    """
+    resolved = target(compute_profile)
+    container = registration_for(compute_profile)["ContainerProperties"]
+
+    assert container["ResourceRequirements"] == deployed_container_properties(resolved)[
+        "ResourceRequirements"
+    ]
+    wants_a_gpu = any(
+        entry["Type"] == "GPU" and int(entry["Value"]) > 0
+        for entry in container["ResourceRequirements"]
+    )
+    assert wants_a_gpu == (compute_profile.startswith("gpu-"))
+
+
+@pytest.mark.parametrize("compute_profile", PROMOTED_PROFILES)
+def test_the_registered_definition_is_the_deployed_one_with_the_image_swapped(
+    compute_profile: str,
+) -> None:
+    """Mutation: omit a field the deployed definition carries.
+
+    This is the failure the whole design guards against, and it is why the request is built
+    in tested Python rather than reconstructed by a ``Parameters`` block in a template
+    nobody unit-tests. Omission is silent on every axis that matters here: a GPU definition
+    with no ``Secrets`` block starts and cannot reach W&B, one with ECS's default 64 MiB of
+    ``/dev/shm`` dies partway into training with a DataLoader bus error that names neither
+    shared memory nor the setting that fixes it, and one that declares no ``Command`` has no
+    key for the submission's own command override to replace.
+
+    The key set is compared rather than the values, because the values that differ are
+    exactly the ones this function is for -- the image -- and the ones a template writes as
+    ``Fn::Sub`` expressions over pseudo-parameters that no committed file can spell.
+    """
+    resolved = target(compute_profile)
+    deployed = deployed_job_definition(resolved.job_definition_arn.rsplit("/", maxsplit=1)[1])
+    request = registration_for(compute_profile)
+    container = request["ContainerProperties"]
+
+    assert set(container) == set(deployed["ContainerProperties"])
+    assert set(request) == set(deployed)
+    assert container["Command"] == deployed["ContainerProperties"]["Command"]
+    assert container["Environment"] == deployed["ContainerProperties"]["Environment"]
+    assert container["Privileged"] is False
+    assert request["Type"] == "container"
+    assert request["PlatformCapabilities"] == ["EC2"]
+    # Both floors, which every real submission overrides. They are here so a job submitted
+    # by hand against this definition during an incident still cannot run unbounded.
+    assert request["RetryStrategy"] == deployed["RetryStrategy"]
+    assert request["Timeout"] == deployed["Timeout"]
+    assert request["PropagateTags"] == deployed["PropagateTags"]
+    options = container["LogConfiguration"]["Options"]
+    assert container["LogConfiguration"]["LogDriver"] == "awslogs"
+    assert options["awslogs-group"] == resolved.log_group
+    assert options["awslogs-region"] == resolved.region
+    deployed_options = deployed["ContainerProperties"]["LogConfiguration"]["Options"]
+    assert options["awslogs-stream-prefix"] == deployed_options["awslogs-stream-prefix"]
+
+
+def test_the_image_is_pulled_from_the_repository_whose_scan_admission_read() -> None:
+    """Reads the state machine and the Python. Mutation: name a different repository here.
+
+    The state machine's ``ReadImageScan`` state asks ECR for the findings on the declared
+    digest in one named repository, and admission refuses a digest whose findings nobody
+    reviewed. If this function pulled the same digest from a different repository, the
+    image that ran would be one whose scan was never read -- an admission gate passed
+    against a different image, which is the failure this whole change exists to close,
+    reintroduced one field along.
+
+    A digest identifies bytes and a repository is where those bytes are indexed, so the two
+    references are only the same image because the repository is the same. That agreement
+    is between a Python constant and a literal in an ASL template with nothing connecting
+    them, which is why it is asserted rather than assumed.
+    """
+    definition = json.loads(
+        load_template(STATE_MACHINE_TEMPLATE_PATH)["Resources"]["AdmissionStateMachine"][
+            "Properties"
+        ]["DefinitionString"]["Fn::Sub"]
+    )
+    scanned = definition["States"]["ReadImageScan"]["Parameters"]["RepositoryName"]
+    image = registration_for()["ContainerProperties"]["Image"]
+
+    assert PUBLISHED_IMAGE_REPOSITORY == scanned
+    assert image.split("@", maxsplit=1)[0].endswith(f"/{PUBLISHED_IMAGE_REPOSITORY}")
+
+
+def test_a_profile_with_a_target_and_no_container_shape_is_refused_rather_than_guessed() -> None:
+    """Mutation: fall back to some default shape.
+
+    A third way for two files to disagree, alongside the two ``resolve_execution_target``
+    already separates: a profile that has somewhere to run and no statement of what its
+    container asks for. Guessing would register a definition whose shape nobody chose,
+    which on the GPU side is a job that trains on the CPU at GPU prices. The refusal names
+    the profile, because the fix is an edit in a specific place.
+    """
+    unshaped = target().model_copy(update={"compute_profile": "cpu-1024vcpu"})
+
+    with pytest.raises(UnshapedComputeProfileError, match="cpu-1024vcpu"):
+        batch_register_job_definition_request(
+            manifest=manifest(), target=unshaped, run_id=RUN_ID
+        )
 
 
 # ---------------------------------------------------------------------------------------

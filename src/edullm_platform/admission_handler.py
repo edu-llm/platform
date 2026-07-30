@@ -238,6 +238,14 @@ def handler(event: Mapping[str, Any], context: object = None) -> dict[str, Any]:
                 manifest=outcome.intent.manifest,
                 target=outcome.execution,
                 run_id=run_id,
+                # Still the target's static definition, and this is the call site the
+                # required argument exists to name. Executing a run on the digest it
+                # declared means registering a definition first and submitting against the
+                # revision that comes back, which is a change to the state machine, to what
+                # this function answers and to the admission role's grants. Until that
+                # ships, the ARN sent here is the one the templates pin -- unchanged
+                # behaviour, now stated rather than defaulted.
+                job_definition_arn=outcome.execution.job_definition_arn,
             ),
         }
     return answer

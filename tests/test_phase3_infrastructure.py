@@ -320,10 +320,12 @@ def cpu_manifest(**overrides: Any) -> RunManifest:
 def submit_request() -> dict[str, Any]:
     """The request Python builds, so the seam tests can compare it to what AWS declares."""
     manifest = cpu_manifest()
+    target = seam_target(manifest)
     return batch_submit_request(
         manifest=manifest,
-        target=seam_target(manifest),
+        target=target,
         run_id=SEAM_RUN_ID,
+        job_definition_arn=target.job_definition_arn,
     )
 
 
@@ -346,7 +348,10 @@ def every_submit_request_field() -> frozenset[str]:
         key
         for manifest in (single, fanned)
         for key in batch_submit_request(
-            manifest=manifest, target=seam_target(manifest), run_id=SEAM_RUN_ID
+            manifest=manifest,
+            target=seam_target(manifest),
+            run_id=SEAM_RUN_ID,
+            job_definition_arn=seam_target(manifest).job_definition_arn,
         )
     )
 
