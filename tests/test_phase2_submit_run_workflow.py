@@ -51,6 +51,7 @@ from edullm_platform.contracts.image import GitHubWorkflowRunReference
 from edullm_platform.contracts.results import output_prefix
 from edullm_platform.submission import SubmissionInputs
 from tests.test_manifest import load_representative_manifest
+from tools.resolve_published_image import RESOLVER_ECR_ACTIONS
 
 #: How a dropdown spells 'leave this empty'. A choice option cannot be blank.
 INHERIT_SENTINEL = "inherit"
@@ -82,6 +83,10 @@ RUN_ID = "run_0198f0a1-2b3c-7d4e-8f01-23456789abcd"
 APPROVED_SHA256 = "sha256:" + "a" * 64
 RECORDED_SHA256 = "sha256:" + "f" * 64
 
+RESOLVE_STEP = "Read which image this commit published"
+RESOLVE_CREDENTIALS_STEP = "Configure AWS credentials"
+RESOLVE_UPLOAD_STEP = "Upload what the registry answered"
+RESOLVE_DOWNLOAD_STEP = "Download what the registry answered"
 FORM_STEP = "Assemble the submission form"
 COMPILE_STEP = "Compile the submission"
 APPROVAL_STEP = "Read who released the gate"
@@ -100,6 +105,7 @@ CANCELLED_STEP = "Record that a cancelled workflow stopped no compute"
 
 DENIALS_TOOL = "tools/verify_admission_denials.py"
 BATCH_DENIALS_TOOL = "tools/verify_batch_denials.py"
+RESOLVER_TOOL = "tools/resolve_published_image.py"
 
 # Outputs no run body can be read for. The compile job's four come out of
 # tools/compile_submission.py, and the test below re-derives them from that tool rather
@@ -227,7 +233,9 @@ def test_no_optional_field_defaults_to_a_value_somebody_could_have_meant() -> No
     declared = _load()["on"]["workflow_dispatch"]["inputs"]
     optional = [name for name, field in SubmissionInputs.model_fields.items() if not field.is_required()]
 
-    assert len(optional) == 6
+    # Seven since ``image_digest`` stopped being required: a run's image is derived from
+    # the commit it declares, and what survives is an override for a deliberate pin.
+    assert len(optional) == 7
     for name in optional:
         default = declared[name]["default"]
         assert default in ("", INHERIT_SENTINEL), name
@@ -239,9 +247,18 @@ def test_no_optional_field_defaults_to_a_value_somebody_could_have_meant() -> No
 
 
 def test_the_three_jobs_carry_exactly_these_permission_maps() -> None:
+    """The three the Phase 2 criteria rest on, still asserted as an exact map each.
+
+    Deliberately not renamed when the resolve job arrived, and deliberately not widened to
+    cover it. ``phase2_criteria.py`` cites this node id as what *proves* criterion 8, and
+    what that criterion rests on is these three maps -- that compiling cannot request a
+    token, that the probe job holds one and no environment, and that submitting holds
+    exactly three entries. The inventory of jobs is a different property and is asserted
+    below, where a fourth job changes a count instead of quietly changing what a recorded
+    criterion is understood to have proved.
+    """
     workflow = _load()
 
-    assert list(workflow["jobs"]) == ["compile", "deny-unapproved", "submit"]
     assert workflow["jobs"]["compile"]["permissions"] == {"contents": "read"}
     assert workflow["jobs"]["deny-unapproved"]["permissions"] == {
         "contents": "read",
@@ -255,8 +272,25 @@ def test_the_three_jobs_carry_exactly_these_permission_maps() -> None:
         "actions": "read",
     }
     assert workflow["jobs"]["submit"]["needs"] == ["compile", "deny-unapproved"]
-    assert "needs" not in workflow["jobs"]["compile"]
     assert "needs" not in workflow["jobs"]["deny-unapproved"]
+
+
+def test_the_workflow_declares_these_four_jobs_and_orders_them_this_way() -> None:
+    # The inventory, re-armed at four when the resolve job arrived. A job added to this
+    # file inherits the two trust policies that pin job_workflow_ref to it, so a new one is
+    # a new principal for both the admission role and the image resolver -- which is why
+    # the list is exact rather than a floor, and why it is a test rather than a review
+    # habit.
+    workflow = _load()
+
+    assert list(workflow["jobs"]) == ["resolve", "compile", "deny-unapproved", "submit"]
+    assert workflow["jobs"]["resolve"]["permissions"] == {
+        "contents": "read",
+        "id-token": "write",
+    }
+    assert workflow["jobs"]["compile"]["needs"] == ["resolve"]
+    assert "needs" not in workflow["jobs"]["resolve"]
+    assert "environment" not in workflow["jobs"]["resolve"]
 
 
 def test_the_compile_job_cannot_request_a_token_by_any_spelling() -> None:
@@ -449,6 +483,7 @@ def test_the_tools_the_run_bodies_reach_for_exist_on_disk() -> None:
 
     assert referenced == [
         "tools/compile_submission.py",
+        RESOLVER_TOOL,
         DENIALS_TOOL,
         "tools/verify_approved_manifest.py",
         BATCH_DENIALS_TOOL,
@@ -484,7 +519,10 @@ def test_no_run_body_interpolates_a_github_expression() -> None:
 def test_every_run_body_enables_strict_bash() -> None:
     bodies = list(_run_bodies())
 
-    assert len(bodies) == 16
+    # Eighteen since the resolve job arrived with its own tooling install and its own
+    # lookup step. Counted rather than sampled, so a body added without the strict line
+    # fails here instead of running past its first error.
+    assert len(bodies) == 18
     for name, script in bodies:
         assert script.startswith("set -euo pipefail\n"), name
 
@@ -493,14 +531,17 @@ def _aws_reaching_calls() -> list[tuple[str, tuple[str, ...]]]:
     """Everything this workflow makes AWS answer, in the order the runner reaches it.
 
     A run body that calls the CLI directly contributes the call it makes. Each denial
-    matrix contributes the actions it attempts, because they are made by a tool rather
-    than by a shell and a reader of this file would otherwise see the submit job reach
-    AWS twice when it reaches it a dozen times. Each matrix's own
-    ``sts:get-caller-identity`` is left out: it requires no permission and cannot be
-    denied by a policy, so it is not part of the surface this enumeration is about.
+    matrix contributes the actions it attempts, and the image resolver contributes its two
+    reads, because all three are made by a tool rather than by a shell and a reader of this
+    file would otherwise see the submit job reach AWS twice when it reaches it a dozen
+    times. Each matrix's own ``sts:get-caller-identity`` is left out: it requires no
+    permission and cannot be denied by a policy, so it is not part of the surface this
+    enumeration is about.
     """
     calls: list[tuple[str, tuple[str, ...]]] = []
     for name, script in _run_bodies():
+        if RESOLVER_TOOL in script:
+            calls.extend((name, ("image-resolver", action)) for action in RESOLVER_ECR_ACTIONS)
         if DENIALS_TOOL in script:
             calls.extend((name, ("denial-probe", action)) for action in ADMISSION_DENIED_ACTIONS)
         if BATCH_DENIALS_TOOL in script:
@@ -513,9 +554,11 @@ def _aws_reaching_calls() -> list[tuple[str, tuple[str, ...]]]:
 
 def test_the_workflow_makes_exactly_these_aws_calls_in_exactly_this_order() -> None:
     # Enumerated so that a new call has to be argued for in review rather than appearing.
-    # Both sets of refused attempts are read out of the matrices the tools define, so
-    # adding a probe or renaming an action changes this list rather than slipping past it.
+    # Both sets of refused attempts and the resolver's two reads are read out of the tools
+    # that define them, so adding a probe or renaming an action changes this list rather
+    # than slipping past it.
     assert _aws_reaching_calls() == [
+        *[(f"resolve:{RESOLVE_STEP}", ("image-resolver", action)) for action in RESOLVER_ECR_ACTIONS],
         (
             f"deny-unapproved:{DENY_STEP}",
             ("aws", "sts", "assume-role-with-web-identity"),
@@ -530,6 +573,26 @@ def test_the_workflow_makes_exactly_these_aws_calls_in_exactly_this_order() -> N
     ]
 
 
+def test_the_only_aws_a_dispatch_reaches_before_an_approval_is_a_read_and_a_refusal() -> None:
+    """Mutation: give the resolve job a third call, or point it at another service.
+
+    The invariant this file maintains is not that an unapproved dispatch never reaches AWS
+    -- ``deny-unapproved`` mints a token and calls STS on every one. It is that an
+    unapproved dispatch obtains nothing that can start, submit or write. So what the two
+    jobs ahead of the gate reach is enumerated here as a whole, rather than only the
+    resolve job's half, because the property is about the pair.
+    """
+    before_the_gate = [
+        call for name, call in _aws_reaching_calls() if not name.startswith("submit:")
+    ]
+
+    assert before_the_gate == [
+        *[("image-resolver", action) for action in RESOLVER_ECR_ACTIONS],
+        ("aws", "sts", "assume-role-with-web-identity"),
+    ]
+    assert all(action.startswith("ecr:Describe") for _tool, action in before_the_gate[:-1])
+
+
 def test_both_denial_matrices_are_attempted_before_the_state_machine_is_started() -> None:
     # The ordering is the property, so it is computed from the step list rather than
     # assumed of it. Attempted after StartExecution a matrix would report on a role that
@@ -542,11 +605,13 @@ def test_both_denial_matrices_are_attempted_before_the_state_machine_is_started(
     assert names.index(DENIALS_STEP) < names.index(BATCH_DENIALS_STEP) < names.index(START_STEP)
     # And nothing else reaches AWS in between: the probes are the only thing this session
     # does before StartExecution, which is what makes them a statement about these
-    # credentials rather than about the template they were issued from.
-    reaching = [name for name, _call in _aws_reaching_calls()]
+    # credentials rather than about the template they were issued from. Restricted to this
+    # job's own calls, because what an earlier job reached under a different role says
+    # nothing about the session in hand -- and the resolve job now makes two.
+    reaching = [name for name, _call in _aws_reaching_calls() if name.startswith("submit:")]
     assert reaching.index(f"submit:{START_STEP}") == len(reaching) - 2
     assert reaching[reaching.index(f"submit:{START_STEP}") - 1] == f"submit:{BATCH_DENIALS_STEP}"
-    assert set(reaching[1:-2]) == {f"submit:{DENIALS_STEP}", f"submit:{BATCH_DENIALS_STEP}"}
+    assert set(reaching[:-2]) == {f"submit:{DENIALS_STEP}", f"submit:{BATCH_DENIALS_STEP}"}
 
 
 def test_the_write_probe_names_the_lineage_bucket_the_template_deploys() -> None:
@@ -627,6 +692,13 @@ def _comment_block_above(step_name: str) -> str:
     return " ".join(line.strip().removeprefix("#").strip() for line in block.splitlines())
 
 
+def _comment_block_above_job(job_id: str) -> str:
+    """The same, for a job rather than a step, because two jobs here argue for themselves."""
+    text = WORKFLOW_PATH.read_text(encoding="utf-8")
+    block = text.split(f"\n  {job_id}:\n", 1)[0].rsplit("\n\n", 1)[-1]
+    return " ".join(line.strip().removeprefix("#").strip() for line in block.splitlines())
+
+
 def test_the_probe_that_cannot_be_made_inert_says_so_where_it_runs() -> None:
     # The write probe leaves an object behind if the role is ever permitted to write one.
     # A cost that is only written down in the tool is a cost the person reading this
@@ -648,6 +720,157 @@ def test_the_upload_names_the_phase_one_matrix_it_is_the_counterpart_of() -> Non
 
     assert "publisher denial matrix" in rationale
     assert "Phase 1" in rationale
+
+
+# --------------------------------------------------------------------------------------
+# The job that reads which image the declared commit published
+# --------------------------------------------------------------------------------------
+
+
+def test_the_resolve_job_assumes_the_read_only_image_role_through_the_reviewed_action() -> None:
+    """Mutation: name the admission role here, which is already a repository variable.
+
+    The two ARNs are one expression apart and only one of them is safe before an approval.
+    The role this names may describe images and their scan findings and nothing else, which
+    ``tests/test_phase5_infrastructure.py`` asserts as an exact set rather than a superset
+    -- a trust policy cannot tell one job in this file from another, so whatever that role
+    holds, every job here can assume.
+    """
+    resolve = _job("resolve")
+    credentials = step(resolve, RESOLVE_CREDENTIALS_STEP)
+
+    assert credentials["uses"] == CREDENTIALS_ACTION
+    assert credentials["with"]["role-to-assume"] == "${{ vars.AWS_IMAGE_RESOLVER_ROLE_ARN }}"
+    assert credentials["with"]["aws-region"] == "${{ vars.AWS_REGION }}"
+    assert credentials["with"]["mask-aws-account-id"] is True
+    assumed = {
+        reference
+        for text in _strings(resolve)
+        for reference in _references(text)
+        if reference.startswith("vars.")
+    }
+    assert assumed == {"vars.AWS_IMAGE_RESOLVER_ROLE_ARN", "vars.AWS_REGION"}
+
+
+def test_the_resolve_job_argues_for_the_credential_it_holds_where_it_holds_it() -> None:
+    """The comment is the deliverable, and it points at the template rather than repeating it.
+
+    A credentialed job ahead of the approval gate is the thing in this file a reader is
+    most likely to try to undo, and the argument for it is long enough that a copy here
+    would be a second copy going stale. ``infra/iam/image-resolver-role.yaml`` carries it
+    in full, beside the two actions it is an argument about.
+    """
+    rationale = _comment_block_above_job("resolve")
+
+    assert "infra/iam/image-resolver-role.yaml" in rationale
+    assert "deny-unapproved" in rationale
+    assert "admission" in rationale
+    assert "starts nothing" in rationale
+    assert "tools/compile_submission.py" in rationale
+    assert "fails closed" in rationale
+
+
+def test_the_resolve_step_is_told_the_registry_the_repository_and_the_commit(
+    tmp_path: Path,
+) -> None:
+    # Everything the tool needs arrives through the environment, and the ECR repository is
+    # not among them: the tool reads that out of the registry for the reason the deleted
+    # provenance writer did, which is that a caller-supplied repository name is a
+    # caller-supplied choice of whose images a submission is resolved against.
+    resolve_step = step(_job("resolve"), RESOLVE_STEP)
+    stub_bin = tmp_path / "bin"
+    recorded = tmp_path / "argv.txt"
+    write_stub(stub_bin, "uv", f'printf "%s\\n" "$@" > "{recorded}"\nexit 0\n')
+
+    result = run_step_script(
+        resolve_step["run"],
+        cwd=tmp_path,
+        env={
+            "RUNNER_TEMP": str(tmp_path),
+            "RESEARCH_REPOSITORY": "OLMo-core",
+            "COMMIT_SHA": "a" * 40,
+            "RESOLVE_AWS_REGION": "us-east-1",
+        },
+        stub_bin=stub_bin,
+    )
+
+    assert result.returncode == 0, result.stderr
+    passed = dict(itertools.pairwise(recorded.read_text(encoding="utf-8").splitlines()))
+    assert passed["--registry"] == "config/repositories.yaml"
+    assert passed["--repository"] == "OLMo-core"
+    assert passed["--commit-sha"] == "a" * 40
+    assert passed["--aws-region"] == "us-east-1"
+    assert passed["--output"] == str(tmp_path / "published-image.json")
+    assert "--ecr-repository" not in passed
+
+
+def test_the_registry_answer_crosses_to_the_credential_free_job_as_an_artifact() -> None:
+    """Mutation: make it a job output, or merge the two jobs.
+
+    The compile job cannot request an OIDC token by any spelling, and the classification it
+    computes is worth something only because of that -- so the job that can request one has
+    to be a different job, and what passes between them has to be a document rather than a
+    credential. An artifact is also what lets a reader of a finished run see exactly what
+    the registry answered, which a string in the expression context would not.
+    """
+    upload = step(_job("resolve"), RESOLVE_UPLOAD_STEP)
+    download = step(_job("compile"), RESOLVE_DOWNLOAD_STEP)
+    names = [candidate.get("name") for candidate in _job("compile")["steps"]]
+
+    assert upload["uses"] == UPLOAD_ACTION
+    assert download["uses"] == DOWNLOAD_ACTION
+    assert upload["with"]["name"] == download["with"]["name"] == "published-image"
+    assert upload["with"]["if-no-files-found"] == "error"
+    assert "outputs" not in _job("resolve")
+    assert names.index(RESOLVE_DOWNLOAD_STEP) < names.index(COMPILE_STEP)
+
+
+def test_the_compile_step_is_handed_the_file_the_resolve_job_wrote(tmp_path: Path) -> None:
+    # The seam between the two jobs, read off both sides: the artifact lands where the
+    # download step puts it, and that is the path the compile step passes on.
+    download = step(_job("compile"), RESOLVE_DOWNLOAD_STEP)
+    result, arguments = _run_compile_step(tmp_path, uv_body="exit 0\n")
+
+    assert result.returncode == 0, result.stderr
+    passed = dict(itertools.pairwise(arguments))
+    assert download["with"]["path"] == "${{ runner.temp }}/published-image"
+    assert passed["--published-images"] == str(
+        tmp_path / "published-image" / "published-image.json"
+    )
+
+
+def test_the_compile_job_gained_no_way_to_reach_aws_by_gaining_an_upstream_that_can() -> None:
+    """Mutation: assume the resolver role in the compile job and skip the artifact.
+
+    It would work, and it would end the only claim this file makes that does not rest on
+    trusting a job to behave: a job with no ``id-token`` permission cannot request a token,
+    so it cannot leak one and cannot reach AWS whatever it is asked to do. ``needs`` orders
+    the two jobs and transfers nothing.
+    """
+    compile_job = _job("compile")
+
+    for text in _strings(compile_job):
+        normalized = text.lower().replace("_", "-")
+        assert "id-token" not in normalized, text
+    assert set(compile_job["permissions"]) == {"contents"}
+    assert CREDENTIALS_ACTION not in set(_strings(compile_job))
+    assert "AWS_IMAGE_RESOLVER_ROLE_ARN" not in str(compile_job)
+
+
+def test_the_digest_field_is_offered_as_an_override_and_says_what_leaving_it_blank_does() -> None:
+    """Mutation: leave the description saying it is the digest of the published image.
+
+    That description asked for the hardest field on the form and gave no hint that it had
+    stopped being required, so a submitter who read it would go and transcribe
+    seventy-one characters the workflow was about to derive for them.
+    """
+    declared = _load()["on"]["workflow_dispatch"]["inputs"]["image_digest"]
+
+    assert declared["required"] is False
+    assert declared["default"] == ""
+    assert "override" in declared["description"].lower()
+    assert "blank" in declared["description"].lower()
+    assert "commit" in declared["description"].lower()
 
 
 # --------------------------------------------------------------------------------------
@@ -937,6 +1160,23 @@ def test_the_assembled_form_is_a_document_the_contract_accepts(tmp_path: Path) -
         "wandb_project",
         "command",
     }
+
+
+def test_a_digest_left_blank_is_omitted_rather_than_sent_as_an_empty_string(
+    tmp_path: Path,
+) -> None:
+    """The seam between "leave it blank" on the form and deriving one from the commit.
+
+    An empty string is not the absence of a digest: it is a digest that fails the pattern,
+    so the form would be refused as unusable and the submitter would be told their input
+    was invalid for having left an optional field alone. The assembly step already drops
+    empty text fields, and this is what says that behaviour is now load-bearing for the
+    field a submitter is most likely to leave empty.
+    """
+    _result, payload = _run_form_assembly(tmp_path, FORM_IMAGE_DIGEST="")
+
+    assert "image_digest" not in payload
+    assert SubmissionInputs.model_validate(payload).image_digest is None
 
 
 def test_the_assembled_form_carries_the_overrides_in_the_types_the_contract_demands(

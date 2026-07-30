@@ -403,8 +403,26 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                     WORKFLOW,
                     "test_the_submit_job_takes_its_gate_from_needs_and_never_from_the_form",
                 ),
+                *_ids(
+                    WORKFLOW,
+                    "test_the_only_aws_a_dispatch_reaches_before_an_approval_is_a_read_and_a_refusal",
+                ),
             ),
             scope_limits=(
+                (
+                    "The statement is narrower than it reads, and it always was. Two jobs "
+                    "run before a reviewer sees anything and both hold id-token: write. "
+                    "deny-unapproved mints a token and spends it proving the admission role "
+                    "refuses a subject with no environment on it -- the refusal is the "
+                    "check. resolve assumes sbsandbox-intern-edullm-image-resolver and makes "
+                    "two ECR describes, which is how the image a commit published and its "
+                    "scan findings reach a job that holds no credential of its own. So what "
+                    "is covered is that an unapproved dispatch obtains nothing that can "
+                    "start, submit or write: no admission role, no state machine, no queue, "
+                    "no lineage. infra/iam/image-resolver-role.yaml argues the second one in "
+                    "full and tests/test_phase5_infrastructure.py holds its grant to exactly "
+                    "two read actions."
+                ),
                 (
                     "Covered on the committed workflow rather than on a capture, and that is "
                     "sufficient here for a reason the other live criteria do not share: the "

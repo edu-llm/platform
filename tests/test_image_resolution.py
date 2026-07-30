@@ -10,12 +10,19 @@ can be held to what it says as well as to when it fires.
 
 from __future__ import annotations
 
+import inspect
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
+import yaml
 
 from edullm_platform.errors import SubmissionRefusedError
 from edullm_platform.image_resolution import PublishedImage, resolve_image
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+ECR_TEMPLATE = PROJECT_ROOT / "infra" / "ecr-repositories.yaml"
+BUILD_WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "build-research-image.yml"
 
 #: A commit sha from this repository's own history, so the shape is one that has existed.
 COMMIT = "8076c077533eb79742f4ed22aade439df123a593"
@@ -216,3 +223,54 @@ def test_two_images_pushed_at_the_same_instant_are_refused_rather_than_picked_be
     assert SECOND_BUILD in message
     assert THIRD_BUILD in message
     assert COMMIT in message
+
+
+# ---------------------------------------------------------------------------------------
+# The two branches nothing reaches, and the record of why they are kept
+# ---------------------------------------------------------------------------------------
+
+
+def test_the_publish_path_cannot_produce_the_second_image_those_two_branches_need() -> None:
+    """Reads the registry template and the build workflow. Mutation: relax either.
+
+    Most-recent-wins and the tie refusal are the only rules here that need a commit to have
+    published more than one image, and the publish path cannot produce one. Three mechanisms
+    have to hold at once for that to stay true: the tag is twelve characters of the commit
+    and carries nothing that varies between builds; both ECR repositories refuse to move a
+    tag; and the build workflow's pre-flight lookup skips the build entirely when the tag is
+    already there, so a re-run resumes onto the published digest rather than pushing beside
+    it.
+
+    Relax any one of them and those branches become live. This is the test that says so, and
+    the comment in ``resolve_image`` is what tells a reader of that function the same thing.
+    """
+    template = yaml.safe_load(ECR_TEMPLATE.read_text(encoding="utf-8"))
+    repositories = [
+        resource["Properties"]
+        for resource in template["Resources"].values()
+        if resource.get("Type") == "AWS::ECR::Repository"
+    ]
+    build_workflow = BUILD_WORKFLOW.read_text(encoding="utf-8")
+
+    assert repositories
+    for properties in repositories:
+        assert properties["ImageTagMutability"] == "IMMUTABLE"
+    assert 'image_tag="${COMMIT_SHA:0:12}"' in build_workflow
+    assert "Skipping build and push" in build_workflow
+
+
+def test_resolve_image_records_that_nothing_reaches_the_multi_image_branches() -> None:
+    """The comment is the deliverable, so it is checked like one.
+
+    A reader who finds a rule with no live caller has two wrong things to do with it: read
+    it as behaviour the platform exhibits, or delete it as dead code. Neither is right --
+    the rules are correct and the reason nothing reaches them is three configuration
+    choices away from changing -- so what stands between them and either mistake is a
+    paragraph saying which three.
+    """
+    source = inspect.getsource(resolve_image)
+
+    assert "IMMUTABLE" in source
+    assert "twelve" in source
+    assert "pre-flight" in source or "preflight" in source
+    assert "at most one" in source
