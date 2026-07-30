@@ -178,6 +178,7 @@ jobs:
             --repository "${RESEARCH_REPOSITORY}" \
             --commit-sha "${COMMIT_SHA}" \
             --aws-region "${RESOLVE_AWS_REGION}" \
+            --policy config/policy.yaml \
             --output "${RUNNER_TEMP}/published-image.json" || resolve_status=$?
           if [[ "${resolve_status}" -ne 0 ]]; then
             echo "published_image_unresolved" >&2
