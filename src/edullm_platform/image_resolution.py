@@ -34,7 +34,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
-from edullm_platform.submission import SubmissionRefusedError
+from edullm_platform.errors import SubmissionRefusedError
 
 __all__ = [
     "PublishedImage",
