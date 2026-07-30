@@ -1729,7 +1729,7 @@ def test_the_states_role_may_read_a_scan_for_every_submittable_repository() -> N
     repository, because reading a scan needs a submission to exist to read it for -- and
     the day those two sets coincide is the day this grant is wrong.
 
-    This module already unwraps ``Resource`` for the S3, SQS, Batch and IAM statements it
+    This module already unwraps ``Resource`` for the S3, SQS, Batch and ECS statements it
     checks, and the ECR statement is the one it skipped, which is how a scope naming one
     repository survived a second registration landing in config/repositories.yaml.
 
