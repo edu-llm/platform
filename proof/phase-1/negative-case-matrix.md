@@ -97,7 +97,7 @@ Proving tests (8), all executed and passing:
 - `tests/test_source_identity.py::test_missing_remote_ref_fails`
 - `tests/test_source_identity.py::test_checkout_head_mismatch_fails`
 - `tests/test_verify_source_identity_cli.py::test_a_dirty_tree_is_rejected_without_leaking_paths_or_environment`
-- `tests/test_verify_source_identity_cli.py::test_rejected_identities_exit_non_zero_with_only_a_machine_readable_reason[overrides4-remote_ref_missing]`
+- `tests/test_verify_source_identity_cli.py::test_rejected_identities_lead_with_a_machine_readable_reason_and_then_explain[overrides4-remote_ref_missing]`
 - `tests/test_build_research_image_workflow.py::test_publish_job_reverifies_the_source_before_it_holds_aws_credentials`
 
 ### Check 4 — A commit from an unauthorized repository is rejected.
@@ -114,8 +114,8 @@ Proving tests (7), all executed and passing:
 
 - `tests/test_source_identity.py::test_unknown_repository_fails`
 - `tests/test_source_identity.py::test_wrong_repository_id_fails`
-- `tests/test_verify_source_identity_cli.py::test_rejected_identities_exit_non_zero_with_only_a_machine_readable_reason[overrides0-unregistered_repository]`
-- `tests/test_verify_source_identity_cli.py::test_rejected_identities_exit_non_zero_with_only_a_machine_readable_reason[overrides1-repository_id_mismatch]`
+- `tests/test_verify_source_identity_cli.py::test_rejected_identities_lead_with_a_machine_readable_reason_and_then_explain[overrides0-unregistered_repository]`
+- `tests/test_verify_source_identity_cli.py::test_rejected_identities_lead_with_a_machine_readable_reason_and_then_explain[overrides1-repository_id_mismatch]`
 - `tests/test_repository_registry.py::test_the_shipped_registry_registers_olmo_core_exactly_as_it_was_reviewed`
 - `tests/test_repository_registry.py::test_repository_registry_unknown_lookups_raise_domain_error`
 - `tests/test_build_research_image_workflow.py::test_publish_job_reverifies_the_source_before_it_holds_aws_credentials`
