@@ -33,7 +33,7 @@ and a reader of the record can see that the only thing wrong with it was the pro
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -61,6 +61,7 @@ from edullm_platform.contracts.image import GitHubWorkflowRunReference
 from edullm_platform.contracts.image_scan import (
     ImageScanExceptionRegistry,
     ImageScanSummary,
+    ScanFinding,
 )
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.manifest import RunManifest
@@ -178,6 +179,7 @@ def admit(
     dataset_registry: DatasetRegistry,
     image_scan_registry: ImageScanExceptionRegistry,
     image_scan_summary: ImageScanSummary | None,
+    image_scan_findings: Sequence[ScanFinding] | None,
     recorded_at: datetime,
 ) -> AdmissionOutcome:
     manifest = _parse_manifest(manifest_payload)
@@ -258,6 +260,7 @@ def admit(
         image_scan_policy=policy.image_scan,
         image_scan_registry=image_scan_registry,
         image_scan_summary=image_scan_summary,
+        image_scan_findings=image_scan_findings,
     )
     approval_class = classify_request(facts, policy.thresholds)
     authorization = evaluate_authorization(

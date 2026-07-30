@@ -109,6 +109,23 @@ enforced: you can name a team you do not belong to and the run proceeds, with th
 the decision record. Membership is not verified against anything today, so the recorded
 value distinguishes nothing yet.
 
+**A newly disclosed vulnerability can block every submission overnight.** Your image is
+refused if the registry finds a critical nobody has reviewed. The ones the shared base
+carries are reviewed already, in `config/image-exceptions.yaml`, so an ordinary rebuild is
+not affected. What changes that is a new critical being published against a package in the
+base: from the next scan, every image inherits it, and every submission is refused until
+somebody reads it and records a review. The refusal names the identifier and the package, so
+it is obvious what happened. Tell us rather than working around it — the review is a small
+pull request and the alternative is a gate that stops meaning anything.
+
+**A build that says your image does not match your commit is a tag collision.** Images are
+tagged with the first twelve characters of the commit, and the registry refuses to overwrite
+a tag. If another commit in the repository happens to start with the same twelve characters,
+your build fails saying the published image was not built from your commit. It is
+astronomically unlikely and it is not something you did wrong. Rebase to change the SHA
+rather than submitting that commit — a submission for it would resolve to the other commit's
+image.
+
 **Nobody is watching the queue for you.** A job that cannot get capacity sits in `RUNNABLE`
 rather than failing, and no alarm notices: AWS Batch publishes no CloudWatch metric for
 queue depth or job state, so there is no series to threshold. A queued job bills nothing, so

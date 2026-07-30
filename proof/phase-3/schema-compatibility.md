@@ -1,6 +1,6 @@
 # Phase 3 schema compatibility report
 
-The 24 contract models defined by the modules this bundle's evidence is built from, so that a reviewer can check a shape without reading the whole inventory. The structural digest is `sha256` over the model's JSON schema with sorted keys, so it changes when a field is added, removed, retyped or reconstrained, and does not change when unrelated code moves.
+The 26 contract models defined by the modules this bundle's evidence is built from, so that a reviewer can check a shape without reading the whole inventory. The structural digest is `sha256` over the model's JSON schema with sorted keys, so it changes when a field is added, removed, retyped or reconstrained, and does not change when unrelated code moves.
 
 What scopes this table is where code sits today, not a record of what the phase delivered. It was introduced for a long time as the contract models the phase added, which is a question it cannot answer: the only thing it knows about a model is which module the model is in now, so moving one to another file changed the count without any phase having delivered anything different. It is a compatibility view over the complete inventory in `proof/phase-0/schema-compatibility.md`, and `tests/test_schema_compatibility.py` fails when either table stops describing the tree.
 
@@ -13,9 +13,11 @@ Six models that Phase 0 defined and nothing had ever constructed were exported d
 | ExecutionTargetBinding | edullm_platform.contracts.execution | record | unversioned | no | sha256:011f8640d8c895318e86bae11e62d59972b5b5ef67a1c50e77cb0f9b74ad0aa2 |
 | ExecutionTargetCatalog | edullm_platform.contracts.execution | record | 1 | no | sha256:baad4dd4cda8e9519685011cd20f97f36338e0e2e54d96488f7a897243688baa |
 | ImageScanException | edullm_platform.contracts.image_scan | record | unversioned | yes | sha256:f2aca5a4ed2373862ed4f22eef0a78dd2063d2db159e2e70670c4e6375249eb6 |
-| ImageScanExceptionRegistry | edullm_platform.contracts.image_scan | record | 1 | yes | sha256:08fa8dc6ee43fe2d52ff8dbca543e2080943fafdd08bab531c781164919069fc |
+| ImageScanExceptionRegistry | edullm_platform.contracts.image_scan | record | 1 | yes | sha256:446b067f64b593aa2c7b35275bed21c02f547c1c1d801b58aaf36813b6754ce2 |
 | ImageScanPolicy | edullm_platform.contracts.image_scan | record | unversioned | yes | sha256:a995523c781b979c5400ab756aa90b610775a5f797641b38b7530418f283c192 |
 | ImageScanSummary | edullm_platform.contracts.image_scan | record | 1 | no | sha256:4ae0dbc073e6e33a52d8caf9213d1b8344b8ceb49d60d6475a766702cb6b2f30 |
+| ReviewedVulnerability | edullm_platform.contracts.image_scan | record | unversioned | yes | sha256:e1bab292e41b2667ab935a3ab6c45d7f85fc265fbe4038866ed4fbaa60d0a7e1 |
+| ScanFinding | edullm_platform.contracts.image_scan | record | unversioned | no | sha256:07e6f38f7190b357b088220a80499f36683d42270fa428292bb67cb1112e9ffd |
 | AccountMeasurements | edullm_platform.phase3_evidence | record | 1 | no | sha256:5b7c36029e25ad4004faea605604a6a1ea4c0a41c51ca0821661559cc356c611 |
 | ActionVerdict | edullm_platform.phase3_evidence | record | unversioned | no | sha256:f52eda88bcd1ab4b8229db05097df2adf8120549ac32c8d9c5dedeff17b3a83f |
 | AuthorizationControl | edullm_platform.phase3_evidence | record | unversioned | no | sha256:30fab671ec96cf057ef841200b009f492cb19d3d023dbc0fc0cf28837103cb23 |

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from decimal import Decimal
 from pathlib import Path
 from typing import Final
@@ -11,6 +12,7 @@ from edullm_platform.contracts.image_scan import (
     ImageScanExceptionRegistry,
     ImageScanPolicy,
     ImageScanSummary,
+    ScanFinding,
     image_scan_is_reviewed,
 )
 from edullm_platform.contracts.manifest import (
@@ -106,6 +108,7 @@ def build_request_facts(
     image_scan_policy: ImageScanPolicy | None = None,
     image_scan_registry: ImageScanExceptionRegistry | None = None,
     image_scan_summary: ImageScanSummary | None = None,
+    image_scan_findings: Sequence[ScanFinding] | None = None,
 ) -> RequestFacts:
     """Derive the facts policy classifies, from the manifest and reviewed configuration.
 
@@ -161,6 +164,7 @@ def build_request_facts(
         image_scan_reviewed = image_scan_is_reviewed(
             image_digest=manifest.image_digest,
             summary=image_scan_summary,
+            blocking_findings=image_scan_findings,
             policy=image_scan_policy,
             registry=image_scan_registry or ImageScanExceptionRegistry(schema_version=1),
         )

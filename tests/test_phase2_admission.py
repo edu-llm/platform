@@ -16,6 +16,7 @@ from edullm_platform.contracts.image import GitHubWorkflowRunReference
 from edullm_platform.contracts.image_scan import (
     ImageScanExceptionRegistry,
     ImageScanSummary,
+    ScanFinding,
 )
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.manifest import RunManifest
@@ -183,6 +184,7 @@ def admit_submission(
     dataset_registry: DatasetRegistry | None = None,
     image_scan_registry: ImageScanExceptionRegistry | None = None,
     image_scan_summary: ImageScanSummary | None = None,
+    image_scan_findings: tuple[ScanFinding, ...] | None = None,
 ) -> AdmissionOutcome:
     submitted = (
         payload
@@ -220,6 +222,10 @@ def admit_submission(
         image_scan_summary=(
             image_scan_summary if image_scan_summary is not None else clean_image_scan()
         ),
+        # Defaults to none supplied, which pairs with the clean summary above: a scan with
+        # no blocking findings needs no list, and the gate never reaches the branch that
+        # would want one. A test wanting the reviewed-vulnerability path passes both.
+        image_scan_findings=image_scan_findings,
         recorded_at=RECORDED_AT,
     )
 

@@ -103,6 +103,48 @@ ACCEPTED_EVENT: dict[str, Any] = {
         "workflow_path": ".github/workflows/submit-run.yml",
         "workflow_ref": "refs/heads/main",
     },
+    # WHAT ReadImageScan PUTS HERE, AND THIS EVENT USED TO CARRY NOTHING.
+    #
+    # It passed anyway, because the digest above was one of the two this repository excepted
+    # by hand -- and a per-digest exception overrides a missing scan, so the handler was
+    # admitting a run whose findings nobody had supplied. Retiring those two entries in
+    # favour of reviewed vulnerabilities took the cover away and left the test asserting
+    # that admission accepts an image it knows nothing about.
+    #
+    # These are the four criticals the registry actually reports for this digest, read from
+    # the account rather than invented, and they are the same four the other published image
+    # carries because both inherit them from the same pinned base. So this now exercises the
+    # path a pilot submission takes: a real scan, findings that block, and reviews recorded
+    # against the vulnerabilities rather than against the image.
+    "image_scan": {
+        "imageScanStatus": {"status": "COMPLETE"},
+        "imageScanFindings": {
+            "imageScanCompletedAt": "2026-07-29T01:36:04+00:00",
+            "findingSeverityCounts": {"CRITICAL": 4, "HIGH": 8, "MEDIUM": 3},
+            "findings": [
+                {
+                    "name": "CVE-2026-57433",
+                    "severity": "CRITICAL",
+                    "attributes": [{"key": "package_name", "value": "perl"}],
+                },
+                {
+                    "name": "CVE-2026-12087",
+                    "severity": "CRITICAL",
+                    "attributes": [{"key": "package_name", "value": "perl"}],
+                },
+                {
+                    "name": "CVE-2026-13221",
+                    "severity": "CRITICAL",
+                    "attributes": [{"key": "package_name", "value": "perl"}],
+                },
+                {
+                    "name": "CVE-2026-5450",
+                    "severity": "CRITICAL",
+                    "attributes": [{"key": "package_name", "value": "glibc"}],
+                },
+            ],
+        },
+    },
 }
 
 

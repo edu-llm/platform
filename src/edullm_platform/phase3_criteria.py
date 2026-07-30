@@ -1025,7 +1025,7 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                 *_ids(SCAN, "test_a_blocking_finding_without_an_exception_is_refused"),
                 *_ids(SCAN, "test_a_blocking_finding_with_a_recorded_exception_runs"),
                 *_ids(SCAN, "test_no_scan_at_all_is_refused_rather_than_assumed_clean"),
-                *_ids(SCAN, "test_the_shipped_registry_covers_the_only_published_image"),
+                *_ids(SCAN, "test_the_shipped_registry_covers_what_the_published_images_actually_carry"),
                 *_ids(SCAN, "test_the_shipped_registry_excepts_nothing_it_does_not_explain"),
                 *_ids(SCAN, "test_both_production_callers_evaluate_the_scan_gate"),
             ),

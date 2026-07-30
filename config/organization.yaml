@@ -14,7 +14,16 @@ admins:
 #
 # The GitHub `team-leads` team gates the run-approval-lead environment and is what actually
 # stops a job. It is not in this repository and does not follow this edit; changing it is an
-# owner action in the organization settings, and until it happens the two disagree.
+# owner action in the organization settings.
+#
+# The two agreed as of 2026-07-30, checked login by login with an empty symmetric difference.
+# They had not: this list dropped syz2026 for VS-code-cloud when the Memory group's lead
+# changed, and the GitHub team was not told for two days -- so somebody who leads no group
+# could release any team's routine run, and the lead who does could not release his own
+# group's. Nothing in this repository can notice that, which is why it is worth re-checking
+# by hand rather than trusting this comment:
+#
+#   gh api orgs/edu-llm/teams/team-leads/members --jq '.[].login' | sort
 team_leads:
   - philote-dev
   - ericrcwu001
