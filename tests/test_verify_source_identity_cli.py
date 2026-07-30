@@ -7,7 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from tools.verify_source_identity import main
+from edullm_platform.contracts.source_identity import SourceIdentityReason
+from tools.verify_source_identity import REMEDIES, main
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REGISTRY_PATH = PROJECT_ROOT / "config" / "repositories.yaml"
@@ -151,21 +152,72 @@ def test_step_outputs_are_appended_so_earlier_outputs_survive(
         ({"--ref": "refs/heads/absent"}, "remote_ref_missing"),
     ],
 )
-def test_rejected_identities_exit_non_zero_with_only_a_machine_readable_reason(
+def test_rejected_identities_lead_with_a_machine_readable_reason_and_then_explain(
     checkout: Checkout,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     overrides: dict[str, str],
     reason: str,
 ) -> None:
+    """THE FIRST LINE IS THE TOKEN AND THE REST IS FOR A PERSON.
+
+    This asserted the token and *nothing else*, on the reasoning that anything more might
+    leak. That was half right and it cost a pilot user their first build: they met
+    ``remote_ref_mismatch`` on an otherwise empty page, which names a condition and gives no
+    cause and no next step.
+
+    The detail was being constructed and discarded. Every one of them is a fixed sentence
+    about git state with no path, no identifier and no environment in it -- the only
+    interpolated value anywhere in the set is a remote name -- so withholding them bought
+    nothing and cost the reader everything.
+
+    The token stays first so anything reading the stream for a machine-readable reason still
+    finds it in the same place. What is asserted below is that, and that nothing unsafe
+    follows, which is a stronger claim than silence.
+    """
     exit_code = main(argv(checkout, tmp_path, **overrides))
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert captured.err == f"{reason}\n"
+    assert captured.err.splitlines()[0] == reason
     assert captured.out == ""
+    assert str(checkout.root) not in captured.err
+    assert str(tmp_path) not in captured.err
     assert not (tmp_path / "source-identity.json").exists()
     assert not (tmp_path / "step-output.txt").exists()
+
+
+def test_the_refusals_a_person_can_act_on_say_what_to_do() -> None:
+    """Mutation: add a reason to the remedies table that nobody can act on.
+
+    A remedy is only worth printing where there is an action. ``unregistered_repository``
+    and ``repository_id_mismatch`` are defects somebody has to look at, and inventing a
+    next step for them would send a reader somewhere wrong with confidence -- so the table
+    is deliberately partial, and this says which four are in it and that each names an
+    action rather than restating the condition.
+    """
+    assert set(REMEDIES) == {
+        SourceIdentityReason.REMOTE_REF_MISMATCH,
+        SourceIdentityReason.REMOTE_REF_MISSING,
+        SourceIdentityReason.DIRTY_TREE,
+        SourceIdentityReason.HEAD_MISMATCH,
+    }
+    for reason, remedy in REMEDIES.items():
+        assert len(remedy) >= 60, reason
+        assert remedy.rstrip().endswith("."), reason
+
+
+def test_a_stale_re_run_is_told_that_re_running_is_what_did_it() -> None:
+    """The specific sentence a pilot user needed and did not get.
+
+    A re-run replays the commit the original dispatch was given, so a branch that has moved
+    since makes the guard fire -- and nothing on the page connects "I pressed re-run" to
+    "remote ref mismatch". The remedy has to name the act, not just the state.
+    """
+    remedy = REMEDIES[SourceIdentityReason.REMOTE_REF_MISMATCH]
+
+    assert "re-run" in remedy.lower()
+    assert "new run" in remedy.lower()
 
 
 @pytest.mark.slow
@@ -182,7 +234,7 @@ def test_a_dirty_tree_is_rejected_without_leaking_paths_or_environment(
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert captured.err == "dirty_tree\n"
+    assert captured.err.splitlines()[0] == "dirty_tree"
     assert "leak-canary-value" not in captured.err
     assert str(checkout.root) not in captured.err
     assert "git" not in captured.err

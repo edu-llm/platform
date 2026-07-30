@@ -146,7 +146,7 @@ DRIFT_COMPARISON_RAN: Final = (
 #: The CLI the workflow actually invokes, parametrised over one rejection reason each.
 IDENTITY_CLI_REJECTION: Final = (
     "tests/test_verify_source_identity_cli.py"
-    "::test_rejected_identities_exit_non_zero_with_only_a_machine_readable_reason"
+    "::test_rejected_identities_lead_with_a_machine_readable_reason_and_then_explain"
 )
 
 #: The publish job re-derives source identity on its own runner before it configures AWS
