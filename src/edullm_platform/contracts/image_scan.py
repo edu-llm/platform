@@ -299,15 +299,15 @@ def image_scan_summary_from_ecr(payload: object) -> ImageScanSummary | None:
     """
     if not isinstance(payload, dict):
         return None
-    status_block = payload.get("imageScanStatus")
-    findings = payload.get("imageScanFindings")
+    status_block = _field(payload, "imageScanStatus")
+    findings = _field(payload, "imageScanFindings")
     if not isinstance(status_block, dict) or not isinstance(findings, dict):
         return None
-    status = status_block.get("status")
-    completed_at = findings.get("imageScanCompletedAt")
+    status = _field(status_block, "status")
+    completed_at = _field(findings, "imageScanCompletedAt")
     if not isinstance(status, str) or not isinstance(completed_at, str):
         return None
-    counts = findings.get("findingSeverityCounts")
+    counts = _field(findings, "findingSeverityCounts")
     counts = counts if isinstance(counts, dict) else {}
     # model_validate rather than the constructor, so the BeforeValidators that parse the
     # status string and the timestamp are the ones that run. Calling the constructor with
@@ -326,6 +326,31 @@ def image_scan_summary_from_ecr(payload: object) -> ImageScanSummary | None:
         )
     except (ValidationError, ValueError, TypeError):
         return None
+
+
+def _field(payload: object, name: str) -> object:
+    """One field of a describe result, in whichever casing the caller's transport used.
+
+    TWO TRANSPORTS, TWO CASINGS, AND THIS WAS WRONG FOR AS LONG AS IT EXISTED.
+    ``aws ecr describe-image-scan-findings`` answers in camelCase; the Step Functions AWS SDK
+    integration answers the same call in PascalCase, down to ``Key`` and ``Value`` on a
+    finding's attributes. The mapping below read camelCase only, so on the admission side it
+    returned ``None`` every time and the gate read that as nobody having seen the findings.
+
+    It stayed invisible because it fails closed and because a per-digest exception is
+    consulted before the summary, and every submittable digest had one. Retiring those
+    exceptions surfaced it immediately: compile accepted an image on findings it had read
+    and admission refused the same image on findings it could not, which is the two sides
+    disagreeing about one answer -- the failure this shared mapping exists to prevent.
+
+    Measured from a real execution's ReadImageScan output rather than taken from the API
+    reference, which documents the wire shape and not the integration's re-casing.
+    """
+    if not isinstance(payload, dict):
+        return None
+    if name in payload:
+        return payload[name]
+    return payload.get(name[0].upper() + name[1:])
 
 
 def blocking_findings_from_ecr(
@@ -351,10 +376,10 @@ def blocking_findings_from_ecr(
     """
     if not isinstance(payload, dict):
         return None
-    findings = payload.get("imageScanFindings")
+    findings = _field(payload, "imageScanFindings")
     if not isinstance(findings, dict):
         return None
-    raw = findings.get("findings")
+    raw = _field(findings, "findings")
     if raw is None:
         raw = ()
     if not isinstance(raw, list | tuple):
@@ -364,22 +389,22 @@ def blocking_findings_from_ecr(
     for entry in raw:
         if not isinstance(entry, dict):
             return None
-        if entry.get("severity") not in blocking:
+        if _field(entry, "severity") not in blocking:
             continue
-        attributes = entry.get("attributes")
+        attributes = _field(entry, "attributes")
         attributes = attributes if isinstance(attributes, list | tuple) else ()
         package = next(
             (
-                attribute.get("value")
+                _field(attribute, "value")
                 for attribute in attributes
-                if isinstance(attribute, dict) and attribute.get("key") == "package_name"
+                if isinstance(attribute, dict) and _field(attribute, "key") == "package_name"
             ),
             None,
         )
         try:
             collected.append(
                 ScanFinding.model_validate(
-                    {"vulnerability_id": entry.get("name"), "package_name": package}
+                    {"vulnerability_id": _field(entry, "name"), "package_name": package}
                 )
             )
         except ValidationError:
