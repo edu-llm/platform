@@ -80,6 +80,38 @@ byte-reproducible, so a second run should produce no diff:
 uv run python tools/export_schemas.py
 ```
 
+## Pilot limitations
+
+This platform is open to a named pilot. It works end to end and it is not finished, and
+this page is everything known to be missing. Anything that goes wrong which is **not** on
+this page is worth reporting, because this page is the reason the remaining checks are
+allowed to wait.
+
+**Cancelling does not stop your job.** Cancelling the workflow does not stop the job; ask an
+admin, and note the mandatory timeout bounds it. No identity in this account holds
+`batch:TerminateJob` — not the deployer, not admission, not the recorder — and the absence
+is deliberate: stopping a run is its own path with its own principal, and that path has not
+been built. What bounds the cost of a run you have given up on is the per-attempt timeout
+every submission carries. An admin can terminate it by hand, and the job name is the run id,
+which is what makes it findable; the procedure is in `infra/README.md`.
+
+**A checkpoint cannot resume training yet.** A committed checkpoint carries a model state
+dict and the step it was written at. It carries no optimizer moments and no schedule
+position, so a resume loads the weights and starts the optimizer cold. On a short smoke run
+that is invisible. On a long run it is a visible discontinuity in the loss curve — on
+exactly the runs that are the reason to resume at all.
+
+**`team` routes your approval and is not a permission.** The team on a submission says who
+should review it. It grants nothing, restricts nothing, and is recorded rather than
+enforced: you can name a team you do not belong to and the run proceeds, with that fact on
+the decision record. Membership is not verified against anything today, so the recorded
+value distinguishes nothing yet.
+
+**Nobody is watching the queue for you.** A job that cannot get capacity sits in `RUNNABLE`
+rather than failing, and no alarm notices: AWS Batch publishes no CloudWatch metric for
+queue depth or job state, so there is no series to threshold. A queued job bills nothing, so
+this costs time rather than money. If a run has not started within an hour, ask.
+
 ## Acceptance gate
 
 ```bash
