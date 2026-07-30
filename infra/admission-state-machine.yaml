@@ -90,7 +90,7 @@ Resources:
       Code:
         S3Bucket: sbsandbox-intern-edullm-artifacts
         S3Key: admission-validator/admission-validator.zip
-        S3ObjectVersion: zKeACsN6lKJyAOK8KJtMGwfmUohzGRMR
+        S3ObjectVersion: KtBKSrprapdCz6ctLp0j3rUAYbJcy1yq
       Timeout: 30
       MemorySize: 512
 
@@ -186,7 +186,10 @@ Resources:
       # sends it, so an execution without one is a hand-started execution that should stop
       # here rather than record an approval nobody gave.
       #
-      # The three new states, and what each is for:
+      # The three new states, and what each is for -- with a fourth,
+      # RegisterJobDefinition, added after this phase and listed below in the order the
+      # states run rather than the order they arrived, because a reader following an
+      # execution needs the first ordering and can get the second from this sentence:
       #
       #   ReadImageScan   reads the ECR scan findings for the digest the manifest names,
       #                   before anything is judged. It catches States.ALL and continues to
@@ -203,10 +206,27 @@ Resources:
       #                   S3.S3Exception -- and here a guessed name that never fires would
       #                   fail the whole execution on an unscanned image instead of
       #                   refusing the run with a reason.
+      #   RegisterJobDefinition
+      #                   registers the job definition this run is executed on, with the
+      #                   image pinned to the digest the manifest declared, and feeds the
+      #                   revision Batch returns into the submit request. Reachable only
+      #                   from the accepted branch. See the paragraph below for why a state
+      #                   that mints a Batch resource sits on the admission path at all.
       #   SubmitToBatch   sends the request the validator built. It carries InputPath and
       #                   no Parameters, which is deliberate; see the note on that state.
       #   WriteBinding    records the Batch job id write-once, the instant Batch accepts
       #                   the submission and before anything has started.
+      #
+      # WHY THE BINDING READS job_definition_arn OUT OF THE SUBMIT REQUEST RATHER THAN OUT OF
+      # THE TARGET. It used to read $.execution.target.job_definition_arn, which was right
+      # while the target's definition was the one every job ran on. It stopped being right
+      # the moment a run registers its own: the target still names the CloudFormation-owned
+      # cpu-run or gpu-run definition, and the job runs on the revision RegisterJobDefinition
+      # just minted. Left alone, the one lineage record that says which definition a job ran
+      # on would name a definition it did not run on -- the same class of untruth this whole
+      # change exists to remove, one field along and in the record rather than in the image.
+      # The submit request is where the answer is, and the two fields beside this one already
+      # read from it.
       #
       # And the Succeed state moved. AdmissionAccepted's true branch used to end at
       # "Admitted"; it now continues into submission and ends at "Submitted". An execution
@@ -278,6 +298,59 @@ Resources:
       # the failure. Everything downstream is JSONPath again and reads $.admission and
       # $.submission as though nothing had changed.
       #
+      # REGISTERJOBDEFINITION IS THE STATE THAT MAKES A DECLARED DIGEST SELECT SOMETHING,
+      # AND IT IS THE FIRST STATE HERE THAT CREATES AN AWS RESOURCE RATHER THAN USING ONE.
+      #
+      # AWS Batch has no submit-time image override. ContainerOverrides carries command,
+      # environment, instanceType and resourceRequirements; TaskContainerOverrides the same
+      # minus instanceType; and Ref:: substitution is documented for the command field
+      # alone. RegisterJobDefinition is the only mechanism that can change a container's
+      # image, so until this state existed the digest a submitter declared was validated,
+      # gated admission through ReadImageScan above, written immutably into the lineage
+      # record -- and selected nothing. What ran was whatever infra/batch-compute.yaml and
+      # infra/batch-compute-gpu.yaml pin, and the two agreed only because
+      # config/image-exceptions.yaml happens to hold exactly those two digests.
+      #
+      # It is a JSONata state for the same measured reason SubmitToBatch is, and it copies
+      # that state rather than reasoning afresh: Arguments is a single reference to the
+      # request the validator built, so a field added on the Python side arrives here
+      # without this file being touched and no field can be dropped by an omission here,
+      # because there are no fields here to omit. That property is worth more on a job
+      # definition than on a submission, because omission is silent on every axis of one --
+      # a missing Secrets block is a training run that cannot reach W&B, a missing
+      # LinuxParameters is a DataLoader bus error partway into training, and a missing GPU
+      # resource requirement is a container that trains on the CPU at GPU prices and
+      # reports nothing wrong.
+      #
+      # The Output is the only place in this file that names a field of the submit request,
+      # and it has to be: the revision ARN does not exist until Batch has replied, and
+      # SubmitToBatch passes the request through whole precisely so that it names nothing.
+      # So the merge happens here, in the one state that knows the answer. The handler
+      # writes the definition's *name* into JobDefinition, which Batch accepts and resolves
+      # to the highest active revision -- so if this merge were ever dropped the submission
+      # would still reach the revision this state registered rather than falling back to
+      # the deployed definition, which is the silent wrong answer the whole change is
+      # about.
+      #
+      # THE CATCH IS NOT OPTIONAL AND ITS TARGET IS NOT NEW. By the time this state runs,
+      # WriteIntent and WriteDecision have both succeeded and the decision on record says
+      # accepted. An execution that died here would fail with whatever Batch said and write
+      # nothing, so the lineage would end at a record promising a submission that never
+      # happened and the only account of what went wrong would be an execution history.
+      # This project has paid for that shape once already, on the command-by-team override
+      # budget, so the catch routes to RecordSubmissionFailure -- the refusal path
+      # SubmitToBatch's own failure already uses -- rather than to a second one invented
+      # for this state. It writes under a different key, registration_failure rather than
+      # submission_failure, because the record is the whole execution state serialized and
+      # a reader opening it should be able to see which of the two calls Batch refused
+      # without reading a Cause.
+      #
+      # States.ALL, and broad on purpose. What Step Functions calls a Batch refusal of a
+      # registration has not been measured against this account, and the discipline that
+      # kept States.ALL on the lineage writes until tools/probe_conditional_write.py
+      # measured S3.S3Exception applies here: a guessed error name that never fires is a
+      # Catch that reads as protection and is not.
+      #
       # ArrayProperties is the reason for the small Choice before the binding is written.
       # batch_submit_request omits it for a single container -- Batch rejects an array job
       # of size one, so emitting it unconditionally would fail every non-fan-out submission
@@ -320,7 +393,7 @@ Resources:
       DefinitionString:
         Fn::Sub: |
           {
-            "Comment": "Read the image scan, validate a submitted run manifest, record the intent and the decision as write-once lineage, submit the accepted run to Batch, and record the binding.",
+            "Comment": "Read the image scan, validate a submitted run manifest, record the intent and the decision as write-once lineage, register the job definition that pins the accepted run to the image it declared, submit the run to Batch against that definition, and record the binding.",
             "StartAt": "ReadImageScan",
             "States": {
               "ReadImageScan": {
@@ -461,6 +534,21 @@ Resources:
                 "Type": "Pass",
                 "InputPath": "$.admission.payload.execution",
                 "ResultPath": "$.execution",
+                "Next": "RegisterJobDefinition"
+              },
+              "RegisterJobDefinition": {
+                "Type": "Task",
+                "QueryLanguage": "JSONata",
+                "Resource": "arn:${AWS::Partition}:states:::aws-sdk:batch:registerJobDefinition",
+                "Arguments": "{% $states.input.execution.register_request %}",
+                "Output": "{% $merge([$states.input, {'execution': $merge([$states.input.execution, {'submit_request': $merge([$states.input.execution.submit_request, {'JobDefinition': $states.result.JobDefinitionArn}])}])}]) %}",
+                "Catch": [
+                  {
+                    "ErrorEquals": ["States.ALL"],
+                    "Output": "{% $merge([$states.input, {'registration_failure': $states.errorOutput}]) %}",
+                    "Next": "RecordSubmissionFailure"
+                  }
+                ],
                 "Next": "SubmitToBatch"
               },
               "SubmitToBatch": {
@@ -529,7 +617,7 @@ Resources:
                     "batch_job_arn.$": "$.submission.JobArn",
                     "batch_job_name.$": "$.submission.JobName",
                     "job_queue_arn.$": "$.execution.target.job_queue_arn",
-                    "job_definition_arn.$": "$.execution.target.job_definition_arn",
+                    "job_definition_arn.$": "$.execution.submit_request.JobDefinition",
                     "compute_profile.$": "$.execution.target.compute_profile",
                     "log_group.$": "$.execution.target.log_group",
                     "attempt_duration_seconds.$": "$.execution.submit_request.Timeout.AttemptDurationSeconds",
@@ -564,7 +652,7 @@ Resources:
                     "batch_job_arn.$": "$.submission.JobArn",
                     "batch_job_name.$": "$.submission.JobName",
                     "job_queue_arn.$": "$.execution.target.job_queue_arn",
-                    "job_definition_arn.$": "$.execution.target.job_definition_arn",
+                    "job_definition_arn.$": "$.execution.submit_request.JobDefinition",
                     "compute_profile.$": "$.execution.target.compute_profile",
                     "log_group.$": "$.execution.target.log_group",
                     "attempt_duration_seconds.$": "$.execution.submit_request.Timeout.AttemptDurationSeconds",
@@ -591,7 +679,7 @@ Resources:
               "SubmissionFailed": {
                 "Type": "Fail",
                 "Error": "BatchSubmissionFailed",
-                "Cause": "The run was admitted and Batch refused the submission. The decision is recorded under decision/ and the failure under submission-failure/ in the lineage bucket."
+                "Cause": "The run was admitted and Batch refused either the job definition it registers for itself or the submission that follows. The decision is recorded under decision/ and the failure under submission-failure/ in the lineage bucket, where the key naming it says which of the two."
               },
               "Rejected": {
                 "Type": "Fail",

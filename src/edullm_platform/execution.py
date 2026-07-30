@@ -26,16 +26,44 @@ master plan requires a mandatory timeout, and the specific way that requirement 
 is a timeout applied only when the manifest sets a runtime bound -- which passes every
 fixture that sets one. ``RunManifest.maximum_runtime_hours`` is required by the contract, so
 there is no case where the bound is unknown, and this function has no branch that omits it.
+
+**WHY A RUN REGISTERS A JOB DEFINITION OF ITS OWN, WHICH IS THE EXPENSIVE ANSWER.** There is
+no submit-time image override in AWS Batch. This was checked against the API reference
+rather than assumed, and it is worth writing down so that nobody searches for it twice:
+``ContainerOverrides`` carries ``command``, ``environment``, ``instanceType``,
+``resourceRequirements`` and the deprecated ``memory`` and ``vcpus``; ``TaskContainerOverrides``,
+the ECS-properties path, carries ``command``, ``environment``, ``name`` and
+``resourceRequirements``. Neither has an image field, and job-definition parameter
+substitution with ``Ref::`` is documented for the ``command`` field only.
+``RegisterJobDefinition`` is the only mechanism that can change a container's image.
+
+That matters because until :func:`batch_register_job_definition_request` existed, the digest
+a submitter declared was validated, gated admission through the ECR scan and was written
+immutably into the S3 lineage record -- while the container that actually ran was whatever
+``infra/batch-compute.yaml`` and ``infra/batch-compute-gpu.yaml`` pinned. The two coincided
+only because ``config/image-exceptions.yaml`` happened to hold exactly the two digests the
+templates pin. The lineage record's image provenance was true by convention rather than by
+mechanism, and every other guarantee this platform makes is read back off that record.
+
+The registration request is built here for the same reason the submit request is, and the
+state machine template already argues it at length: a ``Parameters`` block reconstructing
+the same structure in a template nobody unit-tests fails by silently omitting a field, and
+omission is silent on every axis of a job definition -- a missing ``Secrets`` block is a
+training run that cannot reach W&B, a missing ``LinuxParameters`` is a DataLoader bus error
+partway into training, a missing GPU resource requirement is a container that trains on the
+CPU at GPU prices and reports nothing wrong.
 """
 
 from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Final
 
 from .contracts.execution import (
+    SANDBOX_RESOURCE_PREFIX,
     ExecutionTarget,
     ExecutionTargetCatalog,
     UnbackedComputeProfileError,
@@ -49,7 +77,10 @@ from .contracts.workload import (
 
 __all__ = [
     "MINIMUM_ATTEMPT_DURATION_SECONDS",
+    "PUBLISHED_IMAGE_REPOSITORY",
+    "UnshapedComputeProfileError",
     "attempt_duration_seconds",
+    "batch_register_job_definition_request",
     "batch_submit_request",
     "resolve_execution_target",
 ]
@@ -123,6 +154,7 @@ def batch_submit_request(
     manifest: RunManifest,
     target: ExecutionTarget,
     run_id: str,
+    job_definition: str,
 ) -> dict[str, Any]:
     """The exact parameter block the state machine sends to ``batch:SubmitJob``.
 
@@ -130,13 +162,29 @@ def batch_submit_request(
     them, because this structure is passed through rather than translated. The ASL and this
     function are held to the same key set by a seam test; a field added here and not there
     would otherwise be silently dropped at the boundary.
+
+    ``job_definition`` is required rather than defaulted to ``target.job_definition_arn``,
+    and that is the point of it. The definition a run is submitted against is now the
+    revision registered for that run, carrying the digest the manifest declared, and a
+    default would let the old behaviour survive as an omission at a call site instead of as
+    a change to this function. The compiler naming every caller is what makes the change
+    reviewable.
+
+    It is ``job_definition`` and not ``job_definition_arn``, which is a rename this change
+    paid for rather than a preference. Batch's ``jobDefinition`` accepts a name, a
+    ``name:revision``, or an ARN with or without the revision, and the admission handler
+    passes the *name* the registration is about to mint -- because the revision ARN does
+    not exist until Batch has answered, and the state machine is what puts it here. A
+    parameter called ``_arn`` receiving a name is the kind of quiet inaccuracy that survives
+    review and then misleads the next reader into building an ARN somewhere it is not
+    needed.
     """
     request: dict[str, Any] = {
         # The run id, so the Batch job, the S3 keys and the execution name all carry the
         # same identifier and any two disagreeing is visible.
         "JobName": run_id,
         "JobQueue": target.job_queue_arn,
-        "JobDefinition": target.job_definition_arn,
+        "JobDefinition": job_definition,
         "ContainerOverrides": {
             "Command": list(manifest.command),
             "Environment": [
@@ -244,3 +292,292 @@ def refuse_an_oversized_override(overrides: Mapping[str, Any]) -> None:
         f"{command} of them. A program this long belongs in the image, or in an object the "
         "container fetches, rather than in the command line."
     )
+
+
+# ---------------------------------------------------------------------------------------
+# The job definition a run registers for itself
+# ---------------------------------------------------------------------------------------
+
+#: The ECR repository the images this platform runs are published to.
+#:
+#: A constant, and the honest reading of that is that this is the *second* place the
+#: repository is hardcoded rather than looked up: the admission state machine's
+#: ReadImageScan state names the same string when it asks ECR for the declared digest's
+#: findings. The two have to agree or the scan that gated admission was read against a
+#: different image, so a seam test compares them.
+#:
+#: WHAT IS DELIBERATELY ABSENT AND WHERE IT BELONGS. The repository an image lives in is
+#: properly a fact about the submission's source repository -- config/repositories.yaml
+#: maps OLMo-core to sbsandbox-intern-edullm-olmo-core and edullm-data to
+#: sbsandbox-intern-edullm-data, and the mapping is not derivable from the name. Looking it
+#: up here would mean passing the registry in, and the state machine would still be reading
+#: the scan from the wrong repository. Both are the same edit and it is not this one; the
+#: first submission naming edullm-data is what forces it, and it will fail loudly at the
+#: image pull rather than quietly.
+PUBLISHED_IMAGE_REPOSITORY: Final = f"{SANDBOX_RESOURCE_PREFIX}olmo-core"
+
+#: Batch's bound on a job definition name.
+MAXIMUM_JOB_DEFINITION_NAME_LENGTH: Final = 128
+
+#: The floors the registered definition carries, copied from the deployed definitions
+#: because they are floors rather than settings. Every real submission overrides both --
+#: ``batch_submit_request`` derives the attempt duration from the manifest and the retry
+#: count from ``maximum_attempts`` -- so these are only reached by a job submitted against
+#: this definition by hand, during an incident, and the point of them is that such a job
+#: still cannot run unbounded.
+JOB_DEFINITION_ATTEMPT_FLOOR: Final = 1
+JOB_DEFINITION_TIMEOUT_FLOOR_SECONDS: Final = 3600
+
+
+class UnshapedComputeProfileError(ValueError):
+    """A profile with somewhere to run and no statement of what its container asks for.
+
+    A third way for two files to disagree, alongside the two ``resolve_execution_target``
+    already separates. ``config/execution-targets.yaml`` says where a profile's jobs go;
+    the shapes below say what the container that runs there asks for, and a profile present
+    in the first and absent from the second is a promotion somebody did half of.
+
+    Refused rather than defaulted, because the cost of a guess is asymmetric and silent. A
+    guessed CPU shape on a GPU profile produces a container with no device that trains at
+    GPU prices and reports nothing wrong; a guessed GPU shape on a CPU profile produces a
+    job that waits in RUNNABLE forever. Neither surfaces as an error anywhere.
+    """
+
+    reason_code = "unshaped_compute_profile"
+
+
+@dataclass(frozen=True)
+class ContainerShape:
+    """What one compute profile's deployed job definition asks for, beside its image.
+
+    THIS DUPLICATES infra/batch-compute.yaml AND infra/batch-compute-gpu.yaml, WHICH IS THE
+    UNCOMFORTABLE PART OF THIS CHANGE AND IS NOT AN OVERSIGHT. RegisterJobDefinition is the
+    only mechanism that can change a container's image, so a run that wants to be executed
+    on the digest it declared has to restate a whole job definition in Python -- and the
+    template remains the thing that is deployed, so the two are now two statements of one
+    shape with nothing in CloudFormation connecting them.
+
+    Two things follow. The values here are the templates' values verbatim, including the
+    CPU definition's ``teams/data-prep/runs/`` default output prefix, which the GPU template
+    already records as a default that fails open: reproducing it keeps a registered
+    definition equal to the deployed one, and improving it here would be a second change
+    hiding inside this one. And a seam test in tests/test_phase3_execution.py reads both
+    templates and compares them field by field against what this builds, because a table
+    that drifts from the templates is exactly as bad as no table.
+
+    Moving this into ``config/execution-targets.yaml`` beside the queue and the roles is the
+    better long-run home and was deliberately not done here: it would add fields to two
+    contract models, and ``proof_bundle.discover_contract_models`` records every contract
+    model's structural digest in four committed proof bundles.
+    """
+
+    vcpus: int
+    memory_mib: int
+    #: Zero for a CPU profile, and the entry is then omitted rather than sent as "0".
+    #: Without a GPU entry ECS does not select the NVIDIA runtime for the task, so even on
+    #: the NVIDIA AMI the container sees no device.
+    gpus: int
+    #: ``/dev/shm``, in MiB, or ``None`` to leave ECS's 64 MiB default in place. A PyTorch
+    #: DataLoader with worker processes moves batches through shared memory and dies on the
+    #: default partway into training, with a bus error naming neither shared memory nor the
+    #: setting that fixes it.
+    shared_memory_mib: int | None
+    #: ``(container variable, Secrets Manager secret name)``. ECS resolves these under the
+    #: execution role while starting the task, so the workload never holds a
+    #: ``secretsmanager`` action of its own. The name carries the suffix Secrets Manager
+    #: assigned, because ``ValueFrom`` is a lookup and not a pattern.
+    secrets: tuple[tuple[str, str], ...]
+    #: The default environment, which every real submission overrides. Declared rather than
+    #: omitted because an override can only replace a key the definition declares.
+    default_environment: tuple[tuple[str, str], ...]
+
+
+CONTAINER_SHAPES: Final[Mapping[str, ContainerShape]] = {
+    # 32 vCPU and 60 GiB against a c7i.8xlarge's 32 and 64. The gap is not rounding: the
+    # ECS agent and the host's own processes need memory, and a container asking for all
+    # 65536 MiB never fits on the instance it was sized for.
+    "cpu-32vcpu": ContainerShape(
+        vcpus=32,
+        memory_mib=61440,
+        gpus=0,
+        shared_memory_mib=None,
+        secrets=(),
+        default_environment=(
+            ("EDULLM_OUTPUT_BUCKET", f"{SANDBOX_RESOURCE_PREFIX}outputs"),
+            ("EDULLM_OUTPUT_PREFIX", "teams/data-prep/runs/"),
+        ),
+    ),
+    # 4 vCPU and 15 GiB against a g5.xlarge's 4 and 16, leaving 1 GiB for the ECS agent and
+    # the host.
+    "gpu-1xa10g": ContainerShape(
+        vcpus=4,
+        memory_mib=15360,
+        gpus=1,
+        shared_memory_mib=4096,
+        secrets=(("WANDB_API_KEY", f"{SANDBOX_RESOURCE_PREFIX}wandb-api-key-fnwEVp"),),
+        default_environment=(
+            ("EDULLM_OUTPUT_BUCKET", f"{SANDBOX_RESOURCE_PREFIX}outputs"),
+            (
+                "EDULLM_OUTPUT_PREFIX",
+                f"s3://{SANDBOX_RESOURCE_PREFIX}outputs/no-submission-supplied-a-prefix/",
+            ),
+        ),
+    ),
+}
+
+
+def job_definition_name(run_id: str) -> str:
+    """What the definition registered for one run is called.
+
+    The run id, under this project's resource prefix. Everything else in this platform
+    joins on the run id -- it is the S3 key, the Step Functions execution name and the Batch
+    job name -- and a definition registered for a run that then vanished has to be findable
+    the same way. The prefix is what a ``batch:RegisterJobDefinition`` grant can be scoped
+    to, so a name minted outside it would be a name the submitting role could not register.
+
+    Sixty-four characters against Batch's 128, so the bound is checked rather than reasoned
+    about: a run id is fixed-length today, and the check is here to fail loudly rather than
+    at the API if either the prefix or the identifier ever grows.
+    """
+    name = f"{SANDBOX_RESOURCE_PREFIX}{run_id}"
+    if len(name) > MAXIMUM_JOB_DEFINITION_NAME_LENGTH:
+        raise ValueError(
+            f"a job definition name may be at most {MAXIMUM_JOB_DEFINITION_NAME_LENGTH} "
+            f"characters and {name!r} is {len(name)}"
+        )
+    return name
+
+
+def partition_and_account(role_arn: str) -> tuple[str, str]:
+    """The partition and account an ARN the resolver assembled was assembled from.
+
+    Read back out rather than taken as arguments, because this function takes what
+    ``batch_submit_request`` takes and nothing else. ``resolve_execution_target`` built
+    these ARNs from an account the Lambda read off its own context, so the account in them
+    is the account this code is running in by construction -- and reading it back keeps the
+    account from becoming a second argument that some caller could pass a different value
+    for.
+    """
+    segments = role_arn.split(":")
+    return segments[1], segments[4]
+
+
+def batch_register_job_definition_request(
+    *,
+    manifest: RunManifest,
+    target: ExecutionTarget,
+    run_id: str,
+) -> dict[str, Any]:
+    """The exact parameter block the state machine sends to ``batch:RegisterJobDefinition``.
+
+    What comes out is the definition ``infra/batch-compute.yaml`` or
+    ``infra/batch-compute-gpu.yaml`` already deploys for this profile, with two things
+    changed: the name is the run's, and the image is the digest the manifest declared. Not
+    a new shape -- see :class:`ContainerShape` for why the deployed shape is restated here
+    at all, and for the seam test that holds the restatement to the templates.
+
+    Keys are Batch's own spelling, capitalised as the Step Functions SDK integration wants
+    them, because this structure is passed through whole rather than translated.
+
+    Both roles come from the target and are set here rather than at submission, because
+    Batch takes them when a definition is registered and nowhere else -- which is what
+    :class:`~.contracts.execution.ExecutionTarget` already says about why it carries two
+    roles that no submit request mentions.
+    """
+    shape = CONTAINER_SHAPES.get(target.compute_profile)
+    if shape is None:
+        raise UnshapedComputeProfileError(
+            f"compute profile {target.compute_profile!r} has an execution target but no "
+            "container shape, so what its job definition should ask for is unknown; the "
+            "profile was promoted in config/execution-targets.yaml without being given a "
+            "shape in src/edullm_platform/execution.py"
+        )
+    partition, account_id = partition_and_account(target.execution_role_arn)
+    # The deployed definition's name, without a revision suffix. resolve_execution_target
+    # never puts one there, but BatchJobDefinitionArn permits ``:5`` and a colon reaching
+    # the log stream prefix below would be a stream nobody can find rather than an error.
+    deployed_name = target.job_definition_arn.rsplit("/", maxsplit=1)[1].split(":", maxsplit=1)[0]
+
+    resource_requirements: list[dict[str, str]] = [
+        {"Type": "VCPU", "Value": str(shape.vcpus)},
+        {"Type": "MEMORY", "Value": str(shape.memory_mib)},
+    ]
+    if shape.gpus > 0:
+        resource_requirements.append({"Type": "GPU", "Value": str(shape.gpus)})
+
+    container: dict[str, Any] = {
+        # THE ONE FIELD THIS FUNCTION EXISTS FOR. Pinned by digest and never by a tag, for
+        # the reason the templates give: a tag is a mutable pointer, so the bytes that run
+        # would stop being the bytes the decision record names.
+        "Image": (
+            f"{account_id}.dkr.ecr.{target.region}.amazonaws.com/"
+            f"{PUBLISHED_IMAGE_REPOSITORY}@{manifest.image_digest}"
+        ),
+        # Two roles, and the difference between them is the point. The execution role is
+        # ECS's identity while it starts the task -- it pulls the image and opens the log
+        # stream, and the container never sees those credentials. The workload role is what
+        # the container's own process runs as, and it is the one an untrusted training
+        # command can reach.
+        "ExecutionRoleArn": target.execution_role_arn,
+        "JobRoleArn": target.workload_role_arn,
+        "ResourceRequirements": resource_requirements,
+    }
+    if shape.secrets:
+        container["Secrets"] = [
+            {
+                "Name": variable,
+                "ValueFrom": (
+                    f"arn:{partition}:secretsmanager:{target.region}:{account_id}"
+                    f":secret:{secret}"
+                ),
+            }
+            for variable, secret in shape.secrets
+        ]
+    # The default command and environment, both of which this run's own submission
+    # overrides a moment later. Declared rather than omitted because ContainerOverrides can
+    # only override a key the definition declares in the first place, and because the key
+    # names here and in the submit request have to match exactly -- a Command here against
+    # a Commands there is a silently dropped override.
+    #
+    # The default prints the *deployed* definition's name rather than this registration's,
+    # so that a registered definition is the deployed one with the image swapped and a test
+    # can compare the two verbatim.
+    container["Command"] = [
+        "python",
+        "-c",
+        f'print("{deployed_name}: no command override was supplied")',
+    ]
+    container["Environment"] = [
+        {"Name": name, "Value": value} for name, value in shape.default_environment
+    ]
+    if shape.shared_memory_mib is not None:
+        container["LinuxParameters"] = {"SharedMemorySize": shape.shared_memory_mib}
+    container["LogConfiguration"] = {
+        "LogDriver": "awslogs",
+        "Options": {
+            "awslogs-group": target.log_group,
+            # The deployed definition's stream prefix, which is its own name without this
+            # project's resource prefix -- cpu-run, gpu-run. Derived rather than tabulated
+            # so that a stream cannot end up filed under a run id, which would make a log
+            # stream findable only by the reader who already knew the run.
+            "awslogs-stream-prefix": deployed_name.removeprefix(SANDBOX_RESOURCE_PREFIX),
+            "awslogs-region": target.region,
+        },
+    }
+    # Explicit rather than left to the default, because the default is the answer that
+    # matters and a reader should not have to know it. A privileged container shares the
+    # host's kernel capabilities, which on a shared container host means reaching the ECS
+    # agent's credentials -- and those are the instance role.
+    container["Privileged"] = False
+
+    return {
+        "JobDefinitionName": job_definition_name(run_id),
+        "Type": "container",
+        "PlatformCapabilities": ["EC2"],
+        # Job tags reach the underlying ECS task only when asked, and the tags carrying the
+        # run id and the team are what Phase 5's cost attribution reads.
+        "PropagateTags": True,
+        "RetryStrategy": {"Attempts": JOB_DEFINITION_ATTEMPT_FLOOR},
+        "Timeout": {"AttemptDurationSeconds": JOB_DEFINITION_TIMEOUT_FLOOR_SECONDS},
+        "ContainerProperties": container,
+    }

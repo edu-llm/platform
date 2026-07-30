@@ -96,6 +96,21 @@ Resources:
                   - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu
                   - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-run
                   - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-run:*
+                  # THE PER-RUN DEFINITION, WITHOUT WHICH THIS ROLE CAN REGISTER A JOB
+                  # DEFINITION AND NOT SUBMIT TO IT. SubmitJob authorizes against the
+                  # definition as well as the queue, so a submission naming the revision
+                  # registered a state earlier is denied with a 403 naming the definition --
+                  # the same denial batch:TagResource produced on the first run through this
+                  # path. It fails closed into a submission-failure record rather than
+                  # launching anything, and it fails on every accepted submission.
+                  #
+                  # Scoped to the minted shape rather than to the project prefix. A run id
+                  # is run_<uuid7> and job_definition_name puts it under this prefix, so
+                  # sbsandbox-intern-edullm-run_* matches exactly what a registration can
+                  # produce and matches neither cpu-run nor gpu-run, which do not begin
+                  # run_. A definition named anything else stays a visible edit here.
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-run_*
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-run_*:*
               # batch:TagResource is here to serve the SubmitJob above and for no other
               # reason. batch_submit_request always sends Tags -- the run id, the team and
               # the compute profile, which is what Phase 5's cost attribution reads -- and
@@ -125,6 +140,94 @@ Resources:
                   - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu
                   - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-run
                   - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-run:*
+                  # Mirrors SubmitJob's list exactly, for the reason the comment above gives:
+                  # it is the same call against the same resources, billed to a second action
+                  # name, and a list widened on one and not the other produces a role that
+                  # can submit and cannot.
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-run_*
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-run_*:*
+              # THE FIRST GRANT THAT LETS THIS ROLE CREATE A BATCH RESOURCE RATHER THAN USE
+              # ONE, AND THE REASON IS THAT AWS BATCH HAS NO SUBMIT-TIME IMAGE OVERRIDE.
+              # ContainerOverrides carries command, environment, instanceType and
+              # resourceRequirements and no image field, so RegisterJobDefinition is the
+              # only mechanism that can put a run on the digest its manifest declared.
+              # Without this, the declared digest is validated, gates admission through the
+              # ECR scan above, is written immutably into lineage -- and selects nothing,
+              # because what runs is whatever infra/batch-compute.yaml pins.
+              #
+              # NO ":*" SUFFIX, AND UNLIKE THE SUBMIT SCOPE IT NEEDS NONE. Not because a
+              # revision is absent from the ARN: it is there, and
+              # infra/iam/infra-deployer-role.yaml records the deploy that learned it the
+              # hard way -- a grant on the bare definition name authorizes revision 1 and
+              # denies revision 2, which reads as a permissions change nobody made. It is
+              # because an IAM wildcard matches ':' as well as every other character, so a
+              # scope ending in '*' already covers the ':5' form, and a second entry
+              # spelling it out would be a strict subset of this one. The submit scope needs
+              # both forms because it names its two definitions in full and so has no
+              # trailing wildcard to do that work. The same reasoning is already written
+              # into the deployer's log-group scope.
+              #
+              # The prefix starts after the edullm segment for the reason every scope in
+              # this repository does: sbsandbox-intern- alone is every intern's prefix in a
+              # shared account, and a job definition names the two IAM roles its container
+              # runs as -- so a wider scope would not be a Batch resource being edited, it
+              # would be an identity handed to an image somebody else did not choose.
+              #
+              # DELIBERATELY ABSENT: batch:DeregisterJobDefinition. One definition is
+              # registered per submission and they accumulate, which is untidy and is not a
+              # problem: Batch enforces no quota on revisions. Cleaning them up is a later
+              # phase's work and belongs to a different principal, because this one records
+              # a run as accepted and then launches it -- a role that could also retire the
+              # definition a running job is bound to could make a completed run unreadable,
+              # since the binding record names a definition Batch would no longer describe.
+              # Granting a verb nothing calls widens the role for nothing.
+              - Effect: Allow
+                Action: batch:RegisterJobDefinition
+                # Narrowed to the shape a registration can actually mint, matching the two
+                # lists above. The project prefix would also let this role register a
+                # revision of sbsandbox-intern-edullm-cpu-run or -gpu-run, replacing the
+                # image on a definition the CloudFormation stack owns and that every earlier
+                # run was submitted against. Nothing needs that, and the narrower scope means
+                # the deployed definitions can only be changed by the template that declares
+                # them.
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-run_*
+              # The other half of RegisterJobDefinition, and the one to argue about rather
+              # than skim. A job definition names an execution role and a job role, so
+              # registering one passes both -- that call is where a container's two
+              # identities are fixed, and the calling principal must hold iam:PassRole for
+              # each. infra/iam/infra-deployer-role.yaml carries the same pair of grants for
+              # the same call and the same reason.
+              #
+              # FOUR WHOLE ROLE ARNS, AND THEY MUST STAY WHOLE. A prefix --
+              # sbsandbox-intern-edullm-* -- would read as the same grant and is not:
+              # passing a role is how a principal lends its own limits away, so a prefix
+              # would let this state machine hand a container any role that ever takes a
+              # matching name, including one created in a later phase with permissions
+              # nobody weighed against the only principal in this account that may start
+              # compute. Naming each one means a fifth is a visible edit here.
+              #
+              # Four rather than two because there are two backed compute profiles and each
+              # has its own pair; config/execution-targets.yaml is what says so, and
+              # tests/test_phase5_infrastructure.py reads that file and this list and
+              # compares them, so promoting a third profile without extending this list
+              # fails there rather than at the first submission on it.
+              #
+              # The instance roles are absent and must stay absent. An instance role is
+              # passed by batch:CreateComputeEnvironment, which this principal does not
+              # hold, and it is the one role in the Batch set whose credentials a process on
+              # a shared container host can reach through the ECS agent.
+              #
+              # The blast radius is bounded on the other side too: each of these four is
+              # trusted only by the AWS service its own trust policy names, so passing one
+              # anywhere else yields a role that cannot be assumed.
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-execution
+                  - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-workload
+                  - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-execution
+                  - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-workload
               # ecr:DescribeImageScanFindings, for the ReadImageScan state the state
               # machine runs before it validates anything. The findings reach the validator
               # as a payload key the ASL builds from this task's result and from nowhere

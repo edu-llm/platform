@@ -9,7 +9,7 @@ This tripwire is doing more work in Phase 2 than in Phase 1, and it is worth und
 | role | template | canonical bytes | digest |
 | --- | --- | --- | --- |
 | sbsandbox-intern-edullm-admission | infra/iam/admission-role.yaml | 2044 | sha256:99f597e80519995aeaec203e2f460f7a487447f4f61dc218bf63c2708be42b4a |
-| sbsandbox-intern-edullm-admission-states | infra/iam/admission-service-roles.yaml | 3523 | sha256:e265fadf960571485cbe58ffc427d7da2cddad7f576d115c7b1fcd2c2e22bbea |
+| sbsandbox-intern-edullm-admission-states | infra/iam/admission-service-roles.yaml | 4782 | sha256:e03226922d6e826a21c4336cb932ca954ec3c8975323c732b7bd3233549169bf |
 | sbsandbox-intern-edullm-admission-lambda | infra/iam/admission-service-roles.yaml | 918 | sha256:2eca3d6d95954cabaf13148f99c380a90d4fe6049c254c195928adee1f81ec4c |
 
 ## How this fails

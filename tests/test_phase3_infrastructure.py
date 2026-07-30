@@ -99,6 +99,11 @@ COMPUTE_PATHS = (COMPUTE_PATH, GPU_COMPUTE_PATH)
 GPU_COMPUTE_ENVIRONMENT_NAME = "sbsandbox-intern-edullm-gpu"
 GPU_JOB_QUEUE_NAME = "sbsandbox-intern-edullm-gpu"
 GPU_JOB_DEFINITION_NAME = "sbsandbox-intern-edullm-gpu-run"
+
+#: The definition an accepted run registers for itself, as the states role's grants name it.
+#: No template creates it -- it is minted at admission from the run id, which is why it is a
+#: pattern here rather than a name read out of a template like the two above.
+PER_RUN_JOB_DEFINITION_NAME = "sbsandbox-intern-edullm-run_*"
 GPU_BATCH_LOG_GROUP = "/aws/batch/sbsandbox-intern-edullm-gpu"
 GPU_EXECUTION_ROLE_NAME = "sbsandbox-intern-edullm-batch-gpu-execution"
 GPU_WORKLOAD_ROLE_NAME = "sbsandbox-intern-edullm-batch-gpu-workload"
@@ -320,10 +325,12 @@ def cpu_manifest(**overrides: Any) -> RunManifest:
 def submit_request() -> dict[str, Any]:
     """The request Python builds, so the seam tests can compare it to what AWS declares."""
     manifest = cpu_manifest()
+    target = seam_target(manifest)
     return batch_submit_request(
         manifest=manifest,
-        target=seam_target(manifest),
+        target=target,
         run_id=SEAM_RUN_ID,
+        job_definition=target.job_definition_arn,
     )
 
 
@@ -346,7 +353,10 @@ def every_submit_request_field() -> frozenset[str]:
         key
         for manifest in (single, fanned)
         for key in batch_submit_request(
-            manifest=manifest, target=seam_target(manifest), run_id=SEAM_RUN_ID
+            manifest=manifest,
+            target=seam_target(manifest),
+            run_id=SEAM_RUN_ID,
+            job_definition=seam_target(manifest).job_definition_arn,
         )
     )
 
@@ -710,6 +720,16 @@ def test_the_job_definition_the_states_role_may_submit_is_the_one_that_is_regist
     on one side denies every submission -- which fails closed and still costs a live run to
     diagnose. Both ARN forms are required because RegisterJobDefinition mints a revision on
     every deploy and the revision is part of the ARN.
+
+    **A third name the templates do not create, and it is the point of this phase.** An
+    accepted run registers a definition of its own so that the digest its manifest declared
+    is the image its container is given -- AWS Batch has no submit-time image override, so
+    registering is the only mechanism. That definition is minted at admission and appears in
+    no template, so this can no longer assert that the role submits only to what the
+    templates deploy. What it asserts instead is that the role submits to those two and to
+    the minted shape and to nothing else: ``run_`` is what ``job_definition_name`` produces
+    and is a prefix neither deployed definition begins with, so a fourth name is still a
+    visible edit here.
     """
     registered = names_across_compute_templates("AWS::Batch::JobDefinition", "JobDefinitionName")
     from_the_role = {
@@ -720,10 +740,10 @@ def test_the_job_definition_the_states_role_may_submit_is_the_one_that_is_regist
     revisions = [arn for arn in states_role_submit_arns() if arn.endswith(":*")]
 
     assert registered == {JOB_DEFINITION_NAME, GPU_JOB_DEFINITION_NAME}
-    assert from_the_role == registered
-    assert len(revisions) == len(registered), (
+    assert from_the_role == registered | {PER_RUN_JOB_DEFINITION_NAME}
+    assert len(revisions) == len(from_the_role), (
         "a grant on the bare definition name authorizes nothing once a second revision "
-        "exists, so every registered definition needs both ARN forms"
+        "exists, so every definition this role may submit to needs both ARN forms"
     )
 
 
@@ -1004,7 +1024,14 @@ def test_the_execution_block_is_carried_through_the_selector_and_never_selected(
     assert lift["Type"] == "Pass"
     assert lift["InputPath"] == "$.admission.payload.execution"
     assert lift["ResultPath"] == "$.execution"
-    assert lift["Next"] == "SubmitToBatch"
+    # RegisterJobDefinition rather than SubmitToBatch since an accepted run registers the
+    # definition it is executed on. What this line is protecting is unchanged and is not
+    # the name: it is that the lift feeds the submission path and that the whole path is
+    # downstream of the Choice, so the carrier is only ever read where `execution` is
+    # guaranteed to exist. The register state is the first reader of it now, and
+    # tests/test_phase5_infrastructure.py is where its own shape is held.
+    assert lift["Next"] == "RegisterJobDefinition"
+    assert states["RegisterJobDefinition"]["Next"] == "SubmitToBatch"
     # Only reachable from the accepted branch of the Choice, which is what makes the key
     # guaranteed rather than hoped for.
     assert states["AdmissionAccepted"]["Choices"][0]["Next"] == "ResolveExecutionTarget"
@@ -1568,26 +1595,38 @@ def test_the_states_role_gains_batch_and_ecr_reads_and_no_way_to_stop_a_job() ->
         for action in statement_actions(statement)
     ]
 
-    # Two Batch actions, and the second is not a second capability. batch_submit_request
-    # always sends Tags, and Batch authorizes tagging-on-creation under its own action
-    # name, so a role holding SubmitJob without TagResource is refused every submission --
-    # measured on the first run through the whole path, which reached SubmitToBatch and got
-    # a 403 naming the job definition. Asserted as an exact list so a third action cannot
-    # arrive unnoticed on the strength of this one having been allowed.
+    # Three Batch actions, and only the first is a capability of its own.
+    # batch_submit_request always sends Tags, and Batch authorizes tagging-on-creation
+    # under its own action name, so a role holding SubmitJob without TagResource is refused
+    # every submission -- measured on the first run through the whole path, which reached
+    # SubmitToBatch and got a 403 naming the job definition. RegisterJobDefinition arrived
+    # later, because Batch has no submit-time image override and it is the only mechanism
+    # that can put a run on the digest its manifest declared; its scope, the iam:PassRole
+    # that call needs, and the deregister verb it deliberately does not come with are
+    # asserted in tests/test_phase5_infrastructure.py.
+    #
+    # Asserted as an exact list so a fourth action cannot arrive unnoticed on the strength
+    # of these three having been allowed. That is the property being re-armed here, and it
+    # is why the list is extended rather than turned into a subset check.
     assert [action for action in actions if action.startswith("batch:")] == [
         "batch:SubmitJob",
         "batch:TagResource",
+        "batch:RegisterJobDefinition",
     ]
     assert [action for action in actions if action.startswith("ecr:")] == [
         "ecr:DescribeImageScanFindings"
     ]
-    # UntagResource joins the three that were already refused. The tags are lineage: a
+    # UntagResource joins the two that were already refused. The tags are lineage: a
     # principal that could remove them could detach a running job from the run that paid
     # for it, which is the same harm as terminating one and harder to see afterwards.
+    # DeregisterJobDefinition replaces RegisterJobDefinition in this set for the reason
+    # tests/test_phase5_infrastructure.py gives: revisions accumulate against no quota, so
+    # nothing needs the verb, and a role that could retire the definition a running job is
+    # bound to could make a completed run unreadable.
     assert not {
         "batch:TerminateJob",
         "batch:CancelJob",
-        "batch:RegisterJobDefinition",
+        "batch:DeregisterJobDefinition",
         "batch:UntagResource",
     } & set(actions)
 

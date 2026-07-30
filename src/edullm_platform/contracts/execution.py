@@ -43,6 +43,7 @@ __all__ = [
     "BATCH_JOB_DEFINITION_ARN_PATTERN",
     "BATCH_JOB_QUEUE_ARN_PATTERN",
     "IAM_ROLE_ARN_PATTERN",
+    "SANDBOX_RESOURCE_PREFIX",
     "BatchJobBinding",
     "ExecutionTarget",
     "ExecutionTargetBinding",
@@ -68,10 +69,17 @@ BATCH_JOB_ARN_PATTERN = (
 IAM_ROLE_ARN_PATTERN = r"^arn:aws[a-z0-9-]*:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_-]{1,64}$"
 LOG_GROUP_PATTERN = r"^/[A-Za-z0-9_./#-]{1,511}$"
 
+#: What every resource this project owns in the shared sandbox account is called. Named
+#: once because it is now read as a value as well as matched as a pattern: a job definition
+#: registered per run is minted under it rather than read out of the catalog, and the two
+#: spellings drifting would put a run's definition outside whatever the submitting role is
+#: eventually scoped to.
+SANDBOX_RESOURCE_PREFIX = "sbsandbox-intern-edullm-"
+
 #: Names, for the catalog. Pinned to this project's prefix so a target cannot point at
 #: another team's queue in the shared account by a typo, which an ARN pattern alone would
 #: allow.
-SANDBOX_RESOURCE_NAME_PATTERN = r"^sbsandbox-intern-edullm-[a-z0-9][a-z0-9-]{0,80}$"
+SANDBOX_RESOURCE_NAME_PATTERN = rf"^{SANDBOX_RESOURCE_PREFIX}[a-z0-9][a-z0-9-]{{0,80}}$"
 BatchResourceName = Annotated[str, Field(pattern=SANDBOX_RESOURCE_NAME_PATTERN)]
 IamRoleName = Annotated[str, Field(pattern=SANDBOX_RESOURCE_NAME_PATTERN)]
 
