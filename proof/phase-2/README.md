@@ -2,8 +2,8 @@
 
 Phase: phase-2
 Bundle schema version: 1
-Source commit: 4f259c8735793ee9c769421af3dde50861100bad
-Generated: 2026-07-30T00:42:18+00:00
+Source commit: b1a4a94ceb9b9eea60fa2d458be0e3bf01a4d4f5
+Generated: 2026-07-30T07:17:51+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 2 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase2_proof.py` at generation time. It is not done, and the Result table below says by how much.
 
@@ -45,14 +45,14 @@ This run evaluated 22 acceptance criteria: twelve criteria are covered, one crit
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3542 |
-| suite tests executed | 3376 |
-| suite passed | 3376 |
+| suite tests collected | 3621 |
+| suite tests executed | 3455 |
+| suite passed | 3455 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
-| matrix node ids executed | 581 |
-| matrix node ids passed | 581 |
+| matrix node ids executed | 599 |
+| matrix node ids passed | 599 |
 | matrix node ids failed | 0 |
 | phase criteria | 22 |
 | criteria COVERED | 12 (1, 5, 8, 10, 13, 15, 16, 17, 18, 20, 21, 22) |
@@ -88,8 +88,8 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 
 | file | digest |
 | --- | --- |
-| .github/workflows/deploy-phase2-admission.yml | sha256:07d3f22fff1655577bcd7b125a7cc77ea6c97258438c45c79f82c4d3fa3c0848 |
-| .github/workflows/submit-run.yml | sha256:80c621ee2dcf716cd364e5b464e06bb59c227d94dc34ba2d1286efae432c2948 |
+| .github/workflows/deploy-phase2-admission.yml | sha256:e82f87cb4bad4186d96d5e55514d863e4557b1519c2acbc08098b7d1b3756dc5 |
+| .github/workflows/submit-run.yml | sha256:028a9056161e4885be487da229c720c06748f44d16f2cc8c33aea663d387cccd |
 | config/organization.yaml | sha256:c20f775a586005475853d2d80192b9e7b98666a3c9092ebf10a3f69869cc612b |
 | config/policy.yaml | sha256:8efa2f00527f9ad1677ed27452a2b6093a6a8c9e8190cf3e0a583b0f68787b39 |
 | fixtures/authorization/admin-exception.yaml | sha256:4ad48b8ecd405d11428cf446f74d0a8aeabf904365f3fee7b599b6a7ed0b6fa0 |
