@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
+from edullm_platform.evidence import scan_for_secrets
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 README_PATH = PROJECT_ROOT / "README.md"
@@ -31,13 +31,6 @@ CANCELLATION_SENTENCE = (
     "Cancelling the workflow does not stop the job; ask an admin, and note the mandatory "
     "timeout bounds it."
 )
-
-#: What must never reach a page written for people outside the account. Every committed
-#: capture in this repository has its account id masked by a tool; a page somebody types
-#: by hand is the one place in the tree where the unmasked value has nothing standing in
-#: its way.
-DISCLOSURES = ("056956104102", "AKIA", "aws_secret_access_key")
-
 
 def readme_text() -> str:
     return README_PATH.read_text(encoding="utf-8")
@@ -135,13 +128,20 @@ def test_the_page_does_not_promise_a_checkpoint_can_resume_training() -> None:
     assert "starts the optimizer cold" in section
 
 
-@pytest.mark.parametrize("disclosure", DISCLOSURES)
-def test_the_page_discloses_no_account_id_and_no_credential(disclosure: str) -> None:
+def test_the_page_discloses_no_account_id_and_no_credential() -> None:
     """The whole file, not the section, because the reason to scan does not stop at a heading.
 
     This is the only document in the repository written for people outside the team that
     built it, and the pilot page is the part of it most likely to grow a worked example --
     a queue arn, a console link, a copied command with a profile in it. Scanning only the
     section would leave the paste one heading away from being unchecked.
+
+    **Through the shared scanner rather than against a list of literals, and the first
+    attempt at this test is why.** It named the account id it was looking for, which put the
+    account id in a tracked file, which is the disclosure it existed to prevent -- caught in
+    CI by ``test_evidence.py`` and not locally, because that check reads the tracked tree and
+    the new file was not yet added. Asking ``scan_for_secrets`` is both shorter and stronger:
+    it refuses any twelve-digit run, any access key id, any secret key and any session token,
+    rather than the three spellings somebody thought of.
     """
-    assert disclosure not in readme_text()
+    scan_for_secrets(readme_text())
