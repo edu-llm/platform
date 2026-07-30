@@ -83,9 +83,11 @@ uv run python tools/export_schemas.py
 ## Pilot limitations
 
 This platform is open to a named pilot. It works end to end and it is not finished, and
-this page is everything known to be missing. Anything that goes wrong which is **not** on
-this page is worth reporting, because this page is the reason the remaining checks are
-allowed to wait.
+this page is what is known to be missing rather than everything that is. Anything that goes
+wrong which is **not** on this page is worth reporting, and is the most useful thing a pilot
+user can produce — the reason a short list of named people may use a phase whose checks are
+still open is precisely that they are close enough to the work to notice what nobody wrote
+down.
 
 **Cancelling does not stop your job.** Cancelling the workflow does not stop the job; ask an
 admin, and note the mandatory timeout bounds it. No identity in this account holds
