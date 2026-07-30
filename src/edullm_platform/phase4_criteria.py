@@ -361,11 +361,14 @@ def phase4_criteria() -> tuple[CriterionSpec, ...]:
         ),
         CriterionSpec(
             number="7",
-            statement="The workload role cannot read another team's restricted prefix.",
+            statement=(
+                "The workload role reaches run outputs and nothing else: it cannot enumerate "
+                "the outputs bucket, and it cannot write to the store that records what it did."
+            ),
             status=CriterionStatus.COVERED,
             pilot_blocking=True,
             proving_node_ids=(
-                *_ids(RUN_EVIDENCE, "test_the_workload_role_was_refused_every_prefix_it_must_not_reach"),
+                *_ids(RUN_EVIDENCE, "test_the_workload_role_was_refused_the_two_reaches_widening_did_not_grant"),
                 *_ids(RUN_EVIDENCE, "test_the_container_could_not_write_to_the_store_that_records_what_it_did"),
             ),
             supporting_node_ids=(
@@ -376,11 +379,26 @@ def phase4_criteria() -> tuple[CriterionSpec, ...]:
             scope_limits=(
                 A_REFUSAL_RATHER_THAN_A_POLICY,
                 (
-                    "The GPU workload role is scoped to teams/platform/runs/*, narrower than the "
-                    "CPU role's teams/*/runs/*. One team exists, so the narrowing changes nothing "
-                    "anybody can see today -- and it is what makes this criterion closeable at "
-                    "all, because a role permitting every team cannot fail to reach another "
-                    "team's prefix."
+                    "THE STATEMENT WAS REWRITTEN WHEN THE GPU ROLE WAS WIDENED, AND THE OLD ONE "
+                    "IS HERE SO THE CHANGE IS LEGIBLE. It read: 'The workload role cannot read "
+                    "another team's restricted prefix.' The GPU trio was scoped to "
+                    "teams/platform/runs/* to make exactly that closeable -- a role permitting "
+                    "every team cannot fail to reach another team's prefix -- which is a grant "
+                    "shaped by a check rather than by a requirement. Isolation between the "
+                    "groups sharing this account is not a goal: they are one team building one "
+                    "model, and nobody can name a harm that follows from one reading another's "
+                    "outputs. The role now reads teams/*/runs/*, matching the CPU role, so the "
+                    "criterion states the containment that survives rather than a property the "
+                    "platform decided against."
+                ),
+                (
+                    "Two of the four captured probes no longer describe the deployed role. "
+                    "read_another_teams_prefix and write_to_another_teams_prefix were refused "
+                    "when captured and would now succeed; that capture stays committed because "
+                    "it records an event that happened, and it is cited as supporting rather "
+                    "than proving for that reason. The two that still hold are the two the "
+                    "evidence model itself calls load-bearing: list_the_whole_outputs_bucket, "
+                    "which the s3:prefix condition still bounds, and write_to_the_lineage_bucket."
                 ),
                 (
                     "A separate GPU role trio exists rather than the CPU roles being tightened. "

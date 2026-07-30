@@ -1,14 +1,14 @@
 {
   "environment": "sandbox",
   "grants_delete": false,
-  "observed_at": "2026-07-29T15:20:37Z",
+  "observed_at": "2026-07-30T16:36:36Z",
   "reaches_the_lineage_bucket": false,
   "readable_prefixes": [
-    "teams/platform/runs/*"
+    "teams/*/runs/*"
   ],
   "role_name": "sbsandbox-intern-edullm-batch-gpu-workload",
   "source": "aws",
   "writable_prefixes": [
-    "teams/platform/runs/*"
+    "teams/*/runs/*"
   ]
 }

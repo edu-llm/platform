@@ -100,35 +100,33 @@ def test_no_workload_role_reaches_outside_the_team_prefix_shape() -> None:
                     )
 
 
-def test_the_gpu_workload_role_names_exactly_one_team() -> None:
-    """Mutation: widen it to teams/*/runs/* to match the CPU role.
+def test_both_workload_roles_reach_every_team_by_decision() -> None:
+    """Mutation: narrow either one to a named team.
 
-    It was written narrow on purpose, and the narrowness is what makes Phase 4's cross-team
-    criterion closeable at all -- a role permitting every team cannot fail to reach another
-    team's prefix, so the check would have nothing to assert.
+    That would be a tightening nobody asked for, and it has a cost that is easy to miss:
+    Batch fixes a container's roles when a job definition is registered, so a role per team
+    means a job definition per team. Structure built for a boundary this lab does not want.
+
+    **The GPU role was narrow until this was written, and the history is the point.** It
+    named `platform` alone so that Phase 4's cross-team criterion had something to assert --
+    a role permitting every team cannot fail to reach another team's prefix. That is a
+    reason about evidence rather than about risk, and a grant shaped to satisfy a check is
+    the anomaly once the check turns out to encode no requirement. Asked directly, nobody
+    could name a harm: one lab building one model, where another person reading your outputs
+    is collaboration, and collision is already prevented by the per-run prefix segment and
+    by the absence of ``s3:DeleteObject``.
+
+    The trigger for reopening it is in the module docstring and is not the arrival of a
+    second team. It is an external collaborator, a second lab, or a dataset that must not be
+    trained on.
     """
-    reached = teams_reachable_by(role_named(GPU_WORKLOAD))  # type: ignore[arg-type]
+    reach = {
+        role.role_name: teams_reachable_by(role)  # type: ignore[arg-type]
+        for role in workload_roles(PROJECT_ROOT)
+    }
 
-    assert reached == frozenset({THE_ONLY_TEAM})
-    assert EVERY_TEAM not in reached
-
-
-def test_the_cpu_workload_role_reaches_every_team_on_purpose() -> None:
-    """The measured state, recorded as a decision rather than as a defect.
-
-    Mutation: narrow it to a named team. That would be a tightening nobody asked for, and
-    it would cost the Phase 5 gate: adding a team would then require an IAM amendment and a
-    laptop-applied deploy rather than a line of configuration.
-
-    This was written as a defect first, and the correction is worth keeping visible. The
-    reasoning was that a wildcard matching one name today will silently match two tomorrow,
-    which is true. What it skipped is what the second match would cost, and the answer is
-    nothing: one lab, one model, no adversary, and collision already prevented by the
-    per-run prefix and the absence of s3:DeleteObject.
-    """
-    reached = teams_reachable_by(role_named(CPU_WORKLOAD))  # type: ignore[arg-type]
-
-    assert reached == frozenset({EVERY_TEAM})
+    assert reach[CPU_WORKLOAD] == frozenset({EVERY_TEAM})
+    assert reach[GPU_WORKLOAD] == frozenset({EVERY_TEAM})
 
 
 def test_the_wildcard_is_a_decision_and_the_narrow_role_is_the_one_that_needs_a_reason() -> None:
@@ -148,20 +146,23 @@ def test_the_wildcard_is_a_decision_and_the_narrow_role_is_the_one_that_needs_a_
     criterion had something to assert, which is a reason about evidence rather than about
     risk.
 
-    What this asserts now is that both remain deliberate: at least one role reaches every
-    team, at least one reaches exactly one, and neither drifted into the other by accident.
-
-    The trigger for reopening it is written in the module docstring and is not the arrival
-    of a second team: it is an external collaborator, a second lab, or a dataset that must
-    not be trained on.
+    What this asserts now is that **no** workload role names a team. The asymmetry this test
+    was originally written to defend is gone: the GPU trio was the last narrow grant and it
+    was widened to match the CPU one, so there is no longer a role holding a shape that
+    needs a reason. A named team reappearing here is a tightening somebody should have to
+    argue for rather than one that arrives inside a well-intentioned change.
     """
-    reach = {
-        role.role_name: teams_reachable_by(role)  # type: ignore[arg-type]
+    named_a_team = {
+        role.role_name
         for role in workload_roles(PROJECT_ROOT)
+        if EVERY_TEAM not in teams_reachable_by(role)  # type: ignore[arg-type]
     }
 
-    assert reach[CPU_WORKLOAD] == frozenset({EVERY_TEAM})
-    assert reach[GPU_WORKLOAD] == frozenset({THE_ONLY_TEAM})
+    assert named_a_team == set(), (
+        f"{sorted(named_a_team)} scope a workload role to a named team; isolation between "
+        "the groups sharing this account is not a goal, and a role per team costs a job "
+        "definition per team because Batch fixes a container's roles at registration"
+    )
 
 
 def test_binding_a_team_is_a_configuration_change_and_not_an_infrastructure_one() -> None:
@@ -172,8 +173,15 @@ def test_binding_a_team_is_a_configuration_change_and_not_an_infrastructure_one(
     needs an IAM template amendment, a laptop-applied deploy and a job definition -- which
     is the redesign, arriving as a well-intentioned tightening.
 
-    So the assertion is that no workload role names a specific team *except* the one that
-    does so for a recorded reason, and that binding a team touches config only.
+    So the assertion is that no workload role names a specific team, and therefore that
+    binding one touches configuration only.
+
+    **This used to carry an exception and no longer needs it.** The GPU role named a team,
+    so binding a second one meant deciding whether that run path was for everybody or needed
+    a role of its own -- the one place where adding a team was not purely a configuration
+    change. Widening the GPU role removed the exception rather than documenting it, so what
+    was "no role except this one" is now simply no role, and any number of teams may be
+    bound without touching a template.
     """
     inventory = load_yaml(PROJECT_ROOT / "config" / "organization.yaml", OrganizationInventory)
     bound = {team.team_id for team in inventory.team_bindings.teams}
@@ -183,14 +191,13 @@ def test_binding_a_team_is_a_configuration_change_and_not_an_infrastructure_one(
         if EVERY_TEAM not in teams_reachable_by(role)  # type: ignore[arg-type]
     }
 
-    assert named_a_team == {GPU_WORKLOAD}, (
-        "a workload role scoped to a named team has to be justified per role; "
-        f"{sorted(named_a_team - {GPU_WORKLOAD})} are not"
+    assert named_a_team == set(), (
+        f"{sorted(named_a_team)} would make adding a team an IAM amendment and a "
+        "laptop-applied deploy rather than a line of configuration"
     )
-    assert bound == set() or bound <= {THE_ONLY_TEAM} or GPU_WORKLOAD not in named_a_team, (
-        "the GPU role names one team, so binding a second means deciding whether that run "
-        "path is for everybody or whether it needs a second role -- which is the one place "
-        "adding a team is not purely a configuration change"
+    assert bound == set() or all(isinstance(team_id, str) for team_id in bound), (
+        "team bindings are configuration and no workload role reads them, so any number "
+        "may be bound without an infrastructure change"
     )
 
 
@@ -244,14 +251,21 @@ def test_the_prefix_the_roles_grant_is_the_prefix_the_platform_derives() -> None
 
     The grant and the location are two spellings of one decision, and Phase 4 inherited a
     version of this where three sources spelled it three ways and two happened to agree.
-    """
-    derived = output_prefix(team=THE_ONLY_TEAM, run_id="run_x")
-    key = derived.removeprefix(f"s3://{OUTPUTS_BUCKET}/")
 
-    assert key.startswith(f"teams/{THE_ONLY_TEAM}/runs/")
-    assert teams_reachable_by(role_named(GPU_WORKLOAD)) == frozenset(  # type: ignore[arg-type]
-        {key.split("/")[1]}
-    )
+    Asserted for a team that is *not* the one every run so far declared, which is the whole
+    of what widening the GPU role bought: a researcher claiming a team of their own writes
+    a checkpoint the role can reach. Under the narrow grant this was the failing case, and
+    it failed at write time, deep inside a training run that had already spent its GPU time.
+    """
+    for team in (THE_ONLY_TEAM, "evaluation"):
+        derived = output_prefix(team=team, run_id="run_x")
+        key = derived.removeprefix(f"s3://{OUTPUTS_BUCKET}/")
+
+        assert key.startswith(f"teams/{team}/runs/")
+        for role_name in (CPU_WORKLOAD, GPU_WORKLOAD):
+            assert teams_reachable_by(role_named(role_name)) == frozenset(  # type: ignore[arg-type]
+                {EVERY_TEAM}
+            ), f"{role_name} cannot reach the prefix the platform derives for {team}"
 
 
 @pytest.mark.parametrize("role_name", [CPU_WORKLOAD, GPU_WORKLOAD])
