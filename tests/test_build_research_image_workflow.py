@@ -724,9 +724,9 @@ def test_publish_job_logs_in_to_ecr_without_a_third_party_login_action() -> None
 
 def test_the_registered_base_is_enforced_on_the_dockerfile_before_the_build() -> None:
     # BASE_IMAGE reaches docker build as a --build-arg, which a Dockerfile is free to
-    # ignore by hardcoding its own FROM. write_image_provenance records base_image_digest
-    # from the registry either way, so without this gate the provenance record would
-    # assert something nothing verified, which is worse than omitting the field.
+    # ignore by hardcoding its own FROM. Phase 1 evidence capture records
+    # base_image_digest from the registry either way, so without this gate a committed
+    # record would assert something nothing verified, which is worse than omitting it.
     publish = _job("publish")
     names = [candidate.get("name") for candidate in publish["steps"]]
     gate = step(publish, BASE_GATE_STEP)
@@ -742,10 +742,10 @@ SKIP_CONDITION = "steps.preflight.outputs.image_digest == ''"
 
 
 def test_an_already_published_tag_skips_the_build_and_the_push() -> None:
-    # ECR tags are immutable and the push happens before the read-back and the provenance
-    # record, so any failure after the push would make that commit unpublishable forever:
-    # the run-URL label guarantees a different manifest digest on the retry, and the tag
-    # cannot be rewritten. A pre-flight lookup makes a re-run resume instead of collide.
+    # ECR tags are immutable and the push happens before the read-back, so any failure
+    # after the push would make that commit unpublishable forever: the run-URL label
+    # guarantees a different manifest digest on the retry, and the tag cannot be
+    # rewritten. A pre-flight lookup makes a re-run resume instead of collide.
     publish = _job("publish")
     names = [candidate.get("name") for candidate in publish["steps"]]
     preflight = step(publish, PREFLIGHT_STEP)
@@ -759,7 +759,6 @@ def test_an_already_published_tag_skips_the_build_and_the_push() -> None:
     # The read-back is never skipped: the digest that leaves this workflow is the one the
     # registry reports on this run, whether or not this run is what put it there.
     assert "if" not in step(publish, "Read published digest from the registry")
-    assert "if" not in step(publish, "Write image provenance")
     assert preflight["env"]["COMMIT_SHA"] == "${{ needs.verify.outputs.commit_sha }}"
     assert preflight["env"]["ECR_REPOSITORY"] == "${{ needs.verify.outputs.ecr_repository }}"
 
@@ -1088,73 +1087,6 @@ def test_an_image_that_cannot_say_when_it_was_built_stops_before_the_push(
     assert "push" not in calls
 
 
-@pytest.mark.slow
-def test_provenance_is_told_when_the_image_was_built_by_whichever_path_ran(
-    tmp_path: Path,
-) -> None:
-    # The build step and the resume step are mutually exclusive and both write the same
-    # file, so provenance reads one value and does not have to know which path produced it.
-    provenance = step(_job("publish"), "Write image provenance")
-    recorded = tmp_path / "argv.txt"
-    stub_bin = tmp_path / "bin"
-    write_stub(
-        stub_bin,
-        "uv",
-        f'printf "%s\\n" "$@" > "{recorded}"\ntouch "${{RUNNER_TEMP}}/image-provenance.json"\n',
-    )
-    (tmp_path / IMAGE_CREATED_FILE).write_text(f"{PUBLISHED_IMAGE_CREATED}\n", encoding="utf-8")
-
-    result = run_step_script(
-        provenance["run"],
-        cwd=tmp_path,
-        env={
-            "RUNNER_TEMP": str(tmp_path),
-            "RESEARCH_REPOSITORY": "OLMo-core",
-            "IMAGE_DIGEST": PUBLISHED_IMAGE_DIGEST,
-            "RUN_REPOSITORY": "edu-llm/OLMo-core",
-            "WORKFLOW_REPOSITORY": PLATFORM_REPOSITORY,
-            "WORKFLOW_FILE_PATH": WORKFLOW_PATH_INPUT,
-            "WORKFLOW_REF": JOB_WORKFLOW_REF,
-            "RUN_ID": "987654321",
-            "RUN_ATTEMPT": "1",
-        },
-        stub_bin=stub_bin,
-    )
-
-    assert result.returncode == 0, result.stderr
-    passed = dict(itertools.pairwise(recorded.read_text(encoding="utf-8").splitlines()))
-    assert passed["--image-created"] == PUBLISHED_IMAGE_CREATED
-
-
-@pytest.mark.slow
-def test_provenance_refuses_to_run_when_no_path_recorded_a_creation_time(
-    tmp_path: Path,
-) -> None:
-    provenance = step(_job("publish"), "Write image provenance")
-    stub_bin = tmp_path / "bin"
-    write_stub(stub_bin, "uv", 'echo "the provenance tool was reached" >&2\nexit 0\n')
-
-    result = run_step_script(
-        provenance["run"],
-        cwd=tmp_path,
-        env={
-            "RUNNER_TEMP": str(tmp_path),
-            "RESEARCH_REPOSITORY": "OLMo-core",
-            "IMAGE_DIGEST": PUBLISHED_IMAGE_DIGEST,
-            "RUN_REPOSITORY": "edu-llm/OLMo-core",
-            "WORKFLOW_REPOSITORY": PLATFORM_REPOSITORY,
-            "WORKFLOW_FILE_PATH": WORKFLOW_PATH_INPUT,
-            "WORKFLOW_REF": JOB_WORKFLOW_REF,
-            "RUN_ID": "987654321",
-            "RUN_ATTEMPT": "1",
-        },
-        stub_bin=stub_bin,
-    )
-
-    assert result.returncode != 0
-    assert "the provenance tool was reached" not in result.stderr
-
-
 def test_the_only_thing_read_out_of_the_local_daemon_is_the_creation_time() -> None:
     # The digest that leaves this workflow is the registry's. Nothing else may be taken
     # from `docker inspect`, or a local build could claim an identity ECR never accepted.
@@ -1266,17 +1198,20 @@ def test_the_published_digest_is_written_where_a_person_can_copy_it(tmp_path: Pa
 
 
 def test_the_digest_summary_comes_after_the_read_back_that_establishes_it() -> None:
-    """Mutation: move it above the read-back, or make it conditional.
+    """Mutation: move it above the read-back, make it conditional, or push it down the job.
 
     Written before the digest is read it would publish the previous image's, and a summary
-    is the one artefact a person copies from without checking. It is also deliberately
-    unconditional and deliberately not last: a failure writing provenance still leaves the
-    digest of an image that is already in the registry somewhere reachable.
+    is the one artefact a person copies from without checking.
+
+    Immediately after, rather than merely after, and that is the half worth pinning. The
+    image is in the registry by this point and its tag can never be rewritten, so any step
+    that lands in the gap is a step that can fail between publishing an image and telling
+    anybody its digest -- which strands a commit that was published successfully. Adjacency
+    is what keeps the gap closed as steps are appended, and appending is how it would go.
     """
     names = [candidate.get("name") for candidate in _job("publish")["steps"]]
 
-    assert names.index(DIGEST_STEP) < names.index(DIGEST_SUMMARY_STEP)
-    assert names.index(DIGEST_SUMMARY_STEP) < names.index("Write image provenance")
+    assert names.index(DIGEST_SUMMARY_STEP) == names.index(DIGEST_STEP) + 1
     assert "if" not in step(_job("publish"), DIGEST_SUMMARY_STEP)
     assert step(_job("publish"), DIGEST_SUMMARY_STEP)["env"] == {
         "RESEARCH_REPOSITORY": "${{ inputs.repository }}",
@@ -1345,10 +1280,8 @@ def test_the_uv_that_answers_on_path_must_be_the_one_that_was_pinned(tmp_path: P
     assert _run_install(tmp_path, f"uv {pinned}0").returncode == 1
 
 
-def test_publish_job_assumes_the_publisher_role_and_writes_provenance() -> None:
-    publish = _job("publish")
-    credentials = step(publish, "Configure AWS credentials")
-    provenance = step(publish, "Write image provenance")
+def test_publish_job_assumes_the_publisher_role_with_the_account_id_masked() -> None:
+    credentials = step(_job("publish"), "Configure AWS credentials")
 
     assert credentials["id"] == "credentials"
     # mask-aws-account-id defaults to false in v6, and `docker push` prints the registry
@@ -1359,60 +1292,6 @@ def test_publish_job_assumes_the_publisher_role_and_writes_provenance() -> None:
         "role-duration-seconds": 3600,
         "mask-aws-account-id": True,
     }
-    assert "write_image_provenance.py" in provenance["run"]
-    assert provenance["env"]["WORKFLOW_REPOSITORY"] == "${{ job.workflow_repository }}"
-    assert provenance["env"]["WORKFLOW_FILE_PATH"] == "${{ job.workflow_file_path }}"
-    assert provenance["env"]["WORKFLOW_REF"] == "${{ job.workflow_ref }}"
-    assert provenance["env"]["RUN_REPOSITORY"] == "${{ github.repository }}"
-    assert provenance["env"]["IMAGE_DIGEST"] == "${{ steps.digest.outputs.image_digest }}"
-
-
-@pytest.mark.slow
-def test_provenance_records_the_branch_ref_that_the_trust_policy_asserts(
-    tmp_path: Path,
-) -> None:
-    # ImageProvenance.workflow_ref accepts a commit SHA, but the model composes
-    # job_workflow_ref from it, and the publisher role matches that claim with
-    # StringEquals against @refs/heads/main. A SHA would satisfy the field and record a
-    # claim string that can never have been asserted, so the recorded ref is the ref.
-    provenance = step(_job("publish"), "Write image provenance")
-    recorded = tmp_path / "argv.txt"
-    stub_bin = tmp_path / "bin"
-    write_stub(
-        stub_bin,
-        "uv",
-        f'printf "%s\\n" "$@" > "{recorded}"\ntouch "${{RUNNER_TEMP}}/image-provenance.json"\n',
-    )
-    (tmp_path / IMAGE_CREATED_FILE).write_text(f"{PUBLISHED_IMAGE_CREATED}\n", encoding="utf-8")
-
-    result = run_step_script(
-        provenance["run"],
-        cwd=tmp_path,
-        env={
-            "RUNNER_TEMP": str(tmp_path),
-            "RESEARCH_REPOSITORY": "OLMo-core",
-            "IMAGE_DIGEST": "sha256:" + "b" * 64,
-            "RUN_REPOSITORY": "edu-llm/OLMo-core",
-            "WORKFLOW_REPOSITORY": PLATFORM_REPOSITORY,
-            "WORKFLOW_FILE_PATH": WORKFLOW_PATH_INPUT,
-            "WORKFLOW_REF": JOB_WORKFLOW_REF,
-            "RUN_ID": "987654321",
-            "RUN_ATTEMPT": "1",
-        },
-        stub_bin=stub_bin,
-    )
-
-    assert result.returncode == 0, result.stderr
-    arguments = recorded.read_text(encoding="utf-8").splitlines()
-    passed = dict(itertools.pairwise(arguments))
-    assert passed["--workflow-ref"] == "refs/heads/main"
-    assert passed["--workflow-repository"] == PLATFORM_REPOSITORY
-    assert passed["--workflow-path"] == WORKFLOW_PATH_INPUT
-
-    reconstructed = (
-        f"{passed['--workflow-repository']}/{passed['--workflow-path']}@{passed['--workflow-ref']}"
-    )
-    assert reconstructed == JOB_WORKFLOW_REF
 
 
 def test_the_workflow_makes_exactly_these_aws_calls_in_exactly_this_order() -> None:
@@ -1474,7 +1353,6 @@ def test_every_run_step_declares_the_directory_its_tooling_lives_in() -> None:
         "publish:Build and push image": "source",
         "publish:Read published digest from the registry": None,
         f"publish:{DIGEST_SUMMARY_STEP}": None,
-        "publish:Write image provenance": "platform",
     }
 
 
