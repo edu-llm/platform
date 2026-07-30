@@ -613,15 +613,61 @@ reason. It is the one seam in this phase whose failure produces no error anywher
 | # | Stack | Template | Roles or resources | Applied from |
 | --- | --- | --- | --- | --- |
 | 1 | `sbsandbox-intern-edullm-phase5-image-resolver-iam` | `infra/iam/image-resolver-role.yaml` | `…-image-resolver` | laptop |
+| 2 | `sbsandbox-intern-edullm-phase2-admission-service-roles` | `infra/iam/admission-service-roles.yaml` (amended) | `…-admission-states` gains `batch:RegisterJobDefinition` and the `iam:PassRole` that call needs | laptop |
+| 3 | `sbsandbox-intern-edullm-phase2-admission` | `infra/admission-state-machine.yaml` (amended) | the `RegisterJobDefinition` state | CI |
 
-**There is no order to get wrong yet, and that is worth saying rather than leaving to be
-inferred.** In Phases 2 and 3 the sequence was forced: a later stack granted `iam:PassRole`
-naming roles by full ARN, so the roles had to exist first, and the deployer had to carry a
-new `job_workflow_ref` entry before CI could assume it at all. Nothing here does either.
-This stack creates one role that no other principal passes, that grants no `iam:` action of
-its own, and that GitHub assumes directly — so it can be applied before or after anything
-else in this file. Later Phase 5 rows will be added as those changes land, and the ordering
-argument will have to be made again then rather than inherited from this one.
+Same rule as Phases 2 and 3: **every laptop stack goes before every CI stack**, and within
+the laptop group the order above is the one that works.
+
+- **Stack 1 has no order to get wrong, and that is worth saying rather than leaving to be
+  inferred.** It creates one role that no other principal passes, that grants no `iam:`
+  action of its own, and that GitHub assumes directly, so it can be applied before or after
+  anything else in this file. The argument does not extend to the two rows below it.
+- **Stack 2 must precede stack 3, and this is the ordering that bites.** The state machine
+  calls `batch:RegisterJobDefinition` as `…-admission-states`, and that state sits on the
+  accepted branch between resolving the execution target and submitting the job. Deploying
+  stack 3 first produces a state machine whose states are all correct and whose first
+  accepted submission is refused with an access denial — after the intent and decision
+  records have been written, at a state whose name says nothing about IAM. It reads like a
+  broken state machine and is not one: it is a template deployed ahead of the grant it
+  depends on, which is the same shape as deploying Phase 2's CI stacks before the deployer
+  carried `deploy-phase2-admission-stacks`.
+- **`iam:PassRole` is the half of stack 2 to read rather than skim.** `RegisterJobDefinition`
+  passes an execution role and a workload role — that call is where a container's two
+  identities are fixed — so the grant names all four Batch role ARNs in full, one pair per
+  backed compute profile. IAM does not require the resource of a grant to exist, and
+  `infra/iam/batch-roles.yaml` and `infra/iam/batch-gpu-roles.yaml` created those four in
+  Phase 3 and Phase 4, so nothing here has to be created first. Promoting a fifth profile
+  does mean amending this stack, and `tests/test_phase5_infrastructure.py` compares the
+  grant against `config/execution-targets.yaml` so that the amendment is a red test rather
+  than a refused submission.
+- **One grant is missing from stack 2 and this file will not guess at it.** `batch:SubmitJob`
+  authorizes against the job definition a submission names as well as against the queue, and
+  the definition it now names is the per-run one — `sbsandbox-intern-edullm-<run id>` — which
+  the submit scope does not list. On the reading of the IAM model in the template's own
+  comments that denies every accepted submission at `SubmitToBatch`, with a 403 naming the
+  job definition: the same denial `batch:TagResource` produced on the first run through the
+  whole path, and it fails closed into a `submission-failure/` record rather than launching
+  anything. It has not been measured against the account and no test in this repository can
+  reach IAM to settle it. Read this as an instruction to check before submitting, not as a
+  default. Closing it means adding one job-definition pattern to the `batch:SubmitJob` and
+  `batch:TagResource` scopes — narrow enough to keep both queues and both deployed
+  definitions listed in full, which is the property the template's comment about prefixes is
+  actually protecting — and it is left out of this change because widening the only principal
+  in the account that may start compute is a decision to take deliberately rather than in
+  passing.
+- **Stack 3 is a validator release as well as a template deploy.** The handler now returns a
+  registration request beside the submit request, and
+  `src/edullm_platform/admission_handler.py` is inside the zip
+  `tools/build_admission_lambda.py` packages — so a state machine deployed against the
+  previous zip reads `$.execution.register_request` from a payload that has no such key and
+  fails at `States.Runtime`, which is precisely the failure the second validator release was
+  bought with. Follow *Releasing the admission validator* above and land the new
+  `S3ObjectVersion` in the same change; `tests/test_phase2_lambda_package.py` fails until the
+  released zip is the one this tree builds, which is the tripwire Phase 4 did not have when
+  it needed it.
+
+### Stack 1: the image resolver role
 
 ```bash
 aws cloudformation deploy \
@@ -655,3 +701,36 @@ Which roles the drift comparison reads is a registry per phase in
 `src/edullm_platform/role_drift.py`, and this role is in `PHASE5_ROLE_TEMPLATES`. Same rule
 as Phase 2: a role that is not listed there is compared to nothing, and adding it is part of
 shipping the role rather than a follow-up.
+
+### Stack 2: the grants the register state runs as
+
+```bash
+aws cloudformation deploy \
+  --stack-name sbsandbox-intern-edullm-phase2-admission-service-roles \
+  --template-file infra/iam/admission-service-roles.yaml \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --no-fail-on-empty-changeset \
+  --profile sbsandbox \
+  --region us-east-1
+```
+
+**The stack name is the Phase 2 one and stays the Phase 2 one.** This is an amendment to a
+stack that already exists rather than a new stack, and the note under the Phase 2 table says
+what a second name costs: two stacks trying to create the same two role names, the second
+of which fails.
+
+Then read the policy back, which for an amendment matters more than reading the role does —
+what changed is a document inside it:
+
+```bash
+aws iam get-role-policy \
+  --role-name sbsandbox-intern-edullm-admission-states \
+  --policy-name run-admission-workflow \
+  --profile sbsandbox --region us-east-1
+```
+
+Eight statements, and the two new ones are `batch:RegisterJobDefinition` scoped to
+`job-definition/sbsandbox-intern-edullm-*` and `iam:PassRole` naming four whole role ARNs.
+Check the second by eye: a prefix where those four ARNs should be is the difference between
+a state machine that may hand a container the two identities this repository reviewed and
+one that may hand it any role a later phase happens to name.

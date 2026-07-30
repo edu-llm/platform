@@ -532,7 +532,7 @@ def main(argv: list[str] | None = None) -> int:
             # Whichever definition a run is submitted against, the override this measures
             # is the same size: the ARN is a sibling of ContainerOverrides and not inside
             # the budget. The target's own is passed because it is the one that exists.
-            job_definition_arn=measuring_target.job_definition_arn,
+            job_definition=measuring_target.job_definition_arn,
         )["ContainerOverrides"]
     )
 

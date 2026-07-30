@@ -408,7 +408,7 @@ def test_the_prefix_recorded_is_the_prefix_the_container_was_handed() -> None:
         manifest=manifest,
         target=target,
         run_id=RUN_ID,
-        job_definition_arn=target.job_definition_arn,
+        job_definition=target.job_definition_arn,
     )
     told = {
         entry["Name"]: entry["Value"]

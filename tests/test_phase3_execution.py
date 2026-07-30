@@ -307,7 +307,7 @@ def request_for(**overrides: Any) -> Mapping[str, Any]:
         manifest=run_manifest,
         target=target(),
         run_id=RUN_ID,
-        job_definition_arn=target().job_definition_arn,
+        job_definition=target().job_definition_arn,
     )
 
 
@@ -435,7 +435,7 @@ def test_the_submitted_target_is_the_resolved_one_and_not_anything_from_the_mani
         manifest=manifest(),
         target=resolved,
         run_id=RUN_ID,
-        job_definition_arn=resolved.job_definition_arn,
+        job_definition=resolved.job_definition_arn,
     )
 
     assert request["JobQueue"] == resolved.job_queue_arn
@@ -460,7 +460,7 @@ def test_the_container_environment_is_exactly_these_six_variables() -> None:
         manifest=manifest(),
         target=target(),
         run_id=RUN_ID,
-        job_definition_arn=target().job_definition_arn,
+        job_definition=target().job_definition_arn,
     )
     environment = request["ContainerOverrides"]["Environment"]
 
@@ -493,7 +493,7 @@ def test_the_wandb_project_comes_from_the_manifest_and_not_from_the_command() ->
         manifest=declared,
         target=target(),
         run_id=RUN_ID,
-        job_definition_arn=target().job_definition_arn,
+        job_definition=target().job_definition_arn,
     )
     environment = {entry["Name"]: entry["Value"] for entry in request["ContainerOverrides"]["Environment"]}
 
@@ -516,7 +516,7 @@ def test_the_prefix_the_container_is_told_is_the_one_the_shared_function_builds(
         manifest=subject,
         target=target(),
         run_id=RUN_ID,
-        job_definition_arn=target().job_definition_arn,
+        job_definition=target().job_definition_arn,
     )
     told = next(
         entry["Value"]
@@ -656,7 +656,7 @@ def test_a_submission_goes_to_the_definition_just_registered_and_not_the_static_
         manifest=manifest(),
         target=resolved,
         run_id=RUN_ID,
-        job_definition_arn=registered,
+        job_definition=registered,
     )
 
     assert request["JobDefinition"] == registered

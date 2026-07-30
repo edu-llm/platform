@@ -26,6 +26,15 @@ to ``batch:SubmitJob``. The split is the same one the S3 writes use and the reas
 sharper: the component that parses a manifest an attacker could shape decides *what would
 be submitted* and holds no permission to submit it, and the launch appears as a first-class
 event in the execution history rather than inside this function's logs.
+
+**It now also describes the container, and it still cannot create one.** The ``execution``
+key carries a second request: the job definition an accepted run registers for itself, so
+that the container which runs is the digest the manifest declared rather than whichever one
+``infra/batch-compute.yaml`` pins. That is a larger thing to be describing -- a job
+definition names the two IAM roles a container runs as -- and it is the same split for the
+same reason, only more so. This function decides what identity the run would be given and
+holds neither ``batch:RegisterJobDefinition`` nor ``iam:PassRole``; the state machine holds
+both, against a scope this function cannot influence.
 """
 
 from __future__ import annotations
@@ -52,7 +61,10 @@ from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.policy import ApprovalPolicy
 from edullm_platform.contracts.repository_registry import RepositoryRegistry
 from edullm_platform.contracts.workload import WorkloadCatalog
-from edullm_platform.execution import batch_submit_request
+from edullm_platform.execution import (
+    batch_register_job_definition_request,
+    batch_submit_request,
+)
 
 __all__ = [
     "AdmissionContextError",
@@ -226,26 +238,52 @@ def handler(event: Mapping[str, Any], context: object = None) -> dict[str, Any]:
     if outcome.execution is not None:
         # Present only when accepted, and absent rather than null when not: the state
         # machine's Choice branches on `accepted`, and a rejected submission that carried
-        # an execution block would be one InputPath away from being submitted anyway.
+        # an execution block would be one InputPath away from being submitted anyway. Both
+        # requests live under the same rule, and the second is the one that makes the rule
+        # matter: a registration request minted for a refused run would be a job definition
+        # naming two IAM roles, built for a submission the platform has just declined.
         #
-        # `submit_request` is passed through to batch:submitJob untouched -- the ASL sends
-        # it by InputPath and does not build it -- so its key set is a hard contract
-        # between this function and the state machine, and reshaping it here is the same
-        # change as editing the ASL. A seam test holds the two together.
+        # Both are passed through to the SDK integrations untouched -- the ASL sends each
+        # by a single JSONata reference and builds neither -- so their key sets are a hard
+        # contract between this function and the state machine, and reshaping one here is
+        # the same change as editing the ASL. Seam tests hold each pair together.
+        register_request = batch_register_job_definition_request(
+            manifest=outcome.intent.manifest,
+            target=outcome.execution,
+            run_id=run_id,
+        )
         answer["execution"] = {
             "target": json.loads(canonical_json_bytes(outcome.execution)),
+            "register_request": register_request,
             "submit_request": batch_submit_request(
                 manifest=outcome.intent.manifest,
                 target=outcome.execution,
                 run_id=run_id,
-                # Still the target's static definition, and this is the call site the
-                # required argument exists to name. Executing a run on the digest it
-                # declared means registering a definition first and submitting against the
-                # revision that comes back, which is a change to the state machine, to what
-                # this function answers and to the admission role's grants. Until that
-                # ships, the ARN sent here is the one the templates pin -- unchanged
-                # behaviour, now stated rather than defaulted.
-                job_definition_arn=outcome.execution.job_definition_arn,
+                # THE ONE FIELD OF THE SUBMIT REQUEST THIS FUNCTION CANNOT FINISH, AND THE
+                # REASON IT IS A NAME RATHER THAN AN ARN.
+                #
+                # A run is executed on the revision registered a moment from now, and that
+                # revision's ARN does not exist until Batch has replied -- so the state
+                # machine's RegisterJobDefinition state merges the returned
+                # JobDefinitionArn into this request before SubmitToBatch passes it
+                # through. What is written here is what that merge overwrites.
+                #
+                # The value therefore has to be chosen for what happens if the merge is
+                # ever dropped, not for what happens when it works. Batch's
+                # `jobDefinition` accepts a name as well as an ARN, and the name read
+                # straight back out of the registration is the choice that degrades in the
+                # safe direction: Batch resolves it to the highest active revision, and
+                # this name is minted from the run id, so its only revision is the one just
+                # registered. A dropped merge submits the same image; a dropped
+                # registration submits nothing at all, because the definition does not
+                # exist. Neither can reach `target.job_definition_arn`, which is the
+                # deployed definition whose image is pinned in CloudFormation and is
+                # exactly the silent wrong answer this change exists to remove.
+                #
+                # Read off the registration rather than rebuilt from `job_definition_name`,
+                # so the two strings cannot disagree. A second author of this name would be
+                # a submission against a definition nobody registered.
+                job_definition=register_request["JobDefinitionName"],
             ),
         }
     return answer

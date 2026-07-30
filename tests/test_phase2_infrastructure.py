@@ -291,20 +291,27 @@ def test_service_roles_are_bounded_and_trusted_only_by_their_own_aws_service() -
 
 
 def test_states_role_invokes_the_validator_and_appends_lineage_and_nothing_else() -> None:
-    # Six statements since Phase 3, not three. The three it gained -- batch:SubmitJob on one
-    # queue and one job definition, batch:TagResource on the same ARNs because Batch
-    # authorizes the tags that submission carries under a separate action name, and
-    # ecr:DescribeImageScanFindings on one repository -- are asserted in
-    # tests/test_phase3_infrastructure.py, which also compares the queue name here against
-    # the queue infra/batch-compute.yaml creates. What this test still owns is the Phase 2
-    # claim: the S3 grant is PutObject on the lineage bucket and nothing else, whatever else
-    # the role has since been given.
+    # Eight statements now, not the three Phase 2 wrote. Three arrived with Phase 3 --
+    # batch:SubmitJob on one queue and one job definition, batch:TagResource on the same
+    # ARNs because Batch authorizes the tags that submission carries under a separate
+    # action name, and ecr:DescribeImageScanFindings on one repository -- and are asserted
+    # in tests/test_phase3_infrastructure.py, which also compares the queue name here
+    # against the queue infra/batch-compute.yaml creates. Two arrived with the job
+    # definition an accepted run registers for itself, batch:RegisterJobDefinition and the
+    # iam:PassRole that call needs, and are asserted in
+    # tests/test_phase5_infrastructure.py.
+    #
+    # The count is re-armed rather than relaxed, and it is the whole of "and nothing else"
+    # in the name above: this test cannot know what a future statement would grant, so what
+    # it holds is that a statement cannot arrive without somebody editing this line. What
+    # the test still owns on its own is the Phase 2 claim: the S3 grant is PutObject on the
+    # lineage bucket and nothing else, whatever else the role has since been given.
     statements = policy_statements(
         role_named(SERVICE_ROLES_PATH, STATES_ROLE_NAME), "run-admission-workflow"
     )
-    invoke, write, _submit, _tag, _describe_scan, _logs = statements
+    invoke, write, _submit, _tag, _register, _pass_role, _describe_scan, _logs = statements
 
-    assert len(statements) == 6
+    assert len(statements) == 8
     assert invoke["Effect"] == "Allow"
     assert statement_actions(invoke) == ["lambda:InvokeFunction"]
     assert invoke["Resource"] == [
@@ -527,6 +534,10 @@ def test_admission_definition_validates_then_records_intent_and_decision() -> No
         "RecordConflict",
         "AdmissionAccepted",
         "ResolveExecutionTarget",
+        # RegisterJobDefinition arrived after Phase 3, between resolving the target and
+        # submitting against it, because the definition a run is executed on is registered
+        # per submission and its revision ARN does not exist until Batch has answered.
+        "RegisterJobDefinition",
         "SubmitToBatch",
         "RecordSubmissionFailure",
         "BindingIsFanOut",

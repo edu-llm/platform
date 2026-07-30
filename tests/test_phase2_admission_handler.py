@@ -181,6 +181,59 @@ def test_the_records_serialize_back_to_the_bytes_they_were_hashed_from(
         assert without_sorting == with_sorting
 
 
+def test_an_accepted_run_is_answered_with_both_of_the_requests_batch_needs(
+    _packaged_config: None,
+) -> None:
+    """Mutation: return ``submit_request`` alone, as this handler did until now.
+
+    ``batch_register_job_definition_request`` existed, was tested field by field, and was
+    called by nothing -- so the digest a submitter declared was validated, gated admission
+    through the ECR scan, was written immutably into lineage, and selected nothing. The
+    container that ran was whichever one ``infra/batch-compute.yaml`` pinned. Nothing failed
+    while that was true, which is why the wiring is asserted here rather than left to the
+    two requests each being correct on their own.
+
+    ``JobDefinition`` is the definition being registered rather than the deployed one, and
+    the two halves of that matter separately. It is not the target's static ARN, because a
+    submission that fell back to it would run the wrong image silently; and it is the exact
+    string the registration mints, because the state machine replaces it with the revision
+    ARN Batch returns and a submission against some third name would be authorized against
+    a definition nobody registered.
+    """
+    execution = handler(ACCEPTED_EVENT, InvocationContext())["execution"]
+
+    assert set(execution) == {"target", "register_request", "submit_request"}
+    assert execution["register_request"]["ContainerProperties"]["Image"].endswith(
+        f"@{ACCEPTED_EVENT['manifest']['image_digest']}"
+    )
+    assert execution["submit_request"]["JobDefinition"] == (
+        execution["register_request"]["JobDefinitionName"]
+    )
+    assert execution["submit_request"]["JobDefinition"] != (
+        execution["target"]["job_definition_arn"]
+    )
+
+
+def test_a_refused_run_is_answered_with_no_execution_block_at_all(
+    _packaged_config: None,
+) -> None:
+    """Mutation: emit ``execution`` unconditionally, with the key empty on a refusal.
+
+    The state machine branches on ``accepted`` and lifts ``$.admission.payload.execution``
+    on the true branch only, so an execution block on a refused run is not read today. It
+    would be one ``InputPath`` away from being read, and what it now carries is a request to
+    mint a job definition naming two IAM roles -- so the absence is a control rather than
+    tidiness, and it is worth a test of its own now that the block has grown a second
+    request.
+    """
+    refused = {**ACCEPTED_EVENT, "approved_manifest_sha256": "sha256:" + "0" * 64}
+
+    result = handler(refused, InvocationContext())
+
+    assert result["accepted"] is False
+    assert "execution" not in result
+
+
 def test_the_decision_cites_the_policy_on_disk_not_anything_in_the_event(
     _packaged_config: None,
 ) -> None:

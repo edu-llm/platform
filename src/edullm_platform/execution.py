@@ -154,7 +154,7 @@ def batch_submit_request(
     manifest: RunManifest,
     target: ExecutionTarget,
     run_id: str,
-    job_definition_arn: str,
+    job_definition: str,
 ) -> dict[str, Any]:
     """The exact parameter block the state machine sends to ``batch:SubmitJob``.
 
@@ -163,19 +163,28 @@ def batch_submit_request(
     function are held to the same key set by a seam test; a field added here and not there
     would otherwise be silently dropped at the boundary.
 
-    ``job_definition_arn`` is required rather than defaulted to ``target.job_definition_arn``,
+    ``job_definition`` is required rather than defaulted to ``target.job_definition_arn``,
     and that is the point of it. The definition a run is submitted against is now the
     revision registered for that run, carrying the digest the manifest declared, and a
     default would let the old behaviour survive as an omission at a call site instead of as
     a change to this function. The compiler naming every caller is what makes the change
     reviewable.
+
+    It is ``job_definition`` and not ``job_definition_arn``, which is a rename this change
+    paid for rather than a preference. Batch's ``jobDefinition`` accepts a name, a
+    ``name:revision``, or an ARN with or without the revision, and the admission handler
+    passes the *name* the registration is about to mint -- because the revision ARN does
+    not exist until Batch has answered, and the state machine is what puts it here. A
+    parameter called ``_arn`` receiving a name is the kind of quiet inaccuracy that survives
+    review and then misleads the next reader into building an ARN somewhere it is not
+    needed.
     """
     request: dict[str, Any] = {
         # The run id, so the Batch job, the S3 keys and the execution name all carry the
         # same identifier and any two disagreeing is visible.
         "JobName": run_id,
         "JobQueue": target.job_queue_arn,
-        "JobDefinition": job_definition_arn,
+        "JobDefinition": job_definition,
         "ContainerOverrides": {
             "Command": list(manifest.command),
             "Environment": [
