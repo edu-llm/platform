@@ -1,55 +1,97 @@
-# Digests that may run despite carrying findings at a severity policy blocks on.
+# What may run despite carrying findings at a severity policy blocks on, in two forms.
 #
-# This is the escape hatch that makes the image-scan rule enforceable rather than either
-# toothless or absolute. An entry is a person saying they read the findings and accepted
-# them, and it arrives as a reviewed pull request, so it carries an author and a date
-# without needing any machinery of its own.
+# THE UNIT OF REVIEW IS THE VULNERABILITY, AND IT DID NOT USED TO BE. This file held two
+# entries, each naming one image digest, and that shape had a consequence nobody wanted: an
+# image is refused unless somebody has written its digest here, every build produces a new
+# digest, and so every iteration needed a reviewed pull request from an admin before it
+# could run. That is the friction this platform removed from choosing an image, arriving one
+# step to the left -- and it made the check "an image built today, with no hand-written
+# exception, is accepted" unpassable by construction.
 #
-# Adding an entry is not routine. The question it answers is "does this specific image,
-# with these specific findings, get to run", and the reason has a length floor in the
-# contract because "approved" is not a reason.
+# What a reviewer actually did when writing those two entries was read four CVEs and decide
+# they were acceptable. They did not bless an image; they could not, because the findings
+# they were reading belong to the base every image shares. So the record says that now, once,
+# and keeps saying it across rebuilds.
 #
-# Removing the last entry does not turn the rule off. An image with no entry and no
-# blocking findings runs; an image with no entry and blocking findings does not.
+# This is not a loosening. A finding nobody has reviewed still refuses the run, which is the
+# thing the per-digest form could not express: it could not tell a finding inherited from the
+# base from one the project introduced, so it treated both as reviewed the moment anybody
+# signed the image. Reviewing the vulnerability separates them.
+#
+# WHAT IT COSTS, AND IT IS ON THE README'S PILOT LIMITATIONS PAGE. A newly disclosed critical
+# in a base package blocks every submission from the next scan until somebody reviews it.
+# That is the correct behaviour and it is not a quiet one: the refusal names the identifier
+# and the package.
+#
+# Adding an entry of either kind is not routine. The question it answers is "may this run",
+# and the reason has a length floor in the contract because "approved" is not a reason.
 schema_version: 1
-exceptions:
-  - image_digest: "sha256:e8f4d5aaea4c7a6e0f723f9b49fccf406ee63017baab4cea4e8b94b8e23e079f"
+
+# One image, accepted whole. The stronger and rarer statement: it covers a scan that never
+# completed and an image the registry cannot scan at all, because it is a person saying they
+# looked rather than a claim about a finding.
+#
+# EMPTY ON PURPOSE, AND THAT IS A RESULT RATHER THAN AN OMISSION. The two entries that were
+# here covered the only two images the platform had published, and both are now covered by
+# the reviews below -- the four criticals in each are the same four, enumerated from the
+# registry rather than assumed. Removing them is what demonstrates the new mechanism carries
+# the existing images, instead of leaving them held up by both and never finding out.
+exceptions: []
+
+# One vulnerability, read and accepted, covering every image that carries it.
+#
+# All four are the Debian base's, inherited by everything built from the digest this project
+# registers, and identical across both images published so far -- which is what makes them a
+# fact about the base rather than about any image. None is fixable from this repository, and
+# there is no patched base to move to: the digest registered in config/repositories.yaml is
+# what Docker Hub serves for python:3.12-slim today.
+#
+# THE RESIDUAL, STATED WHERE IT APPLIES. This registry is on BASIC scanning, which reads the
+# operating system package database and does not look at Python distributions at all. The
+# training image installs torch, the project and its dependencies, boto3 and wandb -- about
+# three gigabytes of Python that no finding below refers to, because nothing scanned it. The
+# reviews here are reviews of what was looked at. Enhanced scanning is what would cover the
+# rest and is not enabled.
+reviewed_vulnerabilities:
+  - vulnerability_id: CVE-2026-57433
+    package_name: perl
     reason: >-
-      The training image, rebuilt from OLMo-core b067a31 after the first attempt could not
-      import the library it exists to run: the project declared torch>=2.6.0 and its own
-      code needs the torch.compiler.disable(reason=...) keyword that arrived in 2.8.0, so
-      the pin is now 2.9.0 and the image is 4.29 GB rather than 3.28. Fifteen findings: four critical and eight high, which is the same profile the
-      CPU image below carries and for the same cause -- three criticals in perl, one in
-      glibc, highs in perl, glibc and sqlite3, mediums in perl and util-linux. Identical
-      package versions, because the registered base digest has not moved.
-      WHAT IS DIFFERENT FROM THE ENTRY BELOW, AND IT IS THE PART TO READ. That entry
-      reasoned that the Dockerfile installs nothing, so nothing in the image came from this
-      project. That is no longer true: the Dockerfile now installs torch pinned at 2.6.0,
-      the project and its dependencies, boto3 and wandb, which is about three gigabytes of
-      Python that was not there before. None of it appears above. This registry is on BASIC
-      scanning, which reads the operating system package database and does not look at
-      Python distributions at all, so the scan being quiet about those three gigabytes is
-      an absence of looking rather than an absence of findings. Enhanced scanning is what
-      would cover them and is not enabled; that is recorded as a residual rather than
-      claimed here.
-      So this entry accepts two different things. The twelve blocking OS findings are
-      inherited from a digest-pinned Debian base, are unfixable from this repository, and
-      are not reachable by a training entrypoint that invokes neither perl nor sqlite3. The
-      Python dependency tree is accepted unscanned, on the narrower ground that it is the
-      declared dependency set of a published research library installed from immutable
-      pinned versions, and that the container it runs in holds one role that may write one
-      team's output prefix and read it back.
-    recorded_by: philote
-    recorded_at: "2026-07-28T19:05:00.000000Z"
-  - image_digest: "sha256:4ebdba1ba3b57096efb4f4647ed41ed5ded4ac9e77e8c9038b7ff24db0bc6db8"
+      Debian perl 5.40.1-6, inherited from the digest-pinned python:3.12-slim base that both
+      registered repositories build from. CVSS 9.8, and unreachable from this platform's
+      workloads: the entrypoint is a Python training program and invokes no perl at any
+      point, directly or through a subprocess. Unfixable from this repository -- the package
+      comes from the base, and no patched base has been published upstream. Reviewed against
+      the findings the registry reported for both published images, which carry the same
+      four criticals and no others.
+    recorded_by: philote-dev
+    recorded_at: "2026-07-30T17:20:00.000000Z"
+  - vulnerability_id: CVE-2026-12087
+    package_name: perl
     reason: >-
-      Four critical and eight high findings, all of them Debian base-OS packages inherited
-      from the digest-pinned base this repository registers: three criticals in perl, one
-      in glibc, with the highs in perl, glibc and sqlite3. The Dockerfile installs nothing
-      -- it sets three environment variables, creates a working directory and copies the
-      source -- so none of these came from this project and none can be fixed here. The
-      workload is a Python training entrypoint and invokes none of the affected packages.
-      Recorded so Phase 3 can run the one image the platform has published; it does not
-      generalise to the next base, which gets its own reading.
-    recorded_by: philote
-    recorded_at: "2026-07-27T18:00:00.000000Z"
+      Debian perl 5.40.1-6, inherited from the digest-pinned base, reviewed together with
+      CVE-2026-57433 and CVE-2026-13221 because all three are the same package at the same
+      version and the reachability question is one question. No perl runs in any workload
+      this platform submits, and the package cannot be upgraded from here.
+    recorded_by: philote-dev
+    recorded_at: "2026-07-30T17:20:00.000000Z"
+  - vulnerability_id: CVE-2026-13221
+    package_name: perl
+    reason: >-
+      Debian perl 5.40.1-6, inherited from the digest-pinned base, reviewed together with
+      CVE-2026-57433 and CVE-2026-12087 for the reason recorded against those two: one
+      package, one version, one reachability question, and no perl on any path a workload
+      takes.
+    recorded_by: philote-dev
+    recorded_at: "2026-07-30T17:20:00.000000Z"
+  - vulnerability_id: CVE-2026-5450
+    package_name: glibc
+    reason: >-
+      Debian glibc 2.41-12+deb13u3, inherited from the digest-pinned base. Unlike the perl
+      findings this one is in a library every process links, so it is accepted on
+      unfixability rather than on unreachability: it comes from the base, no patched base
+      exists upstream, and the alternative is to publish no images at all. Worth revisiting
+      the day Docker Hub republishes python:3.12-slim -- that is a re-pin of one digest in
+      config/repositories.yaml and a rebuild, and it is the only action that would retire
+      this entry rather than renew it.
+    recorded_by: philote-dev
+    recorded_at: "2026-07-30T17:20:00.000000Z"

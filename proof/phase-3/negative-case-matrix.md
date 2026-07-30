@@ -4,7 +4,7 @@ The nineteen Phase 3 acceptance criteria, mapped to the tests cited for each one
 
 This mapping is defined once, in `src/edullm_platform/phase3_criteria.py`. The acceptance gate reads the same definition and executes the same node ids, so this matrix and `tools/validate_phase3.py` cannot disagree.
 
-Verification run: 339 tests executed, 339 passed, 0 failed, 0 errored, pytest exit code 0.
+Verification run: 368 tests executed, 368 passed, 0 failed, 0 errored, pytest exit code 0.
 
 Three statuses exist and no more. **COVERED** means one or more cited tests prove the criterion as stated against the shipped configuration and all of them pass; the gate passes it. **DEFERRED** means an explicit recorded decision not to satisfy it yet, which requires both a written reason and a written trigger describing what makes it live again; the gate passes it. **GAP** is everything else, and the gate fails it. There is no in-between status, because an in-between status is what lets a gate be green and wrong at the same time.
 
@@ -510,6 +510,6 @@ Supporting tests (6), all executed and passing, cited as evidence rather than as
 - `tests/test_phase3_image_scan.py::test_a_blocking_finding_without_an_exception_is_refused`
 - `tests/test_phase3_image_scan.py::test_a_blocking_finding_with_a_recorded_exception_runs`
 - `tests/test_phase3_image_scan.py::test_no_scan_at_all_is_refused_rather_than_assumed_clean`
-- `tests/test_phase3_image_scan.py::test_the_shipped_registry_covers_the_only_published_image`
+- `tests/test_phase3_image_scan.py::test_the_shipped_registry_covers_what_the_published_images_actually_carry`
 - `tests/test_phase3_image_scan.py::test_the_shipped_registry_excepts_nothing_it_does_not_explain`
 - `tests/test_phase3_image_scan.py::test_both_production_callers_evaluate_the_scan_gate`

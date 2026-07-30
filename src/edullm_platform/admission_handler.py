@@ -55,6 +55,7 @@ from edullm_platform.contracts.execution import ExecutionTargetCatalog
 from edullm_platform.contracts.image import GitHubWorkflowRunReference
 from edullm_platform.contracts.image_scan import (
     ImageScanExceptionRegistry,
+    blocking_findings_from_ecr,
     image_scan_summary_from_ecr,
 )
 from edullm_platform.contracts.inventory import OrganizationInventory
@@ -203,6 +204,13 @@ def handler(event: Mapping[str, Any], context: object = None) -> dict[str, Any]:
         # declare its own image clean. The ASL builds this key from the ReadImageScan
         # state's Result and from nowhere else.
         image_scan_summary=image_scan_summary_from_ecr(event.get("image_scan")),
+        # Both readings come off the same describe result, so the count and the list
+        # cannot disagree about which image they describe. The gate refuses them when
+        # they disagree about how many findings block, which is what makes a mapping
+        # that silently dropped one fail closed rather than open.
+        image_scan_findings=blocking_findings_from_ecr(
+            event.get("image_scan"), policy=policy.image_scan
+        ),
         recorded_at=datetime.now(tz=UTC),
     )
 

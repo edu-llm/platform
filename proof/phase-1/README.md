@@ -2,8 +2,8 @@
 
 Phase: phase-1
 Bundle schema version: 1
-Source commit: 4f259c8735793ee9c769421af3dde50861100bad
-Generated: 2026-07-30T00:40:39+00:00
+Source commit: 609a14e8412ea199ecc92e9985e190cea04b815b
+Generated: 2026-07-30T18:02:43+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 1 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase1_proof.py` at generation time. Every criterion is covered and the gate is green, which is the state in which a bundle is most worth reading carefully: the Known limitations below say what each criterion does not cover, and `open-decisions.md` says what this phase surfaced and did not settle.
 
@@ -22,9 +22,9 @@ This bundle exists so that a reviewer can decide whether Phase 1 is done without
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3542 |
-| suite tests executed | 3376 |
-| suite passed | 3376 |
+| suite tests collected | 3659 |
+| suite tests executed | 3493 |
+| suite passed | 3493 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
@@ -65,8 +65,8 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 
 | file | digest |
 | --- | --- |
-| .github/workflows/build-research-image.yml | sha256:e0e244dbf93425e093e5b57b79b9bf4a06102350b75850d46673e0a214475fd8 |
-| .github/workflows/deploy-phase1-ecr.yml | sha256:7279eb11127a7c69d24c6699dbf5194f5ac8a833feb18b5990f35f426ad685d4 |
+| .github/workflows/build-research-image.yml | sha256:7c19d25c5f18e9040305cc8124891e8fbe222dbf7b59b79648b9d6ecf170970e |
+| .github/workflows/deploy-phase1-ecr.yml | sha256:0bea8d5868e5382e6a61b5b799085bddf5a03e500cf38ba604e2026226583862 |
 | config/repositories.yaml | sha256:2ebf3fc8d091d88c62555e432059c59e208a5f26f2d0bdd8f7cf50133fdcd384 |
 | fixtures/evidence/phase-1/rebuild/local-rebuild-comparison.json | sha256:91966d61ec214e5c66a6ed801ed9a3271b834ff10a110afa600cf66981d7a33d |
 | fixtures/evidence/phase-1/roles/sbsandbox-intern-edullm-ecr-publisher.sanitized.json | sha256:ffa2f5e2f9fb77aa9a045e17080dbada30aeb7f0f1ea35ad7e0ff9fa19d8851d |

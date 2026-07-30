@@ -34,11 +34,21 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Final
 
+from pydantic import ValidationError
+
 from edullm_platform.build_tooling import RegistryUnreadableError, load_registry
 from edullm_platform.capture_tooling import EXIT_UNUSABLE, CaptureFailedError, aws, report
+from edullm_platform.config import load_yaml
 from edullm_platform.contracts.base import serialize_utc_timestamp
-from edullm_platform.contracts.image_scan import ImageScanSummary, image_scan_summary_from_ecr
+from edullm_platform.contracts.image_scan import (
+    ImageScanPolicy,
+    ImageScanSummary,
+    ScanFinding,
+    blocking_findings_from_ecr,
+    image_scan_summary_from_ecr,
+)
 from edullm_platform.contracts.manifest import COMMIT_SHA_PATTERN
+from edullm_platform.contracts.policy import ApprovalPolicy
 from edullm_platform.contracts.repository_registry import UnknownRepositoryError
 from edullm_platform.publisher_denials import parse_aws_cli_error
 
@@ -154,8 +164,8 @@ def describe_published_image(
 
 
 def describe_scan_findings(
-    *, ecr_repository: str, image_digest: str, region: str
-) -> ImageScanSummary | None:
+    *, ecr_repository: str, image_digest: str, region: str, policy: ImageScanPolicy
+) -> tuple[ImageScanSummary | None, tuple[ScanFinding, ...] | None]:
     """What the registry's scan found in this digest, or ``None`` for no scan at all.
 
     **An unscanned image and a scan that is still running are recorded as themselves, never
@@ -184,13 +194,20 @@ def describe_scan_findings(
         absent=SCAN_ABSENT_ERROR,
     )
     if answered is None:
-        return None
-    # The same mapping the admission validator applies to the same call, rather than a
-    # second one. Two readings of `findingSeverityCounts` would be two chances to disagree
+        return None, None
+    # The same two mappings the admission validator applies to the same call, rather than a
+    # second pair. Two readings of `findingSeverityCounts` would be two chances to disagree
     # about what an omitted severity means, and admission re-derives this summary and fails
     # closed when the two disagree -- so a disagreement here is a submission that passes the
     # gate and is then refused inside AWS for a reason neither side can explain.
-    return image_scan_summary_from_ecr(answered)
+    #
+    # The findings travel beside the counts because the gate needs both: the counts say how
+    # many blocking findings there are, and the list says which, so a review recorded against
+    # a vulnerability can be matched to it. Sending one without the other is what the count
+    # guard in image_scan_is_reviewed refuses.
+    return image_scan_summary_from_ecr(answered), blocking_findings_from_ecr(
+        answered, policy=policy
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -204,6 +221,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--repository", required=True)
     parser.add_argument("--commit-sha", required=True)
     parser.add_argument("--aws-region", required=True)
+    # The same policy the compile job and the admission validator read, so that what counts
+    # as a blocking finding is decided once. Passed rather than defaulted to a path, because
+    # a tool that knew where the reviewed configuration lived could be pointed at a
+    # different copy of it by being run from a different directory.
+    parser.add_argument("--policy", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     return parser
 
@@ -232,19 +254,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("unregistered_repository", file=sys.stderr)
         return EXIT_UNUSABLE
 
+    try:
+        image_scan_policy = load_yaml(arguments.policy, ApprovalPolicy).image_scan
+    except (OSError, ValidationError, TypeError):
+        # The reason is not echoed. A pydantic error quotes the input it rejected, and the
+        # input here is reviewed configuration rather than anything a submitter supplied.
+        print("policy_unreadable", file=sys.stderr)
+        return EXIT_UNUSABLE
+
     ecr_repository = registered.ecr_repository
     image_tag = arguments.commit_sha[:IMAGE_TAG_LENGTH]
     try:
         published = describe_published_image(
             ecr_repository=ecr_repository, image_tag=image_tag, region=arguments.aws_region
         )
-        scan = (
-            None
+        scan, blocking = (
+            (None, None)
             if published is None
             else describe_scan_findings(
                 ecr_repository=ecr_repository,
                 image_digest=published[0],
                 region=arguments.aws_region,
+                policy=image_scan_policy,
             )
         )
     except CaptureFailedError as exc:
@@ -259,6 +290,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     document: dict[str, Any] = {
         "published": entries,
         "image_scan": None if scan is None else scan.model_dump(mode="json"),
+        # Null rather than an empty list when the findings could not be read, and the
+        # distinction is the whole guard. An empty list means the registry reported nothing
+        # at a blocking severity; a null means nobody knows, and the gate refuses that
+        # because the count in the summary will not match a list it does not have.
+        "blocking_findings": (
+            None
+            if blocking is None
+            else [found.model_dump(mode="json") for found in blocking]
+        ),
     }
 
     # Written plainly rather than through capture_tooling.write_record, which is the write

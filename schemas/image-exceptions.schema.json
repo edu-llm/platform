@@ -35,10 +35,54 @@
       ],
       "title": "ImageScanException",
       "type": "object"
+    },
+    "ReviewedVulnerability": {
+      "additionalProperties": false,
+      "description": "One vulnerability somebody read and accepted, with their name against it.\n\nTHE UNIT OF REVIEW IS THE VULNERABILITY, NOT THE IMAGE, AND THAT IS THE POINT. Every\nimage this platform builds inherits the same criticals from the base it shares -- perl\nand glibc, unfixable from this repository, with no patched base published upstream. A\nper-digest exception makes each rebuild a reviewed pull request naming seventy-one\ncharacters, so a researcher cannot iterate without an admin. That is the friction this\nplatform removed from choosing an image, arriving one step to the left.\n\nWhat a reviewer does is read a finding and decide it is acceptable. This lets the record\nsay that, once, and keeps saying it across rebuilds. It is not a loosening: a finding\nnobody has reviewed still refuses the run, which is what the per-digest form could not\nexpress, because it could not tell an inherited finding from an introduced one.\n\n``reason`` carries the same floor as :class:`ImageScanException` and for the same\nreason: \"approved\" is not a reason, and the value of the record is that a later reader\ncan tell whether the finding was understood or waved through.",
+      "properties": {
+        "package_name": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Package Name",
+          "type": "string"
+        },
+        "reason": {
+          "minLength": 40,
+          "title": "Reason",
+          "type": "string"
+        },
+        "recorded_at": {
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$",
+          "title": "Recorded At",
+          "type": "string"
+        },
+        "recorded_by": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9-]+$",
+          "title": "Recorded By",
+          "type": "string"
+        },
+        "vulnerability_id": {
+          "maxLength": 128,
+          "pattern": "^[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9][A-Za-z0-9.-]*$",
+          "title": "Vulnerability Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "vulnerability_id",
+        "package_name",
+        "reason",
+        "recorded_by",
+        "recorded_at"
+      ],
+      "title": "ReviewedVulnerability",
+      "type": "object"
     }
   },
   "additionalProperties": false,
-  "description": "The reviewed set of digests that may run despite carrying blocking findings.",
+  "description": "What may run despite carrying blocking findings, in two forms.\n\n``reviewed_vulnerabilities`` is the routine one: a finding read and accepted, covering\nevery image that carries it. ``exceptions`` is the stronger and rarer one: a whole image\naccepted, which covers a scan that never completed and an image the registry cannot scan\nat all, because it is a human saying they looked rather than a claim about a finding.",
   "properties": {
     "exceptions": {
       "default": [],
@@ -46,6 +90,14 @@
         "$ref": "#/$defs/ImageScanException"
       },
       "title": "Exceptions",
+      "type": "array"
+    },
+    "reviewed_vulnerabilities": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ReviewedVulnerability"
+      },
+      "title": "Reviewed Vulnerabilities",
       "type": "array"
     },
     "schema_version": {

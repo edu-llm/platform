@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from edullm_platform import admission, submission
+from edullm_platform import admission, admission_handler, submission
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.image_scan import (
     ImageScanException,
@@ -33,8 +33,12 @@ from edullm_platform.contracts.image_scan import (
     ImageScanSeverity,
     ImageScanStatus,
     ImageScanSummary,
+    ReviewedVulnerability,
+    ScanFinding,
+    blocking_findings_from_ecr,
     image_scan_is_reviewed,
     image_scan_summary_from_ecr,
+    unreviewed_blocking_findings,
 )
 from edullm_platform.contracts.policy import (
     ApprovalClass,
@@ -91,13 +95,41 @@ def reviewed(
     digest: str = OTHER_DIGEST,
     scan: ImageScanSummary | None,
     registry: ImageScanExceptionRegistry | None = None,
+    findings: tuple[ScanFinding, ...] | None = None,
 ) -> bool:
     return image_scan_is_reviewed(
         image_digest=digest,
         summary=scan,
         policy=critical_only_policy(),
         registry=registry if registry is not None else empty_registry(),
+        blocking_findings=findings,
     )
+
+
+#: The four the shipped base actually carries, which is what makes them the worked example.
+PERL_CVES = ("CVE-2026-57433", "CVE-2026-12087", "CVE-2026-13221")
+GLIBC_CVE = "CVE-2026-5450"
+
+
+def finding(vulnerability_id: str, package_name: str = "perl") -> ScanFinding:
+    return ScanFinding(vulnerability_id=vulnerability_id, package_name=package_name)
+
+
+def review(vulnerability_id: str, package_name: str = "perl") -> ReviewedVulnerability:
+    return ReviewedVulnerability(
+        vulnerability_id=vulnerability_id,
+        package_name=package_name,
+        reason=(
+            "Inherited from the digest-pinned base, unfixable from this repository, and in "
+            "a package the training entrypoint never invokes. Recorded for this test only."
+        ),
+        recorded_by="philote",
+        recorded_at=SCANNED_AT,
+    )
+
+
+def registry_reviewing(*reviews: ReviewedVulnerability) -> ImageScanExceptionRegistry:
+    return ImageScanExceptionRegistry(schema_version=1, reviewed_vulnerabilities=reviews)
 
 
 # ---------------------------------------------------------------------------------------
@@ -119,6 +151,188 @@ def test_findings_below_the_blocking_severity_do_not_block() -> None:
 
 def test_a_blocking_finding_without_an_exception_is_refused() -> None:
     assert not reviewed(scan=summary(critical=1))
+
+
+# ---------------------------------------------------------------------------------------
+# Reviewing the vulnerability rather than the image
+# ---------------------------------------------------------------------------------------
+
+
+def test_an_image_carrying_only_reviewed_vulnerabilities_runs_without_an_exception() -> None:
+    """THE CASE THE WHOLE CHANGE EXISTS FOR, AND WHY IT IS NOT A LOOSENING.
+
+    Every image this platform builds inherits the same four criticals from the shared
+    Debian base -- three in perl, one in glibc -- which are unfixable from this repository
+    and for which no patched base exists upstream. Under a per-digest exception the only
+    way to run any of them is a reviewed pull request naming that exact image, so a
+    researcher cannot iterate without an admin, which is the friction this phase removed
+    from the image and would otherwise reintroduce at the scan.
+
+    What a reviewer actually did when they wrote those exceptions was read four CVEs and
+    accept them. This lets the sign-off say that. Nothing is waved through: the review is
+    still a human, a reason and a date, and it still has to exist before the run.
+    """
+    findings = tuple(finding(cve) for cve in PERL_CVES) + (finding(GLIBC_CVE, "glibc"),)
+    registry = registry_reviewing(
+        *(review(cve) for cve in PERL_CVES), review(GLIBC_CVE, "glibc")
+    )
+
+    assert reviewed(scan=summary(critical=4, high=8), registry=registry, findings=findings)
+
+
+def test_one_unreviewed_critical_among_reviewed_ones_still_refuses() -> None:
+    """Mutation: pass when *any* finding is reviewed rather than when all are.
+
+    This is the property that keeps the gate worth having. A base whose findings are all
+    reviewed says nothing about a critical the project itself pulled in, and the whole point
+    of reviewing vulnerabilities rather than images is that a new one still stops the run.
+    """
+    findings = tuple(finding(cve) for cve in PERL_CVES) + (finding("CVE-2026-99999", "zlib"),)
+    registry = registry_reviewing(*(review(cve) for cve in PERL_CVES))
+
+    assert not reviewed(scan=summary(critical=4), registry=registry, findings=findings)
+
+
+def test_the_unreviewed_ones_are_nameable_so_a_refusal_can_say_which() -> None:
+    """A refusal that says "unreviewed scan findings" sends somebody to look at everything.
+
+    The gate answers yes or no; this is what lets the message name the one that stopped it.
+    Separate rather than folded into the gate, because a boolean is the right shape for a
+    decision and a list is the right shape for a message.
+    """
+    unknown = finding("CVE-2026-99999", "zlib")
+    findings = tuple(finding(cve) for cve in PERL_CVES) + (unknown,)
+    registry = registry_reviewing(*(review(cve) for cve in PERL_CVES))
+
+    assert unreviewed_blocking_findings(blocking_findings=findings, registry=registry) == (
+        unknown,
+    )
+
+
+def test_a_review_of_one_package_does_not_cover_the_same_id_in_another() -> None:
+    """Mutation: match on the vulnerability id alone.
+
+    A review is a statement about a vulnerability *in a package we ship* -- that it is
+    unreachable from the entrypoint, or unfixable, or both. The same identifier in a
+    different package is a different reachability question that nobody answered.
+    """
+    registry = registry_reviewing(review(GLIBC_CVE, "glibc"))
+
+    assert not reviewed(
+        scan=summary(critical=1), registry=registry, findings=(finding(GLIBC_CVE, "perl"),)
+    )
+
+
+def test_a_summary_saying_there_are_criticals_with_no_findings_supplied_is_refused() -> None:
+    """THE VACUOUS PASS, AND IT IS THE ONE THAT WOULD HAVE BEEN EASY TO SHIP.
+
+    "Every blocking finding is reviewed" is trivially true of an empty list. A caller that
+    stopped sending the findings -- a mapping that returned nothing on an unfamiliar payload,
+    a workflow step that dropped an artifact -- would turn the gate off silently and in the
+    open direction. So the count the summary reports is what says how many findings must
+    arrive, and a mismatch is refused rather than reconciled.
+    """
+    assert not reviewed(scan=summary(critical=4), registry=empty_registry(), findings=())
+    assert not reviewed(scan=summary(critical=4), registry=empty_registry(), findings=None)
+
+
+def test_fewer_findings_than_the_summary_counts_is_refused_even_if_all_are_reviewed() -> None:
+    """The same guard, in the shape it would actually arrive in.
+
+    Not an empty list but a short one: three of four findings carried through, all three
+    reviewed. Every finding present is accounted for and the image still has a critical
+    nobody has seen.
+    """
+    findings = tuple(finding(cve) for cve in PERL_CVES)
+    registry = registry_reviewing(*(review(cve) for cve in PERL_CVES))
+
+    assert not reviewed(scan=summary(critical=4), registry=registry, findings=findings)
+
+
+def test_a_reviewed_vulnerability_below_the_blocking_severity_is_not_needed() -> None:
+    """Reviews are only consulted for findings that block.
+
+    Mutation: require a review for every finding. The base carries eight highs and three
+    mediums that nobody has reviewed and that the policy does not block on, so demanding a
+    review for those would refuse every image while looking like tightening.
+    """
+    assert reviewed(scan=summary(high=8, medium=3), registry=empty_registry(), findings=())
+
+
+def test_a_per_digest_exception_still_overrides_everything() -> None:
+    """The stronger statement stays available and stays first.
+
+    A human saying "I looked at this image" covers a scan that never completed, a registry
+    that cannot scan the image at all, and findings nobody has enumerated. Reviewing
+    vulnerabilities is the routine path; this remains the escape hatch.
+    """
+    assert reviewed(
+        scan=None, registry=registry_with(OTHER_DIGEST), findings=None
+    )
+
+
+def test_two_reviews_of_one_vulnerability_in_one_package_are_refused_at_load() -> None:
+    """Mutation: allow duplicates.
+
+    Two entries for the same pair means two people reviewed the same thing and at least one
+    of the reasons is not the one in force. The reason is the whole value of the record.
+    """
+    with pytest.raises(ValueError, match="more than one recorded review"):
+        registry_reviewing(review(GLIBC_CVE, "glibc"), review(GLIBC_CVE, "glibc"))
+
+
+def test_a_review_needs_a_reason_worth_reading() -> None:
+    """The same floor the per-digest exception carries, for the same reason."""
+    with pytest.raises(ValueError):
+        ReviewedVulnerability(
+            vulnerability_id=GLIBC_CVE,
+            package_name="glibc",
+            reason="accepted",
+            recorded_by="philote",
+            recorded_at=SCANNED_AT,
+        )
+
+
+def test_the_blocking_findings_are_read_off_the_describe_result() -> None:
+    """One mapping in one place, beside the one that builds the summary.
+
+    Two callers read the same answer from two directions -- the state machine hands the
+    validator a describe result, and the resolver reads the same call from the compile side
+    -- and two copies of this would be two chances to disagree about which findings block.
+    """
+    payload = {
+        "imageScanStatus": {"status": "COMPLETE"},
+        "imageScanFindings": {
+            "imageScanCompletedAt": "2026-07-26T22:05:49+00:00",
+            "findingSeverityCounts": {"CRITICAL": 1, "HIGH": 2},
+            "findings": [
+                {
+                    "name": GLIBC_CVE,
+                    "severity": "CRITICAL",
+                    "attributes": [{"key": "package_name", "value": "glibc"}],
+                },
+                {
+                    "name": "CVE-2026-1",
+                    "severity": "HIGH",
+                    "attributes": [{"key": "package_name", "value": "perl"}],
+                },
+            ],
+        },
+    }
+
+    assert blocking_findings_from_ecr(payload, policy=critical_only_policy()) == (
+        finding(GLIBC_CVE, "glibc"),
+    )
+
+
+def test_an_unreadable_describe_result_yields_no_findings_rather_than_an_empty_pass() -> None:
+    """``None``, not ``()``, and the difference is the whole guard above.
+
+    An empty tuple means "the registry found nothing that blocks", which is a pass. A
+    payload this cannot read means "nobody knows", and the gate reads that as a refusal
+    because the count from the summary will not match.
+    """
+    assert blocking_findings_from_ecr({"nonsense": True}, policy=critical_only_policy()) is None
 
 
 def test_a_blocking_finding_with_a_recorded_exception_runs() -> None:
@@ -294,6 +508,42 @@ def test_both_production_callers_evaluate_the_scan_gate() -> None:
         )
 
 
+def test_both_production_callers_forward_the_findings_they_were_given() -> None:
+    """The sibling of the test above, for the argument that arrived with reviewed CVEs.
+
+    ``blocking_findings`` defaults to ``None`` and ``None`` refuses any image carrying a
+    blocking finding, so a caller that dropped it fails closed rather than open -- which is
+    the right direction and is also the direction nobody notices, because it looks exactly
+    like the base having an unreviewed CVE. The whole pilot would go back to needing a
+    hand-written exception per image and the suite would stay green.
+
+    Asserted on the source rather than by calling, because what is being protected is that
+    the wiring exists at all. There is no input to ``admit`` that distinguishes "forwarded
+    nothing" from "was given nothing".
+    """
+    for module, function in ((admission, "admit"), (submission, "compile_submission")):
+        source = inspect.getsource(getattr(module, function))
+        assert "image_scan_findings=image_scan_findings" in source, (
+            f"{module.__name__}.{function} no longer forwards the blocking findings into "
+            "build_request_facts, so every image with a reviewed CVE is refused as though "
+            "nobody had reviewed it"
+        )
+
+
+def test_the_handler_derives_the_findings_from_the_same_call_as_the_summary() -> None:
+    """Mutation: read the findings from the execution input instead of the describe result.
+
+    The caller supplies the manifest. Letting it also supply the findings would let a
+    submitter declare its own image's vulnerabilities, which is the same hole the summary is
+    already guarded against -- and it would be worse here, because a list is easier to
+    understate convincingly than a count.
+    """
+    source = inspect.getsource(admission_handler.handler)
+
+    assert 'blocking_findings_from_ecr(\n            event.get("image_scan")' in source
+    assert 'image_scan_summary_from_ecr(event.get("image_scan"))' in source
+
+
 def test_both_production_callers_take_the_exception_registry() -> None:
     """A registry that cannot be passed in is a registry read from somewhere unreviewed."""
     for module, function in ((admission, "admit"), (submission, "compile_submission")):
@@ -338,16 +588,49 @@ def test_the_shipped_policy_names_the_denial_condition() -> None:
     assert "image_scan_findings_unreviewed" in shipped_policy().denied_outright
 
 
-def test_the_shipped_registry_covers_the_only_published_image() -> None:
-    """Ties the configuration to the account, so deleting the entry fails here.
+def test_the_shipped_registry_covers_what_the_published_images_actually_carry() -> None:
+    """Ties the configuration to the account, so deleting a review fails here.
 
-    The platform has published exactly one image and it carries four criticals. Without a
-    recorded exception for that digest nothing can run, and every other test in this file
-    would still pass -- which is why this one reads the real config rather than a fixture.
+    Every image this platform has published carries the same four criticals, inherited from
+    the base both registered repositories build from. Without a review for each of them
+    nothing can run at all, and every other test in this file would still pass -- which is
+    why this one reads the shipped config rather than a fixture.
+
+    **It asserted a per-digest exception until those were retired**, and the difference is
+    the whole change. The old form tied the configuration to one image, so it went stale the
+    moment anybody rebuilt; this ties it to what the registry reports, which is a fact about
+    the base and stays true across rebuilds. The four are written out rather than derived,
+    because a test that read them from the same file it is checking would pass against an
+    empty one.
     """
-    exception = shipped_registry().exception_for(PUBLISHED_DIGEST)
-    assert exception is not None
-    assert len(exception.reason) >= 40
+    registry = shipped_registry()
+    carried = (
+        ScanFinding(vulnerability_id="CVE-2026-57433", package_name="perl"),
+        ScanFinding(vulnerability_id="CVE-2026-12087", package_name="perl"),
+        ScanFinding(vulnerability_id="CVE-2026-13221", package_name="perl"),
+        ScanFinding(vulnerability_id="CVE-2026-5450", package_name="glibc"),
+    )
+
+    assert unreviewed_blocking_findings(blocking_findings=carried, registry=registry) == ()
+    for found in carried:
+        review = registry.review_for(found)
+        assert review is not None
+        assert len(review.reason) >= 40
+
+
+def test_the_shipped_registry_no_longer_blesses_whole_images() -> None:
+    """Mutation: re-add a per-digest exception to make one submission work.
+
+    That is the move this change exists to remove, and it is a tempting one under time
+    pressure -- it is one entry and it unblocks the run in front of you. It also makes every
+    finding in that image reviewed, including any the project introduced, and it goes stale
+    on the next rebuild so the next person does it again.
+
+    Not a ban: the form survives in the contract for the case it is right for, an image the
+    registry cannot scan at all. This says the shipped configuration does not currently need
+    it, so re-adding one is a decision somebody takes rather than a habit.
+    """
+    assert shipped_registry().exceptions == ()
 
 
 def test_the_shipped_registry_excepts_nothing_it_does_not_explain() -> None:

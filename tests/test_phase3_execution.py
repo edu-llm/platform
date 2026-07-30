@@ -160,6 +160,7 @@ def admit_manifest(
         submitter=MEMBER,
         approver=LEAD,
         approving_environment=ApprovalEnvironment.LEAD,
+        image_scan_findings=None,
         workflow_run=GitHubWorkflowRunReference(
             run_repository="edu-llm/platform",
             workflow_repository="edu-llm/platform",

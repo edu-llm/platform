@@ -1,6 +1,6 @@
 # Phase 0 schema compatibility report
 
-132 contract models. The structural digest is `sha256` over the model's JSON schema with sorted keys, so it changes when a field is added, removed, retyped, or reconstrained, and does not change when unrelated code moves. Comparing this table between phases answers whether a schema changed.
+134 contract models. The structural digest is `sha256` over the model's JSON schema with sorted keys, so it changes when a field is added, removed, retyped, or reconstrained, and does not change when unrelated code moves. Comparing this table between phases answers whether a schema changed.
 
 This is the complete inventory: every contract model in the repository is below, whichever phase wrote it and whichever module it has since moved to. The three phase bundles carry a scoped view of the same digests and none of them carries a digest that is not here. `tests/test_schema_compatibility.py` recomputes every row of every one of those tables against the tree and fails when one stops describing it.
 
@@ -8,7 +8,7 @@ The kind column separates a `record`, which some payload is validated against, f
 
 ## Repository-configuration contracts
 
-35 models are reachable from the sixteen root models exported to `schemas/`. These describe what the repository declares: who is in the organization, what compute exists, what policy applies, and what a submission looks like. They are versioned by the checked-in JSON Schema files below rather than by a `schema_version` field, except for RunManifest, which carries both.
+36 models are reachable from the sixteen root models exported to `schemas/`. These describe what the repository declares: who is in the organization, what compute exists, what policy applies, and what a submission looks like. They are versioned by the checked-in JSON Schema files below rather than by a `schema_version` field, except for RunManifest, which carries both.
 
 | model | module | kind | schema_version | structural digest |
 | --- | --- | --- | --- | --- |
@@ -24,8 +24,9 @@ The kind column separates a `record`, which some payload is validated against, f
 | BatchJobBinding | edullm_platform.contracts.execution | record | 1 | sha256:e42641ace737ac344e31cfe56152e7b41bf2fff4d888cd8a3741c3c7b805ba1a |
 | GitHubWorkflowRunReference | edullm_platform.contracts.image | record | unversioned | sha256:a80e5dc8c40056fbc75557716cac82f11e5f4d80ec840dcb76d33ad56c57604f |
 | ImageScanException | edullm_platform.contracts.image_scan | record | unversioned | sha256:f2aca5a4ed2373862ed4f22eef0a78dd2063d2db159e2e70670c4e6375249eb6 |
-| ImageScanExceptionRegistry | edullm_platform.contracts.image_scan | record | 1 | sha256:08fa8dc6ee43fe2d52ff8dbca543e2080943fafdd08bab531c781164919069fc |
+| ImageScanExceptionRegistry | edullm_platform.contracts.image_scan | record | 1 | sha256:446b067f64b593aa2c7b35275bed21c02f547c1c1d801b58aaf36813b6754ce2 |
 | ImageScanPolicy | edullm_platform.contracts.image_scan | record | unversioned | sha256:a995523c781b979c5400ab756aa90b610775a5f797641b38b7530418f283c192 |
+| ReviewedVulnerability | edullm_platform.contracts.image_scan | record | unversioned | sha256:e1bab292e41b2667ab935a3ab6c45d7f85fc265fbe4038866ed4fbaa60d0a7e1 |
 | OrganizationInventory | edullm_platform.contracts.inventory | record | unversioned | sha256:950a43db0b18777147c8dc8bbbc8f19a388c1768d671360906d101a2f39705ce |
 | PersonRef | edullm_platform.contracts.inventory | record | unversioned | sha256:3fd6419368a4098e6f5792779e2bc5fd0bce1975846b53e2492654d2ce7a7305 |
 | CheckpointRef | edullm_platform.contracts.lifecycle | record | unversioned | sha256:74d6aea6cf08b2b0c2151d0ff6c1ef8d804405869774911f8e0e73f94ccaa4e3 |
@@ -50,7 +51,7 @@ The kind column separates a `record`, which some payload is validated against, f
 
 ## Runtime records
 
-97 models are not exported to `schemas/`. These are produced while work runs or while a decision is made: lineage, results, datasets, authorization outcomes, operational evidence, and gate results. They carry a `schema_version` field where they are persisted, and they are deliberately not published as repository configuration, because no human authors them by hand.
+98 models are not exported to `schemas/`. These are produced while work runs or while a decision is made: lineage, results, datasets, authorization outcomes, operational evidence, and gate results. They carry a `schema_version` field where they are persisted, and they are deliberately not published as repository configuration, because no human authors them by hand.
 
 | model | module | kind | schema_version | structural digest |
 | --- | --- | --- | --- | --- |
@@ -68,6 +69,7 @@ The kind column separates a `record`, which some payload is validated against, f
 | ExecutionTargetCatalog | edullm_platform.contracts.execution | record | 1 | sha256:baad4dd4cda8e9519685011cd20f97f36338e0e2e54d96488f7a897243688baa |
 | ImageProvenance | edullm_platform.contracts.image | record | 1 | sha256:102aa35cb3107bfc48c8d448b8047b6a897fa0939cc8de34a63d1987d5b601c4 |
 | ImageScanSummary | edullm_platform.contracts.image_scan | record | 1 | sha256:4ae0dbc073e6e33a52d8caf9213d1b8344b8ceb49d60d6475a766702cb6b2f30 |
+| ScanFinding | edullm_platform.contracts.image_scan | record | unversioned | sha256:07e6f38f7190b357b088220a80499f36683d42270fa428292bb67cb1112e9ffd |
 | RequestFacts | edullm_platform.contracts.policy | record | unversioned | sha256:966ee518a0ef0f15641cb8d0579d63c9534080783452153f8fcc01a6dcffd9d2 |
 | SourceIdentity | edullm_platform.contracts.source_identity | record | 1 | sha256:c785066e238f71471c7cab1aaaca9f2fd53f3b9eb5653abe1f444d18dca1efa1 |
 | CriterionResult | edullm_platform.criteria | record | unversioned | sha256:b45d908a731eeb75ddc20bf1abb24357fe952d605a399dc7773bb1e4a4bbf11c |
@@ -162,7 +164,7 @@ The checked-in schemas under `schemas/`, with the digest of each file as generat
 | schemas/checkpoint-manifest.schema.json | CheckpointManifest | sha256:f51cc8c500c81cd1d286dc86c59ff5f24b09a640127034f1527494251d76a07e |
 | schemas/datasets.schema.json | DatasetRegistry | sha256:3f175ffd729d92eaba728bc459ca455a538bb5b5131840c11986f1548579ef9b |
 | schemas/decision-record.schema.json | DecisionRecord | sha256:852ee127b92bc2a592f5da86972e32ed50e949548951bd66fed94b237b6ce821 |
-| schemas/image-exceptions.schema.json | ImageScanExceptionRegistry | sha256:0c2c63980225a5c6e1097356b98f2fe535b8885e8da9ad1618e93697548da862 |
+| schemas/image-exceptions.schema.json | ImageScanExceptionRegistry | sha256:e57e7388a87f331a31c9f1e871065306421772bf1da3a043b46f121bde1ffb17 |
 | schemas/intent-record.schema.json | IntentRecord | sha256:39b40c1375c470efe47179c52e898562a7623c1a79f429de8f078f46cf3ddc8d |
 | schemas/lifecycle-event.schema.json | LifecycleEvent | sha256:f747e330743b4f471021b38e161d26e24ecda8fb47ab02b08939ee298a1921ab |
 | schemas/logical-run.schema.json | LogicalRun | sha256:898f1d6b338ea810a75c0614035a49e0812147aef7816037c97447a602d37688 |

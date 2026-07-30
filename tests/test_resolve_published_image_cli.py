@@ -38,6 +38,7 @@ from tools.resolve_published_image import IMAGE_TAG_LENGTH, build_parser, main
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REGISTRY = PROJECT_ROOT / "config" / "repositories.yaml"
+POLICY = PROJECT_ROOT / "config" / "policy.yaml"
 
 REPOSITORY = "OLMo-core"
 ECR_REPOSITORY = "sbsandbox-intern-edullm-olmo-core"
@@ -169,12 +170,18 @@ def resolve(
     repository: str = REPOSITORY,
     commit_sha: str = COMMIT,
     registry: Path | None = None,
+    policy: Path | None = None,
     output: Path | None = None,
 ) -> int:
     return main(
         [
             "--registry",
             str(registry if registry is not None else REGISTRY),
+            # The shipped policy, so what counts as a blocking finding here is what counts
+            # everywhere else. A fixture policy would let these tests agree with themselves
+            # about a severity list nothing deploys.
+            "--policy",
+            str(policy if policy is not None else POLICY),
             "--repository",
             repository,
             "--commit-sha",
@@ -426,7 +433,14 @@ def test_a_commit_with_no_published_image_is_recorded_as_nothing_published(
 
     assert exit_code == 0
     assert captured.err == ""
-    assert written(tmp_path) == {"published": [], "image_scan": None}
+    # Findings null rather than empty, for the same reason the summary is. Nothing was
+    # scanned because nothing was published, and an empty list would say the registry looked
+    # and found nothing blocking -- which is the one reading that opens the gate.
+    assert written(tmp_path) == {
+        "published": [],
+        "image_scan": None,
+        "blocking_findings": None,
+    }
     assert json.loads(captured.out)["published_images"] == 0
 
 

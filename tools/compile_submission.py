@@ -29,7 +29,11 @@ from edullm_platform.canonical import canonical_json_bytes
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
 from edullm_platform.contracts.identity import new_run_id
-from edullm_platform.contracts.image_scan import ImageScanExceptionRegistry, ImageScanSummary
+from edullm_platform.contracts.image_scan import (
+    ImageScanExceptionRegistry,
+    ImageScanSummary,
+    ScanFinding,
+)
 from edullm_platform.contracts.policy import ApprovalPolicy
 from edullm_platform.contracts.repository_registry import RepositoryRegistry
 from edullm_platform.contracts.workload import WorkloadCatalog
@@ -55,7 +59,9 @@ class ResolvedImagesUnreadableError(ValueError):
     """
 
 
-def read_published_images(document: object) -> tuple[list[PublishedImage], ImageScanSummary | None]:
+def read_published_images(
+    document: object,
+) -> tuple[list[PublishedImage], ImageScanSummary | None, tuple[ScanFinding, ...] | None]:
     """What ``tools/resolve_published_image.py`` wrote, read back into what compiling needs.
 
     Nothing here is skipped or defaulted on a malformed entry. Dropping one silently turns a
@@ -88,12 +94,30 @@ def read_published_images(document: object) -> tuple[list[PublishedImage], Image
         published.append(PublishedImage(image_digest=digest, pushed_at=taken))
 
     scan = document.get("image_scan")
-    if scan is None:
-        return published, None
+    summary = None
+    if scan is not None:
+        try:
+            summary = ImageScanSummary.model_validate(scan)
+        except ValidationError as exc:
+            raise ResolvedImagesUnreadableError(
+                f"the recorded scan summary is not one: {exc}"
+            ) from exc
+
+    # Absent and empty are different answers. A missing key or a null means the findings
+    # could not be read, and the gate refuses that because the count in the summary will not
+    # match a list it does not have. An empty list means the registry reported nothing at a
+    # blocking severity, which is a pass. Reading one as the other is the only way this file
+    # could open the gate rather than close it.
+    recorded = document.get("blocking_findings")
+    if recorded is None:
+        return published, summary, None
+    if not isinstance(recorded, list):
+        raise ResolvedImagesUnreadableError("blocking_findings is not a list")
     try:
-        return published, ImageScanSummary.model_validate(scan)
+        findings = tuple(ScanFinding.model_validate(entry) for entry in recorded)
     except ValidationError as exc:
-        raise ResolvedImagesUnreadableError(f"the recorded scan summary is not one: {exc}") from exc
+        raise ResolvedImagesUnreadableError(f"a recorded finding is not one: {exc}") from exc
+    return published, summary, findings
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -155,7 +179,7 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_UNUSABLE
 
     try:
-        published_images, image_scan_summary = read_published_images(resolved)
+        published_images, image_scan_summary, blocking_findings = read_published_images(resolved)
     except ResolvedImagesUnreadableError as exc:
         print(f"the resolved images are unreadable: {exc}", file=sys.stderr)
         return EXIT_UNUSABLE
@@ -177,6 +201,7 @@ def main(argv: list[str] | None = None) -> int:
             dataset_registry=registry,
             image_scan_registry=image_scan_registry,
             image_scan_summary=image_scan_summary,
+            image_scan_findings=blocking_findings,
             published_images=published_images,
         )
     except SubmissionRefusedError as exc:

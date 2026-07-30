@@ -49,6 +49,7 @@ digest runs because the scan had not finished yet.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from enum import StrEnum
 from typing import Annotated, Literal, Self
 
@@ -64,14 +65,20 @@ from .base import (
 from .bindings import GitHubLogin
 
 __all__ = [
+    "VULNERABILITY_ID_PATTERN",
     "ImageScanException",
     "ImageScanExceptionRegistry",
     "ImageScanPolicy",
     "ImageScanSeverity",
     "ImageScanStatus",
     "ImageScanSummary",
+    "ReviewedVulnerability",
+    "ScanFinding",
+    "VulnerabilityId",
+    "blocking_findings_from_ecr",
     "image_scan_is_reviewed",
     "image_scan_summary_from_ecr",
+    "unreviewed_blocking_findings",
 ]
 
 
@@ -174,12 +181,77 @@ class ImageScanException(ContractModel):
     recorded_at: UtcTimestamp
 
 
+#: What the registry calls a vulnerability. Deliberately wider than ``CVE-…``: ECR reports
+#: whatever its source database uses, and a shape this refuses is a finding nobody can ever
+#: review -- which would wedge the gate closed rather than fail it safe.
+VULNERABILITY_ID_PATTERN = r"^[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9][A-Za-z0-9.-]*$"
+
+VulnerabilityId = Annotated[str, Field(pattern=VULNERABILITY_ID_PATTERN, max_length=128)]
+
+
+class ScanFinding(ContractModel):
+    """One finding at a blocking severity, as the registry reported it.
+
+    Carried between the two places that read a scan and the one place that judges it, which
+    is why it is a contract rather than a tuple: the resolver serializes these into the
+    artifact the compile job reads, and the state machine hands the equivalent to the
+    validator.
+
+    The package is part of the identity. A vulnerability is reviewed as a statement about a
+    package this platform ships -- unreachable from the entrypoint, or unfixable upstream,
+    or both -- and the same identifier in a different package is a different question.
+    """
+
+    vulnerability_id: VulnerabilityId
+    package_name: str = Field(min_length=1, max_length=128)
+
+
+class ReviewedVulnerability(ContractModel):
+    """One vulnerability somebody read and accepted, with their name against it.
+
+    THE UNIT OF REVIEW IS THE VULNERABILITY, NOT THE IMAGE, AND THAT IS THE POINT. Every
+    image this platform builds inherits the same criticals from the base it shares -- perl
+    and glibc, unfixable from this repository, with no patched base published upstream. A
+    per-digest exception makes each rebuild a reviewed pull request naming seventy-one
+    characters, so a researcher cannot iterate without an admin. That is the friction this
+    platform removed from choosing an image, arriving one step to the left.
+
+    What a reviewer does is read a finding and decide it is acceptable. This lets the record
+    say that, once, and keeps saying it across rebuilds. It is not a loosening: a finding
+    nobody has reviewed still refuses the run, which is what the per-digest form could not
+    express, because it could not tell an inherited finding from an introduced one.
+
+    ``reason`` carries the same floor as :class:`ImageScanException` and for the same
+    reason: "approved" is not a reason, and the value of the record is that a later reader
+    can tell whether the finding was understood or waved through.
+    """
+
+    vulnerability_id: VulnerabilityId
+    package_name: str = Field(min_length=1, max_length=128)
+    reason: str = Field(min_length=40)
+    recorded_by: GitHubLogin
+    recorded_at: UtcTimestamp
+
+    @property
+    def covers(self) -> tuple[str, str]:
+        return (self.vulnerability_id, self.package_name)
+
+
 class ImageScanExceptionRegistry(ContractModel):
-    """The reviewed set of digests that may run despite carrying blocking findings."""
+    """What may run despite carrying blocking findings, in two forms.
+
+    ``reviewed_vulnerabilities`` is the routine one: a finding read and accepted, covering
+    every image that carries it. ``exceptions`` is the stronger and rarer one: a whole image
+    accepted, which covers a scan that never completed and an image the registry cannot scan
+    at all, because it is a human saying they looked rather than a claim about a finding.
+    """
 
     schema_version: Literal[1]
     exceptions: Annotated[
         tuple[ImageScanException, ...], BeforeValidator(require_ordered_sequence)
+    ] = Field(default=(), strict=False)
+    reviewed_vulnerabilities: Annotated[
+        tuple[ReviewedVulnerability, ...], BeforeValidator(require_ordered_sequence)
     ] = Field(default=(), strict=False)
 
     @model_validator(mode="after")
@@ -189,10 +261,25 @@ class ImageScanExceptionRegistry(ContractModel):
             raise ValueError("a digest must not carry more than one recorded exception")
         return self
 
+    @model_validator(mode="after")
+    def validate_one_review_per_vulnerability(self) -> Self:
+        covered = [review.covers for review in self.reviewed_vulnerabilities]
+        if len(set(covered)) != len(covered):
+            raise ValueError(
+                "a vulnerability in a package must not carry more than one recorded review"
+            )
+        return self
+
     def exception_for(self, image_digest: str) -> ImageScanException | None:
         for exception in self.exceptions:
             if exception.image_digest == image_digest:
                 return exception
+        return None
+
+    def review_for(self, finding: ScanFinding) -> ReviewedVulnerability | None:
+        for review in self.reviewed_vulnerabilities:
+            if review.covers == (finding.vulnerability_id, finding.package_name):
+                return review
         return None
 
 
@@ -241,14 +328,91 @@ def image_scan_summary_from_ecr(payload: object) -> ImageScanSummary | None:
         return None
 
 
+def blocking_findings_from_ecr(
+    payload: object, *, policy: ImageScanPolicy
+) -> tuple[ScanFinding, ...] | None:
+    """The blocking findings in a ``describe-image-scan-findings`` result, or ``None``.
+
+    Beside :func:`image_scan_summary_from_ecr` and for the same reason: two callers read
+    the same answer from two directions -- the state machine hands the validator a describe
+    result, and the resolver reads the same call on the credential-free side -- and two
+    copies of this would be two chances to disagree about which findings block.
+
+    **``None`` and ``()`` are different answers and the difference is the guard.** An empty
+    tuple means the registry reported nothing at a blocking severity, which is a pass. A
+    ``None`` means this could not read the payload, and the gate turns that into a refusal
+    because the count it compares against will not match. Returning an empty tuple on an
+    unreadable answer would be the one bug that opens the gate quietly.
+
+    A finding whose identifier or package this cannot parse makes the whole answer ``None``
+    rather than being dropped. Dropping it would produce a shorter list that still satisfies
+    every review, which is the vacuous pass arriving through the mapping instead of through
+    the caller.
+    """
+    if not isinstance(payload, dict):
+        return None
+    findings = payload.get("imageScanFindings")
+    if not isinstance(findings, dict):
+        return None
+    raw = findings.get("findings")
+    if raw is None:
+        raw = ()
+    if not isinstance(raw, list | tuple):
+        return None
+    blocking = {severity.value for severity in policy.blocking_severities}
+    collected: list[ScanFinding] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            return None
+        if entry.get("severity") not in blocking:
+            continue
+        attributes = entry.get("attributes")
+        attributes = attributes if isinstance(attributes, list | tuple) else ()
+        package = next(
+            (
+                attribute.get("value")
+                for attribute in attributes
+                if isinstance(attribute, dict) and attribute.get("key") == "package_name"
+            ),
+            None,
+        )
+        try:
+            collected.append(
+                ScanFinding.model_validate(
+                    {"vulnerability_id": entry.get("name"), "package_name": package}
+                )
+            )
+        except ValidationError:
+            return None
+    return tuple(collected)
+
+
+def unreviewed_blocking_findings(
+    *,
+    blocking_findings: Sequence[ScanFinding],
+    registry: ImageScanExceptionRegistry,
+) -> tuple[ScanFinding, ...]:
+    """The blocking findings nobody has reviewed, so a refusal can name them.
+
+    Separate from the gate because a decision wants a boolean and a message wants a list.
+    A refusal reading "unreviewed scan findings" sends a submitter to look at everything
+    their image contains; one naming the identifier and the package sends them to the one
+    thing that stopped it.
+    """
+    return tuple(
+        finding for finding in blocking_findings if registry.review_for(finding) is None
+    )
+
+
 def image_scan_is_reviewed(
     *,
     image_digest: str,
     summary: ImageScanSummary | None,
     policy: ImageScanPolicy,
     registry: ImageScanExceptionRegistry,
+    blocking_findings: Sequence[ScanFinding] | None = None,
 ) -> bool:
-    """Whether this digest may run: clean of blocking findings, or excepted by somebody.
+    """Whether this digest may run: clean, every blocking finding reviewed, or excepted.
 
     Fails closed on every kind of not-knowing. A missing summary, a scan that has not
     finished, and a scan that failed are all "nobody has seen the findings", and none of
@@ -256,9 +420,26 @@ def image_scan_is_reviewed(
     missing scan, because the exception is a human saying they looked -- which is a stronger
     statement than a scan result, and the only one that can cover an image the registry
     cannot scan at all.
+
+    **The count from the summary is what says how many findings must arrive, and that guard
+    is load-bearing.** "Every blocking finding is reviewed" is trivially true of an empty
+    list, so a caller that stopped sending findings -- a mapping returning nothing on an
+    unfamiliar payload, a workflow step dropping an artifact -- would turn the gate off
+    silently and in the open direction. A mismatch between the count and the list is refused
+    rather than reconciled, which makes the failure loud and closed instead of quiet and
+    open. ``blocking_findings`` therefore defaults to ``None`` and that default refuses any
+    image with a blocking finding, so a caller cannot reach the permissive branch by
+    omission.
     """
     if registry.exception_for(image_digest) is not None:
         return True
     if summary is None or not summary.complete:
         return False
-    return policy.blocking_findings(summary) == 0
+    expected = policy.blocking_findings(summary)
+    if expected == 0:
+        return True
+    if blocking_findings is None or len(blocking_findings) != expected:
+        return False
+    return not unreviewed_blocking_findings(
+        blocking_findings=blocking_findings, registry=registry
+    )

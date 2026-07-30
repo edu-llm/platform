@@ -2,8 +2,8 @@
 
 Phase: phase-0
 Bundle schema version: 1
-Source commit: 53e1302ef6229d0c67960308643b0031f41191f9
-Generated: 2026-07-30T07:13:10+00:00
+Source commit: 609a14e8412ea199ecc92e9985e190cea04b815b
+Generated: 2026-07-30T18:01:09+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 0 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase0_proof.py` at generation time.
 
@@ -18,9 +18,9 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3621 |
-| suite tests executed | 3455 |
-| suite passed | 3455 |
+| suite tests collected | 3659 |
+| suite tests executed | 3493 |
+| suite passed | 3493 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
@@ -33,7 +33,7 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 | criteria GAP (each one fails the gate) | 0 |
 | related recorded deferrals | 1 (D1) |
 | fixtures with recorded digests | 9 |
-| contract models inventoried | 132 |
+| contract models inventoried | 134 |
 | JSON Schema files exported | 16 |
 
 ## Contract versions
@@ -86,7 +86,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 
 | file | digest |
 | --- | --- |
-| config/organization.yaml | sha256:c20f775a586005475853d2d80192b9e7b98666a3c9092ebf10a3f69869cc612b |
+| config/organization.yaml | sha256:967e5053115dbef048570904859d1907003512c1180cf683d4585c5abd66a2b1 |
 | config/policy.yaml | sha256:8efa2f00527f9ad1677ed27452a2b6093a6a8c9e8190cf3e0a583b0f68787b39 |
 | config/workload-catalog.yaml | sha256:dbd10c9d4655be66f829b8c43e150544ba17ca778988f86d14d22e51600feec6 |
 | fixtures/authorization/admin-exception.yaml | sha256:4ad48b8ecd405d11428cf446f74d0a8aeabf904365f3fee7b599b6a7ed0b6fa0 |
@@ -102,7 +102,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | schemas/checkpoint-manifest.schema.json | sha256:f51cc8c500c81cd1d286dc86c59ff5f24b09a640127034f1527494251d76a07e |
 | schemas/datasets.schema.json | sha256:3f175ffd729d92eaba728bc459ca455a538bb5b5131840c11986f1548579ef9b |
 | schemas/decision-record.schema.json | sha256:852ee127b92bc2a592f5da86972e32ed50e949548951bd66fed94b237b6ce821 |
-| schemas/image-exceptions.schema.json | sha256:0c2c63980225a5c6e1097356b98f2fe535b8885e8da9ad1618e93697548da862 |
+| schemas/image-exceptions.schema.json | sha256:e57e7388a87f331a31c9f1e871065306421772bf1da3a043b46f121bde1ffb17 |
 | schemas/intent-record.schema.json | sha256:39b40c1375c470efe47179c52e898562a7623c1a79f429de8f078f46cf3ddc8d |
 | schemas/lifecycle-event.schema.json | sha256:f747e330743b4f471021b38e161d26e24ecda8fb47ab02b08939ee298a1921ab |
 | schemas/logical-run.schema.json | sha256:898f1d6b338ea810a75c0614035a49e0812147aef7816037c97447a602d37688 |

@@ -42,6 +42,7 @@ from edullm_platform.contracts.dataset_registry import DatasetRegistry
 from edullm_platform.contracts.image_scan import (
     ImageScanExceptionRegistry,
     ImageScanSummary,
+    ScanFinding,
 )
 from edullm_platform.contracts.manifest import (
     COMMIT_SHA_PATTERN,
@@ -168,6 +169,7 @@ def compile_submission(
     dataset_registry: DatasetRegistry,
     image_scan_registry: ImageScanExceptionRegistry,
     image_scan_summary: ImageScanSummary | None = None,
+    image_scan_findings: Sequence[ScanFinding] | None = None,
     # Every image the registry holds for the declared commit, as the resolve job read them.
     # Defaulted to nothing rather than made required, and the default is the fail-closed
     # one: a caller that never passes this gets the unbuilt-commit refusal rather than a
@@ -283,6 +285,7 @@ def compile_submission(
         image_scan_policy=policy.image_scan,
         image_scan_registry=image_scan_registry,
         image_scan_summary=image_scan_summary,
+        image_scan_findings=image_scan_findings,
     )
 
     # Imported here rather than at module scope: admission owns this rule, and importing
