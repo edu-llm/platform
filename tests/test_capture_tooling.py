@@ -115,6 +115,39 @@ def test_an_aws_call_names_a_region_only_when_it_was_given_one(stubbed_path: Pat
     assert invoked_arguments(stubbed_path)[-2:] == ["--region", REGION]
 
 
+def test_an_aws_call_names_a_profile_only_when_it_was_given_one(stubbed_path: Path) -> None:
+    """Mutation: keep the profile required, and give the one caller without one a default.
+
+    The five capture tools run from a laptop and inherit an SSO session, which is what a
+    profile names. ``tools/resolve_published_image.py`` runs on a GitHub Actions runner
+    under a role the workflow assumed, so its credentials are in the environment and there
+    is no profile to name -- and naming one anyway is not a harmless default: the CLI
+    answers a profile absent from the config file with ProfileNotFound, before the call
+    leaves the runner, which reads as a broken role rather than as a made-up argument.
+    """
+    echoing_aws_stub(stubbed_path)
+
+    aws(["ecr", "describe-images"], region=REGION)
+
+    assert invoked_arguments(stubbed_path) == [
+        "ecr",
+        "describe-images",
+        "--output",
+        "json",
+        "--region",
+        REGION,
+    ]
+
+
+def test_a_required_answer_can_be_asked_for_without_a_profile_too(stubbed_path: Path) -> None:
+    # The wrapper that parses is the one the resolver actually calls, so the parameter has
+    # to reach both or the caller is back to composing its own command line.
+    echoing_aws_stub(stubbed_path, '{"imageDetails": []}')
+
+    assert aws_json(["ecr", "describe-images"], region=REGION) == {"imageDetails": []}
+    assert "--profile" not in invoked_arguments(stubbed_path)
+
+
 def test_an_argument_holding_a_space_arrives_as_one_argument(stubbed_path: Path) -> None:
     """``shell=False`` and a list, which is what stops a filter becoming two arguments."""
     echoing_aws_stub(stubbed_path)
