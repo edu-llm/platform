@@ -390,9 +390,13 @@ def test_every_run_body_is_strict_about_failures_and_unset_variables() -> None:
     A run body without it continues past a failed command and exits on the last one, so a
     deploy that failed in the middle reports the exit status of the step's final line.
     """
+    # One per stack, plus validate, plus verify, plus the dispatch guard. The count is the
+    # point rather than scaffolding: a run body added without ``set -euo pipefail`` would
+    # otherwise be checked by nothing, so a new step is meant to fail here once and be
+    # counted in deliberately.
     scripts = run_scripts()
 
-    assert len(scripts) == len(DEPLOYMENT_ORDER) + 2
+    assert len(scripts) == len(DEPLOYMENT_ORDER) + 3
     assert all(script.startswith("set -euo pipefail\n") for script in scripts)
 
 

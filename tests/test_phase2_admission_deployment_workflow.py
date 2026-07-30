@@ -296,9 +296,13 @@ def test_verification_pins_the_admission_shape_and_fails_loudly_when_it_drifts()
 
 
 def test_every_run_body_is_strict_about_failures_and_unset_variables() -> None:
+    # One per stack, plus validate, plus verify, plus the dispatch guard. The count is the
+    # point rather than scaffolding: a run body added without ``set -euo pipefail`` would
+    # otherwise be checked by nothing, so a new step is meant to fail here once and be
+    # counted in deliberately.
     scripts = _run_scripts()
 
-    assert len(scripts) == len(DEPLOYMENT_ORDER) + 2
+    assert len(scripts) == len(DEPLOYMENT_ORDER) + 3
     assert all(script.startswith("set -euo pipefail\n") for script in scripts)
 
 

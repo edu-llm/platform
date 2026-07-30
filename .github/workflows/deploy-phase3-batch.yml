@@ -42,6 +42,41 @@ jobs:
       contents: read
       id-token: write
     steps:
+      # WHO MAY DEPLOY BY HAND, ENUMERATED RATHER THAN MATCHED. workflow_dispatch is
+      # offered to anybody holding write, and write stopped meaning "an admin" when the
+      # pilot opened. Without this, a researcher can reconcile a CloudFormation stack into
+      # the sandbox account by pressing a button, through a role they cannot see and were
+      # never shown.
+      #
+      # Only the dispatch path is guarded. A push to main has already been through a
+      # code-owner review of both the template and the workflow that applies it, and
+      # refusing there would strand an approved infrastructure change with no way to land.
+      #
+      # It fails rather than skipping. A job-level `if` that evaluates false reports the
+      # job as skipped, which reads as success in the checks list and tells the person
+      # nothing at all.
+      #
+      # First in the job, before the checkout, so a refused dispatch does no work. The list
+      # is checked against config/organization.yaml by tests/test_deploy_authorization.py,
+      # which also holds all three deploy workflows to carrying this same step -- three
+      # copies kept honest by a test, the way the job queue name already is, rather than by
+      # a composite action that would move the control out of the file it protects.
+      - name: Refuse a hand-started deploy from somebody who may not make one
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          case "${ACTOR}" in
+            philote-dev|BritishAmericqn) ;;
+            *)
+              echo "deploy_dispatch_not_authorized:${ACTOR}" >&2
+              echo "Deploying infrastructure by hand is limited to the repository admins." >&2
+              echo "Open a pull request against the template instead: a merge to main deploys it after a code-owner review." >&2
+              exit 1
+              ;;
+          esac
+
       - name: Check out repository
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
