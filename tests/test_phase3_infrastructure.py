@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import string
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 
@@ -48,9 +49,12 @@ from infrastructure_support import (
     walk_strings,
 )
 
+from edullm_platform.config import load_yaml
 from edullm_platform.contracts.execution import BatchJobBinding, ExecutionTarget
 from edullm_platform.contracts.lifecycle import SchedulerAttempt
 from edullm_platform.contracts.manifest import RunManifest
+from edullm_platform.contracts.repository_registry import RepositoryRegistry
+from edullm_platform.contracts.workload import WorkloadCatalog
 from edullm_platform.execution import batch_submit_request
 from edullm_platform.lifecycle_handler import (
     BATCH_ITEM_FAILURES_KEY,
@@ -69,6 +73,8 @@ BATCH_ROLES_PATH = IAM_ROOT / "batch-roles.yaml"
 LIFECYCLE_ROLE_PATH = IAM_ROOT / "lifecycle-lambda-role.yaml"
 SERVICE_ROLES_PATH = IAM_ROOT / "admission-service-roles.yaml"
 EXECUTION_TARGETS_PATH = PROJECT_ROOT / "config" / "execution-targets.yaml"
+REPOSITORY_REGISTRY_PATH = PROJECT_ROOT / "config" / "repositories.yaml"
+WORKLOAD_CATALOG_PATH = PROJECT_ROOT / "config" / "workload-catalog.yaml"
 CPU_MANIFEST_PATH = PROJECT_ROOT / "fixtures" / "manifests" / "cpu-routine.yaml"
 
 #: Every template this phase adds or amends, whoever applies it.
@@ -119,6 +125,28 @@ DEAD_LETTER_QUEUE_NAME = "sbsandbox-intern-edullm-batch-lifecycle-dlq"
 RECORDER_FUNCTION_NAME = "sbsandbox-intern-edullm-lifecycle-recorder"
 OUTPUTS_BUCKET = "sbsandbox-intern-edullm-outputs"
 LINEAGE_BUCKET = "sbsandbox-intern-edullm-lineage"
+
+#: The three actions an image is pulled with. ``ecr:GetAuthorizationToken`` is deliberately
+#: not among them: it has no resource type and is granted on ``"*"``, so the statement
+#: carrying it says nothing about which repository an identity may pull from.
+IMAGE_PULL_ACTIONS = frozenset(
+    {
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer",
+    }
+)
+
+#: Every identity that pulls a research image, across both files that create one. The GPU
+#: trio is a copy of the CPU trio, and the copy is the exposure: a scope widened in one file
+#: and not the other leaves a whole queue unable to start a container, and a test reading
+#: one file reports that everything is covered.
+IMAGE_PULLING_ROLES = (
+    (BATCH_ROLES_PATH, EXECUTION_ROLE_NAME),
+    (BATCH_ROLES_PATH, INSTANCE_ROLE_NAME),
+    (GPU_BATCH_ROLES_PATH, GPU_EXECUTION_ROLE_NAME),
+    (GPU_BATCH_ROLES_PATH, GPU_INSTANCE_ROLE_NAME),
+)
 
 #: c7i.8xlarge is offered in these five and not in us-east-1e. Measured against the account
 #: on 2026-07-27; the consequence of getting it wrong is a job that waits rather than errors.
@@ -1629,6 +1657,136 @@ def test_the_states_role_gains_batch_and_ecr_reads_and_no_way_to_stop_a_job() ->
         "batch:DeregisterJobDefinition",
         "batch:UntagResource",
     } & set(actions)
+
+
+# --------------------------------------------------------------------------------------
+# Seam: the one ECR repository these roles name, against the registry that maps them all
+# --------------------------------------------------------------------------------------
+
+
+def submittable_ecr_repositories() -> dict[str, str]:
+    """Every repository a submission can actually name, mapped to where its images live.
+
+    Submittable is the intersection of two files, because it takes both to reach Batch.
+    ``config/repositories.yaml`` is what gives a repository an ECR repository at all, and
+    ``config/workload-catalog.yaml`` is what gives it a profile a manifest can name -- a
+    submission naming a repository with no workload profile cannot be compiled. Two
+    repositories are registered and one of them has a profile, and that one-member set is
+    the only reason the repository name hardcoded in four places has never been wrong.
+
+    Duplicated verbatim in ``tests/test_phase3_execution.py`` rather than lifted into
+    ``tests/infrastructure_support.py``. Both modules already load both of these files, and
+    three lines repeated once is a smaller thing to keep true than a shared support module
+    that neither of them owns.
+    """
+    registry = load_yaml(REPOSITORY_REGISTRY_PATH, RepositoryRegistry)
+    catalog = load_yaml(WORKLOAD_CATALOG_PATH, WorkloadCatalog)
+    named = {workload.repository for workload in catalog.workloads}
+    submittable = {
+        entry.repository: entry.ecr_repository
+        for entry in registry.repositories
+        if entry.repository in named
+    }
+    assert submittable, "no registered repository has a workload profile to be named by"
+    return submittable
+
+
+def arn_covers(granted: str, ecr_repository: str) -> bool:
+    """Whether one ``Resource`` entry authorizes an action against one ECR repository.
+
+    IAM's ``*`` is honoured because IAM honours it. The fix these two tests exist to force
+    may well be a single scope over the project prefix rather than an entry per repository
+    -- infra/iam/image-resolver-role.yaml is already written that way -- and a comparison
+    that accepted only exact names would go red against a role that genuinely reaches
+    everything. That is the shape of failure somebody closes by editing the expectation.
+    """
+    if granted == "*":
+        return True
+    if ":repository/" not in granted:
+        return False
+    return fnmatchcase(ecr_repository, granted.rsplit(":repository/", 1)[1])
+
+
+def image_pull_arns(path: Path, role_name: str) -> list[str]:
+    """Every ``Resource`` entry the statements granting one role a pull action name."""
+    return [
+        arn
+        for policy in role_named(path, role_name)["Policies"]
+        for statement in policy["PolicyDocument"]["Statement"]
+        if IMAGE_PULL_ACTIONS.intersection(statement_actions(statement))
+        for arn in resource_arns(statement["Resource"])
+    ]
+
+
+def test_the_states_role_may_read_a_scan_for_every_submittable_repository() -> None:
+    """Reads BOTH sides. Mutation: give a second registered repository a workload profile
+    and leave this grant scoped to the first.
+
+    Modelled on ``test_the_publisher_role_may_push_to_every_registered_destination`` in
+    tests/test_repository_registry.py, and asking that question one step further down the
+    path. That one compares a grant against every *registered* repository, because a
+    registration is all publishing needs. This compares one against every *submittable*
+    repository, because reading a scan needs a submission to exist to read it for -- and
+    the day those two sets coincide is the day this grant is wrong.
+
+    This module already unwraps ``Resource`` for the S3, SQS, Batch and IAM statements it
+    checks, and the ECR statement is the one it skipped, which is how a scope naming one
+    repository survived a second registration landing in config/repositories.yaml.
+
+    The denial never reaches anybody as a denial. ``ReadImageScan`` catches ``States.ALL``,
+    so an AccessDenied arrives at the validator in the same branch an unscanned image does,
+    and ``image_scan_is_reviewed`` consults config/image-exceptions.yaml before it looks at
+    the summary at all -- so a digest with an exception is admitted on a scan nobody read.
+    """
+    granted = states_role_arns_for("ecr:DescribeImageScanFindings")
+    scoped_to = sorted(arn.rsplit(":repository/", 1)[-1] for arn in granted)
+    unreadable = sorted(
+        f"{repository} (images in {ecr_repository})"
+        for repository, ecr_repository in submittable_ecr_repositories().items()
+        if not any(arn_covers(arn, ecr_repository) for arn in granted)
+    )
+
+    assert not unreadable, (
+        "the admission states role may read scan findings for "
+        f"{', '.join(scoped_to)} and no other repository, which leaves "
+        f"{', '.join(unreadable)} uncovered. infra/iam/admission-service-roles.yaml, the "
+        "ecr:DescribeImageScanFindings statement's Resource, is what would have to change."
+    )
+
+
+def test_every_role_that_pulls_an_image_may_pull_from_every_submittable_repository() -> None:
+    """Reads THREE files. Mutation: give a second registered repository a workload profile
+    and leave either roles file scoped to the first.
+
+    The execution role is ECS's identity while it starts the task and the instance role is
+    the agent's on the host, and both roles are spelled twice, once per compute stack. All
+    four are compared in one pass so the GPU trio cannot drift from the CPU one: widening
+    infra/iam/batch-roles.yaml alone leaves every GPU submission unable to start, and a
+    test that read one file would report the seam as covered.
+
+    THIS IS THE ONE THAT FAILS LAST AND READS LEAST LIKE ITS CAUSE. Everything upstream has
+    already succeeded by the time it fires -- the scan was read, the decision was recorded
+    as accepted in an immutable lineage store, the job definition registered, the job was
+    submitted, the queue found capacity and an instance scaled up and joined the cluster.
+    What arrives is a ``CannotPullContainerError`` inside a job that has already cost money,
+    naming a registry path rather than a policy, and it reproduces identically on every
+    resubmission -- so it reads as a broken image rather than as a repository whose images
+    no identity in this account was ever authorised to fetch.
+    """
+    submittable = submittable_ecr_repositories()
+    unreachable = sorted(
+        f"{repository} (images in {ecr_repository}) is unreachable by {role_name} in "
+        f"{path.relative_to(PROJECT_ROOT)}"
+        for path, role_name in IMAGE_PULLING_ROLES
+        for repository, ecr_repository in submittable.items()
+        if not any(arn_covers(arn, ecr_repository) for arn in image_pull_arns(path, role_name))
+    )
+
+    assert not unreachable, (
+        "a container cannot start from an image the roles that fetch it may not pull, and "
+        "these grants do not cover every repository a submission can name: "
+        + "; ".join(unreachable)
+    )
 
 
 # --------------------------------------------------------------------------------------
