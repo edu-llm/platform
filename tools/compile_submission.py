@@ -28,9 +28,9 @@ from edullm_platform.contracts.image_scan import ImageScanExceptionRegistry
 from edullm_platform.contracts.policy import ApprovalPolicy
 from edullm_platform.contracts.repository_registry import RepositoryRegistry
 from edullm_platform.contracts.workload import WorkloadCatalog
+from edullm_platform.errors import SubmissionRefusedError
 from edullm_platform.submission import (
     SubmissionInputs,
-    SubmissionRefusedError,
     compile_submission,
     render_approver_context,
 )

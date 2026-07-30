@@ -14,8 +14,8 @@ from datetime import UTC, datetime
 
 import pytest
 
+from edullm_platform.errors import SubmissionRefusedError
 from edullm_platform.image_resolution import PublishedImage, resolve_image
-from edullm_platform.submission import SubmissionRefusedError
 
 #: A commit sha from this repository's own history, so the shape is one that has existed.
 COMMIT = "8076c077533eb79742f4ed22aade439df123a593"
