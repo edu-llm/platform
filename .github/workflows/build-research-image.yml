@@ -476,9 +476,10 @@ jobs:
             --github-output "${GITHUB_OUTPUT}"
 
       # The registered base digest reaches docker build only as --build-arg BASE_IMAGE,
-      # which a Dockerfile is free to ignore by hardcoding its own FROM. Provenance would
-      # still record base_image_digest from the registry, so the record would assert a
-      # fact about the image that nothing established. Enforce the contract instead.
+      # which a Dockerfile is free to ignore by hardcoding its own FROM. Phase 1 evidence
+      # capture still records base_image_digest from the registry, so the record would
+      # assert a fact about the image that nothing established. Enforce the contract
+      # instead.
       - name: Require the registered base image
         working-directory: platform
         env:
@@ -541,11 +542,11 @@ jobs:
 
       # Resuming is only safe if the published image is the image this run would have
       # built, and the tag alone cannot say so: it encodes twelve characters of the commit
-      # and nothing else, while the provenance record re-derives the rest at write time
-      # from config/repositories.yaml as it stands now. Resuming an older commit after the
-      # registered base digest changed would otherwise record the new base for an image
-      # built from the old one, which is the unverified assertion the Dockerfile gate
-      # above exists to prevent, arriving by a road that gate cannot see because it
+      # and nothing else, while everything downstream that describes the image re-derives
+      # the rest from config/repositories.yaml as it stands now. Resuming an older commit
+      # after the registered base digest changed would otherwise record the new base for
+      # an image built from the old one, which is the unverified assertion the Dockerfile
+      # gate above exists to prevent, arriving by a road that gate cannot see because it
       # inspects the checkout rather than the image. Comparing the labels also restores
       # the loud rejection a twelve-character tag collision used to get from the
       # immutable push.
@@ -699,9 +700,8 @@ jobs:
       # careful selection -- and a digest transcribed by eye is refused at admission as a
       # mutable image reference or accepted against the wrong image entirely.
       #
-      # Placed immediately after the read-back rather than at the end of the job, so a
-      # failure writing provenance still leaves the digest of an image that is already
-      # published where somebody can reach it.
+      # Placed immediately after the read-back so that anything added to the end of this
+      # job cannot fail between publishing an image and telling somebody its digest.
       - name: Publish the digest where a person can copy it
         env:
           RESEARCH_REPOSITORY: ${{ inputs.repository }}
@@ -731,41 +731,3 @@ jobs:
             echo
           } >> "${GITHUB_STEP_SUMMARY}"
           echo "The step summary carries the published digest for this commit."
-
-      # The recorded workflow_ref is the ref half of job.workflow_ref, never a commit SHA.
-      # ImageProvenance composes job_workflow_ref from these three fields, and the
-      # publisher role matches that claim with StringEquals against @refs/heads/main, so a
-      # SHA would record a claim string that could never have been asserted.
-      - name: Write image provenance
-        working-directory: platform
-        env:
-          RESEARCH_REPOSITORY: ${{ inputs.repository }}
-          IMAGE_DIGEST: ${{ steps.digest.outputs.image_digest }}
-          RUN_REPOSITORY: ${{ github.repository }}
-          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
-          WORKFLOW_FILE_PATH: ${{ job.workflow_file_path }}
-          WORKFLOW_REF: ${{ job.workflow_ref }}
-          RUN_ID: ${{ github.run_id }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
-        run: |
-          set -euo pipefail
-          provenance_file="${RUNNER_TEMP}/image-provenance.json"
-          workflow_ref="${WORKFLOW_REF#*@}"
-          # Written by whichever of the build step and the resume step ran; they are
-          # mutually exclusive and exactly one of them always does. Missing means neither
-          # established when the image was built, and a clock reading is not a substitute.
-          image_created="$(cat "${RUNNER_TEMP}/image-created.txt")"
-          uv run --frozen python tools/write_image_provenance.py \
-            --registry config/repositories.yaml \
-            --repository "${RESEARCH_REPOSITORY}" \
-            --source-identity "${RUNNER_TEMP}/source-identity.json" \
-            --image-digest "${IMAGE_DIGEST}" \
-            --run-repository "${RUN_REPOSITORY}" \
-            --workflow-repository "${WORKFLOW_REPOSITORY}" \
-            --workflow-path "${WORKFLOW_FILE_PATH}" \
-            --workflow-ref "${workflow_ref}" \
-            --run-id "${RUN_ID}" \
-            --run-attempt "${RUN_ATTEMPT}" \
-            --image-created "${image_created}" \
-            --output "${provenance_file}"
-          cat "${provenance_file}"
