@@ -355,6 +355,89 @@ def test_manifest_rejects_empty_command() -> None:
     )
 
 
+#: The command as it reached AWS Batch on 2026-07-30, read back out of the intent record for
+#: run_019fb4ce-cf24-7028-8eed-a32a28ec2493. A pilot user's shell quoting survived into the
+#: form field, so ``shlex.split`` saw one fully quoted string and returned one token.
+UNSPLIT_COMMAND_LINE = 'python -c "print(\\"hello from a second person\\")"'
+
+PROGRAM_NAMES_NOTHING_CAN_EXECUTE: tuple[tuple[str, str], ...] = (
+    ("a whole command line", UNSPLIT_COMMAND_LINE),
+    ("a quoted program name", "'python'"),
+    ("a double-quoted program name", '"python"'),
+    ("a name padded with a space", "python "),
+    ("a tab", "\tpython"),
+    ("nothing at all", ""),
+)
+
+
+@pytest.mark.parametrize(
+    ("description", "program"),
+    PROGRAM_NAMES_NOTHING_CAN_EXECUTE,
+    ids=[description for description, _program in PROGRAM_NAMES_NOTHING_CAN_EXECUTE],
+)
+def test_a_first_element_that_cannot_name_a_program_is_refused(
+    description: str,
+    program: str,
+) -> None:
+    payload = manifest_payload()
+    payload["command"] = [program, "-m", "train"]
+    with pytest.raises(ValidationError) as exc_info:
+        RunManifest.model_validate(payload)
+    assert_validation_error(
+        exc_info.value,
+        error_type="value_error",
+        loc=("command",),
+        message_fragment="the first command element must name a program",
+    )
+
+
+def test_the_refusal_says_the_command_line_was_never_split() -> None:
+    payload = manifest_payload()
+    payload["command"] = [UNSPLIT_COMMAND_LINE]
+    with pytest.raises(ValidationError) as exc_info:
+        RunManifest.model_validate(payload)
+    # The submitter reads this in the compile job's log and has to work out what to change,
+    # so it names the cause rather than restating the rule. Batch's own message for this --
+    # `executable file not found in $PATH` quoting the entire line -- arrives after a lead
+    # has approved the run and an instance has pulled the image.
+    assert_validation_error(
+        exc_info.value,
+        error_type="value_error",
+        loc=("command",),
+        message_fragment="was not split into arguments",
+    )
+
+
+def test_an_argument_may_hold_the_whitespace_and_quotes_a_program_name_may_not() -> None:
+    payload = manifest_payload()
+    # The corrected form of the same submission. Everything the rule forbids in the first
+    # element is ordinary in the ones after it, which is why the rule reaches only the first.
+    payload["command"] = ["python", "-c", "print('hello from a second person')"]
+    manifest = RunManifest.model_validate(payload)
+    assert manifest.command == ("python", "-c", "print('hello from a second person')")
+
+
+def test_a_program_named_by_absolute_path_is_still_a_program() -> None:
+    payload = manifest_payload()
+    payload["command"] = ["/usr/local/bin/python", "-m", "train"]
+    manifest = RunManifest.model_validate(payload)
+    assert manifest.command[0] == "/usr/local/bin/python"
+
+
+def test_an_empty_command_is_still_refused_for_being_empty() -> None:
+    # The program-name rule must not swallow this one: an absent command and an unusable
+    # program name are different mistakes and a submitter fixes them differently.
+    payload = manifest_payload()
+    payload["command"] = []
+    with pytest.raises(ValidationError) as exc_info:
+        RunManifest.model_validate(payload)
+    assert_validation_error(
+        exc_info.value,
+        error_type="too_short",
+        loc=("command",),
+    )
+
+
 def test_manifest_rejects_non_decimal_runtime_hours() -> None:
     payload = manifest_payload()
     payload["maximum_runtime_hours"] = 6
