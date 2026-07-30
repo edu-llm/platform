@@ -2,8 +2,8 @@
 
 Phase: phase-2
 Bundle schema version: 1
-Source commit: 5e1b74a6010c04024e71262369a37e015a781f10
-Generated: 2026-07-29T19:40:07+00:00
+Source commit: 4f259c8735793ee9c769421af3dde50861100bad
+Generated: 2026-07-30T00:42:18+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 2 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase2_proof.py` at generation time. It is not done, and the Result table below says by how much.
 
@@ -37,7 +37,7 @@ This run evaluated 22 acceptance criteria: twelve criteria are covered, one crit
 - `admission-denial-matrix.md` — the six actions the admission session must not be able to take, how each probe is aimed so that being permitted would change nothing, and what choosing a probe has cost. The matrix has run and holds no committed refusal.
 - `open-decisions.md` — what this repository has surfaced and not answered, and why none of D1 to D9 is among it.
 - `serialization-goldens.md` and `serialization-goldens.json` — the recorded canonical digest of what each Phase 2 role template grants, and the tripwire that fails when one drifts.
-- `schema-compatibility.md` — the contract models Phase 2 added, with their structural digests.
+- `schema-compatibility.md` — the contract models the modules behind this bundle define, with the structural digest of each and what makes one move.
 - `unit-test-report.md` — summarised pass and fail counts, per module and for the whole suite, with the commands to reproduce them.
 - `oidc-session-evidence.md` and `deployed-role-drift.md` — empty. Each says what it records, what would fill it, and which checks are waiting on it.
 
@@ -45,14 +45,14 @@ This run evaluated 22 acceptance criteria: twelve criteria are covered, one crit
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3412 |
-| suite tests executed | 3250 |
-| suite passed | 3250 |
+| suite tests collected | 3542 |
+| suite tests executed | 3376 |
+| suite passed | 3376 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
-| matrix node ids executed | 565 |
-| matrix node ids passed | 565 |
+| matrix node ids executed | 581 |
+| matrix node ids passed | 581 |
 | matrix node ids failed | 0 |
 | phase criteria | 22 |
 | criteria COVERED | 12 (1, 5, 8, 10, 13, 15, 16, 17, 18, 20, 21, 22) |
@@ -67,7 +67,7 @@ This run evaluated 22 acceptance criteria: twelve criteria are covered, one crit
 | CloudTrail records captured | 0 |
 | captures expire | 2026-08-26 |
 | open decisions recorded | 0 |
-| contract models added by this phase | 12 |
+| contract models in schema-compatibility.md | 12 |
 
 ## Verification commands
 
@@ -88,9 +88,9 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 
 | file | digest |
 | --- | --- |
-| .github/workflows/deploy-phase2-admission.yml | sha256:bed80da61dcae3ec6b6325b111e59a519add443fad6a2760f76e346741c0f687 |
-| .github/workflows/submit-run.yml | sha256:9855e09272408ea644d5ec955aaf8746ccd122b1e74c48eb732db83d2dd4235c |
-| config/organization.yaml | sha256:bb6b836e679464f5870225439664b9f6dacbed2e0fd39d80fbfcc47751c720a1 |
+| .github/workflows/deploy-phase2-admission.yml | sha256:07d3f22fff1655577bcd7b125a7cc77ea6c97258438c45c79f82c4d3fa3c0848 |
+| .github/workflows/submit-run.yml | sha256:80c621ee2dcf716cd364e5b464e06bb59c227d94dc34ba2d1286efae432c2948 |
+| config/organization.yaml | sha256:c20f775a586005475853d2d80192b9e7b98666a3c9092ebf10a3f69869cc612b |
 | config/policy.yaml | sha256:8efa2f00527f9ad1677ed27452a2b6093a6a8c9e8190cf3e0a583b0f68787b39 |
 | fixtures/authorization/admin-exception.yaml | sha256:4ad48b8ecd405d11428cf446f74d0a8aeabf904365f3fee7b599b6a7ed0b6fa0 |
 | fixtures/authorization/lead-self-authorization.yaml | sha256:0e65da633a3880b11e5f14d380d54497a2be7124da1121f34ec3d21d4b4e83d0 |
@@ -109,7 +109,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | fixtures/evidence/phase-2/lineage/records/intent/run_019fa46a-5478-70ea-aab6-28de23c41f7f.json | sha256:89ad215366a6c1e6177e24a04de4db99f0687529175d9bccae39ef3dfadd4ba1 |
 | fixtures/evidence/phase-2/lineage/records/intent/run_019fa471-0173-7050-a41b-22ca01969b52.json | sha256:e1e6f323427445671f554e4af5d23ea7a2020b578d926d6e934d3144604be0ba |
 | fixtures/evidence/phase-2/lineage/records/intent/run_019fa4c0-390d-7081-b539-08d9ff6b58be.json | sha256:be35e6f2797c899e1a5b44544ed64d053b125f6d17cb47fb0cc6932f2fd976a5 |
-| infra/admission-state-machine.yaml | sha256:f052fa4f0bfd732399405c7f02ac8efdb16a45d9aeba61b189514aaf4ea7110f |
+| infra/admission-state-machine.yaml | sha256:6b1a5c387158b4b053649838a19355bb4033875ac5fa54b2f5f6b87726cede30 |
 | infra/iam/admission-role.yaml | sha256:e5e5b2db0ae9b7d1cdf8d46ab3568f35279a33344fe1ec337cf69e82b9c9e841 |
 | infra/iam/admission-service-roles.yaml | sha256:6aeb0d2091c79dd6c4c4a42fed0796c612e88438655db97fcbc0c94860e0893d |
 | infra/iam/infra-deployer-role.yaml | sha256:596abb25126c0f10d734cbecd01bec08495cac63b19a81ab46870318504774ac |

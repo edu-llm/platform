@@ -14,9 +14,9 @@ and twice did.
 Everything else here is the shared plumbing: the golden-digest tripwire and its
 regeneration discipline, the nested pytest runs a generator uses to verify the tree it is
 describing, the secret scan applied to every document before it is written, the contract
-inventory, and the markdown helpers. A phase's generator supplies what is specific to it:
-which artifacts have goldens, which documents the bundle contains, and what the prose
-says.
+inventory together with the tripwire that reads it back out of a published bundle, and the
+markdown helpers. A phase's generator supplies what is specific to it: which artifacts have
+goldens, which documents the bundle contains, and what the prose says.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ import pkgutil
 import subprocess
 import sys
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, get_args
@@ -49,14 +49,18 @@ __all__ = [
     "CITATION_LEGEND",
     "GENERATOR_NESTED_ENV_VARS",
     "GENERATOR_TEST_PATHS",
+    "SCOPE_IS_NOT_AUTHORSHIP",
     "STATUS_LEGEND",
     "BundleWaitingOnADeployError",
     "GoldenDigestDriftError",
     "GoldenDrift",
+    "InventoryDrift",
     "MissingTestNodeError",
     "ModelRecord",
     "ProofBundleError",
     "RecordedGolden",
+    "RecordedModel",
+    "RecordedSchemaFile",
     "SchemaFileRecord",
     "SuiteOutcome",
     "assert_secret_free",
@@ -67,18 +71,25 @@ __all__ = [
     "contradicting_status_claims",
     "count_naming",
     "describe_drift",
+    "describe_inventory_drift",
     "file_digest",
     "full_suite_child_runs",
     "golden_drift",
     "golden_drift_guidance",
+    "inventory_drift",
+    "inventory_drift_guidance",
     "load_recorded_goldens",
+    "markdown_tables",
     "model_records",
     "pytest_environment",
+    "recorded_models",
+    "recorded_schema_files",
     "redact_own_digests",
     "render_check_detail",
     "render_goldens_document",
     "run_full_suite",
     "run_test_selection",
+    "schema_file_drift",
     "schema_file_records",
     "source_commit_sha",
     "status_claims",
@@ -138,6 +149,32 @@ Do exactly one of these, deliberately:
      Every digest already written into a proof bundle, a run manifest reference, or a
      lineage record disagrees with this build until you do."""
 
+INVENTORY_DRIFT_GUIDANCE: Final = """{subject}: the recorded {field} does not describe this tree.
+  recorded: {recorded}
+  live:     {live}
+
+This is a contract-inventory tripwire, not a formatting check. The table it guards is a
+published claim about this repository's contracts, and until it agrees with the tree the
+bundle describes a repository that is not the one in front of you.
+
+Which field moved decides what it means, and they do not mean the same thing:
+
+  * a structural digest means a field was added, removed, retyped or reconstrained. Every
+    payload already written against the old shape is one the new shape may now refuse;
+  * a module means the contract did not change and the code moved. It costs a reviewer
+    nothing and still has to be re-recorded, because a table naming a file the model is
+    not in is a table nobody can check by hand;
+  * a presence means a contract was added to the tree or taken out of it.
+
+Do exactly one of these, deliberately:
+
+  1. The change was intended. Re-record with
+       {command}
+     and review the table diff in the same commit as the change that caused it, so the new
+     table is approved by a human rather than absorbed silently.
+
+  2. The change was not intended. This is a regression: fix it instead of re-recording."""
+
 STATUS_LEGEND: Final = (
     "Three statuses exist and no more. **COVERED** means one or more cited tests prove the "
     "criterion as stated against the shipped configuration and all of them pass; the gate "
@@ -146,6 +183,19 @@ STATUS_LEGEND: Final = (
     "the gate passes it. **GAP** is everything else, and the gate fails it. There is no "
     "in-between status, because an in-between status is what lets a gate be green and wrong at "
     "the same time."
+)
+
+#: Why a phase bundle's contract table stopped claiming the phase added what it lists.
+#: Printed by all three phase generators rather than written into each, because a phase
+#: that kept its own copy could quietly go back to claiming authorship.
+SCOPE_IS_NOT_AUTHORSHIP: Final = (
+    "What scopes this table is where code sits today, not a record of what the phase "
+    "delivered. It was introduced for a long time as the contract models the phase added, "
+    "which is a question it cannot answer: the only thing it knows about a model is which "
+    "module the model is in now, so moving one to another file changed the count without "
+    "any phase having delivered anything different. It is a compatibility view over the "
+    "complete inventory in `proof/phase-0/schema-compatibility.md`, and "
+    "`tests/test_schema_compatibility.py` fails when either table stops describing the tree."
 )
 
 CITATION_LEGEND: Final = (
@@ -654,6 +704,224 @@ def model_records(repo_root: Path) -> tuple[ModelRecord, ...]:
             structural_digest=structural_digest(model),
         )
         for model in models
+    )
+
+
+# --------------------------------------------------------------------------------------
+# Reading a recorded contract inventory back
+# --------------------------------------------------------------------------------------
+#
+# A bundle's `schema-compatibility.md` is a recorded-digest artifact exactly as
+# `serialization-goldens.json` is, and for a long time only one of the two could be
+# checked. The goldens were written as JSON and had a tripwire; the contract tables were
+# written as markdown, read by nobody, and drifted — Phase 1's table went on naming a
+# module nine of its models had left, and recorded a digest for DeployedRoleEvidence that
+# the tree had stopped computing, and nothing failed.
+#
+# What is parsed is the published document rather than a machine-readable sidecar. A
+# sidecar would be a second copy of the same table, which is what every one of these
+# bundles warns against in its own prose, and it would leave the document a reviewer
+# actually reads as the unchecked one.
+
+
+#: The first four columns of every contract table a bundle writes. Phase 0's tables carry
+#: these five columns and phases 1 to 3 insert an ``exported`` column before the digest,
+#: so the digest is read from the last cell rather than from a fixed index.
+MODEL_TABLE_HEADER: Final = ("model", "module", "kind", "schema_version")
+
+#: The exported-schema table, which records the digest of a file rather than of a shape.
+SCHEMA_FILE_TABLE_HEADER: Final = ("file", "root model", "file digest")
+
+
+@dataclass(frozen=True)
+class RecordedModel:
+    name: str
+    module: str
+    kind: str
+    schema_version: str
+    digest: str
+
+
+@dataclass(frozen=True)
+class RecordedSchemaFile:
+    path: str
+    model: str
+    digest: str
+
+
+@dataclass(frozen=True)
+class InventoryDrift:
+    subject: str
+    field: str
+    recorded: str
+    live: str
+
+
+def split_markdown_row(line: str) -> tuple[str, ...] | None:
+    stripped = line.strip()
+    if not stripped.startswith("|") or not stripped.endswith("|"):
+        return None
+    return tuple(cell.strip() for cell in stripped[1:-1].split("|"))
+
+
+def markdown_tables(text: str) -> Iterator[tuple[tuple[str, ...], tuple[tuple[str, ...], ...]]]:
+    """Every pipe table in a document, as a header and its rows.
+
+    Written here rather than depended on, because the only tables it has to read are the
+    ones :func:`table` writes and those are one shape: a header line, a rule, then rows
+    until the first line that is not one.
+    """
+    lines = text.splitlines()
+    index = 0
+    while index < len(lines):
+        header = split_markdown_row(lines[index])
+        rule = split_markdown_row(lines[index + 1]) if index + 1 < len(lines) else None
+        if header is None or rule is None or set(rule) != {"---"}:
+            index += 1
+            continue
+        index += 2
+        rows: list[tuple[str, ...]] = []
+        while index < len(lines):
+            row = split_markdown_row(lines[index])
+            if row is None:
+                break
+            rows.append(row)
+            index += 1
+        yield header, tuple(rows)
+
+
+def recorded_models(document: str) -> tuple[RecordedModel, ...]:
+    """Every contract row a bundle's schema-compatibility document records."""
+    return tuple(
+        RecordedModel(
+            name=row[0],
+            module=row[1],
+            kind=row[2],
+            schema_version=row[3],
+            digest=row[-1],
+        )
+        for header, rows in markdown_tables(document)
+        if header[: len(MODEL_TABLE_HEADER)] == MODEL_TABLE_HEADER
+        for row in rows
+    )
+
+
+def recorded_schema_files(document: str) -> tuple[RecordedSchemaFile, ...]:
+    return tuple(
+        RecordedSchemaFile(path=row[0], model=row[1], digest=row[2])
+        for header, rows in markdown_tables(document)
+        if header == SCHEMA_FILE_TABLE_HEADER
+        for row in rows
+    )
+
+
+def inventory_drift(
+    recorded: Sequence[RecordedModel],
+    live: Sequence[ModelRecord],
+) -> tuple[InventoryDrift, ...]:
+    """What a recorded contract table and the tree disagree about, keyed by model name.
+
+    Keyed by name and not by ``module.name``, which is the point rather than a detail. A
+    model that moves between modules is the same contract in a different file; a tripwire
+    keyed on where it lives would report one model vanishing and an unrelated one
+    appearing, and leave the reviewer to notice for themselves that the two had the same
+    digest. Keyed on the name, the same move reports what it is: one relocation, nothing
+    about the shape.
+    """
+    recorded_by_name = {record.name: record for record in recorded}
+    live_by_name = {record.name: record for record in live}
+    drift: list[InventoryDrift] = []
+    for name in sorted(set(recorded_by_name) | set(live_by_name)):
+        before = recorded_by_name.get(name)
+        after = live_by_name.get(name)
+        if before is not None and after is not None:
+            drift.extend(
+                InventoryDrift(subject=name, field=field, recorded=was, live=now)
+                for field, was, now in (
+                    ("module", before.module, after.module),
+                    ("kind", before.kind, "base" if after.base else "record"),
+                    ("schema_version", before.schema_version, after.schema_version),
+                    ("structural digest", before.digest, after.structural_digest),
+                )
+                if was != now
+            )
+        elif before is None and after is not None:
+            drift.append(
+                InventoryDrift(
+                    subject=name,
+                    field="presence",
+                    recorded="not recorded",
+                    live=f"defined in {after.module}",
+                )
+            )
+        elif before is not None:
+            drift.append(
+                InventoryDrift(
+                    subject=name,
+                    field="presence",
+                    recorded=f"recorded in {before.module}",
+                    live="no longer in this bundle's scope",
+                )
+            )
+    return tuple(drift)
+
+
+def schema_file_drift(
+    recorded: Sequence[RecordedSchemaFile],
+    live: Sequence[SchemaFileRecord],
+) -> tuple[InventoryDrift, ...]:
+    """The same check for the exported-schema digests recorded beside the contract tables."""
+    recorded_by_path = {record.path: record for record in recorded}
+    live_by_path = {f"schemas/{record.filename}": record for record in live}
+    drift: list[InventoryDrift] = []
+    for path in sorted(set(recorded_by_path) | set(live_by_path)):
+        before = recorded_by_path.get(path)
+        after = live_by_path.get(path)
+        if before is not None and after is not None:
+            drift.extend(
+                InventoryDrift(subject=path, field=field, recorded=was, live=now)
+                for field, was, now in (
+                    ("root model", before.model, after.model),
+                    ("file digest", before.digest, after.file_digest),
+                )
+                if was != now
+            )
+        elif before is None and after is not None:
+            drift.append(
+                InventoryDrift(
+                    subject=path,
+                    field="presence",
+                    recorded="not recorded",
+                    live=f"exported from {after.model}",
+                )
+            )
+        elif before is not None:
+            drift.append(
+                InventoryDrift(
+                    subject=path,
+                    field="presence",
+                    recorded=f"recorded for {before.model}",
+                    live="no longer exported",
+                )
+            )
+    return tuple(drift)
+
+
+def inventory_drift_guidance(*, command: str) -> str:
+    """The guidance with this bundle's own regeneration command in it, fields left open."""
+    return INVENTORY_DRIFT_GUIDANCE.replace("{command}", command)
+
+
+def describe_inventory_drift(drift: Sequence[InventoryDrift], *, command: str) -> str:
+    guidance = inventory_drift_guidance(command=command)
+    return "\n\n".join(
+        guidance.format(
+            subject=entry.subject,
+            field=entry.field,
+            recorded=entry.recorded,
+            live=entry.live,
+        )
+        for entry in drift
     )
 
 

@@ -1,8 +1,8 @@
 # Phase 2 schema compatibility report
 
-The twelve contract models Phase 2 added. The structural digest is `sha256` over the model's JSON schema with sorted keys, so it changes when a field is added, removed, retyped or reconstrained, and does not change when unrelated code moves.
+The twelve contract models defined by the modules this bundle's evidence is built from, so that a reviewer can check a shape without reading the whole inventory. The structural digest is `sha256` over the model's JSON schema with sorted keys, so it changes when a field is added, removed, retyped or reconstrained, and does not change when unrelated code moves.
 
-The repository-wide inventory, including every Phase 0 contract, is in `proof/phase-0/schema-compatibility.md` and is not repeated here, because a second copy is a copy that goes stale.
+What scopes this table is where code sits today, not a record of what the phase delivered. It was introduced for a long time as the contract models the phase added, which is a question it cannot answer: the only thing it knows about a model is which module the model is in now, so moving one to another file changed the count without any phase having delivered anything different. It is a compatibility view over the complete inventory in `proof/phase-0/schema-compatibility.md`, and `tests/test_schema_compatibility.py` fails when either table stops describing the tree.
 
 | model | module | kind | schema_version | exported | structural digest |
 | --- | --- | --- | --- | --- | --- |

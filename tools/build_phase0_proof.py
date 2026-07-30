@@ -503,6 +503,13 @@ def render_schema_report(
                 "removed, retyped, or reconstrained, and does not change when unrelated code "
                 "moves. Comparing this table between phases answers whether a schema changed."),
                 "",
+                ("This is the complete inventory: every contract model in the repository is "
+                "below, whichever phase wrote it and whichever module it has since moved to. "
+                "The three phase bundles carry a scoped view of the same digests and none of "
+                "them carries a digest that is not here. "
+                "`tests/test_schema_compatibility.py` recomputes every row of every one of "
+                "those tables against the tree and fails when one stops describing it."),
+                "",
                 ("The kind column separates a `record`, which some payload is validated against, "
                 "from a `base`, which exists only for other models to inherit from and which no "
                 "payload names directly."),

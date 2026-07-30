@@ -17,9 +17,9 @@ uv run python tools/build_phase3_proof.py
 
 | measure | count |
 | --- | --- |
-| collected by pytest | 3395 |
-| executed (excluding tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py) | 3233 |
-| passed | 3233 |
+| collected by pytest | 3542 |
+| executed (excluding tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py) | 3376 |
+| passed | 3376 |
 | failed | 0 |
 | errored | 0 |
 | skipped | 0 |
@@ -31,9 +31,9 @@ Every test node id cited by the negative-case matrix, plus every test in the mod
 
 | measure | count |
 | --- | --- |
-| selected node ids | 321 |
-| executed | 321 |
-| passed | 321 |
+| selected node ids | 339 |
+| executed | 339 |
+| passed | 339 |
 | failed | 0 |
 | errored | 0 |
 | skipped | 0 |
@@ -45,6 +45,7 @@ The test modules Phase 3 added, excluding the ones that invoke a gate or this ge
 
 | module | tests | result |
 | --- | --- | --- |
+| tests/test_capture_phase3_evidence_cli.py | 18 | pass |
 | tests/test_phase3_account_measurements.py | 13 | pass |
 | tests/test_phase3_batch_denials.py | 29 | pass |
 | tests/test_phase3_batch_deployment_workflow.py | 31 | pass |
