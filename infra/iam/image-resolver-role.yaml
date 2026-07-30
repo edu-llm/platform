@@ -1,0 +1,96 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: GitHub Actions role that reads which image a commit published, and the registry's scan findings for it, before a submission is approved.
+
+Resources:
+  ImageResolverRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sbsandbox-intern-edullm-image-resolver
+      PermissionsBoundary:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/InternSandboxBoundary
+      MaxSessionDuration: 3600
+      # This role is assumable before anybody has approved anything, which is the whole
+      # question about it, so the argument belongs here rather than in a review comment.
+      #
+      # The invariant `submit-run.yml` maintains is not "this workflow never reaches AWS".
+      # Its `deny-unapproved` job already holds `id-token: write` and calls STS on every
+      # dispatch, by design. The invariant is that an unapproved dispatch cannot obtain the
+      # *admission* role: it cannot start an execution, cannot submit a job, and cannot
+      # write lineage. A role that can only describe images and their scan findings does
+      # not touch that. It starts nothing, writes nothing, and returns what
+      # `build-research-image.yml` already prints into a step summary.
+      #
+      # What it does relax is a weaker second property. The approval gate used to be chosen
+      # before the run reached AWS at all, and the scan summary is what picks that gate. The
+      # compensating control already exists and is written out in `tools/compile_submission.py`:
+      # admission re-derives the findings from the registry itself and fails closed on
+      # disagreement, so an understated summary buys a submitter a gate they still cannot
+      # pass. That was already the design's answer back when the summary was meant to come
+      # from a provenance record, so nothing new rests on it.
+      #
+      # A trust policy cannot distinguish jobs within a workflow. `compile`,
+      # `deny-unapproved` and the resolve job that will use this role all present the same
+      # `job_workflow_ref` and the same `sub`, so this role is assumable by any of them and
+      # by any job added to that file later. That is acceptable only because it is
+      # read-only, which is why `tests/test_phase5_infrastructure.py` asserts the action set
+      # exactly rather than approximately.
+      #
+      # The sub prefix carries owner and repository ids because this organization issues
+      # immutable subject claims, verified the same way the deployer role's was:
+      # `gh api repos/edu-llm/platform/actions/oidc/customization/sub` reports
+      # sub_claim_prefix repo:edu-llm@306859726/platform@1311508598.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated:
+                Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:job_workflow_ref: edu-llm/platform/.github/workflows/submit-run.yml@refs/heads/main
+                token.actions.githubusercontent.com:repository_owner_id: "306859726"
+                token.actions.githubusercontent.com:repository_id: "1311508598"
+                token.actions.githubusercontent.com:sub: repo:edu-llm@306859726/platform@1311508598:ref:refs/heads/main
+      # Inline rather than a customer managed policy. InternSandboxBoundary denies
+      # iam:CreatePolicyVersion on every policy, so a managed policy could be created once
+      # and never amended; the first permission change would fail the stack update. Inline
+      # policies go through iam:PutRolePolicy, which the boundary permits on this name.
+      Policies:
+        - PolicyName: describe-published-images-only
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # Two actions, and they are the two questions the compile step cannot ask
+              # today: DescribeImages answers which digest a commit's tag points at, so a
+              # submitter stops pasting a 71-character digest copied out of another
+              # repository's build log; DescribeImageScanFindings answers what the registry
+              # found in it, so the scan summary stops being absent and
+              # `image_scan_is_reviewed` stops failing closed against the two-entry
+              # allowlist in `config/image-exceptions.yaml`.
+              #
+              # Deliberately absent: ecr:GetAuthorizationToken and ecr:BatchGetImage,
+              # because nothing here pulls an image -- resolving a digest is a metadata
+              # read, and a role that could authenticate to the registry could fetch the
+              # layers of every research image in the account. Every ECR write verb, so
+              # this cannot tag, push, or expire anything it can see. And every other
+              # service: no states:, no batch:, no s3:, no logs:, no iam:, no sts:. The
+              # role's entire reach is described by the two lines below.
+              - Effect: Allow
+                Action:
+                  - ecr:DescribeImages
+                  - ecr:DescribeImageScanFindings
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-*
+
+Outputs:
+  RoleName:
+    Value:
+      Ref: ImageResolverRole
+  RoleArn:
+    Value:
+      Fn::GetAtt:
+        - ImageResolverRole
+        - Arn

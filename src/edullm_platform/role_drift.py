@@ -89,6 +89,7 @@ __all__ = [
     "FOREIGN_ACCOUNT_PLACEHOLDER",
     "INFRA_DEPLOYER_ROLE_NAME",
     "PHASE3_ROLE_TEMPLATES",
+    "PHASE5_ROLE_TEMPLATES",
     "PUBLISHER_ROLE_NAME",
     "DriftDirection",
     "PolicyNotComparableError",
@@ -148,6 +149,17 @@ PHASE3_ROLE_TEMPLATES: Final[tuple[tuple[str, str], ...]] = (
     ("sbsandbox-intern-edullm-batch-workload", "infra/iam/batch-roles.yaml"),
     ("sbsandbox-intern-edullm-batch-instance", "infra/iam/batch-roles.yaml"),
     ("sbsandbox-intern-edullm-lifecycle-lambda", "infra/iam/lifecycle-lambda-role.yaml"),
+)
+
+#: The role Phase 5 adds so a submission can read which image a commit published, and the
+#: committed template that declares it.
+#:
+#: A tuple of its own for the reason written above ``PHASE3_ROLE_TEMPLATES``, which is worth
+#: reading rather than restating: one registry per phase, because the Phase 1 proof bundle
+#: counts ``COMMITTED_ROLE_TEMPLATES`` in its README, and appending here would change a
+#: committed golden for a reason that has nothing to do with Phase 1.
+PHASE5_ROLE_TEMPLATES: Final[tuple[tuple[str, str], ...]] = (
+    ("sbsandbox-intern-edullm-image-resolver", "infra/iam/image-resolver-role.yaml"),
 )
 
 #: What ``DeployedRoleEvidence`` carries that a template projection cannot: the evidence
