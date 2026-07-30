@@ -1,3 +1,21 @@
+# Who has to review a change to the things IAM trusts.
+#
+# Write access to this repository is merge access to five workflow files pinned by name in
+# three IAM trust policies -- and to the source and configuration that ship inside the two
+# released Lambda zips. tools/build_admission_lambda.py copies config/*.yaml and the whole
+# src/edullm_platform tree into the validator, so a change to either decides whether a run
+# is authorized. That makes them the same kind of path as a workflow file rather than a
+# different one, and they were not covered here.
+#
+# Extended when write access was first granted to somebody who did not build this platform.
+# Until then, ownership covered the workflows and the infrastructure and left the admission
+# validator's own source and the policy it enforces uncovered, so a change to the
+# authorization rules needed one approving review from anybody holding write.
+
 /.github/CODEOWNERS @philote-dev @BritishAmericqn
 /.github/workflows/** @philote-dev @BritishAmericqn
 /infra/** @philote-dev @BritishAmericqn
+/src/edullm_platform/** @philote-dev @BritishAmericqn
+/config/** @philote-dev @BritishAmericqn
+/tools/build_admission_lambda.py @philote-dev @BritishAmericqn
+/tools/build_lifecycle_lambda.py @philote-dev @BritishAmericqn
