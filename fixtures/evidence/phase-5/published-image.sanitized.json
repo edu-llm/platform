@@ -1,0 +1,22 @@
+{
+  "commit_sha": "8da0d6aa45b297feb25625fc9edf390b030c5c21",
+  "environment": "sandbox",
+  "image_digest": "sha256:1cd62aca4ed4599b96d96728b41958b732196b993ea6c57be045de97185185a9",
+  "image_tag": "8da0d6aa45b2",
+  "observed_at": "2026-07-30T22:00:55Z",
+  "published_tags": [
+    "1ebe2e569d58",
+    "4204375e6db8",
+    "568946c4b205",
+    "5a88debce725",
+    "8da0d6aa45b2",
+    "a61e3dc7f2d0",
+    "b067a31e48c4",
+    "d6425e68a079",
+    "f9af535d6c70"
+  ],
+  "pushed_at": "2026-07-30T20:47:45.507000Z",
+  "region": "us-east-1",
+  "repository_name": "sbsandbox-intern-edullm-olmo-core",
+  "source": "aws"
+}

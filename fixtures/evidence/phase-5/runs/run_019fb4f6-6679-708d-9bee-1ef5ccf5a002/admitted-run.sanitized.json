@@ -1,0 +1,44 @@
+{
+  "authorization": {
+    "approval_class": "routine",
+    "approval_scope": "organization",
+    "approver": "pianomaster99",
+    "claimed_team": "tokenizer",
+    "granted": true,
+    "reason": "routine_approved_by_lead_or_admin",
+    "submitter": "aryanjverma",
+    "team_verified": false
+  },
+  "batch_job_id": "ff6728af-5ef4-490d-807c-51a2e30bbf8e",
+  "compute_profile": "cpu-32vcpu",
+  "container_image_digest": "sha256:1cd62aca4ed4599b96d96728b41958b732196b993ea6c57be045de97185185a9",
+  "declared_commit_sha": "8da0d6aa45b297feb25625fc9edf390b030c5c21",
+  "declared_image_digest": "sha256:1cd62aca4ed4599b96d96728b41958b732196b993ea6c57be045de97185185a9",
+  "environment": "sandbox",
+  "exit_code": 0,
+  "job_definition_name": "sbsandbox-intern-edullm-run_019fb4f6-6679-708d-9bee-1ef5ccf5a002:1",
+  "manifest_sha256": "sha256:f3c25a1c5b64b44210caf5775b20b65ab196e47a54de4d27bfdaa4180a9f9846",
+  "observed_at": "2026-07-30T21:39:58.396469Z",
+  "output_prefixes": [
+    "s3://sbsandbox-intern-edullm-outputs/teams/tokenizer/runs/run_019fb4f6-6679-708d-9bee-1ef5ccf5a002/"
+  ],
+  "recorded_states": [
+    "runnable",
+    "runnable",
+    "succeeded",
+    "running"
+  ],
+  "region": "us-east-1",
+  "repository": "OLMo-core",
+  "result_outcome": "succeeded",
+  "run_id": "run_019fb4f6-6679-708d-9bee-1ef5ccf5a002",
+  "scheduler_status": "SUCCEEDED",
+  "source": "aws",
+  "submitter": "aryanjverma",
+  "team": "tokenizer",
+  "wandb_run": null,
+  "workflow_path": ".github/workflows/submit-run.yml",
+  "workflow_ref": "refs/heads/main",
+  "workflow_run_id": 30584110943,
+  "workload_profile": "olmo-core-cpu-smoke"
+}
