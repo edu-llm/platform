@@ -607,3 +607,51 @@ result record is ever written. The run looks fine in Batch and vanishes from lin
 
 `tests/test_phase3_infrastructure.py` compares the three against each other for this
 reason. It is the one seam in this phase whose failure produces no error anywhere.
+
+## The Phase 5 stacks, in dependency order
+
+| # | Stack | Template | Roles or resources | Applied from |
+| --- | --- | --- | --- | --- |
+| 1 | `sbsandbox-intern-edullm-phase5-image-resolver-iam` | `infra/iam/image-resolver-role.yaml` | `…-image-resolver` | laptop |
+
+**There is no order to get wrong yet, and that is worth saying rather than leaving to be
+inferred.** In Phases 2 and 3 the sequence was forced: a later stack granted `iam:PassRole`
+naming roles by full ARN, so the roles had to exist first, and the deployer had to carry a
+new `job_workflow_ref` entry before CI could assume it at all. Nothing here does either.
+This stack creates one role that no other principal passes, that grants no `iam:` action of
+its own, and that GitHub assumes directly — so it can be applied before or after anything
+else in this file. Later Phase 5 rows will be added as those changes land, and the ordering
+argument will have to be made again then rather than inherited from this one.
+
+```bash
+aws cloudformation deploy \
+  --stack-name sbsandbox-intern-edullm-phase5-image-resolver-iam \
+  --template-file infra/iam/image-resolver-role.yaml \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --no-fail-on-empty-changeset \
+  --profile sbsandbox \
+  --region us-east-1
+```
+
+Then read the role back, as after every deploy above:
+
+```bash
+aws iam get-role \
+  --role-name sbsandbox-intern-edullm-image-resolver \
+  --profile sbsandbox --region us-east-1
+
+aws iam list-attached-role-policies \
+  --role-name sbsandbox-intern-edullm-image-resolver \
+  --profile sbsandbox --region us-east-1
+```
+
+`AttachedPolicies` must be empty: this template attaches no managed policy, so anything
+listed there was added outside CloudFormation. The role's one inline policy grants exactly
+`ecr:DescribeImages` and `ecr:DescribeImageScanFindings`, and that exactness is the entire
+reason the role may be assumed before a submission has been approved — the template's
+comments carry the argument.
+
+Which roles the drift comparison reads is a registry per phase in
+`src/edullm_platform/role_drift.py`, and this role is in `PHASE5_ROLE_TEMPLATES`. Same rule
+as Phase 2: a role that is not listed there is compared to nothing, and adding it is part of
+shipping the role rather than a follow-up.
