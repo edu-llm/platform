@@ -65,6 +65,7 @@ from edullm_platform.phase3_evidence import AccountMeasurements
 from edullm_platform.proof_bundle import (
     CITATION_LEGEND,
     GENERATOR_TEST_PATHS,
+    SCOPE_IS_NOT_AUTHORSHIP,
     STATUS_LEGEND,
     STATUS_PROSE,
     GoldenDigestDriftError,
@@ -1537,20 +1538,23 @@ def render_schema_report(models: Sequence[ModelRecord]) -> str:
                 "# Phase 3 schema compatibility report",
                 "",
                 (
-                    f"The {spell(len(models))} contract models Phase 3 added. The structural "
-                    "digest is `sha256` over the model's JSON schema with sorted keys, so it "
-                    "changes when a field is added, removed, retyped or reconstrained, and does "
-                    "not change when unrelated code moves."
+                    f"The {spell(len(models))} contract models defined by the modules this "
+                    "bundle's evidence is built from, so that a reviewer can check a shape "
+                    "without reading the whole inventory. The structural digest is `sha256` "
+                    "over the model's JSON schema with sorted keys, so it changes when a field "
+                    "is added, removed, retyped or reconstrained, and does not change when "
+                    "unrelated code moves."
                 ),
                 "",
+                SCOPE_IS_NOT_AUTHORSHIP,
+                "",
                 (
-                    "Phase 3 also exported six models that Phase 0 defined and nothing had ever "
-                    "constructed: `LogicalRun`, `SchedulerAttempt`, `LifecycleEvent`, "
-                    "`CheckpointManifest`, `ResultManifest` and `BatchJobBinding`. They are not "
-                    "repeated here -- the repository-wide inventory is in "
-                    "`proof/phase-0/schema-compatibility.md`, and a second copy is a copy that "
-                    "goes stale -- but the export is what makes them reviewable by somebody who "
-                    "does not read Python."
+                    "Six models that Phase 0 defined and nothing had ever constructed were "
+                    "exported during Phase 3: `LogicalRun`, `SchedulerAttempt`, "
+                    "`LifecycleEvent`, `CheckpointManifest`, `ResultManifest` and "
+                    "`BatchJobBinding`. They are not repeated here -- they are in the complete "
+                    "inventory, and a second copy is a copy that goes stale -- but the export "
+                    "is what makes them reviewable by somebody who does not read Python."
                 ),
                 "",
                 table(
@@ -1839,8 +1843,9 @@ def render_index(
                             "template grants, and the tripwire that fails when one drifts."
                         ),
                         (
-                            "`schema-compatibility.md` — the contract models Phase 3 added, with "
-                            "their structural digests."
+                            "`schema-compatibility.md` — the contract models the modules "
+                            "behind this bundle define, with the structural digest of each "
+                            "and what makes one move."
                         ),
                         (
                             "`unit-test-report.md` — summarised pass and fail counts, per module "
@@ -1889,7 +1894,7 @@ def render_index(
                         ["lineage records written by this phase", "0"],
                         ["denial matrices executed", "0"],
                         ["open decisions recorded", str(len(decisions))],
-                        ["contract models added by this phase", str(len(models))],
+                        ["contract models in schema-compatibility.md", str(len(models))],
                     ],
                 ),
                 "",

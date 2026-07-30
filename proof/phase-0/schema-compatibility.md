@@ -1,6 +1,8 @@
 # Phase 0 schema compatibility report
 
-131 contract models. The structural digest is `sha256` over the model's JSON schema with sorted keys, so it changes when a field is added, removed, retyped, or reconstrained, and does not change when unrelated code moves. Comparing this table between phases answers whether a schema changed.
+132 contract models. The structural digest is `sha256` over the model's JSON schema with sorted keys, so it changes when a field is added, removed, retyped, or reconstrained, and does not change when unrelated code moves. Comparing this table between phases answers whether a schema changed.
+
+This is the complete inventory: every contract model in the repository is below, whichever phase wrote it and whichever module it has since moved to. The three phase bundles carry a scoped view of the same digests and none of them carries a digest that is not here. `tests/test_schema_compatibility.py` recomputes every row of every one of those tables against the tree and fails when one stops describing it.
 
 The kind column separates a `record`, which some payload is validated against, from a `base`, which exists only for other models to inherit from and which no payload names directly.
 
@@ -48,7 +50,7 @@ The kind column separates a `record`, which some payload is validated against, f
 
 ## Runtime records
 
-96 models are not exported to `schemas/`. These are produced while work runs or while a decision is made: lineage, results, datasets, authorization outcomes, operational evidence, and gate results. They carry a `schema_version` field where they are persisted, and they are deliberately not published as repository configuration, because no human authors them by hand.
+97 models are not exported to `schemas/`. These are produced while work runs or while a decision is made: lineage, results, datasets, authorization outcomes, operational evidence, and gate results. They carry a `schema_version` field where they are persisted, and they are deliberately not published as repository configuration, because no human authors them by hand.
 
 | model | module | kind | schema_version | structural digest |
 | --- | --- | --- | --- | --- |
@@ -140,6 +142,7 @@ The kind column separates a `record`, which some payload is validated against, f
 | TrainingSummaryEvidence | edullm_platform.phase4_evidence | record | unversioned | sha256:2e97f2b0ed364df6afaf8139f6cebfbd8137094ce7828ad8f2af146924d4fb91 |
 | WorkloadRoleScopeEvidence | edullm_platform.phase4_evidence | record | unversioned | sha256:a291e05094714bdd08465a239732a666b76186e600748a6cea6126d75e05780a |
 | Phase4GateReport | edullm_platform.phase4_gate | record | unversioned | sha256:f54277fa159962aaeaa5920f63f691bf06745fee71b093f1442c6d127fbc514a |
+| PhaseGateReport | edullm_platform.phase_gate | base | unversioned | sha256:c3ed9d4e03917d577f70d05028d8a450ea36034d606ba54701f671c65da4ca0c |
 | AttemptedDenial | edullm_platform.publisher_denials | record | unversioned | sha256:f0b497787467fde6f343ddec8552ead542f393a7ed111e59cc7b74041107fe69 |
 | PublisherDenialMatrix | edullm_platform.publisher_denials | record | 1 | sha256:66bcc2645e9e044e23cd10338e2041e7a236528989f5ad2013f0d1d292d354da |
 | ConfigurationField | edullm_platform.rebuild_comparison | record | unversioned | sha256:04c684f0cfe10bf5d4afbc0a8885fc89150cf49966d76690a30f104c132478c1 |

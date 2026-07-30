@@ -2,8 +2,8 @@
 
 Phase: phase-1
 Bundle schema version: 1
-Source commit: 5e1b74a6010c04024e71262369a37e015a781f10
-Generated: 2026-07-29T19:38:24+00:00
+Source commit: 4f259c8735793ee9c769421af3dde50861100bad
+Generated: 2026-07-30T00:40:39+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 1 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase1_proof.py` at generation time. Every criterion is covered and the gate is green, which is the state in which a bundle is most worth reading carefully: the Known limitations below say what each criterion does not cover, and `open-decisions.md` says what this phase surfaced and did not settle.
 
@@ -16,15 +16,15 @@ This bundle exists so that a reviewer can decide whether Phase 1 is done without
 - `deployed-role-drift.md` — how a role in the account is compared to the template that claims to describe it, what the comparison cannot see, and what it found. Phase 0 has no counterpart: it deployed nothing.
 - `unit-test-report.md` — summarised pass and fail counts, per module and for the whole suite, with the commands to reproduce them.
 - `serialization-goldens.md` and `serialization-goldens.json` — the recorded canonical digest of what each committed role template grants, and the tripwire that fails when one drifts.
-- `schema-compatibility.md` — the contract models Phase 1 added, with their structural digests.
+- `schema-compatibility.md` — the contract models the modules behind this bundle define, with the structural digest of each and what makes one move.
 
 ## Result
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3412 |
-| suite tests executed | 3250 |
-| suite passed | 3250 |
+| suite tests collected | 3542 |
+| suite tests executed | 3376 |
+| suite passed | 3376 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
@@ -42,7 +42,7 @@ This bundle exists so that a reviewer can decide whether Phase 1 is done without
 | actions the publisher session was refused | 5 |
 | image configurations compared | 5 |
 | open decisions recorded | 0 |
-| contract models added by this phase | 28 |
+| contract models in schema-compatibility.md | 19 |
 
 ## Verification commands
 
@@ -65,8 +65,8 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 
 | file | digest |
 | --- | --- |
-| .github/workflows/build-research-image.yml | sha256:2797be4b88d3569c87fbc929cc9de25b484b42207987f139de5592707a3a23d8 |
-| .github/workflows/deploy-phase1-ecr.yml | sha256:8320eda8dcf143695ffbed148efadf9aceb8052d5e4b2c3578aeb92fb97cdf4a |
+| .github/workflows/build-research-image.yml | sha256:e0e244dbf93425e093e5b57b79b9bf4a06102350b75850d46673e0a214475fd8 |
+| .github/workflows/deploy-phase1-ecr.yml | sha256:7279eb11127a7c69d24c6699dbf5194f5ac8a833feb18b5990f35f426ad685d4 |
 | config/repositories.yaml | sha256:2ebf3fc8d091d88c62555e432059c59e208a5f26f2d0bdd8f7cf50133fdcd384 |
 | fixtures/evidence/phase-1/rebuild/local-rebuild-comparison.json | sha256:91966d61ec214e5c66a6ed801ed9a3271b834ff10a110afa600cf66981d7a33d |
 | fixtures/evidence/phase-1/roles/sbsandbox-intern-edullm-ecr-publisher.sanitized.json | sha256:ffa2f5e2f9fb77aa9a045e17080dbada30aeb7f0f1ea35ad7e0ff9fa19d8851d |

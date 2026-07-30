@@ -2,8 +2,8 @@
 
 Phase: phase-3
 Bundle schema version: 1
-Source commit: ba8498534907c2fd1b61a0afacb8e749c4108cc7
-Generated: 2026-07-29T22:30:25+00:00
+Source commit: 4f259c8735793ee9c769421af3dde50861100bad
+Generated: 2026-07-30T00:44:14+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 3 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase3_proof.py` at generation time. It is not done, and the Result table below says by how much.
 
@@ -19,7 +19,7 @@ What is not done is captures rather than mechanism, which is a change in this bu
 - `batch-denial-matrix.md` — the two matrices, what each probe is aimed at so a permitted call changes nothing, and what choosing a probe has cost. The admission matrix has run against real sessions; the workload one has not.
 - `open-decisions.md` — the question this phase answered and moved to where it is enforced, and the ones still open.
 - `serialization-goldens.md` and `serialization-goldens.json` — the recorded canonical digest of what each Phase 3 role template grants, and the tripwire that fails when one drifts.
-- `schema-compatibility.md` — the contract models Phase 3 added, with their structural digests.
+- `schema-compatibility.md` — the contract models the modules behind this bundle define, with the structural digest of each and what makes one move.
 - `unit-test-report.md` — summarised pass and fail counts, per module and for the whole suite, with the commands to reproduce them.
 - `batch-execution-evidence.md`, `log-stream-evidence.md`, `lineage-record-evidence.md`, `cancellation-and-timeout-evidence.md` and `deployed-role-drift.md` — what four completed runs left behind, rendered from the captures committed under `fixtures/evidence/phase-3/`.
 - `rollback-evidence.md` — the rollback rehearsal, which has not been performed. It says so, and says why nothing in the acceptance list is waiting for it.
@@ -29,14 +29,14 @@ What is not done is captures rather than mechanism, which is a change in this bu
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3395 |
-| suite tests executed | 3233 |
-| suite passed | 3233 |
+| suite tests collected | 3542 |
+| suite tests executed | 3376 |
+| suite passed | 3376 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
-| matrix node ids executed | 321 |
-| matrix node ids passed | 321 |
+| matrix node ids executed | 339 |
+| matrix node ids passed | 339 |
 | matrix node ids failed | 0 |
 | phase criteria | 19 |
 | criteria COVERED | 13 (1, 2, 3, 4, 8, 9, 15, 16, 17, 19, 20, 21, 22) |
@@ -48,7 +48,7 @@ What is not done is captures rather than mechanism, which is a change in this bu
 | lineage records written by this phase | 0 |
 | denial matrices executed | 0 |
 | open decisions recorded | 0 |
-| contract models added by this phase | 24 |
+| contract models in schema-compatibility.md | 24 |
 
 ## Verification commands
 

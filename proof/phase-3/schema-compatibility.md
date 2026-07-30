@@ -1,8 +1,10 @@
 # Phase 3 schema compatibility report
 
-The 24 contract models Phase 3 added. The structural digest is `sha256` over the model's JSON schema with sorted keys, so it changes when a field is added, removed, retyped or reconstrained, and does not change when unrelated code moves.
+The 24 contract models defined by the modules this bundle's evidence is built from, so that a reviewer can check a shape without reading the whole inventory. The structural digest is `sha256` over the model's JSON schema with sorted keys, so it changes when a field is added, removed, retyped or reconstrained, and does not change when unrelated code moves.
 
-Phase 3 also exported six models that Phase 0 defined and nothing had ever constructed: `LogicalRun`, `SchedulerAttempt`, `LifecycleEvent`, `CheckpointManifest`, `ResultManifest` and `BatchJobBinding`. They are not repeated here -- the repository-wide inventory is in `proof/phase-0/schema-compatibility.md`, and a second copy is a copy that goes stale -- but the export is what makes them reviewable by somebody who does not read Python.
+What scopes this table is where code sits today, not a record of what the phase delivered. It was introduced for a long time as the contract models the phase added, which is a question it cannot answer: the only thing it knows about a model is which module the model is in now, so moving one to another file changed the count without any phase having delivered anything different. It is a compatibility view over the complete inventory in `proof/phase-0/schema-compatibility.md`, and `tests/test_schema_compatibility.py` fails when either table stops describing the tree.
+
+Six models that Phase 0 defined and nothing had ever constructed were exported during Phase 3: `LogicalRun`, `SchedulerAttempt`, `LifecycleEvent`, `CheckpointManifest`, `ResultManifest` and `BatchJobBinding`. They are not repeated here -- they are in the complete inventory, and a second copy is a copy that goes stale -- but the export is what makes them reviewable by somebody who does not read Python.
 
 | model | module | kind | schema_version | exported | structural digest |
 | --- | --- | --- | --- | --- | --- |

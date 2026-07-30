@@ -38,6 +38,7 @@ from edullm_platform.phase1_criteria import phase1_criteria
 from edullm_platform.proof_bundle import (
     CITATION_LEGEND,
     GENERATOR_TEST_PATHS,
+    SCOPE_IS_NOT_AUTHORSHIP,
     STATUS_LEGEND,
     STATUS_PROSE,
     BundleWaitingOnADeployError,
@@ -900,19 +901,20 @@ def render_schema_report(models: Sequence[ModelRecord]) -> str:
                 "# Phase 1 schema compatibility report",
                 "",
                 (
-                    f"The {len(models)} contract models Phase 1 added. The structural digest is "
-                    "`sha256` over the model's JSON schema with sorted keys, so it changes when "
-                    "a field is added, removed, retyped or reconstrained, and does not change "
-                    "when unrelated code moves."
+                    f"The {len(models)} contract models defined by the modules this bundle's "
+                    "evidence is built from, so that a reviewer can check a shape without "
+                    "reading the whole inventory. The structural digest is `sha256` over the "
+                    "model's JSON schema with sorted keys, so it changes when a field is added, "
+                    "removed, retyped or reconstrained, and does not change when unrelated code "
+                    "moves."
                 ),
+                "",
+                SCOPE_IS_NOT_AUTHORSHIP,
                 "",
                 (
                     "None of these is exported to `schemas/`. Those files describe what a human "
                     "authors — the organization, the workload catalog, the policy, a run "
-                    "manifest — and nobody writes an evidence record by hand. The "
-                    "repository-wide inventory, including every Phase 0 contract, is in "
-                    "`proof/phase-0/schema-compatibility.md`; it is not repeated here, because "
-                    "a second copy is a copy that goes stale."
+                    "manifest — and nobody writes an evidence record by hand."
                 ),
                 "",
                 table(["model", "module", "kind", "schema_version", "structural digest"], rows),
@@ -1215,8 +1217,9 @@ def render_index(
                             "template grants, and the tripwire that fails when one drifts."
                         ),
                         (
-                            "`schema-compatibility.md` — the contract models Phase 1 added, "
-                            "with their structural digests."
+                            "`schema-compatibility.md` — the contract models the modules "
+                            "behind this bundle define, with the structural digest of each and "
+                            "what makes one move."
                         ),
                     ]
                 ),
@@ -1246,7 +1249,7 @@ def render_index(
                         ["actions the publisher session was refused", str(len(run.denials))],
                         ["image configurations compared", str(len(rebuilds))],
                         ["open decisions recorded", str(len(decisions))],
-                        ["contract models added by this phase", str(len(models))],
+                        ["contract models in schema-compatibility.md", str(len(models))],
                     ],
                 ),
                 "",
