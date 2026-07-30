@@ -1,6 +1,6 @@
 from typing import Annotated, Literal, Self
 
-from pydantic import BeforeValidator, Field, model_validator
+from pydantic import AfterValidator, BeforeValidator, Field, model_validator
 
 from .base import (
     SHA256_DIGEST_PATTERN,
@@ -8,7 +8,7 @@ from .base import (
     PositiveStrictDecimal,
     require_ordered_sequence,
 )
-from .validation import require_checkpoint_for_retries
+from .validation import require_checkpoint_for_retries, require_startable_program
 from .workload import CheckpointContract
 
 COMMIT_SHA_PATTERN = r"^[0-9a-f]{40}$"
@@ -33,9 +33,11 @@ class RunManifest(ContractModel):
     commit_sha: str = Field(pattern=COMMIT_SHA_PATTERN)
     image_digest: str = Field(pattern=IMAGE_DIGEST_PATTERN)
     dataset_release: str = Field(min_length=1)
-    command: Annotated[tuple[str, ...], BeforeValidator(require_ordered_sequence)] = Field(
-        min_length=1, strict=False
-    )
+    command: Annotated[
+        tuple[str, ...],
+        BeforeValidator(require_ordered_sequence),
+        AfterValidator(require_startable_program),
+    ] = Field(min_length=1, strict=False)
     team: str = Field(min_length=1)
     wandb_project: str = Field(min_length=1)
     workload_profile: str = Field(min_length=1)
