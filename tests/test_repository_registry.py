@@ -434,3 +434,45 @@ def test_the_publisher_role_may_push_to_every_registered_destination() -> None:
     }
 
     assert granted == {entry.ecr_repository for entry in registry.repositories}
+
+
+def test_the_publisher_role_accepts_a_subject_from_every_registered_repository() -> None:
+    """Reads BOTH sides. Mutation: add a repository to ``repository_id`` and leave ``sub``.
+
+    The third condition, and the one the pair above does not read. Condition keys are ANDed,
+    so a repository added to the id list and not to this one holds a token that satisfies
+    ``StringEquals`` and fails ``StringLike`` -- and fails it at ``AssumeRole``, which is the
+    same failure shape that made ``edullm-data``'s registration inert for a day. Two tests
+    were written after that and neither would have caught the half-fix.
+
+    **The pattern is derived from both halves of the registration on purpose.** The deployed
+    subjects are ``repo:edu-llm@306859726/<name>@<id>:ref:refs/heads/*`` -- the numeric form,
+    not the friendly ``repo:edu-llm/<name>:*`` that most examples show. A test that rebuilt
+    the friendly form would compare a set it invented against a set it invented and pass
+    while proving nothing, so the name and the id both come out of the registry and a
+    ``sub`` entry missing either half fails here.
+
+    Two properties of that pattern are worth reading off it rather than discovering later.
+    It ends ``:ref:refs/heads/*``, so it matches **branch refs only**: a caller workflow
+    triggered by a tag or a pull request is refused even for an authorised repository, which
+    is a constraint on how the research repositories may trigger their build. And
+    ``job_workflow_ref`` is pinned to this repository's own
+    ``build-research-image.yml@refs/heads/main``, so it is the one condition that needs no
+    per-repository widening at all -- the reusable workflow lives in ``platform``.
+    """
+    root = Path(__file__).resolve().parents[1]
+    registry = load_yaml(root / "config" / "repositories.yaml", RepositoryRegistry)
+    condition = publisher_role()["AssumeRolePolicyDocument"]["Statement"][0]["Condition"]
+    accepted = {
+        str(value)
+        for value in as_list(condition["StringLike"]["token.actions.githubusercontent.com:sub"])
+    }
+    owner_id = str(
+        condition["StringEquals"]["token.actions.githubusercontent.com:repository_owner_id"]
+    )
+
+    assert accepted == {
+        f"repo:edu-llm@{owner_id}/{entry.repository}@{entry.github_repository_id}"
+        ":ref:refs/heads/*"
+        for entry in registry.repositories
+    }
