@@ -322,6 +322,7 @@ def test_a_phase_criteria_module_exists_to_be_checked() -> None:
         "src/edullm_platform/phase2_criteria.py",
         "src/edullm_platform/phase3_criteria.py",
         "src/edullm_platform/phase4_criteria.py",
+        "src/edullm_platform/phase5_criteria.py",
     ]
 
 

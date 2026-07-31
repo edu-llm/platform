@@ -183,18 +183,26 @@ uv run python tools/validate_phase1.py
 uv run python tools/validate_phase2.py
 uv run python tools/validate_phase3.py
 uv run python tools/validate_phase4.py
+uv run python tools/validate_phase5.py
 ```
 
-All four exit `0` on a pass, `1` when the gate ran and a criterion failed, and `2` when the
+All five exit `0` on a pass, `1` when the gate ran and a criterion failed, and `2` when the
 inputs could not be read. They report criteria only; the `operational_inventory_checks`
 group is Phase 0's and exists because that phase predates the current definition.
 
-**Phases 2, 3 and 4 exit 1 today, and that is the report working rather than a broken
-gate.** All three phases are deployed and have run. Phase 2 reports twelve of twenty-two
+**Phases 2, 3, 4 and 5 exit 1 today, and that is the report working rather than a broken
+gate.** All four phases are deployed and have run. Phase 2 reports twelve of twenty-two
 criteria covered, one deferred and nine gaps; Phase 3 reports thirteen of nineteen covered
-and six gaps; Phase 4 reports nine of twelve covered, one deferred and two gaps. Run the
-gates for the current numbers — the ones above are what they printed when this paragraph was
-written, and a gate is the authority rather than this file.
+and six gaps; Phase 4 reports nine of twelve covered, one deferred and two gaps; Phase 5
+reports fourteen of fifteen covered and one gap. Run the gates for the current numbers — the
+ones above are what they printed when this paragraph was written, and a gate is the
+authority rather than this file.
+
+**Phase 5's single gap is a different kind from the others and is worth reading as one.**
+Every other open criterion in this repository is a capture nobody has taken. Phase 5's wants
+a GPU run claiming a team other than `platform` and writing a checkpoint, and the mechanism
+for all three of those exists and has been exercised separately — so it closes on one
+submission rather than on any work.
 
 What the remaining gaps are about is worth knowing before reading them. They are not the
 submission path, which works end to end: they are captures nobody has taken and shapes of

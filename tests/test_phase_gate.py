@@ -42,6 +42,8 @@ from edullm_platform.phase3_criteria import PHASE3_CRITERION_COUNT
 from edullm_platform.phase3_gate import Phase3GateReport
 from edullm_platform.phase4_criteria import PHASE4_CRITERION_COUNT
 from edullm_platform.phase4_gate import Phase4GateReport
+from edullm_platform.phase5_criteria import PHASE5_CRITERION_COUNT
+from edullm_platform.phase5_gate import Phase5GateReport
 from edullm_platform.phase_gate import PhaseGateReport, run_gate_command
 
 
@@ -59,6 +61,7 @@ PHASES = (
     PhaseUnderTest("Phase 2", Phase2GateReport, PHASE2_CRITERION_COUNT),
     PhaseUnderTest("Phase 3", Phase3GateReport, PHASE3_CRITERION_COUNT),
     PhaseUnderTest("Phase 4", Phase4GateReport, PHASE4_CRITERION_COUNT),
+    PhaseUnderTest("Phase 5", Phase5GateReport, PHASE5_CRITERION_COUNT),
 )
 
 
