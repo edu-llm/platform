@@ -334,15 +334,35 @@ def render_unit_test_report(
     return "\n".join(sections) + "\n"
 
 
-def standing(gap_numbers: Sequence[str]) -> str:
+def standing(gap_numbers: Sequence[str], deferred_numbers: Sequence[str]) -> str:
     """How the bundle opens, which cannot be a fixed sentence about being unfinished.
 
     The first version of this said "It is not done", which was true when it was written and
     would have gone on being printed after it stopped being true. A reviewer who trusts the
     bundle would have been told the opposite of what the table below it says.
+
+    The green branch carried the same defect one turn later, and Phase 5 is the first bundle
+    to reach it: it said every criterion is covered, which describes a phase that closes with
+    nothing outstanding and misdescribes one that closes with a deferral. A deferral is the
+    thing a reader most needs an opening not to smooth over, because it passes the gate
+    without anybody having observed it. ``contradicting_status_claims`` does not catch that
+    sentence either -- it reads "check 6 is deferred" and has no opinion about "every".
     """
     if gap_numbers:
         return "It is not done, and the Result table below says by how much."
+    if deferred_numbers:
+        subject = (
+            f"criterion {deferred_numbers[0]} is"
+            if len(deferred_numbers) == 1
+            else f"criteria {', '.join(deferred_numbers)} are"
+        )
+        return (
+            f"No criterion is a gap and the gate is green, and {subject} deferred rather "
+            "than covered -- a recorded decision not to satisfy it yet, which passes the "
+            "gate without anybody having observed it. Read that entry in "
+            "`negative-case-matrix.md` first: it carries the reason and the trigger, and "
+            "the Known limitations below say what this phase does not establish."
+        )
     return (
         "Every criterion is covered and the gate is green, which is the state in which a "
         "bundle is most worth reading carefully: the Known limitations below say what each "

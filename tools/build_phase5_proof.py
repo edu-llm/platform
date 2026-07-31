@@ -836,10 +836,13 @@ def known_limitations(
             "another non-lead rather than to record the criterion closed by self-authorization."
         ),
         (
-            f"Check 6 is {status_of('6')} and it is the only one, but it is not the only thing "
-            "unproven -- it is the only thing unproven that the phase agreed to measure. All "
-            "three runs went to the CPU profile carrying a print statement and two W&B calls. "
-            "No pilot run has trained anything, written a checkpoint, or touched a GPU."
+            f"Check 6 is {status_of('6')}, which passes the gate and proves nothing. All three "
+            "runs went to the CPU profile carrying a print statement and two W&B calls, so no "
+            "pilot run has trained anything, written a checkpoint, or touched a GPU -- and "
+            "that is the largest thing this bundle does not establish. The deferral moved the "
+            "observation to Phase 6's closeout, where it still closes this phase's gate; it "
+            "did not make the observation less necessary, and a reader who takes the green "
+            "verdict for a research workload having run is reading it wrong."
         ),
         (
             "No CPU run could reach Weights and Biases while these three ran. "
@@ -935,7 +938,7 @@ def render_index(
                 (
                     "This bundle exists so that a reviewer can decide whether Phase 5 is done "
                     "without reading the test suite. Everything it claims was executed by "
-                    f"`{GENERATOR_COMMAND}` at generation time. {standing(gaps)}"
+                    f"`{GENERATOR_COMMAND}` at generation time. {standing(gaps, deferred)}"
                 ),
                 "",
                 (
@@ -953,12 +956,26 @@ def render_index(
                 ),
                 "",
                 (
-                    "What is not done is one check, and it is a different kind of open from "
-                    "every other in this repository. The others are captures nobody has taken. "
-                    "This one wants a GPU run claiming a team other than `platform` and writing "
-                    "a checkpoint, and each of those three works and has been exercised "
-                    "separately -- so it closes on one submission rather than on any work. The "
-                    "Result table below says which."
+                    "**What this bundle does not establish is larger than its one outstanding "
+                    "check, and the gate being green does not shrink it.** Every one of the "
+                    "three runs went to the CPU profile carrying a print statement, so nothing "
+                    "here was trained, no checkpoint was written and no GPU was touched. What "
+                    "was established is that the two-person path completes, which is what the "
+                    "phase is named after and what had never happened. It is not evidence that "
+                    "this platform carries a research workload for somebody who did not build "
+                    "it."
+                ),
+                "",
+                (
+                    "The one check that is outstanding is a different kind of open from every "
+                    "other in this repository. The others are captures nobody has taken. This "
+                    "one wants a GPU run claiming a team other than `platform` and writing a "
+                    "checkpoint, and each of those three works and has been exercised "
+                    "separately -- so it closes on one submission rather than on any work. Its "
+                    "observation moved to Phase 6's closeout on 2026-07-31 and still closes "
+                    "this phase's gate rather than that one's, which is why the verdict below "
+                    "is green while the phase is not finished. The Result table says which "
+                    "check, and `negative-case-matrix.md` carries the reason and the trigger."
                 ),
                 "",
                 "## Contents",
@@ -968,7 +985,8 @@ def render_index(
                         (
                             f"`negative-case-matrix.md` — each of the {spell(len(criteria))} "
                             "Phase 5 acceptance criteria mapped to the tests cited for it, by "
-                            "node id, with every gap stated. Read this one first."
+                            "node id, with every gap and every deferral stated. Read this one "
+                            "first."
                         ),
                         (
                             "`second-person-evidence.md` — who submitted, who released, what "

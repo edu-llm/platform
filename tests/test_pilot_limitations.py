@@ -113,6 +113,32 @@ def test_the_page_says_the_team_field_routes_approval_rather_than_granting_anyth
     assert "not a permission" in section
 
 
+def test_the_page_says_a_gpu_checkpoint_under_a_new_team_has_never_been_written() -> None:
+    """The page owes this because criterion 6 stopped being a check on 2026-07-31.
+
+    That criterion asked for a GPU run claiming a team other than ``platform`` to write its
+    checkpoint, and it moved to Phase 6's closeout as a deferral. A deferral may never be
+    pilot-blocking, so what it would have protected is owed to this page instead -- and the
+    harm it guards is a real one: an unwritable checkpoint fails at the end of a GPU run,
+    after the money is spent.
+
+    Written as something a reader can do rather than as a disclosure, which is the test a
+    written limitation has to pass before it may substitute for a check. Both halves are
+    built and proved separately -- the workload role reaches every team's prefix, and Phase
+    4's GPU runs wrote checkpoints under ``platform`` -- so the reader is not being told to
+    expect failure. They are being told they are the first, and to look.
+    """
+    section = limitations_prose()
+
+    assert "`platform`" in section, (
+        "the page does not name the one team every GPU run so far has claimed"
+    )
+    assert "first" in section
+    assert "checkpoint landed" in section, (
+        "the page mentions the gap without telling the reader what to check"
+    )
+
+
 def test_the_page_does_not_promise_a_checkpoint_can_resume_training() -> None:
     """The checkpoint protocol calls a checkpoint resumable, and it means something narrower.
 

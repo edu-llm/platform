@@ -6,7 +6,7 @@ This mapping is defined once, in `src/edullm_platform/phase5_criteria.py`. The a
 
 **The numbering is the migration document's eleven checks followed by four.** Criteria 1 to 11 are the checks the 2026-07-29 re-cut listed, in its order. Criteria 12 to 15 are what deriving a run's image from its declared commit owes over merely comparing the two, and they are appended rather than interleaved so that nothing already argued about had to be renumbered. Criterion 14 keeps its number after being rewritten, for the same reason.
 
-Verification run: 88 tests executed, 88 passed, 0 failed, 0 errored, pytest exit code 0.
+Verification run: 89 tests executed, 89 passed, 0 failed, 0 errored, pytest exit code 0.
 
 Three statuses exist and no more. **COVERED** means one or more cited tests prove the criterion as stated against the shipped configuration and all of them pass; the gate passes it. **DEFERRED** means an explicit recorded decision not to satisfy it yet, which requires both a written reason and a written trigger describing what makes it live again; the gate passes it. **GAP** is everything else, and the gate fails it. There is no in-between status, because an in-between status is what lets a gate be green and wrong at the same time.
 
@@ -19,7 +19,7 @@ Three statuses exist and no more. **COVERED** means one or more cited tests prov
 | 3 | COVERED | 2 | 1 | An image built from a commit pushed today, with no hand-written exception entry, is accepted. |
 | 4 | COVERED | 1 | 1 | The digest in the accepted manifest is the digest of the container that ran, evidenced from the Batch job description rather than from the template. |
 | 5 | COVERED | 1 | 2 | A submission declaring a commit that did not produce its image is refused at compile, before a reviewer is asked. |
-| 6 | GAP | 0 | 0 | A GPU run claiming a team other than platform writes its checkpoint successfully. |
+| 6 | DEFERRED | 0 | 3 | A GPU run claiming a team other than platform writes its checkpoint successfully. |
 | 7 | COVERED | 2 | 3 | A refused submission tells the submitter which refusal it was, in the workflow, with no account id disclosed. |
 | 8 | COVERED | 2 | 2 | An accepted run tells the submitter where its output, logs and W&B project are. |
 | 9 | COVERED | 6 | 8 | A member with write access cannot trigger a deploy workflow. |
@@ -29,15 +29,6 @@ Three statuses exist and no more. **COVERED** means one or more cited tests prov
 | 13 | COVERED | 1 | 1 | A commit with no published image is refused at compile, with a reason naming the build workflow. |
 | 14 | COVERED | 1 | 3 | A commit publishes at most one image, so a submission resolving from a commit has no rebuild to choose between. |
 | 15 | COVERED | 1 | 1 | An image_digest override naming a digest published from a different commit is refused. |
-
-## Gaps
-
-Read these first. A matrix that overstates coverage is worse than no matrix. Every gap here fails the acceptance gate, and each one is unfinished work rather than a recorded decision to postpone: a deferral needs a written reason and a written trigger, and neither exists for any of these. Relabelling one would turn the gate green without anything changing in the account -- and because a deferral may never be pilot-blocking, it would open the pilot rung at the same time. That is two controls disabled by one word.
-
-### Check 6 (GAP) — A GPU run claiming a team other than platform writes its checkpoint successfully.
-
-- No pilot run went to a GPU. All three went to cpu-32vcpu, and the workload they carried was a print statement and two W&B calls, so none of them wrote a checkpoint. There is no observation to capture.
-- Nothing is missing but the run. The GPU workload role already reaches teams/*/runs/* -- item 5.5 widened it to match the CPU role -- so a checkpoint under any team is permitted, and the checkpoint machinery is what Phase 4 proved on three GPU jobs under team platform. What has not happened is the two together.
 
 ## Checks
 
@@ -139,19 +130,33 @@ Supporting tests (2), all executed and passing, cited as evidence rather than as
 
 ### Check 6 — A GPU run claiming a team other than platform writes its checkpoint successfully.
 
-**Status: GAP**
+**Status: DEFERRED**
 
-Gap:
+Deferred because:
 
-- No pilot run went to a GPU. All three went to cpu-32vcpu, and the workload they carried was a print statement and two W&B calls, so none of them wrote a checkpoint. There is no observation to capture.
-- Nothing is missing but the run. The GPU workload role already reaches teams/*/runs/* -- item 5.5 widened it to match the CPU role -- so a checkpoint under any team is permitted, and the checkpoint machinery is what Phase 4 proved on three GPU jobs under team platform. What has not happened is the two together.
+WHAT THIS MEASURES IS BUILT AND UNEXERCISED, AND THE OBSERVATION HAS BEEN RELOCATED RATHER THAN ABANDONED. Nothing is missing but the run. The GPU workload role already reaches teams/*/runs/* -- item 5.5 widened it to match the CPU role -- so a checkpoint under any team is permitted, and the checkpoint machinery is what Phase 4 proved on three GPU jobs under team platform. What has not happened is the two together.
+
+It is a deferral rather than a gap because the decision is recorded on both sides and the observation is owned somewhere real. The master plan carries this check at the head of Phase 6's list, marked as arriving from Phase 5 and as closing Phase 5's gate rather than Phase 6's, and no Phase 6 build item stands in front of it: it needs no registration, no deploy and no code. A postponement with an owner and a trigger is what DEFERRED is for; one owned nowhere is a gap wearing the label, which is the move the three-status rule exists to make visible.
+
+It is not a prediction that the run will succeed. If the checkpoint write is refused, this resolves to a gap and item 5.5 was wrong -- which is the outcome the trigger exists to make somebody look at rather than infer.
+
+Live again when:
+
+One GPU submission claiming a team other than platform that writes a checkpoint. It is a submission rather than any work: the compute profile is a dropdown on the same form, the GPU role already reaches every team's prefix, and Phase 4 proved the checkpoint machinery. Phase 6's closeout campaign carries it and it belongs early in that campaign, because until it runs the previous phase is not declarable complete. Re-record this as covered against the capture, or as a gap if the write is refused; leaving it deferred once a GPU run under another team exists is the one outcome this trigger forbids.
 
 Scope:
 
+- THE RE-CUT IS A RELOCATION AND NOT A PASS, AND THE PHASE'S CLAIM IS NARROWER THAN A GREEN GATE WILL READ. All three pilot runs went to cpu-32vcpu and the workload they carried was a print statement and two W&B calls, so none of them wrote a checkpoint and there is nothing to capture. No pilot run has trained anything or touched a GPU. What Phase 5 established is that the two-person path completes -- which had never been established in twenty-five prior dispatches and is the thing the phase is named after -- and not that this platform carries a research workload for somebody who did not build it.
 - The team half is already demonstrated and is worth separating from the GPU half. Every one of the three pilot runs claimed team tokenizer -- the first team other than platform or the data-prep placeholder to appear in this store -- and the succeeded run's output prefix is teams/tokenizer/runs/. What is missing is a GPU run doing the same and writing a checkpoint at the end of it.
-- Closing it is one submission rather than any work. The compute profile is a dropdown on the same form, the GPU role already reaches every team's prefix, and Phase 4 proved the checkpoint machinery on three GPU jobs.
+- The pilot-blocking marker came off as a consequence of the status rather than as a judgement about the harm, and the shared contract refuses the combination rather than leaving it to a reviewer. The harm has not moved: a checkpoint the workload role cannot write is a GPU run's whole output lost at the end of the run, after the money is spent. So it goes on the pilot limitations page in the words a reader can act on -- if you are the first to run on a GPU under your own team, check the checkpoint landed -- which is what a written limitation owes before it may stand in for a check.
 
 No test proves this check.
+
+Supporting tests (3), all executed and passing, cited as evidence rather than as proof:
+
+- `tests/test_phase5_team_isolation.py::test_both_workload_roles_reach_every_team_by_decision`
+- `tests/test_phase5_team_isolation.py::test_the_prefix_the_roles_grant_is_the_prefix_the_platform_derives`
+- `tests/test_phase5_run_evidence.py::test_a_run_that_succeeded_recorded_where_its_output_went`
 
 ### Check 7 — A refused submission tells the submitter which refusal it was, in the workflow, with no account id disclosed.
 

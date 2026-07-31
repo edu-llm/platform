@@ -1171,7 +1171,7 @@ def render_index(
                 (
                     "This bundle exists so that a reviewer can decide whether Phase 1 is done "
                     "without reading the test suite. Everything it claims was executed by "
-                    f"`{GENERATOR_COMMAND}` at generation time. {standing(gap_numbers)}"
+                    f"`{GENERATOR_COMMAND}` at generation time. {standing(gap_numbers, deferred_numbers)}"
                 ),
                 "",
                 "## Contents",
