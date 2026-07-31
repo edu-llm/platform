@@ -2,8 +2,8 @@
 
 Phase: phase-2
 Bundle schema version: 1
-Source commit: b5b7f6ee42a7701cd5402b3dd7b8eec398196ff1
-Generated: 2026-07-31T02:40:04+00:00
+Source commit: 42b302ab203e08b05ecf8752ac162cb495e332c9
+Generated: 2026-07-31T18:29:04+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 2 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase2_proof.py` at generation time. It is not done, and the Result table below says by how much.
 
@@ -45,15 +45,15 @@ This run evaluated 22 acceptance criteria: twelve criteria are covered, one crit
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3757 |
-| suite tests executed | 3580 |
-| suite passed | 3580 |
-| suite failed | 0 |
+| suite tests collected | 3804 |
+| suite tests executed | 3623 |
+| suite passed | 3622 |
+| suite failed | 1 |
 | suite errored | 0 |
 | suite skipped | 0 |
-| matrix node ids executed | 601 |
-| matrix node ids passed | 601 |
-| matrix node ids failed | 0 |
+| matrix node ids executed | 611 |
+| matrix node ids passed | 610 |
+| matrix node ids failed | 1 |
 | phase criteria | 22 |
 | criteria COVERED | 12 (1, 5, 8, 10, 13, 15, 16, 17, 18, 20, 21, 22) |
 | criteria DEFERRED | 1 (4) |
@@ -89,8 +89,8 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | file | digest |
 | --- | --- |
 | .github/workflows/deploy-phase2-admission.yml | sha256:e82f87cb4bad4186d96d5e55514d863e4557b1519c2acbc08098b7d1b3756dc5 |
-| .github/workflows/submit-run.yml | sha256:8f51256b517c2100258956666d64b85eee6f249334d0aab4863d11941154ec90 |
-| config/organization.yaml | sha256:967e5053115dbef048570904859d1907003512c1180cf683d4585c5abd66a2b1 |
+| .github/workflows/submit-run.yml | sha256:63b75b2a3d60f38152a88f8d37e56b70361a155325d3375f53d97101d460b822 |
+| config/organization.yaml | sha256:cea2d2123d2fb5794614e6a4b8a362c8aaa33626f20ae28a13cb673fadf4ac78 |
 | config/policy.yaml | sha256:8efa2f00527f9ad1677ed27452a2b6093a6a8c9e8190cf3e0a583b0f68787b39 |
 | fixtures/authorization/admin-exception.yaml | sha256:4ad48b8ecd405d11428cf446f74d0a8aeabf904365f3fee7b599b6a7ed0b6fa0 |
 | fixtures/authorization/lead-self-authorization.yaml | sha256:0e65da633a3880b11e5f14d380d54497a2be7124da1121f34ec3d21d4b4e83d0 |
@@ -109,7 +109,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | fixtures/evidence/phase-2/lineage/records/intent/run_019fa46a-5478-70ea-aab6-28de23c41f7f.json | sha256:89ad215366a6c1e6177e24a04de4db99f0687529175d9bccae39ef3dfadd4ba1 |
 | fixtures/evidence/phase-2/lineage/records/intent/run_019fa471-0173-7050-a41b-22ca01969b52.json | sha256:e1e6f323427445671f554e4af5d23ea7a2020b578d926d6e934d3144604be0ba |
 | fixtures/evidence/phase-2/lineage/records/intent/run_019fa4c0-390d-7081-b539-08d9ff6b58be.json | sha256:be35e6f2797c899e1a5b44544ed64d053b125f6d17cb47fb0cc6932f2fd976a5 |
-| infra/admission-state-machine.yaml | sha256:dfe2b0bd3deb473a24a9584c11dfbc9fe8dfcc81cd42bf51555449e529f92c47 |
+| infra/admission-state-machine.yaml | sha256:7cb2cfb2465c6b78950b197cb233083ff6569a1f3a621946d8392d09f438ef3a |
 | infra/iam/admission-role.yaml | sha256:e5e5b2db0ae9b7d1cdf8d46ab3568f35279a33344fe1ec337cf69e82b9c9e841 |
 | infra/iam/admission-service-roles.yaml | sha256:fd826897cc8ff59b345a648cf6063dd470942ec0680751f8a550d9ccca3793d2 |
 | infra/iam/infra-deployer-role.yaml | sha256:596abb25126c0f10d734cbecd01bec08495cac63b19a81ab46870318504774ac |

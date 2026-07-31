@@ -6,7 +6,7 @@ This mapping is defined once, in `src/edullm_platform/phase5_criteria.py`. The a
 
 **The numbering is the migration document's eleven checks followed by four.** Criteria 1 to 11 are the checks the 2026-07-29 re-cut listed, in its order. Criteria 12 to 15 are what deriving a run's image from its declared commit owes over merely comparing the two, and they are appended rather than interleaved so that nothing already argued about had to be renumbered. Criterion 14 keeps its number after being rewritten, for the same reason.
 
-Verification run: 89 tests executed, 89 passed, 0 failed, 0 errored, pytest exit code 0.
+Verification run: 91 tests executed, 91 passed, 0 failed, 0 errored, pytest exit code 0.
 
 Three statuses exist and no more. **COVERED** means one or more cited tests prove the criterion as stated against the shipped configuration and all of them pass; the gate passes it. **DEFERRED** means an explicit recorded decision not to satisfy it yet, which requires both a written reason and a written trigger describing what makes it live again; the gate passes it. **GAP** is everything else, and the gate fails it. There is no in-between status, because an in-between status is what lets a gate be green and wrong at the same time.
 
@@ -19,12 +19,12 @@ Three statuses exist and no more. **COVERED** means one or more cited tests prov
 | 3 | COVERED | 2 | 1 | An image built from a commit pushed today, with no hand-written exception entry, is accepted. |
 | 4 | COVERED | 1 | 1 | The digest in the accepted manifest is the digest of the container that ran, evidenced from the Batch job description rather than from the template. |
 | 5 | COVERED | 1 | 2 | A submission declaring a commit that did not produce its image is refused at compile, before a reviewer is asked. |
-| 6 | DEFERRED | 0 | 3 | A GPU run claiming a team other than platform writes its checkpoint successfully. |
+| 6 | DEFERRED | 0 | 4 | A GPU run claiming a team other than platform writes its checkpoint successfully. |
 | 7 | COVERED | 2 | 3 | A refused submission tells the submitter which refusal it was, in the workflow, with no account id disclosed. |
 | 8 | COVERED | 2 | 2 | An accepted run tells the submitter where its output, logs and W&B project are. |
 | 9 | COVERED | 6 | 8 | A member with write access cannot trigger a deploy workflow. |
 | 10 | COVERED | 2 | 1 | A member with write access cannot merge a workflow change without a code-owner review. |
-| 11 | COVERED | 2 | 4 | The pilot limitations page is in the README and names the checkpoint's missing optimizer state, the absence of cancellation, and that team routes approval rather than granting permission. |
+| 11 | COVERED | 4 | 3 | Every accepted submission tells the submitter, on the summary it ends on, that cancelling does not stop the job, that a checkpoint omits optimizer state, and that team routes approval rather than granting permission. |
 | 12 | COVERED | 2 | 1 | A submission that supplies a commit and no digest resolves to the image published from that commit. |
 | 13 | COVERED | 1 | 1 | A commit with no published image is refused at compile, with a reason naming the build workflow. |
 | 14 | COVERED | 1 | 3 | A commit publishes at most one image, so a submission resolving from a commit has no rebuild to choose between. |
@@ -134,26 +134,23 @@ Supporting tests (2), all executed and passing, cited as evidence rather than as
 
 Deferred because:
 
-WHAT THIS MEASURES IS BUILT AND UNEXERCISED, AND THE OBSERVATION HAS BEEN RELOCATED RATHER THAN ABANDONED. Nothing is missing but the run. The GPU workload role already reaches teams/*/runs/* -- item 5.5 widened it to match the CPU role -- so a checkpoint under any team is permitted, and the checkpoint machinery is what Phase 4 proved on three GPU jobs under team platform. What has not happened is the two together.
-
-It is a deferral rather than a gap because the decision is recorded on both sides and the observation is owned somewhere real. The master plan carries this check at the head of Phase 6's list, marked as arriving from Phase 5 and as closing Phase 5's gate rather than Phase 6's, and no Phase 6 build item stands in front of it: it needs no registration, no deploy and no code. A postponement with an owner and a trigger is what DEFERRED is for; one owned nowhere is a gap wearing the label, which is the move the three-status rule exists to make visible.
-
-It is not a prediction that the run will succeed. If the checkpoint write is refused, this resolves to a gap and item 5.5 was wrong -- which is the outcome the trigger exists to make somebody look at rather than infer.
+NOTHING IS MISSING BUT THE RUN. The GPU workload role already reaches teams/*/runs/* -- item 5.5 widened it to match the CPU role -- so a checkpoint under any team is permitted, and the checkpoint machinery is what Phase 4 proved on three GPU jobs under team platform. What has not happened is the two together. THE DEFERRAL WAS WITHDRAWN ONCE ON 2026-07-31 AND RE-GRANTED THE SAME DAY AGAINST A DIFFERENT MECHANISM, WHICH IS WORTH READING BEFORE TRUSTING IT. The first re-cut was granted against a page: a deferral may never be pilot-blocking, so what it stopped guarding had to be written where a reader could act on it, and the pilot limitations page was where that went. The page then left the README on a standing decision about what this repository publishes, the condition stopped holding, and the deferral was withdrawn rather than allowed to expire quietly. WHAT IT IS GRANTED AGAINST NOW IS NARROWER AND HARDER TO LOSE. The warning is printed on the run summary, to the submissions it applies to and not to the rest: a run carrying a checkpoint contract under a team other than platform is told it may be the first, and told what to check. That is delivered at the moment the person can act on it rather than on a page they would have had to open first, and test_the_first_gpu_checkpoint_under_a_new_team_is_warned_about_and_only_it_is fails if either the warning or its guard is removed. A page can be moved out of the README by an unrelated decision, which is exactly what happened; this cannot go quiet without a test going red.
 
 Live again when:
 
-One GPU submission claiming a team other than platform that writes a checkpoint. It is a submission rather than any work: the compute profile is a dropdown on the same form, the GPU role already reaches every team's prefix, and Phase 4 proved the checkpoint machinery. Phase 6's closeout campaign carries it and it belongs early in that campaign, because until it runs the previous phase is not declarable complete. Re-record this as covered against the capture, or as a gap if the write is refused; leaving it deferred once a GPU run under another team exists is the one outcome this trigger forbids.
+One GPU submission claiming a team other than platform that writes a checkpoint closes it, and the criterion is re-recorded as COVERED or GAP against that capture rather than against this text. Phase 6's closeout campaign carries it as its first item. Until it runs this phase is not declarable complete, and if the campaign is abandoned this returns to a gap rather than remaining deferred.
 
 Scope:
 
-- THE RE-CUT IS A RELOCATION AND NOT A PASS, AND THE PHASE'S CLAIM IS NARROWER THAN A GREEN GATE WILL READ. All three pilot runs went to cpu-32vcpu and the workload they carried was a print statement and two W&B calls, so none of them wrote a checkpoint and there is nothing to capture. No pilot run has trained anything or touched a GPU. What Phase 5 established is that the two-person path completes -- which had never been established in twenty-five prior dispatches and is the thing the phase is named after -- and not that this platform carries a research workload for somebody who did not build it.
+- THE PHASE'S CLAIM IS NARROWER THAN A GATE VERDICT WILL READ, WHICHEVER WAY THE VERDICT GOES. All three pilot runs went to cpu-32vcpu and the workload they carried was a print statement and two W&B calls, so none of them wrote a checkpoint and there is nothing to capture. No pilot run has trained anything or touched a GPU. What Phase 5 established is that the two-person path completes -- which had never been established in twenty-five prior dispatches and is the thing the phase is named after -- and not that this platform carries a research workload for somebody who did not build it. Closing this one criterion is not a pass on that larger question either.
 - The team half is already demonstrated and is worth separating from the GPU half. Every one of the three pilot runs claimed team tokenizer -- the first team other than platform or the data-prep placeholder to appear in this store -- and the succeeded run's output prefix is teams/tokenizer/runs/. What is missing is a GPU run doing the same and writing a checkpoint at the end of it.
-- The pilot-blocking marker came off as a consequence of the status rather than as a judgement about the harm, and the shared contract refuses the combination rather than leaving it to a reviewer. The harm has not moved: a checkpoint the workload role cannot write is a GPU run's whole output lost at the end of the run, after the money is spent. So it goes on the pilot limitations page in the words a reader can act on -- if you are the first to run on a GPU under your own team, check the checkpoint landed -- which is what a written limitation owes before it may stand in for a check.
+- THE HARM IS CARRIED BY A WARNING RATHER THAN BY THE MARKER, AND THIS IS WHAT THAT EXCHANGE COSTS. A checkpoint the workload role cannot write is a GPU run's whole output lost at the end of the run, after the money is spent. A deferral may never be pilot-blocking, so the marker comes off and a written limitation is what is owed in exchange: the person about to be first is told so on their own run summary and told what to check. That is a person checking rather than a system preventing, which is weaker, and it is the trade a deferral is. The trigger below is what ends it.
 
 No test proves this check.
 
-Supporting tests (3), all executed and passing, cited as evidence rather than as proof:
+Supporting tests (4), all executed and passing, cited as evidence rather than as proof:
 
+- `tests/test_pilot_limitations.py::test_the_first_gpu_checkpoint_under_a_new_team_is_warned_about_and_only_it_is`
 - `tests/test_phase5_team_isolation.py::test_both_workload_roles_reach_every_team_by_decision`
 - `tests/test_phase5_team_isolation.py::test_the_prefix_the_roles_grant_is_the_prefix_the_platform_derives`
 - `tests/test_phase5_run_evidence.py::test_a_run_that_succeeded_recorded_where_its_output_went`
@@ -252,27 +249,31 @@ Supporting tests (1), all executed and passing, cited as evidence rather than as
 
 - `tests/test_phase5_run_evidence.py::test_the_control_binds_members_and_the_admins_may_still_bypass_it`
 
-### Check 11 — The pilot limitations page is in the README and names the checkpoint's missing optimizer state, the absence of cancellation, and that team routes approval rather than granting permission.
+### Check 11 — Every accepted submission tells the submitter, on the summary it ends on, that cancelling does not stop the job, that a checkpoint omits optimizer state, and that team routes approval rather than granting permission.
 
 **Status: COVERED**
 
 Scope:
 
-- UNDER THE ADOPTION LADDER'S OWN RULES THIS PAGE IS THE REASON THE REMAINING CHECKS MAY WAIT, so its absence would not be a documentation gap -- it would be the pilot not existing. That is why an unmarked criterion is nonetheless a precondition for the rung rather than paperwork.
-- The cancellation wording is fixed rather than free, and the test asserts the sentence rather than the topic. Phase 3's three cancellation criteria transfer to Phase 8 on the condition that a user is told, in words they can act on, that cancelling the workflow does not stop the job -- so a page that mentioned cancellation vaguely would quietly withdraw the grounds for that transfer.
-- In the public README rather than in a private path, because the audience is somebody who has not been given the private paths. The earlier draft was in one and was materially stale in both directions.
+- THE STATEMENT WAS REWRITTEN ON 2026-07-31 AND THIS RECORDS WHAT IT USED TO ASK FOR, BECAUSE A CRITERION THAT CHANGES TO MATCH WHAT WAS BUILT IS THE MOVE THIS LADDER EXISTS TO CATCH. It previously read: the pilot limitations page is in the README and names the checkpoint's missing optimizer state, the absence of cancellation, and that team routes approval rather than granting permission. The page left the README that day on the owner's standing decision that the README is a public artifact and a candid list of what this platform has not finished is not. That decision is settled and is not what this criterion measures.
+- WHAT WAS GIVEN UP IS REAL AND IS NOT RECOVERED BY THE REWRITE. The full page said more than three things and said them in one place a reader could review before deciding to use the platform at all. That page is now readable on one laptop. Nothing here claims otherwise, and the candid assessment being private is a cost carried rather than closed.
+- WHAT IS DELIVERED INSTEAD IS NARROWER AND LANDS HARDER, WHICH IS WHY THIS IS COVERED RATHER THAN DEFERRED. The three facts above are the load-bearing subset: each is discovered by being caught out by it, and each is expensive when it is -- the spend that continues after a cancellation, the resumed run whose optimizer restarted cold, the user who reads team as an access control. They are printed on the summary every accepted submission ends on, which is read by every submitter at the moment each wrong belief would otherwise form, rather than on a page a reader had to already decide to open. A README section is the weaker delivery of the two and was not chosen for being stronger.
+- THE FOURTH TEST IS THE ONE THAT MATTERS AND IS NOT REDUNDANT. Each sentence could be true of a document nobody opens; test_all_three_are_on_the_page_every_accepted_submission_ends_on asserts they arrive together under one heading on the summary a submitter is already reading to find their run id. Split them across three places and every other test here still passes while the property is gone.
+- The cancellation wording is fixed rather than free, and the test asserts the sentence rather than the topic. Phase 3's three cancellation criteria transfer to Phase 8 on the condition that a user is told, in words they can act on, that cancelling the workflow does not stop the job -- so wording that mentioned cancellation vaguely would quietly withdraw the grounds for that transfer.
+- test_the_readme_does_not_carry_the_section_the_record_says_it_lost stays cited, and is the check that a recorded absence is a real one. Within an hour of the section being removed, an editor holding the file wrote its buffer back and the section returned while this criterion went on reporting it private, and nothing failed because the tests that read the section had just been deleted.
 
-Proving tests (2), all executed and passing:
+Proving tests (4), all executed and passing:
 
-- `tests/test_pilot_limitations.py::test_the_page_names_the_three_things_a_pilot_user_has_to_know`
-- `tests/test_pilot_limitations.py::test_the_cancellation_wording_is_the_sentence_a_reader_can_act_on`
+- `tests/test_pilot_limitations.py::test_a_submitter_is_told_that_cancelling_does_not_stop_the_job`
+- `tests/test_pilot_limitations.py::test_a_submitter_is_told_the_checkpoint_leaves_the_optimizer_behind`
+- `tests/test_pilot_limitations.py::test_a_submitter_is_told_that_team_routes_approval_rather_than_granting_access`
+- `tests/test_pilot_limitations.py::test_all_three_are_on_the_page_every_accepted_submission_ends_on`
 
-Supporting tests (4), all executed and passing, cited as evidence rather than as proof:
+Supporting tests (3), all executed and passing, cited as evidence rather than as proof:
 
-- `tests/test_pilot_limitations.py::test_the_readme_carries_a_pilot_limitations_section`
-- `tests/test_pilot_limitations.py::test_the_page_says_the_team_field_routes_approval_rather_than_granting_anything`
-- `tests/test_pilot_limitations.py::test_the_page_does_not_promise_a_checkpoint_can_resume_training`
+- `tests/test_pilot_limitations.py::test_the_readme_does_not_carry_the_section_the_record_says_it_lost`
 - `tests/test_pilot_limitations.py::test_the_page_discloses_no_account_id_and_no_credential`
+- `tests/test_pilot_limitations.py::test_the_summary_a_submitter_reads_discloses_no_account_id_and_no_credential`
 
 ### Check 12 — A submission that supplies a commit and no digest resolves to the image published from that commit.
 
@@ -326,7 +327,7 @@ So this is retired as written and replaced by the property that survives, which 
 
 It keeps its pilot-blocking marker. The harm it guards has not changed: if any of the three mechanisms is relaxed, a commit can publish twice and the lineage record starts naming an image nobody chose.
 - The two rules for a state that cannot occur are cited as supporting rather than deleted from the citation list. They are correct, they are tested, and nothing reaches them -- so citing them as proving would claim the platform exhibits behaviour it cannot, and dropping them would leave a reader of image_resolution.py with a rule and no indication that anybody had thought about whether it runs.
-- There is a residual and it is not this criterion's. Two commits sharing a twelve-hex-character prefix cannot both publish, and under derivation the second would resolve to the first's image -- a lineage record naming commit B for an image commit A produced. Forty-eight bits makes it negligible, the build workflow already refuses the colliding build by verifying the published image against the commit, and the tag stays twelve characters because widening it would falsify two committed Phase 1 captures and dissolve the rationale for the one field exempt from the secret scan. It is on the limitations page instead.
+- There is a residual and it is not this criterion's. Two commits sharing a twelve-hex-character prefix cannot both publish, and under derivation the second would resolve to the first's image -- a lineage record naming commit B for an image commit A produced. Forty-eight bits makes it negligible, the build workflow already refuses the colliding build by verifying the published image against the commit, and the tag stays twelve characters because widening it would falsify two committed Phase 1 captures and dissolve the rationale for the one field exempt from the secret scan. It was on the limitations page until that page was taken out of the README on 2026-07-31, and it is now recorded here and nowhere a pilot user reads.
 
 Proving tests (1), all executed and passing:
 

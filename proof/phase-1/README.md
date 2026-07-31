@@ -2,8 +2,8 @@
 
 Phase: phase-1
 Bundle schema version: 1
-Source commit: b5b7f6ee42a7701cd5402b3dd7b8eec398196ff1
-Generated: 2026-07-31T02:38:25+00:00
+Source commit: 42b302ab203e08b05ecf8752ac162cb495e332c9
+Generated: 2026-07-31T18:27:18+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 1 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase1_proof.py` at generation time. Every criterion is covered and the gate is green, which is the state in which a bundle is most worth reading carefully: the Known limitations below say what each criterion does not cover, and `open-decisions.md` says what this phase surfaced and did not settle.
 
@@ -22,10 +22,10 @@ This bundle exists so that a reviewer can decide whether Phase 1 is done without
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3757 |
-| suite tests executed | 3580 |
-| suite passed | 3580 |
-| suite failed | 0 |
+| suite tests collected | 3804 |
+| suite tests executed | 3623 |
+| suite passed | 3622 |
+| suite failed | 1 |
 | suite errored | 0 |
 | suite skipped | 0 |
 | matrix node ids executed | 423 |
@@ -65,7 +65,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 
 | file | digest |
 | --- | --- |
-| .github/workflows/build-research-image.yml | sha256:7c19d25c5f18e9040305cc8124891e8fbe222dbf7b59b79648b9d6ecf170970e |
+| .github/workflows/build-research-image.yml | sha256:f39972c4da20a63b3fd0f725ccaf521dd893d94c4d72d6f376456e081223e122 |
 | .github/workflows/deploy-phase1-ecr.yml | sha256:0bea8d5868e5382e6a61b5b799085bddf5a03e500cf38ba604e2026226583862 |
 | config/repositories.yaml | sha256:2ebf3fc8d091d88c62555e432059c59e208a5f26f2d0bdd8f7cf50133fdcd384 |
 | fixtures/evidence/phase-1/rebuild/local-rebuild-comparison.json | sha256:91966d61ec214e5c66a6ed801ed9a3271b834ff10a110afa600cf66981d7a33d |

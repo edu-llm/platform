@@ -2,8 +2,8 @@
 
 Phase: phase-0
 Bundle schema version: 1
-Source commit: c302526c4cd0a4300e50f8cc1a26243641136f55
-Generated: 2026-07-31T05:44:58+00:00
+Source commit: 42b302ab203e08b05ecf8752ac162cb495e332c9
+Generated: 2026-07-31T18:25:37+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 0 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase0_proof.py` at generation time.
 
@@ -18,10 +18,10 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3772 |
-| suite tests executed | 3595 |
-| suite passed | 3595 |
-| suite failed | 0 |
+| suite tests collected | 3804 |
+| suite tests executed | 3623 |
+| suite passed | 3622 |
+| suite failed | 1 |
 | suite errored | 0 |
 | suite skipped | 0 |
 | matrix node ids executed | 254 |
@@ -86,7 +86,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 
 | file | digest |
 | --- | --- |
-| config/organization.yaml | sha256:e68856d918a61e17d9f5565795dcf8cda3041f6316dddc02da0724fabf9df913 |
+| config/organization.yaml | sha256:cea2d2123d2fb5794614e6a4b8a362c8aaa33626f20ae28a13cb673fadf4ac78 |
 | config/policy.yaml | sha256:8efa2f00527f9ad1677ed27452a2b6093a6a8c9e8190cf3e0a583b0f68787b39 |
 | config/workload-catalog.yaml | sha256:dbd10c9d4655be66f829b8c43e150544ba17ca778988f86d14d22e51600feec6 |
 | fixtures/authorization/admin-exception.yaml | sha256:4ad48b8ecd405d11428cf446f74d0a8aeabf904365f3fee7b599b6a7ed0b6fa0 |
@@ -112,7 +112,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | schemas/result-manifest.schema.json | sha256:7e7b6a5891444d9d13256202319f5be6e70addb81f0b0c077e5294c63529503b |
 | schemas/run-manifest.schema.json | sha256:62851f48df41a1dc270a525b44a8ef01eab660af9d5b60030d6c0a8776e196f2 |
 | schemas/scheduler-attempt.schema.json | sha256:91984a9fb1f7f9150f7799dc337807bd14b93b50908a56e0e230391546c9c4ac |
-| schemas/submission-inputs.schema.json | sha256:1b4cb859d29e2efd305fe8477fcc20d8297bbfff64a9cdb958939661e71fb709 |
+| schemas/submission-inputs.schema.json | sha256:08ffde56bfbb8e5eff5f5a235d50852d5665ad3eab1448e3870121410c16a7e9 |
 | schemas/workload-catalog.schema.json | sha256:4039ead3f77c0949db2a701dae90461788ed6856838075a1f223f3d4b853fa06 |
 
 ## Known limitations

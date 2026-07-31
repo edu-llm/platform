@@ -152,14 +152,41 @@ def test_the_opening_sentence_does_not_call_a_deferred_criterion_covered() -> No
     """Mutation: open a green bundle by saying every criterion is covered.
 
     The shared opening was written for a phase that closes with nothing outstanding, and it
-    says so in those words. Phase 5 is the first bundle to reach a green gate while carrying
+    says so in those words. Phase 5 was the first bundle to reach a green gate while carrying
     a deferral, so that sentence would have printed "every criterion is covered" over a
     criterion nobody has observed -- on the one page most reviewers read, and past the guard
     that reads status claims, which understands "check 6 is deferred" and not "every".
 
-    ``contradicting_status_claims`` is asserted beside the wording rather than instead of
-    it, because the two catch different halves: the guard would let this through and a
-    reader would not.
+    **Asserted against a synthetic deferral rather than against this phase, since
+    2026-07-31.** Phase 5's deferral was withdrawn and re-granted inside that one day, and for
+    the hours it was withdrawn the phase exercised this branch not at all. Keying the test on
+    ``phase5_criteria()`` would have left it passing while measuring nothing for exactly that
+    window -- the same class of quiet failure the branch itself exists to prevent -- so it
+    stays keyed on a deferral it constructs, whatever the phase happens to record.
+    """
+    opening = standing([], ["6"])
+
+    assert "It is not done" not in opening
+    assert "Every criterion is covered" not in opening
+    assert "deferred" in opening
+    assert "6" in opening, "the opening does not say which criterion is outstanding"
+
+
+def test_the_opening_sentence_reports_this_phase_as_green_but_not_complete() -> None:
+    """Mutation: open the bundle as though the phase had closed, or as though it had failed.
+
+    **Both wrong openings are available here and they are wrong in opposite directions,
+    which is why this is asserted rather than left to the generator.** As of 2026-07-31
+    Phase 5 records no gaps and one deferral: criterion 6, the GPU checkpoint under a team
+    other than ``platform``. "Every criterion is covered" is the first wrong opening -- one
+    is not, it is deferred, and a deferral is a decision to accept something untrue for now
+    rather than a small kind of covered. "It is not done" is the second, and it is what this
+    file asserted while the same criterion was a gap; printing it now would report a green
+    gate as a red one.
+
+    Read off the definition rather than written down, because the wording and the statuses
+    drifting apart is exactly what ``contradicting_status_claims`` is asserted here to catch
+    -- and that drift is not hypothetical: the statuses moved twice on 2026-07-31.
     """
     numbers = {
         status: [check.number for check in phase5_criteria() if check.status is status]
@@ -167,11 +194,9 @@ def test_the_opening_sentence_does_not_call_a_deferred_criterion_covered() -> No
     }
     opening = standing(numbers[CriterionStatus.GAP], numbers[CriterionStatus.DEFERRED])
 
+    assert "No criterion is a gap and the gate is green" in opening
+    assert "criterion 6 is deferred rather than covered" in opening
     assert "It is not done" not in opening
-    assert "Every criterion is covered" not in opening
-    assert "deferred" in opening
-    for number in numbers[CriterionStatus.DEFERRED]:
-        assert number in opening, "the opening does not say which criterion is outstanding"
     assert contradicting_status_claims({"README.md": opening}, phase5_criteria()) == ()
 
 

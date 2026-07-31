@@ -14,7 +14,7 @@ Three runs, submitted by `aryanjverma` and released by `pianomaster99`. Rendered
 
 Every one of them was released by somebody other than their submitter, which is what check 2 is and is why it is covered. It also closes Phase 2's criterion 3 -- any team lead approval succeeding while `approval_scope` is `organization` -- which could not be closed by writing code and has been open across every submission this platform has ever taken.
 
-**`team verified` is `no` on every row, and that is correct rather than a defect.** The team a submitter claims is recorded and not enforced: nothing binds a team to a person yet, which is Phase 6 item 6.5. A record reading `yes` here would be evidence for a control that does not exist. The pilot limitations page tells a user the same thing in the same words -- `team` routes approval rather than granting permission.
+**`team verified` is `no` on every row, and that is correct rather than a defect.** The team a submitter claims is recorded and not enforced: nothing binds a team to a person yet, which is Phase 6 item 6.5. A record reading `yes` here would be evidence for a control that does not exist. A submitter is told the same thing in the same words -- `team` routes approval rather than granting permission -- on the summary every accepted submission ends on. That sentence was on the pilot limitations page until it was taken out of the README on 2026-07-31, and moving it onto the summary put it in front of everybody who submits rather than everybody who goes looking.
 
 ## What each run did
 

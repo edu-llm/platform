@@ -17,13 +17,13 @@ uv run python tools/build_phase3_proof.py
 
 | measure | count |
 | --- | --- |
-| collected by pytest | 3772 |
-| executed (excluding tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py, tests/test_phase5_proof.py) | 3595 |
-| passed | 3595 |
-| failed | 0 |
+| collected by pytest | 3804 |
+| executed (excluding tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py, tests/test_phase5_proof.py) | 3623 |
+| passed | 3622 |
+| failed | 1 |
 | errored | 0 |
 | skipped | 0 |
-| pytest exit code | 0 |
+| pytest exit code | 1 |
 
 ## Targeted verification run
 
@@ -31,9 +31,9 @@ Every test node id cited by the negative-case matrix, plus every test in the mod
 
 | measure | count |
 | --- | --- |
-| selected node ids | 376 |
-| executed | 376 |
-| passed | 376 |
+| selected node ids | 378 |
+| executed | 378 |
+| passed | 378 |
 | failed | 0 |
 | errored | 0 |
 | skipped | 0 |
@@ -51,10 +51,10 @@ The test modules Phase 3 added, excluding the ones that invoke a gate or this ge
 | tests/test_phase3_batch_deployment_workflow.py | 31 | pass |
 | tests/test_phase3_deployer_role.py | 14 | pass |
 | tests/test_phase3_ec2_authorization.py | 16 | pass |
-| tests/test_phase3_execution.py | 47 | pass |
+| tests/test_phase3_execution.py | 48 | pass |
 | tests/test_phase3_golden.py | 9 | pass |
 | tests/test_phase3_image_scan.py | 47 | pass |
-| tests/test_phase3_infrastructure.py | 54 | pass |
+| tests/test_phase3_infrastructure.py | 55 | pass |
 | tests/test_phase3_lifecycle_projection.py | 56 | pass |
 | tests/test_phase3_run_evidence.py | 37 | pass |
 

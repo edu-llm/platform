@@ -1,166 +1,180 @@
-"""The pilot limitations page, read out of the file a reader will actually open.
+"""The three things a submitter has to know, and where they are now said.
 
-Three people who did not build this platform are about to be given access to it, and the
-adoption rules make a written limitations page the precondition for that: a pilot whose
-users have not read what is missing is not a pilot, it is an unannounced release. The page
-is also the reason the phase's remaining checks are allowed to wait, so it carries weight
-a paragraph in a proof bundle does not.
+**The page was taken out of the README on 2026-07-31 and is not coming back.** It moved to a
+local, gitignored document on the owner's standing decision that the README is a public
+artifact and a candid list of what this platform has not finished is not. That decision is
+settled; what follows is how the requirement behind it is met anyway.
 
-**These tests read the shipped ``README.md`` and never a fixture, and that is the whole
-design.** A limitations page that is true in a test and absent from the file a reader opens
-is worse than no page at all: the suite goes green, the rung is recorded as reachable, and
-the reader is still told nothing. A fixture here would assert that somebody once wrote the
-right sentence somewhere, which is not the claim anybody needs to be able to make.
+**The requirement was never the page.** It was that a pilot user learns three things before
+being caught out by them: that cancelling does not stop a job, that a checkpoint omits
+optimizer state, and that ``team`` routes an approval rather than granting a permission. A
+README section was one way to deliver that, and on reflection a weak one -- it puts the facts
+where somebody has already decided to go looking, and nobody looks before their first run.
+
+**So they are printed in the run summary instead, and that is strictly better.** Every
+accepted submission ends on the "Your run" step summary; it is the one page in this system
+every submitter reads, at the moment each of these beliefs would otherwise form wrong. The
+tests below hold the text there. Five tests that read the README section were deleted when it
+left, and these replace them against the surface that now carries the facts.
+
+**What stayed a gap, honestly.** Nothing here claims the full page is readable, because it is
+not. The bundle records that the candid assessment is private and that the operational subset
+is delivered at the point of use, which is what is true.
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
+
+from workflow_support import load_workflow
 
 from edullm_platform.evidence import scan_for_secrets
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 README_PATH = PROJECT_ROOT / "README.md"
+SUBMIT_WORKFLOW_PATH = PROJECT_ROOT / ".github" / "workflows" / "submit-run.yml"
 
 SECTION_HEADING = "## Pilot limitations"
 
-#: Matched word for word and mark for mark rather than loosely. See
-#: ``test_the_cancellation_wording_is_the_sentence_a_reader_can_act_on`` for why the
-#: wording is fixed here instead of being left to whoever next edits the page.
-CANCELLATION_SENTENCE = (
-    "Cancelling the workflow does not stop the job; ask an admin, and note the mandatory "
-    "timeout bounds it."
-)
 
 def readme_text() -> str:
     return README_PATH.read_text(encoding="utf-8")
 
 
-def limitations_section() -> str:
-    """The section on its own, so no test here can be satisfied by prose elsewhere.
+def summary_step_script() -> str:
+    """The step that writes the "Your run" summary, as one string to search.
 
-    The rest of this README already discusses cancellation, the mandatory attempt timeout
-    and the empty team bindings, in the language of phases and acceptance criteria. A test
-    that read the whole file would therefore pass on exactly the material the pilot page
-    exists to replace, and would go on passing if the page were deleted.
+    Read out of the workflow rather than out of a rendered summary because rendering one
+    needs a submission to have been admitted. What is asserted is that the text is in the
+    step that always runs on a successful submission, which is the property that matters:
+    there is no branch of that step where a submitter is shown the table without it.
     """
-    text = readme_text()
-    assert SECTION_HEADING in text, (
-        f"{README_PATH.name} has no {SECTION_HEADING!r} section, so a pilot user has "
-        "nowhere to read what is missing before they are given access"
+    jobs = load_workflow(SUBMIT_WORKFLOW_PATH)["jobs"]
+    steps = [step for job in jobs.values() for step in job.get("steps", [])]
+    matching = [step for step in steps if "## Your run" in str(step.get("run", ""))]
+    assert len(matching) == 1, (
+        f"expected exactly one step to write the run summary, found {len(matching)}. If it "
+        "was split, point this helper at the one a submitter reads."
     )
-    return text.split(SECTION_HEADING, 1)[1].split("\n## ", 1)[0]
+    # Adjacent Python string literals rejoined, so the assertions below read the sentence a
+    # submitter sees rather than the source lines it happens to be typed across. Without this
+    # a reflow of the heredoc breaks tests that are about wording, which trains the next
+    # person to weaken the assertion instead of looking at what changed.
+    return re.sub(r'"\s*\n\s*"', "", str(matching[0]["run"]))
 
 
-def limitations_prose() -> str:
-    """The section as a reader meets it, with markdown's soft wraps closed up.
+def test_the_readme_does_not_carry_the_section_the_record_says_it_lost() -> None:
+    """Mutation: restore the section and leave the record saying it is private.
 
-    The page is hard-wrapped, so a sentence longer than a line carries a newline that
-    renders as a space. Matched against the raw file, a fixed sentence would be pinning
-    where the lines happen to break as well as what it says, and rewrapping a paragraph is
-    not editing it. A test that failed on a rewrap is one people learn to work around,
-    which would cost the sentence below the protection it is here to have.
+    **This is the tripwire the five deleted tests cost, pointed the other way, and it is here
+    because the defect it catches happened within the hour.** The section was removed, an
+    editor with the file open wrote its buffer back, and the section returned -- while the
+    criteria went on reporting that the page is private, the Phase 5 paragraph in that same
+    README went on saying the page was taken out, and the proof bundle went on recording
+    both. Nothing failed, because the only tests that read the section had just been deleted.
+
+    A recorded absence needs a check as much as a recorded presence does. If the section comes
+    back, this fails, which is the signal that the record and the tree disagree and somebody
+    has to say which one is right.
     """
-    return " ".join(limitations_section().split())
-
-
-def test_the_readme_carries_a_pilot_limitations_section() -> None:
-    assert SECTION_HEADING in readme_text()
-
-
-def test_the_page_names_the_three_things_a_pilot_user_has_to_know() -> None:
-    """Together rather than one test each, because the set is what makes the page a page.
-
-    Any one of these alone reads as a thorough disclosure and leaves the reader exposed on
-    the other two: they will lose an optimizer state they assumed was saved, wait for a
-    cancellation that is never coming, or read a team field as an access control. A page
-    naming two of the three is the failure worth catching, and a page naming two of the
-    three passes every test that checks them separately.
-    """
-    section = limitations_prose()
-
-    assert "optimizer" in section, "the page does not mention the optimizer state a resume loses"
-    assert "batch:TerminateJob" in section, "the page does not say cancellation cannot happen"
-    assert "`team`" in section, "the page does not mention the team field at all"
-
-
-def test_the_cancellation_wording_is_the_sentence_a_reader_can_act_on() -> None:
-    """Verbatim, because in this one case the wording is the substitution.
-
-    This limitation stands in for a check nobody is going to build before the pilot opens,
-    and a written limitation may only substitute for a missing check when the reader can
-    act on it. "Ask an admin" is the next step and "the mandatory timeout bounds it" is
-    the worst case if nobody takes it; between them a reader who has given up on a run
-    knows what to do and what it costs to do nothing. A softer paraphrase --
-    "cancellation is not supported" -- is true, shorter, and hands the reader neither
-    half, which is a disclosure rather than a substitute. So the sentence is pinned here
-    instead of being left to whoever next tightens the prose.
-    """
-    assert CANCELLATION_SENTENCE in limitations_prose()
-
-
-def test_the_page_says_the_team_field_routes_approval_rather_than_granting_anything() -> None:
-    """In those terms, because "team" reads as an access control to everybody who has met one.
-
-    A reader who takes it for one will assume naming their own team keeps their outputs
-    away from everyone else's, and will assume naming somebody else's would be refused.
-    Neither is true: the value routes the approval and is recorded, and nothing is checked
-    against it.
-    """
-    section = limitations_prose()
-
-    assert "routes" in section
-    assert "not a permission" in section
-
-
-def test_the_page_says_a_gpu_checkpoint_under_a_new_team_has_never_been_written() -> None:
-    """The page owes this because criterion 6 stopped being a check on 2026-07-31.
-
-    That criterion asked for a GPU run claiming a team other than ``platform`` to write its
-    checkpoint, and it moved to Phase 6's closeout as a deferral. A deferral may never be
-    pilot-blocking, so what it would have protected is owed to this page instead -- and the
-    harm it guards is a real one: an unwritable checkpoint fails at the end of a GPU run,
-    after the money is spent.
-
-    Written as something a reader can do rather than as a disclosure, which is the test a
-    written limitation has to pass before it may substitute for a check. Both halves are
-    built and proved separately -- the workload role reaches every team's prefix, and Phase
-    4's GPU runs wrote checkpoints under ``platform`` -- so the reader is not being told to
-    expect failure. They are being told they are the first, and to look.
-    """
-    section = limitations_prose()
-
-    assert "`platform`" in section, (
-        "the page does not name the one team every GPU run so far has claimed"
-    )
-    assert "first" in section
-    assert "checkpoint landed" in section, (
-        "the page mentions the gap without telling the reader what to check"
+    assert SECTION_HEADING not in readme_text(), (
+        f"{README_PATH.name} carries {SECTION_HEADING!r} again, but the Phase 5 record says "
+        "the page is private and delivered through the run summary instead. Either take the "
+        "section back out, or re-cut criterion 11 and say the decision changed."
     )
 
 
-def test_the_page_does_not_promise_a_checkpoint_can_resume_training() -> None:
-    """The checkpoint protocol calls a checkpoint resumable, and it means something narrower.
+def test_a_submitter_is_told_that_cancelling_does_not_stop_the_job() -> None:
+    """Mutation: drop it, or soften it to "cancellation is best effort".
 
-    ``edullm_platform.checkpoints`` reports COMMITTED when a success marker certifies the
-    payload beside it, which establishes that the bytes are whole. It says nothing about
-    what is in them, and what is in them is a model state dict and a step number. A page
-    that repeated the word without the qualification would tell a researcher their long
-    run can pick up where it left off.
+    The most expensive of the three and the only one that costs money while being wrong
+    about it. A person who cancels a workflow and believes the spend stopped has no reason
+    to check, so this is not discovered by observation -- it is discovered on the bill.
+
+    ``batch:TerminateJob`` is held by no identity in this account, so the sentence is
+    accurate rather than cautious, and it names the action a submitter can actually take.
     """
-    section = limitations_prose()
+    script = summary_step_script()
 
-    assert "cannot resume training" in section
-    assert "starts the optimizer cold" in section
+    assert "Cancelling the workflow does not stop your job" in script
+    assert "batch:TerminateJob" in script
+    assert "Ask an admin" in script
+
+
+def test_a_submitter_is_told_the_checkpoint_leaves_the_optimizer_behind() -> None:
+    """Mutation: drop it, or describe it as a checkpoint without qualification.
+
+    The one that silently corrupts a result rather than failing. A resumed run whose
+    optimizer restarted cold produces a loss curve that looks like training and is not the
+    training that was intended, and nothing in the system reports it.
+    """
+    script = summary_step_script()
+
+    assert "checkpoint does not include optimizer state" in script
+    assert "restarts its optimizer cold" in script
+
+
+def test_a_submitter_is_told_that_team_routes_approval_rather_than_granting_access() -> None:
+    """Mutation: drop it, or let the wording imply the field is an access control.
+
+    The one that produces a wrong mental model of the whole platform. ``team`` is recorded
+    and routed on; it is not enforced, and no submission is refused for naming a team the
+    submitter is not on. A user who believes otherwise treats a mis-routed request as a
+    permissions problem and asks for access nobody needs to grant.
+    """
+    script = summary_step_script()
+
+    assert "does not grant you anything" in script
+    assert "Any lead may approve any run" in script
+
+
+def test_all_three_are_on_the_page_every_accepted_submission_ends_on() -> None:
+    """Mutation: move one of them to a page of its own, or behind a conditional.
+
+    The delivery mechanism is the claim being made. Each sentence above could be true of a
+    document nobody opens; what makes this an improvement on the README section is that the
+    three arrive together, unavoidably, on the summary a submitter is already reading to find
+    their run id. Split them up and that property is gone while every test above still passes.
+    """
+    script = summary_step_script()
+    heading = "### Three things this does not do yet"
+
+    assert heading in script
+    body = script.split(heading, 1)[1]
+    assert "Cancelling the workflow does not stop your job" in body
+    assert "checkpoint does not include optimizer state" in body
+    assert "does not grant you anything" in body
+
+
+def test_the_first_gpu_checkpoint_under_a_new_team_is_warned_about_and_only_it_is() -> None:
+    """Mutation: print it to every run, or drop it and leave criterion 6 a gap.
+
+    This is what Phase 5 criterion 6's deferral is granted in exchange for. No GPU run
+    claiming a team other than ``platform`` has written a checkpoint here: the permission is
+    in place and the machinery is proven, but only under ``platform``, so the combination is
+    untested rather than known broken. The harm if it does not work is a run that trains to
+    completion and saves nothing, discovered after the money is spent.
+
+    **Both halves are asserted, and the conditional half is the one that keeps it read.** A
+    warning shown to every submission is a warning nobody reads by the third run, which
+    would satisfy the deferral's letter while destroying what it was for. So this also fails
+    if the guard is removed.
+    """
+    script = summary_step_script()
+
+    assert 'if manifest.checkpoint is not None and manifest.team != "platform":' in script
+    assert "may be the first to write a checkpoint on a GPU" in script
+    assert "trains to completion and saves nothing" in script
 
 
 def test_the_page_discloses_no_account_id_and_no_credential() -> None:
-    """The whole file, not the section, because the reason to scan does not stop at a heading.
+    """The whole file, and it always was, which is why this one survives the page leaving.
 
-    This is the only document in the repository written for people outside the team that
-    built it, and the pilot page is the part of it most likely to grow a worked example --
-    a queue arn, a console link, a copied command with a profile in it. Scanning only the
-    section would leave the paste one heading away from being unchecked.
+    This is still the only document in the repository written for people outside the team
+    that built it, so it is still the one most likely to grow a worked example -- a queue
+    arn, a console link, a copied command with a profile in it. The scan never depended on
+    the limitations section existing; it reads the README end to end.
 
     **Through the shared scanner rather than against a list of literals, and the first
     attempt at this test is why.** It named the account id it was looking for, which put the
@@ -171,3 +185,14 @@ def test_the_page_discloses_no_account_id_and_no_credential() -> None:
     rather than the three spellings somebody thought of.
     """
     scan_for_secrets(readme_text())
+
+
+def test_the_summary_a_submitter_reads_discloses_no_account_id_and_no_credential() -> None:
+    """The same scan, against the surface that now carries the facts the README used to.
+
+    The reason to repeat it is that this text is new, is written for the same outside
+    audience, and sits in a workflow file next to role arns and queue names -- which is
+    precisely the neighbourhood where a worked example gets pasted in to make a sentence
+    concrete.
+    """
+    scan_for_secrets(summary_step_script())

@@ -19,37 +19,48 @@ two that failed.
 Criteria 1 to 11 are the checks the re-cut listed, in its order. Criteria 12 to 15 are what
 deriving the image from the declared commit owes over merely comparing the two, and they are
 appended rather than interleaved so that nothing already argued about had to be renumbered.
-Ten are pilot-blocking, which is still the highest proportion of any phase and is not a
+Eleven are pilot-blocking, which is still the highest proportion of any phase and is not a
 marker that stopped sorting: this phase *is* the pilot rung, so almost every check is a
 precondition for a real person's run being real rather than a demonstration staged for them.
 
-**The five unmarked criteria are three conditions on the access grant, one refusal, and the
-deferral.** Criteria 9, 10 and 11 are the deploy-workflow guard, the code-owner requirement
-and the limitations page -- conditions on granting write access rather than guards on a run.
+**The four unmarked criteria are three conditions on the access grant and one refusal.**
+Criteria 9, 10 and 11 are the deploy-workflow guard, the code-owner requirement and the
+limitations a submitter is shown -- conditions on granting write access rather than guards on
+a run.
 Criterion 13 is the compile-time refusal of an unbuilt commit, and it is unmarked on the
 reasoning Phase 7 applies to its own two: a refusal that arrives in the wrong place spends a
-reviewer's attention, which is not one of the four harms the marker sorts on. Criterion 6 is
-unmarked by the contract rather than by a judgement, because a deferred criterion may never
-be pilot-blocking.
+reviewer's attention, which is not one of the four harms the marker sorts on.
 
-**Criterion 6 moved from a gap to a deferral on 2026-07-31, and the move is a relocation
-rather than a relabelling.** It wants a GPU run under a team other than ``platform`` writing
-a checkpoint. All three pilot runs went to ``cpu-32vcpu`` and none wrote a checkpoint, so
-there is nothing to read; the team half is demonstrated -- every one of the three claimed
-``tokenizer`` and wrote under ``teams/tokenizer/`` -- and what is missing is the GPU half.
-The observation now belongs to Phase 6's closeout, where it carries this phase's gate rather
-than that one's and where no build item stands in front of it. That is what makes it a
-deferral: a postponement with an owner is what the status is for, and one owned nowhere is a
-gap wearing the label.
+**Criterion 11 was re-cut on 2026-07-31 and criterion 6 moved twice the same day, both out of
+one decision.** The pilot limitations page was taken out of the README and moved to a local,
+gitignored document, on the owner's standing decision that the README is a public artifact and
+a candid list of what this platform has not finished is not.
 
-**Deferring it turns the gate green and opens the pilot rung, and both are stated rather
-than left to be noticed.** A deferral passes the gate, and a deferred criterion may not be
-pilot-blocking, so one word moves two verdicts -- which is exactly why the criterion carries
-the argument for the move in its own scope limits, why those limits say in terms that the
-re-cut is not a pass, and why the pilot limitations page gains the sentence a reader can act
-on. What Phase 5 established is that the two-person path completes. It did not establish
-that this platform carries a research workload for somebody who did not build it, and a
-green gate should not be read as though it had.
+**Criterion 11 asserted the page was in the README, so it was unmet the moment the page
+left.** What it protected was never the page. It was that a pilot user learns three things
+before being caught out by them, and those three are now printed on the summary every accepted
+submission ends on -- the one page in this system every submitter reads, at the moment each of
+those beliefs would otherwise form wrong. So the criterion asserts that instead and is
+covered: a narrower promise than the page made, in a better place than the page was.
+
+**Criterion 6 was unmet consequentially for a few hours, and the chain is worth following.**
+It wants a GPU run under a team other than ``platform`` writing a checkpoint, and it had been
+re-cut from a gap to a deferral that same morning. A deferral may never be pilot-blocking, so
+the harm the marker had been carrying -- a GPU run's whole output lost at the end of the run
+-- was required to go somewhere a reader could act on it, and the limitations page was where
+that went. With the page private that exchange was off and the deferral was withdrawn. It was
+re-granted against a warning printed on the run summary to the submissions it applies to and
+not to the rest, which is the harder thing to lose: a page can be moved by a decision that
+never mentions this criterion, and that is exactly what happened, whereas a warning held in
+place by a cited node id cannot go quiet without the gate executing that node id and failing.
+
+**The gate is green and the pilot rung is open, and neither says this phase is finished.** The
+mechanism is as built as it was before any of this. The team half is demonstrated -- every one
+of the three pilot runs claimed ``tokenizer`` and wrote under ``teams/tokenizer/`` -- and what
+is missing is still only the GPU half, which one submission closes. What Phase 5 established
+is that the two-person path completes; it did not establish that this platform carries a
+research workload for somebody who did not build it, and no verdict on this phase should be
+read as though it had.
 
 **Criterion 10 is narrower than the master plan's sentence, deliberately.** The plan asks
 that a change to a workflow file cannot reach ``main`` without a code-owner review. That is
@@ -158,38 +169,22 @@ THE_REBUILD_CRITERION_AS_IT_WAS_WRITTEN: Final = (
     "naming an image nobody chose."
 )
 
-#: Why criterion 6 is a deferral rather than a gap. Written out because the distinction is
-#: the whole of the move, and because a reader of the gate's output sees this and does not
-#: see the module docstring.
-BUILT_AND_UNEXERCISED: Final = (
-    "WHAT THIS MEASURES IS BUILT AND UNEXERCISED, AND THE OBSERVATION HAS BEEN RELOCATED "
-    "RATHER THAN ABANDONED. Nothing is missing but the run. The GPU workload role already "
-    "reaches teams/*/runs/* -- item 5.5 widened it to match the CPU role -- so a checkpoint "
-    "under any team is permitted, and the checkpoint machinery is what Phase 4 proved on "
-    "three GPU jobs under team platform. What has not happened is the two together.\n\n"
-    "It is a deferral rather than a gap because the decision is recorded on both sides and "
-    "the observation is owned somewhere real. The master plan carries this check at the "
-    "head of Phase 6's list, marked as arriving from Phase 5 and as closing Phase 5's gate "
-    "rather than Phase 6's, and no Phase 6 build item stands in front of it: it needs no "
-    "registration, no deploy and no code. A postponement with an owner and a trigger is "
-    "what DEFERRED is for; one owned nowhere is a gap wearing the label, which is the move "
-    "the three-status rule exists to make visible.\n\n"
-    "It is not a prediction that the run will succeed. If the checkpoint write is refused, "
-    "this resolves to a gap and item 5.5 was wrong -- which is the outcome the trigger "
-    "exists to make somebody look at rather than infer."
-)
-
-#: What closes criterion 6. Kept separate from the reason because a reader deciding what to
-#: do next needs the action rather than the argument.
-ONE_SUBMISSION_CLOSES_IT: Final = (
-    "One GPU submission claiming a team other than platform that writes a checkpoint. It "
-    "is a submission rather than any work: the compute profile is a dropdown on the same "
-    "form, the GPU role already reaches every team's prefix, and Phase 4 proved the "
-    "checkpoint machinery. Phase 6's closeout campaign carries it and it belongs early in "
-    "that campaign, because until it runs the previous phase is not declarable complete. "
-    "Re-record this as covered against the capture, or as a gap if the write is refused; "
-    "leaving it deferred once a GPU run under another team exists is the one outcome this "
-    "trigger forbids."
+#: Why criteria 6 and 11 are both gaps as of 2026-07-31. One decision produced both, so the
+#: argument is written once and cited from each rather than paraphrased twice. A reader of
+#: the gate's output sees this and does not see the module docstring.
+THE_LIMITATIONS_PAGE_WENT_PRIVATE: Final = (
+    "THE PILOT LIMITATIONS PAGE WAS TAKEN OUT OF THE README ON 2026-07-31 AND A PILOT USER "
+    "CAN NO LONGER READ IT. Nothing was deleted and no sentence changed: the page was moved "
+    "to a local, gitignored document on the owner's decision that the README is a public "
+    "artifact and the limitations are not. What changed is who can open it, and the only "
+    "audience it was ever written for is the audience that now cannot.\n\n"
+    "This is a gap rather than a deferral because there is no trigger. A deferral is a "
+    "postponement carrying a written condition that makes the check live again; this is a "
+    "standing decision about what the repository publishes, and it closes when that "
+    "decision changes or never. Recording a standing decision as a deferral is precisely "
+    "the move the three-status rule exists to make visible, so it is not recorded as one.\n\n"
+    "What would close it: the limitations, or the load-bearing subset of them, published "
+    "somewhere a pilot user can reach -- the README, or a tracked page the README links to."
 )
 
 
@@ -418,23 +413,56 @@ def phase5_criteria() -> tuple[CriterionSpec, ...]:
             ),
             status=CriterionStatus.DEFERRED,
             supporting_node_ids=(
+                *_ids(LIMITATIONS, "test_the_first_gpu_checkpoint_under_a_new_team_is_warned_about_and_only_it_is"),
                 *_ids(TEAM_ISOLATION, "test_both_workload_roles_reach_every_team_by_decision"),
                 *_ids(TEAM_ISOLATION, "test_the_prefix_the_roles_grant_is_the_prefix_the_platform_derives"),
                 *_ids(RUN_EVIDENCE, "test_a_run_that_succeeded_recorded_where_its_output_went"),
             ),
-            deferral_reason=BUILT_AND_UNEXERCISED,
-            deferral_trigger=ONE_SUBMISSION_CLOSES_IT,
+            deferral_reason=(
+                "NOTHING IS MISSING BUT THE RUN. The GPU workload role already reaches "
+                "teams/*/runs/* -- item 5.5 widened it to match the CPU role -- so a "
+                "checkpoint under any team is permitted, and the checkpoint machinery is what "
+                "Phase 4 proved on three GPU jobs under team platform. What has not happened "
+                "is the two together. "
+                "THE DEFERRAL WAS WITHDRAWN ONCE ON 2026-07-31 AND RE-GRANTED THE SAME DAY "
+                "AGAINST A DIFFERENT MECHANISM, WHICH IS WORTH READING BEFORE TRUSTING IT. "
+                "The first re-cut was granted against a page: a deferral may never be "
+                "pilot-blocking, so what it stopped guarding had to be written where a reader "
+                "could act on it, and the pilot limitations page was where that went. The page "
+                "then left the README on a standing decision about what this repository "
+                "publishes, the condition stopped holding, and the deferral was withdrawn "
+                "rather than allowed to expire quietly. "
+                "WHAT IT IS GRANTED AGAINST NOW IS NARROWER AND HARDER TO LOSE. The warning is "
+                "printed on the run summary, to the submissions it applies to and not to the "
+                "rest: a run carrying a checkpoint contract under a team other than platform "
+                "is told it may be the first, and told what to check. That is delivered at the "
+                "moment the person can act on it rather than on a page they would have had to "
+                "open first, and "
+                "test_the_first_gpu_checkpoint_under_a_new_team_is_warned_about_and_only_it_is "
+                "fails if either the warning or its guard is removed. A page can be moved out "
+                "of the README by an unrelated decision, which is exactly what happened; this "
+                "cannot go quiet without a test going red."
+            ),
+            deferral_trigger=(
+                "One GPU submission claiming a team other than platform that writes a "
+                "checkpoint closes it, and the criterion is re-recorded as COVERED or GAP "
+                "against that capture rather than against this text. Phase 6's closeout "
+                "campaign carries it as its first item. Until it runs this phase is not "
+                "declarable complete, and if the campaign is abandoned this returns to a gap "
+                "rather than remaining deferred."
+            ),
             scope_limits=(
                 (
-                    "THE RE-CUT IS A RELOCATION AND NOT A PASS, AND THE PHASE'S CLAIM IS "
-                    "NARROWER THAN A GREEN GATE WILL READ. All three pilot runs went to "
-                    "cpu-32vcpu and the workload they carried was a print statement and two "
-                    "W&B calls, so none of them wrote a checkpoint and there is nothing to "
-                    "capture. No pilot run has trained anything or touched a GPU. What Phase "
-                    "5 established is that the two-person path completes -- which had never "
-                    "been established in twenty-five prior dispatches and is the thing the "
-                    "phase is named after -- and not that this platform carries a research "
-                    "workload for somebody who did not build it."
+                    "THE PHASE'S CLAIM IS NARROWER THAN A GATE VERDICT WILL READ, WHICHEVER "
+                    "WAY THE VERDICT GOES. All three pilot runs went to cpu-32vcpu and the "
+                    "workload they carried was a print statement and two W&B calls, so none "
+                    "of them wrote a checkpoint and there is nothing to capture. No pilot run "
+                    "has trained anything or touched a GPU. What Phase 5 established is that "
+                    "the two-person path completes -- which had never been established in "
+                    "twenty-five prior dispatches and is the thing the phase is named after "
+                    "-- and not that this platform carries a research workload for somebody "
+                    "who did not build it. Closing this one criterion is not a pass on that "
+                    "larger question either."
                 ),
                 (
                     "The team half is already demonstrated and is worth separating from the "
@@ -445,15 +473,15 @@ def phase5_criteria() -> tuple[CriterionSpec, ...]:
                     "writing a checkpoint at the end of it."
                 ),
                 (
-                    "The pilot-blocking marker came off as a consequence of the status rather "
-                    "than as a judgement about the harm, and the shared contract refuses the "
-                    "combination rather than leaving it to a reviewer. The harm has not "
-                    "moved: a checkpoint the workload role cannot write is a GPU run's whole "
-                    "output lost at the end of the run, after the money is spent. So it goes "
-                    "on the pilot limitations page in the words a reader can act on -- if you "
-                    "are the first to run on a GPU under your own team, check the checkpoint "
-                    "landed -- which is what a written limitation owes before it may stand in "
-                    "for a check."
+                    "THE HARM IS CARRIED BY A WARNING RATHER THAN BY THE MARKER, AND THIS IS "
+                    "WHAT THAT EXCHANGE COSTS. A checkpoint the workload role cannot write is "
+                    "a GPU run's whole output lost at the end of the run, after the money is "
+                    "spent. A deferral may never be pilot-blocking, so the marker comes off "
+                    "and a written limitation is what is owed in exchange: the person about "
+                    "to be first is told so on their own run summary and told what to check. "
+                    "That is a person checking rather than a system preventing, which is "
+                    "weaker, and it is the trade a deferral is. The trigger below is what "
+                    "ends it."
                 ),
             ),
         ),
@@ -634,41 +662,82 @@ def phase5_criteria() -> tuple[CriterionSpec, ...]:
         CriterionSpec(
             number="11",
             statement=(
-                "The pilot limitations page is in the README and names the checkpoint's "
-                "missing optimizer state, the absence of cancellation, and that team routes "
-                "approval rather than granting permission."
+                "Every accepted submission tells the submitter, on the summary it ends on, "
+                "that cancelling does not stop the job, that a checkpoint omits optimizer "
+                "state, and that team routes approval rather than granting permission."
             ),
             status=CriterionStatus.COVERED,
             proving_node_ids=(
-                *_ids(LIMITATIONS, "test_the_page_names_the_three_things_a_pilot_user_has_to_know"),
-                *_ids(LIMITATIONS, "test_the_cancellation_wording_is_the_sentence_a_reader_can_act_on"),
+                *_ids(LIMITATIONS, "test_a_submitter_is_told_that_cancelling_does_not_stop_the_job"),
+                *_ids(LIMITATIONS, "test_a_submitter_is_told_the_checkpoint_leaves_the_optimizer_behind"),
+                *_ids(
+                    LIMITATIONS,
+                    "test_a_submitter_is_told_that_team_routes_approval_rather_than_granting_access",
+                ),
+                *_ids(LIMITATIONS, "test_all_three_are_on_the_page_every_accepted_submission_ends_on"),
             ),
             supporting_node_ids=(
-                *_ids(LIMITATIONS, "test_the_readme_carries_a_pilot_limitations_section"),
-                *_ids(LIMITATIONS, "test_the_page_says_the_team_field_routes_approval_rather_than_granting_anything"),
-                *_ids(LIMITATIONS, "test_the_page_does_not_promise_a_checkpoint_can_resume_training"),
+                *_ids(LIMITATIONS, "test_the_readme_does_not_carry_the_section_the_record_says_it_lost"),
                 *_ids(LIMITATIONS, "test_the_page_discloses_no_account_id_and_no_credential"),
+                *_ids(
+                    LIMITATIONS,
+                    "test_the_summary_a_submitter_reads_discloses_no_account_id_and_no_credential",
+                ),
             ),
             scope_limits=(
                 (
-                    "UNDER THE ADOPTION LADDER'S OWN RULES THIS PAGE IS THE REASON THE "
-                    "REMAINING CHECKS MAY WAIT, so its absence would not be a documentation "
-                    "gap -- it would be the pilot not existing. That is why an unmarked "
-                    "criterion is nonetheless a precondition for the rung rather than "
-                    "paperwork."
+                    "THE STATEMENT WAS REWRITTEN ON 2026-07-31 AND THIS RECORDS WHAT IT USED "
+                    "TO ASK FOR, BECAUSE A CRITERION THAT CHANGES TO MATCH WHAT WAS BUILT IS "
+                    "THE MOVE THIS LADDER EXISTS TO CATCH. It previously read: the pilot "
+                    "limitations page is in the README and names the checkpoint's missing "
+                    "optimizer state, the absence of cancellation, and that team routes "
+                    "approval rather than granting permission. The page left the README that "
+                    "day on the owner's standing decision that the README is a public "
+                    "artifact and a candid list of what this platform has not finished is "
+                    "not. That decision is settled and is not what this criterion measures."
+                ),
+                (
+                    "WHAT WAS GIVEN UP IS REAL AND IS NOT RECOVERED BY THE REWRITE. The full "
+                    "page said more than three things and said them in one place a reader "
+                    "could review before deciding to use the platform at all. That page is "
+                    "now readable on one laptop. Nothing here claims otherwise, and the "
+                    "candid assessment being private is a cost carried rather than closed."
+                ),
+                (
+                    "WHAT IS DELIVERED INSTEAD IS NARROWER AND LANDS HARDER, WHICH IS WHY "
+                    "THIS IS COVERED RATHER THAN DEFERRED. The three facts above are the "
+                    "load-bearing subset: each is discovered by being caught out by it, and "
+                    "each is expensive when it is -- the spend that continues after a "
+                    "cancellation, the resumed run whose optimizer restarted cold, the user "
+                    "who reads team as an access control. They are printed on the summary "
+                    "every accepted submission ends on, which is read by every submitter at "
+                    "the moment each wrong belief would otherwise form, rather than on a page "
+                    "a reader had to already decide to open. A README section is the weaker "
+                    "delivery of the two and was not chosen for being stronger."
+                ),
+                (
+                    "THE FOURTH TEST IS THE ONE THAT MATTERS AND IS NOT REDUNDANT. Each "
+                    "sentence could be true of a document nobody opens; "
+                    "test_all_three_are_on_the_page_every_accepted_submission_ends_on asserts "
+                    "they arrive together under one heading on the summary a submitter is "
+                    "already reading to find their run id. Split them across three places and "
+                    "every other test here still passes while the property is gone."
                 ),
                 (
                     "The cancellation wording is fixed rather than free, and the test asserts "
                     "the sentence rather than the topic. Phase 3's three cancellation criteria "
                     "transfer to Phase 8 on the condition that a user is told, in words they "
-                    "can act on, that cancelling the workflow does not stop the job -- so a "
-                    "page that mentioned cancellation vaguely would quietly withdraw the "
+                    "can act on, that cancelling the workflow does not stop the job -- so "
+                    "wording that mentioned cancellation vaguely would quietly withdraw the "
                     "grounds for that transfer."
                 ),
                 (
-                    "In the public README rather than in a private path, because the audience "
-                    "is somebody who has not been given the private paths. The earlier draft "
-                    "was in one and was materially stale in both directions."
+                    "test_the_readme_does_not_carry_the_section_the_record_says_it_lost stays "
+                    "cited, and is the check that a recorded absence is a real one. Within an "
+                    "hour of the section being removed, an editor holding the file wrote its "
+                    "buffer back and the section returned while this criterion went on "
+                    "reporting it private, and nothing failed because the tests that read the "
+                    "section had just been deleted."
                 ),
             ),
         ),
@@ -776,7 +845,9 @@ def phase5_criteria() -> tuple[CriterionSpec, ...]:
                     "verifying the published image against the commit, and the tag stays "
                     "twelve characters because widening it would falsify two committed Phase 1 "
                     "captures and dissolve the rationale for the one field exempt from the "
-                    "secret scan. It is on the limitations page instead."
+                    "secret scan. It was on the limitations page until that page was taken "
+                    "out of the README on 2026-07-31, and it is now recorded here and "
+                    "nowhere a pilot user reads."
                 ),
             ),
         ),

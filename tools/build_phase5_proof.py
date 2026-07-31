@@ -300,8 +300,12 @@ def render_second_person(repo_root: Path, checks: Sequence[CriterionSpec]) -> st
                     "defect.** The team a submitter claims is recorded and not enforced: "
                     "nothing binds a team to a person yet, which is Phase 6 item 6.5. A record "
                     "reading `yes` here would be evidence for a control that does not exist. "
-                    "The pilot limitations page tells a user the same thing in the same words "
-                    "-- `team` routes approval rather than granting permission."
+                    "A submitter is told the same thing in the same words -- `team` routes "
+                    "approval rather than granting permission -- on the summary every "
+                    "accepted submission ends on. That sentence was on the pilot limitations "
+                    "page until it was taken out of the README on 2026-07-31, and moving it "
+                    "onto the summary put it in front of everybody who submits rather than "
+                    "everybody who goes looking."
                 ),
                 "",
                 "## What each run did",
@@ -499,7 +503,9 @@ def render_image_provenance(repo_root: Path, checks: Sequence[CriterionSpec]) ->
                     "the colliding build by verifying the published image against the commit. "
                     "The tag stays twelve characters because widening it would falsify two "
                     "committed Phase 1 captures and dissolve the rationale for the one field "
-                    "exempt from the secret scan. It is on the pilot limitations page instead."
+                    "exempt from the secret scan. It was on the pilot limitations page until "
+                    "that page was taken out of the README on 2026-07-31, and it is now "
+                    "recorded here and nowhere a pilot user reads."
                 ),
             ]
         )

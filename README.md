@@ -80,65 +80,6 @@ byte-reproducible, so a second run should produce no diff:
 uv run python tools/export_schemas.py
 ```
 
-## Pilot limitations
-
-This platform is open to a named pilot. It works end to end and it is not finished, and
-this page is what is known to be missing rather than everything that is. Anything that goes
-wrong which is **not** on this page is worth reporting, and is the most useful thing a pilot
-user can produce — the reason a short list of named people may use a phase whose checks are
-still open is precisely that they are close enough to the work to notice what nobody wrote
-down.
-
-**Cancelling does not stop your job.** Cancelling the workflow does not stop the job; ask an
-admin, and note the mandatory timeout bounds it. No identity in this account holds
-`batch:TerminateJob` — not the deployer, not admission, not the recorder — and the absence
-is deliberate: stopping a run is its own path with its own principal, and that path has not
-been built. What bounds the cost of a run you have given up on is the per-attempt timeout
-every submission carries. An admin can terminate it by hand, and the job name is the run id,
-which is what makes it findable; the procedure is in `infra/README.md`.
-
-**A checkpoint cannot resume training yet.** A committed checkpoint carries a model state
-dict and the step it was written at. It carries no optimizer moments and no schedule
-position, so a resume loads the weights and starts the optimizer cold. On a short smoke run
-that is invisible. On a long run it is a visible discontinuity in the loss curve — on
-exactly the runs that are the reason to resume at all.
-
-**Nobody has yet written a checkpoint from a GPU run under a team other than `platform`.**
-The two halves are proved separately and have never been done together: the workload role
-reaches every team's output prefix, and every GPU run that has written a checkpoint claimed
-`platform`. If you are the first, look at your run's output prefix once the job finishes and
-confirm the checkpoint landed before you rely on it — a refused write fails at the end of a
-GPU run, after the time and the money are spent. Tell us either way, because the check that
-would have caught this is waiting on exactly your run.
-
-**`team` routes your approval and is not a permission.** The team on a submission says who
-should review it. It grants nothing, restricts nothing, and is recorded rather than
-enforced: you can name a team you do not belong to and the run proceeds, with that fact on
-the decision record. Membership is not verified against anything today, so the recorded
-value distinguishes nothing yet.
-
-**A newly disclosed vulnerability can block every submission overnight.** Your image is
-refused if the registry finds a critical nobody has reviewed. The ones the shared base
-carries are reviewed already, in `config/image-exceptions.yaml`, so an ordinary rebuild is
-not affected. What changes that is a new critical being published against a package in the
-base: from the next scan, every image inherits it, and every submission is refused until
-somebody reads it and records a review. The refusal names the identifier and the package, so
-it is obvious what happened. Tell us rather than working around it — the review is a small
-pull request and the alternative is a gate that stops meaning anything.
-
-**A build that says your image does not match your commit is a tag collision.** Images are
-tagged with the first twelve characters of the commit, and the registry refuses to overwrite
-a tag. If another commit in the repository happens to start with the same twelve characters,
-your build fails saying the published image was not built from your commit. It is
-astronomically unlikely and it is not something you did wrong. Rebase to change the SHA
-rather than submitting that commit — a submission for it would resolve to the other commit's
-image.
-
-**Nobody is watching the queue for you.** A job that cannot get capacity sits in `RUNNABLE`
-rather than failing, and no alarm notices: AWS Batch publishes no CloudWatch metric for
-queue depth or job state, so there is no series to threshold. A queued job bills nothing, so
-this costs time rather than money. If a run has not started within an hour, ask.
-
 ## Acceptance gate
 
 ```bash
@@ -205,15 +146,22 @@ gaps; Phase 4 reports nine of twelve covered, one deferred and two gaps. Run the
 the current numbers — the ones above are what they printed when this paragraph was written,
 and a gate is the authority rather than this file.
 
-**Phase 5 exits 0 with something outstanding, and that is worth reading rather than
-skipping.** It reports fourteen of fifteen criteria covered and one deferred. The deferred
-one wants a GPU run claiming a team other than `platform` and writing a checkpoint; the
-mechanism for all three of those exists and has been exercised separately, so it closes on
-one submission rather than on any work, and its observation moved to Phase 6's closeout on
-2026-07-31 while still closing Phase 5's gate. A deferral passes the gate and a deferred
-criterion may not be pilot-blocking, so that one status change moved both verdicts — which
-is why the criterion carries the argument for the move, and why what it would have protected
-is on the pilot limitations page above. **Phase 5's green gate says the two-person path
+**Phase 5 exits 0 with one criterion outstanding, and that is worth reading rather than
+skipping.** It reports fourteen of fifteen covered and one deferred, and both numbers moved on
+2026-07-31 when the pilot limitations page left this README on a standing decision about what
+this repository publishes. Criterion 11 used to assert that the page was here. It now asserts
+that the three things a submitter cannot afford to learn by being caught out — cancelling does
+not stop the job, a checkpoint omits optimizer state, `team` routes approval rather than
+granting permission — are printed on the summary every accepted submission ends on. That is a
+narrower promise than the page made, and it reaches everybody who submits rather than
+everybody who goes looking.
+
+Criterion 6 wants a GPU run claiming a team other than `platform` and writing a checkpoint.
+The mechanism exists and each half has been exercised separately, so it closes on one
+submission rather than on any work. Its deferral was withdrawn and re-granted inside the same
+day: the first grant was conditioned on the limitations page and lapsed when the page moved,
+and the second is conditioned on a warning printed to exactly the submissions it applies to,
+which a cited test fails if anybody removes. **Phase 5 established that the two-person path
 completes. It does not say anybody has run a research workload on this platform**: all three
 pilot runs were a print statement on the CPU profile.
 

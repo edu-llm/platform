@@ -1146,7 +1146,69 @@ jobs:
                   "for what the container did."
               ),
               "",
+              # THE THREE THINGS A SUBMITTER HAS TO KNOW, PRINTED WHERE THEY ARE ABOUT TO
+              # MATTER RATHER THAN ON A PAGE.
+              #
+              # These used to live in a README section, which put them where a reader had
+              # already decided to go looking. Nobody looks before their first run, and each
+              # of these is only discovered by being caught out by it: the person who cancels
+              # and assumes the spend stopped, the person who resumes and finds the optimizer
+              # cold, the person who reads `team` as an access control. Printed here they are
+              # read once by everybody who submits, at the moment the wrong belief would
+              # otherwise form.
+              #
+              # Held to this text by tests, because the value is entirely in it being here at
+              # all -- see tests/test_pilot_limitations.py, and Phase 5 criterion 11.
+              "### Three things this does not do yet",
+              "",
+              (
+                  "**Cancelling the workflow does not stop your job.** Nothing in this "
+                  "account holds `batch:TerminateJob`, so a cancelled workflow leaves the "
+                  "container running and spending. Ask an admin to stop it. The runtime "
+                  "bound above is what limits it otherwise."
+              ),
+              "",
+              (
+                  "**A checkpoint does not include optimizer state.** Weights are written "
+                  "and the optimizer is not, so a resumed run restarts its optimizer cold "
+                  "rather than continuing. Fine for a smoke test, not fine for a result you "
+                  "intend to publish."
+              ),
+              "",
+              (
+                  "**`team` routes your approval; it does not grant you anything.** It "
+                  "decides which lead is asked and which cost centre is charged. Any lead "
+                  "may approve any run, and naming a team you are not on is a mis-routed "
+                  "request rather than a refused one."
+              ),
+              "",
           ]
+          # THE FOURTH WARNING, SHOWN TO THE RUNS IT APPLIES TO RATHER THAN TO EVERYBODY.
+          #
+          # No GPU run claiming a team other than `platform` has ever written a checkpoint
+          # here. The permission is in place -- the GPU workload role reaches
+          # teams/*/runs/* -- and the checkpoint machinery is proven, but only under team
+          # `platform`, so this combination is untested rather than known broken.
+          #
+          # Conditional because the harm is: a checkpoint the role cannot write is the whole
+          # output of a GPU run lost at the end of it, after the money is spent. That is
+          # worth a sentence to the person about to be first, and is noise to the several
+          # hundred runs it cannot happen to. Printing it to everybody is how a warning stops
+          # being read.
+          if manifest.checkpoint is not None and manifest.team != "platform":
+              report.extend(
+                  [
+                      (
+                          "**You may be the first to write a checkpoint on a GPU under a team "
+                          f"other than `platform`.** Check that your checkpoint actually "
+                          f"landed under the output prefix above before relying on the run. "
+                          "The permission is in place and the combination has not been "
+                          "exercised, so the failure mode to watch for is a run that trains "
+                          "to completion and saves nothing."
+                      ),
+                      "",
+                  ]
+              )
           with Path(sys.argv[2]).open("a", encoding="utf-8") as summary:
               summary.write("\n".join(report) + "\n")
           print(f"Run {run_id} was submitted. The step summary says where to find it.")
