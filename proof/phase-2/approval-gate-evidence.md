@@ -45,7 +45,7 @@ Four artifacts the phase plan asks this document for do not exist, and each is a
 | --- | --- | --- |
 | 2 | a gap | the pending-deployment state |
 | 3 | a gap | a second lead releasing one run |
-| 9 | a gap | the approvals API response |
+| 9 | covered | the approvals API response |
 | 11 | a gap | the rendered approver context |
 
 Criterion 3 is the one nobody here can close alone. It needs a lead other than the submitter to release a routine submission, and every run so far was released by the submitter, who is also a lead.
