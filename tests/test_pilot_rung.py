@@ -49,6 +49,8 @@ from edullm_platform.phase3_criteria import phase3_criteria
 from edullm_platform.phase3_gate import Phase3GateReport
 from edullm_platform.phase4_criteria import phase4_criteria
 from edullm_platform.phase4_gate import Phase4GateReport
+from edullm_platform.phase5_criteria import phase5_criteria
+from edullm_platform.phase5_gate import Phase5GateReport
 from edullm_platform.status_prose import gate_and_pilot_line, status_claims, status_count_claims
 
 A_REAL_NODE_ID = "tests/test_canonical.py::test_canonical_json_bytes_sorts_keys"
@@ -343,6 +345,7 @@ PHASES = (
     PhaseUnderTest(2, "Phase 2", phase2_criteria, Phase2GateReport),
     PhaseUnderTest(3, "Phase 3", phase3_criteria, Phase3GateReport),
     PhaseUnderTest(4, "Phase 4", phase4_criteria, Phase4GateReport),
+    PhaseUnderTest(5, "Phase 5", phase5_criteria, Phase5GateReport),
 )
 
 
