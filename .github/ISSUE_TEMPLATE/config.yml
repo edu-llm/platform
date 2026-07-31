@@ -1,0 +1,26 @@
+# Blank issues stay on, deliberately, and this is the file that would turn them off.
+#
+# The pilot limitations section of README.md asks pilot users to report anything that goes
+# wrong which is not already listed there, and calls that the most useful thing they can
+# produce. A chooser that offers one dataset form and no way past it would contradict that
+# on the first attempt: the only template here covers a request this platform cannot yet
+# fulfil, and everything else a pilot user has to say would have nowhere to go.
+#
+# Turn this off when the templates cover the ordinary reasons somebody opens an issue --
+# not before.
+blank_issues_enabled: true
+
+contact_links:
+  - name: What actually works today
+    url: https://github.com/edu-llm/platform#pilot-limitations
+    about: >-
+      The known-missing list, including why a published dataset is not yet readable from a
+      training job. Worth reading before filing anything — several of the surprises are
+      already written down.
+
+  - name: The dataset library itself
+    url: https://github.com/edu-llm/edullm-data
+    about: >-
+      The separate repository that owns the publish/validate/read standard and the
+      edullm-landing to edullm-data airlock. File there if your question is about the
+      standard or a published dataset, rather than about getting a new one built.

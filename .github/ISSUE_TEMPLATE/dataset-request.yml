@@ -1,0 +1,165 @@
+# Asking for a dataset, in the shape the person who has to build it needs.
+#
+# This is the first issue form in this repository and the first issue path of any kind:
+# `.github/` held CODEOWNERS and workflows and nothing else, and no issue has ever been
+# filed here. Until now a dataset request was a conversation, which is why there is no
+# record of one being made, refused, or fulfilled.
+#
+# The fields are the ones a publisher cannot start without. Token budget and tokenizer
+# decide whether the job fits and whether its output is usable by the model you mean to
+# train; the slicing keys decide the layout, and a layout chosen after publication is a
+# republish rather than an edit. `needed_by` is asked because publication is manual and a
+# person has to schedule it, not because anything enforces a date.
+#
+# Deliberately absent: `labels:`. This repository carries only GitHub's nine default
+# labels -- there is no `dataset` or `dataset-request` among them, verified on 2026-07-31 --
+# and a form naming a label that does not exist produces unlabelled issues rather than an
+# error anybody sees. Create the label in repository settings first, then add it here.
+name: Dataset request
+description: Ask for a dataset to be built and published for a training or evaluation run.
+title: "[dataset] "
+assignees:
+  - philote-dev
+  - BritishAmericqn
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Before you fill this in
+
+        **Publishing a dataset is a manual job done by the dataset owner.** There is no
+        pipeline behind this form. Filing it creates an issue that a person reads,
+        schedules, and works through by hand in
+        [`edu-llm/edullm-data`](https://github.com/edu-llm/edullm-data) — the separate
+        repository that owns the publish/validate/read standard and the
+        `edullm-landing` → `edullm-data` airlock. Nothing here reserves capacity or
+        commits anybody to a date.
+
+        **A published dataset is not yet readable from a training job on this platform.**
+        That wiring does not exist — see the *Datasets* section of the README for what is
+        and is not in place. Ask anyway if you need data: knowing what people actually
+        want is what decides which half gets built first. Just do not plan a run around
+        an answer arriving by a particular day.
+
+        Answer what you know. "I don't know yet" is a useful answer and is much better
+        than a guess that gets built.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What data do you want?
+      description: >-
+        The corpus, and where it comes from. Name the upstream source and its release or
+        snapshot if it has one. If it is a subset or a filtered view of something that
+        already exists, say what the filter is.
+      placeholder: |
+        Dolma v1.7, the CC and Wikipedia subsets only, English, deduplicated at document level.
+    validations:
+      required: true
+
+  - type: textarea
+    id: experiment
+    attributes:
+      label: What experiment does it serve, and what decision does that experiment inform?
+      description: >-
+        Both halves, please. The experiment tells the publisher what the data has to
+        support; the decision tells them what "good enough" means, and it is the part that
+        usually changes the answer. A dataset for a decision you will take next week is a
+        different build from one for a paper next quarter.
+      placeholder: |
+        Experiment: 190M-parameter ablation over three deduplication thresholds, 20k steps each.
+        Decision: which threshold we use for the 1B run in September. We need the loss curves to
+        separate, so the eval split matters more than the total size.
+    validations:
+      required: true
+
+  - type: input
+    id: tokens
+    attributes:
+      label: Approximate token budget
+      description: >-
+        Order of magnitude is fine, and is what decides whether this is an afternoon or a
+        week. Say what you are training and for how long if that is easier to estimate
+        than a token count.
+      placeholder: "~10B tokens, or: 190M params x 20k steps x 1024 seq x 2 batch"
+    validations:
+      required: true
+
+  - type: input
+    id: tokenizer
+    attributes:
+      label: Which tokenizer?
+      description: >-
+        Name and version. This is the field that most often makes a published dataset
+        unusable to the person who asked for it: tokenized output is tokenizer-specific,
+        and a mismatch is not fixable without republishing. If you do not know, say which
+        model you are training and the owner will work it out.
+      placeholder: "allenai/dolma2-tokenizer, or: whatever OLMo-core's olmo2_190M config expects"
+    validations:
+      required: true
+
+  - type: textarea
+    id: slicing
+    attributes:
+      label: How should it be sliceable?
+      description: >-
+        Which keys you need to select or hold out on — by source, by domain, by language,
+        by document length, by quality bucket. This decides the physical layout, so it is
+        cheap to honour now and a republish to change later. Say "no slicing needed" if a
+        single undifferentiated stream is genuinely fine.
+      placeholder: |
+        By source (CC vs Wikipedia vs books) so I can reweight without rebuilding.
+        By domain within CC if that is cheap; nice to have rather than required.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: validation_split
+    attributes:
+      label: Do you need a held-out validation split?
+      description: >-
+        A split made after the fact is not held out, so this has to be decided before the
+        build rather than after.
+      options:
+        - "Yes — and I will say the size and how to split it below"
+        - "No — training data only"
+        - "I don't know yet"
+    validations:
+      required: true
+
+  - type: input
+    id: validation_detail
+    attributes:
+      label: If yes, how should the split be drawn?
+      description: >-
+        Size, and whether it should be a random sample or held out along one of the
+        slicing keys above. Held out by source answers a different question from held out
+        at random, and the difference matters if you are measuring generalisation.
+      placeholder: "~50M tokens, held out by document so no source is split across the boundary"
+    validations:
+      required: false
+
+  - type: input
+    id: needed_by
+    attributes:
+      label: When do you need it by, and what happens if it is late?
+      description: >-
+        A date and its consequence. Publication is scheduled by a person, so the second
+        half is what lets them order this against everything else. "No deadline" is a
+        real and useful answer.
+      placeholder: "2026-08-14 — after that the compute reservation for the ablation lapses."
+    validations:
+      required: true
+
+  - type: textarea
+    id: anything_else
+    attributes:
+      label: Anything else the person building this should know?
+      description: >-
+        Licence or access constraints, data you must not have included, a prior release
+        this should be comparable with, or a related run already in flight.
+      placeholder: |
+        Must be comparable with whatever the July ablation used, if that is still recoverable.
+    validations:
+      required: false
