@@ -26,6 +26,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
+from re import fullmatch
 from typing import Annotated, Self
 
 from pydantic import BeforeValidator, Field, ValidationError, model_validator
@@ -38,6 +39,7 @@ from edullm_platform.contracts.base import (
     require_ordered_sequence,
     serialize_decimal,
 )
+from edullm_platform.contracts.bindings import SLUG_PATTERN
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
 from edullm_platform.contracts.image_scan import (
     ImageScanExceptionRegistry,
@@ -89,8 +91,8 @@ def _plain(value: Decimal) -> str:
 class SubmissionInputs(ContractModel):
     """The ``workflow_dispatch`` form.
 
-    Fourteen properties against a ceiling of twenty-five, so the count is a usability
-    question rather than a platform constraint. Seven are required and seven are overrides a
+    Fifteen properties against a ceiling of twenty-five, so the count is a usability
+    question rather than a platform constraint. Eight are required and seven are overrides a
     submitter can leave alone. The newest of the seven is the image digest, which stopped
     being required when it started being derived, and which was the hardest of the eight to
     fill in by some distance.
@@ -108,6 +110,10 @@ class SubmissionInputs(ContractModel):
     workload_profile: str = Field(min_length=1)
     dataset_release: str = Field(min_length=1)
     team: str = Field(min_length=1)
+    # Free text on the form and shaped in the manifest. Held as a plain string here, so the
+    # refusal a submitter meets is the one compile_submission writes rather than a pydantic
+    # dump about a form field -- the same split as `team`, for the same reason.
+    project: str = Field(min_length=1)
     wandb_project: str = Field(min_length=1)
     command: Annotated[tuple[str, ...], BeforeValidator(require_ordered_sequence)] = Field(
         min_length=1, strict=False
@@ -148,6 +154,24 @@ class CompiledSubmission:
     # of how many candidates -- which is the difference between a commit built once and a
     # commit built four times, and reads identically in the manifest either way.
     resolved_image: ResolvedImage
+    # BESIDE THE MANIFEST FOR A HARDER REASON THAN resolved_image'S, AND NOT BY PREFERENCE.
+    #
+    # A manifest is hashed whole and the digest is what an approver releases, so a field
+    # added to RunManifest changes the digest of every manifest ever written -- the
+    # recomputed form carries a key the stored bytes never had, and
+    # test_the_manifest_in_every_intent_still_hashes_to_its_recorded_value stops agreeing
+    # with records nobody touched. Measured on a real record rather than reasoned about:
+    # as stored it rehashes to 819aaf8a, with `project: null` to 0439d570.
+    #
+    # No serialization setting rescues it. Dropping nulls instead gives e75c8f8a, because
+    # the stored manifests already carry `fanout: null` and excluding it moves the digest
+    # the other way. This is schema evolution against content addressing, and it is general:
+    # any field added to RunManifest does this.
+    #
+    # Nothing is lost by keeping it out. A project groups runs; it does not say what ran.
+    # Its three consumers -- the W&B run group, the `edullm:project` Batch tag and the cost
+    # view -- are all set when the job is launched, and none reads the sealed document.
+    project: str
 
 
 def _resolve_workload(catalog: WorkloadCatalog, name: str) -> WorkloadProfile:
@@ -244,6 +268,20 @@ def compile_submission(
     # never be able to say that. A form may leave the image to be derived; a record of what
     # ran may not leave it undetermined. So the field is filled in here, from the
     # resolution above, on every path.
+    #
+    # Checked here rather than on SubmissionInputs, so that what a submitter meets is a
+    # sentence rather than a pydantic dump. Same split as `team`, and checked before the
+    # manifest is built rather than after, because the project is no longer part of it --
+    # see CompiledSubmission.project for why a grouping key cannot live in a hashed record.
+    if not fullmatch(SLUG_PATTERN, inputs.project):
+        raise SubmissionRefusedError(
+            f"the project {inputs.project!r} is not a project name this platform can group "
+            "on. A project is written in lower-case letters and digits, with single hyphens "
+            "between words and none at either end -- context-length-sweep, tokenizer-ablation. "
+            "It registers nothing and needs no pull request; only the shape is fixed, so that "
+            "two people naming the same project get one group rather than two."
+        )
+
     manifest = RunManifest(
         schema_version=1,
         repository=inputs.repository,
@@ -335,6 +373,7 @@ def compile_submission(
         approving_environment=ApprovalEnvironment.for_approval_class(approval_class),
         cost=cost,
         resolved_image=resolved_image,
+        project=inputs.project,
     )
 
 

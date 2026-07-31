@@ -1,6 +1,6 @@
 {
   "additionalProperties": false,
-  "description": "The ``workflow_dispatch`` form.\n\nFourteen properties against a ceiling of twenty-five, so the count is a usability\nquestion rather than a platform constraint. Seven are required and seven are overrides a\nsubmitter can leave alone. The newest of the seven is the image digest, which stopped\nbeing required when it started being derived, and which was the hardest of the eight to\nfill in by some distance.",
+  "description": "The ``workflow_dispatch`` form.\n\nFifteen properties against a ceiling of twenty-five, so the count is a usability\nquestion rather than a platform constraint. Eight are required and seven are overrides a\nsubmitter can leave alone. The newest of the seven is the image digest, which stopped\nbeing required when it started being derived, and which was the hardest of the eight to\nfill in by some distance.",
   "properties": {
     "command": {
       "items": {
@@ -112,6 +112,11 @@
       "default": null,
       "title": "Maximum Runtime Hours"
     },
+    "project": {
+      "minLength": 1,
+      "title": "Project",
+      "type": "string"
+    },
     "repository": {
       "minLength": 1,
       "title": "Repository",
@@ -139,6 +144,7 @@
     "workload_profile",
     "dataset_release",
     "team",
+    "project",
     "wandb_project",
     "command"
   ],

@@ -156,6 +156,12 @@ def batch_submit_request(
     run_id: str,
     job_definition: str,
     wandb_username: str | None = None,
+    # Beside the manifest rather than read off it, because a grouping key cannot live in a
+    # hashed record without changing the digest of every record written before it existed.
+    # CompiledSubmission.project carries the measurement. Optional here for the same reason
+    # wandb_username is: a run admitted before the field existed has no project, and an
+    # empty tag value is a cost group named "" that Cost Explorer will happily total up.
+    project: str | None = None,
 ) -> dict[str, Any]:
     """The exact parameter block the state machine sends to ``batch:SubmitJob``.
 
@@ -237,6 +243,14 @@ def batch_submit_request(
                 # into its parent team anyway, which is the same place, right up until it is
                 # not.
                 {"Name": "WANDB_ENTITY", "Value": WANDB_ENTITY},
+                # W&B's own name, for the same reason the entity is: the client reads
+                # WANDB_RUN_GROUP without being asked. A prefixed EDULLM_PROJECT would need
+                # every workload to forward it, and one that forgot would produce ungrouped
+                # runs -- indistinguishable from a submitter who left the field blank,
+                # except that the field cannot be left blank.
+                #
+                # The grouping key itself is appended below, with the tag, because a manifest
+                # written before the field existed has no value for it.
             ],
         },
         # Unconditional. See the module docstring for why there is no branch here.
@@ -260,6 +274,22 @@ def batch_submit_request(
         request["ContainerOverrides"]["Environment"].append(
             {"Name": "WANDB_USERNAME", "Value": wandb_username}
         )
+    if project is not None:
+        # Both together, because they are one fact told to two systems -- W&B groups runs on
+        # the environment variable and Cost Explorer groups them on the tag, and a run that
+        # appeared in one grouping and not the other would read as a billing discrepancy
+        # rather than as a missing field.
+        #
+        # Conditional for the reason the parameter is optional: a run admitted before the
+        # field existed carries no project, and an empty tag value is a group named "" that
+        # Cost Explorer will happily total up. Every submission compiled today passes one.
+        request["ContainerOverrides"]["Environment"].append(
+            {"Name": "WANDB_RUN_GROUP", "Value": project}
+        )
+        # Prefixed like its neighbours, and the prefix is load-bearing rather than decorative:
+        # this is a shared sandbox account, Cost Explorer groups on the whole key, and a bare
+        # `project` is a key somebody else's stack may also be writing.
+        request["Tags"]["edullm:project"] = project
     if manifest.fanout is not None:
         # Absent for a single container rather than present with size one: Batch rejects an
         # array job of size one, so emitting ArrayProperties unconditionally would fail

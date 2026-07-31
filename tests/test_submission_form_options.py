@@ -316,7 +316,7 @@ def test_the_form_stays_within_what_github_will_accept() -> None:
     """Mutation: add inputs past the cap.
 
     ``workflow_dispatch`` allowed 10 inputs until December 2025 and allows 25 now. This form
-    has fourteen, so the headroom is real but finite -- and the failure is the workflow
+    has fifteen, so the headroom is real but finite -- and the failure is the workflow
     refusing to parse, which takes the submission path down entirely rather than degrading.
     """
     assert len(form_inputs()) <= 25

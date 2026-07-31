@@ -342,6 +342,19 @@ def handler(event: Mapping[str, Any], context: object = None) -> dict[str, Any]:
                 # roster and is a whole run that works -- see the comment on `members` in
                 # config/organization.yaml for why a guess would be worse than a blank.
                 wandb_username=inventory.wandb_username_for(outcome.intent.submitter),
+                # Read off the event rather than the manifest, because the manifest is
+                # hashed and a grouping key added to it changes the digest of every record
+                # written before it existed. CompiledSubmission.project carries the
+                # measurement behind that.
+                #
+                # `get` rather than a required field, unlike `ecr_repository` above, and the
+                # difference is what each absence means. A request with no `ecr_repository`
+                # is hand-built and should stop. A request with no `project` is one that was
+                # already in flight when this shipped -- the form requires the field, so the
+                # only way to reach here without it is to have crossed the approval gate
+                # before the deploy. Refusing those would fail runs a lead had released for
+                # a reason that has nothing to do with them.
+                project=event.get("project"),
             ),
         }
     return answer
