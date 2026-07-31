@@ -529,13 +529,26 @@ class WorkloadRoleScopeEvidence(FreshEvidenceModel):
     readable_prefixes: tuple[SecretFreeStr, ...] = Field(strict=False)
     grants_delete: bool
     reaches_the_lineage_bucket: bool
+    #: Every S3 grant on a bucket that is not the outputs bucket, as ``bucket/key``. Recorded
+    #: rather than filtered away: the two prefix tuples above are a claim about the outputs
+    #: bucket and folding a dataset grant into them turned "cannot reach" into "reaches
+    #: everything" without any test noticing. Defaulted to an empty tuple so the capture taken
+    #: on 2026-07-30 still loads and still says something true about the role as deployed then.
+    grants_outside_the_outputs_bucket: tuple[SecretFreeStr, ...] = Field(
+        default=(), strict=False
+    )
 
     def may_reach(self, prefix: str) -> bool:
-        """Whether any grant on this role covers a given S3 key prefix.
+        """Whether any grant on this role covers a given key in the OUTPUTS bucket.
 
-        Wildcards are expanded the way IAM reads them -- ``*`` matches any run of
-        characters -- rather than compared literally, because ``teams/*/runs/*`` and
-        ``teams/other/runs/x`` do not look alike and IAM says one covers the other.
+        The bucket is part of the question and used not to be. Wildcards are expanded the way
+        IAM reads them -- ``*`` matches any run of characters -- because ``teams/*/runs/*``
+        and ``teams/other/runs/x`` do not look alike and IAM says one covers the other.
+
+        Grants on other buckets are in ``grants_outside_the_outputs_bucket`` and are
+        deliberately not consulted here. A dataset read is not a wider reach into this
+        platform's outputs, and a reader that could not say so reported the first as the
+        second.
         """
         return any(
             fnmatch.fnmatchcase(prefix, pattern)

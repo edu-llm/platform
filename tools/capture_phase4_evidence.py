@@ -50,6 +50,7 @@ from edullm_platform.capture_tooling import (
     write_model,
 )
 from edullm_platform.checkpoints import inspect_checkpoint
+from edullm_platform.contracts.results import OUTPUTS_BUCKET
 from edullm_platform.evidence import (
     CAPTURE_SUFFIX,
     NON_ACCOUNT_SECRET_PATTERNS,
@@ -83,7 +84,6 @@ GPU_JOB_DEFINITION_NAME: Final = "sbsandbox-intern-edullm-gpu-run"
 GPU_COMPUTE_ENVIRONMENT_NAME: Final = "sbsandbox-intern-edullm-gpu"
 GPU_LOG_GROUP: Final = "/aws/batch/sbsandbox-intern-edullm-gpu"
 GPU_WORKLOAD_ROLE: Final = "sbsandbox-intern-edullm-batch-gpu-workload"
-OUTPUTS_BUCKET: Final = "sbsandbox-intern-edullm-outputs"
 LINEAGE_BUCKET: Final = "sbsandbox-intern-edullm-lineage"
 GPU_INSTANCE_TYPE: Final = "g5.xlarge"
 
@@ -705,6 +705,7 @@ def capture_role_scope(*, profile: str, region: str) -> WorkloadRoleScopeEvidenc
     )
     writable: set[str] = set()
     readable: set[str] = set()
+    elsewhere: set[str] = set()
     deletes = False
     lineage = False
     for policy_name in listed.get("PolicyNames") or []:
@@ -731,10 +732,19 @@ def capture_role_scope(*, profile: str, region: str) -> WorkloadRoleScopeEvidenc
                 matched = S3_OBJECT_ARN.match(str(resource))
                 if matched is None:
                     continue
+                bucket = matched.group("bucket")
                 key = matched.group("key")
-                if any(action in ("s3:PutObject", "s3:*") for action in actions):
+                reads = any(action in ("s3:GetObject", "s3:*") for action in actions)
+                writes = any(action in ("s3:PutObject", "s3:*") for action in actions)
+                if bucket != OUTPUTS_BUCKET:
+                    # Recorded whole rather than discarded. The key portion alone is what
+                    # made a dataset read look like an outputs-bucket wildcard.
+                    if reads or writes:
+                        elsewhere.add(f"{bucket}/{key}")
+                    continue
+                if writes:
                     writable.add(key)
-                if any(action in ("s3:GetObject", "s3:*") for action in actions):
+                if reads:
                     readable.add(key)
     del account  # read to prove the caller is who it thinks it is; never recorded
     return WorkloadRoleScopeEvidence(
@@ -744,6 +754,7 @@ def capture_role_scope(*, profile: str, region: str) -> WorkloadRoleScopeEvidenc
         role_name=GPU_WORKLOAD_ROLE,
         writable_prefixes=tuple(sorted(writable)),
         readable_prefixes=tuple(sorted(readable)),
+        grants_outside_the_outputs_bucket=tuple(sorted(elsewhere)),
         grants_delete=deletes,
         reaches_the_lineage_bucket=lineage,
     )
