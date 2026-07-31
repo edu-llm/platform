@@ -195,6 +195,29 @@ Resources:
             Value: "32"
           - Type: MEMORY
             Value: "61440"
+        # THE SECRET IS RESOLVED BY ECS, NOT BY THE CONTAINER, and this block is here
+        # because a pilot run found it missing. ValueFrom takes the secret's ARN and ECS
+        # reads it under the execution role while starting the task, then places the
+        # plaintext in the container's environment. The workload role holds no
+        # secretsmanager action at all, so the training command gets the one value that was
+        # injected and cannot ask for another name or another version.
+        #
+        # This shape carried no Secrets block until 2026-07-30, and the omission was never a
+        # decision -- W&B was wired up during the GPU training work and this definition was
+        # left behind. The submission form offers wandb_project on every profile and the
+        # container is told it on every profile, so a CPU workload that called wandb.init
+        # died on `No API key configured`, having been admitted, released by a lead and
+        # given an instance first.
+        #
+        # The ARN carries the -fnwEVp suffix Secrets Manager assigned. Unlike the IAM grant
+        # in infra/iam/batch-roles.yaml, which uses a trailing -* because the suffix is not
+        # stable across a delete-and-recreate, this has to be exact: ValueFrom is a lookup
+        # and not a pattern. Recreating the secret means editing this line, and the symptom
+        # of forgetting is a task that fails to start with a resolution error, which is loud.
+        Secrets:
+          - Name: WANDB_API_KEY
+            ValueFrom:
+              Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sbsandbox-intern-edullm-wandb-api-key-fnwEVp
         # The default command and environment, both of which every real submission
         # overrides. They are declared rather than omitted because ContainerOverrides can
         # only override a key the definition declares in the first place, and because the

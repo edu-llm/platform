@@ -34,6 +34,7 @@ from edullm_platform.contracts.image_scan import (
     ImageScanSummary,
     ScanFinding,
 )
+from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.policy import ApprovalPolicy
 from edullm_platform.contracts.repository_registry import RepositoryRegistry
 from edullm_platform.contracts.workload import WorkloadCatalog
@@ -168,6 +169,12 @@ def main(argv: list[str] | None = None) -> int:
         image_scan_registry = load_yaml(
             args.config_dir / "image-exceptions.yaml", ImageScanExceptionRegistry
         )
+        # Read for one thing only: whether this submitter's runs can be attributed in W&B,
+        # so the approver context can say before the gate what W&B will not say after it.
+        # Admission resolves the same mapping independently from its own copy, because what
+        # a run is labelled with must not depend on a file the compile job could be pointed
+        # at; this one is for the sentence the reviewer reads.
+        inventory = load_yaml(args.config_dir / "organization.yaml", OrganizationInventory)
     except (OSError, ValidationError, TypeError) as exc:
         print(f"reviewed configuration is unreadable: {exc}", file=sys.stderr)
         return EXIT_UNUSABLE
@@ -228,6 +235,7 @@ def main(argv: list[str] | None = None) -> int:
                 submitter=args.submitter,
                 policy=policy,
                 repository_url=args.repository_url,
+                wandb_username=inventory.wandb_username_for(args.submitter),
             ),
             encoding="utf-8",
         )

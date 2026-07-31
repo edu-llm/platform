@@ -356,6 +356,7 @@ def render_approver_context(
     submitter: str,
     policy: ApprovalPolicy,
     repository_url: str,
+    wandb_username: str | None = None,
 ) -> str:
     """What the reviewer reads before deciding, as GitHub step-summary markdown.
 
@@ -388,6 +389,20 @@ def render_approver_context(
             f"${_plain(cost.hourly_rate_usd)}/hour |"
         ),
         f"| Policy version | `{policy.policy_version}` |",
+        # WHOSE NAME THIS RUN WILL CARRY IN W&B, SAID BEFORE THE RUN RATHER THAN FOUND
+        # AFTERWARDS. An unattributed run works -- it logs, it charts, it finishes -- and
+        # W&B reports nothing about the missing author: it simply shows the platform's own
+        # service account, which is indistinguishable from a run nobody tried to attribute.
+        # This page is the only moment a person sees the gap, and it names the submitter so
+        # the fix is a line in config/organization.yaml rather than an investigation.
+        (
+            f"| W&B author | `{wandb_username}` |"
+            if wandb_username is not None
+            else (
+                f"| W&B author | **this run will not be attributed** — no W&B account is "
+                f"recorded for `{submitter}` |"
+            )
+        ),
         "",
         "## Worst-case cost",
         "",

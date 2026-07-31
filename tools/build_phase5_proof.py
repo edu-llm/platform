@@ -334,12 +334,13 @@ def render_second_person(repo_root: Path, checks: Sequence[CriterionSpec]) -> st
                         ),
                         (
                             "The run that exited 1 did so on `No API key configured`. Its "
-                            "command logged to Weights and Biases, and "
-                            "`CONTAINER_SHAPES['cpu-32vcpu']` declares `secrets=()` while "
-                            "`gpu-1xa10g` names the W&B secret -- so no run on the CPU profile "
-                            "has ever been able to authenticate. This is a finding rather than "
-                            "a user error, and it is recorded here rather than closed because "
-                            "closing it widens a grant."
+                            "command logged to Weights and Biases, and at the time "
+                            "`CONTAINER_SHAPES['cpu-32vcpu']` declared `secrets=()` while "
+                            "`gpu-1xa10g` named the W&B secret -- so no run on the CPU profile "
+                            "could authenticate. That was a finding rather than a user error, "
+                            "and it has since been closed: the CPU execution role may read the "
+                            "secret and the CPU job definition injects it. This run predates "
+                            "the fix."
                         ),
                     )
                 ),
@@ -841,11 +842,13 @@ def known_limitations(
             "No pilot run has trained anything, written a checkpoint, or touched a GPU."
         ),
         (
-            "No CPU run can reach Weights and Biases. `CONTAINER_SHAPES['cpu-32vcpu']` declares "
-            "`secrets=()` while `gpu-1xa10g` names the W&B secret, so the third pilot run's "
-            "command failed on `No API key configured`. The workflow summary still names the "
-            f"W&B project, so check 8 is {status_of('8')} on what the submitter is told -- and "
-            "what they are told, on this profile, points at a project nothing can write to."
+            "No CPU run could reach Weights and Biases while these three ran. "
+            "`CONTAINER_SHAPES['cpu-32vcpu']` declared `secrets=()` while `gpu-1xa10g` named "
+            "the W&B secret, so the third pilot run's command failed on `No API key "
+            f"configured`. Check 8 is {status_of('8')} on what the submitter is told, which was "
+            "honest and, on that profile and that day, pointed at a project nothing could write "
+            "to. The gap is closed -- both profiles now carry the same secrets -- so what these "
+            "runs demonstrate about W&B is the defect rather than the remedy."
         ),
         (
             "The result manifest names no W&B run for any of these, because "

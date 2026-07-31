@@ -44,6 +44,19 @@
           "pattern": "^[A-Za-z0-9-]+$",
           "title": "Github Login",
           "type": "string"
+        },
+        "wandb_username": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Wandb Username"
         }
       },
       "required": [
