@@ -2,8 +2,8 @@
 
 Phase: phase-5
 Bundle schema version: 1
-Source commit: b5b7f6ee42a7701cd5402b3dd7b8eec398196ff1
-Generated: 2026-07-31T02:49:08+00:00
+Source commit: 375672c27ce5dcdb76f31f065acf1ed149830edd
+Generated: 2026-07-31T06:25:58+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 5 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase5_proof.py` at generation time. It is not done, and the Result table below says by how much.
 
@@ -26,9 +26,9 @@ What is not done is one check, and it is a different kind of open from every oth
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3757 |
-| suite tests executed | 3580 |
-| suite passed | 3580 |
+| suite tests collected | 3772 |
+| suite tests executed | 3595 |
+| suite passed | 3595 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
@@ -72,7 +72,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | .github/workflows/submit-run.yml | sha256:8f51256b517c2100258956666d64b85eee6f249334d0aab4863d11941154ec90 |
 | README.md | sha256:656787bf8be05213b8336bea8d8b76b7ca385903f18dd5f26f9957177e8544e8 |
 | config/image-exceptions.yaml | sha256:0828f4203385bbc3adbd8521f62768e7f4eb46f56382bc6223d37b89aae7a49c |
-| config/organization.yaml | sha256:967e5053115dbef048570904859d1907003512c1180cf683d4585c5abd66a2b1 |
+| config/organization.yaml | sha256:e68856d918a61e17d9f5565795dcf8cda3041f6316dddc02da0724fabf9df913 |
 | fixtures/evidence/phase-5/branch-protection.sanitized.json | sha256:99a949fb3cae169e5b77cc53661e660410928552213615314bab97ec83100ef5 |
 | fixtures/evidence/phase-5/published-image.sanitized.json | sha256:65f9b7ef2f121541a121944641c51d5e3548675b9da58f15e5aa2dee2d313d37 |
 | src/edullm_platform/image_resolution.py | sha256:0bd11cece57c91d6d82680dbffb1e959dade2ea9f60094a5a1a747accbf554fd |
@@ -82,7 +82,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 - Everything about people here rests on three runs by one submitter on one day. That is enough to establish that the two-person path completes, which is the thing that had never been established; it is not a sample from which anything about how the platform behaves for a second, third or tenth person follows.
 - The cohort is three and two of them are leads, who authorize their own routine runs by design. So the only person in it whose submission needs releasing by somebody else at all is the one non-lead, and check 2 -- covered -- rests entirely on him. If he had dropped out the phase would have lost its point rather than a participant, and the correct response would have been to seat another non-lead rather than to record the criterion closed by self-authorization.
 - Check 6 is a gap and it is the only one, but it is not the only thing unproven -- it is the only thing unproven that the phase agreed to measure. All three runs went to the CPU profile carrying a print statement and two W&B calls. No pilot run has trained anything, written a checkpoint, or touched a GPU.
-- No CPU run can reach Weights and Biases. `CONTAINER_SHAPES['cpu-32vcpu']` declares `secrets=()` while `gpu-1xa10g` names the W&B secret, so the third pilot run's command failed on `No API key configured`. The workflow summary still names the W&B project, so check 8 is covered on what the submitter is told -- and what they are told, on this profile, points at a project nothing can write to.
+- No CPU run could reach Weights and Biases while these three ran. `CONTAINER_SHAPES['cpu-32vcpu']` declared `secrets=()` while `gpu-1xa10g` named the W&B secret, so the third pilot run's command failed on `No API key configured`. Check 8 is covered on what the submitter is told, which was honest and, on that profile and that day, pointed at a project nothing could write to. The gap is closed -- both profiles now carry the same secrets -- so what these runs demonstrate about W&B is the defect rather than the remedy.
 - The result manifest names no W&B run for any of these, because `lifecycle_projection` hardcodes `wandb_run=None` on every one it writes. That is Phase 7 item 7.4 and it is asserted rather than worked around, so the day it changes a test fails and this sentence gets reread.
 - Check 7 is covered against the workflow rather than against a refusal somebody received, which is one step weaker. No pilot submission has been refused on its merits: the two failed dispatches were a tool invoked without a required argument and a container that could not start, and neither is a refusal. What is asserted is what the workflow does with a refusal it is given.
 - The branch-protection record expires thirty days after it was observed, and the cited tests fail once it does. Nothing about the runs will have changed on that date -- every lineage object is in a write-once store -- and what will have lapsed is anybody's knowledge of how the repository is configured. That is the window working rather than a defect.

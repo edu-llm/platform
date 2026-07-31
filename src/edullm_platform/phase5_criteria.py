@@ -469,13 +469,15 @@ def phase5_criteria() -> tuple[CriterionSpec, ...]:
                     "because three places once answered that question and two of them agreed."
                 ),
                 (
-                    "THE W&B LEG IS TRUE AND USELESS ON THE CPU PROFILE, AND THIS IS A FINDING "
-                    "RATHER THAN A SCOPE NOTE. The summary names the project honestly. But "
-                    "CONTAINER_SHAPES['cpu-32vcpu'] declares secrets=() while gpu-1xa10g names "
-                    "the W&B secret, so no CPU run can authenticate -- the third pilot run's "
-                    "command logged to W&B and died on 'No API key configured'. A submitter on "
-                    "the CPU profile is therefore pointed at a project nothing can write to. "
-                    "Recorded here rather than closed, because closing it widens a grant."
+                    "THE W&B LEG WAS TRUE AND USELESS ON THE CPU PROFILE WHEN THE THIRD PILOT "
+                    "RUN MET IT, AND IT IS NOW CLOSED. The summary always named the project "
+                    "honestly, but CONTAINER_SHAPES['cpu-32vcpu'] declared secrets=() while "
+                    "gpu-1xa10g named the W&B secret, so no CPU run could authenticate and that "
+                    "run died on 'No API key configured' -- pointed at a project nothing could "
+                    "write to. Both halves are fixed: the CPU execution role may read the "
+                    "secret and the CPU job definition injects it, so the two profiles now "
+                    "carry the same secrets. The three runs this bundle rests on predate the "
+                    "fix, which is why none of them has a W&B run to show."
                 ),
                 (
                     "No URL is invented for the W&B run, deliberately. A run is named for its "
