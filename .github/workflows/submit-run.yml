@@ -22,7 +22,7 @@ on:
         options:
           - OLMo-core
       commit_sha:
-        description: "The forty-character commit your image was built from — not a branch name. The Build research image run prints it, or use git rev-parse HEAD."
+        description: "Your branch name works here, and so does a tag or a full commit. Whichever you give, the record names the exact commit it resolved to."
         required: true
         type: string
       image_digest:
@@ -129,9 +129,69 @@ jobs:
   # infra/iam/image-resolver-role.yaml carries the argument in full, beside the two actions
   # it is an argument about, including why a trust policy cannot tell this job from any
   # other job in this file. Read it there rather than trusting this summary of it.
+  # A JOB OF ITS OWN, AND THE REASON IS THE GUARD ON THE JOB BELOW. The resolve job holds
+  # `id-token: write`, and a test refuses it any `outputs` at all: what crosses out of a job
+  # that can mint a credential has to be a document, never a string in the expression
+  # context. That rule is right and this work does not belong under it -- turning a branch
+  # name into a commit needs no AWS, no token that can reach it, and nothing from the
+  # registry.
+  #
+  # So it happens here instead, in a job that cannot request an OIDC token by any spelling,
+  # and both jobs below read the answer. Placing it first also means a branch that does not
+  # exist is refused before a credential has been minted for it.
+  identify:
+    name: Resolve what the submitter named to a commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      commit_sha: ${{ steps.commit.outputs.commit_sha }}
+    steps:
+      - name: Resolve what the submitter named to a commit
+        id: commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RESEARCH_REPOSITORY: ${{ inputs.repository }}
+          RESEARCH_OWNER: ${{ github.repository_owner }}
+          DECLARED: ${{ inputs.commit_sha }}
+        run: |
+          set -euo pipefail
+          # A commit passes through untouched. Only something that is not one is looked up,
+          # so the ordinary path costs no API call and the lookup cannot reinterpret a SHA
+          # as a ref that happens to share its name.
+          if [[ "${DECLARED}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "commit_sha=${DECLARED}" >> "$GITHUB_OUTPUT"
+            echo "Using the commit as given."
+            exit 0
+          fi
+          # WHY A LOOKUP AND NOT A REFUSAL. The image resolver in the job below already
+          # refuses anything that is not forty hex characters, and says what that costs:
+          # the image tag is twelve characters of whatever it is handed, so a branch name
+          # resolves to a tag nobody published and comes back as "this commit has no image"
+          # -- sending the submitter to build something that is already built. That guard
+          # stays. This exists so it is never reached by somebody who typed the only name
+          # they know their work by.
+          #
+          # No token is strictly required, since every research repository is public, but
+          # the GITHUB_TOKEN this workflow already holds raises the rate limit from sixty an
+          # hour per runner IP to a thousand, and shared runners make the smaller figure a
+          # real risk rather than a theoretical one. An apostrophe is avoided in this block
+          # deliberately: a seam test shlex-parses every run body to find the AWS calls, and
+          # one stray quote makes the whole file unparseable to it.
+          resolved="$(gh api "repos/${RESEARCH_OWNER}/${RESEARCH_REPOSITORY}/commits/${DECLARED}" --jq .sha 2>/dev/null || true)"
+          if [[ ! "${resolved}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "unresolvable_revision" >&2
+            echo "There is no branch, tag or commit called '${DECLARED}' in ${RESEARCH_OWNER}/${RESEARCH_REPOSITORY}. Nothing was compiled and no reviewer was asked. Check the spelling, or push the branch first." >&2
+            exit 1
+          fi
+          echo "commit_sha=${resolved}" >> "$GITHUB_OUTPUT"
+          echo "'${DECLARED}' is ${resolved}. That commit is what the record will name, because a branch moves and a record must not."
+
   resolve:
     name: Read which image the declared commit published
     runs-on: ubuntu-latest
+    needs: [identify]
     timeout-minutes: 10
     permissions:
       contents: read
@@ -184,7 +244,7 @@ jobs:
       - name: Read which image this commit published
         env:
           RESEARCH_REPOSITORY: ${{ inputs.repository }}
-          COMMIT_SHA: ${{ inputs.commit_sha }}
+          COMMIT_SHA: ${{ needs.identify.outputs.commit_sha }}
           RESOLVE_AWS_REGION: ${{ vars.AWS_REGION }}
         run: |
           set -euo pipefail
@@ -234,7 +294,7 @@ jobs:
   compile:
     name: Compile the submission and classify it
     runs-on: ubuntu-latest
-    needs: [resolve]
+    needs: [identify, resolve]
     timeout-minutes: 15
     permissions:
       contents: read
@@ -282,7 +342,7 @@ jobs:
       - name: Assemble the submission form
         env:
           FORM_REPOSITORY: ${{ inputs.repository }}
-          FORM_COMMIT_SHA: ${{ inputs.commit_sha }}
+          FORM_COMMIT_SHA: ${{ needs.identify.outputs.commit_sha }}
           FORM_IMAGE_DIGEST: ${{ inputs.image_digest }}
           FORM_WORKLOAD_PROFILE: ${{ inputs.workload_profile }}
           FORM_DATASET_RELEASE: ${{ inputs.dataset_release }}

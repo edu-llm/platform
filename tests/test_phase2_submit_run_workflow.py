@@ -112,6 +112,7 @@ RESOLVER_TOOL = "tools/resolve_published_image.py"
 # than trusting this tuple; aws-account-id is a documented output of the credentials
 # action.
 DECLARED_OUTPUTS = {
+    "commit": ("commit_sha",),
     "compile": ("run_id", "approval_class", "environment", "manifest_sha256"),
     "credentials": ("aws-account-id",),
 }
@@ -275,22 +276,60 @@ def test_the_three_jobs_carry_exactly_these_permission_maps() -> None:
     assert "needs" not in workflow["jobs"]["deny-unapproved"]
 
 
-def test_the_workflow_declares_these_four_jobs_and_orders_them_this_way() -> None:
-    # The inventory, re-armed at four when the resolve job arrived. A job added to this
+def test_the_workflow_declares_these_five_jobs_and_orders_them_this_way() -> None:
+    # The inventory, re-armed at five when the identify job arrived. A job added to this
     # file inherits the two trust policies that pin job_workflow_ref to it, so a new one is
     # a new principal for both the admission role and the image resolver -- which is why
     # the list is exact rather than a floor, and why it is a test rather than a review
     # habit.
+    #
+    # IDENTIFY IS THE FIRST JOB ADDED SINCE THAT SENTENCE WAS WRITTEN, SO IT IS WORTH
+    # ANSWERING DIRECTLY. It is a new principal under both trust policies in the sense the
+    # comment means: the policies name this workflow, not a job within it. It cannot use
+    # either, because it holds no `id-token` permission and so cannot request the token an
+    # AssumeRoleWithWebIdentity call needs -- the same absence the compile job's guarantee
+    # rests on, asserted for this job below on the same reasoning.
     workflow = _load()
 
-    assert list(workflow["jobs"]) == ["resolve", "compile", "deny-unapproved", "submit"]
+    assert list(workflow["jobs"]) == [
+        "identify",
+        "resolve",
+        "compile",
+        "deny-unapproved",
+        "submit",
+    ]
     assert workflow["jobs"]["resolve"]["permissions"] == {
         "contents": "read",
         "id-token": "write",
     }
-    assert workflow["jobs"]["compile"]["needs"] == ["resolve"]
-    assert "needs" not in workflow["jobs"]["resolve"]
+    assert workflow["jobs"]["compile"]["needs"] == ["identify", "resolve"]
+    assert workflow["jobs"]["resolve"]["needs"] == ["identify"]
+    assert "needs" not in workflow["jobs"]["identify"]
     assert "environment" not in workflow["jobs"]["resolve"]
+
+
+def test_the_job_that_turns_a_branch_into_a_commit_cannot_reach_aws_at_all() -> None:
+    """Mutation: give it id-token, or let it grow an AWS step.
+
+    It exists so that a submitter can type the only name they know their work by, which
+    needs the GitHub API and nothing else. Adding it to this file made it a principal under
+    both trust policies -- they pin ``job_workflow_ref`` to the workflow rather than to a
+    job -- so what stops it using them is the same thing that stops the compile job: it
+    cannot request an OIDC token, and a job that cannot request one cannot leak one.
+
+    Also why it is a job rather than a step at the top of resolve. That job holds the
+    token, and ``test_the_registry_answer_crosses_to_the_credential_free_job_as_an_artifact``
+    refuses it any outputs at all, so a string could not have left it.
+    """
+    identify = _job("identify")
+
+    for text in _strings(identify):
+        normalized = text.lower().replace("_", "-")
+        assert "id-token" not in normalized, f"this job must stay credential free: {text!r}"
+    assert set(identify["permissions"]) == {"contents"}
+    assert identify["permissions"]["contents"] == "read"
+    assert "environment" not in identify
+    assert set(identify["outputs"]) == {"commit_sha"}
 
 
 def test_the_compile_job_cannot_request_a_token_by_any_spelling() -> None:
@@ -371,6 +410,12 @@ def test_every_needs_reference_names_an_output_the_job_actually_declares() -> No
         "needs.compile.outputs.environment",
         "needs.compile.outputs.manifest_sha256",
         "needs.compile.outputs.run_id",
+        # Read by two jobs and written by neither of them. The identify job turns whatever
+        # the submitter typed into a commit, and both the registry lookup and the compile
+        # step take it from here rather than from `inputs`, so that a branch name is
+        # resolved exactly once and the manifest and the image agree about which commit
+        # they mean.
+        "needs.identify.outputs.commit_sha",
     ]
 
 
@@ -519,10 +564,10 @@ def test_no_run_body_interpolates_a_github_expression() -> None:
 def test_every_run_body_enables_strict_bash() -> None:
     bodies = list(_run_bodies())
 
-    # Eighteen since the resolve job arrived with its own tooling install and its own
-    # lookup step. Counted rather than sampled, so a body added without the strict line
-    # fails here instead of running past its first error.
-    assert len(bodies) == 18
+    # Nineteen since the identify job arrived with its single lookup step. Counted rather
+    # than sampled, so a body added without the strict line fails here instead of running
+    # past its first error.
+    assert len(bodies) == 19
     for name, script in bodies:
         assert script.startswith("set -euo pipefail\n"), name
 
