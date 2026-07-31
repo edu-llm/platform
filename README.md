@@ -80,6 +80,59 @@ byte-reproducible, so a second run should produce no diff:
 uv run python tools/export_schemas.py
 ```
 
+## Datasets
+
+**Published datasets live in `s3://edullm-data/`, and this repository does not own them.**
+The publish, validate and read path is
+[`edu-llm/edullm-data`](https://github.com/edu-llm/edullm-data), a separate project owned by
+a teammate: data lands in `s3://edullm-landing/`, an airlock validator checks it against the
+eduLLM Dataset Standard, and what passes is promoted into `s3://edullm-data/`. Neither bucket
+has a CloudFormation template in `infra/` — the three this repository creates are artifacts,
+lineage and outputs, and that is the whole list. `edullm-data` is registered in
+`config/repositories.yaml` with an ECR repository of its own, so its jobs can be built and
+published here; it has no workload profile yet, which is why it is not on the submission form.
+
+**Reading a published dataset from a training job is not wired up, and you should plan
+around that rather than around this paragraph changing soon.** The committed CPU workload
+role in `infra/iam/batch-roles.yaml` holds no `s3:GetObject` at all. The GPU one in
+`infra/iam/batch-gpu-roles.yaml` holds it only on the run's own output prefix, so a training
+job can read back its own checkpoint and nothing else. Both say so in place, and the CPU
+template calls a dataset grant "the first grant a real tokenizer job will need."
+
+One thing does reach the data today and it is not a feature. The *deployed* CPU workload role
+carries an inline policy called `dataset-validator`, attached by hand outside CloudFormation,
+granting read *and write* on both `edullm-data/*` and `edullm-landing/*` — including
+`s3:PutObject` into the published bucket, under a statement named `PromoteIntoPublishedBucket`.
+This repository does not declare it, `tests/test_phase3_run_evidence.py` records it as the one
+known role drift, and it applies to every CPU container on every team rather than to the
+validator that needed it. Do not build on it: nothing here keeps it working, and the recorded
+fix is a decision about whether to declare it or move it to its own role.
+
+**The one dataset the form offers is a name for nothing.** `dataset_release` has a single
+option, `dolma-2026-07`, and no `DatasetRelease` binds it to an address. The only place in
+this repository that gives it one is a fixture pointing at
+`s3://sbsandbox-intern-edullm-datasets/`, a bucket no template creates and no policy grants.
+No run that has reached Batch has read it: the CPU submissions were print statements, and the
+GPU training program trains on randomly generated tokens while sending that identifier along
+with them. Those claims are now in write-once intent records. Registering an honest
+identifier for "this workload generates its own tokens" is a change to `config/datasets.yaml`,
+which is packaged inside the admission validator's zip, so it cannot take effect without a
+Lambda release from a laptop with AWS credentials.
+`tests/test_submission_form_options.py` records what has to happen and in what order.
+
+**So what should you expect today?** That you can submit and run a workload, and that
+whatever it trains on has to come from inside your own image or be generated at run time.
+Pick `dolma-2026-07` because it is the only option, and read it as the placeholder it is
+rather than as a claim about what your job read. If your work needs a real corpus, say so
+now — that is the signal that decides which half of this gets built first.
+
+**To ask for a dataset**, open a
+[dataset request](https://github.com/edu-llm/platform/issues/new?template=dataset-request.yml).
+It asks what the data is, what experiment it serves and what decision that informs, the token
+budget, the tokenizer, how it needs to be sliceable, whether you need a validation split, and
+when you need it. Publication is a manual job done by the dataset owner, so filing one starts
+a conversation with a person rather than a pipeline.
+
 ## Pilot limitations
 
 This platform is open to a named pilot. It works end to end and it is not finished, and

@@ -25,6 +25,7 @@ appear.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,7 @@ import pytest
 import yaml
 
 from edullm_platform.config import load_yaml
+from edullm_platform.contracts.dataset import DATASET_RELEASE_ID_PATTERN
 from edullm_platform.contracts.execution import (
     ExecutionTargetCatalog,
     UnbackedComputeProfileError,
@@ -49,6 +51,11 @@ INHERIT = "inherit"
 #: ``resolve_execution_target`` composes ARNs from whatever account it is handed and this
 #: test cares only about whether it can compose them at all, so no real account is needed.
 EXAMPLE_ACCOUNT_ID = "123456789012"
+
+#: What a smoke run ought to be able to declare: no corpus, the workload makes its own
+#: tokens. It is not registered and it is not on the form. The test that ends this module
+#: is the reason, and it is a deploy rather than a disagreement.
+NO_CORPUS = "no-corpus"
 
 
 def form_inputs() -> dict[str, Any]:
@@ -155,6 +162,60 @@ def test_the_dataset_dropdown_offers_exactly_the_registered_releases() -> None:
     registered = [entry["release_id"] for entry in registry("datasets.yaml")["releases"]]
 
     assert options_for("dataset_release") == sorted(registered)
+
+
+def test_no_dataset_option_yet_says_this_run_reads_no_corpus() -> None:
+    """A RECORDED ABSENCE WITH A TRIGGER, not a guard. Mutation: register ``no-corpus``
+    and offer it, without releasing the admission validator.
+
+    **The one option on the form is a name for nothing.** No ``DatasetRelease`` binds
+    ``dolma-2026-07`` to an address, and the only place in this repository that gives it one
+    is ``fixtures/manifests/cpu-routine.yaml``, naming ``s3://sbsandbox-intern-edullm-datasets/``
+    -- a bucket no template in ``infra/`` creates and no policy anywhere grants. Published
+    data is in ``s3://edullm-data/``, which belongs to ``edu-llm/edullm-data`` rather than to
+    this control plane.
+
+    **So every run so far has declared a corpus and read none of it.**
+    ``tools/build_gpu_training_submission.py`` trains on ``torch.randint`` tokens and sends
+    ``dataset_release: dolma-2026-07`` with them. Four completed GPU runs recorded that claim
+    into intent records, and those are write-once -- ``infra/lineage-bucket.yaml`` enables
+    Object Lock with the retention rule commented out, so nothing rewrites them and nothing
+    has to. The fix is forward-only: an identifier that means what a smoke run actually does.
+
+    **It is absent because registering it is an AWS deploy, and that is the whole reason.**
+    ``tools/build_admission_lambda.py`` copies ``config/*.yaml`` into the validator's zip, so
+    the registry is part of that function's release rather than something it reads at run
+    time. Measured on 2026-07-31 rather than assumed: appending a single comment line to
+    ``config/datasets.yaml`` moved the built digest from ``ca3ffb2f04ca…`` to ``aa8108de29c6…``.
+    Registering an id therefore means a rebuild, an upload that needs laptop AWS SSO
+    credentials, an ``S3ObjectVersion`` edit in ``infra/admission-state-machine.yaml``, and a
+    CI deploy.
+
+    Until all four land, the deployed validator still holds the old registry and refuses the
+    new id with ``unregistered_dataset`` -- after the approval gate, having spent a lead's
+    attention. That is precisely the failure the test above exists to prevent, arriving in the
+    account instead of here, and it is the same shape as the refusal that cost Phase 4 a live
+    GPU run. ``infra/admission-validator-release.yaml`` carries that story.
+
+    So the honest option waits for somebody with credentials. This test is what makes the wait
+    a decision: the id is proved registrable below, so nothing is left to work out, and
+    deleting these assertions is what registering it looks like.
+    """
+    registered = {entry["release_id"] for entry in registry("datasets.yaml")["releases"]}
+
+    # Registrable already: the contract would accept this id today, so the only thing between
+    # here and an honest smoke submission is the release procedure in infra/README.md.
+    assert re.match(DATASET_RELEASE_ID_PATTERN, NO_CORPUS)
+
+    assert registered == {"dolma-2026-07"}, (
+        "the dataset registry has changed. If no-corpus is now in it, release the admission "
+        "validator in the same change and delete this test -- infra/README.md, 'Releasing "
+        "the admission validator'"
+    )
+    assert NO_CORPUS not in options_for("dataset_release"), (
+        "offering no-corpus before config/datasets.yaml registers it and the validator is "
+        "released is a menu item whose only outcome is unregistered_dataset, after approval"
+    )
 
 
 def test_the_workload_dropdown_offers_only_workloads_whose_repository_is_registered() -> None:
