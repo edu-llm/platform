@@ -11,6 +11,7 @@ command:
   - --config
   - configs/extended-smoke.yaml
 team: modeling
+project: long-context-extension
 wandb_project: olmo-core-extended
 workload_profile: olmo-core-train-smoke
 compute_profile: gpu-4xa10g

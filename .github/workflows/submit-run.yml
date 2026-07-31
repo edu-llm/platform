@@ -47,6 +47,10 @@ on:
         description: Team the run is charged to and whose lead may approve it.
         required: true
         type: string
+      project:
+        description: Project these runs belong to, for grouping them in Weights and Biases and in the cost view. Lower-case words joined by hyphens. Registers nothing, so a new one needs no pull request.
+        required: true
+        type: string
       wandb_project:
         description: Weights and Biases project the run reports into.
         required: true
@@ -271,6 +275,7 @@ jobs:
           FORM_WORKLOAD_PROFILE: ${{ inputs.workload_profile }}
           FORM_DATASET_RELEASE: ${{ inputs.dataset_release }}
           FORM_TEAM: ${{ inputs.team }}
+          FORM_PROJECT: ${{ inputs.project }}
           FORM_WANDB_PROJECT: ${{ inputs.wandb_project }}
           FORM_COMMAND: ${{ inputs.command }}
           FORM_COMPUTE_PROFILE: ${{ inputs.compute_profile }}
@@ -295,6 +300,7 @@ jobs:
               ("workload_profile", "FORM_WORKLOAD_PROFILE"),
               ("dataset_release", "FORM_DATASET_RELEASE"),
               ("team", "FORM_TEAM"),
+              ("project", "FORM_PROJECT"),
               ("wandb_project", "FORM_WANDB_PROJECT"),
               ("compute_profile", "FORM_COMPUTE_PROFILE"),
               ("maximum_runtime_hours", "FORM_MAXIMUM_RUNTIME_HOURS"),

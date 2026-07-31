@@ -107,6 +107,10 @@ class SubmissionInputs(ContractModel):
     workload_profile: str = Field(min_length=1)
     dataset_release: str = Field(min_length=1)
     team: str = Field(min_length=1)
+    # Free text on the form and shaped in the manifest. Held as a plain string here, so the
+    # refusal a submitter meets is the one compile_submission writes rather than a pydantic
+    # dump about a form field -- the same split as `team`, for the same reason.
+    project: str = Field(min_length=1)
     wandb_project: str = Field(min_length=1)
     command: Annotated[tuple[str, ...], BeforeValidator(require_ordered_sequence)] = Field(
         min_length=1, strict=False
@@ -243,26 +247,45 @@ def compile_submission(
     # never be able to say that. A form may leave the image to be derived; a record of what
     # ran may not leave it undetermined. So the field is filled in here, from the
     # resolution above, on every path.
-    manifest = RunManifest(
-        schema_version=1,
-        repository=inputs.repository,
-        commit_sha=inputs.commit_sha,
-        image_digest=resolved_image.image_digest,
-        dataset_release=inputs.dataset_release,
-        command=inputs.command,
-        team=inputs.team,
-        wandb_project=inputs.wandb_project,
-        workload_profile=workload.name,
-        compute_profile=inputs.compute_profile or workload.compute_profile,
-        maximum_runtime_hours=(
-            inputs.maximum_runtime_hours
-            if inputs.maximum_runtime_hours is not None
-            else workload.maximum_runtime_hours
-        ),
-        maximum_attempts=attempts,
-        checkpoint=workload.checkpoint,
-        fanout=fanout,
-    )
+    #
+    # The try is for `project`, which is the one field here whose shape the form does not
+    # enforce: SubmissionInputs takes it as a plain string so that the refusal a submitter
+    # meets is a sentence rather than a pydantic dump. Same split as `team`, translated in
+    # the same way, and only for that field -- a validation error anywhere else in this
+    # construction is a mistake in the derivation above rather than something a submitter
+    # typed, and reporting it as a refusal would blame them for it.
+    try:
+        manifest = RunManifest(
+            schema_version=1,
+            repository=inputs.repository,
+            commit_sha=inputs.commit_sha,
+            image_digest=resolved_image.image_digest,
+            dataset_release=inputs.dataset_release,
+            command=inputs.command,
+            team=inputs.team,
+            project=inputs.project,
+            wandb_project=inputs.wandb_project,
+            workload_profile=workload.name,
+            compute_profile=inputs.compute_profile or workload.compute_profile,
+            maximum_runtime_hours=(
+                inputs.maximum_runtime_hours
+                if inputs.maximum_runtime_hours is not None
+                else workload.maximum_runtime_hours
+            ),
+            maximum_attempts=attempts,
+            checkpoint=workload.checkpoint,
+            fanout=fanout,
+        )
+    except ValidationError as exc:
+        if not any(error["loc"] == ("project",) for error in exc.errors()):
+            raise
+        raise SubmissionRefusedError(
+            f"the project {inputs.project!r} is not a project name this platform can group "
+            "on. A project is written in lower-case letters and digits, with single hyphens "
+            "between words and none at either end -- context-length-sweep, tokenizer-ablation. "
+            "It registers nothing and needs no pull request; only the shape is fixed, so that "
+            "two people naming the same project get one group rather than two."
+        ) from exc
 
     try:
         cost = compute_manifest_cost_inputs(manifest, catalog)

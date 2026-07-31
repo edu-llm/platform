@@ -12,6 +12,7 @@ command:
   - configs/memory-split.yaml
   - --seed
 team: memory-split
+project: memory-split-seeds
 wandb_project: olmo-core-memory-split
 workload_profile: olmo-core-train-smoke
 compute_profile: gpu-1xa10g

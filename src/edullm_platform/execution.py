@@ -237,6 +237,16 @@ def batch_submit_request(
                 # into its parent team anyway, which is the same place, right up until it is
                 # not.
                 {"Name": "WANDB_ENTITY", "Value": WANDB_ENTITY},
+                # W&B's own name again, for the same reason the entity is: the client reads
+                # WANDB_RUN_GROUP without being asked. A prefixed EDULLM_PROJECT would need
+                # every workload to forward it, and one that forgot would produce ungrouped
+                # runs -- indistinguishable from a submitter who left the field blank,
+                # except that the field cannot be left blank.
+                #
+                # The manifest's value and never the run id. The neighbours here and in the
+                # tags below both vary per run, so deriving this from the run id is the
+                # available mistake, and it would group nothing while looking like it did.
+                {"Name": "WANDB_RUN_GROUP", "Value": manifest.project},
             ],
         },
         # Unconditional. See the module docstring for why there is no branch here.
@@ -245,6 +255,10 @@ def batch_submit_request(
         "Tags": {
             "edullm:run-id": run_id,
             "edullm:team": manifest.team,
+            # Prefixed like its neighbours, and the prefix is load-bearing rather than
+            # decorative: this is a shared sandbox account, Cost Explorer groups on the whole
+            # key, and a bare `project` is a key somebody else's stack may also be writing.
+            "edullm:project": manifest.project,
             "edullm:compute-profile": target.compute_profile,
         },
         # Batch propagates job tags to the underlying ECS task only when asked, and the

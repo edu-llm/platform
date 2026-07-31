@@ -11,6 +11,7 @@ command:
   - --config
   - configs/curriculum-order.yaml
 team: curriculum
+project: curriculum-ablation
 wandb_project: olmo-core-curriculum
 workload_profile: olmo-core-train-smoke
 compute_profile: gpu-1xa10g

@@ -11,6 +11,7 @@ command:
   - --config
   - configs/smoke.yaml
 team: modeling
+project: olmo-core-smoke
 wandb_project: olmo-core-smoke
 workload_profile: olmo-core-train-smoke
 # BACKEND NEUTRALITY: this is gpu-routine.yaml with one field changed. A SageMaker-managed
