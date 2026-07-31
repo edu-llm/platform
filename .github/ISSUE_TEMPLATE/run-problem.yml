@@ -1,0 +1,59 @@
+name: My run did something I did not expect
+description: A submission was refused, got stuck, or ran and produced the wrong thing.
+labels: ["run-problem"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The run id and the workflow run link are the two things that make this answerable
+        without a conversation. Everything else is optional.
+
+  - type: input
+    id: workflow_run
+    attributes:
+      label: Link to the workflow run
+      description: The address bar on the Actions page for your submission.
+      placeholder: https://github.com/edu-llm/platform/actions/runs/...
+    validations:
+      required: true
+
+  - type: input
+    id: run_id
+    attributes:
+      label: Run id, if the submission got far enough to have one
+      description: >-
+        Printed in the "Your run" table at the end of a successful submission. A submission
+        refused before admission has no run id, and leaving this blank is itself useful
+        information.
+      placeholder: run_019fa439-203e-70c7-bf8a-9ce33bc71f20
+    validations:
+      required: false
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected to happen
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead
+      description: Paste the message you were given, if there was one.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where it went wrong, as far as you could tell
+      options:
+        - Filling in the form
+        - The submission was refused before anyone approved it
+        - Waiting for approval
+        - It was refused after approval
+        - The job ran but did the wrong thing
+        - I cannot tell
+    validations:
+      required: true

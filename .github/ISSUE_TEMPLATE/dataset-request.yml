@@ -1,0 +1,72 @@
+name: I need a dataset
+description: Ask for data to be prepared and published so a run can read it.
+labels: ["dataset-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Read this first, because it sets expectations honestly.** Preparing a dataset is a
+        person's work today, not an automated pipeline. Filing this gets your request into a
+        queue with an owner, which is better than the previous arrangement of asking someone
+        directly and hoping. It does not get you data this afternoon.
+
+        Tell us what you are trying to find out rather than what files you think you want.
+        The shape of the data usually follows from the question, and the people who build it
+        know shapes you do not.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: What are you trying to find out?
+      description: The experiment or comparison this data is for.
+    validations:
+      required: true
+
+  - type: textarea
+    id: content
+    attributes:
+      label: What should be in it
+      description: >-
+        Sources, domains, languages, filtering — as specific as you can be. If you want a
+        mixture, say the proportions.
+    validations:
+      required: true
+
+  - type: input
+    id: size
+    attributes:
+      label: Roughly how many tokens
+      placeholder: 20B
+    validations:
+      required: true
+
+  - type: input
+    id: tokenizer
+    attributes:
+      label: Which tokenizer
+      description: If you do not know, write "whatever is standard" and someone will pick.
+      placeholder: dolma2-bpe
+    validations:
+      required: true
+
+  - type: input
+    id: needed_by
+    attributes:
+      label: When you need it
+      description: A real date. "Soon" cannot be scheduled against anything.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: reproducible
+    attributes:
+      label: Does this need to be reproducible?
+      description: >-
+        Reproducible means a fixed seed is recorded, so the same request produces the same
+        files again later. Say yes if a paper or a comparison depends on it.
+      options:
+        - "Yes — a result will depend on it"
+        - "No — exploratory"
+        - "I do not know"
+    validations:
+      required: true
