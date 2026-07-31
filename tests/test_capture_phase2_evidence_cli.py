@@ -12,10 +12,14 @@ invented here rather than read off the tool. Lineage is the target that carries 
 write path: it is the one write in this tool that commits a document nobody in this
 repository composed, and therefore the one that could commit an account id.
 
-The third of those three, ``lead-team``, arrived on 2026-07-31 and is uncovered here for
-the same reason as the other two rather than by oversight. What it writes was checked by
-hand against a stub answering the members endpoint, and the record it produced was
-byte-identical to the committed capture apart from the observation instant.
+The third of those three, ``lead-team``, arrived on 2026-07-31, and its *write* is
+uncovered here for the same reason as the other two rather than by oversight: what it
+writes was checked by hand against a stub answering the members endpoint, and the record
+it produced was byte-identical to the committed capture apart from the observation
+instant. Its *read* is covered below, at the function rather than through ``main``,
+because that read is the one place in this tool where getting less than everything is
+silent: a member past a page boundary is simply not in the record, and the comparison that
+would have named him reads the record.
 """
 
 from __future__ import annotations
@@ -30,7 +34,13 @@ import pytest
 from workflow_support import write_stub
 
 from edullm_platform.evidence import scan_for_secrets
-from tools.capture_phase2_evidence import ALLOWED_OUTPUT_SUFFIX, LINEAGE_BUCKET, main
+from tools.capture_phase2_evidence import (
+    ALLOWED_OUTPUT_SUFFIX,
+    LEAD_APPROVAL_TEAM_SLUG,
+    LINEAGE_BUCKET,
+    capture_lead_team,
+    main,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 COMMITTED = PROJECT_ROOT / "fixtures" / "evidence" / "phase-2"
@@ -92,6 +102,29 @@ def install_aws_stub(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "aws",
         f"printf '%s\\n' \"$*\" >> '{recording}'\n"
         'case "$*" in\n' + "\n".join(branches) + "\n  *) exit 64 ;;\nesac\n",
+    )
+    monkeypatch.setenv("PATH", f"{stub_bin}{os.pathsep}{os.defpath}")
+    return recording
+
+
+def install_gh_stub(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    pages: list[list[dict[str, str]]],
+) -> Path:
+    """A ``gh`` answering the members endpoint in the shape ``--slurp`` returns.
+
+    One outer array holding one array per page, which is what the flag documents and what
+    the capture flattens. A stub that answered with a flat list would agree with the code
+    that reads only the first page, so the shape here is the whole point of the stub.
+    """
+    recording = tmp_path / "gh-calls.txt"
+    stub_bin = tmp_path / "bin"
+    write_stub(
+        stub_bin,
+        "gh",
+        f"printf '%s\\n' \"$*\" >> '{recording}'\n"
+        f"cat <<'RESPONSE'\n{json.dumps(pages)}\nRESPONSE\n",
     )
     monkeypatch.setenv("PATH", f"{stub_bin}{os.pathsep}{os.defpath}")
     return recording
@@ -215,6 +248,53 @@ def test_no_account_id_reaches_any_file_the_lineage_capture_writes(
 
     for name, text in written(tmp_path).items():
         assert ACCOUNT_ID not in text, name
+
+
+@pytest.mark.slow
+def test_the_lead_team_capture_records_the_members_of_every_page(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: read the first page and call it the team.
+
+    A member GitHub returns on the second page is a reviewer on the lead gate exactly as
+    much as one on the first. Reading only the first is not a smaller record: for a login
+    ``config/organization.yaml`` does not declare, it is the same record as one taken of a
+    team that never had him, and the comparison that exists to name him reads only what
+    was captured.
+    """
+    install_gh_stub(
+        tmp_path,
+        monkeypatch,
+        [[{"login": "philote-dev"}, {"login": "hiyasvyas"}], [{"login": "alsy7009"}]],
+    )
+
+    membership = capture_lead_team("edu-llm", "platform")
+
+    assert membership.member_logins == ("alsy7009", "hiyasvyas", "philote-dev")
+
+
+@pytest.mark.slow
+def test_the_lead_team_capture_asks_github_for_every_page_of_the_team(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: drop --paginate, or drop --slurp, and trust ``per_page``.
+
+    ``per_page=100`` is a ceiling rather than a promise, and the test above cannot see the
+    difference on a team that fits: it passes on a single request for as long as the team
+    is small, which is the condition under which somebody would remove the flags. The
+    request is pinned for that reason. ``--slurp`` is what makes ``--paginate`` readable
+    back, since bare ``--paginate`` emits one JSON document per page.
+    """
+    recording = install_gh_stub(tmp_path, monkeypatch, [[{"login": "philote-dev"}]])
+
+    capture_lead_team("edu-llm", "platform")
+
+    asked = recording.read_text(encoding="utf-8").split()
+    assert "--paginate" in asked, asked
+    assert "--slurp" in asked, asked
+    assert f"orgs/edu-llm/teams/{LEAD_APPROVAL_TEAM_SLUG}/members?per_page=100" in asked, asked
 
 
 def test_the_capture_refuses_to_write_outside_the_working_directory(

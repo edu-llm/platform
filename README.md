@@ -152,8 +152,10 @@ capturing something nobody had recorded: who is on the `team-leads` team, which 
 effective reviewer list on the lead approval gate. Phase 4 reached 0 without any criterion
 being satisfied — one was transferred to a later phase that owns the mechanism it needs, and
 one became a deferral with a written trigger. A gate going green because work moved is a
-different event from a gate going green because work landed, and only the first one is on
-this line.
+different event from a gate going green because work landed. Of these two it is Phase 4
+that went green, and it is the first kind: nothing about the account changed. Phase 2 is
+the second kind and its gate still exits 1, because closing one criterion out of nine left
+eight.
 
 **Phase 5 exits 0 with one criterion outstanding, and that is worth reading rather than
 skipping.** It reports fourteen of fifteen covered and one deferred, and both numbers moved on

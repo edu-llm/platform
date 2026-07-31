@@ -35,6 +35,19 @@ def field_ids() -> set[str]:
     return {str(element["id"]) for element in body if "id" in element}
 
 
+#: Fields of ``PersonRef`` a requester is deliberately not asked for, each with the reason.
+#: The assertion below stays anchored on the model, because that is what keeps it meaning
+#: something after the model grows -- but "add the field to the form" is not the only honest
+#: response to a new field, and a test offering only that remedy pushes whoever meets it
+#: into adding a question that should never be on a form a stranger fills in. Naming the
+#: exceptions here makes leaving one off an argued decision rather than a silent one, and
+#: makes it visible in review as a diff to this tuple.
+#:
+#: It is empty today. Every field the roster records about a person is something only that
+#: person can tell you, so the form asks for all three.
+FIELDS_A_REQUESTER_MUST_NOT_SUPPLY: tuple[str, ...] = ()
+
+
 def test_the_form_asks_for_every_detail_the_roster_records_about_a_person() -> None:
     """Mutation: add a field to PersonRef and leave the form asking for the old set.
 
@@ -43,14 +56,34 @@ def test_the_form_asks_for_every_detail_the_roster_records_about_a_person() -> N
     ``{"github_login", "display_name", "wandb_username"}`` would pass the day the model grew
     and go on passing, which is the failure it would exist to catch.
     """
-    missing = set(PersonRef.model_fields) - field_ids()
+    missing = set(PersonRef.model_fields) - field_ids() - set(FIELDS_A_REQUESTER_MUST_NOT_SUPPLY)
 
     assert not missing, (
         f"config/organization.yaml records {sorted(missing)} about a person and "
         f"{FORM_PATH.name} does not ask for it, so whoever sets up a new user has to know to "
-        "ask out of band. Add the field to the form, or if the roster should stop recording "
-        "it, take it off PersonRef."
+        "ask out of band. Add the field to the form; or, if a requester should not be the "
+        "one to supply it, add it to FIELDS_A_REQUESTER_MUST_NOT_SUPPLY with the reason; or, if "
+        "the roster should stop recording it, take it off PersonRef."
     )
+
+
+def test_no_field_is_excused_from_the_form_without_being_on_it() -> None:
+    """Mutation: excuse a field by name that the form asks for anyway, or that is gone.
+
+    An exclusion is only an argued decision while it names a field that exists and is
+    genuinely absent from the form. One left behind after the field was removed from
+    ``PersonRef``, or after somebody added the question to the form, is a comment claiming
+    a decision nobody is taking any more.
+    """
+    for field in FIELDS_A_REQUESTER_MUST_NOT_SUPPLY:
+        assert field in PersonRef.model_fields, (
+            f"{field} is excused from {FORM_PATH.name} and PersonRef has no such field, so "
+            "the exclusion argues about nothing"
+        )
+        assert field not in field_ids(), (
+            f"{field} is excused from {FORM_PATH.name} and the form asks for it anyway, so "
+            "the exclusion is out of date rather than a decision"
+        )
 
 
 def test_the_form_says_that_a_guessed_wandb_name_is_worse_than_no_name() -> None:

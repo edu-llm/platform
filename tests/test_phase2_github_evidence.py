@@ -183,6 +183,16 @@ def test_the_membership_captured_is_of_the_team_the_lead_gate_actually_names(
     # capture the reviewer tests use, so the gate this is tied to cannot drift from the
     # gate they describe.
     lead_gate = next(e for e in environments.environments if e.name == "run-approval-lead")
+
+    # Unpacked with a message rather than as a tuple assignment. Two sibling tests fail
+    # loudly if the gate gains a second reviewer, so nothing is missed either way, but a
+    # bare ValueError: too many values to unpack is the one failure in this module that
+    # says nothing about what it is complaining about.
+    assert len(lead_gate.reviewers) == 1, (
+        "the lead gate names more than one reviewer, so there is no longer a single team "
+        "for this capture to be the membership of, and the two comparisons below are "
+        f"about one entry in a longer list: {[(r.kind, r.name) for r in lead_gate.reviewers]}"
+    )
     (reviewer,) = lead_gate.reviewers
 
     assert (reviewer.kind, reviewer.name) == ("Team", lead_team.team_slug)

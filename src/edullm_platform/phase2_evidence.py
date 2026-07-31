@@ -214,6 +214,21 @@ class LeadTeamMembership(FreshEvidenceModel):
     organization: SecretFreeStr = Field(min_length=1)
     repository: SecretFreeStr = Field(min_length=1)
     team_slug: SecretFreeStr = Field(min_length=1)
+
+    #: Plain ``str`` where every other field here is ``SecretFreeStr``, and the exception
+    #: is a decision rather than an oversight. That scan refuses any bare run of twelve
+    #: digits, because in free text that is an AWS account id -- and a GitHub login of
+    #: twelve digits is a legal login, so the scan would refuse a real member and take the
+    #: whole record down with him, failing the criteria that read it for a reason having
+    #: nothing to do with the gate. What the scan would be protecting is already had by
+    #: shape: the endpoint behind this field returns logins, nothing but the login is
+    #: written, and there is no field here a credential could arrive in.
+    #:
+    #: The inconsistency that leaves is real and is the lesser risk. ``EnvironmentReviewer
+    #: .name`` carries logins too and keeps the scan, so it would refuse the same login --
+    #: but that field holds reviewers this repository chose and would recognize, while
+    #: this one holds everyone an owner has added to a team, which is precisely where a
+    #: login nobody here chose turns up.
     member_logins: OrderedStrings = Field(strict=False)
 
 

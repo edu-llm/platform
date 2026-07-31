@@ -6,8 +6,8 @@ writes one immutable intent record and one immutable decision record to S3. This
 records the twenty-two checks the phase must satisfy, against the contract in
 ``edullm_platform.criteria``.
 
-**Most of them are gaps today, and the reason is worth being exact about.** The path ran.
-On 2026-07-27 a submission went through the lead gate and produced records; an
+**Eight of the twenty-two are gaps today, and the reason is worth being exact about.** The
+path ran. On 2026-07-27 a submission went through the lead gate and produced records; an
 exception-classified submission routed to the admin gate and produced records; a duplicate
 execution name was refused; a tampered hash was refused and still earned a decision record;
 and the six-probe denial matrix came back refused on every entry. Those runs are in the
@@ -97,7 +97,7 @@ AUTHZ = "tests/test_authorization.py"
 #:
 #: It used to say that no Phase 2 capture existed at all, which was true when it was
 #: written and stopped being true the same day. The correction matters more than the
-#: wording: a criterion that reads "nothing is captured" beside eight criteria covered on
+#: wording: a criterion that reads "nothing is captured" beside ten criteria covered on
 #: captures tells a reader the opposite of what the definition records, and the artifact
 #: each of these is actually short of is narrower and harder to find than "a capture".
 #:
@@ -488,15 +488,16 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 *_ids(GITHUB, "test_no_member_who_is_not_a_lead_or_admin_reviews_either_gate"),
                 *_ids(
                     GITHUB,
+                    "test_the_membership_captured_is_of_the_team_the_lead_gate_actually_names",
+                ),
+                *_ids(
+                    GITHUB,
                     "test_only_a_lead_the_roster_declares_can_release_a_run_at_the_lead_gate",
                 ),
+                *_ids(GITHUB, "test_no_environment_lets_an_admin_release_without_a_reviewer"),
             ),
             supporting_node_ids=(
                 *_ids(AUTHZ, "test_plain_member_routine_run_approved_by_another_plain_member_is_denied"),
-                *_ids(
-                    GITHUB,
-                    "test_the_membership_captured_is_of_the_team_the_lead_gate_actually_names",
-                ),
                 *_ids(
                     GITHUB,
                     "test_a_lead_the_roster_declares_is_never_locked_out_of_the_lead_gate",
@@ -524,10 +525,45 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                     "and the comparison against the roster is what now fails by name instead."
                 ),
                 (
+                    "WHICH OF THOSE CITATIONS PROVE THE STATEMENT AND WHICH SUPPORT IT WAS "
+                    "SETTLED BY MUTATING THE CAPTURE RATHER THAN BY READING IT. Point "
+                    "team_slug at some other team and both roster comparisons stay green -- "
+                    "they compare a list of logins against a list of logins, and any team of "
+                    "leads satisfies them -- while only "
+                    "test_the_membership_captured_is_of_the_team_the_lead_gate_actually_names "
+                    "fails. That test is what ties the membership to this gate, so without it "
+                    "the other two are about a team rather than about the lead gate, which is "
+                    "why it is proving here rather than cited beside the proof. "
+                    "test_a_lead_the_roster_declares_is_never_locked_out_of_the_lead_gate is "
+                    "the one that stays supporting, and the reason is the statement rather "
+                    "than the test's strength: it establishes that the two lists agree, which "
+                    "is what licenses reading roster membership as gate membership, and it "
+                    "bears on whether a lead can be kept out rather than on whether a member "
+                    "can get in. Empty the captured membership and it is the only citation "
+                    "that fails, which is the right result for this criterion: a lead gate "
+                    "with nobody behind it releases nothing."
+                ),
+                (
                     "Note that prevent_self_review is deliberately false on both "
                     "environments, because leads self-authorizing and admins approving their "
                     "own exceptions are both intended. The flag is not what enforces this, "
                     "and a reader must not be left thinking it is."
+                ),
+                (
+                    "THE OTHER FLAG IS WHAT THIS PROOF QUIETLY RESTS ON, SO IT IS CITED HERE "
+                    "AND NOT ONLY WHERE IT WAS FIRST WRITTEN DOWN. Every citation above bounds "
+                    "who may be asked to review. With can_admins_bypass true a repository "
+                    "admin releases a waiting deployment through Start all waiting jobs "
+                    "without being a reviewer at all and without leaving an approval record, "
+                    "so the reviewer lists would be an accurate description of a control "
+                    "nobody has to pass -- and GitHub grants repository admin in repository "
+                    "settings, independently of the admins list in config/organization.yaml, "
+                    "so nothing in the roster bounds who holds it. The capture records the "
+                    "flag false on both environments and "
+                    "test_no_environment_lets_an_admin_release_without_a_reviewer pins it. If "
+                    "somebody turns it on, what still holds is the authorization half: the "
+                    "bypass leaves no approver for the submitting job to read, so admission "
+                    "refuses the run rather than attributing it to nobody."
                 ),
                 (
                     "How it was closed, since the previous entry here was a remedy rather "
@@ -544,10 +580,15 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                     "that ended on 2026-07-30, which config/organization.yaml records."
                 ),
                 (
-                    "What a capture cannot do is notice a change while nobody is looking. This "
-                    "is a statement about its observed_at and it expires with the freshness "
-                    "window, so in the interval between two captures a member added to the "
-                    "team-leads team is a reviewer on the lead gate and no test here fails. "
+                    "What a capture cannot do is notice a change while nobody is looking. "
+                    "This criterion rests on two captures rather than one and they were taken "
+                    "four days apart -- the environments on 2026-07-27 and the team membership "
+                    "on 2026-07-31 -- so it is a statement about two observed_at values, and "
+                    "the earlier one governs: each expires on its own freshness window, the "
+                    "environment capture lapses first, and the proof lapses with it rather "
+                    "than surviving on the newer record. In the interval between two captures "
+                    "a member added to the team-leads team is a reviewer on the lead gate and "
+                    "no test here fails. "
                     "What stands behind the gate in that interval is unchanged: "
                     "evaluate_authorization refuses the submission after the approval, so the "
                     "run does not start, and the residual is that somebody held an approval "
@@ -798,16 +839,16 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                     GITHUB,
                     "test_the_lead_gate_is_reviewed_by_the_leads_team_rather_than_by_named_people",
                 ),
-            ),
-            supporting_node_ids=(
-                *_ids(GITHUB, "test_both_approval_environments_exist_and_no_third_one_does"),
-                *_ids(GITHUB, "test_self_review_is_deliberately_permitted_on_both_gates"),
                 *_ids(
                     GITHUB,
                     "test_the_membership_captured_is_of_the_team_the_lead_gate_actually_names",
                 ),
                 *_ids(GITHUB, "test_only_a_lead_the_roster_declares_can_release_a_run_at_the_lead_gate"),
                 *_ids(GITHUB, "test_a_lead_the_roster_declares_is_never_locked_out_of_the_lead_gate"),
+            ),
+            supporting_node_ids=(
+                *_ids(GITHUB, "test_both_approval_environments_exist_and_no_third_one_does"),
+                *_ids(GITHUB, "test_self_review_is_deliberately_permitted_on_both_gates"),
             ),
             scope_limits=(
                 (
@@ -820,6 +861,16 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                     "this next should take the pairing as the lesson: two criteria sharing "
                     "evidence can disagree about what the evidence proves, and the optimistic "
                     "one is not the one to trust."
+                ),
+                (
+                    "Those three are recorded as proving, and for the first day they existed "
+                    "they were not, which made this paragraph disagree with the table above "
+                    "it: the bundle renders a supporting citation as evidence cited rather "
+                    "than as proof, so it printed the three tests that close the overclaim as "
+                    "not amounting to one. For a gate whose reviewer is a team, the statement "
+                    "that the reviewer lists match the roster is exactly the two directions "
+                    "plus the pin that says which team was captured. Nothing else here "
+                    "reaches the lead gate's effective reviewer list at all."
                 ),
                 (
                     "The membership is compared through a capture of its own rather than by "
@@ -861,8 +912,11 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                     "about."
                 ),
                 (
-                    "This rests on a capture, so it is a statement about 2026-07-27 rather "
-                    "than about now, and it expires with the freshness window. A GitHub "
+                    "This rests on two captures rather than one, and they were taken four "
+                    "days apart: the environments on 2026-07-27 and the lead team's "
+                    "membership on 2026-07-31. Each expires on its own freshness window and "
+                    "the earlier one governs, so this is a statement about 2026-07-27 and it "
+                    "lapses then rather than being carried by the newer record. A GitHub "
                     "setting changes in a browser in ten seconds and leaves no artifact in "
                     "any repository, which is exactly why the statement about one has to "
                     "lapse rather than stand."

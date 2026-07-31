@@ -2,7 +2,7 @@
 
 The gate is GitHub configuration rather than code, and nothing in this repository could read it until this capture existed. A setting here changes in a browser in ten seconds and leaves no artifact in any repository, which is why a statement about one expires rather than standing: these records stop loading on 2026-08-26.
 
-Captured by `tools/capture_phase2_evidence.py` from `edu-llm/platform` and read from `fixtures/evidence/phase-2/github/environments.sanitized.json` and `fixtures/evidence/phase-2/github/secrets.sanitized.json`.
+Captured by `tools/capture_phase2_evidence.py` from `edu-llm/platform` and read from `fixtures/evidence/phase-2/github/environments.sanitized.json`, `fixtures/evidence/phase-2/github/secrets.sanitized.json` and `fixtures/evidence/phase-2/github/lead-team.sanitized.json`.
 
 ## Both approval environments, as configured
 
@@ -12,6 +12,8 @@ Captured by `tools/capture_phase2_evidence.py` from `edu-llm/platform` and read 
 | run-approval-lead | Team:team-leads | custom | main | no | no |
 
 Every environment the capture found is listed, not only the two this phase expects. An environment is auto-created, with no protection rules at all, by anybody who can name one in a workflow file -- which is everybody who can submit -- so a capture reading only the two expected names would report a healthy gate with a third, unprotected environment beside it.
+
+**The lead gate's single reviewer is a team, so its effective reviewer list is a second record.** The environment capture can say that the slot holds a team and cannot say who stands behind it, because that is organization state no file in this repository follows. `fixtures/evidence/phase-2/github/lead-team.sanitized.json` is that record: eight logins in `team-leads`, compared against `team_leads` in `config/organization.yaml` in both directions rather than flattened into the reviewer list above, which would agree with the roster for the wrong reason. It was taken on a later day than the environment capture, and the expiry quoted above is the earlier of the two: a criterion resting on both is only as current as the older one.
 
 **The branch policy form is asserted specifically and the two forms are not equivalent.** `protected_branches` follows whatever branch protection happens to cover, so it widens the moment a second branch is protected -- a change nobody would connect to this control. `custom_branch_policies` matches names that were written down.
 

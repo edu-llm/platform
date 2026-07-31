@@ -6,23 +6,24 @@ over every document before it is written, and the same rule that no sentence may
 criterion a status the gate did not reach.
 
 **Phase 2 is not accepted, and this bundle has to say so on its first screen.** The gate
-exits 1: nine of the twenty-two criteria are gaps. That is not a broken gate. The path ran
+exits 1: eight of the twenty-two criteria are gaps. That is not a broken gate. The path ran
 end to end on 2026-07-27 -- a lead released their own routine run, an exception routed to
 the admin gate, a duplicate execution name was refused, a tampered hash was refused and
 still earned a decision record, and a six-probe denial matrix came back refused on every
 entry -- and what is committed is a capture of the *state* those runs left behind rather
 than of the runs. A criterion whose statement can only be established by evidence nobody
 committed is a gap however convincing the run was to whoever watched it, so the index
-names the nine before it names anything else.
+names the eight before it names anything else.
 
 Three kinds of document come out of that, and the distinction is the one thing to
 understand before reading any of them:
 
-*Rendered from a committed capture.* The lineage store, the admission executions and the
-GitHub environment and secret configuration were captured and are read here. Eight criteria
-are covered on the strength of them, which is why :func:`read_captures` refuses the whole
-build if any of them has expired or stopped loading: a bundle that printed those eight as
-covered after the capture lapsed would state a status the gate does not reach.
+*Rendered from a committed capture.* The lineage store, the admission executions, the
+GitHub environment and secret configuration and the membership of the team that reviews
+the lead gate were captured and are read here. Ten criteria are covered on the strength of
+them, which is why :func:`read_captures` refuses the whole build if any of them has
+expired or stopped loading: a bundle that printed those ten as covered after the capture
+lapsed would state a status the gate does not reach.
 
 *Rendered, and carrying no evidence.* ``admission-denial-matrix.md`` describes a matrix
 that has run live and was never captured. It is rendered from the probe definitions rather
@@ -75,6 +76,7 @@ from edullm_platform.phase2_evidence import (
     PHASE2_ROLE_TEMPLATES,
     AdmissionExecutionInventory,
     EnvironmentInventory,
+    LeadTeamMembership,
     LineageInventory,
     SecretInventory,
 )
@@ -158,10 +160,33 @@ GENERATOR_COMMAND: Final = "uv run python tools/build_phase2_proof.py"
 EVIDENCE_DIR: Final = "fixtures/evidence/phase-2"
 ENVIRONMENTS_PATH: Final = f"{EVIDENCE_DIR}/github/environments.sanitized.json"
 SECRETS_PATH: Final = f"{EVIDENCE_DIR}/github/secrets.sanitized.json"
+LEAD_TEAM_PATH: Final = f"{EVIDENCE_DIR}/github/lead-team.sanitized.json"
 EXECUTIONS_PATH: Final = f"{EVIDENCE_DIR}/executions.sanitized.json"
 LINEAGE_PATH: Final = f"{EVIDENCE_DIR}/lineage.sanitized.json"
 RECORDS_DIR: Final = f"{EVIDENCE_DIR}/lineage/records"
 SCENARIO_DIR: Final = "fixtures/authorization"
+
+CaptureModel = (
+    EnvironmentInventory
+    | SecretInventory
+    | LeadTeamMembership
+    | AdmissionExecutionInventory
+    | LineageInventory
+)
+
+#: Every committed capture this bundle rests on, with the model that reads it back. One
+#: tuple rather than a list inside :func:`read_captures`, because three separate places
+#: have to agree about it -- what is loaded, what governs the expiry date, and what the
+#: refusal test breaks -- and the lead-team capture is here because it was added to none
+#: of them. It was committed, cited by criteria 9 and 15, measured in the digest table by
+#: an ``rglob``, and never loaded: backdating it moved no date and refused no build.
+CAPTURE_SOURCES: Final[tuple[tuple[str, type[CaptureModel]], ...]] = (
+    (ENVIRONMENTS_PATH, EnvironmentInventory),
+    (SECRETS_PATH, SecretInventory),
+    (LEAD_TEAM_PATH, LeadTeamMembership),
+    (EXECUTIONS_PATH, AdmissionExecutionInventory),
+    (LINEAGE_PATH, LineageInventory),
+)
 
 CAPTURE_TOOL: Final = "tools/capture_phase2_evidence.py"
 
@@ -294,6 +319,7 @@ class CommittedEvidence:
 
     environments: EnvironmentInventory
     secrets: SecretInventory
+    lead_team: LeadTeamMembership
     executions: AdmissionExecutionInventory
     lineage: LineageInventory
     intents: tuple[tuple[str, IntentRecord], ...]
@@ -301,10 +327,17 @@ class CommittedEvidence:
 
     @property
     def expires_on(self) -> str:
-        """When the earliest of these captures stops loading, as a date."""
+        """When the earliest of these captures stops loading, as a date.
+
+        The earliest and not each one's own, because the bundle is refused as a whole:
+        the captures were not taken on the same day -- the GitHub environments on
+        2026-07-27 and the lead team on 2026-07-31 -- and a criterion resting on both is
+        only as current as the older of them.
+        """
         observed = [
             self.environments.observed_at,
             self.secrets.observed_at,
+            self.lead_team.observed_at,
             self.executions.observed_at,
             self.lineage.observed_at,
         ]
@@ -388,20 +421,21 @@ def read_lineage_payloads(repo_root: Path, kind: str) -> tuple[tuple[str, object
 def read_captures(repo_root: Path) -> CommittedEvidence:
     """The committed Phase 2 captures, or a refusal naming why one does not load.
 
-    Eight criteria are recorded as covered on the strength of these records, and the
+    Ten criteria are recorded as covered on the strength of these records, and the
     matrix prints the recorded status. So once a capture expires, drifts or stops loading,
     the gate fails those criteria and this bundle would still print them covered -- which
     is the one defect a bundle cannot survive. Refusing is also what makes the expiry
     visible: somebody has to re-capture, or delete the records and the citations.
+
+    Every capture is loaded from :data:`CAPTURE_SOURCES` rather than from a list written
+    here, because a capture this function does not open is a capture that cannot refuse
+    anything. The lead-team record was committed on 2026-07-31, cited by criteria 9 and
+    15, and left out of this loop: backdating it past the freshness window changed no date
+    in the bundle and stopped no build, so the generator would have printed both criteria
+    covered while the gate failed them.
     """
-    sources: tuple[tuple[str, type[EnvironmentInventory | SecretInventory | AdmissionExecutionInventory | LineageInventory]], ...] = (
-        (ENVIRONMENTS_PATH, EnvironmentInventory),
-        (SECRETS_PATH, SecretInventory),
-        (EXECUTIONS_PATH, AdmissionExecutionInventory),
-        (LINEAGE_PATH, LineageInventory),
-    )
-    loaded: dict[str, object] = {}
-    for relative_path, model in sources:
+    loaded: dict[str, CaptureModel] = {}
+    for relative_path, model in CAPTURE_SOURCES:
         path = repo_root / relative_path
         try:
             loaded[relative_path] = model.model_validate(
@@ -418,15 +452,18 @@ def read_captures(repo_root: Path) -> CommittedEvidence:
             ) from error
     environments = loaded[ENVIRONMENTS_PATH]
     secrets = loaded[SECRETS_PATH]
+    lead_team = loaded[LEAD_TEAM_PATH]
     executions = loaded[EXECUTIONS_PATH]
     lineage = loaded[LINEAGE_PATH]
     assert isinstance(environments, EnvironmentInventory)
     assert isinstance(secrets, SecretInventory)
+    assert isinstance(lead_team, LeadTeamMembership)
     assert isinstance(executions, AdmissionExecutionInventory)
     assert isinstance(lineage, LineageInventory)
     return CommittedEvidence(
         environments=environments,
         secrets=secrets,
+        lead_team=lead_team,
         executions=executions,
         lineage=lineage,
         intents=tuple(
@@ -624,6 +661,7 @@ def render_approval_gate(evidence: CommittedEvidence, checks: Sequence[Criterion
     """The gate as GitHub is configured, and the three things about it nobody captured."""
     environments = evidence.environments
     secrets = evidence.secrets
+    lead_team = evidence.lead_team
     environment_rows = [
         [
             environment.name,
@@ -661,7 +699,7 @@ def render_approval_gate(evidence: CommittedEvidence, checks: Sequence[Criterion
                 (
                     f"Captured by `{CAPTURE_TOOL}` from "
                     f"`{environments.organization}/{environments.repository}` and read from "
-                    f"`{ENVIRONMENTS_PATH}` and `{SECRETS_PATH}`."
+                    f"`{ENVIRONMENTS_PATH}`, `{SECRETS_PATH}` and `{LEAD_TEAM_PATH}`."
                 ),
                 "",
                 "## Both approval environments, as configured",
@@ -685,6 +723,21 @@ def render_approval_gate(evidence: CommittedEvidence, checks: Sequence[Criterion
                     "everybody who can submit -- so a capture reading only the two expected "
                     "names would report a healthy gate with a third, unprotected environment "
                     "beside it."
+                ),
+                "",
+                (
+                    "**The lead gate's single reviewer is a team, so its effective reviewer "
+                    "list is a second record.** The environment capture can say that the slot "
+                    "holds a team and cannot say who stands behind it, because that is "
+                    "organization state no file in this repository follows. "
+                    f"`{LEAD_TEAM_PATH}` is that record: "
+                    f"{spell(len(lead_team.member_logins))} logins in "
+                    f"`{lead_team.team_slug}`, compared against `team_leads` in "
+                    "`config/organization.yaml` in both directions rather than flattened into "
+                    "the reviewer list above, which would agree with the roster for the wrong "
+                    "reason. It was taken on a later day than the environment capture, and the "
+                    "expiry quoted above is the earlier of the two: a criterion resting on both "
+                    "is only as current as the older one."
                 ),
                 "",
                 (
@@ -1619,7 +1672,7 @@ def known_limitations(
 
     return (
         (
-            "The path ran and the runs were not captured. This is the limitation the nine "
+            "The path ran and the runs were not captured. This is the limitation the eight "
             "open checks are consequences of: on 2026-07-27 a lead released a routine run, an "
             "exception routed to the admin gate, a duplicate execution name was refused, a "
             "tampered hash was refused, and a six-probe denial matrix came back refused on "
@@ -1656,9 +1709,10 @@ def known_limitations(
             "misreport it. The gate itself cannot be skipped."
         ),
         (
-            "Every committed Phase 2 capture is a statement about one moment. They stop "
-            f"loading on {evidence.expires_on}, this generator refuses to build from that "
-            "date, and every check resting on them is open again. Nothing about GitHub or the "
+            "Every committed Phase 2 capture is a statement about one moment, and they were "
+            "not all taken at the same one. The earliest of them stops loading on "
+            f"{evidence.expires_on}, this generator refuses to build from that date, and "
+            "every check resting on any of them is open again. Nothing about GitHub or the "
             "lineage store will have changed; what will have lapsed is anybody's knowledge of "
             "them. Re-capturing is a read of the account rather than another run."
         ),
@@ -2067,7 +2121,7 @@ def render_unit_test_report(verification: Verification) -> str:
             "workflow that could not complete a run, because every assertion compared the "
             "literal text of expressions rather than checking whether they named anything "
             "real. The counts above say the tests pass; `negative-case-matrix.md` says what "
-            "they establish, which for nine of this phase's criteria is not the criterion."
+            "they establish, which for eight of this phase's criteria is not the criterion."
         ),
     )
 

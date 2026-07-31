@@ -68,8 +68,11 @@ body:
     attributes:
       label: Which group are you working with
       description: >-
-        The research group or the person you are working under. This decides who is asked to
-        release your runs.
+        The research group or the person you are working under. This is here so the request
+        reaches whoever sets you up, and so your runs are attributed to the right group
+        afterwards. It does not decide who approves them — approval authority is
+        organization-wide here, so whoever holds it can release any group's routine run
+        including yours, and naming a group grants nobody in it anything.
     validations:
       required: true
 

@@ -10,12 +10,13 @@ no artifact in any repository. That is the reason these records expire: a captur
 statement about one moment, and the freshness window is what stops it reading as a
 statement about now.
 
-**One of the four settings is not in the repository's own organization at all, and that is
-why it was the last to be captured.** The lead gate's only reviewer is the ``team-leads``
-team, so who may release a routine run is a list held in organization settings that no file
-here follows. It joined this tool on 2026-07-31, as the ``lead-team`` target, and
-:func:`capture_lead_team` argues at length about the one thing it can find: a login the
-platform's own roster does not declare.
+**A fourth setting joined those three on 2026-07-31, and it is the one that is not a
+repository setting at all, which is why it was the last to be captured.** The lead gate's
+only reviewer is the ``team-leads`` team, so who may release a routine run is a list held
+in organization settings that no file here follows and that an owner can edit without
+leaving an artifact anywhere. It is the ``lead-team`` target, and :func:`capture_lead_team`
+argues at length about the one thing it can find: a login the platform's own roster does
+not declare.
 
 **Secret names, never values.** The models this writes have no field a value could occupy,
 so this tool cannot leak one by being careless. It reads the endpoints that return names,
@@ -252,15 +253,40 @@ def capture_lead_team(organization: str, repository: str) -> LeadTeamMembership:
     under ``docs-frank/working/``; copying a capture into ``fixtures/`` is a person's
     decision, taken with the unrecognized login in front of them. That review is the
     control, and what it must not be is a decision this code takes silently on their behalf.
+
+    What makes that cost small in practice is worth stating rather than leaving to be
+    rediscovered: every login in the committed capture is already in ``team_leads`` in
+    ``config/organization.yaml``, which this repository publishes. So the marginal
+    disclosure is not the team's membership, which is public here already -- it is confined
+    to exactly the undeclared login this record exists to surface, and that one is a grant
+    somebody made over this platform's runs rather than a fact about a stranger.
     """
     observed_at = _observed_at()
-    # per_page rather than --paginate: the default page holds thirty, and gh api
-    # --paginate emits one JSON array per page, which json.loads cannot read back as a
-    # single document. A hundred is far past any roster this platform will have, and a
-    # team that did exceed it would be captured short -- which the roster comparison
-    # reports as leads missing from GitHub, a false alarm rather than a silence.
-    # Maintainers come back beside members, which is right: GitHub asks either to review.
-    members = _gh(f"orgs/{organization}/teams/{LEAD_APPROVAL_TEAM_SLUG}/members?per_page=100")
+    # Every page, because truncation here is silent in the direction that matters. The
+    # default page holds thirty and the maximum is a hundred, and this asked for a hundred
+    # on the argument that a team past the cap would be captured short in a way the roster
+    # comparison reports as leads missing from GitHub -- a false alarm rather than a
+    # silence. That holds only for a login the roster declares. An undeclared login past
+    # the cut is simply absent, and the comparison that would have named it checks the
+    # captured logins against the roster, so a login nobody captured fails nothing. The
+    # one case this record exists to surface is the one a short capture drops quietly.
+    #
+    # --slurp is what makes paginating readable back: bare --paginate emits one JSON array
+    # per page, which json.loads cannot parse as a single document, and --slurp (gh 2.44
+    # and later) wraps the pages into one outer array, flattened below. An older gh fails
+    # on the unknown flag and the capture stops, which is the right way to lose.
+    #
+    # role defaults to all, so maintainers come back beside members, which is right:
+    # GitHub asks either of them to review. Members of child teams come back too, carrying
+    # inherited true, and they are kept for the same reason -- a child team's member can
+    # release a deployment the parent team is the reviewer on, so dropping them would make
+    # this record smaller than the set of people who can open the gate.
+    pages = _gh(
+        "--paginate",
+        "--slurp",
+        f"orgs/{organization}/teams/{LEAD_APPROVAL_TEAM_SLUG}/members?per_page=100",
+    )
+    logins = sorted(str(member["login"]) for page in pages or [] for member in page or [])
     return LeadTeamMembership(
         observed_at=observed_at,
         source="github",
@@ -268,7 +294,7 @@ def capture_lead_team(organization: str, repository: str) -> LeadTeamMembership:
         organization=organization,
         repository=repository,
         team_slug=LEAD_APPROVAL_TEAM_SLUG,
-        member_logins=tuple(sorted(str(member["login"]) for member in members or [])),
+        member_logins=tuple(logins),
     )
 
 
