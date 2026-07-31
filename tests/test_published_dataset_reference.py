@@ -11,6 +11,12 @@ PUBLISHED_URI = "s3://edullm-data/pretrain/olmo-150b-dolma2/v1/"
 #: with the manifest_sha256 map in its _VALIDATED.json. Bare hex, which is the point.
 TOKENS_GROUP_DIGEST = "3f00499dbed01bc01a57097e84ae38ccd670b2b9d7981587d5fc828466ccf699"
 
+#: The same dataset.json's groups[0].depends_on[0].manifest_sha256 -- the tokenizer dependency,
+#: role: "tokenizer", dataset_id: "tokenizer/dolma2-bpe" -- read live 2026-07-31. Same file, same
+#: group, a different digest for a different claim, and the plausible wrong one to copy: it is
+#: also 64 bare hex characters, so nothing about its shape marks it as the wrong candidate.
+TOKENIZER_DEPENDENCY_DIGEST = "b37b8954f767a351b726aa66f47867c299be41f96aee7b17171bf8851a772267"
+
 INSIDE_THE_SANDBOX = (
     "s3://sbsandbox-intern-edullm-outputs/teams/platform/runs/x/",
     "s3://sbsandbox-intern-edullm-datasets/dolma/2026-07/",
@@ -103,15 +109,23 @@ def test_the_digest_a_reference_pins_is_the_one_group_manifest_and_not_the_datas
     dataset_paths reads one group; pinning the other means comparing two values that were
     never meant to be equal and reporting the mismatch as a corrupted corpus.
 
-    Read live 2026-07-31: pretrain/regmix-10b/v1 carries dataset_sha256 2171d43a... and
-    manifest_sha256 {"tokens": "a24992f5..."}, and they differ, which is what makes the
-    confusion possible and this test worth writing.
+    There is no dataset-level digest to fall back on -- the digest is per group, full stop --
+    and this corpus's own dataset.json offers a second, wrong candidate at that same group:
+    groups[0].depends_on[0].manifest_sha256, the tokenizer dependency's digest, also 64 bare hex
+    characters and therefore indistinguishable by shape. TOKENIZER_DEPENDENCY_DIGEST names it so
+    this test can fail for the reason its name gives: it fails if the tokenizer's digest is
+    pinned in place of the group's, not merely if the field's type changes.
+
+    Read live 2026-07-31 from pretrain/olmo-150b-dolma2/v1/dataset.json: groups[0].manifest_sha256
+    is TOKENS_GROUP_DIGEST (the one to pin) and groups[0].depends_on[0].manifest_sha256 is
+    TOKENIZER_DEPENDENCY_DIGEST (role: "tokenizer", the wrong one to copy).
     """
     reference = PublishedDatasetReference.model_validate(
         reference_payload(manifest_sha256=TOKENS_GROUP_DIGEST)
     )
 
     assert reference.manifest_sha256 == TOKENS_GROUP_DIGEST
+    assert reference.manifest_sha256 != TOKENIZER_DEPENDENCY_DIGEST
 
 
 def test_a_reference_names_the_tokenizer_the_corpus_declares_and_never_a_default() -> None:
@@ -209,3 +223,54 @@ def test_the_reader_arguments_are_stored_apart_rather_than_split_from_the_uri() 
     reference = PublishedDatasetReference.model_validate(reference_payload())
 
     assert reference.uri.endswith(f"/{reference.dataset_id}/{reference.version}/")
+
+
+def test_a_dataset_id_missing_its_family_segment_is_refused_even_though_it_is_a_suffix_match() -> (
+    None
+):
+    """Mutation: check ``uri.endswith(f"/{dataset_id}/{version}/")`` instead of an exact
+    reconstruction of the uri from its parts.
+
+    ``"olmo-150b-dolma2"`` is a proper suffix of the real id ``"pretrain/olmo-150b-dolma2"`` --
+    the uri still ends with ``"/olmo-150b-dolma2/v1/"`` -- but it is missing its ``pretrain/``
+    segment and is therefore not the corpus's real id. A suffix test accepts this and would
+    store a dataset_id that is not the dataset's id, which a later task passes straight to the
+    upstream reader. This is exactly the case a suffix check lets through and the one a future
+    simplification back to ``endswith`` would reintroduce.
+    """
+    with pytest.raises(ValidationError) as exc_info:
+        PublishedDatasetReference.model_validate(reference_payload(dataset_id="olmo-150b-dolma2"))
+    assert_validation_error(
+        exc_info.value,
+        error_type="value_error",
+        message_fragment="cannot describe different objects",
+    )
+
+
+def test_a_dataset_id_naming_a_different_corpus_than_the_uri_is_refused() -> None:
+    """A plain mismatch, not merely a truncation: the uri and dataset_id name two different
+    corpora entirely, and the reference must be refused rather than silently pinned to whichever
+    one the reader assumes.
+    """
+    with pytest.raises(ValidationError) as exc_info:
+        PublishedDatasetReference.model_validate(
+            reference_payload(dataset_id="pretrain/regmix-10b")
+        )
+    assert_validation_error(
+        exc_info.value,
+        error_type="value_error",
+        message_fragment="cannot describe different objects",
+    )
+
+
+def test_a_version_that_disagrees_with_the_uri_is_refused() -> None:
+    """The uri, dataset_id and version must all describe the same object; a version field that
+    disagrees with the uri's path segment is refused the same way a disagreeing dataset_id is.
+    """
+    with pytest.raises(ValidationError) as exc_info:
+        PublishedDatasetReference.model_validate(reference_payload(version="v2"))
+    assert_validation_error(
+        exc_info.value,
+        error_type="value_error",
+        message_fragment="cannot describe different objects",
+    )
