@@ -4,13 +4,18 @@ Same shape as ``tests/test_capture_phase3_evidence_cli.py``: a stub ``aws`` on P
 answering out of ``fixtures/evidence/phase-2/``, and the tool's output compared against
 the committed records that supplied the answers.
 
-**Only the lineage target, and that is a measurement rather than a stopping point.** Two
-of this tool's four targets read GitHub through ``gh`` rather than an account through
+**Only the lineage target, and that is a measurement rather than a stopping point.** Three
+of this tool's five targets read GitHub through ``gh`` rather than an account through
 ``aws``, and the committed captures for them sit under ``github/`` while the tool writes
 them at the output root -- so covering those means a second stub and a path mapping
 invented here rather than read off the tool. Lineage is the target that carries the shared
 write path: it is the one write in this tool that commits a document nobody in this
 repository composed, and therefore the one that could commit an account id.
+
+The third of those three, ``lead-team``, arrived on 2026-07-31 and is uncovered here for
+the same reason as the other two rather than by oversight. What it writes was checked by
+hand against a stub answering the members endpoint, and the record it produced was
+byte-identical to the committed capture apart from the observation instant.
 """
 
 from __future__ import annotations

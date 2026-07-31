@@ -29,6 +29,15 @@ counts as one slot. A capture that flattened teams into their members would repo
 reviewers and agree with the roster for the wrong reason -- and would go on agreeing after
 somebody replaced the team with six named users, which is a different control.
 
+**Who is in that team is therefore a second record, and until 2026-07-31 there was none.**
+Keeping the reviewer as a team is right and it leaves a question the environment capture
+cannot answer: one slot with eight people behind it, held in organization settings that no
+file in this repository follows and that an owner can edit without leaving an artifact
+anywhere. A member added to the team becomes a reviewer on the lead gate, and every test
+reading the environment capture goes on passing. :class:`LeadTeamMembership` is the answer,
+and it carries the team's slug beside its members so a capture of some other team cannot be
+mistaken for this one.
+
 Everything here is a :class:`~edullm_platform.evidence.FreshEvidenceModel`, so a record
 older than the freshness window refuses to load rather than reading as current. A GitHub
 setting can be changed in a browser in ten seconds, which is precisely why a statement about
@@ -50,8 +59,10 @@ from edullm_platform.evidence import (
 
 __all__ = [
     "APPROVAL_ENVIRONMENT_NAMES",
+    "LEAD_APPROVAL_TEAM_SLUG",
     "EnvironmentInventory",
     "EnvironmentReviewer",
+    "LeadTeamMembership",
     "ProtectedEnvironment",
     "SecretInventory",
 ]
@@ -60,6 +71,12 @@ __all__ = [
 #: else is capturing the wrong environments, and a capture missing one of these is
 #: capturing an incomplete gate.
 APPROVAL_ENVIRONMENT_NAMES: tuple[str, ...] = ("run-approval-lead", "run-approval-admin")
+
+#: The one team that reviews ``run-approval-lead``. Written down here rather than read off
+#: the environment capture, because a capture is the thing being checked: a tool that
+#: asked GitHub which team reviews the gate and then captured that team's members could
+#: never disagree with the gate, and disagreeing is the whole job.
+LEAD_APPROVAL_TEAM_SLUG: str = "team-leads"
 
 #: The three roles Phase 2 creates, and the committed templates that declare them. The
 #: Phase 1 list is separate on purpose: these roles belong to a different phase's evidence
@@ -160,6 +177,44 @@ class EnvironmentInventory(FreshEvidenceModel):
     @property
     def names(self) -> tuple[str, ...]:
         return tuple(environment.name for environment in self.environments)
+
+
+class LeadTeamMembership(FreshEvidenceModel):
+    """Everyone in the GitHub team that reviews ``run-approval-lead``, as GitHub lists them.
+
+    The record :class:`ProtectedEnvironment` structurally cannot hold, and the reason it
+    cannot is deliberate. The gate names one reviewer of kind ``Team``; who stands behind
+    that slot is organization state, not repository state, and the platform's own list of
+    leads is ``team_leads`` in ``config/organization.yaml``. The two are edited in different
+    places by different people and have already disagreed in both directions at once.
+
+    **Logins are recorded exactly as GitHub returned them, including any this repository
+    does not declare, and there is no placeholder for one.** ``phase1_evidence``'s
+    ``UNDECLARED_IDENTITY_PLACEHOLDER`` exists for the opposite situation -- a per-person
+    IAM role in a sandbox account shared with teams this project has nothing to do with --
+    and folding an unrecognized login into a placeholder here would delete the single fact
+    this record was built to surface. ``tools/capture_phase2_evidence.py`` argues that in
+    full at the point where the redaction would have gone.
+
+    ``team_slug`` is captured rather than assumed so that a capture of some other team
+    cannot be read as this one, and ``tests/test_phase2_github_evidence.py`` pins it
+    against the reviewer the lead gate actually names. ``repository`` is recorded even
+    though a team belongs to an organization: the claim being made is about this
+    repository's gate, and the same team can review an environment on a repository this
+    platform does not own.
+
+    ``member_logins`` may be empty and that is not refused. A team with nobody in it is a
+    lead gate no routine run can ever pass, which is a real state worth writing down
+    rather than a capture failure -- and the roster comparison reports it by naming all
+    eight leads as missing, which is louder than any refusal here would be.
+    """
+
+    source: Literal["github"]
+    environment: EvidenceEnvironment
+    organization: SecretFreeStr = Field(min_length=1)
+    repository: SecretFreeStr = Field(min_length=1)
+    team_slug: SecretFreeStr = Field(min_length=1)
+    member_logins: OrderedStrings = Field(strict=False)
 
 
 class SecretInventory(FreshEvidenceModel):

@@ -10,6 +10,13 @@ no artifact in any repository. That is the reason these records expire: a captur
 statement about one moment, and the freshness window is what stops it reading as a
 statement about now.
 
+**One of the four settings is not in the repository's own organization at all, and that is
+why it was the last to be captured.** The lead gate's only reviewer is the ``team-leads``
+team, so who may release a routine run is a list held in organization settings that no file
+here follows. It joined this tool on 2026-07-31, as the ``lead-team`` target, and
+:func:`capture_lead_team` argues at length about the one thing it can find: a login the
+platform's own roster does not declare.
+
 **Secret names, never values.** The models this writes have no field a value could occupy,
 so this tool cannot leak one by being careless. It reads the endpoints that return names,
 and there is no code path here that asks for a value.
@@ -53,10 +60,12 @@ if str(PROJECT_ROOT) not in sys.path:
 from edullm_platform.canonical import canonical_json_bytes
 from edullm_platform.capture_tooling import CaptureFailedError, write_sanitized_text
 from edullm_platform.phase2_evidence import (
+    LEAD_APPROVAL_TEAM_SLUG,
     AdmissionExecution,
     AdmissionExecutionInventory,
     EnvironmentInventory,
     EnvironmentReviewer,
+    LeadTeamMembership,
     LineageInventory,
     LineageObject,
     ProtectedEnvironment,
@@ -69,11 +78,18 @@ from edullm_platform.phase2_evidence import (
 LINEAGE_BUCKET: Final = "sbsandbox-intern-edullm-lineage"
 STATE_MACHINE_NAME: Final = "sbsandbox-intern-edullm-admission"
 
+#: What ``--target`` accepts and what it does with no flag at all. One tuple rather than
+#: two lists, because the two have to agree and a target added to only the second is a
+#: capture nobody can ask for by name.
+CAPTURE_TARGETS: Final = ("environments", "secrets", "lead-team", "lineage", "executions")
+
 __all__ = [
     "ALLOWED_OUTPUT_SUFFIX",
+    "CAPTURE_TARGETS",
     "CaptureError",
     "capture_environments",
     "capture_executions",
+    "capture_lead_team",
     "capture_lineage",
     "capture_secrets",
     "main",
@@ -197,6 +213,62 @@ def capture_environments(organization: str, repository: str) -> EnvironmentInven
         organization=organization,
         repository=repository,
         environments=tuple(sorted(captured, key=lambda item: item.name)),
+    )
+
+
+def capture_lead_team(organization: str, repository: str) -> LeadTeamMembership:
+    """Everyone GitHub holds in the team that reviews ``run-approval-lead``.
+
+    The environment capture records that the lead gate's one reviewer is a team. This
+    records who that is, which is organization state an owner edits in a browser and which
+    no file in this repository follows. Without it a member added to the team is a reviewer
+    on the gate and nothing here can say so.
+
+    Sorted, so two captures of an unchanged team are byte-identical apart from the
+    observation instant. The committed records are canonical JSON for that reason, and an
+    unstable capture would put a diff in front of a reviewer on every re-capture until
+    they stopped reading them.
+
+    **WHAT THIS DOES WITH A LOGIN ``config/organization.yaml`` DOES NOT DECLARE: writes it
+    down, unchanged.** Every login this endpoint returns is by construction supposed to be
+    in ``team_leads``, and the entire reason the record exists is the case where one is
+    not. Each way of not writing it down destroys that.
+
+    Folding it to a placeholder the way ``phase1_evidence`` handles an IAM role this
+    repository does not declare is the nearest analogue and does not carry over. That
+    placeholder protects people in a sandbox AWS account shared with teams this project has
+    nothing to do with, whose per-person role names are not this project's to publish.
+    Nobody is in ``edu-llm/team-leads`` incidentally: membership is approval authority over
+    this platform's runs, granted by an owner of this organization, so an undeclared login
+    is not a stranger's name but this project's own unrecorded grant. Two of them would
+    also fold to one string, leaving a failure that can say neither who nor how many.
+
+    Dropping it makes the two lists agree by construction, which is this exact hole wearing
+    a green tick. Recording a digest instead buys nothing either: a GitHub login has a
+    candidate space small enough to invert against the organization's member list, so it
+    protects nobody while making the failure message unreadable.
+
+    The privacy cost is real and is paid deliberately, one step later. This tool writes only
+    under ``docs-frank/working/``; copying a capture into ``fixtures/`` is a person's
+    decision, taken with the unrecognized login in front of them. That review is the
+    control, and what it must not be is a decision this code takes silently on their behalf.
+    """
+    observed_at = _observed_at()
+    # per_page rather than --paginate: the default page holds thirty, and gh api
+    # --paginate emits one JSON array per page, which json.loads cannot read back as a
+    # single document. A hundred is far past any roster this platform will have, and a
+    # team that did exceed it would be captured short -- which the roster comparison
+    # reports as leads missing from GitHub, a false alarm rather than a silence.
+    # Maintainers come back beside members, which is right: GitHub asks either to review.
+    members = _gh(f"orgs/{organization}/teams/{LEAD_APPROVAL_TEAM_SLUG}/members?per_page=100")
+    return LeadTeamMembership(
+        observed_at=observed_at,
+        source="github",
+        environment="sandbox",
+        organization=organization,
+        repository=repository,
+        team_slug=LEAD_APPROVAL_TEAM_SLUG,
+        member_logins=tuple(sorted(str(member["login"]) for member in members or [])),
     )
 
 
@@ -361,12 +433,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--target",
         action="append",
-        choices=["environments", "secrets", "lineage", "executions"],
+        choices=CAPTURE_TARGETS,
         help="repeatable; defaults to every target",
     )
     parser.add_argument("--output-dir", type=Path, required=True)
     arguments = parser.parse_args(argv)
-    targets = arguments.target or ["environments", "secrets", "lineage", "executions"]
+    targets = arguments.target or list(CAPTURE_TARGETS)
 
     try:
         output_dir = _resolved_output_dir(arguments.output_dir)
@@ -387,6 +459,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 record: Any = capture_environments(arguments.organization, arguments.repository)
             elif target == "secrets":
                 record = capture_secrets(arguments.organization, arguments.repository)
+            elif target == "lead-team":
+                record = capture_lead_team(arguments.organization, arguments.repository)
             elif target == "lineage":
                 record, bodies = capture_lineage(arguments.aws_profile, arguments.aws_region)
                 # The records themselves, beside the inventory. The inventory says what S3

@@ -102,8 +102,10 @@ AUTHZ = "tests/test_authorization.py"
 #: each of these is actually short of is narrower and harder to find than "a capture".
 #:
 #: Two criteria carried this and should not have. Criterion 3 waits on a second lead
-#: rather than on an artifact, and criterion 9 waits on a capture this tool could take but
-#: does not; both now say what they actually wait on, in their own words.
+#: rather than on an artifact and still says so in its own words. Criterion 9 waited on a
+#: capture this tool could have taken and had not; on 2026-07-31 it was taken, and that
+#: criterion is now covered on it. Five criteria still carry the sentence below, and each
+#: of them waits on somebody doing to its artifact what was done to that one.
 NEEDS_A_COMMITTED_CAPTURE: Final = (
     "The capture that exists does not reach this. tools/capture_phase2_evidence.py "
     "records the GitHub environment and secret configuration, the Step Functions "
@@ -473,9 +475,9 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
         CriterionSpec(
             number="9",
             statement="A member cannot approve their own submission.",
-            status=CriterionStatus.GAP,
+            status=CriterionStatus.COVERED,
             pilot_blocking=True,
-            supporting_node_ids=(
+            proving_node_ids=(
                 *_ids(
                     AUTHZ,
                     "test_case_variants_of_a_member_login_are_recognized_as_self_approval",
@@ -483,27 +485,43 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                     "CAIIRIS-caiiris",
                     "CaIiRiS-caIIris",
                 ),
-                *_ids(AUTHZ, "test_plain_member_routine_run_approved_by_another_plain_member_is_denied"),
                 *_ids(GITHUB, "test_no_member_who_is_not_a_lead_or_admin_reviews_either_gate"),
+                *_ids(
+                    GITHUB,
+                    "test_only_a_lead_the_roster_declares_can_release_a_run_at_the_lead_gate",
+                ),
             ),
-            gaps=(
+            supporting_node_ids=(
+                *_ids(AUTHZ, "test_plain_member_routine_run_approved_by_another_plain_member_is_denied"),
+                *_ids(
+                    GITHUB,
+                    "test_the_membership_captured_is_of_the_team_the_lead_gate_actually_names",
+                ),
+                *_ids(
+                    GITHUB,
+                    "test_a_lead_the_roster_declares_is_never_locked_out_of_the_lead_gate",
+                ),
+            ),
+            scope_limits=(
                 (
-                    "Enforced twice and proved once. evaluate_authorization returns "
-                    "self_approval_not_permitted_for_member against the shipped roster, which "
-                    "is the mechanism that holds regardless of GitHub's configuration. The "
-                    "second mechanism is that members are not reviewers on either environment."
+                    "Enforced twice, and as of 2026-07-31 proved twice. evaluate_authorization "
+                    "returns self_approval_not_permitted_for_member against the shipped "
+                    "roster, which is the mechanism that holds regardless of GitHub's "
+                    "configuration. The second mechanism is that members are not reviewers on "
+                    "either environment, and that half was proved only for reviewers named as "
+                    "users until the capture below existed."
                 ),
                 (
-                    "The environment capture reaches part of that second mechanism and not the "
-                    "whole of it, and the difference is where this criterion still sits. "
-                    "test_no_member_who_is_not_a_lead_or_admin_reviews_either_gate reads the "
-                    "committed capture and establishes that every reviewer named as a user on "
-                    "either gate is a lead or an admin in config/organization.yaml. The lead "
-                    "gate names no users at all: its single reviewer is the team-leads team, "
-                    "because eight leads exceed the six reviewer slots and a team counts as "
-                    "one. No capture records who is in that team, so a member added to "
-                    "team-leads on GitHub becomes a reviewer on the lead gate and every test "
-                    "here goes on passing."
+                    "What was missing was the membership of one team, and it is now captured. "
+                    "test_no_member_who_is_not_a_lead_or_admin_reviews_either_gate establishes "
+                    "that every reviewer named as a user on either gate is a lead or an admin "
+                    "in config/organization.yaml. The lead gate names no users at all: its "
+                    "single reviewer is the team-leads team, because eight leads exceed the "
+                    "six reviewer slots and a team counts as one. Nothing recorded who was in "
+                    "that team, so a member added to it on GitHub became a reviewer on the "
+                    "lead gate and every test went on passing. "
+                    "fixtures/evidence/phase-2/github/lead-team.sanitized.json is that record, "
+                    "and the comparison against the roster is what now fails by name instead."
                 ),
                 (
                     "Note that prevent_self_review is deliberately false on both "
@@ -512,13 +530,28 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                     "and a reader must not be left thinking it is."
                 ),
                 (
-                    "Closing this means capturing the team-leads team's membership, which "
-                    "tools/capture_phase2_evidence.py does not record today, comparing it "
-                    "against config/organization.yaml the way the reviewer lists already are, "
-                    "and citing the test that reads it. Until then the reviewer half is proved "
-                    "only for named users, and what stands behind it is evaluate_authorization, "
-                    "which refuses the submission after the gate has opened rather than "
-                    "stopping the approval."
+                    "How it was closed, since the previous entry here was a remedy rather "
+                    "than a record. tools/capture_phase2_evidence.py gained a lead-team "
+                    "target reading orgs/edu-llm/teams/team-leads/members, which writes the "
+                    "team's slug beside its logins so that a capture of some other team "
+                    "cannot be read as this one; a test pins that slug against the reviewer "
+                    "the lead gate actually names. The roster comparison runs in both "
+                    "directions as two tests rather than one, because the directions are "
+                    "different incidents with different fixes: a login on GitHub and not in "
+                    "the roster opens a gate admission will then refuse, and a login in the "
+                    "roster and not on GitHub is a lead the gate will never release, even for "
+                    "his own group's run. Both were live at once through the two-day window "
+                    "that ended on 2026-07-30, which config/organization.yaml records."
+                ),
+                (
+                    "What a capture cannot do is notice a change while nobody is looking. This "
+                    "is a statement about its observed_at and it expires with the freshness "
+                    "window, so in the interval between two captures a member added to the "
+                    "team-leads team is a reviewer on the lead gate and no test here fails. "
+                    "What stands behind the gate in that interval is unchanged: "
+                    "evaluate_authorization refuses the submission after the approval, so the "
+                    "run does not start, and the residual is that somebody held an approval "
+                    "authority nobody granted for as long as it took to re-capture."
                 ),
             ),
         ),
@@ -769,8 +802,33 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
             supporting_node_ids=(
                 *_ids(GITHUB, "test_both_approval_environments_exist_and_no_third_one_does"),
                 *_ids(GITHUB, "test_self_review_is_deliberately_permitted_on_both_gates"),
+                *_ids(
+                    GITHUB,
+                    "test_the_membership_captured_is_of_the_team_the_lead_gate_actually_names",
+                ),
+                *_ids(GITHUB, "test_only_a_lead_the_roster_declares_can_release_a_run_at_the_lead_gate"),
+                *_ids(GITHUB, "test_a_lead_the_roster_declares_is_never_locked_out_of_the_lead_gate"),
             ),
             scope_limits=(
+                (
+                    "THIS WAS OVERCLAIMED UNTIL 2026-07-31, AND THE THREE CITATIONS ADDED THAT "
+                    "DAY ARE WHAT MAKE THE STATEMENT TRUE RATHER THAN MERELY ASSERTED. The "
+                    "statement is that the reviewer lists match the roster. One gate's reviewer "
+                    "is a team, so its effective reviewer list is that team's membership -- and "
+                    "nothing recorded who was in it. Criterion 9 reported that hole honestly and "
+                    "this one, resting on the same capture, went green over it. Whoever reads "
+                    "this next should take the pairing as the lesson: two criteria sharing "
+                    "evidence can disagree about what the evidence proves, and the optimistic "
+                    "one is not the one to trust."
+                ),
+                (
+                    "The membership is compared through a capture of its own rather than by "
+                    "flattening the reviewer list, which is what keeps the paragraph below true. "
+                    "A reviewer test that expanded the team into its members would still pass "
+                    "after somebody replaced the team with six named users, because the expanded "
+                    "set would go on matching. Two records answering two questions -- who is "
+                    "listed, and who that listing resolves to -- cannot collapse that way."
+                ),
                 (
                     "Pilot-blocking, and it has no counterpart in the master plan's list. The "
                     "plan's checks describe what the approval gate refuses; this one describes "
