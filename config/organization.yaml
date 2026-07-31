@@ -64,7 +64,12 @@ pilot_repositories:
 #   {entity(name:"eduLLM"){members{username name accountType}}}
 members:
   - {github_login: BritishAmericqn, display_name: Benjamin Royston}
-  - {github_login: ericrcwu001, display_name: Eric Wu}
+  # Matched on the login rather than on display_name, which is the stronger evidence here and
+  # not the weaker: the eduLLM entity holds `ericrcwu` and this GitHub account is
+  # `ericrcwu001`. Its display name is `Eric Ruocheng Wu`, a superset of this one rather than
+  # a different person. He has twenty-eight runs in the `test` project, all of them currently
+  # logging as the service account.
+  - {github_login: ericrcwu001, display_name: Eric Wu, wandb_username: ericrcwu}
   - {github_login: GMatherne, display_name: Grant Matherne, wandb_username: grant-matherne}
   - {github_login: nzhao721, display_name: Nathan Zhao, wandb_username: nathan-zhao}
   - {github_login: pianomaster99, display_name: Tom Liu, wandb_username: liumaizi}
@@ -89,9 +94,17 @@ members:
   - {github_login: syz2026, display_name: Stephen Zhang, wandb_username: stephen-zhang}
   - {github_login: philote-dev, display_name: Frank Gonzalez, wandb_username: philote}
   - {github_login: ninLi0, display_name: Eric Ni, wandb_username: lol96297}
-  - {github_login: meric233, display_name: Meric Xing}
+  # Confirmed by Frank rather than matched, because the display names differ: the eduLLM
+  # entity holds `langming-xing` under `Langming Xing`. Twenty-two runs across `edullm-p7`
+  # and `pretraining` were logging as the service account before this line existed.
+  - {github_login: meric233, display_name: Meric Xing, wandb_username: langming-xing}
   - {github_login: hiyasvyas, display_name: Hiya Vyas, wandb_username: hiyasvyas}
-  - {github_login: mathishard17, display_name: Sophia Zhang}
+  # Renamed from mathishard17, which now 404s. A dead login here is not inert: it is the key
+  # every other roster lookup joins on, so it silently excludes her from anything derived
+  # from this file. The W&B side is deliberately still blank -- the eduLLM entity holds
+  # `zsophia` under the display name `Sophia Z`, which is not the exact roster match this
+  # file requires, and the comment above says why a near-match is worse than a blank.
+  - {github_login: zsophiaaa, display_name: Sophia Zhang}
   - {github_login: LawrenceDong71, display_name: Lawrence Dong, wandb_username: lawrence-dong}
   - {github_login: katiehehe, display_name: Katie He, wandb_username: katiehe}
   - {github_login: alphaxia2100, display_name: Andrew Xia, wandb_username: alphaai-andrew}
