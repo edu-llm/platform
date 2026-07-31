@@ -36,38 +36,64 @@ team_leads:
 pilot_repositories:
   - OLMo-core
   - dolma
+# WHOSE NAME GOES ON A RUN IN WEIGHTS AND BIASES, AND WHY MOST OF THESE ARE BLANK.
+#
+# The platform logs with a team service account rather than with any person's key, so every
+# run would otherwise appear authored by the platform itself. W&B's remedy is WANDB_USERNAME,
+# which names a human author -- and it works only when that account belongs to the service
+# account's parent team. When it does not, W&B does not complain: the run simply logs as the
+# service account, which is indistinguishable from having sent no attribution at all.
+#
+# That silence is why a wandb_username here is only ever a login read out of the eduLLM
+# team's own member list and matched to this file on display_name. A plausible-looking guess
+# buys nothing and costs the one thing this mapping exists to provide, because a run
+# attributed to the wrong person looks exactly like a correctly attributed one and the only
+# reader placed to notice is the person who did not run it. The contract refuses two members
+# claiming one account for the same reason.
+#
+# Absent here means the run logs unattributed, which is a whole run that works. The compile
+# job says so in the approver context before a lead is asked to release it, so the gap is
+# something a person sees rather than something they find afterwards in W&B.
+#
+# THE ONE THAT MATTERS AND IS BLANK. aryanjverma submitted both of the runs Phase 5 rests on
+# and has no account in the eduLLM team, so nothing here can attribute him. Adding him to the
+# W&B team is an owner action in W&B and does not follow this file.
+#
+# Re-derived by matching display_name against the team roster:
+#
+#   {entity(name:"eduLLM"){members{username name accountType}}}
 members:
   - {github_login: BritishAmericqn, display_name: Benjamin Royston}
   - {github_login: ericrcwu001, display_name: Eric Wu}
-  - {github_login: GMatherne, display_name: Grant Matherne}
-  - {github_login: nzhao721, display_name: Nathan Zhao}
-  - {github_login: pianomaster99, display_name: Tom Liu}
-  - {github_login: cd1313, display_name: Cathy Du}
-  - {github_login: IsabellaChen70, display_name: Isabella Chen}
-  - {github_login: gorpyshortlegs, display_name: Arhant Choudhary}
+  - {github_login: GMatherne, display_name: Grant Matherne, wandb_username: grant-matherne}
+  - {github_login: nzhao721, display_name: Nathan Zhao, wandb_username: nathan-zhao}
+  - {github_login: pianomaster99, display_name: Tom Liu, wandb_username: liumaizi}
+  - {github_login: cd1313, display_name: Cathy Du, wandb_username: cathy-du}
+  - {github_login: IsabellaChen70, display_name: Isabella Chen, wandb_username: isabella-chen}
+  - {github_login: gorpyshortlegs, display_name: Arhant Choudhary, wandb_username: flaming-fuelers}
   - {github_login: Elitelord, display_name: Sameer Agarwal}
-  - {github_login: anshulmago1, display_name: Anshul Mago}
+  - {github_login: anshulmago1, display_name: Anshul Mago, wandb_username: magoanshul}
   - {github_login: arteexu, display_name: Arthur Xu}
-  - {github_login: sidvenkatayogi, display_name: Siddhartha Venkatayogi}
-  - {github_login: banksaj27, display_name: Adam Banks}
-  - {github_login: claire-mao, display_name: Claire Mao}
-  - {github_login: VS-code-cloud, display_name: Vishnu Sharma}
-  - {github_login: Avaneesh-Ramesh-07, display_name: Avaneesh Ramesh}
+  - {github_login: sidvenkatayogi, display_name: Siddhartha Venkatayogi, wandb_username: sidvenkatayogi}
+  - {github_login: banksaj27, display_name: Adam Banks, wandb_username: adam-banks-alpha-ai}
+  - {github_login: claire-mao, display_name: Claire Mao, wandb_username: claire-mao}
+  - {github_login: VS-code-cloud, display_name: Vishnu Sharma, wandb_username: vishnu-sharma}
+  - {github_login: Avaneesh-Ramesh-07, display_name: Avaneesh Ramesh, wandb_username: avaneesh-ramesh}
   - {github_login: aryanjverma, display_name: Aryan Verma}
-  - {github_login: William-2357, display_name: William Wang}
-  - {github_login: TejasviTyagi14, display_name: Tejasvi Tyagi}
+  - {github_login: William-2357, display_name: William Wang, wandb_username: william-wang}
+  - {github_login: TejasviTyagi14, display_name: Tejasvi Tyagi, wandb_username: tejasvi-tyagi}
   - {github_login: caiiris, display_name: Iris Cai}
   - {github_login: yuen-kai, display_name: Yuen Kai Chow}
-  - {github_login: alsy7009, display_name: Amy Lin}
+  - {github_login: alsy7009, display_name: Amy Lin, wandb_username: amy-lin-alpha-ai}
   - {github_login: Adarsh-Rajesh-gitHub, display_name: Adarsh Rajesh}
-  - {github_login: syz2026, display_name: Stephen Zhang}
-  - {github_login: philote-dev, display_name: Frank Gonzalez}
-  - {github_login: ninLi0, display_name: Eric Ni}
+  - {github_login: syz2026, display_name: Stephen Zhang, wandb_username: stephen-zhang}
+  - {github_login: philote-dev, display_name: Frank Gonzalez, wandb_username: philote}
+  - {github_login: ninLi0, display_name: Eric Ni, wandb_username: lol96297}
   - {github_login: meric233, display_name: Meric Xing}
-  - {github_login: hiyasvyas, display_name: Hiya Vyas}
+  - {github_login: hiyasvyas, display_name: Hiya Vyas, wandb_username: hiyasvyas}
   - {github_login: mathishard17, display_name: Sophia Zhang}
-  - {github_login: LawrenceDong71, display_name: Lawrence Dong}
-  - {github_login: katiehehe, display_name: Katie He}
-  - {github_login: alphaxia2100, display_name: Andrew Xia}
+  - {github_login: LawrenceDong71, display_name: Lawrence Dong, wandb_username: lawrence-dong}
+  - {github_login: katiehehe, display_name: Katie He, wandb_username: katiehe}
+  - {github_login: alphaxia2100, display_name: Andrew Xia, wandb_username: alphaai-andrew}
   - {github_login: NotAnAlgorithm, display_name: Eve Feng}
-  - {github_login: blackbird-alt, display_name: Ellie Zhang}
+  - {github_login: blackbird-alt, display_name: Ellie Zhang, wandb_username: blackbird-alt}

@@ -2,8 +2,8 @@
 
 Phase: phase-0
 Bundle schema version: 1
-Source commit: b5b7f6ee42a7701cd5402b3dd7b8eec398196ff1
-Generated: 2026-07-31T02:36:54+00:00
+Source commit: c302526c4cd0a4300e50f8cc1a26243641136f55
+Generated: 2026-07-31T05:44:58+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 0 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase0_proof.py` at generation time.
 
@@ -18,9 +18,9 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3757 |
-| suite tests executed | 3580 |
-| suite passed | 3580 |
+| suite tests collected | 3772 |
+| suite tests executed | 3595 |
+| suite passed | 3595 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
@@ -86,7 +86,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 
 | file | digest |
 | --- | --- |
-| config/organization.yaml | sha256:967e5053115dbef048570904859d1907003512c1180cf683d4585c5abd66a2b1 |
+| config/organization.yaml | sha256:e68856d918a61e17d9f5565795dcf8cda3041f6316dddc02da0724fabf9df913 |
 | config/policy.yaml | sha256:8efa2f00527f9ad1677ed27452a2b6093a6a8c9e8190cf3e0a583b0f68787b39 |
 | config/workload-catalog.yaml | sha256:dbd10c9d4655be66f829b8c43e150544ba17ca778988f86d14d22e51600feec6 |
 | fixtures/authorization/admin-exception.yaml | sha256:4ad48b8ecd405d11428cf446f74d0a8aeabf904365f3fee7b599b6a7ed0b6fa0 |
@@ -106,7 +106,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | schemas/intent-record.schema.json | sha256:39b40c1375c470efe47179c52e898562a7623c1a79f429de8f078f46cf3ddc8d |
 | schemas/lifecycle-event.schema.json | sha256:f747e330743b4f471021b38e161d26e24ecda8fb47ab02b08939ee298a1921ab |
 | schemas/logical-run.schema.json | sha256:898f1d6b338ea810a75c0614035a49e0812147aef7816037c97447a602d37688 |
-| schemas/organization.schema.json | sha256:5caadb560ced32562f2673591717ce836f1831292cab16a4f9c3a22ba3c0c1f1 |
+| schemas/organization.schema.json | sha256:a66e0170cc0aafce3765b5e7b8b4062baf28c421792d6a2f9f5bb93272289d6f |
 | schemas/policy.schema.json | sha256:e57443df3ebf18a1b1858a441f99aec2d41121a3f2110d05be30b530ff2b7f67 |
 | schemas/repositories.schema.json | sha256:ee5ef9172b9ab89aa0965cefda9d86fda855c4cd3f0eeda41ab50551327ff68e |
 | schemas/result-manifest.schema.json | sha256:7e7b6a5891444d9d13256202319f5be6e70addb81f0b0c077e5294c63529503b |

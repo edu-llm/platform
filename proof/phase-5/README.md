@@ -2,8 +2,8 @@
 
 Phase: phase-5
 Bundle schema version: 1
-Source commit: 3754180c1accbf96f670cfa8af2527bf37a2e020
-Generated: 2026-07-31T06:51:01+00:00
+Source commit: f657a79686b3bf0f8eace68967201a01e39593ba
+Generated: 2026-07-31T07:22:23+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 5 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase5_proof.py` at generation time. No criterion is a gap and the gate is green, and criterion 6 is deferred rather than covered -- a recorded decision not to satisfy it yet, which passes the gate without anybody having observed it. Read that entry in `negative-case-matrix.md` first: it carries the reason and the trigger, and the Known limitations below say what this phase does not establish.
 
@@ -28,9 +28,9 @@ The one check that is outstanding is a different kind of open from every other i
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3761 |
-| suite tests executed | 3582 |
-| suite passed | 3582 |
+| suite tests collected | 3776 |
+| suite tests executed | 3597 |
+| suite passed | 3597 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
@@ -74,7 +74,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | .github/workflows/submit-run.yml | sha256:8f51256b517c2100258956666d64b85eee6f249334d0aab4863d11941154ec90 |
 | README.md | sha256:b4d39f18a505dc328c7787ecfedc815e869d1137e9b8a7af30c175fde491c614 |
 | config/image-exceptions.yaml | sha256:0828f4203385bbc3adbd8521f62768e7f4eb46f56382bc6223d37b89aae7a49c |
-| config/organization.yaml | sha256:967e5053115dbef048570904859d1907003512c1180cf683d4585c5abd66a2b1 |
+| config/organization.yaml | sha256:e68856d918a61e17d9f5565795dcf8cda3041f6316dddc02da0724fabf9df913 |
 | fixtures/evidence/phase-5/branch-protection.sanitized.json | sha256:99a949fb3cae169e5b77cc53661e660410928552213615314bab97ec83100ef5 |
 | fixtures/evidence/phase-5/published-image.sanitized.json | sha256:65f9b7ef2f121541a121944641c51d5e3548675b9da58f15e5aa2dee2d313d37 |
 | src/edullm_platform/image_resolution.py | sha256:0bd11cece57c91d6d82680dbffb1e959dade2ea9f60094a5a1a747accbf554fd |
@@ -84,7 +84,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 - Everything about people here rests on three runs by one submitter on one day. That is enough to establish that the two-person path completes, which is the thing that had never been established; it is not a sample from which anything about how the platform behaves for a second, third or tenth person follows.
 - The cohort is three and two of them are leads, who authorize their own routine runs by design. So the only person in it whose submission needs releasing by somebody else at all is the one non-lead, and check 2 -- covered -- rests entirely on him. If he had dropped out the phase would have lost its point rather than a participant, and the correct response would have been to seat another non-lead rather than to record the criterion closed by self-authorization.
 - Check 6 is deferred, which passes the gate and proves nothing. All three runs went to the CPU profile carrying a print statement and two W&B calls, so no pilot run has trained anything, written a checkpoint, or touched a GPU -- and that is the largest thing this bundle does not establish. The deferral moved the observation to Phase 6's closeout, where it still closes this phase's gate; it did not make the observation less necessary, and a reader who takes the green verdict for a research workload having run is reading it wrong.
-- No CPU run can reach Weights and Biases. `CONTAINER_SHAPES['cpu-32vcpu']` declares `secrets=()` while `gpu-1xa10g` names the W&B secret, so the third pilot run's command failed on `No API key configured`. The workflow summary still names the W&B project, so check 8 is covered on what the submitter is told -- and what they are told, on this profile, points at a project nothing can write to.
+- No CPU run could reach Weights and Biases while these three ran. `CONTAINER_SHAPES['cpu-32vcpu']` declared `secrets=()` while `gpu-1xa10g` named the W&B secret, so the third pilot run's command failed on `No API key configured`. Check 8 is covered on what the submitter is told, which was honest and, on that profile and that day, pointed at a project nothing could write to. The gap is closed -- both profiles now carry the same secrets -- so what these runs demonstrate about W&B is the defect rather than the remedy.
 - The result manifest names no W&B run for any of these, because `lifecycle_projection` hardcodes `wandb_run=None` on every one it writes. That is Phase 7 item 7.4 and it is asserted rather than worked around, so the day it changes a test fails and this sentence gets reread.
 - Check 7 is covered against the workflow rather than against a refusal somebody received, which is one step weaker. No pilot submission has been refused on its merits: the two failed dispatches were a tool invoked without a required argument and a container that could not start, and neither is a refusal. What is asserted is what the workflow does with a refusal it is given.
 - The branch-protection record expires thirty days after it was observed, and the cited tests fail once it does. Nothing about the runs will have changed on that date -- every lineage object is in a write-once store -- and what will have lapsed is anybody's knowledge of how the repository is configured. That is the window working rather than a defect.

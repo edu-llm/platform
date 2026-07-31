@@ -251,13 +251,39 @@ def render(
     submission: CompiledSubmission,
     *,
     policy: ApprovalPolicy | None = None,
+    wandb_username: str | None = None,
 ) -> str:
     return render_approver_context(
         submission,
         submitter=SUBMITTER,
         policy=policy if policy is not None else load_approval_policy(),
         repository_url=REPOSITORY_URL,
+        wandb_username=wandb_username,
     )
+
+
+def test_the_reviewer_is_told_which_wandb_account_the_run_will_be_logged_under() -> None:
+    rendered = render(compile_payload(cpu_payload()), wandb_username="liumaizi")
+
+    assert "`liumaizi`" in rendered
+
+
+def test_the_reviewer_is_told_when_a_run_will_be_logged_under_nobody() -> None:
+    """THE FLAG FOR A GAP THAT IS OTHERWISE ONLY VISIBLE AFTERWARDS, IN W&B.
+
+    An unattributed run works: it logs, it charts, it finishes. What it does not do is carry
+    the submitter's name, and W&B says nothing about that -- the run simply appears authored
+    by the platform's service account, which looks exactly like a run nobody attributed
+    because nobody tried.
+
+    So the only moment a person can notice is before the run, on the page a lead already has
+    to read. Naming the submitter in the warning is the point: it says whose mapping is
+    missing, so the fix is a line in config/organization.yaml rather than an investigation.
+    """
+    rendered = render(compile_payload(cpu_payload()), wandb_username=None)
+
+    assert "not be attributed" in rendered
+    assert SUBMITTER in rendered
 
 
 def context_fragments(

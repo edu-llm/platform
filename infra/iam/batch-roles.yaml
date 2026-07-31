@@ -82,6 +82,32 @@ Resources:
                   - logs:PutLogEvents
                 Resource:
                   Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/batch/sbsandbox-intern-edullm-cpu:*
+              # THE SAME GRANT THE GPU EXECUTION ROLE HAS CARRIED SINCE PHASE 4, arriving
+              # here because a CPU pilot run needed W&B and could not reach it. ECS resolves
+              # the secret under this role while starting the task and injects the plaintext;
+              # the workload role holds no secretsmanager action at all, so the container's
+              # own command cannot read it under another name or at another version.
+              #
+              # THE WILDCARD ON THIS ARN IS LOAD-BEARING AND IS NOT A PREFIX GRANT. Secrets
+              # Manager appends a random six-character suffix to every secret ARN -- here
+              # -fnwEVp -- which is not predictable and not stable across a
+              # delete-and-recreate, so a grant written against the exact ARN works until
+              # somebody recreates the secret and then fails as an access denial that reads
+              # like a policy error. The trailing -* matches that suffix and nothing else:
+              # the name it follows is complete, so this cannot reach a second secret unless
+              # somebody creates one whose name begins with this one.
+              #
+              # Deliberately absent: secretsmanager:PutSecretValue, UpdateSecret and
+              # DeleteSecret. This identity reads a credential in order to inject it and has
+              # no business changing it. The value is set from a laptop and from nowhere else.
+              #
+              # Deliberately absent: secretsmanager:ListSecrets. It has no resource type, so
+              # granting it would be an account-wide enumeration of sixteen other teams'
+              # secret names to save a call this role never needs to make.
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sbsandbox-intern-edullm-wandb-api-key-*
 
   # ------------------------------------------------------------------------------------
   # Workload role: what the container's own command runs as
