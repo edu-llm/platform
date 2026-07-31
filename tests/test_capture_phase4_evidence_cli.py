@@ -105,3 +105,125 @@ def test_a_grant_on_another_bucket_is_recorded_by_bucket_and_key_never_reaching_
     assert scope.writable_prefixes == ("teams/platform/runs/*",)
     assert other_key not in scope.readable_prefixes
     assert scope.grants_outside_the_outputs_bucket == (f"{OTHER_BUCKET}/{other_key}",)
+
+
+@pytest.mark.slow
+def test_a_grant_of_an_s3_action_that_is_not_a_read_or_a_write_is_recorded_rather_than_dropped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: keep the Get/Put filter that the outputs-bucket branch needs.
+
+    The two branches ask different questions and the same filter cannot serve both. The
+    prefix tuples answer "what does this role read and write in the outputs bucket", so
+    they read s3:GetObject and s3:PutObject and nothing else. This field answers "what else
+    does this role touch", and under a Get/Put filter the answer was silently no for every
+    other S3 action -- a grant recorded as absent rather than as a grant.
+
+    The actions here are not invented. s3:GetObjectAttributes and s3:AbortMultipartUpload
+    are both in an inline policy this platform carries on a shared role, read live
+    2026-07-31, alongside s3:PutObjectTagging.
+    """
+    other_key = "train/shard-0001.jsonl"
+    install_aws_stub(
+        tmp_path,
+        monkeypatch,
+        policy_document={
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Action": ["s3:GetObjectAttributes", "s3:AbortMultipartUpload"],
+                    "Resource": [f"arn:aws:s3:::{OTHER_BUCKET}/{other_key}"],
+                },
+            ],
+        },
+    )
+
+    scope = capture_role_scope(profile=PROFILE, region=REGION)
+
+    assert scope.grants_outside_the_outputs_bucket == (f"{OTHER_BUCKET}/{other_key}",)
+    assert scope.readable_prefixes == ()
+    assert scope.writable_prefixes == ()
+
+
+@pytest.mark.slow
+def test_a_grant_on_another_buckets_own_arn_is_recorded_although_it_names_no_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: match only ARNs that carry a key, which is what the object pattern did.
+
+    s3:ListBucket and s3:GetBucketLocation cannot be granted on an object ARN -- they are
+    bucket-level actions and IAM requires the bucket's own ARN -- so a recorder that only
+    matched ``bucket/key`` could never see the grant that lets this role enumerate somebody
+    else's corpus. Both actions are in the shared-role inline policy read live 2026-07-31.
+
+    Recorded as the bare bucket name, which is unambiguous rather than merely short: an
+    object grant always carries a non-empty key and a bucket name cannot contain a slash,
+    so a recorded value with no slash in it is a grant on the bucket itself and nothing
+    else.
+    """
+    install_aws_stub(
+        tmp_path,
+        monkeypatch,
+        policy_document={
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Action": ["s3:ListBucket", "s3:GetBucketLocation"],
+                    "Resource": [f"arn:aws:s3:::{OTHER_BUCKET}"],
+                },
+            ],
+        },
+    )
+
+    scope = capture_role_scope(profile=PROFILE, region=REGION)
+
+    assert scope.grants_outside_the_outputs_bucket == (OTHER_BUCKET,)
+
+
+@pytest.mark.slow
+def test_the_outputs_bucket_prefixes_are_read_from_object_reads_and_writes_and_nothing_else(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The load-bearing half, asserted so that widening the other half cannot reach it.
+
+    Criteria 4, 7 and 12 rest on these two tuples, so the wider rule the two tests above
+    ask for has to stay on the other side of the bucket comparison. Two ways it could leak
+    across and both are refused here: a tagging or attributes action on the outputs bucket
+    becoming a read or a write, and the outputs bucket's own ARN being read as a grant on
+    the prefix '' -- which fnmatch would then match against nothing, but which would still
+    put an empty string in a tuple whose every entry is supposed to be a key pattern.
+
+    This passed before the widening and passes after it, which is the entire point of it.
+    """
+    install_aws_stub(
+        tmp_path,
+        monkeypatch,
+        policy_document={
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Action": ["s3:GetObject", "s3:PutObject"],
+                    "Resource": [f"arn:aws:s3:::{OUTPUTS_BUCKET}/teams/platform/runs/*"],
+                },
+                {
+                    "Effect": "Allow",
+                    "Action": ["s3:GetObjectAttributes", "s3:PutObjectTagging"],
+                    "Resource": [f"arn:aws:s3:::{OUTPUTS_BUCKET}/teams/platform/scratch/*"],
+                },
+                {
+                    "Effect": "Allow",
+                    "Action": ["s3:ListBucket"],
+                    "Resource": [f"arn:aws:s3:::{OUTPUTS_BUCKET}"],
+                },
+            ],
+        },
+    )
+
+    scope = capture_role_scope(profile=PROFILE, region=REGION)
+
+    assert scope.readable_prefixes == ("teams/platform/runs/*",)
+    assert scope.writable_prefixes == ("teams/platform/runs/*",)
+    assert scope.grants_outside_the_outputs_bucket == ()
