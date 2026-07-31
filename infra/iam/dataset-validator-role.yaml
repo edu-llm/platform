@@ -1,0 +1,109 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: The identity a dataset owner's own validator assumes to promote a dataset into edullm-data, separate from anything this repository runs a workload under.
+
+# Declared without being wired in. The validator that promotes datasets into the sealed
+# edullm-data bucket currently runs under sbsandbox-intern-edullm-batch-workload -- our
+# shared CPU workload role -- through an inline policy attached outside CloudFormation
+# (`dataset-validator`, recorded as drift in tests/test_phase3_run_evidence.py). That role
+# is what every CPU container on every team runs as, so a job that only prints a line
+# currently inherits write access to a dataset bucket it has no reason to touch.
+#
+# This role is where that policy moves. Moving it is a separate, later change and is not
+# done here: both EventBridge rules that can invoke a Batch job resolve the job definition
+# by unversioned name, so a bad revision reaches production on the next event, and that
+# cutover belongs in a window somebody is watching rather than beside a template addition.
+# Until that happens this role can exist in the account and grant nothing effective --
+# see the bucket-policy note below the inline policy.
+#
+# Deliberately its own identity rather than an amendment to batch-roles.yaml. The point of
+# declaring it at all is that the validator's reach and our own workloads' reach stop being
+# the same set; folding it into the shared role would be the exposure this closes, restated
+# under a different name.
+
+Resources:
+  DatasetValidatorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sbsandbox-intern-edullm-dataset-validator
+      PermissionsBoundary:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/InternSandboxBoundary
+      MaxSessionDuration: 3600
+      # ecs-tasks.amazonaws.com and nothing else. No human and no other service can assume
+      # this identity, so a Batch container running under it is the only caller that can
+      # ever act as the validator -- that is the property this design leans on, not the
+      # bucket policy the inline grant below is written against. In particular, not
+      # events.amazonaws.com: an EventBridge rule that cannot invoke this role directly is
+      # solved by routing the invocation through a role built for that (the way this
+      # account's own admission pipeline already does), and widening the trust policy to
+      # fix an invocation problem would be trading the one property that matters here for
+      # convenience.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      # Inline rather than a customer-managed policy, for the same reason as every other
+      # role in this account: InternSandboxBoundary denies iam:CreatePolicyVersion on every
+      # policy, so a managed policy could be created once and never amended, and the first
+      # permission change would fail the stack update. Inline policies go through
+      # iam:PutRolePolicy, which the boundary permits on this name.
+      Policies:
+        - PolicyName: validate-the-published-dataset
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:PutObjectTagging
+                  - s3:AbortMultipartUpload
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::edullm-data/*
+              # Bucket-level, so it cannot be scoped by the object ARN above. Unconditioned
+              # rather than prefixed: the validator's job is to promote datasets across the
+              # whole bucket, not one team's slice of it, so there is no teams/ segment here
+              # the way there is on our own workload roles.
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::edullm-data
+              # DELIBERATELY ABSENT, each for its own reason.
+              #
+              # s3:DeleteObject and s3:DeleteObjectVersion: the bucket policy denies both to
+              # every principal that touches this bucket, this role included, so granting
+              # them here would only be a capability something else exists to block --
+              # the same reasoning that keeps delete off both Batch workload roles in
+              # infra/iam/batch-roles.yaml and infra/iam/batch-gpu-roles.yaml.
+              #
+              # Any action on an sbsandbox-intern-edullm-* bucket: this role's entire reason
+              # to exist is that the validator's reach and our own workloads' reach stop
+              # being the same set. A grant on any bucket of ours would be the shared role
+              # again with a new name on it.
+              #
+              # Any logs: action. A Batch execution role writes a container's stdout under
+              # its own identity before the container's process starts; a logs grant here
+              # would let this identity write into the record of what it printed, which is
+              # a different thing from printing it.
+              #
+              # NOT YET EFFECTIVE. edullm-data's own bucket policy denies these write
+              # actions to every principal except sbsandbox-intern-edullm-batch-workload and
+              # sbsandbox-intern-edullm-infra-deployer (the latter a documented break-glass
+              # path for removing a published dataset, and out of scope here). This role is
+              # not added to that exemption today, so it can be created and its writes stay
+              # denied until the exemption is moved from the shared role to this one in the
+              # same later change that removes dataset-validator from
+              # sbsandbox-intern-edullm-batch-workload -- one swap rather than a window with
+              # neither identity able to write.
+
+Outputs:
+  RoleName:
+    Value:
+      Ref: DatasetValidatorRole
+  RoleArn:
+    Value:
+      Fn::GetAtt:
+        - DatasetValidatorRole
+        - Arn
