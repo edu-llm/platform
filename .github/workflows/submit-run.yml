@@ -38,7 +38,7 @@ on:
           - olmo-core-cpu-smoke
           - olmo-core-gpu-smoke
       dataset_release:
-        description: "Which prepared dataset this run reads. Pick none unless you are reading one — a smoke run reads nothing, and saying none is what makes the record true."
+        description: "Which prepared dataset this run reads. Pick none unless you are reading one — a quick check reads nothing, and saying none is what makes the record true."
         required: true
         type: choice
         options:
@@ -49,7 +49,7 @@ on:
         required: true
         type: string
       project:
-        description: "A label grouping related runs together in Weights and Biases and in the cost view, such as onboarding-smoke. Lower-case words joined by hyphens. Make one up; it needs no registering."
+        description: "A label grouping related runs together in Weights and Biases and in the cost view, such as onboarding. Lower-case words joined by hyphens. Make one up; it needs no registering."
         required: true
         type: string
       wandb_project:
@@ -57,7 +57,7 @@ on:
         required: true
         type: string
       command:
-        description: "What the container should run, as one command line. For a first test: python -c 'import sys; print(\"edullm smoke ok\", sys.version)'"
+        description: "What the container should run, as one command line. For a first test: python -c 'import sys; print(\"edullm ready\", sys.version)'"
         required: true
         type: string
       compute_profile:
