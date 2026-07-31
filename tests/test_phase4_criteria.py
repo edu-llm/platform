@@ -1,11 +1,29 @@
 """What the Phase 4 criteria definition must be true of, independent of the phase itself.
 
 Two kinds of test. The first kind reads the definition against the master plan: the right
-number of checks, the right ones marked pilot-blocking, every gap saying what would close
-it. The second kind is the one that has caught real defects in every phase so far -- asking
-pytest whether the cited node ids collect. A citation that reads correctly and names
-nothing turns a criterion into a claim nobody checks, and no amount of reading the
-definition reveals it.
+number of checks, the right ones marked pilot-blocking, every criterion that is not covered
+saying what would close it. The second kind is the one that has caught real defects in every
+phase so far -- asking pytest whether the cited node ids collect. A citation that reads
+correctly and names nothing turns a criterion into a claim nobody checks, and no amount of
+reading the definition reveals it.
+
+**Both of this phase's gaps were disposed of on 2026-07-31, in two different ways, and the
+tests that guarded against exactly those moves were rewritten rather than deleted.** They
+were right about the danger -- a gate goes green the moment somebody relabels the checks it
+is red on -- and being right about the danger is why they now assert the shape of each move
+instead of asserting that no such move has happened.
+
+Criterion 9 was capacity failure. It left the phase for Phase 8, which is where the
+queue-wait detector it waits on is built, and its number was not reused. So the numbering
+case pins the hole rather than the range, on the same reasoning Phase 3 pins the hole where
+its three cancellation criteria used to be: a criterion number is an identifier, and closing
+the gap up would silently rewrite every citation written against the old list.
+
+Criterion 11 became a deferral. It wants a job placed on an alternate instance type, and the
+GPU compute environment lists exactly one -- deliberately, because that list is what stops a
+submission for one A10G being placed on four. The case below therefore holds it to naming
+the cost control and to naming the event that makes it live again, because a deferral whose
+reason is "not yet" is the relabelling the three-status rule exists to make visible.
 """
 
 from __future__ import annotations
@@ -16,6 +34,7 @@ from pathlib import Path
 
 import pytest
 
+from edullm_platform import phase4_criteria as criteria_module
 from edullm_platform.criteria import CriterionStatus, cited_node_ids
 from edullm_platform.phase4_capture import CAPTURE_ROOT
 from edullm_platform.phase4_criteria import (
@@ -25,13 +44,22 @@ from edullm_platform.phase4_criteria import (
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-#: The eleven from the master plan, plus the twelfth this phase added. Nine of the plan's
-#: are marked, and the twelfth is marked too, so ten of twelve.
-PILOT_BLOCKING = ("1", "2", "3", "4", "5", "6", "7", "8", "9", "12")
+#: Eight of the plan's eleven are marked, and the twelfth this phase added is marked too, so
+#: nine of eleven. It was ten of twelve until criterion 9 left for Phase 8. That criterion
+#: was marked, so the pilot set lost a member with it -- as a consequence of the transfer
+#: rather than because anybody's judgement about harm changed.
+PILOT_BLOCKING = ("1", "2", "3", "4", "5", "6", "7", "8", "12")
 
-#: The two that are open, and why they are different. Nine has no observation to capture;
-#: eleven has a configuration nobody has deliberately widened.
-OPEN = ("9", "11")
+#: The number no criterion carries. Capacity failure moved to Phase 8, which is where the
+#: queue-wait detector it cannot be closed without is built, and the number was not reused,
+#: so a citation written against the old list still names what it named. Recorded here so
+#: that reinstating it is a change to this file too.
+MOVED_TO_A_LATER_PHASE = ("9",)
+
+#: The two this phase does not cover, both recorded decisions carrying a trigger. Ten is the
+#: queue-wait detector nobody has built; eleven is the single-item instance list that is
+#: itself the control on what a job can be placed onto.
+DEFERRED = ("10", "11")
 
 #: The module that reads the committed captures. Every criterion about the account rather
 #: than about pure Python has to cite it, or it is proving something about a fixture.
@@ -39,16 +67,48 @@ RUN_EVIDENCE = "tests/test_phase4_run_evidence.py"
 
 
 def test_the_definition_lists_every_check_the_phase_plan_names() -> None:
-    """Mutation: drop a criterion.
+    """Mutation: drop a criterion, or renumber the list to close the hole 9 left behind.
 
     The count is the plan's eleven plus the prefix-agreement check this phase added when it
-    inherited three answers to where a run writes its output. A definition short by one
-    reports a phase closer to done than it is, and nothing else notices.
+    inherited three answers to where a run writes its output, less the one that moved to
+    Phase 8. A definition short by one reports a phase closer to done than it is, and
+    nothing else notices.
+
+    Closing the hole up would read as a tidy-up and would be a silent rewrite of every
+    citation. A criterion number is an identifier -- plan documents and decisions already
+    written down name Phase 4 criteria by number -- so moving 10 down to 9 changes what
+    "criterion 10" means in text nobody is going to re-read. The shared contract requires
+    the numbers to be unique and says nothing about them being contiguous, which is what
+    permits the hole; this is what keeps it open.
     """
     specs = phase4_criteria()
+    expected = [str(n) for n in range(1, 13) if str(n) not in MOVED_TO_A_LATER_PHASE]
 
-    assert len(specs) == PHASE4_CRITERION_COUNT
-    assert [spec.number for spec in specs] == [str(n) for n in range(1, 13)]
+    assert len(specs) == PHASE4_CRITERION_COUNT == 11
+    assert [spec.number for spec in specs] == expected
+    assert all(spec.statement.strip() for spec in specs)
+
+
+def test_the_transferred_criterion_left_the_phase_rather_than_being_softened() -> None:
+    """Mutation: keep criterion 9 and reword it into something this phase can close.
+
+    That is the move this case exists to refuse, and it is the cheaper of the two available:
+    "capacity failure is surfaced" becomes "the intent record survives a capacity failure",
+    which is already true, and a check the phase was red on turns green without anything
+    changing in the account. The transfer keeps the sentence and moves it whole.
+
+    What makes the removal legible rather than silent is the module saying where the check
+    went. A criterion that vanishes with no destination is a check nobody owns, which is the
+    outcome a transfer is supposed to prevent rather than produce -- so the docstring has to
+    name both the number and the phase now carrying it.
+    """
+    numbers = {spec.number for spec in phase4_criteria()}
+    written = criteria_module.__doc__ or ""
+
+    assert numbers.isdisjoint(MOVED_TO_A_LATER_PHASE)
+    assert "Phase 8" in written, "nothing says which phase carries the transferred check"
+    for number in MOVED_TO_A_LATER_PHASE:
+        assert f"Criterion {number}" in written or f"criterion {number}" in written
 
 
 def test_the_pilot_markers_are_the_plans_and_not_a_later_judgement() -> None:
@@ -58,6 +118,10 @@ def test_the_pilot_markers_are_the_plans_and_not_a_later_judgement() -> None:
     marking a criterion that costs a pilot user nothing makes the rung unreachable rather
     than safer -- and unmarking one that costs them money is the failure the marker exists
     to prevent.
+
+    The set lost criterion 9 when criterion 9 left the phase, and that is the only reason it
+    moved. A marker coming off a criterion still in the list would be a judgement about harm
+    and would fail here.
     """
     marked = tuple(spec.number for spec in phase4_criteria() if spec.pilot_blocking)
 
@@ -65,11 +129,16 @@ def test_the_pilot_markers_are_the_plans_and_not_a_later_judgement() -> None:
 
 
 def test_the_two_unmarked_criteria_are_the_two_about_waiting_rather_than_harm() -> None:
-    """Mutation: mark either of them, or explain neither.
+    """Mutation: explain neither.
 
     Saying no is what makes the marker mean anything. Both unmarked criteria are about a
     job that waits, and a job that waits bills nothing -- which is a statement about cost
     that has to be written down, because "not marked" on its own reads like an oversight.
+
+    Both are now deferrals, so the contract refuses the marker on them outright and the
+    other half of the old mutation cannot happen. What is left for this case is the half no
+    contract can check: that the cost argument is written down where a reader meets the
+    criterion, rather than having been made once in somebody's head.
     """
     unmarked = {
         spec.number: " ".join((*spec.scope_limits, *spec.gaps, spec.deferral_reason or ""))
@@ -77,44 +146,84 @@ def test_the_two_unmarked_criteria_are_the_two_about_waiting_rather_than_harm() 
         if not spec.pilot_blocking
     }
 
-    assert set(unmarked) == {"10", "11"}
+    assert set(unmarked) == set(DEFERRED)
     assert all("bills nothing" in written or "costs nothing" in written
                for written in unmarked.values())
 
 
-def test_every_open_criterion_says_what_would_close_it() -> None:
-    """Mutation: record a gap with no explanation, or with one that restates the criterion.
+def test_every_criterion_that_is_not_covered_says_what_would_close_it() -> None:
+    """Mutation: record a deferral with an explanation that restates the criterion.
 
-    A gap that does not say what would close it is a criterion nobody can pick up. Each of
-    these names a different amount of work, and the difference is what somebody choosing
-    what to do next is choosing between.
+    Anything not covered is work somebody has to pick up, and one that does not say what
+    would close it is a criterion nobody can. Written against both open statuses rather than
+    against gaps alone, because this phase has no gap left and a case keyed on gaps would
+    have quietly stopped measuring anything on the day the last one was disposed of.
     """
-    gaps = {spec.number: spec.gaps for spec in phase4_criteria() if spec.status is CriterionStatus.GAP}
+    unproved = {
+        spec.number: (*spec.gaps, *(text for text in (spec.deferral_trigger,) if text))
+        for spec in phase4_criteria()
+        if spec.status is not CriterionStatus.COVERED
+    }
 
-    # Compared as a set: sorted() on these puts '11' before '9', which is a true fact
-    # about strings and a confusing one to read in a failure message.
-    assert set(gaps) == set(OPEN)
-    for number, written in gaps.items():
+    assert set(unproved) == set(DEFERRED)
+    for number, written in unproved.items():
         assert written, number
         assert all(len(entry) > 80 for entry in written), (
-            f"criterion {number} records a gap too short to say what would close it"
+            f"criterion {number} says what closes it too briefly to be acted on"
         )
 
 
-def test_the_one_deferral_carries_a_trigger_that_can_actually_fire() -> None:
+def test_both_deferrals_carry_a_trigger_that_can_actually_fire() -> None:
     """Mutation: defer something with a reason and no trigger.
 
     The contract already refuses that at construction, so this checks the softer failure it
-    cannot see: a trigger written as a condition nobody will ever observe. This one fires
-    on a run somebody notices waiting, or on a second team, both of which are events that
-    happen rather than states somebody has to go and measure.
+    cannot see: a trigger written as a condition nobody will ever observe. Ten fires on a
+    run somebody notices waiting, or on a second team. Eleven fires on a decision somebody
+    takes or on contention somebody feels. All four are events that happen rather than
+    states somebody has to go and measure.
     """
     deferred = [spec for spec in phase4_criteria() if spec.status is CriterionStatus.DEFERRED]
 
-    assert [spec.number for spec in deferred] == ["10"]
-    assert deferred[0].deferral_trigger
-    assert "second team" in (deferred[0].deferral_trigger or "")
-    assert "no CloudWatch metric" in (deferred[0].deferral_reason or "")
+    assert [spec.number for spec in deferred] == list(DEFERRED)
+    for spec in deferred:
+        assert (spec.deferral_trigger or "").strip(), spec.number
+        assert not spec.proving_node_ids, spec.number
+
+    queue_wait, instance_shape = deferred
+    assert "second team" in (queue_wait.deferral_trigger or "")
+    assert "no CloudWatch metric" in (queue_wait.deferral_reason or "")
+    assert "single-GPU" in (instance_shape.deferral_trigger or "")
+    assert "contention" in (instance_shape.deferral_trigger or "")
+
+
+def test_the_instance_shape_deferral_reads_as_a_cost_control_rather_than_an_omission() -> None:
+    """Mutation: defer criterion 11 with a reason that stops at "one instance type is listed".
+
+    That sentence is true and it is the relabelling this case exists to refuse: it describes
+    unfinished configuration, which is a gap, and a deferral is a decision. What makes this
+    one a decision is that the single-item list is itself the control -- widening it is the
+    one line that lets a job which asked for one A10G at $1.006/hr be placed on four at
+    $5.672 -- so the reason has to say the narrowness is deliberate and has to name what it
+    is buying.
+
+    The prices are asserted because they are the argument. A reason saying "cost" without
+    them is one a reader cannot weigh, and weighing it is exactly what the trigger asks
+    somebody to do.
+    """
+    eleven = next(spec for spec in phase4_criteria() if spec.number == "11")
+    reason = eleven.deferral_reason or ""
+
+    assert eleven.status is CriterionStatus.DEFERRED
+    assert "deliberate" in reason.lower(), (
+        "the deferral does not say the single-item list is a choice, so it reads as an "
+        "omission that nobody got round to"
+    )
+    assert "1.006" in reason and "5.672" in reason, (
+        "the deferral argues from cost and does not say what the cost is"
+    )
+    assert eleven.scope_limits, (
+        "the gap prose said things a reader still needs and it was dropped rather than kept"
+    )
 
 
 def test_every_criterion_about_the_account_cites_the_module_that_reads_the_captures() -> None:

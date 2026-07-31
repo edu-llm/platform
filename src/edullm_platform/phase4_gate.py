@@ -1,4 +1,4 @@
-"""The Phase 4 acceptance gate: the twelve criteria, executed rather than read.
+"""The Phase 4 acceptance gate: the eleven criteria, executed rather than read.
 
 Every rule this gate applies is the shared one. The three statuses, what a citation may be,
 and the decision that execution overrules the recorded table all live in
@@ -10,20 +10,29 @@ number of criteria it holds the report to. There is deliberately no second copy 
 the above, for the reason Phase 1 gives and every phase since repeats: a phase that could
 restate the rule could restate it more kindly.
 
-**This gate fails today, and by a much narrower margin than any previous phase's did at the
-same point.** Nine of twelve criteria are covered by tests reading committed captures of
-three real GPU jobs. What is left is one gap nobody can close without causing a capacity
-failure, one gap that is a cost decision rather than a defect, and one deferral with a
-written trigger. A gate that passed would be claiming that a job held in RUNNABLE gets
-noticed, which nothing here does.
+**This gate passes today, and what it is passing on is worth reading before the exit code
+is quoted.** Nine of eleven criteria are covered by tests reading committed captures of
+three real GPU jobs. The other two are deferrals with written triggers: the queue-wait
+detector, which needs building rather than configuring, and the alternate instance shape,
+where the one-item list is itself the cost control. Neither has been observed and the gate
+says so in the detail it prints beside each of them.
 
-**The pilot verdict is the one worth reading.** Ten of the twelve are pilot-blocking -- the
+**The gate was red until 2026-07-31 and the change was not a run.** It was red on capacity
+failure, which could not be closed by running anything -- Batch leaves a job it cannot place
+in RUNNABLE indefinitely, so nothing surfaces it until the detector of criterion 10 exists,
+and that detector belongs to Phase 8. A criterion blocked on another phase's mechanism
+measures that phase rather than this one, so it moved to Phase 8 with its sentence and its
+number, on the terms Phase 3's cancellation criteria moved on. What it protected is on the
+pilot limitations page instead. The hole where criterion 9 used to be is deliberate and
+:mod:`edullm_platform.phase4_criteria` says why.
+
+**The pilot verdict is the one worth reading.** Nine of the eleven are pilot-blocking -- the
 highest proportion of any phase, because a GPU instance bills whether or not the container
-is using it -- and exactly one of those ten is open. This is the first phase where the two
-verdicts are likely to differ in the interesting direction: the gate is red on criteria
-nobody can close tonight, while the capability a pilot user would actually reach has been
-exercised end to end. Keeping them separate is what lets both be said without one softening
-the other.
+is using it -- and every one of them is covered. The two that are not marked are the two
+deferrals, which the contract would refuse the marker on in any case: what a deferred check
+would have protected belongs on the limitations page instead. One paragraph there carries
+both of them, because waiting for capacity and waiting for the one shape a job can run on
+are the same wait to the person doing it.
 """
 
 from __future__ import annotations

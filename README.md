@@ -137,7 +137,10 @@ image.
 **Nobody is watching the queue for you.** A job that cannot get capacity sits in `RUNNABLE`
 rather than failing, and no alarm notices: AWS Batch publishes no CloudWatch metric for
 queue depth or job state, so there is no series to threshold. A queued job bills nothing, so
-this costs time rather than money. If a run has not started within an hour, ask.
+this costs time rather than money. Your run intent and the decision to admit it are written
+before Batch is reached at all, so a run that never places loses nothing but time and still
+has a record under its run id. If a run has not started within an hour, ask, and quote the
+run id.
 
 ## Acceptance gate
 
