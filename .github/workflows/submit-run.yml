@@ -609,10 +609,53 @@ jobs:
             --submission "${RUNNER_TEMP}/compiled-submission/compiled-submission.json" \
             --approved-sha256 "${APPROVED_SHA256}"
 
+      # Read out of config/repositories.yaml rather than written down anywhere, and read
+      # HERE rather than eleven steps further down, which is where it used to sit.
+      #
+      # It arrived in Phase 3 for the Batch denial probes, which carry no image probe and
+      # never use the value -- the tool validates every argument before it attempts
+      # anything, and a placeholder invented to satisfy a validator is the first step
+      # towards a probe aimed at something that is not there. Phase 6 gives it a real
+      # consumer: it is the repository ReadImageScan describes against, so it has to be in
+      # hand before the admission request is built rather than after.
+      #
+      # Order is load-bearing in a way that would not announce itself. A `steps.` output
+      # referenced before its step has run is the empty string, not an error, so leaving
+      # this below the assembly would send `"ecr_repository": ""` and fail the describe on
+      # a repository name nobody wrote. The `required()` guard in the assembly catches that,
+      # and this ordering is why it never has to.
+      - name: Resolve the registered image repository
+        id: registry
+        env:
+          RESEARCH_REPOSITORY: ${{ inputs.repository }}
+        run: |
+          set -euo pipefail
+          uv run --frozen python - > "${RUNNER_TEMP}/ecr-repository.txt" <<'PY'
+          import os
+          from pathlib import Path
+
+          from edullm_platform.build_tooling import load_registry
+
+          registered = load_registry(Path("config/repositories.yaml")).repository_by_name(
+              os.environ["RESEARCH_REPOSITORY"]
+          )
+          print(registered.ecr_repository)
+          PY
+          ecr_repository="$(cat "${RUNNER_TEMP}/ecr-repository.txt")"
+          # An ECR repository name, and nothing that could carry a second line into
+          # GITHUB_OUTPUT. The registry contract already constrains the field; this is the
+          # same check the approver login gets, for the same reason.
+          if [[ ! "${ecr_repository}" =~ ^[a-z0-9][a-z0-9._/-]*$ ]]; then
+            echo "registered_repository_unusable" >&2
+            exit 1
+          fi
+          echo "ecr_repository=${ecr_repository}" >> "${GITHUB_OUTPUT}"
+
       - name: Assemble the admission request
         env:
           APPROVED_SHA256: ${{ needs.compile.outputs.manifest_sha256 }}
           APPROVER: ${{ steps.approval.outputs.approver }}
+          ECR_REPOSITORY: ${{ steps.registry.outputs.ecr_repository }}
           RUN_REPOSITORY: ${{ github.repository }}
           WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
           WORKFLOW_FILE_PATH: ${{ job.workflow_file_path }}
@@ -656,6 +699,12 @@ jobs:
               # document admission is being asked to judge.
               "approved_manifest_sha256": required("APPROVED_SHA256"),
               "manifest": document["manifest"],
+              # Where ReadImageScan looks, resolved from the registry by the step above.
+              # A hint about which repository holds this digest, never an authority on it:
+              # the validator re-derives the same name from manifest.repository against the
+              # registry in its own zip and refuses the request if the two disagree. So a
+              # request built by hand cannot aim the scan read at a cleaner repository.
+              "ecr_repository": required("ECR_REPOSITORY"),
               "workflow_run": {
                   "run_repository": required("RUN_REPOSITORY"),
                   "workflow_repository": required("WORKFLOW_REPOSITORY"),
@@ -760,38 +809,6 @@ jobs:
           path: ${{ runner.temp }}/admission-denials.json
           if-no-files-found: error
           retention-days: 30
-
-      # Read out of config/repositories.yaml rather than written down here. The Phase 3
-      # matrix below carries no image probe and never uses this value, but the tool
-      # validates every argument before it attempts anything, and a placeholder invented to
-      # satisfy a validator is the first step towards a probe aimed at something that is not
-      # there. The registered name costs one lookup and is the true answer.
-      - name: Resolve the registered image repository
-        id: registry
-        env:
-          RESEARCH_REPOSITORY: ${{ inputs.repository }}
-        run: |
-          set -euo pipefail
-          uv run --frozen python - > "${RUNNER_TEMP}/ecr-repository.txt" <<'PY'
-          import os
-          from pathlib import Path
-
-          from edullm_platform.build_tooling import load_registry
-
-          registered = load_registry(Path("config/repositories.yaml")).repository_by_name(
-              os.environ["RESEARCH_REPOSITORY"]
-          )
-          print(registered.ecr_repository)
-          PY
-          ecr_repository="$(cat "${RUNNER_TEMP}/ecr-repository.txt")"
-          # An ECR repository name, and nothing that could carry a second line into
-          # GITHUB_OUTPUT. The registry contract already constrains the field; this is the
-          # same check the approver login gets, for the same reason.
-          if [[ ! "${ecr_repository}" =~ ^[a-z0-9][a-z0-9._/-]*$ ]]; then
-            echo "registered_repository_unusable" >&2
-            exit 1
-          fi
-          echo "ecr_repository=${ecr_repository}" >> "${GITHUB_OUTPUT}"
 
       # PHASE 3'S HALF OF THE SAME MATRIX, AND THE REASON IT IS A SECOND STEP.
       #

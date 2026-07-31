@@ -1511,6 +1511,10 @@ COMPILED_SUBMISSION = {
 REQUEST_ENVIRONMENT = {
     "APPROVED_SHA256": APPROVED_SHA256,
     "APPROVER": "team-lead",
+    # What the registry step resolved for the repository the manifest above names. The
+    # assembly step does not consult the registry -- the step before it does, and the
+    # validator re-derives the same answer -- so this is that step's output standing in.
+    "ECR_REPOSITORY": "sbsandbox-intern-edullm-dolma",
     "RUN_REPOSITORY": PLATFORM_REPOSITORY,
     "WORKFLOW_REPOSITORY": PLATFORM_REPOSITORY,
     "WORKFLOW_FILE_PATH": WORKFLOW_FILE,
@@ -1587,7 +1591,18 @@ def test_the_recorded_workflow_run_is_one_the_contract_accepts(tmp_path: Path) -
 
 @pytest.mark.parametrize(
     "variable",
-    ["WORKFLOW_REPOSITORY", "WORKFLOW_FILE_PATH", "WORKFLOW_REF", "APPROVER", "APPROVED_SHA256"],
+    [
+        "WORKFLOW_REPOSITORY",
+        "WORKFLOW_FILE_PATH",
+        "WORKFLOW_REF",
+        "APPROVER",
+        "APPROVED_SHA256",
+        # Empty is the shape this one actually fails in. The others go empty on GitHub
+        # Enterprise Server; this one goes empty if the registry step is ever moved back
+        # below the assembly, because a `steps.` output read before its step has run is the
+        # empty string rather than an error. An empty repository name would reach ECR.
+        "ECR_REPOSITORY",
+    ],
 )
 def test_an_empty_job_workflow_identity_fails_closed(tmp_path: Path, variable: str) -> None:
     # The job-context workflow properties are documented as unavailable on GitHub

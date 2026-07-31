@@ -86,6 +86,11 @@ _REQUIRED_EVENT_FIELDS = (
     "approved_manifest_sha256",
     "manifest",
     "workflow_run",
+    # Required rather than defaulted, for the reason the ASL gives about `approver`: an
+    # execution reaching this handler without it is a hand-started execution, and the useful
+    # thing to do with one is stop. Defaulting it to OLMo-core's repository would restore the
+    # exact constant Phase 6 removed, and restore it somewhere no test was looking.
+    "ecr_repository",
 )
 
 
@@ -181,6 +186,39 @@ def handler(event: Mapping[str, Any], context: object = None) -> dict[str, Any]:
     manifest_payload = _require(event, "manifest")
     if not isinstance(manifest_payload, Mapping):
         raise UnreadableManifestError("the admission event's manifest is not an object")
+
+    # THE ONE CALLER-SUPPLIED FIELD THAT DECIDES WHAT WAS LOOKED AT RATHER THAN WHAT IS
+    # ALLOWED, AND WHY IT IS CHECKED HERE INSTEAD OF TRUSTED.
+    #
+    # `ecr_repository` tells ReadImageScan which repository holds this digest. It has to
+    # come from the caller: that state runs first, before this function, so nothing in the
+    # state machine can look it up, and the mapping is not derivable from the GitHub name
+    # anyway. Every other field in this event is either the caller's own claim, which policy
+    # judges on its merits, or something the state machine read for itself. This is neither.
+    #
+    # Left unchecked it would be the cleanest possible bypass of the image gate: point the
+    # read at a repository with no findings, and `image_scan_is_reviewed` sees a spotless
+    # COMPLETE scan and admits the run -- with the manifest still naming, and Batch still
+    # running, the image nobody scanned. So the field is treated as a hint and the registry
+    # in this zip as the authority, and disagreement stops the execution.
+    #
+    # Only when the repository is registered. An unregistered one is a policy question with
+    # an answer a submitter should receive as a decision record, and raising here would
+    # convert that refusal into an execution failure nobody can read back.
+    declared_ecr_repository = str(_require(event, "ecr_repository"))
+    claimed_repository = manifest_payload.get("repository")
+    if isinstance(claimed_repository, str) and repositories.is_registered(claimed_repository):
+        registered_ecr_repository = repositories.repository_by_name(
+            claimed_repository
+        ).ecr_repository
+        if declared_ecr_repository != registered_ecr_repository:
+            raise AdmissionEventError(
+                "the admission event's ecr_repository is not the one this repository is "
+                f"registered against: the event says {declared_ecr_repository!r} and "
+                f"config/repositories.yaml records {registered_ecr_repository!r} for "
+                f"{claimed_repository!r}, so the scan findings in hand describe images "
+                "the manifest does not name"
+            )
 
     outcome = admit(
         manifest_payload=manifest_payload,
