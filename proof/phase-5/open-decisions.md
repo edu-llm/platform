@@ -1,0 +1,3 @@
+# Phase 5 open decisions
+
+**No open decision is recorded against this phase.** That is a statement about the register rather than a claim that Phase 5 raised no questions: the register refuses an entry with fewer than two options and forbids a recommendation, so a question with an obvious answer does not belong in it. The judgements this phase took and did not defer -- narrowing check 10 to members, rewriting check 14, leaving `enforce_admins` off, and shipping a guard step in place of an actor rule -- are argued where they apply, in the criterion's own scope limits and in the documents beside this one, rather than collected here as though they were still open.

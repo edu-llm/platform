@@ -107,6 +107,7 @@ GENERATOR_TEST_PATHS: Final = (
     "tests/test_phase1_proof.py",
     "tests/test_phase2_proof.py",
     "tests/test_phase3_proof.py",
+    "tests/test_phase5_proof.py",
 )
 
 #: Every generator's recursion guard, all of which are set on every nested run rather than
@@ -118,6 +119,7 @@ GENERATOR_NESTED_ENV_VARS: Final = (
     "EDULLM_PHASE1_PROOF_NESTED",
     "EDULLM_PHASE2_PROOF_NESTED",
     "EDULLM_PHASE3_PROOF_NESTED",
+    "EDULLM_PHASE5_PROOF_NESTED",
 )
 
 STATUS_PROSE: Final = {

@@ -25,8 +25,8 @@
   "recorded_states": [
     "runnable",
     "runnable",
-    "succeeded",
-    "running"
+    "running",
+    "succeeded"
   ],
   "region": "us-east-1",
   "repository": "OLMo-core",
