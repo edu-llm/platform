@@ -130,12 +130,37 @@ def _lineage_object(key: str, *, profile: str, region: str) -> Any | None:
     return document
 
 
+#: The order Batch moves a job through, used only to break a tie between two events the
+#: store timestamped identically. Batch records ``occurred_at`` to the second, and a job that
+#: starts and finishes inside one second produces two events with the same value -- which a
+#: sort on the timestamp alone leaves in whatever order S3 listed them, so a real run came
+#: back reading ``succeeded, running``. Ranking is a display decision about events that are
+#: genuinely simultaneous in the record, and it is not a claim that the store knows the
+#: order: a state this does not name sorts last rather than raising, because inventing a
+#: lifecycle position for an unrecognised state would be the same mistake in the other
+#: direction.
+LIFECYCLE_ORDER: Final = (
+    "submitted",
+    "pending",
+    "runnable",
+    "starting",
+    "running",
+    "succeeded",
+    "failed",
+)
+
+
+def _lifecycle_rank(state: str) -> int:
+    return LIFECYCLE_ORDER.index(state) if state in LIFECYCLE_ORDER else len(LIFECYCLE_ORDER)
+
+
 def _recorded_states(run_id: str, *, profile: str, region: str) -> tuple[str, ...]:
     """Every lifecycle state the store recorded, oldest first.
 
     Ordered by the event's own ``occurred_at`` rather than by key, because the event ids are
     random and sorting by them would produce a sequence that looks like a lifecycle and is
-    not one.
+    not one. Ties are broken by :data:`LIFECYCLE_ORDER`; see the note there for the real run
+    that made that necessary.
     """
     listing = aws_json(
         [
@@ -151,7 +176,12 @@ def _recorded_states(run_id: str, *, profile: str, region: str) -> tuple[str, ..
         record = _lineage_object(entry["Key"], profile=profile, region=region)
         if record is not None:
             events.append(record)
-    events.sort(key=lambda event: event.get("occurred_at", ""))
+    events.sort(
+        key=lambda event: (
+            str(event.get("occurred_at", "")),
+            _lifecycle_rank(str(event.get("state", ""))),
+        )
+    )
     return tuple(str(event.get("state", "")) for event in events)
 
 

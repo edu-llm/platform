@@ -2,8 +2,8 @@
 
 Phase: phase-0
 Bundle schema version: 1
-Source commit: 23c1ef2910ed783f0f73e855eed3d453b2e43c51
-Generated: 2026-07-31T02:21:34+00:00
+Source commit: b5b7f6ee42a7701cd5402b3dd7b8eec398196ff1
+Generated: 2026-07-31T02:36:54+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 0 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase0_proof.py` at generation time.
 
@@ -18,7 +18,7 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3746 |
+| suite tests collected | 3757 |
 | suite tests executed | 3580 |
 | suite passed | 3580 |
 | suite failed | 0 |
@@ -122,7 +122,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 - Approval scope is organization. Any team lead may approve any member's routine submission. Check D1 in the negative-case matrix is deferred for this reason.
 - Cross-team attribution is implemented but cannot reject anything yet. Every decision records the claimed team and a team_verified flag, and a submitter naming a team they do not belong to is denied as soon as team bindings exist. With bindings empty, every shipped decision records team_verified: false, which is the audit record's way of saying the attribution was accepted unchecked. Check 9 is deferred for this reason: no test can show a shipped rejection that the shipped configuration cannot produce.
 - The secret scan applied to this bundle masks its own content digests before scanning. A 64-character hexadecimal sha256 digest and a 40-character hexadecimal commit SHA both match the generic long-credential patterns in evidence.py, so the two exact token shapes this bundle emits are replaced with placeholders and everything else is scanned unchanged. No other exemption is applied.
-- The nested verification run excludes every test module that builds a proof bundle (tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py), because those tests invoke a generator and would recurse. They run in the reviewer's own `uv run pytest -q`, which is the command this bundle asks the reviewer to run.
+- The nested verification run excludes every test module that builds a proof bundle (tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py, tests/test_phase5_proof.py), because those tests invoke a generator and would recurse. They run in the reviewer's own `uv run pytest -q`, which is the command this bundle asks the reviewer to run.
 - This bundle describes the working tree at generation time, which may differ from the commit named above. The input digests recorded in the bundle index identify exactly what was measured.
 - Nothing forces this bundle to stay current. It is a snapshot, and its counts go stale as soon as a test is added or a contract changes. Re-run `uv run python tools/build_phase0_proof.py` and read the diff before accepting a phase gate. The recorded fixture digests are the one part that fails loudly on its own when it goes stale.
 

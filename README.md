@@ -236,21 +236,25 @@ refuses to overwrite a recorded digest that has drifted; re-recording takes
 `--regenerate-goldens` and is meant to be reviewed alongside whatever caused the drift.
 The bundle is committed because a tripwire nobody can diff is not a tripwire.
 
-Phases 1, 2 and 3 have generators of the same shape, writing `proof/phase-1/`,
-`proof/phase-2/` and `proof/phase-3/`:
+Phases 1, 2, 3 and 5 have generators of the same shape, writing `proof/phase-1/`,
+`proof/phase-2/`, `proof/phase-3/` and `proof/phase-5/`:
 
 ```bash
 uv run python tools/build_phase1_proof.py
 uv run python tools/build_phase2_proof.py
 uv run python tools/build_phase3_proof.py
+uv run python tools/build_phase5_proof.py
 ```
 
-Each records the canonical digest of what a committed IAM role template *grants* rather
-than of the file, so a reordered key does not fire and a widened statement does.
+Phases 1, 2 and 3 each record the canonical digest of what a committed IAM role template
+*grants* rather than of the file, so a reordered key does not fire and a widened statement
+does. Phase 5 aims the same tripwire somewhere else, because what can move underneath that
+phase is not a role: it digests each committed pilot-run capture, which is the only evidence
+that anybody other than the author has used this platform.
 
-All four count the suite the same way and each excludes all four generator test modules
+All five count the suite the same way and each excludes all five generator test modules
 from its own verification run, so adding a generator moves a cell in every bundle. Any
-bundle recording three generator modules was written before Phase 2 had one and is stale.
+bundle recording four generator modules was written before Phase 5 had one and is stale.
 
 Phase 4 has an acceptance gate and no generator, so there is no `proof/phase-4/`. Its
 evidence is committed under `fixtures/evidence/phase-4/` and read by the tests the gate

@@ -2,8 +2,8 @@
 
 Phase: phase-3
 Bundle schema version: 1
-Source commit: 9c23e8242b7f2555e494bb5c3606dc6d6d5a1f79
-Generated: 2026-07-30T19:45:20+00:00
+Source commit: b5b7f6ee42a7701cd5402b3dd7b8eec398196ff1
+Generated: 2026-07-31T02:42:00+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 3 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase3_proof.py` at generation time. It is not done, and the Result table below says by how much.
 
@@ -29,9 +29,9 @@ What is not done is captures rather than mechanism, which is a change in this bu
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3693 |
-| suite tests executed | 3527 |
-| suite passed | 3527 |
+| suite tests collected | 3757 |
+| suite tests executed | 3580 |
+| suite passed | 3580 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
@@ -77,7 +77,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | config/image-exceptions.yaml | sha256:0828f4203385bbc3adbd8521f62768e7f4eb46f56382bc6223d37b89aae7a49c |
 | config/workload-catalog.yaml | sha256:dbd10c9d4655be66f829b8c43e150544ba17ca778988f86d14d22e51600feec6 |
 | fixtures/evidence/phase-3/account-measurements.sanitized.json | sha256:02a7cafae966f04037c13f4e2a57b958a7b5e2c435c46a0eba4a6839d4a4c127 |
-| infra/admission-state-machine.yaml | sha256:3ad3d29cb5703079823caf9feccdec6c8eecbffb6be5a487989a3568c9299fbe |
+| infra/admission-state-machine.yaml | sha256:dfe2b0bd3deb473a24a9584c11dfbc9fe8dfcc81cd42bf51555449e529f92c47 |
 | infra/batch-compute.yaml | sha256:d601bb1e6c4f605737d1107334ef654e65c5c7862cc614e2c0eeb4536b93ae1d |
 | infra/batch-events.yaml | sha256:3d347ee3365870ab2a0c0d6514d7c923c76b3646bb9c1a497e525cb16f16cce0 |
 | infra/batch-network.yaml | sha256:699a82646fa0d9d2a3446471c5451a2847d4c5d1d8978ebe7a2525fa98d2154d |
@@ -100,7 +100,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 - The admission denial matrix has run against a real session and its result lives in a GitHub Actions artifact with a thirty-day retention, which is somewhere this repository cannot cite. The workload matrix has not run at all: it executes inside the container, and no command run there has ever invoked it. So every claim about what the workload role cannot do rests on a policy, and check 13 is a gap.
 - The deployed workload role permits writes under `teams/*/runs/*` rather than under one team's prefix, so it can write into any team's output location. The template agrees, so this is deliberate rather than drift, and for a single-team pilot nothing is misattributed -- but the cross-team isolation the `teams/` segment exists to make expressible is not expressed yet.
 - The rollback rehearsal has not been performed. It is written down and no acceptance check is waiting on it, which is exactly the condition in which work stops being done and then stops being remembered.
-- The nested verification run excludes every test module that builds a proof bundle (tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py), because those tests invoke a generator and would recurse. They run in the reviewer's own `uv run pytest -q`.
+- The nested verification run excludes every test module that builds a proof bundle (tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py, tests/test_phase5_proof.py), because those tests invoke a generator and would recurse. They run in the reviewer's own `uv run pytest -q`.
 - This bundle describes the working tree at generation time, which may differ from the commit named above. The input digests recorded in the bundle index identify exactly what was measured.
 - Nothing forces this bundle to stay current. It is a snapshot, and its counts go stale as soon as a test is added or a template changes. Re-run `uv run python tools/build_phase3_proof.py` and read the diff before accepting a phase gate.
 

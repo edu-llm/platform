@@ -36,6 +36,7 @@ SHARE_ONE_WORKER = frozenset(
         "tests/test_phase1_proof.py",
         "tests/test_phase2_proof.py",
         "tests/test_phase3_proof.py",
+        "tests/test_phase5_proof.py",
         "tests/test_suite_budget.py",
     }
 )

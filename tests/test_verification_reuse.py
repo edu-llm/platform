@@ -44,6 +44,7 @@ from tools import (
     build_phase1_proof,
     build_phase2_proof,
     build_phase3_proof,
+    build_phase5_proof,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -216,6 +217,7 @@ def test_every_generator_asks_for_the_same_environment() -> None:
             build_phase1_proof,
             build_phase2_proof,
             build_phase3_proof,
+    build_phase5_proof,
         )
     ]
 
@@ -232,6 +234,7 @@ def test_every_generators_guard_is_one_of_the_variables_that_gets_set() -> None:
         build_phase1_proof.NESTED_RUN_ENV,
         build_phase2_proof.NESTED_RUN_ENV,
         build_phase3_proof.NESTED_RUN_ENV,
+        build_phase5_proof.NESTED_RUN_ENV,
     }
 
     assert guards == set(GENERATOR_NESTED_ENV_VARS)
@@ -263,6 +266,7 @@ def test_every_generator_module_is_listed_as_one() -> None:
         build_phase1_proof.GENERATOR_TEST_PATH,
         build_phase2_proof.GENERATOR_TEST_PATH,
         build_phase3_proof.GENERATOR_TEST_PATH,
+        build_phase5_proof.GENERATOR_TEST_PATH,
     }
 
     assert generators == set(proof_bundle.GENERATOR_TEST_PATHS)

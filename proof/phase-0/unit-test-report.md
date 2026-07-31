@@ -17,8 +17,8 @@ uv run python tools/build_phase0_proof.py
 
 | measure | count |
 | --- | --- |
-| collected by pytest | 3746 |
-| executed (excluding tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py) | 3580 |
+| collected by pytest | 3757 |
+| executed (excluding tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py, tests/test_phase5_proof.py) | 3580 |
 | passed | 3580 |
 | failed | 0 |
 | errored | 0 |

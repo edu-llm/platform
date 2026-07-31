@@ -2,8 +2,8 @@
 
 Phase: phase-1
 Bundle schema version: 1
-Source commit: 7f822e3577edaf373a3e9221f76f4cbd4db53888
-Generated: 2026-07-30T20:42:17+00:00
+Source commit: b5b7f6ee42a7701cd5402b3dd7b8eec398196ff1
+Generated: 2026-07-31T02:38:25+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 1 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase1_proof.py` at generation time. Every criterion is covered and the gate is green, which is the state in which a bundle is most worth reading carefully: the Known limitations below say what each criterion does not cover, and `open-decisions.md` says what this phase surfaced and did not settle.
 
@@ -22,9 +22,9 @@ This bundle exists so that a reviewer can decide whether Phase 1 is done without
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3695 |
-| suite tests executed | 3529 |
-| suite passed | 3529 |
+| suite tests collected | 3757 |
+| suite tests executed | 3580 |
+| suite passed | 3580 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
@@ -96,7 +96,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 - The records of the publish run under `fixtures/evidence/phase-1/run/` expire the same way and it means something different. They stop loading on 2026-08-25, and checks 1, 6 and 7 revert to gaps on that date. Nothing about the run will have changed — the image, its scan, the session and the five refusals are all still in the registry and in CloudTrail — but nobody will have confirmed lately that the repository is still immutable, the role is still refused, and the tag still resolves to this digest. Re-capturing costs a read of the account rather than another publish.
 - The drift comparison does not reason about IAM wildcards. A deployed resource of `repository/*` against a template's `repository/x` is reported as one resource gained and one lost, not as one being wider than the other.
 - The secret scan applied to this bundle masks its own content digests before scanning. A 64-character hexadecimal sha256 digest and a 40-character hexadecimal commit SHA both match the generic long-credential patterns in evidence.py, so the two exact token shapes this bundle emits are replaced with placeholders and everything else is scanned unchanged. No other exemption is applied.
-- The nested verification run excludes every test module that builds a proof bundle (tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py), because those tests invoke a generator and would recurse. They run in the reviewer's own `uv run pytest -q`.
+- The nested verification run excludes every test module that builds a proof bundle (tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py, tests/test_phase5_proof.py), because those tests invoke a generator and would recurse. They run in the reviewer's own `uv run pytest -q`.
 - This bundle describes the working tree at generation time, which may differ from the commit named above. The input digests recorded in the bundle index identify exactly what was measured.
 - Nothing forces this bundle to stay current. It is a snapshot, and its counts go stale as soon as a test is added or a template changes. Re-run `uv run python tools/build_phase1_proof.py` and read the diff before accepting a phase gate. The recorded role digests are the one part that fails loudly on its own when it goes stale.
 
