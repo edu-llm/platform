@@ -4,7 +4,7 @@ The 22 Phase 2 acceptance criteria, mapped to the tests cited for each one by no
 
 This mapping is defined once, in `src/edullm_platform/phase2_criteria.py`. The acceptance gate reads the same definition and executes the same node ids, so this matrix and `tools/validate_phase2.py` cannot disagree.
 
-Verification run: 601 tests executed, 601 passed, 0 failed, 0 errored, pytest exit code 0.
+Verification run: 611 tests executed, 611 passed, 0 failed, 0 errored, pytest exit code 0.
 
 Three statuses exist and no more. **COVERED** means one or more cited tests prove the criterion as stated against the shipped configuration and all of them pass; the gate passes it. **DEFERRED** means an explicit recorded decision not to satisfy it yet, which requires both a written reason and a written trigger describing what makes it live again; the gate passes it. **GAP** is everything else, and the gate fails it. There is no in-between status, because an in-between status is what lets a gate be green and wrong at the same time.
 
@@ -170,7 +170,9 @@ Populating team_bindings.teams in config/organization.yaml once sub-team assignm
 
 Scope:
 
-- This one cannot be marked pilot-blocking, and the shared contract refuses the combination rather than leaving it to a reviewer. A deferral is a decision that the criterion is intentionally false right now, so requiring it before a pilot would make the rung unreachable rather than make it safe. What it would have protected goes on the limitations page instead, in the words a user needs: the team recorded against a run is unverified, and nothing stops somebody naming a team they do not belong to.
+- This one cannot be marked pilot-blocking, and the shared contract refuses the combination rather than leaving it to a reviewer. A deferral is a decision that the criterion is intentionally false right now, so requiring it before a pilot would make the rung unreachable rather than make it safe. What it would have protected went on the limitations page instead, in the words a user needs: the team recorded against a run is unverified, and nothing stops somebody naming a team they do not belong to.
+
+THE PAGE THAT EXCHANGE NAMED IS GONE, AND THE PROTECTION SURVIVED IT SOMEWHERE ELSE. On 2026-07-31 the page was taken out of the README and moved to a local, gitignored document, and for the hours between that and the repair the sentence above was the whole of the record, where no pilot user could reach it. It is reachable again: the same fact, in the same words, is printed on the summary every accepted submission ends on -- naming a team you are not on is a mis-routed request rather than a refused one -- and Phase 5 criterion 11 is what holds it there, cited to a test rather than to a page. So this deferral is paid for in substance while its own text still points at something that no longer exists. It is owed the re-cut Phase 5's equivalent deferral had the same day: cite the summary and the test that guards it.
 
 No test proves this check.
 

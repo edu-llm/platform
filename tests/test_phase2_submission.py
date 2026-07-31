@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from edullm_platform.canonical import sha256_digest
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.admission import ApprovalEnvironment
+from edullm_platform.contracts.bindings import TeamBinding
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
 from edullm_platform.contracts.image_scan import (
     ImageScanExceptionRegistry,
@@ -195,6 +196,7 @@ def cpu_payload(**overrides: object) -> dict[str, object]:
         "dataset_release": REGISTERED_DATASET,
         "team": "data-prep",
         "wandb_project": "olmo-core-tokenize",
+        "project": "dolma-tokenization",
         "command": ["python", "-m", "olmo_core.data.tokenize"],
     }
     payload.update(overrides)
@@ -252,6 +254,7 @@ def render(
     *,
     policy: ApprovalPolicy | None = None,
     wandb_username: str | None = None,
+    inventory: OrganizationInventory | None = None,
 ) -> str:
     return render_approver_context(
         submission,
@@ -259,7 +262,94 @@ def render(
         policy=policy if policy is not None else load_approval_policy(),
         repository_url=REPOSITORY_URL,
         wandb_username=wandb_username,
+        inventory=inventory if inventory is not None else load_organization_inventory(),
     )
+
+
+def inventory_binding(team_id: str, *lead_logins: str) -> OrganizationInventory:
+    """The shipped roster with one team binding added.
+
+    Built from the shipped inventory rather than from scratch, because the bindings
+    catalogue is empty today and a fixture roster would let these tests agree with a shape
+    nothing deploys. Adding one team is the smallest edit that makes routing answerable.
+    """
+    shipped = load_organization_inventory()
+    return shipped.model_copy(
+        update={
+            "team_bindings": shipped.team_bindings.model_copy(
+                update={
+                    "teams": (
+                        TeamBinding(
+                            team_id=team_id,
+                            github_team_slug=team_id,
+                            lead_logins=lead_logins,
+                            # Required by the contract and unread by the routing line.
+                            # Values nobody consumes, in a test rather than in
+                            # config/organization.yaml, which is the point: what the real
+                            # ones should be is one of the open questions, and a written
+                            # value is one a later reader will believe.
+                            s3_namespace=f"sbsandbox-intern-{team_id}",
+                            wandb_entity="eduLLM",
+                            member_logins=(),
+                        ),
+                    )
+                }
+            )
+        }
+    )
+
+
+def test_the_approver_context_names_the_lead_the_claimed_team_would_route_to() -> None:
+    """Mutation: leave the routing line out and let the reviewer infer it.
+
+    THIS IS THE ONLY THING POPULATING team_bindings BUYS, now that membership records
+    rather than enforces, and it is worth being clear that it is enough. The bindings do not
+    decide who may release a run -- any lead may, and the authorization path does not consult
+    them. What they do is answer "whose run is this, and who would normally look at it",
+    which is the question a reviewer opening an approval they were not expecting is asking.
+    """
+    rendered = render(
+        compile_payload(cpu_payload(team="data-prep")),
+        inventory=inventory_binding("data-prep", "philote-dev"),
+    )
+
+    assert "philote-dev" in rendered
+    assert "data-prep" in rendered
+
+
+def test_a_claimed_team_with_no_bound_lead_says_so_rather_than_naming_nobody() -> None:
+    """Mutation: render an empty string, or omit the row, when nothing is bound.
+
+    The state every team is in today, because the bindings catalogue is empty -- so this is
+    the ordinary path rather than the edge case, and it stays ordinary for as long as the
+    bindings go unpopulated. A blank where a name belongs reads as a lookup that failed and
+    sends a reviewer to check whether the page is broken. Saying no lead is recorded says
+    the same thing about the world and nothing about the page.
+    """
+    rendered = render(compile_payload(cpu_payload(team="data-prep")))
+
+    assert "No lead is recorded for team `data-prep`" in rendered
+
+
+def test_the_context_says_any_lead_may_still_release_so_an_absence_delays_nobody() -> None:
+    """Mutation: state the routing without the fallback beside it.
+
+    The fallback is what makes the routing safe to add at all. Naming an expected lead
+    invites the reading that they are the only person who may act, which would make an
+    absent lead a stuck run and an unbound team an unusable one -- and both would be wrong:
+    the approval gate admits any lead, and this line is a hint rather than a gate.
+
+    Said to the reviewer rather than only implemented, because the person who needs to know
+    it is the second lead deciding whether releasing somebody else's run is their business.
+    """
+    routed = render(
+        compile_payload(cpu_payload(team="data-prep")),
+        inventory=inventory_binding("data-prep", "philote-dev"),
+    )
+    unbound = render(compile_payload(cpu_payload(team="data-prep")))
+
+    for rendered in (routed, unbound):
+        assert "any team lead may release" in rendered
 
 
 def test_the_reviewer_is_told_which_wandb_account_the_run_will_be_logged_under() -> None:
@@ -505,6 +595,73 @@ def test_an_unregistered_dataset_is_refused_before_a_reviewer_is_asked() -> None
     with pytest.raises(SubmissionRefusedError) as exc_info:
         compile_payload(cpu_payload(dataset_release=UNREGISTERED_DATASET))
     assert "unregistered_dataset" in str(exc_info.value)
+
+
+def test_a_submission_naming_a_repository_nothing_registers_is_refused_before_a_reviewer_is_asked() -> (
+    None
+):
+    """CHARACTERISATION. This passed the day it was written, and that is the point of it.
+
+    The compile layer already refuses an unregistered repository, through
+    ``build_request_facts`` deriving ``repository_registered`` from the registry and
+    ``denied_outright_conditions`` owning the verdict. Nothing named that behaviour, so
+    nothing would have noticed a refactor dropping ``repositories`` from the
+    ``build_request_facts`` call: the fact would quietly answer False for everything, or
+    the argument would default, and the only test that would go red is one about datasets.
+
+    Deliberately not a second check inside ``compile_submission``. Adding one would give
+    this condition two refusal paths and split the authority the comment above the
+    ``denied_outright_conditions`` import exists to protect.
+
+    It has to be ``dolma``, and finding that out is half of what the test is worth. An
+    invented repository name never reaches the registry fact: the workload profile is
+    checked against the repository first, so a submission naming a repository nothing
+    registers is refused for naming a profile that belongs to a different one, and the
+    registry is never consulted. ``dolma`` is the only name that gets there, because it is
+    the one repository with a workload profile in config/workload-catalog.yaml and no entry
+    in config/repositories.yaml. Registering it -- which Phase 6 does -- takes this path out
+    of reach, and this test with it.
+    """
+    with pytest.raises(SubmissionRefusedError) as exc_info:
+        compile_payload(cpu_payload(repository="dolma", workload_profile=DOLMA_WORKLOAD))
+
+    assert "unregistered_repository" in str(exc_info.value)
+
+
+def test_a_team_that_is_not_kebab_case_is_refused_with_a_message_naming_team() -> None:
+    """Mutation: let the pydantic error out of ``build_request_facts`` untranslated.
+
+    The refusal already happens -- ``RequestFacts.claimed_team`` is a ``TeamId`` and
+    ``TeamId`` carries ``SLUG_PATTERN`` -- so this is about which error a submitter meets.
+    A ``ValidationError`` escaping compile is not a refusal the workflow reports as one, and
+    it arrives as a pydantic dump rather than as a sentence.
+    """
+    with pytest.raises(SubmissionRefusedError) as exc_info:
+        compile_payload(cpu_payload(team="Memory Split"))
+
+    message = str(exc_info.value)
+    assert "team" in message
+    assert "Memory Split" in message
+    # The rule in words rather than the regex. A submitter who has just been shown
+    # ^[a-z0-9]+(?:-[a-z0-9]+)*$ has been told the truth and helped with nothing.
+    assert "lower-case" in message
+    assert "hyphen" in message
+
+
+def test_the_team_refusal_does_not_name_the_field_the_validator_is_thinking_about() -> None:
+    """Mutation: interpolate the pydantic message into the refusal instead of rewriting it.
+
+    ``claimed_team`` is what the field is called inside ``RequestFacts``, where the name
+    carries a real distinction: policy is judging a claim rather than a fact, and the
+    difference between the two is the whole reason team membership is not enforced. None of
+    that is visible to somebody looking at a form with a box marked ``team``. Naming the
+    internal field sends them to search the repository for a field that is not on their
+    form, and the closest thing they will find is the one they already filled in.
+    """
+    with pytest.raises(SubmissionRefusedError) as exc_info:
+        compile_payload(cpu_payload(team="Memory Split"))
+
+    assert "claimed_team" not in str(exc_info.value)
 
 
 def test_an_unregistered_compute_profile_is_refused_because_it_cannot_be_priced() -> None:

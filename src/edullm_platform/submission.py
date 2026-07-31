@@ -26,9 +26,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
+from re import fullmatch
 from typing import Annotated, Self
 
-from pydantic import BeforeValidator, Field, model_validator
+from pydantic import BeforeValidator, Field, ValidationError, model_validator
 
 from edullm_platform.canonical import sha256_digest
 from edullm_platform.contracts.admission import ApprovalEnvironment
@@ -38,12 +39,14 @@ from edullm_platform.contracts.base import (
     require_ordered_sequence,
     serialize_decimal,
 )
+from edullm_platform.contracts.bindings import SLUG_PATTERN
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
 from edullm_platform.contracts.image_scan import (
     ImageScanExceptionRegistry,
     ImageScanSummary,
     ScanFinding,
 )
+from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.manifest import (
     COMMIT_SHA_PATTERN,
     IMAGE_DIGEST_PATTERN,
@@ -88,8 +91,8 @@ def _plain(value: Decimal) -> str:
 class SubmissionInputs(ContractModel):
     """The ``workflow_dispatch`` form.
 
-    Fourteen properties against a ceiling of twenty-five, so the count is a usability
-    question rather than a platform constraint. Seven are required and seven are overrides a
+    Fifteen properties against a ceiling of twenty-five, so the count is a usability
+    question rather than a platform constraint. Eight are required and seven are overrides a
     submitter can leave alone. The newest of the seven is the image digest, which stopped
     being required when it started being derived, and which was the hardest of the eight to
     fill in by some distance.
@@ -107,6 +110,10 @@ class SubmissionInputs(ContractModel):
     workload_profile: str = Field(min_length=1)
     dataset_release: str = Field(min_length=1)
     team: str = Field(min_length=1)
+    # Free text on the form and shaped in the manifest. Held as a plain string here, so the
+    # refusal a submitter meets is the one compile_submission writes rather than a pydantic
+    # dump about a form field -- the same split as `team`, for the same reason.
+    project: str = Field(min_length=1)
     wandb_project: str = Field(min_length=1)
     command: Annotated[tuple[str, ...], BeforeValidator(require_ordered_sequence)] = Field(
         min_length=1, strict=False
@@ -147,6 +154,24 @@ class CompiledSubmission:
     # of how many candidates -- which is the difference between a commit built once and a
     # commit built four times, and reads identically in the manifest either way.
     resolved_image: ResolvedImage
+    # BESIDE THE MANIFEST FOR A HARDER REASON THAN resolved_image'S, AND NOT BY PREFERENCE.
+    #
+    # A manifest is hashed whole and the digest is what an approver releases, so a field
+    # added to RunManifest changes the digest of every manifest ever written -- the
+    # recomputed form carries a key the stored bytes never had, and
+    # test_the_manifest_in_every_intent_still_hashes_to_its_recorded_value stops agreeing
+    # with records nobody touched. Measured on a real record rather than reasoned about:
+    # as stored it rehashes to 819aaf8a, with `project: null` to 0439d570.
+    #
+    # No serialization setting rescues it. Dropping nulls instead gives e75c8f8a, because
+    # the stored manifests already carry `fanout: null` and excluding it moves the digest
+    # the other way. This is schema evolution against content addressing, and it is general:
+    # any field added to RunManifest does this.
+    #
+    # Nothing is lost by keeping it out. A project groups runs; it does not say what ran.
+    # Its three consumers -- the W&B run group, the `edullm:project` Batch tag and the cost
+    # view -- are all set when the job is launched, and none reads the sealed document.
+    project: str
 
 
 def _resolve_workload(catalog: WorkloadCatalog, name: str) -> WorkloadProfile:
@@ -243,6 +268,20 @@ def compile_submission(
     # never be able to say that. A form may leave the image to be derived; a record of what
     # ran may not leave it undetermined. So the field is filled in here, from the
     # resolution above, on every path.
+    #
+    # Checked here rather than on SubmissionInputs, so that what a submitter meets is a
+    # sentence rather than a pydantic dump. Same split as `team`, and checked before the
+    # manifest is built rather than after, because the project is no longer part of it --
+    # see CompiledSubmission.project for why a grouping key cannot live in a hashed record.
+    if not fullmatch(SLUG_PATTERN, inputs.project):
+        raise SubmissionRefusedError(
+            f"the project {inputs.project!r} is not a project name this platform can group "
+            "on. A project is written in lower-case letters and digits, with single hyphens "
+            "between words and none at either end -- context-length-sweep, tokenizer-ablation. "
+            "It registers nothing and needs no pull request; only the shape is fixed, so that "
+            "two people naming the same project get one group rather than two."
+        )
+
     manifest = RunManifest(
         schema_version=1,
         repository=inputs.repository,
@@ -272,21 +311,46 @@ def compile_submission(
             "the submission cannot be priced and policy denies it outright"
         ) from exc
 
-    facts = build_request_facts(
-        manifest,
-        repositories=repositories,
-        catalog=catalog,
-        dataset_registry=dataset_registry,
-        estimated_cost_usd=cost.maximum_compute_cost_usd,
-        # The scan summary comes from the provenance record here, because the compile job
-        # holds no AWS credentials and cannot ask ECR. Admission asks ECR itself and fails
-        # closed on disagreement, so this value chooses the approval environment and is
-        # never what the decision rests on -- the same split as the manifest hash.
-        image_scan_policy=policy.image_scan,
-        image_scan_registry=image_scan_registry,
-        image_scan_summary=image_scan_summary,
-        image_scan_findings=image_scan_findings,
-    )
+    # THE FORM SAYS `team` AND THE VALIDATOR SAYS `claimed_team`, AND ONLY ONE OF THOSE IS
+    # A PLACE THE SUBMITTER CAN GO AND FIX SOMETHING.
+    #
+    # The refusal itself is not new and is not added here: RunManifest.team takes any
+    # non-empty string, RequestFacts.claimed_team is a TeamId, and TeamId carries
+    # SLUG_PATTERN -- so a team with a capital or a space has always been rejected, one
+    # line below. What escaped was a pydantic ValidationError, which is not the type the
+    # submitting workflow reports as a refusal, quoting a field name that appears nowhere
+    # on the form. `claimed_team` earns its name inside RequestFacts, where the distinction
+    # between a claim and a fact is exactly what policy is built on and exactly why
+    # membership is recorded rather than enforced. None of that is the submitter's problem.
+    #
+    # Translated rather than suppressed, and only this one field: a ValidationError from
+    # any other part of the facts is a bug in this platform's own derivation, and turning
+    # that into a refusal would blame a submitter for it.
+    try:
+        facts = build_request_facts(
+            manifest,
+            repositories=repositories,
+            catalog=catalog,
+            dataset_registry=dataset_registry,
+            estimated_cost_usd=cost.maximum_compute_cost_usd,
+            # The scan summary comes from the provenance record here, because the compile
+            # job holds no AWS credentials and cannot ask ECR. Admission asks ECR itself and
+            # fails closed on disagreement, so this value chooses the approval environment
+            # and is never what the decision rests on -- the same split as the manifest hash.
+            image_scan_policy=policy.image_scan,
+            image_scan_registry=image_scan_registry,
+            image_scan_summary=image_scan_summary,
+            image_scan_findings=image_scan_findings,
+        )
+    except ValidationError as exc:
+        if not any(error["loc"] == ("claimed_team",) for error in exc.errors()):
+            raise
+        raise SubmissionRefusedError(
+            f"the team {manifest.team!r} is not a team name this platform can record. A "
+            "team is written in lower-case letters and digits, with single hyphens between "
+            "words and none at either end -- memory-split, data, olmo-core-eval. Correct "
+            "the team field on the submission form."
+        ) from exc
 
     # Imported here rather than at module scope: admission owns this rule, and importing
     # it the other way round would make the compile step the authority on what is denied.
@@ -309,6 +373,7 @@ def compile_submission(
         approving_environment=ApprovalEnvironment.for_approval_class(approval_class),
         cost=cost,
         resolved_image=resolved_image,
+        project=inputs.project,
     )
 
 
@@ -350,12 +415,46 @@ def _exceeded_bounds(submission: CompiledSubmission, policy: ApprovalPolicy) -> 
     return tuple(exceeded)
 
 
+def _routing_note(inventory: OrganizationInventory, *, claimed_team: str) -> str:
+    """Who this run would normally go to, and the sentence that stops that being a rule.
+
+    THE ONLY THING POPULATING team_bindings BUYS, AND IT IS ENOUGH. Membership records
+    rather than enforces: the authorization path does not consult the bindings, and any lead
+    may release any run. What the bindings can answer is "whose run is this and who would
+    normally look at it", which is the question a reviewer opening an approval they were not
+    expecting is actually asking.
+
+    The fallback is stated rather than left implicit, because naming an expected lead invites
+    the reading that they are the only person who may act. If that were true an absent lead
+    would be a stuck run and an unbound team an unusable one, and neither is: the gate admits
+    any lead. Saying so here is what makes the routing safe to show at all.
+
+    Every team is unbound today, so the second branch is the ordinary path rather than the
+    edge case. It says no lead is recorded instead of leaving a blank, because a blank where
+    a name belongs reads as a lookup that broke.
+    """
+    bound = next(
+        (team for team in inventory.team_bindings.teams if team.team_id == claimed_team),
+        None,
+    )
+    if bound is not None and bound.lead_logins:
+        routed = ", ".join(f"`{login}`" for login in bound.lead_logins)
+        expected = f"Team `{claimed_team}` routes to {routed}."
+    else:
+        expected = f"No lead is recorded for team `{claimed_team}`."
+    return (
+        f"{expected} This is a hint and not a gate: **any team lead may release this run**, "
+        "so an unrecorded or unavailable lead delays nobody."
+    )
+
+
 def render_approver_context(
     submission: CompiledSubmission,
     *,
     submitter: str,
     policy: ApprovalPolicy,
     repository_url: str,
+    inventory: OrganizationInventory,
     wandb_username: str | None = None,
 ) -> str:
     """What the reviewer reads before deciding, as GitHub step-summary markdown.
@@ -374,6 +473,8 @@ def render_approver_context(
             f"**{submission.approval_class.value.upper()}** — this request must be released "
             f"by the `{submission.approving_environment.value}` gate."
         ),
+        "",
+        _routing_note(inventory, claimed_team=manifest.team),
         "",
         "| | |",
         "| --- | --- |",

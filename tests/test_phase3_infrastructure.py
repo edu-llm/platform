@@ -1023,6 +1023,11 @@ def test_the_validator_payload_is_built_field_by_field_and_never_forwarded() -> 
         "approved_manifest_sha256",
         "manifest",
         "workflow_run",
+        # Forwarded so the validator can disagree with it. ReadImageScan reads the scan from
+        # the repository this names, and the validator re-derives the same name from
+        # manifest.repository against the registry in its own zip -- a check it cannot make
+        # unless the value it was read with arrives here too.
+        "ecr_repository",
         "image_scan",
     }
 
@@ -1101,6 +1106,32 @@ def test_the_image_scan_is_read_before_anything_is_judged_and_fails_open_to_clos
             "Next": "ValidateAndDecide",
         }
     ]
+
+
+def test_the_scan_is_read_from_the_repository_the_submission_names_rather_than_a_pinned_one() -> (
+    None
+):
+    """Mutation: put any ECR repository name back as a literal ``RepositoryName``.
+
+    This state spelled ``sbsandbox-intern-edullm-olmo-core`` out. That was invisible while
+    one registered repository had a workload profile and fails in the worst available way
+    once a second does -- not by refusing the submission, but by admitting the question and
+    answering it about the wrong image. The manifest compiles, the digest resolves out of
+    the correct repository, the describe is aimed at OLMo-core's, ECR replies
+    ``ImageNotFoundException``, the ``Catch`` above routes it into ``$.image_scan`` exactly
+    as designed, and the run is denied on unreviewed findings *after* a lead released it.
+
+    Nothing in the suite caught that, and the test above is why: it checks the resource, the
+    digest path, the ``Next`` and the ``Catch``, all four of which stay correct. The
+    repository name was the one parameter nobody asserted.
+    """
+    parameters = state_machine_definition()["States"]["ReadImageScan"]["Parameters"]
+
+    assert "RepositoryName" not in parameters, (
+        "ReadImageScan names an ECR repository literally, so every submission's scan is "
+        "read from that one repository whatever the manifest says"
+    )
+    assert parameters["RepositoryName.$"] == "$.ecr_repository"
 
 
 def test_the_binding_write_is_conditional_and_checksummed_like_every_lineage_write() -> None:

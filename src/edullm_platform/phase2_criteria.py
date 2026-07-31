@@ -277,9 +277,21 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                     "the combination rather than leaving it to a reviewer. A deferral is a "
                     "decision that the criterion is intentionally false right now, so requiring "
                     "it before a pilot would make the rung unreachable rather than make it "
-                    "safe. What it would have protected goes on the limitations page instead, "
+                    "safe. What it would have protected went on the limitations page instead, "
                     "in the words a user needs: the team recorded against a run is unverified, "
-                    "and nothing stops somebody naming a team they do not belong to."
+                    "and nothing stops somebody naming a team they do not belong to.\n\n"
+                    "THE PAGE THAT EXCHANGE NAMED IS GONE, AND THE PROTECTION SURVIVED IT "
+                    "SOMEWHERE ELSE. On 2026-07-31 the page was taken out of the README and "
+                    "moved to a local, gitignored document, and for the hours between that "
+                    "and the repair the sentence above was the whole of the record, where no "
+                    "pilot user could reach it. It is reachable again: the same fact, in the "
+                    "same words, is printed on the summary every accepted submission ends on "
+                    "-- naming a team you are not on is a mis-routed request rather than a "
+                    "refused one -- and Phase 5 criterion 11 is what holds it there, cited to "
+                    "a test rather than to a page. So this deferral is paid for in substance "
+                    "while its own text still points at something that no longer exists. It "
+                    "is owed the re-cut Phase 5's equivalent deferral had the same day: cite "
+                    "the summary and the test that guards it."
                 ),
             ),
         ),

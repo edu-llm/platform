@@ -17,9 +17,9 @@ uv run python tools/build_phase5_proof.py
 
 | measure | count |
 | --- | --- |
-| collected by pytest | 3779 |
-| executed (excluding tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py, tests/test_phase5_proof.py) | 3600 |
-| passed | 3600 |
+| collected by pytest | 3807 |
+| executed (excluding tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py, tests/test_phase5_proof.py) | 3626 |
+| passed | 3626 |
 | failed | 0 |
 | errored | 0 |
 | skipped | 0 |
@@ -31,9 +31,9 @@ Every test node id cited by the negative-case matrix, plus every test in the mod
 
 | measure | count |
 | --- | --- |
-| selected node ids | 89 |
-| executed | 89 |
-| passed | 89 |
+| selected node ids | 91 |
+| executed | 91 |
+| passed | 91 |
 | failed | 0 |
 | errored | 0 |
 | skipped | 0 |

@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Submit a run
+    url: https://github.com/edu-llm/platform/actions/workflows/submit-run.yml
+    about: Not an issue. This is the form that runs a job.

@@ -31,22 +31,27 @@ from edullm_platform.phase5_criteria import phase5_criteria
 from edullm_platform.proof_bundle import (
     ProofBundleError,
     contradicting_status_claims,
+    load_recorded_goldens,
 )
 from edullm_platform.proof_generator import standing
 from tests.proof_support import skip_unless_reproducing
 from tools.build_phase5_proof import (
     BUNDLE_FILENAMES,
+    GENERATOR_COMMAND,
     Coherence,
     Verification,
     build_bundle,
     compute_goldens,
+    default_output_dir,
     establish_coherence,
+    goldens_path,
     known_limitations,
     read_runs,
     render_second_person,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+GOLDENS_PATH = goldens_path(default_output_dir(PROJECT_ROOT))
 FIRST_INSTANT = datetime(2026, 1, 1, tzinfo=UTC)
 SECOND_INSTANT = datetime(2026, 6, 30, 12, 34, 56, tzinfo=UTC)
 GENERATED_AT_PREFIX = "Generated: "
@@ -147,14 +152,41 @@ def test_the_opening_sentence_does_not_call_a_deferred_criterion_covered() -> No
     """Mutation: open a green bundle by saying every criterion is covered.
 
     The shared opening was written for a phase that closes with nothing outstanding, and it
-    says so in those words. Phase 5 is the first bundle to reach a green gate while carrying
+    says so in those words. Phase 5 was the first bundle to reach a green gate while carrying
     a deferral, so that sentence would have printed "every criterion is covered" over a
     criterion nobody has observed -- on the one page most reviewers read, and past the guard
     that reads status claims, which understands "check 6 is deferred" and not "every".
 
-    ``contradicting_status_claims`` is asserted beside the wording rather than instead of
-    it, because the two catch different halves: the guard would let this through and a
-    reader would not.
+    **Asserted against a synthetic deferral rather than against this phase, since
+    2026-07-31.** Phase 5's deferral was withdrawn and re-granted inside that one day, and for
+    the hours it was withdrawn the phase exercised this branch not at all. Keying the test on
+    ``phase5_criteria()`` would have left it passing while measuring nothing for exactly that
+    window -- the same class of quiet failure the branch itself exists to prevent -- so it
+    stays keyed on a deferral it constructs, whatever the phase happens to record.
+    """
+    opening = standing([], ["6"])
+
+    assert "It is not done" not in opening
+    assert "Every criterion is covered" not in opening
+    assert "deferred" in opening
+    assert "6" in opening, "the opening does not say which criterion is outstanding"
+
+
+def test_the_opening_sentence_reports_this_phase_as_green_but_not_complete() -> None:
+    """Mutation: open the bundle as though the phase had closed, or as though it had failed.
+
+    **Both wrong openings are available here and they are wrong in opposite directions,
+    which is why this is asserted rather than left to the generator.** As of 2026-07-31
+    Phase 5 records no gaps and one deferral: criterion 6, the GPU checkpoint under a team
+    other than ``platform``. "Every criterion is covered" is the first wrong opening -- one
+    is not, it is deferred, and a deferral is a decision to accept something untrue for now
+    rather than a small kind of covered. "It is not done" is the second, and it is what this
+    file asserted while the same criterion was a gap; printing it now would report a green
+    gate as a red one.
+
+    Read off the definition rather than written down, because the wording and the statuses
+    drifting apart is exactly what ``contradicting_status_claims`` is asserted here to catch
+    -- and that drift is not hypothetical: the statuses moved twice on 2026-07-31.
     """
     numbers = {
         status: [check.number for check in phase5_criteria() if check.status is status]
@@ -162,11 +194,9 @@ def test_the_opening_sentence_does_not_call_a_deferred_criterion_covered() -> No
     }
     opening = standing(numbers[CriterionStatus.GAP], numbers[CriterionStatus.DEFERRED])
 
+    assert "No criterion is a gap and the gate is green" in opening
+    assert "criterion 6 is deferred rather than covered" in opening
     assert "It is not done" not in opening
-    assert "Every criterion is covered" not in opening
-    assert "deferred" in opening
-    for number in numbers[CriterionStatus.DEFERRED]:
-        assert number in opening, "the opening does not say which criterion is outstanding"
     assert contradicting_status_claims({"README.md": opening}, phase5_criteria()) == ()
 
 
@@ -253,11 +283,45 @@ def test_every_committed_capture_carries_a_recorded_digest() -> None:
     The goldens are the only thing standing between a capture being re-taken after the
     account moved on and nobody noticing. A capture with no recorded digest is one that can
     be replaced silently, and it would be the newest one -- the one most likely to matter.
+
+    IT DOES NOT CATCH A CAPTURE BEING DELETED, AND THE TEST BELOW IS WHY THAT MATTERS. Both
+    sides here are computed live from the same directory scan, so they shrink together.
     """
     runs = read_runs(PROJECT_ROOT)
     goldens = compute_goldens(PROJECT_ROOT)
 
     assert {golden.fixture for golden in goldens} == {run.run_id for run in runs}
+
+
+def test_every_digest_the_bundle_recorded_still_has_a_capture_behind_it() -> None:
+    """Mutation: compare the live goldens against the live runs and call it covered.
+
+    That mutation is what this file did until a deletion audit tried it. Removing
+    ``fixtures/evidence/phase-5/runs/run_019fb505-9b0f-70cc-b890-2c60037cfe41`` passed the
+    Phase 5 tests, passed the gate at exit 0, and passed the full nightly reproduction --
+    thirty-seven, zero and thirty-one green respectively. Two live sets derived from one
+    directory scan cannot detect that the directory lost an entry.
+
+    So this one reads the *committed* ``serialization-goldens.json`` instead, which is the
+    protection phases 0 through 3 have had all along and Phase 5 did not. It matters more
+    here than there: these captures are the only evidence that two people who did not build
+    the platform used it, they cannot be re-taken once the account moves on, and the bundle
+    goes on asserting a second person either way.
+    """
+    recorded = load_recorded_goldens(GOLDENS_PATH)
+
+    assert recorded, (
+        f"{GOLDENS_PATH} records no digests at all, so nothing below can fail. Run "
+        f"`{GENERATOR_COMMAND}` to write them."
+    )
+    live = {golden.fixture for golden in compute_goldens(PROJECT_ROOT)}
+    vanished = {record.fixture for record in recorded} - live
+    assert not vanished, (
+        f"the bundle records a digest for {sorted(vanished)}, and no capture under "
+        "fixtures/evidence/phase-5/runs/ answers to it. Either a capture was deleted, in "
+        f"which case restore it, or it was retired deliberately, in which case run "
+        f"`{GENERATOR_COMMAND}` so the bundle stops claiming evidence it no longer holds."
+    )
 
 
 # ---------------------------------------------------------------------------------------

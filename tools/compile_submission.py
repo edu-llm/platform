@@ -225,6 +225,10 @@ def main(argv: list[str] | None = None) -> int:
         "approving_environment": submission.approving_environment.value,
         "manifest_sha256": submission.manifest_sha256,
         "manifest": json.loads(canonical_json_bytes(submission.manifest)),
+        # A sibling of the manifest and deliberately not a key inside it: the digest above
+        # is what an approver releases, and a field folded into the hashed document changes
+        # the digest of every record written before that field existed.
+        "project": submission.project,
     }
     args.output.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -235,6 +239,7 @@ def main(argv: list[str] | None = None) -> int:
                 submitter=args.submitter,
                 policy=policy,
                 repository_url=args.repository_url,
+                inventory=inventory,
                 wandb_username=inventory.wandb_username_for(args.submitter),
             ),
             encoding="utf-8",

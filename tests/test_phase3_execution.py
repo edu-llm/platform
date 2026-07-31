@@ -445,7 +445,7 @@ def test_the_submitted_target_is_the_resolved_one_and_not_anything_from_the_mani
     assert request["JobDefinition"] == resolved.job_definition_arn
 
 
-def test_the_container_environment_is_exactly_these_six_variables() -> None:
+def test_the_container_environment_is_exactly_these_seven_variables() -> None:
     """Mutation: add, drop or rename a variable the container reads.
 
     Nothing else in the repository pins this list, which was measured rather than assumed:
@@ -478,6 +478,11 @@ def test_the_container_environment_is_exactly_these_six_variables() -> None:
         # itself and a prefixed copy would need the workload to forward it. WANDB_USERNAME
         # is absent here and only here: this manifest was submitted with no recorded W&B
         # account, and an empty attribution is worse than none.
+        #
+        # WANDB_PROJECT duplicates the prefixed spelling above deliberately. It is the one
+        # that reaches the client without a workload forwarding it, and nothing in any
+        # research repository forwards the prefixed one.
+        "WANDB_PROJECT",
         "WANDB_ENTITY",
     ]
 
@@ -509,6 +514,38 @@ def test_the_wandb_project_comes_from_the_manifest_and_not_from_the_command() ->
     # Not assembled from anything the command carries, and not defaulted when the manifest
     # is silent -- the field is required on a manifest, so there is no silent case.
     assert declared.wandb_project not in " ".join(declared.command)
+
+
+def test_the_declared_wandb_project_reaches_wandb_without_the_workload_forwarding_it() -> None:
+    """Mutation: send only the prefixed name and rely on the training code to read it.
+
+    That was the state this closes, and it made the form's required `wandb_project` box
+    decorative. `EDULLM_WANDB_PROJECT` is not a name the wandb client knows, and a search of
+    `OLMo-core`, `edullm-data` and `olmo-eval-full` finds nothing reading it -- so the project
+    a run landed in was whatever its own training config said, and the value the approver read
+    on the submission had no bearing on it.
+
+    `WANDB_ENTITY` and `WANDB_RUN_GROUP` were already sent under W&B's own names for exactly
+    this reason. The project was the one that was not, and the inconsistency was the bug.
+
+    This does not take the choice away from a workload. wandb's `init` applies an explicit
+    argument over the environment -- `if project is not None: init_settings.project = project`
+    -- and OLMo-core's `WandBCallback` defaults `project` to `None`, so a run that names its
+    own project still wins and a run that does not now lands where the submission said.
+    """
+    declared = manifest()
+    request = batch_submit_request(
+        manifest=declared,
+        target=target(),
+        run_id=RUN_ID,
+        job_definition=target().job_definition_arn,
+    )
+    environment = {entry["Name"]: entry["Value"] for entry in request["ContainerOverrides"]["Environment"]}
+
+    assert environment["WANDB_PROJECT"] == declared.wandb_project
+    # Both spellings, because the prefixed one is the platform's own record of what it
+    # asserted and a workload may prefer to read it deliberately.
+    assert environment["EDULLM_WANDB_PROJECT"] == environment["WANDB_PROJECT"]
 
 
 def test_a_run_carries_the_wandb_account_of_the_person_who_submitted_it() -> None:
@@ -835,19 +872,32 @@ def test_the_image_is_pulled_from_the_repository_whose_scan_admission_read() -> 
     reintroduced one field along.
 
     A digest identifies bytes and a repository is where those bytes are indexed, so the two
-    references are only the same image because the repository is the same. That agreement
-    is between a Python constant and a literal in an ASL template with nothing connecting
-    them, which is why it is asserted rather than assumed.
+    references are only the same image because the repository is the same. The agreement
+    used to be between a Python constant and a literal in an ASL template with nothing
+    connecting them, which is why it was asserted rather than assumed. Phase 6 connected one
+    end: the scan is read from ``$.ecr_repository``, which the submitting workflow fills out
+    of the registry. So the comparison moves to the registry, which is now the thing both
+    sides have to agree with, and it is made for every submittable repository rather than
+    for the one this constant happens to name.
+
+    ``PUBLISHED_IMAGE_REPOSITORY`` is the end still unconnected. It is correct only while one
+    repository is submittable, and the test below this one is the coverage check that fires
+    when a second becomes so.
     """
     definition = json.loads(
         load_template(STATE_MACHINE_TEMPLATE_PATH)["Resources"]["AdmissionStateMachine"][
             "Properties"
         ]["DefinitionString"]["Fn::Sub"]
     )
-    scanned = definition["States"]["ReadImageScan"]["Parameters"]["RepositoryName"]
+    parameters = definition["States"]["ReadImageScan"]["Parameters"]
     image = registration_for()["ContainerProperties"]["Image"]
 
-    assert PUBLISHED_IMAGE_REPOSITORY == scanned
+    # The scan is read from whatever the request carries, and what the request carries is
+    # the registered name -- asserted against the submitting workflow in
+    # tests/test_phase6_infrastructure.py and against the registry in the handler. So the
+    # repository this pulls from has to be a registered one for the seam to hold.
+    assert parameters["RepositoryName.$"] == "$.ecr_repository"
+    assert PUBLISHED_IMAGE_REPOSITORY in set(submittable_ecr_repositories().values())
     assert image.split("@", maxsplit=1)[0].endswith(f"/{PUBLISHED_IMAGE_REPOSITORY}")
 
 
@@ -878,17 +928,19 @@ def submittable_ecr_repositories() -> dict[str, str]:
 
 
 def test_admission_can_read_a_scan_for_every_submittable_repository() -> None:
-    """Reads the state machine against the registry. Mutation: give a second registered
-    repository a workload profile and leave ``ReadImageScan`` naming the first.
+    """Reads the state machine against the registry. Mutation: pin any submittable
+    repository's ECR repository back as a literal ``RepositoryName``.
 
-    Different in kind from the seam test above, and both are wanted. That one binds
-    ``ReadImageScan`` to ``PUBLISHED_IMAGE_REPOSITORY`` and to nothing else, so two
-    hardcoded names agreeing with each other keep it green however many repositories are
-    registered -- it is a consistency check. This one compares the hardcoded name against
-    the set of repositories a submission can actually name, so it is a coverage check, and
-    it goes red on the day the fix is needed rather than on the day somebody notices.
+    THIS TEST ASKED FOR A FIX AND PHASE 6 MADE IT, so what it checks has changed shape and
+    the history is worth keeping. It used to compare a literal against the set of
+    repositories a submission can name, and it stayed green only because that set had one
+    member. The literal is gone: ``RepositoryName.$`` reads ``$.ecr_repository``, which the
+    submitting workflow fills from ``config/repositories.yaml`` and the validator re-derives
+    and refuses on disagreement. Coverage is now structural rather than arithmetic, so the
+    question this test asks is no longer "does the one name cover every repository" but
+    "has a name been pinned again".
 
-    Where it lands if nothing catches it, which is why the coverage half matters. The
+    Where it lands if nothing catches it, which is why the coverage half still matters. The
     ``resolve`` job reads the scan from the right repository, because
     ``tools/resolve_published_image.py`` takes ``ecr_repository`` out of the registry, so
     compile evaluates the image-scan gate against a real answer, passes, and a lead
@@ -905,20 +957,22 @@ def test_admission_can_read_a_scan_for_every_submittable_repository() -> None:
             "Properties"
         ]["DefinitionString"]["Fn::Sub"]
     )
-    scanned = definition["States"]["ReadImageScan"]["Parameters"]["RepositoryName"]
-    unreadable = sorted(
+    parameters = definition["States"]["ReadImageScan"]["Parameters"]
+    pinned = sorted(
         f"{repository} (images in {ecr_repository})"
         for repository, ecr_repository in submittable_ecr_repositories().items()
-        if ecr_repository != scanned
+        if parameters.get("RepositoryName") == ecr_repository
     )
 
-    assert not unreadable, (
-        f"ReadImageScan reads scan findings from {scanned} and from nowhere else, so an "
-        f"approved submission naming {', '.join(unreadable)} would be admitted against "
-        "findings for an image that repository never published. "
+    assert not pinned, (
+        "ReadImageScan reads scan findings from "
+        f"{parameters.get('RepositoryName')} and from nowhere else, so an approved "
+        f"submission naming any repository other than {', '.join(pinned)} would be "
+        "admitted against findings for an image that repository never published. "
         "infra/admission-state-machine.yaml, the ReadImageScan state's "
         "Parameters.RepositoryName, is what would have to change."
     )
+    assert parameters["RepositoryName.$"] == "$.ecr_repository"
 
 
 def test_a_run_can_pin_an_image_from_every_submittable_repository() -> None:

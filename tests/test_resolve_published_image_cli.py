@@ -643,18 +643,56 @@ def test_an_answer_that_names_no_digest_stops_rather_than_resolving_to_nothing(
     assert not (tmp_path / "published-image.json").exists()
 
 
-def test_a_repository_the_registry_does_not_know_is_refused_before_anything_is_asked(
+def test_an_unregistered_repository_exits_as_a_refusal_rather_than_as_a_tool_that_could_not_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """Mutation: return ``EXIT_UNUSABLE`` here, which is what it used to return.
+
+    The two exit codes mean different things to the job that calls this, and the difference
+    reaches a person. ``EXIT_UNUSABLE`` says the tool could not find out, and the submitting
+    workflow answers it with "This is not a refusal on the merits" -- which is a true
+    sentence about a policy file that will not parse and a false one about a repository
+    nobody registered. That is a refusal on the merits, and the most actionable one this
+    platform produces, because the fix is a pull request against config/repositories.yaml.
+
+    Reported here rather than left to the compile job, which also refuses it. Refusing twice
+    is not the problem; refusing the second time with a better sentence than the first is,
+    because the first is the one the submitter reads.
+    """
     recording = install_aws_stub(tmp_path, monkeypatch)
 
     exit_code = resolve(tmp_path, repository="dolma")
 
-    assert exit_code == 2
-    assert capsys.readouterr().err.splitlines()[0] == "unregistered_repository"
+    assert exit_code == 1
+    assert exit_code != 2, "an unregistered repository is a refusal, not a tool that failed"
     assert calls(recording) == []
+
+
+def test_the_unregistered_repository_message_says_what_to_do_rather_than_naming_a_condition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Mutation: print the bare ``unregistered_repository`` token and stop.
+
+    Phase 5 criterion 7's lesson, applied one job earlier. A token names the condition the
+    code is in, which the submitter is not in and cannot act on. What they can act on is
+    the repository they asked for, the ones that are registered, and the file that decides.
+
+    The token stays as the first line: the workflow greps for it and a machine-readable
+    first line is why the sentence below it can be written for a person.
+    """
+    install_aws_stub(tmp_path, monkeypatch)
+
+    resolve(tmp_path, repository="dolma")
+
+    reported = capsys.readouterr().err
+    assert reported.splitlines()[0] == "unregistered_repository"
+    assert "dolma" in reported
+    assert "OLMo-core" in reported
+    assert "config/repositories.yaml" in reported
 
 
 def test_a_registry_that_cannot_be_read_stops_before_reaching_aws(

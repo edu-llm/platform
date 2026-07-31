@@ -142,9 +142,11 @@ Resources:
               # decision listed. It is recorded here rather than argued, and the reason it
               # is permitted at all is the sentence the decision ended on: this phase may
               # ship the widest scope provided the record says so, and may not ship a
-              # narrower claim than it enforces. So the record says so, here and on the
-              # pilot limitations page, and the Phase 4 isolation criterion is a gap
-              # instead of a pass.
+              # narrower claim than it enforces. So the record says so here, and the Phase 4
+              # isolation criterion is a gap instead of a pass. It also said so on the pilot
+              # limitations page until that page was taken out of the README on 2026-07-31;
+              # this comment is now the whole of the record a reader outside the team can
+              # reach, which is a worse place for it than the page was.
               #
               # WHAT THIS DOES AND DOES NOT BOUND. It bounds a workload to the outputs
               # bucket and to a runs/ prefix under some team. It does not isolate one team

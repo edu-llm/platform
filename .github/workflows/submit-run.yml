@@ -7,9 +7,9 @@ name: Submit a run
 # submission: the failure arrives as an AssumeRole denial that reads like a broken role
 # ARN. Change infra/iam/admission-role.yaml in the same commit or do not change this.
 #
-# The form below is SubmissionInputs field for field. Fourteen properties against a
+# The form below is SubmissionInputs field for field. Fifteen properties against a
 # workflow_dispatch ceiling of twenty-five, so the length is a usability question rather
-# than a platform constraint. Seven are required; seven are overrides that take a
+# than a platform constraint. Eight are required; seven are overrides that take a
 # registered default when left empty -- six from the workload profile, and the image digest
 # from whatever the declared commit published.
 on:
@@ -22,29 +22,34 @@ on:
         options:
           - OLMo-core
       commit_sha:
-        description: Full forty-character commit SHA the image was built from.
+        description: "The forty-character commit your image was built from — not a branch name. The Build research image run prints it, or use git rev-parse HEAD."
         required: true
         type: string
       image_digest:
-        description: Override the image with a digest this commit already published, written as sha256 followed by sixty-four hex characters. Leave blank to run the image built from the commit above.
+        description: "Advanced — leave blank. The image is resolved from the commit above. Fill this in only to pin one particular rebuild of a commit that was built more than once, written as sha256 followed by sixty-four hex characters."
         required: false
         type: string
         default: ""
       workload_profile:
-        description: Workload profile. It fixes the compute profile, the runtime and attempt bounds, and the checkpoint contract.
+        description: "What kind of run this is. For a first test pick olmo-core-cpu-smoke. Your choice fixes the machine, the time limit and the retry limit, so you do not have to."
         required: true
         type: choice
         options:
           - olmo-core-cpu-smoke
           - olmo-core-gpu-smoke
       dataset_release:
-        description: Dataset release this run reads.
+        description: "Which prepared dataset this run reads. Pick none unless you are reading one — a smoke run reads nothing, and saying none is what makes the record true."
         required: true
         type: choice
         options:
+          - none
           - dolma-2026-07
       team:
-        description: Team the run is charged to and whose lead may approve it.
+        description: "Your group, lower-case with hyphens, such as memory-split. It records whose work this is and points the request at a lead. Any lead may approve any run, so a typo here delays nothing."
+        required: true
+        type: string
+      project:
+        description: "A label grouping related runs together in Weights and Biases and in the cost view, such as onboarding-smoke. Lower-case words joined by hyphens. Make one up; it needs no registering."
         required: true
         type: string
       wandb_project:
@@ -52,11 +57,11 @@ on:
         required: true
         type: string
       command:
-        description: Command the container runs, written as one shell command line and split with POSIX quoting rules.
+        description: "What the container should run, as one command line. For a first test: python -c 'import sys; print(\"edullm smoke ok\", sys.version)'"
         required: true
         type: string
       compute_profile:
-        description: Override the workload profile's compute profile. Leave as inherit to take the registered default.
+        description: "Advanced — leave as inherit. Runs on a different machine than the workload above normally uses."
         required: false
         type: choice
         default: inherit
@@ -180,6 +185,15 @@ jobs:
             --aws-region "${RESOLVE_AWS_REGION}" \
             --policy config/policy.yaml \
             --output "${RUNNER_TEMP}/published-image.json" || resolve_status=$?
+          # Two answers, separated, and the separation is the point. Exit 1 is a refusal on
+          # the merits -- today only an unregistered repository -- and the tool has already
+          # printed a sentence naming what to do about it, so this step must not bury that
+          # under a message about the registry being unreachable. Exit 2 says the tool could
+          # not find out, which is an outage and not a verdict on the submission.
+          if [[ "${resolve_status}" -eq 1 ]]; then
+            echo "The submission was refused before anything was compiled and no reviewer was asked. The reason is printed above." >&2
+            exit 1
+          fi
           if [[ "${resolve_status}" -ne 0 ]]; then
             echo "published_image_unresolved" >&2
             echo "The registry could not be asked which image this commit published, so nothing was compiled and no reviewer was asked. This is not a refusal on the merits. The reason token is printed above; the error body is deliberately withheld because it names the account." >&2
@@ -262,6 +276,7 @@ jobs:
           FORM_WORKLOAD_PROFILE: ${{ inputs.workload_profile }}
           FORM_DATASET_RELEASE: ${{ inputs.dataset_release }}
           FORM_TEAM: ${{ inputs.team }}
+          FORM_PROJECT: ${{ inputs.project }}
           FORM_WANDB_PROJECT: ${{ inputs.wandb_project }}
           FORM_COMMAND: ${{ inputs.command }}
           FORM_COMPUTE_PROFILE: ${{ inputs.compute_profile }}
@@ -286,6 +301,7 @@ jobs:
               ("workload_profile", "FORM_WORKLOAD_PROFILE"),
               ("dataset_release", "FORM_DATASET_RELEASE"),
               ("team", "FORM_TEAM"),
+              ("project", "FORM_PROJECT"),
               ("wandb_project", "FORM_WANDB_PROJECT"),
               ("compute_profile", "FORM_COMPUTE_PROFILE"),
               ("maximum_runtime_hours", "FORM_MAXIMUM_RUNTIME_HOURS"),
@@ -328,7 +344,7 @@ jobs:
           Path(sys.argv[1]).write_text(
               json.dumps(form, indent=2, sort_keys=True) + "\n", encoding="utf-8"
           )
-          print(f"The form declares {len(form)} of the fourteen fields.")
+          print(f"The form declares {len(form)} of the fifteen fields.")
           PY
 
       - name: Download what the registry answered
@@ -609,10 +625,53 @@ jobs:
             --submission "${RUNNER_TEMP}/compiled-submission/compiled-submission.json" \
             --approved-sha256 "${APPROVED_SHA256}"
 
+      # Read out of config/repositories.yaml rather than written down anywhere, and read
+      # HERE rather than eleven steps further down, which is where it used to sit.
+      #
+      # It arrived in Phase 3 for the Batch denial probes, which carry no image probe and
+      # never use the value -- the tool validates every argument before it attempts
+      # anything, and a placeholder invented to satisfy a validator is the first step
+      # towards a probe aimed at something that is not there. Phase 6 gives it a real
+      # consumer: it is the repository ReadImageScan describes against, so it has to be in
+      # hand before the admission request is built rather than after.
+      #
+      # Order is load-bearing in a way that would not announce itself. A `steps.` output
+      # referenced before its step has run is the empty string, not an error, so leaving
+      # this below the assembly would send `"ecr_repository": ""` and fail the describe on
+      # a repository name nobody wrote. The `required()` guard in the assembly catches that,
+      # and this ordering is why it never has to.
+      - name: Resolve the registered image repository
+        id: registry
+        env:
+          RESEARCH_REPOSITORY: ${{ inputs.repository }}
+        run: |
+          set -euo pipefail
+          uv run --frozen python - > "${RUNNER_TEMP}/ecr-repository.txt" <<'PY'
+          import os
+          from pathlib import Path
+
+          from edullm_platform.build_tooling import load_registry
+
+          registered = load_registry(Path("config/repositories.yaml")).repository_by_name(
+              os.environ["RESEARCH_REPOSITORY"]
+          )
+          print(registered.ecr_repository)
+          PY
+          ecr_repository="$(cat "${RUNNER_TEMP}/ecr-repository.txt")"
+          # An ECR repository name, and nothing that could carry a second line into
+          # GITHUB_OUTPUT. The registry contract already constrains the field; this is the
+          # same check the approver login gets, for the same reason.
+          if [[ ! "${ecr_repository}" =~ ^[a-z0-9][a-z0-9._/-]*$ ]]; then
+            echo "registered_repository_unusable" >&2
+            exit 1
+          fi
+          echo "ecr_repository=${ecr_repository}" >> "${GITHUB_OUTPUT}"
+
       - name: Assemble the admission request
         env:
           APPROVED_SHA256: ${{ needs.compile.outputs.manifest_sha256 }}
           APPROVER: ${{ steps.approval.outputs.approver }}
+          ECR_REPOSITORY: ${{ steps.registry.outputs.ecr_repository }}
           RUN_REPOSITORY: ${{ github.repository }}
           WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
           WORKFLOW_FILE_PATH: ${{ job.workflow_file_path }}
@@ -656,6 +715,16 @@ jobs:
               # document admission is being asked to judge.
               "approved_manifest_sha256": required("APPROVED_SHA256"),
               "manifest": document["manifest"],
+              # Where ReadImageScan looks, resolved from the registry by the step above.
+              # A hint about which repository holds this digest, never an authority on it:
+              # the validator re-derives the same name from manifest.repository against the
+              # registry in its own zip and refuses the request if the two disagree. So a
+              # request built by hand cannot aim the scan read at a cleaner repository.
+              "ecr_repository": required("ECR_REPOSITORY"),
+              # Beside the manifest rather than inside it. The manifest is hashed and the
+              # digest is what the approver released, so a grouping key folded into it would
+              # change the digest of every record written before the field existed.
+              "project": document["project"],
               "workflow_run": {
                   "run_repository": required("RUN_REPOSITORY"),
                   "workflow_repository": required("WORKFLOW_REPOSITORY"),
@@ -760,38 +829,6 @@ jobs:
           path: ${{ runner.temp }}/admission-denials.json
           if-no-files-found: error
           retention-days: 30
-
-      # Read out of config/repositories.yaml rather than written down here. The Phase 3
-      # matrix below carries no image probe and never uses this value, but the tool
-      # validates every argument before it attempts anything, and a placeholder invented to
-      # satisfy a validator is the first step towards a probe aimed at something that is not
-      # there. The registered name costs one lookup and is the true answer.
-      - name: Resolve the registered image repository
-        id: registry
-        env:
-          RESEARCH_REPOSITORY: ${{ inputs.repository }}
-        run: |
-          set -euo pipefail
-          uv run --frozen python - > "${RUNNER_TEMP}/ecr-repository.txt" <<'PY'
-          import os
-          from pathlib import Path
-
-          from edullm_platform.build_tooling import load_registry
-
-          registered = load_registry(Path("config/repositories.yaml")).repository_by_name(
-              os.environ["RESEARCH_REPOSITORY"]
-          )
-          print(registered.ecr_repository)
-          PY
-          ecr_repository="$(cat "${RUNNER_TEMP}/ecr-repository.txt")"
-          # An ECR repository name, and nothing that could carry a second line into
-          # GITHUB_OUTPUT. The registry contract already constrains the field; this is the
-          # same check the approver login gets, for the same reason.
-          if [[ ! "${ecr_repository}" =~ ^[a-z0-9][a-z0-9._/-]*$ ]]; then
-            echo "registered_repository_unusable" >&2
-            exit 1
-          fi
-          echo "ecr_repository=${ecr_repository}" >> "${GITHUB_OUTPUT}"
 
       # PHASE 3'S HALF OF THE SAME MATRIX, AND THE REASON IT IS A SECOND STEP.
       #
@@ -1109,7 +1146,85 @@ jobs:
                   "for what the container did."
               ),
               "",
+              # WHAT A SUBMITTER HAS TO KNOW, PRINTED WHERE IT IS ABOUT TO MATTER RATHER
+              # THAN ON A PAGE.
+              #
+              # These used to live in a README section, which put them where a reader had
+              # already decided to go looking. Nobody looks before their first run, and each
+              # of these is only discovered by being caught out by it: the person who cancels
+              # and assumes the spend stopped, the person who resumes and finds the optimizer
+              # cold, the person who reads `team` as an access control, the person whose job
+              # sits in a queue and cannot tell waiting from dropped. Printed here they are
+              # read once by everybody who submits, at the moment the wrong belief would
+              # otherwise form.
+              #
+              # Held to this text by tests, because the value is entirely in it being here at
+              # all -- see tests/test_pilot_limitations.py, Phase 5 criterion 11, and the
+              # Phase 4 criterion 9 transfer, whose condition is the queue paragraph below.
+              #
+              # The heading carries no count. It had one, and the count went stale within the
+              # day the fourth item arrived; a number here buys nothing and has to be
+              # maintained by whoever adds or closes a limitation.
+              "### What this does not do yet",
+              "",
+              (
+                  "**Cancelling the workflow does not stop your job.** Nothing in this "
+                  "account holds `batch:TerminateJob`, so a cancelled workflow leaves the "
+                  "container running and spending. Ask an admin to stop it. The runtime "
+                  "bound above is what limits it otherwise."
+              ),
+              "",
+              (
+                  "**A checkpoint does not include optimizer state.** Weights are written "
+                  "and the optimizer is not, so a resumed run restarts its optimizer cold "
+                  "rather than continuing. Fine for a smoke test, not fine for a result you "
+                  "intend to publish."
+              ),
+              "",
+              (
+                  "**`team` routes your approval; it does not grant you anything.** It "
+                  "decides which lead is asked and which cost centre is charged. Any lead "
+                  "may approve any run, and naming a team you are not on is a mis-routed "
+                  "request rather than a refused one."
+              ),
+              "",
+              (
+                  "**Nobody is watching the queue for you.** A job that cannot get capacity "
+                  "sits in `RUNNABLE` rather than failing, and no alarm notices, because "
+                  "Batch publishes no metric for queue depth to threshold on. Your intent "
+                  "and the decision to admit it were written before Batch was reached, so a "
+                  "run that never places costs time and nothing else and still has a record "
+                  "under the run id above. If it has not started within an hour, ask, and "
+                  "quote the run id."
+              ),
+              "",
           ]
+          # THE FOURTH WARNING, SHOWN TO THE RUNS IT APPLIES TO RATHER THAN TO EVERYBODY.
+          #
+          # No GPU run claiming a team other than `platform` has ever written a checkpoint
+          # here. The permission is in place -- the GPU workload role reaches
+          # teams/*/runs/* -- and the checkpoint machinery is proven, but only under team
+          # `platform`, so this combination is untested rather than known broken.
+          #
+          # Conditional because the harm is: a checkpoint the role cannot write is the whole
+          # output of a GPU run lost at the end of it, after the money is spent. That is
+          # worth a sentence to the person about to be first, and is noise to the several
+          # hundred runs it cannot happen to. Printing it to everybody is how a warning stops
+          # being read.
+          if manifest.checkpoint is not None and manifest.team != "platform":
+              report.extend(
+                  [
+                      (
+                          "**You may be the first to write a checkpoint on a GPU under a team "
+                          f"other than `platform`.** Check that your checkpoint actually "
+                          f"landed under the output prefix above before relying on the run. "
+                          "The permission is in place and the combination has not been "
+                          "exercised, so the failure mode to watch for is a run that trains "
+                          "to completion and saves nothing."
+                      ),
+                      "",
+                  ]
+              )
           with Path(sys.argv[2]).open("a", encoding="utf-8") as summary:
               summary.write("\n".join(report) + "\n")
           print(f"Run {run_id} was submitted. The step summary says where to find it.")

@@ -37,12 +37,21 @@ queue capacity who is not "nobody, indefinitely".
 
 The transfer rests on two conditions, the ones Phase 3's rested on. The criterion keeps its
 text and its number, so nothing is quietly reworded into something easier to satisfy. And
-what it protected goes on the pilot limitations page in the root ``README.md`` in words a
-reader can act on: that a job which cannot get capacity sits in ``RUNNABLE`` rather than
-failing, that no alarm notices, that the intent record is written before Batch is reached at
-all so a run that never places loses nothing but time, and who to ask. That page already
-carried the first two, so the paragraph was extended rather than answered a second time
-beside itself, and ``tests/test_pilot_limitations.py`` pins the sentence.
+what it protected is written where a reader can act on it: that a job which cannot get
+capacity sits in ``RUNNABLE`` rather than failing, that no alarm notices, that the intent
+record is written before Batch is reached at all so a run that never places loses nothing
+but time, and who to ask and what to quote when asking.
+
+**The second condition was met in the wrong place for a few hours, and where it is met now
+is better.** It was written onto the pilot limitations page in the root ``README.md``, which
+already carried the first two facts. That page then left the README on a standing decision
+about what this repository publishes -- a decision that never mentioned Phase 4 -- and the
+condition went with it. The paragraph is now printed on the summary every accepted
+submission ends on, beside the three facts Phase 5 criterion 11 holds there, and
+``tests/test_pilot_limitations.py::test_a_submitter_is_told_a_queued_run_is_waiting_rather_than_lost``
+pins it. That is the difference worth carrying forward: a page can be moved by a decision
+that never mentions the criterion it was paying for, and a cited node id cannot go quiet
+without a test going red.
 
 The number was left as a hole rather than closed up, and that is deliberate rather than
 untidy. A criterion number is an identifier: plan documents and decisions already written
@@ -520,8 +529,9 @@ def phase4_criteria() -> tuple[CriterionSpec, ...]:
         # There is no criterion 9. Capacity failure moved to Phase 8, which is where the
         # queue-wait detector it cannot be closed without is built, and the number is a
         # deliberate hole so that every citation written against this list goes on naming
-        # what it named. The module docstring says why, and what the check protected is on
-        # the pilot limitations page.
+        # what it named. The module docstring says why, and what the check protected is
+        # printed on the summary every accepted submission ends on, held there by
+        # tests/test_pilot_limitations.py.
         CriterionSpec(
             number="10",
             statement=(

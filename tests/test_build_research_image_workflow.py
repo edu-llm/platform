@@ -1194,7 +1194,11 @@ def test_the_published_digest_is_written_where_a_person_can_copy_it(tmp_path: Pa
     assert f"```\n{PUBLISHED_IMAGE_DIGEST}\n```" in written
     # The prose is prose. A shell that expanded something would have eaten the backticks,
     # which is how it would first be noticed.
-    assert "image_digest field of the submission form" in written
+    assert "leave image_digest blank and paste only the commit" in written
+    # The digest is still printed, because the one case that needs it is a commit built more
+    # than once. What changed is that this page no longer sends every reader to a field the
+    # submission resolves for them.
+    assert "You do not need to copy it" in written
 
 
 def test_the_digest_summary_comes_after_the_read_back_that_establishes_it() -> None:

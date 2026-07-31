@@ -90,7 +90,7 @@ Resources:
       Code:
         S3Bucket: sbsandbox-intern-edullm-artifacts
         S3Key: admission-validator/admission-validator.zip
-        S3ObjectVersion: YrDFKx6NDM0hoUOGjtoWoWVzebQx4ZcG
+        S3ObjectVersion: UvRnT9BKI8xL8TUyFesjXY5DZLBfj8S0
       Timeout: 30
       MemorySize: 512
 
@@ -206,6 +206,29 @@ Resources:
       #                   S3.S3Exception -- and here a guessed name that never fires would
       #                   fail the whole execution on an unscanned image instead of
       #                   refusing the run with a reason.
+      #
+      #                   WHICH repository it reads from is `$.ecr_repository`, supplied by
+      #                   the submitting workflow out of config/repositories.yaml. It was a
+      #                   literal until Phase 6, which was correct while one registered
+      #                   repository had a workload profile and silently wrong the moment a
+      #                   second did: the scan for a submission naming the second would be
+      #                   read from the first, come back ImageNotFoundException, take the
+      #                   catch below, and deny the run for findings nobody had reviewed --
+      #                   a true sentence about an image this state never looked at, after
+      #                   the lead had approved it. It cannot be computed here. This is the
+      #                   first state, so the validator has not run and nothing in scope can
+      #                   read the registry, and the mapping is not derivable anyway
+      #                   (edullm-data publishes to sbsandbox-intern-edullm-data), so
+      #                   States.Format cannot build it and a Choice state would be the
+      #                   hand-maintained list this removes.
+      #
+      #                   That makes it the one field a caller supplies that decides what
+      #                   this machine looks AT rather than what it allows, so the validator
+      #                   re-derives it from manifest.repository against the registry in its
+      #                   own zip and refuses on disagreement. It is forwarded to
+      #                   ValidateAndDecide below for exactly that check and for nothing
+      #                   else. Without it a hand-started execution could aim the read at a
+      #                   repository whose findings are clean.
       #   RegisterJobDefinition
       #                   registers the job definition this run is executed on, with the
       #                   image pinned to the digest the manifest declared, and feeds the
@@ -400,7 +423,7 @@ Resources:
                 "Type": "Task",
                 "Resource": "arn:${AWS::Partition}:states:::aws-sdk:ecr:describeImageScanFindings",
                 "Parameters": {
-                  "RepositoryName": "sbsandbox-intern-edullm-olmo-core",
+                  "RepositoryName.$": "$.ecr_repository",
                   "ImageId": {
                     "ImageDigest.$": "$.manifest.image_digest"
                   }
@@ -428,6 +451,7 @@ Resources:
                     "approved_manifest_sha256.$": "$.approved_manifest_sha256",
                     "manifest.$": "$.manifest",
                     "workflow_run.$": "$.workflow_run",
+                    "ecr_repository.$": "$.ecr_repository",
                     "image_scan.$": "$.image_scan"
                   }
                 },

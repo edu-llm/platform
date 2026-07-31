@@ -69,6 +69,10 @@ ACCEPTED_EVENT: dict[str, Any] = {
     "approved_manifest_sha256": (
         "sha256:d6de8ce982365bf8491922097edf7aeaf28a280e9cf005eb4131cb3a41360770"
     ),
+    # Which repository ReadImageScan described against, resolved from the registry by the
+    # submitting workflow. Checked against config/repositories.yaml rather than believed:
+    # it is the one field here that says what was looked at rather than what is claimed.
+    "ecr_repository": "sbsandbox-intern-edullm-olmo-core",
     "manifest": {
         "schema_version": 1,
         "repository": "OLMo-core",
