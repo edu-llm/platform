@@ -15,6 +15,33 @@ LICENCE_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9.+-]{0,63}$"
 
 DatasetReleaseId = Annotated[str, Field(pattern=DATASET_RELEASE_ID_PATTERN)]
 
+#: A prefix in a bucket this account does not own, for a corpus somebody else published.
+#:
+#: A SIBLING OF SandboxS3Prefix AND NOT A WIDENING OF IT. That pattern is
+#: CHECKPOINT_DESTINATION_PREFIX_PATTERN, shared with CheckpointRef.uri,
+#: CheckpointContract.destination_prefix and ResultManifest.output_prefixes -- so admitting a
+#: foreign bucket there would let a run write a checkpoint into one. The bucket is named
+#: rather than left open for the same reason: "some bucket outside our namespace" is every
+#: bucket on S3, and a read grant is written against one.
+PUBLISHED_DATASET_BUCKET = "edullm-data"
+PUBLISHED_DATASET_PREFIX_PATTERN = (
+    rf"^s3://{PUBLISHED_DATASET_BUCKET}/[A-Za-z0-9][A-Za-z0-9._/-]*/$"
+)
+
+PublishedDatasetPrefix = Annotated[str, Field(pattern=PUBLISHED_DATASET_PREFIX_PATTERN)]
+
+#: A SHA-256 as somebody else published it: 64 hex characters, no ``sha256:`` prefix.
+#:
+#: SHA256_DIGEST_PATTERN in contracts/base.py requires the prefix, which is right for the ECR
+#: image digests it was written for and wrong for a dataset manifest digest -- measured
+#: 2026-07-31, pretrain/regmix-10b/v1 publishes
+#: a24992f53dc4a900bacf8fa571d77e343fd28ffa9054c14b93d54204b0a38cb4. Reusing that type would
+#: mean either refusing every real value or storing a re-encoded copy of somebody else's
+#: digest, and a pin that does not hold the published string is not a pin.
+BARE_SHA256_DIGEST_PATTERN = r"^[0-9a-f]{64}$"
+
+BareSha256Digest = Annotated[str, Field(pattern=BARE_SHA256_DIGEST_PATTERN)]
+
 
 class DatasetObject(ContractModel):
     key: str = Field(pattern=DATASET_OBJECT_KEY_PATTERN)
