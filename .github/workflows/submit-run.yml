@@ -57,9 +57,20 @@ on:
         required: true
         type: string
       command:
-        description: "What the container should run, as one command line. For a first test: python -c 'import sys; print(\"edullm ready\", sys.version)'"
+        description: "What the container should run, as one command line. The default below runs a one-line check that needs no code of your own; overwrite it with your own script path for real work."
         required: true
         type: string
+        # PRE-FILLED RATHER THAN DESCRIBED, WHICH IS THE DIFFERENCE BETWEEN AN EXAMPLE AND
+        # A FIRST RUN. The description used to end with this exact line and ask the reader
+        # to type it, which meant a first submission required retyping sixty characters of
+        # Python with two kinds of quote in it, correctly, into a single-line text box.
+        # Every character of that was an opportunity to be refused for a reason that has
+        # nothing to do with whether this platform works.
+        #
+        # Splits under POSIX rules into three arguments whose first is `python`, which is
+        # what RunManifest.command requires: a first element naming a program rather than a
+        # whole command line. A default that could not compile would be worse than none.
+        default: "python -c 'import sys; print(\"edullm ready\", sys.version)'"
       compute_profile:
         description: "Advanced — leave as inherit. Runs on a different machine than the workload above normally uses."
         required: false
