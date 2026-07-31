@@ -47,7 +47,7 @@ The kind column separates a `record`, which some payload is validated against, f
 | CostInputs | edullm_platform.contracts.workload | record | unversioned | sha256:42d9b8e66cb97787e2c46e55b6d2254a8c7bab7930cc53653cc14d9b0740d424 |
 | WorkloadCatalog | edullm_platform.contracts.workload | record | unversioned | sha256:d5eb8b6f40addd387722837c9d0f52bfada42e7d30087589d9f9b43f21497312 |
 | WorkloadProfile | edullm_platform.contracts.workload | record | unversioned | sha256:e5a748fc939a27a220a1da81ad515c719678d757d29b42b008158217baaa10a7 |
-| SubmissionInputs | edullm_platform.submission | record | unversioned | sha256:9147295bceda788cbb4846671e8bd041dd298115f8a9c2082432b7d289345beb |
+| SubmissionInputs | edullm_platform.submission | record | unversioned | sha256:3cee9123c490cb1f7dcdc7c88f5f09eb5f1d232462ab30fc37b7a584055f725b |
 
 ## Runtime records
 
@@ -179,7 +179,7 @@ The checked-in schemas under `schemas/`, with the digest of each file as generat
 | schemas/result-manifest.schema.json | ResultManifest | sha256:7e7b6a5891444d9d13256202319f5be6e70addb81f0b0c077e5294c63529503b |
 | schemas/run-manifest.schema.json | RunManifest | sha256:62851f48df41a1dc270a525b44a8ef01eab660af9d5b60030d6c0a8776e196f2 |
 | schemas/scheduler-attempt.schema.json | SchedulerAttempt | sha256:91984a9fb1f7f9150f7799dc337807bd14b93b50908a56e0e230391546c9c4ac |
-| schemas/submission-inputs.schema.json | SubmissionInputs | sha256:08ffde56bfbb8e5eff5f5a235d50852d5665ad3eab1448e3870121410c16a7e9 |
+| schemas/submission-inputs.schema.json | SubmissionInputs | sha256:741c31071d945861c98abaec766ef5533e6a35cd338306e1d0eff9fb8c8ea845 |
 | schemas/workload-catalog.schema.json | WorkloadCatalog | sha256:4039ead3f77c0949db2a701dae90461788ed6856838075a1f223f3d4b853fa06 |
 
 Regenerate with `uv run python tools/export_schemas.py`. Verify a file by hand with `shasum -a 256 schemas/<file>`.

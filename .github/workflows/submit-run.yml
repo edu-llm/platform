@@ -48,8 +48,8 @@ on:
         description: "Your group, lower-case with hyphens, such as memory-split. It records whose work this is and points the request at a lead. Any lead may approve any run, so a typo here delays nothing."
         required: true
         type: string
-      project:
-        description: "A label grouping related runs together in Weights and Biases and in the cost view, such as onboarding. Lower-case words joined by hyphens. Make one up; it needs no registering."
+      experiment:
+        description: "Groups related runs together inside that project — a sweep, an ablation, one week of work. Also names the group on the cost view. Lower-case words joined by hyphens, such as onboarding. Make one up; it needs no registering."
         required: true
         type: string
       wandb_project:
@@ -347,7 +347,7 @@ jobs:
           FORM_WORKLOAD_PROFILE: ${{ inputs.workload_profile }}
           FORM_DATASET_RELEASE: ${{ inputs.dataset_release }}
           FORM_TEAM: ${{ inputs.team }}
-          FORM_PROJECT: ${{ inputs.project }}
+          FORM_EXPERIMENT: ${{ inputs.experiment }}
           FORM_WANDB_PROJECT: ${{ inputs.wandb_project }}
           FORM_COMMAND: ${{ inputs.command }}
           FORM_COMPUTE_PROFILE: ${{ inputs.compute_profile }}
@@ -372,7 +372,7 @@ jobs:
               ("workload_profile", "FORM_WORKLOAD_PROFILE"),
               ("dataset_release", "FORM_DATASET_RELEASE"),
               ("team", "FORM_TEAM"),
-              ("project", "FORM_PROJECT"),
+              ("experiment", "FORM_EXPERIMENT"),
               ("wandb_project", "FORM_WANDB_PROJECT"),
               ("compute_profile", "FORM_COMPUTE_PROFILE"),
               ("maximum_runtime_hours", "FORM_MAXIMUM_RUNTIME_HOURS"),
@@ -795,7 +795,7 @@ jobs:
               # Beside the manifest rather than inside it. The manifest is hashed and the
               # digest is what the approver released, so a grouping key folded into it would
               # change the digest of every record written before the field existed.
-              "project": document["project"],
+              "experiment": document["experiment"],
               "workflow_run": {
                   "run_repository": required("RUN_REPOSITORY"),
                   "workflow_repository": required("WORKFLOW_REPOSITORY"),

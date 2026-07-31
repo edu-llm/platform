@@ -17,9 +17,9 @@ uv run python tools/build_phase3_proof.py
 
 | measure | count |
 | --- | --- |
-| collected by pytest | 3807 |
-| executed (excluding tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py, tests/test_phase5_proof.py) | 3626 |
-| passed | 3626 |
+| collected by pytest | 3819 |
+| executed (excluding tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py, tests/test_phase5_proof.py) | 3638 |
+| passed | 3638 |
 | failed | 0 |
 | errored | 0 |
 | skipped | 0 |
@@ -31,9 +31,9 @@ Every test node id cited by the negative-case matrix, plus every test in the mod
 
 | measure | count |
 | --- | --- |
-| selected node ids | 378 |
-| executed | 378 |
-| passed | 378 |
+| selected node ids | 381 |
+| executed | 381 |
+| passed | 381 |
 | failed | 0 |
 | errored | 0 |
 | skipped | 0 |
@@ -55,6 +55,7 @@ The test modules Phase 3 added, excluding the ones that invoke a gate or this ge
 | tests/test_phase3_golden.py | 9 | pass |
 | tests/test_phase3_image_scan.py | 47 | pass |
 | tests/test_phase3_infrastructure.py | 55 | pass |
+| tests/test_phase3_lifecycle_package.py | 3 | pass |
 | tests/test_phase3_lifecycle_projection.py | 56 | pass |
 | tests/test_phase3_run_evidence.py | 37 | pass |
 

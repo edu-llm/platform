@@ -196,7 +196,7 @@ def cpu_payload(**overrides: object) -> dict[str, object]:
         "dataset_release": REGISTERED_DATASET,
         "team": "data-prep",
         "wandb_project": "olmo-core-tokenize",
-        "project": "dolma-tokenization",
+        "experiment": "dolma-tokenization",
         "command": ["python", "-m", "olmo_core.data.tokenize"],
     }
     payload.update(overrides)

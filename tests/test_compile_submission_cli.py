@@ -58,7 +58,7 @@ def form(**overrides: object) -> dict[str, object]:
         "dataset_release": "dolma-2026-07",
         "team": "data-prep",
         "wandb_project": "olmo-core-tokenize",
-        "project": "dolma-tokenization",
+        "experiment": "dolma-tokenization",
         "command": ["python", "-m", "olmo_core.data.tokenize"],
     }
     payload.update(overrides)

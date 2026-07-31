@@ -228,7 +228,7 @@ def main(argv: list[str] | None = None) -> int:
         # A sibling of the manifest and deliberately not a key inside it: the digest above
         # is what an approver releases, and a field folded into the hashed document changes
         # the digest of every record written before that field existed.
-        "project": submission.project,
+        "experiment": submission.experiment,
     }
     args.output.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 

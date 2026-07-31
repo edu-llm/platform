@@ -1153,7 +1153,7 @@ FORM_ENVIRONMENT = {
     "FORM_DATASET_RELEASE": "dolma-2026-07",
     "FORM_TEAM": "data-prep",
     "FORM_WANDB_PROJECT": "dolma-tokenize",
-    "FORM_PROJECT": "dolma-tokenization",
+    "FORM_EXPERIMENT": "dolma-tokenization",
     "FORM_COMMAND": "python -m dolma.tokenize --note 'two words'",
     "FORM_COMPUTE_PROFILE": "",
     "FORM_MAXIMUM_RUNTIME_HOURS": "",
@@ -1213,7 +1213,7 @@ def test_the_assembled_form_is_a_document_the_contract_accepts(tmp_path: Path) -
         # not an inconsistency: it is a label on the runs rather than a statement about
         # what ran, and a hashed record cannot grow a field without invalidating every
         # record written before it.
-        "project",
+        "experiment",
         "command",
     }
 
@@ -1566,7 +1566,7 @@ COMPILED_SUBMISSION = {
     # Beside the manifest, never inside it: the digest above is what the approver released,
     # and a grouping key folded into the hashed document would move the digest of every
     # record written before the field existed.
-    "project": "dolma-tokenization",
+    "experiment": "dolma-tokenization",
 }
 REQUEST_ENVIRONMENT = {
     "APPROVED_SHA256": APPROVED_SHA256,
@@ -1624,7 +1624,7 @@ def test_the_admission_request_carries_exactly_what_the_handler_requires(
     # released for a reason that has nothing to do with them.
     assert set(request) == set(admission_handler._REQUIRED_EVENT_FIELDS) | {
         "approver",
-        "project",
+        "experiment",
     }
     assert request["run_id"] == RUN_ID
     assert request["submitter"] == "caiiris"
