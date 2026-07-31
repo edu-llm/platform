@@ -74,7 +74,11 @@ EVERY_TEAM: Final = "*"
 
 #: Every role a container runs as, and the template that declares it. The execution and
 #: instance roles are deliberately absent: neither is what the workload's own code runs as,
-#: so neither is what a cross-team check is about.
+#: so neither is what a cross-team check is about. A dataset owner's own validator role
+#: (``role_drift.DATASET_VALIDATOR_ROLE_TEMPLATES``) is deliberately absent too: it is a
+#: container's identity in the same sense the two below are, but its whole purpose is to
+#: reach outside the ``teams/{team}/runs/`` prefix shape every check here assumes, so
+#: folding it in would apply those checks to a role they were never written to describe.
 WORKLOAD_ROLE_TEMPLATES: Final[tuple[tuple[str, str], ...]] = (
     ("sbsandbox-intern-edullm-batch-workload", "infra/iam/batch-roles.yaml"),
     ("sbsandbox-intern-edullm-batch-gpu-workload", "infra/iam/batch-gpu-roles.yaml"),
