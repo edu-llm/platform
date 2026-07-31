@@ -1,9 +1,9 @@
 {
   "fixtures": [
     {
-      "canonical_json_bytes": 1417,
+      "canonical_json_bytes": 1716,
       "contract": "TemplateRole",
-      "digest": "sha256:36454731c540afb361dbbb15c8f615b22f15af1af4e89d45aa541880df4a5460",
+      "digest": "sha256:fd41e2321e4fe42b9639ee69b1867fdc2d90a7c35194599fd3a65c940fbeff79",
       "fixture": "sbsandbox-intern-edullm-batch-execution",
       "relative_path": "infra/iam/batch-roles.yaml"
     },

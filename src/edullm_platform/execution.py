@@ -155,6 +155,7 @@ def batch_submit_request(
     target: ExecutionTarget,
     run_id: str,
     job_definition: str,
+    wandb_username: str | None = None,
 ) -> dict[str, Any]:
     """The exact parameter block the state machine sends to ``batch:SubmitJob``.
 
@@ -178,6 +179,12 @@ def batch_submit_request(
     parameter called ``_arn`` receiving a name is the kind of quiet inaccuracy that survives
     review and then misleads the next reader into building an ARN somewhere it is not
     needed.
+
+    ``wandb_username`` names the human a run is attributed to, and defaults to ``None``
+    because most of the roster has no recorded W&B account. It is a separate argument rather
+    than something read off the manifest: what a run is labelled with is the platform's
+    assertion, derived from the submitter admission recorded, and a submitter who could put
+    it in their own manifest could put somebody else's name there.
     """
     request: dict[str, Any] = {
         # The run id, so the Batch job, the S3 keys and the execution name all carry the
@@ -220,6 +227,16 @@ def batch_submit_request(
                 # What it removes is the need to supply it, which is the difference between
                 # a submitter choosing an attribution and a submitter overriding one.
                 {"Name": "EDULLM_WANDB_PROJECT", "Value": manifest.wandb_project},
+                # W&B'S OWN NAMES FROM HERE DOWN, because the wandb client reads these
+                # itself. A prefixed copy would need every workload to forward it, and a
+                # workload that forgot would log somewhere nobody looks under a name nobody
+                # recognises -- which is the state this pair exists to end.
+                #
+                # The entity is named rather than left to the service account's default.
+                # W&B's documented behaviour is that an unentitled team service account logs
+                # into its parent team anyway, which is the same place, right up until it is
+                # not.
+                {"Name": "WANDB_ENTITY", "Value": WANDB_ENTITY},
             ],
         },
         # Unconditional. See the module docstring for why there is no branch here.
@@ -234,6 +251,15 @@ def batch_submit_request(
         # tags are what Phase 5's cost attribution will read.
         "PropagateTags": True,
     }
+    if wandb_username is not None:
+        # APPENDED RATHER THAN SENT EMPTY, and the distinction is not cosmetic. W&B reads an
+        # empty WANDB_USERNAME as an attribution that failed rather than as one that was
+        # never attempted, and most of the roster has no recorded account -- so an
+        # unconditional entry would turn every ordinary unattributed run into one that looks
+        # broken.
+        request["ContainerOverrides"]["Environment"].append(
+            {"Name": "WANDB_USERNAME", "Value": wandb_username}
+        )
     if manifest.fanout is not None:
         # Absent for a single container rather than present with size one: Batch rejects an
         # array job of size one, so emitting ArrayProperties unconditionally would fail
@@ -315,6 +341,13 @@ def refuse_an_oversized_override(overrides: Mapping[str, Any]) -> None:
 #: first submission naming edullm-data is what forces it, and it will fail loudly at the
 #: image pull rather than quietly.
 PUBLISHED_IMAGE_REPOSITORY: Final = f"{SANDBOX_RESOURCE_PREFIX}olmo-core"
+
+#: The W&B entity every run logs into, which is the parent team of the service account whose
+#: key ``CONTAINER_SHAPES`` injects. The two belong together: a team-scoped service account
+#: can only log to its own team, so changing one without the other is a run that authenticates
+#: and then has nowhere to write. Named here rather than in ``config/organization.yaml``
+#: because it is a property of that key rather than of the roster.
+WANDB_ENTITY: Final = "eduLLM"
 
 #: Batch's bound on a job definition name.
 MAXIMUM_JOB_DEFINITION_NAME_LENGTH: Final = 128
@@ -401,7 +434,13 @@ CONTAINER_SHAPES: Final[Mapping[str, ContainerShape]] = {
         memory_mib=61440,
         gpus=0,
         shared_memory_mib=None,
-        secrets=(),
+        # THE SAME KEY THE GPU SHAPE CARRIES, AND A PILOT RUN PAID FOR THE ASYMMETRY. This
+        # was an empty tuple, so a CPU workload that called wandb.init died on `No API key
+        # configured` -- after being admitted, released by a lead and given an instance. The
+        # submission form offers wandb_project on every profile and the container is told it
+        # on every profile, so the key belonging to only one of them was never a decision;
+        # W&B was wired up during the GPU training work and this shape was left behind.
+        secrets=(("WANDB_API_KEY", f"{SANDBOX_RESOURCE_PREFIX}wandb-api-key-fnwEVp"),),
         default_environment=(
             ("EDULLM_OUTPUT_BUCKET", f"{SANDBOX_RESOURCE_PREFIX}outputs"),
             ("EDULLM_OUTPUT_PREFIX", "teams/data-prep/runs/"),

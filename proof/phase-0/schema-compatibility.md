@@ -27,8 +27,8 @@ The kind column separates a `record`, which some payload is validated against, f
 | ImageScanExceptionRegistry | edullm_platform.contracts.image_scan | record | 1 | sha256:446b067f64b593aa2c7b35275bed21c02f547c1c1d801b58aaf36813b6754ce2 |
 | ImageScanPolicy | edullm_platform.contracts.image_scan | record | unversioned | sha256:a995523c781b979c5400ab756aa90b610775a5f797641b38b7530418f283c192 |
 | ReviewedVulnerability | edullm_platform.contracts.image_scan | record | unversioned | sha256:e1bab292e41b2667ab935a3ab6c45d7f85fc265fbe4038866ed4fbaa60d0a7e1 |
-| OrganizationInventory | edullm_platform.contracts.inventory | record | unversioned | sha256:950a43db0b18777147c8dc8bbbc8f19a388c1768d671360906d101a2f39705ce |
-| PersonRef | edullm_platform.contracts.inventory | record | unversioned | sha256:3fd6419368a4098e6f5792779e2bc5fd0bce1975846b53e2492654d2ce7a7305 |
+| OrganizationInventory | edullm_platform.contracts.inventory | record | unversioned | sha256:7b0ced85179329faef810bd6cba1bd04ffb56a903cc7a3fb749ab10385ff1df9 |
+| PersonRef | edullm_platform.contracts.inventory | record | unversioned | sha256:ff2cded7d21f82656b42896ffa1f04a04225c0e9758a8f795c0d52a0e702e662 |
 | CheckpointRef | edullm_platform.contracts.lifecycle | record | unversioned | sha256:74d6aea6cf08b2b0c2151d0ff6c1ef8d804405869774911f8e0e73f94ccaa4e3 |
 | LifecycleEvent | edullm_platform.contracts.lifecycle | record | 1 | sha256:1fcdc66ee1a799f18bcc37fa146aa8c9597304c459120840d0afe2f7f58f01cf |
 | LogicalRun | edullm_platform.contracts.lifecycle | record | 1 | sha256:fffce378b3f982237b891b5cd4302001302cc2277a5a3bbf9329dd26e18c95db |
@@ -173,7 +173,7 @@ The checked-in schemas under `schemas/`, with the digest of each file as generat
 | schemas/intent-record.schema.json | IntentRecord | sha256:39b40c1375c470efe47179c52e898562a7623c1a79f429de8f078f46cf3ddc8d |
 | schemas/lifecycle-event.schema.json | LifecycleEvent | sha256:f747e330743b4f471021b38e161d26e24ecda8fb47ab02b08939ee298a1921ab |
 | schemas/logical-run.schema.json | LogicalRun | sha256:898f1d6b338ea810a75c0614035a49e0812147aef7816037c97447a602d37688 |
-| schemas/organization.schema.json | OrganizationInventory | sha256:5caadb560ced32562f2673591717ce836f1831292cab16a4f9c3a22ba3c0c1f1 |
+| schemas/organization.schema.json | OrganizationInventory | sha256:a66e0170cc0aafce3765b5e7b8b4062baf28c421792d6a2f9f5bb93272289d6f |
 | schemas/policy.schema.json | ApprovalPolicy | sha256:e57443df3ebf18a1b1858a441f99aec2d41121a3f2110d05be30b530ff2b7f67 |
 | schemas/repositories.schema.json | RepositoryRegistry | sha256:ee5ef9172b9ab89aa0965cefda9d86fda855c4cd3f0eeda41ab50551327ff68e |
 | schemas/result-manifest.schema.json | ResultManifest | sha256:7e7b6a5891444d9d13256202319f5be6e70addb81f0b0c077e5294c63529503b |

@@ -57,9 +57,11 @@ from edullm_platform.contracts.workload import (
     WorkloadCatalog,
 )
 from edullm_platform.execution import (
+    CONTAINER_SHAPES,
     MAXIMUM_CONTAINER_OVERRIDES_BYTES,
     MINIMUM_ATTEMPT_DURATION_SECONDS,
     PUBLISHED_IMAGE_REPOSITORY,
+    WANDB_ENTITY,
     ContainerOverridesTooLargeError,
     UnshapedComputeProfileError,
     attempt_duration_seconds,
@@ -472,6 +474,11 @@ def test_the_container_environment_is_exactly_these_six_variables() -> None:
         "EDULLM_COMMIT_SHA",
         "EDULLM_OUTPUT_PREFIX",
         "EDULLM_WANDB_PROJECT",
+        # W&B's own names rather than EDULLM_ ones, because the wandb client reads these
+        # itself and a prefixed copy would need the workload to forward it. WANDB_USERNAME
+        # is absent here and only here: this manifest was submitted with no recorded W&B
+        # account, and an empty attribution is worse than none.
+        "WANDB_ENTITY",
     ]
 
 
@@ -502,6 +509,85 @@ def test_the_wandb_project_comes_from_the_manifest_and_not_from_the_command() ->
     # Not assembled from anything the command carries, and not defaulted when the manifest
     # is silent -- the field is required on a manifest, so there is no silent case.
     assert declared.wandb_project not in " ".join(declared.command)
+
+
+def test_a_run_carries_the_wandb_account_of_the_person_who_submitted_it() -> None:
+    """Mutation: drop WANDB_USERNAME and let every run log as the platform.
+
+    The container authenticates with a team service account, so without this every run in
+    W&B is authored by the platform and the submitter recorded on the decision record is
+    thrown away at the container boundary. W&B's own remedy is this variable.
+    """
+    request = batch_submit_request(
+        manifest=manifest(),
+        target=target(),
+        run_id=RUN_ID,
+        job_definition=target().job_definition_arn,
+        wandb_username="liumaizi",
+    )
+    environment = {
+        entry["Name"]: entry["Value"] for entry in request["ContainerOverrides"]["Environment"]
+    }
+
+    assert environment["WANDB_USERNAME"] == "liumaizi"
+
+
+def test_a_submitter_with_no_wandb_account_sends_no_attribution_rather_than_an_empty_one() -> None:
+    """THE VARIABLE IS ABSENT, NEVER EMPTY, AND THE DIFFERENCE IS NOT COSMETIC.
+
+    W&B reads an empty ``WANDB_USERNAME`` as an attribution that failed rather than as one
+    that was never attempted, and most of the roster has no recorded account. Sending an
+    empty string on their behalf would turn an ordinary unattributed run into a run that
+    looks like a broken attribution.
+    """
+    request = batch_submit_request(
+        manifest=manifest(),
+        target=target(),
+        run_id=RUN_ID,
+        job_definition=target().job_definition_arn,
+        wandb_username=None,
+    )
+
+    assert "WANDB_USERNAME" not in [
+        entry["Name"] for entry in request["ContainerOverrides"]["Environment"]
+    ]
+
+
+def test_every_run_names_the_entity_the_service_account_belongs_to() -> None:
+    """Mutation: leave WANDB_ENTITY unset and rely on the service account's default.
+
+    W&B's documented failure for a team service account with no entity is that runs land in
+    the parent team's project anyway -- until they do not, at which point the run is
+    somewhere nobody looks. Naming it is one variable and removes the question.
+    """
+    request = batch_submit_request(
+        manifest=manifest(),
+        target=target(),
+        run_id=RUN_ID,
+        job_definition=target().job_definition_arn,
+        wandb_username=None,
+    )
+    environment = {
+        entry["Name"]: entry["Value"] for entry in request["ContainerOverrides"]["Environment"]
+    }
+
+    assert environment["WANDB_ENTITY"] == WANDB_ENTITY
+
+
+def test_the_cpu_profile_can_reach_wandb_the_way_the_gpu_profile_can() -> None:
+    """A PILOT RUN FOUND THIS. Mutation: take the secret back off the CPU shape.
+
+    The submission form accepts ``wandb_project`` on every profile and the container is told
+    it on every profile, but only the GPU shape carried the key -- so a CPU workload that
+    tried to log died on ``No API key configured``, having been admitted, approved by a lead
+    and given an instance first. The omission was never a decision: W&B was wired up during
+    the GPU training work and this shape was left behind.
+    """
+    cpu = CONTAINER_SHAPES["cpu-32vcpu"]
+    gpu = CONTAINER_SHAPES["gpu-1xa10g"]
+
+    assert dict(cpu.secrets) == dict(gpu.secrets)
+    assert "WANDB_API_KEY" in dict(cpu.secrets)
 
 
 def test_the_prefix_the_container_is_told_is_the_one_the_shared_function_builds() -> None:

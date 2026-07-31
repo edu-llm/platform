@@ -262,6 +262,103 @@ def test_inventory_rejects_team_bindings_referencing_an_unknown_team() -> None:
         OrganizationInventory.model_validate(payload)
 
 
+def test_a_member_may_record_the_wandb_account_their_runs_belong_to() -> None:
+    payload = inventory_payload()
+    members = payload["members"]
+    assert isinstance(members, list)
+    members[0] = {
+        "github_login": "philote-dev",
+        "display_name": "Example Admin",
+        "wandb_username": "philote",
+    }
+    inventory = OrganizationInventory.model_validate(payload)
+    assert inventory.wandb_username_for("philote-dev") == "philote"
+
+
+def test_the_wandb_account_is_found_however_the_login_was_cased() -> None:
+    # The submitter reaches admission as GitHub spelled it in the event, and this file
+    # spells logins as their owners authored them. Every other lookup on this model already
+    # normalises, and an attribution that worked or not depending on casing would be the
+    # worst of both: right most of the time.
+    payload = inventory_payload()
+    members = payload["members"]
+    assert isinstance(members, list)
+    members[0] = {"github_login": "philote-dev", "wandb_username": "philote"}
+    inventory = OrganizationInventory.model_validate(payload)
+    assert inventory.wandb_username_for("PHILOTE-DEV") == "philote"
+
+
+def test_a_member_with_no_recorded_wandb_account_answers_nothing() -> None:
+    # Nothing rather than an empty string, because the caller has to tell the difference:
+    # a run for somebody with no W&B account must be submitted with no attribution at all,
+    # and W&B reads an empty WANDB_USERNAME as an attribution attempt that fails.
+    inventory = OrganizationInventory.model_validate(inventory_payload())
+    assert inventory.wandb_username_for("pianomaster99") is None
+
+
+def test_a_login_nobody_recognises_answers_nothing_rather_than_raising() -> None:
+    inventory = OrganizationInventory.model_validate(inventory_payload())
+    assert inventory.wandb_username_for("somebody-who-left") is None
+
+
+def test_two_people_may_not_claim_the_same_wandb_account() -> None:
+    """ATTRIBUTING ONE PERSON'S RUN TO ANOTHER IS WORSE THAN ATTRIBUTING IT TO NOBODY.
+
+    An unattributed run is visibly unattributed. A run attributed to the wrong person looks
+    exactly like a correct one, and the only reader who could catch it is the person who did
+    not run it.
+    """
+    payload = inventory_payload()
+    members = payload["members"]
+    assert isinstance(members, list)
+    members[0] = {"github_login": "philote-dev", "wandb_username": "philote"}
+    members[1] = {"github_login": "BritishAmericqn", "wandb_username": "philote"}
+    with pytest.raises(ValidationError) as exc_info:
+        OrganizationInventory.model_validate(payload)
+    assert "wandb" in str(exc_info.value).casefold()
+
+
+def test_the_shipped_roster_attributes_the_people_who_have_run_something() -> None:
+    """The pilot's three named people, and the two runs that made this necessary.
+
+    `run_019fb4f6` was submitted by `aryanjverma`, released by `pianomaster99`, and logged
+    nothing to W&B; the run after it logged as the platform's own account, because a
+    personal API key was in the container and nothing told W&B who had asked for the work.
+    Frank and Tom are recorded here. Aryan is deliberately absent and
+    `test_the_roster_records_who_cannot_be_attributed_yet` says why.
+    """
+    project_root = Path(__file__).resolve().parents[1]
+    inventory = load_yaml(project_root / "config" / "organization.yaml", OrganizationInventory)
+    assert inventory.wandb_username_for("philote-dev") == "philote"
+    assert inventory.wandb_username_for("pianomaster99") == "liumaizi"
+
+
+def test_the_roster_records_who_cannot_be_attributed_yet() -> None:
+    """W&B ATTRIBUTION IS SILENT WHEN THE PERSON IS NOT ON THE TEAM, WHICH IS WHY THIS EXISTS.
+
+    `WANDB_USERNAME` only names a run's author when that account belongs to the service
+    account's parent team, and W&B reports nothing when it does not -- the run simply logs
+    as the service account, which is indistinguishable from having sent no attribution.
+
+    So a login is recorded here only when its owner was read out of the `eduLLM` team's own
+    roster. Aryan submitted both of the runs this phase rests on and has no W&B account in
+    that team, so recording a guess for him would produce exactly the silent failure this
+    contract exists to avoid.
+    """
+    project_root = Path(__file__).resolve().parents[1]
+    inventory = load_yaml(project_root / "config" / "organization.yaml", OrganizationInventory)
+    assert inventory.wandb_username_for("aryanjverma") is None
+    assert inventory.wandb_username_for("Elitelord") is None
+
+
+def test_every_recorded_wandb_account_belongs_to_somebody_on_the_roster() -> None:
+    project_root = Path(__file__).resolve().parents[1]
+    inventory = load_yaml(project_root / "config" / "organization.yaml", OrganizationInventory)
+    attributed = [member for member in inventory.members if member.wandb_username is not None]
+    assert len(attributed) > 20, "the roster stopped carrying the mapping it was built for"
+    assert len({member.wandb_username for member in attributed}) == len(attributed)
+
+
 def test_organization_yaml_validates_against_inventory_contract() -> None:
     project_root = Path(__file__).resolve().parents[1]
     config_path = project_root / "config" / "organization.yaml"

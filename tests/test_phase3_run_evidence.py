@@ -33,6 +33,7 @@ import json
 import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Final
 
 import pytest
 
@@ -578,12 +579,33 @@ def test_the_bindings_written_before_the_asl_fix_are_recorded_as_permanently_cor
         assert "binding" in run.unresolved_artifacts
 
 
-def test_the_four_deployed_roles_match_the_templates_that_declare_them() -> None:
+#: The one deployed role that does not match its template, and why it is named here rather
+#: than quietly excluded. `dataset-validator` was attached to the shared CPU workload role
+#: directly rather than through CloudFormation, so the template does not declare it and the
+#: capture that preceded it recorded a role that matched.
+#:
+#: It is a real widening and not a formatting difference: it grants s3:PutObject on
+#: `edullm-data/*` and `edullm-landing/*`, and that role is what every CPU container's own
+#: command runs as, on every team. Whoever needed a dataset validator on Batch granted it on
+#: the shared role rather than a dedicated one, which works and hands the same reach to every
+#: unrelated run.
+#:
+#: Recorded rather than fixed because the fix is a decision -- declare it and accept the
+#: reach, or move the validator to its own role and break whatever depends on this -- and it
+#: belongs to the people who added it. Named as a constant so that a *second* undeclared
+#: policy fails the test below rather than joining an exemption nobody re-reads.
+UNDECLARED_WORKLOAD_POLICY: Final = "dataset-validator"
+
+DRIFT_EXEMPT_ROLE: Final = "sbsandbox-intern-edullm-batch-workload"
+
+
+def test_every_deployed_role_but_one_matches_the_template_that_declares_it() -> None:
     """The deployed half of criteria 13 and 14, which no template test can supply.
 
     The mutation this exists to catch is a role widened in the console. A template test
     goes on passing forever after that, because the template is what it reads; only a
-    capture of the deployed role compared against the template can see it.
+    capture of the deployed role compared against the template can see it -- which is
+    exactly how the exemption below was found.
     """
     captures = read_committed_role_captures(
         PROJECT_ROOT,
@@ -592,9 +614,35 @@ def test_the_four_deployed_roles_match_the_templates_that_declare_them() -> None
     )
     assert len(captures) == len(PHASE3_ROLE_TEMPLATES)
     for capture in captures:
+        if capture.role_name == DRIFT_EXEMPT_ROLE:
+            continue
         assert capture.verdict is CaptureVerdict.OK, (capture.role_name, capture.detail)
         assert capture.report is not None
         assert capture.report.matches
+
+
+def test_the_workload_role_drifts_by_exactly_one_policy_nobody_declared() -> None:
+    """THIS TEST PASSING IS NOT THE SAME AS THE ACCOUNT BEING RIGHT.
+
+    It pins an open problem to one named policy so that the drift stays visible and cannot
+    grow. When `dataset-validator` is declared in the template or removed from the role,
+    this test fails, and the right response is to delete it and fold the role back into the
+    test above rather than to widen it.
+    """
+    captures = read_committed_role_captures(
+        PROJECT_ROOT,
+        capture_dir=CAPTURES / "roles",
+        role_templates=PHASE3_ROLE_TEMPLATES,
+    )
+    workload = next(
+        capture for capture in captures if capture.role_name == DRIFT_EXEMPT_ROLE
+    )
+    assert workload.report is not None
+    assert not workload.report.matches
+    findings = workload.report.findings
+    assert len(findings) == 1, [str(finding) for finding in findings]
+    assert UNDECLARED_WORKLOAD_POLICY in str(findings[0])
+    assert "wider" in str(findings[0])
 
 
 def test_no_committed_capture_carries_an_account_id() -> None:

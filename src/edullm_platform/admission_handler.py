@@ -292,6 +292,18 @@ def handler(event: Mapping[str, Any], context: object = None) -> dict[str, Any]:
                 # so the two strings cannot disagree. A second author of this name would be
                 # a submission against a definition nobody registered.
                 job_definition=register_request["JobDefinitionName"],
+                # WHOSE RUN THIS IS, READ OFF THE RECORD RATHER THAN OFF THE REQUEST.
+                #
+                # `outcome.intent.submitter` is the submitter admission recorded and the
+                # decision was made about, so what W&B shows and what the lineage says are
+                # the same person by construction. Taking it from the event instead would
+                # let the two diverge for a caller that sent one thing and had another
+                # written down.
+                #
+                # `None` for anybody with no recorded W&B account, which is most of the
+                # roster and is a whole run that works -- see the comment on `members` in
+                # config/organization.yaml for why a guess would be worse than a blank.
+                wandb_username=inventory.wandb_username_for(outcome.intent.submitter),
             ),
         }
     return answer
