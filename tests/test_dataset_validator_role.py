@@ -84,7 +84,13 @@ def test_the_validator_role_is_not_a_workload_role_and_its_name_is_why() -> None
     ending that way conscripts this role into three checks about the teams/{team}/runs/
     prefix shape, which this role exists to reach outside of. So the suffix is a registry key
     and not a description, and this test is what says so to whoever next tidies a name.
+
+    The constant alone is not enough: the three registry checks below key off
+    VALIDATOR_ROLE_NAME, so renaming the template without updating the constant would leave
+    them green while the trap fires. Binding the constant to what the template declares
+    makes a rename-only mutation fail here first.
     """
+    assert one_role_in(VALIDATOR_TEMPLATE_PATH).role_name == VALIDATOR_ROLE_NAME
     declared = {
         role.role_name
         for path in sorted((PROJECT_ROOT / "infra" / "iam").glob("*.yaml"))
