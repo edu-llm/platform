@@ -4,11 +4,21 @@ import pytest
 from pydantic import ValidationError
 
 from edullm_platform.config import load_yaml
-from edullm_platform.contracts.dataset_registry import DatasetRegistry, RegisteredDatasetRelease
+from edullm_platform.contracts.dataset_registry import (
+    DatasetRegistry,
+    PublishedDatasetReference,
+    RegisteredDatasetRelease,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 SHIPPED_RELEASE_ID = "dolma-2026-07"
+
+#: The same corpus C1's own test module names, reused here rather than invented, so a
+#: reader who has already seen PublishedDatasetReference validated once does not have to
+#: check whether a second sample means something different.
+PUBLISHED_URI = "s3://edullm-data/pretrain/olmo-150b-dolma2/v1/"
+PUBLISHED_DIGEST = "3f00499dbed01bc01a57097e84ae38ccd670b2b9d7981587d5fc828466ccf699"
 
 
 def load_dataset_registry() -> DatasetRegistry:
@@ -22,6 +32,19 @@ def registry_payload(*release_ids: str, **overrides: object) -> dict[str, object
             {"release_id": release_id}
             for release_id in (release_ids or (SHIPPED_RELEASE_ID,))
         ],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def published_reference_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "reference_id": "olmo-150b-dolma2-v1",
+        "uri": PUBLISHED_URI,
+        "dataset_id": "pretrain/olmo-150b-dolma2",
+        "version": "v1",
+        "manifest_sha256": PUBLISHED_DIGEST,
+        "tokenizer": "tokenizer/dolma2-bpe",
     }
     payload.update(overrides)
     return payload
@@ -63,6 +86,15 @@ def test_the_shipped_registry_is_the_set_the_representative_manifests_name() -> 
 
 
 def test_a_registry_entry_carries_a_release_identifier_and_nothing_else() -> None:
+    """Mutation: add uri, dataset_id and version here instead of to a second model.
+
+    STILL TRUE AFTER A SECOND KIND OF DATASET ARRIVED, WHICH IS WHY THIS TEST SURVIVED
+    RATHER THAN BEING DELETED. Admission asks one question of this model -- is this
+    registered -- and unregistered_dataset is a denied-outright condition evaluated on the
+    identifier alone. A corpus somebody else published needs a URI, a dataset id and a
+    version, and those are on PublishedDatasetReference, where the fields have a reader that
+    consumes them.
+    """
     assert tuple(RegisteredDatasetRelease.model_fields) == ("release_id",)
 
 
@@ -177,12 +209,80 @@ def test_registry_rejects_a_release_identifier_that_is_not_a_release_identifier(
     assert exc_info.value.errors()[0]["loc"] == ("releases", 0, "release_id")
 
 
-def test_registry_rejects_a_release_described_by_more_than_its_identifier() -> None:
+def test_a_release_described_by_more_than_its_identifier_belongs_to_the_other_model() -> None:
+    """Mutation: let a uri through here because a published corpus needs one.
+
+    It does need one, and it has one, on a model whose other fields make it usable. A uri on
+    this model would be a second place to look for the same fact and a first place to find it
+    incomplete.
+    """
     payload = registry_payload()
     payload["releases"] = [{"release_id": SHIPPED_RELEASE_ID, "uri": "s3://somewhere/"}]
     with pytest.raises(ValidationError) as exc_info:
         DatasetRegistry.model_validate(payload)
     assert_validation_error(exc_info.value, error_type="extra_forbidden")
+
+
+def test_a_registry_may_carry_no_published_references_at_all() -> None:
+    registry = DatasetRegistry.model_validate(registry_payload())
+
+    assert registry.published == ()
+    assert registry.reference_for("olmo-150b-dolma2-v1") is None
+
+
+@pytest.mark.parametrize(
+    "reference_ids",
+    [
+        ("v-second", "a-first"),
+        ("a-first", "a-first"),
+    ],
+)
+def test_registry_rejects_published_references_that_are_not_in_ascending_order(
+    reference_ids: tuple[str, ...],
+) -> None:
+    payload = registry_payload()
+    payload["published"] = [
+        published_reference_payload(reference_id=reference_id) for reference_id in reference_ids
+    ]
+    with pytest.raises(ValidationError) as exc_info:
+        DatasetRegistry.model_validate(payload)
+    assert_validation_error(
+        exc_info.value,
+        error_type="value_error",
+        message_fragment="published dataset references must be listed once each in ascending order",
+    )
+
+
+def test_reference_for_answers_for_exactly_the_listed_published_references() -> None:
+    payload = registry_payload()
+    payload["published"] = [
+        published_reference_payload(reference_id="a-first"),
+        published_reference_payload(reference_id="olmo-150b-dolma2-v1"),
+    ]
+
+    registry = DatasetRegistry.model_validate(payload)
+
+    resolved = registry.reference_for("olmo-150b-dolma2-v1")
+    assert resolved is not None
+    assert isinstance(resolved, PublishedDatasetReference)
+    assert resolved.dataset_id == "pretrain/olmo-150b-dolma2"
+    assert registry.reference_for("not-registered") is None
+
+
+def test_is_registered_does_not_answer_for_published_references() -> None:
+    """A published reference is checked by reference_for, not is_registered.
+
+    The two lists are separate namespaces even though both use DatasetReleaseId, because
+    admission's unregistered_dataset condition and a submission's published-corpus lookup
+    are different questions asked of different fields.
+    """
+    payload = registry_payload()
+    payload["published"] = [published_reference_payload()]
+
+    registry = DatasetRegistry.model_validate(payload)
+
+    assert registry.is_registered("olmo-150b-dolma2-v1") is False
+    assert registry.reference_for("olmo-150b-dolma2-v1") is not None
 
 
 def test_registry_unknown_schema_version_fails_closed() -> None:

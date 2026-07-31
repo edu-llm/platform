@@ -1,6 +1,6 @@
 # Phase 0 schema compatibility report
 
-139 contract models. The structural digest is `sha256` over the model's JSON schema with sorted keys, so it changes when a field is added, removed, retyped, or reconstrained, and does not change when unrelated code moves. Comparing this table between phases answers whether a schema changed.
+140 contract models. The structural digest is `sha256` over the model's JSON schema with sorted keys, so it changes when a field is added, removed, retyped, or reconstrained, and does not change when unrelated code moves. Comparing this table between phases answers whether a schema changed.
 
 This is the complete inventory: every contract model in the repository is below, whichever phase wrote it and whichever module it has since moved to. The three phase bundles carry a scoped view of the same digests and none of them carries a digest that is not here. `tests/test_schema_compatibility.py` recomputes every row of every one of those tables against the tree and fails when one stops describing it.
 
@@ -8,7 +8,7 @@ The kind column separates a `record`, which some payload is validated against, f
 
 ## Repository-configuration contracts
 
-36 models are reachable from the sixteen root models exported to `schemas/`. These describe what the repository declares: who is in the organization, what compute exists, what policy applies, and what a submission looks like. They are versioned by the checked-in JSON Schema files below rather than by a `schema_version` field, except for RunManifest, which carries both.
+37 models are reachable from the sixteen root models exported to `schemas/`. These describe what the repository declares: who is in the organization, what compute exists, what policy applies, and what a submission looks like. They are versioned by the checked-in JSON Schema files below rather than by a `schema_version` field, except for RunManifest, which carries both.
 
 | model | module | kind | schema_version | structural digest |
 | --- | --- | --- | --- | --- |
@@ -19,7 +19,8 @@ The kind column separates a `record`, which some payload is validated against, f
 | RepositoryBinding | edullm_platform.contracts.bindings | record | unversioned | sha256:acfb98fa6a3ecffb8258ab1ea4f150e721c0f1c067e067a701e61837a9fcfd6c |
 | TeamBinding | edullm_platform.contracts.bindings | record | unversioned | sha256:ecf980a6ccba443b8f7d96455d0baf114886ddebe9d0c1e8540a1725f55b845e |
 | TeamBindingCatalog | edullm_platform.contracts.bindings | record | unversioned | sha256:722d7cd12fe48c2a07bf055fd5a5574005a041ad6ff196bf066a042ee29ffcb7 |
-| DatasetRegistry | edullm_platform.contracts.dataset_registry | record | 1 | sha256:dc482fdd7a0e7d510f2f41c4a4765971d248785466baa083a58b47b4ec41449c |
+| DatasetRegistry | edullm_platform.contracts.dataset_registry | record | 1 | sha256:db46fb8fd3424ab84bcb9088aa51bf790cd810c523e93c1f213b24db501512b1 |
+| PublishedDatasetReference | edullm_platform.contracts.dataset_registry | record | unversioned | sha256:ede191dda61eb24ed7b84eb6ae5966b77ecf9f0660a76f58c748642f46057ab3 |
 | RegisteredDatasetRelease | edullm_platform.contracts.dataset_registry | record | unversioned | sha256:db34cb36a36150d433a41cb0668abc50d67d0882644ef4d279d459fb64040666 |
 | BatchJobBinding | edullm_platform.contracts.execution | record | 1 | sha256:e42641ace737ac344e31cfe56152e7b41bf2fff4d888cd8a3741c3c7b805ba1a |
 | GitHubWorkflowRunReference | edullm_platform.contracts.image | record | unversioned | sha256:a80e5dc8c40056fbc75557716cac82f11e5f4d80ec840dcb76d33ad56c57604f |
@@ -167,7 +168,7 @@ The checked-in schemas under `schemas/`, with the digest of each file as generat
 | --- | --- | --- |
 | schemas/batch-job-binding.schema.json | BatchJobBinding | sha256:41a20845192e959dd91b32f87d57da0cf3b04e5a2177e0200f27aec2cece901c |
 | schemas/checkpoint-manifest.schema.json | CheckpointManifest | sha256:f51cc8c500c81cd1d286dc86c59ff5f24b09a640127034f1527494251d76a07e |
-| schemas/datasets.schema.json | DatasetRegistry | sha256:3f175ffd729d92eaba728bc459ca455a538bb5b5131840c11986f1548579ef9b |
+| schemas/datasets.schema.json | DatasetRegistry | sha256:6d5b79e4153e2241489115eaff52cf659b1f4823fedc41c15cc62d0d131c54c3 |
 | schemas/decision-record.schema.json | DecisionRecord | sha256:852ee127b92bc2a592f5da86972e32ed50e949548951bd66fed94b237b6ce821 |
 | schemas/image-exceptions.schema.json | ImageScanExceptionRegistry | sha256:e57e7388a87f331a31c9f1e871065306421772bf1da3a043b46f121bde1ffb17 |
 | schemas/intent-record.schema.json | IntentRecord | sha256:39b40c1375c470efe47179c52e898562a7623c1a79f429de8f078f46cf3ddc8d |
