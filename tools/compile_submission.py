@@ -235,6 +235,7 @@ def main(argv: list[str] | None = None) -> int:
                 submitter=args.submitter,
                 policy=policy,
                 repository_url=args.repository_url,
+                inventory=inventory,
                 wandb_username=inventory.wandb_username_for(args.submitter),
             ),
             encoding="utf-8",

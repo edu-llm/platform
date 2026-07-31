@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from edullm_platform.canonical import sha256_digest
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.admission import ApprovalEnvironment
+from edullm_platform.contracts.bindings import TeamBinding
 from edullm_platform.contracts.dataset_registry import DatasetRegistry
 from edullm_platform.contracts.image_scan import (
     ImageScanExceptionRegistry,
@@ -252,6 +253,7 @@ def render(
     *,
     policy: ApprovalPolicy | None = None,
     wandb_username: str | None = None,
+    inventory: OrganizationInventory | None = None,
 ) -> str:
     return render_approver_context(
         submission,
@@ -259,7 +261,94 @@ def render(
         policy=policy if policy is not None else load_approval_policy(),
         repository_url=REPOSITORY_URL,
         wandb_username=wandb_username,
+        inventory=inventory if inventory is not None else load_organization_inventory(),
     )
+
+
+def inventory_binding(team_id: str, *lead_logins: str) -> OrganizationInventory:
+    """The shipped roster with one team binding added.
+
+    Built from the shipped inventory rather than from scratch, because the bindings
+    catalogue is empty today and a fixture roster would let these tests agree with a shape
+    nothing deploys. Adding one team is the smallest edit that makes routing answerable.
+    """
+    shipped = load_organization_inventory()
+    return shipped.model_copy(
+        update={
+            "team_bindings": shipped.team_bindings.model_copy(
+                update={
+                    "teams": (
+                        TeamBinding(
+                            team_id=team_id,
+                            github_team_slug=team_id,
+                            lead_logins=lead_logins,
+                            # Required by the contract and unread by the routing line.
+                            # Values nobody consumes, in a test rather than in
+                            # config/organization.yaml, which is the point: what the real
+                            # ones should be is one of the open questions, and a written
+                            # value is one a later reader will believe.
+                            s3_namespace=f"sbsandbox-intern-{team_id}",
+                            wandb_entity="eduLLM",
+                            member_logins=(),
+                        ),
+                    )
+                }
+            )
+        }
+    )
+
+
+def test_the_approver_context_names_the_lead_the_claimed_team_would_route_to() -> None:
+    """Mutation: leave the routing line out and let the reviewer infer it.
+
+    THIS IS THE ONLY THING POPULATING team_bindings BUYS, now that membership records
+    rather than enforces, and it is worth being clear that it is enough. The bindings do not
+    decide who may release a run -- any lead may, and the authorization path does not consult
+    them. What they do is answer "whose run is this, and who would normally look at it",
+    which is the question a reviewer opening an approval they were not expecting is asking.
+    """
+    rendered = render(
+        compile_payload(cpu_payload(team="data-prep")),
+        inventory=inventory_binding("data-prep", "philote-dev"),
+    )
+
+    assert "philote-dev" in rendered
+    assert "data-prep" in rendered
+
+
+def test_a_claimed_team_with_no_bound_lead_says_so_rather_than_naming_nobody() -> None:
+    """Mutation: render an empty string, or omit the row, when nothing is bound.
+
+    The state every team is in today, because the bindings catalogue is empty -- so this is
+    the ordinary path rather than the edge case, and it stays ordinary for as long as the
+    bindings go unpopulated. A blank where a name belongs reads as a lookup that failed and
+    sends a reviewer to check whether the page is broken. Saying no lead is recorded says
+    the same thing about the world and nothing about the page.
+    """
+    rendered = render(compile_payload(cpu_payload(team="data-prep")))
+
+    assert "No lead is recorded for team `data-prep`" in rendered
+
+
+def test_the_context_says_any_lead_may_still_release_so_an_absence_delays_nobody() -> None:
+    """Mutation: state the routing without the fallback beside it.
+
+    The fallback is what makes the routing safe to add at all. Naming an expected lead
+    invites the reading that they are the only person who may act, which would make an
+    absent lead a stuck run and an unbound team an unusable one -- and both would be wrong:
+    the approval gate admits any lead, and this line is a hint rather than a gate.
+
+    Said to the reviewer rather than only implemented, because the person who needs to know
+    it is the second lead deciding whether releasing somebody else's run is their business.
+    """
+    routed = render(
+        compile_payload(cpu_payload(team="data-prep")),
+        inventory=inventory_binding("data-prep", "philote-dev"),
+    )
+    unbound = render(compile_payload(cpu_payload(team="data-prep")))
+
+    for rendered in (routed, unbound):
+        assert "any team lead may release" in rendered
 
 
 def test_the_reviewer_is_told_which_wandb_account_the_run_will_be_logged_under() -> None:

@@ -44,6 +44,7 @@ from edullm_platform.contracts.image_scan import (
     ImageScanSummary,
     ScanFinding,
 )
+from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.manifest import (
     COMMIT_SHA_PATTERN,
     IMAGE_DIGEST_PATTERN,
@@ -375,12 +376,46 @@ def _exceeded_bounds(submission: CompiledSubmission, policy: ApprovalPolicy) -> 
     return tuple(exceeded)
 
 
+def _routing_note(inventory: OrganizationInventory, *, claimed_team: str) -> str:
+    """Who this run would normally go to, and the sentence that stops that being a rule.
+
+    THE ONLY THING POPULATING team_bindings BUYS, AND IT IS ENOUGH. Membership records
+    rather than enforces: the authorization path does not consult the bindings, and any lead
+    may release any run. What the bindings can answer is "whose run is this and who would
+    normally look at it", which is the question a reviewer opening an approval they were not
+    expecting is actually asking.
+
+    The fallback is stated rather than left implicit, because naming an expected lead invites
+    the reading that they are the only person who may act. If that were true an absent lead
+    would be a stuck run and an unbound team an unusable one, and neither is: the gate admits
+    any lead. Saying so here is what makes the routing safe to show at all.
+
+    Every team is unbound today, so the second branch is the ordinary path rather than the
+    edge case. It says no lead is recorded instead of leaving a blank, because a blank where
+    a name belongs reads as a lookup that broke.
+    """
+    bound = next(
+        (team for team in inventory.team_bindings.teams if team.team_id == claimed_team),
+        None,
+    )
+    if bound is not None and bound.lead_logins:
+        routed = ", ".join(f"`{login}`" for login in bound.lead_logins)
+        expected = f"Team `{claimed_team}` routes to {routed}."
+    else:
+        expected = f"No lead is recorded for team `{claimed_team}`."
+    return (
+        f"{expected} This is a hint and not a gate: **any team lead may release this run**, "
+        "so an unrecorded or unavailable lead delays nobody."
+    )
+
+
 def render_approver_context(
     submission: CompiledSubmission,
     *,
     submitter: str,
     policy: ApprovalPolicy,
     repository_url: str,
+    inventory: OrganizationInventory,
     wandb_username: str | None = None,
 ) -> str:
     """What the reviewer reads before deciding, as GitHub step-summary markdown.
@@ -399,6 +434,8 @@ def render_approver_context(
             f"**{submission.approval_class.value.upper()}** — this request must be released "
             f"by the `{submission.approving_environment.value}` gate."
         ),
+        "",
+        _routing_note(inventory, claimed_team=manifest.team),
         "",
         "| | |",
         "| --- | --- |",
