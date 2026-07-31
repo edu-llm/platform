@@ -22,16 +22,16 @@ on:
         options:
           - OLMo-core
       commit_sha:
-        description: Full forty-character commit SHA the image was built from.
+        description: "The forty-character commit your image was built from — not a branch name. The Build research image run prints it, or use git rev-parse HEAD."
         required: true
         type: string
       image_digest:
-        description: Override the image with a digest this commit already published, written as sha256 followed by sixty-four hex characters. Leave blank to run the image built from the commit above.
+        description: "Advanced — leave blank. The image is resolved from the commit above. Fill this in only to pin one particular rebuild of a commit that was built more than once, written as sha256 followed by sixty-four hex characters."
         required: false
         type: string
         default: ""
       workload_profile:
-        description: Workload profile. It fixes the compute profile, the runtime and attempt bounds, and the checkpoint contract.
+        description: "What kind of run this is. For a first test pick olmo-core-cpu-smoke. Your choice fixes the machine, the time limit and the retry limit, so you do not have to."
         required: true
         type: choice
         options:
@@ -45,7 +45,7 @@ on:
           - none
           - dolma-2026-07
       team:
-        description: Team the run is charged to and whose lead may approve it.
+        description: "Your group, lower-case with hyphens, such as memory-split. It records whose work this is and points the request at a lead. Any lead may approve any run, so a typo here delays nothing."
         required: true
         type: string
       project:
@@ -57,11 +57,11 @@ on:
         required: true
         type: string
       command:
-        description: Command the container runs, written as one shell command line and split with POSIX quoting rules.
+        description: "What the container should run, as one command line. For a first test: python -c 'import sys; print(\"edullm smoke ok\", sys.version)'"
         required: true
         type: string
       compute_profile:
-        description: Override the workload profile's compute profile. Leave as inherit to take the registered default.
+        description: "Advanced — leave as inherit. Runs on a different machine than the workload above normally uses."
         required: false
         type: choice
         default: inherit

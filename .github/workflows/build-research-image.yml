@@ -721,8 +721,11 @@ jobs:
             cat <<'NOTICE'
           The digest is what a submission names, and the tag is not: ECR tags are immutable
           here but a tag is still a label, and the admission contract accepts only a digest.
-          Copy this into the image_digest field of the submission form, together with the
-          full commit above:
+
+          You do not need to copy it. Submit a run resolves the digest from the commit above,
+          so leave image_digest blank and paste only the commit. The field is there for the
+          one case the lookup cannot settle: a commit built more than once, where you mean a
+          particular rebuild rather than the latest.
           NOTICE
             echo
             echo '```'

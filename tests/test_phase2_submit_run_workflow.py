@@ -868,7 +868,12 @@ def test_the_digest_field_is_offered_as_an_override_and_says_what_leaving_it_bla
 
     assert declared["required"] is False
     assert declared["default"] == ""
-    assert "override" in declared["description"].lower()
+    described = declared["description"].lower()
+    # The description has to say the field is skippable and say what filling it in is for.
+    # "Override" said only the second, and said it in a word that reads as an instruction to
+    # somebody who does not already know the field is optional.
+    assert "leave blank" in described
+    assert "advanced" in described
     assert "blank" in declared["description"].lower()
     assert "commit" in declared["description"].lower()
 
