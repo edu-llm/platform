@@ -1,0 +1,100 @@
+name: I need access to run things
+description: Ask to be set up so you can submit a run and have it attributed to you.
+labels: ["access-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Access here is not one switch, and knowing that up front will save you a confusing
+        afternoon.** Four separate things have to be true before a run works end to end, they
+        live in three different systems, and only one of them is a file in this repository.
+        Each one fails differently, and none of them fails by saying "you do not have access".
+
+        - **Write access on this repository** is what makes the Run button visible at all. The
+          submission form is a GitHub Actions workflow, and GitHub only shows a manual workflow
+          to people who can write here. Most collaborators currently cannot see it. If this is
+          the piece you are missing, the symptom is that the page other people are describing
+          to you does not exist.
+        - **A place on the roster** in `config/organization.yaml` is what admission checks. If
+          you can submit but are not on it, the run is refused with `submitter_not_in_roster`
+          after you have filled the form. Adding you is a pull request against this repository.
+        - **A Weights and Biases account in the eduLLM team** is what puts your name on your
+          own run. This one is optional and it fails silently: without it the run still works,
+          it just logs under the platform's service account instead of you, and nothing warns
+          you afterwards.
+        - **Approval authority**, only if you need to release other people's runs. That is two
+          lists in two systems that have to agree, and when they disagree the failure looks
+          like a permissions bug rather than a list being out of date.
+
+        Filing this puts all four in one place for whoever sets you up. It does not grant
+        anything by itself — three of the four are actions an organization owner takes outside
+        this repository.
+
+  - type: input
+    id: github_login
+    attributes:
+      label: Your GitHub username
+      description: >-
+        Exactly as GitHub spells it, not your display name. This is the string that goes on the
+        roster and the one admission compares against, so a near-miss here produces a refusal
+        that looks like it is about something else.
+      placeholder: octocat
+    validations:
+      required: true
+
+  - type: input
+    id: display_name
+    attributes:
+      label: Your name
+      description: How you want to be referred to by a human reading the roster.
+    validations:
+      required: true
+
+  - type: input
+    id: wandb_username
+    attributes:
+      label: Your Weights and Biases username, if you have one
+      description: >-
+        Leave this blank if you do not have an account or are not sure. Blank is a real answer
+        and it costs you only attribution. A guess is worse than blank: if the name is not a
+        real login inside the eduLLM team, W&B does not complain, it just logs the run as the
+        service account — which looks exactly like sending no name at all, and the only person
+        placed to notice is you, later, wondering where your runs went.
+    validations:
+      required: false
+
+  - type: input
+    id: group
+    attributes:
+      label: Which group are you working with
+      description: >-
+        The research group or the person you are working under. This decides who is asked to
+        release your runs.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: approval
+    attributes:
+      label: Do you need to approve other people's runs?
+      description: >-
+        Say no unless you lead a group. Approval authority is organization-wide here — anyone
+        who has it can release any group's routine run, so it is granted deliberately rather
+        than by default.
+      options:
+        - "No — I just want to submit my own runs"
+        - "Yes — I lead a group and need to release its runs"
+        - "I do not know"
+    validations:
+      required: true
+
+  - type: textarea
+    id: purpose
+    attributes:
+      label: What are you planning to run?
+      description: >-
+        A sentence is enough. This is not a gate on the request; it helps whoever sets you up
+        tell you now if the thing you have in mind is something the platform cannot do yet,
+        rather than after you have been through the whole form.
+    validations:
+      required: false
