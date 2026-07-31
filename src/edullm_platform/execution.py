@@ -242,8 +242,21 @@ def batch_submit_request(
                 # W&B's documented behaviour is that an unentitled team service account logs
                 # into its parent team anyway, which is the same place, right up until it is
                 # not.
+                # The project under W&B's own name as well as the prefixed one above. The
+                # prefixed spelling alone made the form's required `wandb_project` box
+                # decorative: `EDULLM_WANDB_PROJECT` is not a name the client knows, and
+                # nothing in OLMo-core, edullm-data or olmo-eval-full reads it, so a run
+                # landed wherever its own training config said and the value the approver
+                # read had no bearing on it.
+                #
+                # It does not take the choice away from a workload, which is what the
+                # paragraph above is protecting. wandb applies an explicit argument over the
+                # environment, and OLMo-core's WandBCallback defaults `project` to None -- so
+                # a run that names its own project still wins, and a run that does not now
+                # lands where the submission said it would.
+                {"Name": "WANDB_PROJECT", "Value": manifest.wandb_project},
                 {"Name": "WANDB_ENTITY", "Value": WANDB_ENTITY},
-                # W&B's own name, for the same reason the entity is: the client reads
+                # W&B's own name again, for the same reason the entity is: the client reads
                 # WANDB_RUN_GROUP without being asked. A prefixed EDULLM_PROJECT would need
                 # every workload to forward it, and one that forgot would produce ungrouped
                 # runs -- indistinguishable from a submitter who left the field blank,

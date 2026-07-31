@@ -445,7 +445,7 @@ def test_the_submitted_target_is_the_resolved_one_and_not_anything_from_the_mani
     assert request["JobDefinition"] == resolved.job_definition_arn
 
 
-def test_the_container_environment_is_exactly_these_six_variables() -> None:
+def test_the_container_environment_is_exactly_these_seven_variables() -> None:
     """Mutation: add, drop or rename a variable the container reads.
 
     Nothing else in the repository pins this list, which was measured rather than assumed:
@@ -478,6 +478,11 @@ def test_the_container_environment_is_exactly_these_six_variables() -> None:
         # itself and a prefixed copy would need the workload to forward it. WANDB_USERNAME
         # is absent here and only here: this manifest was submitted with no recorded W&B
         # account, and an empty attribution is worse than none.
+        #
+        # WANDB_PROJECT duplicates the prefixed spelling above deliberately. It is the one
+        # that reaches the client without a workload forwarding it, and nothing in any
+        # research repository forwards the prefixed one.
+        "WANDB_PROJECT",
         "WANDB_ENTITY",
     ]
 
@@ -509,6 +514,38 @@ def test_the_wandb_project_comes_from_the_manifest_and_not_from_the_command() ->
     # Not assembled from anything the command carries, and not defaulted when the manifest
     # is silent -- the field is required on a manifest, so there is no silent case.
     assert declared.wandb_project not in " ".join(declared.command)
+
+
+def test_the_declared_wandb_project_reaches_wandb_without_the_workload_forwarding_it() -> None:
+    """Mutation: send only the prefixed name and rely on the training code to read it.
+
+    That was the state this closes, and it made the form's required `wandb_project` box
+    decorative. `EDULLM_WANDB_PROJECT` is not a name the wandb client knows, and a search of
+    `OLMo-core`, `edullm-data` and `olmo-eval-full` finds nothing reading it -- so the project
+    a run landed in was whatever its own training config said, and the value the approver read
+    on the submission had no bearing on it.
+
+    `WANDB_ENTITY` and `WANDB_RUN_GROUP` were already sent under W&B's own names for exactly
+    this reason. The project was the one that was not, and the inconsistency was the bug.
+
+    This does not take the choice away from a workload. wandb's `init` applies an explicit
+    argument over the environment -- `if project is not None: init_settings.project = project`
+    -- and OLMo-core's `WandBCallback` defaults `project` to `None`, so a run that names its
+    own project still wins and a run that does not now lands where the submission said.
+    """
+    declared = manifest()
+    request = batch_submit_request(
+        manifest=declared,
+        target=target(),
+        run_id=RUN_ID,
+        job_definition=target().job_definition_arn,
+    )
+    environment = {entry["Name"]: entry["Value"] for entry in request["ContainerOverrides"]["Environment"]}
+
+    assert environment["WANDB_PROJECT"] == declared.wandb_project
+    # Both spellings, because the prefixed one is the platform's own record of what it
+    # asserted and a workload may prefer to read it deliberately.
+    assert environment["EDULLM_WANDB_PROJECT"] == environment["WANDB_PROJECT"]
 
 
 def test_a_run_carries_the_wandb_account_of_the_person_who_submitted_it() -> None:
