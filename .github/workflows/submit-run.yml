@@ -38,10 +38,11 @@ on:
           - olmo-core-cpu-smoke
           - olmo-core-gpu-smoke
       dataset_release:
-        description: Dataset release this run reads.
+        description: "Which prepared dataset this run reads. Pick none unless you are reading one — a smoke run reads nothing, and saying none is what makes the record true."
         required: true
         type: choice
         options:
+          - none
           - dolma-2026-07
       team:
         description: Team the run is charged to and whose lead may approve it.

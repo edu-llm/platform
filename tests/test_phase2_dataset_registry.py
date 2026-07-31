@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+import yaml
 from pydantic import ValidationError
 
 from edullm_platform.config import load_yaml
@@ -9,6 +10,7 @@ from edullm_platform.contracts.dataset_registry import DatasetRegistry, Register
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 SHIPPED_RELEASE_ID = "dolma-2026-07"
+NO_DATASET_ID = "none"
 
 
 def load_dataset_registry() -> DatasetRegistry:
@@ -46,8 +48,37 @@ def test_shipped_dataset_registry_loads_and_registers_the_pilot_release() -> Non
     registry = load_dataset_registry()
 
     assert registry.schema_version == 1
-    assert registry.release_ids == frozenset({SHIPPED_RELEASE_ID})
+    assert registry.release_ids == frozenset({SHIPPED_RELEASE_ID, NO_DATASET_ID})
     assert registry.is_registered(SHIPPED_RELEASE_ID) is True
+
+
+def test_a_run_that_reads_no_data_can_say_so_rather_than_naming_a_release_it_never_opened() -> (
+    None
+):
+    # `dataset_release` is required, so before `none` existed the only way to submit was to
+    # name a release. Every run so far therefore recorded that it read `dolma-2026-07`, and
+    # none of them read anything -- the bucket does not exist. A required field with one
+    # option does not collect a fact, it manufactures one, and it manufactures it into
+    # immutable lineage where it cannot later be corrected.
+    registry = load_dataset_registry()
+
+    assert registry.is_registered(NO_DATASET_ID) is True
+
+    options = _submit_run_dataset_options()
+    assert options[0] == NO_DATASET_ID, (
+        "the honest answer for a smoke run should be the one a first-time submitter "
+        f"reaches first, and the options begin {options!r}"
+    )
+
+
+def _submit_run_dataset_options() -> list[str]:
+    document = yaml.safe_load(
+        (PROJECT_ROOT / ".github" / "workflows" / "submit-run.yml").read_text(encoding="utf-8")
+    )
+    # PyYAML reads a bare `on:` key as the boolean True under YAML 1.1.
+    triggers = document.get(True) or document.get("on")
+    inputs = triggers["workflow_dispatch"]["inputs"]
+    return list(inputs["dataset_release"]["options"])
 
 
 def test_the_shipped_registry_is_the_set_the_representative_manifests_name() -> None:

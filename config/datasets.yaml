@@ -8,6 +8,18 @@
 # Entries carry an identifier and nothing else. Binding each identifier to a full
 # DatasetRelease — checksums, S3 VersionIds, schema, lineage, licence, classification and
 # access policy — is the dataset-breadth phase's work, not admission's.
+#
+# `none` is the honest answer, and it is listed first because it is the common one. The field
+# is required, so until `none` existed every submission had to name a release; every run in
+# the lineage therefore records that it read `dolma-2026-07`, and not one of them read
+# anything, because no dataset bucket exists yet. A required field offering a single value
+# does not record a fact about a run, it invents one, and it invents it into a record that is
+# immutable by design and so cannot be corrected afterwards.
+#
+# `dolma-2026-07` stays listed. It is named by every historical intent record and by the
+# manifest fixtures, and de-registering it would make those records unresolvable to prove a
+# point already made by the entry above it.
 schema_version: 1
 releases:
   - release_id: dolma-2026-07
+  - release_id: none

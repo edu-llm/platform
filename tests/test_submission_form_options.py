@@ -153,8 +153,14 @@ def test_the_dataset_dropdown_offers_exactly_the_registered_releases() -> None:
     the approval gate, having spent somebody's attention.
     """
     registered = [entry["release_id"] for entry in registry("datasets.yaml")["releases"]]
+    offered = options_for("dataset_release")
 
-    assert options_for("dataset_release") == sorted(registered)
+    # Set equality rather than sorted order. What this test is for is that no option can be
+    # picked which admission would then deny; the order is a separate decision, and it is made
+    # deliberately against alphabetical so that `none` -- the true answer for a run that reads
+    # nothing -- is the option a first-time submitter reaches first.
+    assert set(offered) == set(registered)
+    assert len(offered) == len(registered), f"an option is listed twice: {offered!r}"
 
 
 def test_the_workload_dropdown_offers_only_workloads_whose_repository_is_registered() -> None:
