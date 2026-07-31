@@ -180,6 +180,15 @@ jobs:
             --aws-region "${RESOLVE_AWS_REGION}" \
             --policy config/policy.yaml \
             --output "${RUNNER_TEMP}/published-image.json" || resolve_status=$?
+          # Two answers, separated, and the separation is the point. Exit 1 is a refusal on
+          # the merits -- today only an unregistered repository -- and the tool has already
+          # printed a sentence naming what to do about it, so this step must not bury that
+          # under a message about the registry being unreachable. Exit 2 says the tool could
+          # not find out, which is an outage and not a verdict on the submission.
+          if [[ "${resolve_status}" -eq 1 ]]; then
+            echo "The submission was refused before anything was compiled and no reviewer was asked. The reason is printed above." >&2
+            exit 1
+          fi
           if [[ "${resolve_status}" -ne 0 ]]; then
             echo "published_image_unresolved" >&2
             echo "The registry could not be asked which image this commit published, so nothing was compiled and no reviewer was asked. This is not a refusal on the merits. The reason token is printed above; the error body is deliberately withheld because it names the account." >&2

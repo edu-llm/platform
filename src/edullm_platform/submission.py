@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Annotated, Self
 
-from pydantic import BeforeValidator, Field, model_validator
+from pydantic import BeforeValidator, Field, ValidationError, model_validator
 
 from edullm_platform.canonical import sha256_digest
 from edullm_platform.contracts.admission import ApprovalEnvironment
@@ -272,21 +272,46 @@ def compile_submission(
             "the submission cannot be priced and policy denies it outright"
         ) from exc
 
-    facts = build_request_facts(
-        manifest,
-        repositories=repositories,
-        catalog=catalog,
-        dataset_registry=dataset_registry,
-        estimated_cost_usd=cost.maximum_compute_cost_usd,
-        # The scan summary comes from the provenance record here, because the compile job
-        # holds no AWS credentials and cannot ask ECR. Admission asks ECR itself and fails
-        # closed on disagreement, so this value chooses the approval environment and is
-        # never what the decision rests on -- the same split as the manifest hash.
-        image_scan_policy=policy.image_scan,
-        image_scan_registry=image_scan_registry,
-        image_scan_summary=image_scan_summary,
-        image_scan_findings=image_scan_findings,
-    )
+    # THE FORM SAYS `team` AND THE VALIDATOR SAYS `claimed_team`, AND ONLY ONE OF THOSE IS
+    # A PLACE THE SUBMITTER CAN GO AND FIX SOMETHING.
+    #
+    # The refusal itself is not new and is not added here: RunManifest.team takes any
+    # non-empty string, RequestFacts.claimed_team is a TeamId, and TeamId carries
+    # SLUG_PATTERN -- so a team with a capital or a space has always been rejected, one
+    # line below. What escaped was a pydantic ValidationError, which is not the type the
+    # submitting workflow reports as a refusal, quoting a field name that appears nowhere
+    # on the form. `claimed_team` earns its name inside RequestFacts, where the distinction
+    # between a claim and a fact is exactly what policy is built on and exactly why
+    # membership is recorded rather than enforced. None of that is the submitter's problem.
+    #
+    # Translated rather than suppressed, and only this one field: a ValidationError from
+    # any other part of the facts is a bug in this platform's own derivation, and turning
+    # that into a refusal would blame a submitter for it.
+    try:
+        facts = build_request_facts(
+            manifest,
+            repositories=repositories,
+            catalog=catalog,
+            dataset_registry=dataset_registry,
+            estimated_cost_usd=cost.maximum_compute_cost_usd,
+            # The scan summary comes from the provenance record here, because the compile
+            # job holds no AWS credentials and cannot ask ECR. Admission asks ECR itself and
+            # fails closed on disagreement, so this value chooses the approval environment
+            # and is never what the decision rests on -- the same split as the manifest hash.
+            image_scan_policy=policy.image_scan,
+            image_scan_registry=image_scan_registry,
+            image_scan_summary=image_scan_summary,
+            image_scan_findings=image_scan_findings,
+        )
+    except ValidationError as exc:
+        if not any(error["loc"] == ("claimed_team",) for error in exc.errors()):
+            raise
+        raise SubmissionRefusedError(
+            f"the team {manifest.team!r} is not a team name this platform can record. A "
+            "team is written in lower-case letters and digits, with single hyphens between "
+            "words and none at either end -- memory-split, data, olmo-core-eval. Correct "
+            "the team field on the submission form."
+        ) from exc
 
     # Imported here rather than at module scope: admission owns this rule, and importing
     # it the other way round would make the compile step the authority on what is denied.

@@ -54,6 +54,15 @@ from edullm_platform.publisher_denials import parse_aws_cli_error
 
 EXIT_OK: Final = 0
 
+#: What a submission refused on its merits exits with, as against ``EXIT_UNUSABLE``'s "this
+#: tool could not find out". The two reach a person differently and the difference is the
+#: whole reason this constant exists: the submitting workflow answers a non-zero exit with
+#: "This is not a refusal on the merits", which is true of a policy file that will not parse
+#: and false of a repository nobody registered. That one is a refusal, and the most
+#: actionable this platform issues -- the fix is a pull request against
+#: config/repositories.yaml -- so it must not be reported as an outage.
+EXIT_REFUSED: Final = 1
+
 #: How much of the commit the published tag carries. ``build-research-image.yml`` publishes
 #: ``${COMMIT_SHA:0:12}`` and nothing else, so this is the join between a submission's
 #: declared commit and the image the registry holds for it. Any other slice is a tag that
@@ -251,8 +260,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         registered = registry.repository_by_name(arguments.repository)
     except UnknownRepositoryError:
+        # The token first, because the workflow greps the first line, and a sentence after
+        # it, because the token is the name of a condition the code is in rather than one
+        # the submitter is in. Everything a reader needs to act is here: what they asked
+        # for, what exists, and the file that decides. Naming the registered repositories
+        # also answers the likeliest cause, which is a spelling -- `olmo-core` for
+        # `OLMo-core` reaches this line and looks like an unregistered repository.
+        registered_names = ", ".join(
+            entry.repository for entry in registry.repositories
+        )
         print("unregistered_repository", file=sys.stderr)
-        return EXIT_UNUSABLE
+        print(
+            f"No repository named {arguments.repository!r} is registered, so there is "
+            "nowhere for its images to have been published and nothing to resolve. The "
+            f"registered repositories are {registered_names}. Register this one by adding "
+            "it to config/repositories.yaml, or correct the repository on the form.",
+            file=sys.stderr,
+        )
+        return EXIT_REFUSED
 
     try:
         image_scan_policy = load_yaml(arguments.policy, ApprovalPolicy).image_scan

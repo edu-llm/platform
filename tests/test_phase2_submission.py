@@ -507,6 +507,73 @@ def test_an_unregistered_dataset_is_refused_before_a_reviewer_is_asked() -> None
     assert "unregistered_dataset" in str(exc_info.value)
 
 
+def test_a_submission_naming_a_repository_nothing_registers_is_refused_before_a_reviewer_is_asked() -> (
+    None
+):
+    """CHARACTERISATION. This passed the day it was written, and that is the point of it.
+
+    The compile layer already refuses an unregistered repository, through
+    ``build_request_facts`` deriving ``repository_registered`` from the registry and
+    ``denied_outright_conditions`` owning the verdict. Nothing named that behaviour, so
+    nothing would have noticed a refactor dropping ``repositories`` from the
+    ``build_request_facts`` call: the fact would quietly answer False for everything, or
+    the argument would default, and the only test that would go red is one about datasets.
+
+    Deliberately not a second check inside ``compile_submission``. Adding one would give
+    this condition two refusal paths and split the authority the comment above the
+    ``denied_outright_conditions`` import exists to protect.
+
+    It has to be ``dolma``, and finding that out is half of what the test is worth. An
+    invented repository name never reaches the registry fact: the workload profile is
+    checked against the repository first, so a submission naming a repository nothing
+    registers is refused for naming a profile that belongs to a different one, and the
+    registry is never consulted. ``dolma`` is the only name that gets there, because it is
+    the one repository with a workload profile in config/workload-catalog.yaml and no entry
+    in config/repositories.yaml. Registering it -- which Phase 6 does -- takes this path out
+    of reach, and this test with it.
+    """
+    with pytest.raises(SubmissionRefusedError) as exc_info:
+        compile_payload(cpu_payload(repository="dolma", workload_profile=DOLMA_WORKLOAD))
+
+    assert "unregistered_repository" in str(exc_info.value)
+
+
+def test_a_team_that_is_not_kebab_case_is_refused_with_a_message_naming_team() -> None:
+    """Mutation: let the pydantic error out of ``build_request_facts`` untranslated.
+
+    The refusal already happens -- ``RequestFacts.claimed_team`` is a ``TeamId`` and
+    ``TeamId`` carries ``SLUG_PATTERN`` -- so this is about which error a submitter meets.
+    A ``ValidationError`` escaping compile is not a refusal the workflow reports as one, and
+    it arrives as a pydantic dump rather than as a sentence.
+    """
+    with pytest.raises(SubmissionRefusedError) as exc_info:
+        compile_payload(cpu_payload(team="Memory Split"))
+
+    message = str(exc_info.value)
+    assert "team" in message
+    assert "Memory Split" in message
+    # The rule in words rather than the regex. A submitter who has just been shown
+    # ^[a-z0-9]+(?:-[a-z0-9]+)*$ has been told the truth and helped with nothing.
+    assert "lower-case" in message
+    assert "hyphen" in message
+
+
+def test_the_team_refusal_does_not_name_the_field_the_validator_is_thinking_about() -> None:
+    """Mutation: interpolate the pydantic message into the refusal instead of rewriting it.
+
+    ``claimed_team`` is what the field is called inside ``RequestFacts``, where the name
+    carries a real distinction: policy is judging a claim rather than a fact, and the
+    difference between the two is the whole reason team membership is not enforced. None of
+    that is visible to somebody looking at a form with a box marked ``team``. Naming the
+    internal field sends them to search the repository for a field that is not on their
+    form, and the closest thing they will find is the one they already filled in.
+    """
+    with pytest.raises(SubmissionRefusedError) as exc_info:
+        compile_payload(cpu_payload(team="Memory Split"))
+
+    assert "claimed_team" not in str(exc_info.value)
+
+
 def test_an_unregistered_compute_profile_is_refused_because_it_cannot_be_priced() -> None:
     with pytest.raises(SubmissionRefusedError) as exc_info:
         compile_payload(olmo_payload(compute_profile=UNREGISTERED_COMPUTE_PROFILE))
