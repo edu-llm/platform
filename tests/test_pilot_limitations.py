@@ -32,6 +32,24 @@ CANCELLATION_SENTENCE = (
     "timeout bounds it."
 )
 
+#: The paragraph the queue limitation lives in, named by its opening so that the tests
+#: below assert something about one paragraph rather than about the page.
+QUEUE_PARAGRAPH_LEAD = "**Nobody is watching the queue for you.**"
+
+#: Matched word for word, like the cancellation sentence and for the same reason. See
+#: ``test_the_queue_paragraph_says_a_run_that_never_placed_still_kept_its_record``.
+QUEUE_INTENT_SENTENCE = (
+    "Your run intent and the decision to admit it are written before Batch is reached at "
+    "all, so a run that never places loses nothing but time and still has a record under "
+    "its run id."
+)
+
+#: The next step, which is what makes the paragraph a substitute rather than a disclosure.
+QUEUE_NEXT_STEP_SENTENCE = (
+    "If a run has not started within an hour, ask, and quote the run id."
+)
+
+
 def readme_text() -> str:
     return README_PATH.read_text(encoding="utf-8")
 
@@ -62,6 +80,29 @@ def limitations_prose() -> str:
     which would cost the sentence below the protection it is here to have.
     """
     return " ".join(limitations_section().split())
+
+
+def queue_paragraph() -> str:
+    """The one paragraph about a job that cannot get capacity, with soft wraps closed up.
+
+    There has to be exactly one, and that is asserted here rather than assumed. The page
+    already told a reader that nobody is watching the queue; what it owes them now is the
+    other half, and the cheap way to add a half is a second paragraph beside the first. Two
+    paragraphs on the same subject are how a reader ends up acting on whichever one they
+    stopped at, so the shape is checked where the wording is.
+    """
+    paragraphs = [
+        prose
+        for prose in (" ".join(block.split()) for block in limitations_section().split("\n\n"))
+        if prose.startswith(QUEUE_PARAGRAPH_LEAD)
+    ]
+
+    assert len(paragraphs) == 1, (
+        f"{len(paragraphs)} paragraphs of the pilot limitations page open "
+        f"{QUEUE_PARAGRAPH_LEAD!r}; the queue limitation is one paragraph so that a reader "
+        "cannot act on half of it"
+    )
+    return paragraphs[0]
 
 
 def test_the_readme_carries_a_pilot_limitations_section() -> None:
@@ -97,6 +138,38 @@ def test_the_cancellation_wording_is_the_sentence_a_reader_can_act_on() -> None:
     instead of being left to whoever next tightens the prose.
     """
     assert CANCELLATION_SENTENCE in limitations_prose()
+
+
+def test_the_queue_paragraph_says_a_run_that_never_placed_still_kept_its_record() -> None:
+    """The page owes this because criterion 9 stopped being a check on 2026-07-31.
+
+    That criterion asked for a capacity failure to be surfaced without losing the run
+    intent, and it moved to Phase 8 with the queue-wait detector it cannot be closed
+    without. What a transferred check would have protected is owed to this page instead, on
+    the same terms Phase 3's cancellation checks were transferred on: in words a reader can
+    act on rather than as a disclosure.
+
+    The half that is already true is the half worth writing down. Admission records the
+    intent and the decision before Batch is reached at all, so a job that never places costs
+    an afternoon and nothing else -- and a reader who has not been told that has no way to
+    tell a run that is waiting from a run that was dropped, which are the same thing to look
+    at and very different things to have happened.
+
+    Asserted inside the queue paragraph rather than against the section, and the mutation is
+    why. A second paragraph restating that nobody is watching would satisfy every check made
+    against the whole page, tell the reader the same thing twice, and put the new half
+    somewhere they may never reach.
+    """
+    paragraph = queue_paragraph()
+
+    assert QUEUE_INTENT_SENTENCE in paragraph
+    assert QUEUE_NEXT_STEP_SENTENCE in paragraph
+    assert "`RUNNABLE`" in paragraph, (
+        "the paragraph no longer says what a job that cannot be placed actually does"
+    )
+    assert "no alarm notices" in paragraph, (
+        "the paragraph no longer says that nothing is watching for it"
+    )
 
 
 def test_the_page_says_the_team_field_routes_approval_rather_than_granting_anything() -> None:
