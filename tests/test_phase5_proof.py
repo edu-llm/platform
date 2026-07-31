@@ -32,6 +32,7 @@ from edullm_platform.proof_bundle import (
     ProofBundleError,
     contradicting_status_claims,
 )
+from edullm_platform.proof_generator import standing
 from tests.proof_support import skip_unless_reproducing
 from tools.build_phase5_proof import (
     BUNDLE_FILENAMES,
@@ -140,6 +141,45 @@ def test_the_generator_refuses_a_tree_with_no_pilot_run_committed(tmp_path: Path
         read_runs(empty)
 
     assert "no pilot run" in str(refusal.value)
+
+
+def test_the_opening_sentence_does_not_call_a_deferred_criterion_covered() -> None:
+    """Mutation: open a green bundle by saying every criterion is covered.
+
+    The shared opening was written for a phase that closes with nothing outstanding, and it
+    says so in those words. Phase 5 is the first bundle to reach a green gate while carrying
+    a deferral, so that sentence would have printed "every criterion is covered" over a
+    criterion nobody has observed -- on the one page most reviewers read, and past the guard
+    that reads status claims, which understands "check 6 is deferred" and not "every".
+
+    ``contradicting_status_claims`` is asserted beside the wording rather than instead of
+    it, because the two catch different halves: the guard would let this through and a
+    reader would not.
+    """
+    numbers = {
+        status: [check.number for check in phase5_criteria() if check.status is status]
+        for status in CriterionStatus
+    }
+    opening = standing(numbers[CriterionStatus.GAP], numbers[CriterionStatus.DEFERRED])
+
+    assert "It is not done" not in opening
+    assert "Every criterion is covered" not in opening
+    assert "deferred" in opening
+    for number in numbers[CriterionStatus.DEFERRED]:
+        assert number in opening, "the opening does not say which criterion is outstanding"
+    assert contradicting_status_claims({"README.md": opening}, phase5_criteria()) == ()
+
+
+def test_the_opening_sentence_is_unchanged_for_a_phase_that_defers_nothing() -> None:
+    """Mutation: reword the settled branch while adding the deferral one.
+
+    Phases 1 and 3 print this same sentence, and Phase 1's bundle is committed with the
+    original wording. Changing it there would be an unrelated diff in a committed bundle
+    inside a pull request about Phase 5, which is how a bundle stops being reviewable by
+    diff.
+    """
+    assert "Every criterion is covered and the gate is green" in standing([], [])
+    assert "It is not done" in standing(["6"], [])
 
 
 def test_a_limitation_that_names_a_check_takes_its_status_from_the_definition() -> None:

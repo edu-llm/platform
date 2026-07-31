@@ -1,11 +1,22 @@
 """What the Phase 5 criteria definition must be true of, independent of the phase itself.
 
 Two kinds of test. The first kind reads the definition against the master plan: the right
-number of checks, the right ones marked pilot-blocking, every gap saying what would close
-it, and the one rewritten criterion carrying the sentence it replaced. The second kind is
-the one that has caught real defects in every phase so far -- asking pytest whether the
-cited node ids collect. A citation that reads correctly and names nothing turns a criterion
-into a claim nobody checks, and no amount of reading the definition reveals it.
+number of checks, the right ones marked pilot-blocking, everything not covered saying what
+would close it, and the one rewritten criterion carrying the sentence it replaced. The
+second kind is the one that has caught real defects in every phase so far -- asking pytest
+whether the cited node ids collect. A citation that reads correctly and names nothing turns
+a criterion into a claim nobody checks, and no amount of reading the definition reveals it.
+
+**Criterion 6 moved from a gap to a deferral on 2026-07-31, and the tests that guarded
+against exactly that move were rewritten rather than deleted.** The guard was right about
+the danger and wrong about this instance: a deferral passes the gate and may never be
+pilot-blocking, so relabelling a gap is two controls disabled by one word, and that is worth
+a test whichever way it lands. What makes this one a postponement rather than a relabelling
+is that the observation is owned somewhere real -- the check moved to Phase 6's closeout,
+where it carries Phase 5's gate rather than Phase 6's -- and no Phase 6 build item stands in
+front of it. So the tests below assert the shape of a relocation instead of asserting that
+no deferral exists: that there is exactly one, that it names what fires it, and that it does
+not let the phase read as though a research workload had been run.
 """
 
 from __future__ import annotations
@@ -22,14 +33,17 @@ from edullm_platform.phase5_criteria import (
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-#: Eleven of fifteen, which is the highest proportion of any phase. Criteria 1 to 8 are the
-#: run itself and the person taking it; 12, 14 and 15 are the derivation checks whose
-#: absence costs a lineage record. The four that are not marked are 9, 10, 11 and 13.
-PILOT_BLOCKING = ("1", "2", "3", "4", "5", "6", "7", "8", "12", "14", "15")
+#: Ten of fifteen, which is still the highest proportion of any phase. Criteria 1 to 5, 7
+#: and 8 are the run itself and the person taking it; 12, 14 and 15 are the derivation
+#: checks whose absence costs a lineage record. Criterion 6 was the eleventh until it was
+#: deferred; the contract refuses a deferred criterion that is also pilot-blocking, so the
+#: marker came off as a consequence of the deferral rather than as a judgement about harm.
+PILOT_BLOCKING = ("1", "2", "3", "4", "5", "7", "8", "12", "14", "15")
 
-#: The one that is open. It wants a GPU run under a team other than platform writing a
-#: checkpoint, and every pilot run so far went to the CPU profile.
-OPEN = ("6",)
+#: The one criterion this phase does not cover. It wants a GPU run under a team other than
+#: platform writing a checkpoint; every pilot run went to the CPU profile, and the
+#: observation moved to Phase 6's closeout rather than being abandoned here.
+DEFERRED = ("6",)
 
 #: The module that reads the committed captures of the pilot runs. Every criterion that is a
 #: claim about people rather than about pure Python has to cite it, or it is proving
@@ -54,73 +68,126 @@ def test_the_definition_lists_every_check_the_phase_plan_names() -> None:
 
 
 def test_the_pilot_markers_are_the_plans_and_not_a_later_judgement() -> None:
-    """Mutation: unmark criterion 6, or mark one of the access-grant conditions.
+    """Mutation: unmark one of the run criteria, or mark an access-grant condition.
 
-    Unmarking 6 is the tempting one, because it is the only thing standing between this
-    phase and a ready rung -- and it is exactly the move the marker exists to prevent. A
-    marked criterion is one the rung waits on, so unmarking one because it is inconvenient
-    converts the control into a description of whatever already passed.
+    A marked criterion is one the rung waits on, so unmarking one because it is inconvenient
+    converts the control into a description of whatever already passed. Criterion 6 is the
+    exception and it is not a loophole: the shared contract refuses a criterion that is both
+    deferred and pilot-blocking, so its marker cannot be reasoned about separately from its
+    status. The test that stops the status itself being changed for convenience is
+    ``test_the_one_deferral_is_a_relocation_and_names_what_fires_it``.
     """
     marked = tuple(spec.number for spec in phase5_criteria() if spec.pilot_blocking)
 
     assert marked == PILOT_BLOCKING
 
 
-def test_the_four_unmarked_criteria_are_the_three_conditions_and_the_one_refusal() -> None:
+def test_every_unmarked_criterion_says_why_it_is_not_pilot_blocking() -> None:
     """Mutation: mark any of them, or explain none of them.
 
-    Saying no is what makes the marker mean anything. Three of the four are conditions on
+    Saying no is what makes the marker mean anything. Three of the five are conditions on
     granting write access rather than guards on a run -- nobody's run loses money, data,
     attribution or lineage integrity if they are absent, and what is at risk is the account.
-    The fourth is a refusal whose value is its position and its wording.
+    One is a refusal whose value is its position and its wording. The fifth is the deferral,
+    which is unmarked by the contract rather than by a judgement, and which therefore owes
+    the loudest explanation of the five.
     """
     unmarked = {
-        spec.number: " ".join((*spec.scope_limits, *spec.gaps))
+        spec.number: " ".join(
+            (
+                *spec.scope_limits,
+                *spec.gaps,
+                spec.deferral_reason or "",
+                spec.deferral_trigger or "",
+            )
+        )
         for spec in phase5_criteria()
         if not spec.pilot_blocking
     }
 
-    assert set(unmarked) == {"9", "10", "11", "13"}
+    assert set(unmarked) == {"6", "9", "10", "11", "13"}
     for number, written in unmarked.items():
-        assert written, f"criterion {number} is unmarked and says nothing about why"
+        assert written.strip(), f"criterion {number} is unmarked and says nothing about why"
 
 
-def test_every_open_criterion_says_what_would_close_it() -> None:
-    """Mutation: record a gap with no explanation, or with one that restates the criterion.
+def test_every_criterion_that_is_not_covered_says_what_would_close_it() -> None:
+    """Mutation: record a gap or a deferral with an explanation that restates the criterion.
 
-    A gap that does not say what would close it is a criterion nobody can pick up. This one
-    is unusual in being closeable by a submission rather than by work, and saying so is the
-    difference between a reader scheduling an afternoon and a reader scheduling a sprint.
+    Anything not covered is work somebody has to pick up, and one that does not say what
+    would close it is a criterion nobody can. Written against both open statuses rather than
+    against gaps alone, because the phase has no gap left and a check keyed on gaps would
+    have quietly stopped measuring anything on the day the last one was deferred.
     """
-    gaps = {
-        spec.number: spec.gaps
+    unproved = {
+        spec.number: (*spec.gaps, *(text for text in (spec.deferral_trigger,) if text))
         for spec in phase5_criteria()
-        if spec.status is CriterionStatus.GAP
+        if spec.status is not CriterionStatus.COVERED
     }
 
-    assert set(gaps) == set(OPEN)
-    for number, written in gaps.items():
+    assert set(unproved) == set(DEFERRED)
+    for number, written in unproved.items():
         assert written, number
         assert all(len(entry) > 80 for entry in written), (
-            f"criterion {number} records a gap too short to say what would close it"
+            f"criterion {number} says what closes it too briefly to be actionable"
         )
 
 
-def test_the_phase_records_no_deferral_and_therefore_hides_nothing_behind_one() -> None:
-    """Mutation: defer criterion 6 instead of recording it as a gap.
+def test_the_one_deferral_is_a_relocation_and_names_what_fires_it() -> None:
+    """Mutation: defer a second criterion, or defer this one without saying where it went.
 
-    A deferral passes the gate. Criterion 6 is one submission away from closing, so
-    deferring it would turn the gate green without anything changing in the account -- and
-    a deferral may never be pilot-blocking, so it would also open the rung. That is two
-    controls disabled by one word, which is precisely why the three-status rule exists.
+    A deferral passes the gate and may never be pilot-blocking, so relabelling a gap is two
+    controls disabled by one word. What separates this from that move is that the
+    observation is owned somewhere real rather than owned nowhere: it moved to Phase 6's
+    closeout, carrying Phase 5's gate, with no Phase 6 build item in front of it. Both
+    halves are asserted -- the reason has to say the mechanism is built and unexercised, and
+    the trigger has to be the one submission that resolves it -- because a deferral whose
+    reason is "not yet" is the label this test exists to refuse.
     """
     deferred = [
-        spec.number
-        for spec in phase5_criteria()
-        if spec.status is CriterionStatus.DEFERRED
+        spec for spec in phase5_criteria() if spec.status is CriterionStatus.DEFERRED
     ]
 
-    assert deferred == []
+    assert [spec.number for spec in deferred] == list(DEFERRED)
+    six = deferred[0]
+    reason = six.deferral_reason or ""
+    trigger = six.deferral_trigger or ""
+
+    assert "Phase 6" in reason, "the deferral does not say where the observation went"
+    assert "5.5" in reason, (
+        "the deferral does not say the grant that makes the checkpoint write permitted"
+    )
+    assert "unexercised" in reason.lower(), (
+        "the deferral does not say the mechanism is built, which is what makes it a "
+        "postponement rather than unfinished work"
+    )
+    assert "GPU" in trigger and "checkpoint" in trigger
+    assert "submission" in trigger, (
+        "the trigger reads as work rather than as the one run that closes it"
+    )
+    assert not six.proving_node_ids, "a deferred criterion is not proved"
+    assert six.supporting_node_ids, (
+        "the deferral cites nothing, so a reader cannot see which half is already built"
+    )
+
+
+def test_the_deferral_does_not_let_the_phase_read_as_a_workload_that_ran() -> None:
+    """Mutation: defer criterion 6 with a reason that stops at "no GPU run happened".
+
+    A green gate on this phase will be read as the platform having carried a second person's
+    research run, and it has not. All three pilot runs went to the CPU profile carrying a
+    print statement, so what Phase 5 established is that the two-person path completes --
+    which had never been established -- and not that anything was trained. The gate prints a
+    deferral's scope limits where a reader of the verdict will see them, which is the only
+    place that sentence survives being skim-read.
+    """
+    six = next(spec for spec in phase5_criteria() if spec.number == "6")
+    written = " ".join(six.scope_limits)
+
+    assert "print statement" in written
+    assert "cpu-32vcpu" in written
+    assert "not a pass" in written.lower(), (
+        "nothing in the record tells a reader the re-cut is a relocation rather than a pass"
+    )
 
 
 def test_the_rewritten_criterion_carries_the_sentence_it_replaced() -> None:

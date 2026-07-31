@@ -10,18 +10,22 @@ number of criteria it holds the report to. There is deliberately no second copy 
 the above, for the reason Phase 1 gives and every phase since repeats: a phase that could
 restate the rule could restate it more kindly.
 
-**This gate fails on one criterion, which is the narrowest margin any phase has opened at.**
-Fourteen of fifteen are covered. The one that is open wants a GPU run under a team other
-than ``platform`` writing a checkpoint, and it is open for want of a submission rather than
-for want of a mechanism: the three pilot runs all went to the CPU profile and none of them
-wrote a checkpoint.
+**This gate passes, and it passes with something outstanding, which is a state worth
+reading slowly.** Fourteen of fifteen are covered and the fifteenth is deferred. That one
+wants a GPU run under a team other than ``platform`` writing a checkpoint, and it is
+outstanding for want of a submission rather than for want of a mechanism: the three pilot
+runs all went to the CPU profile carrying a print statement and none of them wrote a
+checkpoint. The observation moved to Phase 6's closeout on 2026-07-31, where it still
+carries this phase's gate; ``phase5_criteria`` argues the move where a reader of the gate's
+output will see it.
 
-**The pilot verdict is the one worth reading, and it is closed by that same criterion.**
-Eleven of the fifteen are pilot-blocking -- the highest proportion of any phase, because
-this phase *is* the pilot rung and almost every check is a precondition for a real person's
-run being real rather than a demonstration staged for them. Ten of those eleven pass. That
-is a different shape from Phase 4, where the gate was red on criteria nobody could close;
-here one submission closes both verdicts.
+**The pilot verdict is the one worth reading, and it opened on the same word.** Ten of the
+fifteen are pilot-blocking -- still the highest proportion of any phase, because this phase
+*is* the pilot rung and almost every check is a precondition for a real person's run being
+real rather than a demonstration staged for them. All ten pass. The eleventh marker came off
+criterion 6 because the shared contract refuses a criterion that is both deferred and
+pilot-blocking, so the rung and the gate moved together on one status change rather than on
+two decisions.
 """
 
 from __future__ import annotations

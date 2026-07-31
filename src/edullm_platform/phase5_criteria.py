@@ -19,22 +19,37 @@ two that failed.
 Criteria 1 to 11 are the checks the re-cut listed, in its order. Criteria 12 to 15 are what
 deriving the image from the declared commit owes over merely comparing the two, and they are
 appended rather than interleaved so that nothing already argued about had to be renumbered.
-Eleven are pilot-blocking, which is the highest proportion of any phase and is not a marker
-that stopped sorting: this phase *is* the pilot rung, so almost every check is a
+Ten are pilot-blocking, which is still the highest proportion of any phase and is not a
+marker that stopped sorting: this phase *is* the pilot rung, so almost every check is a
 precondition for a real person's run being real rather than a demonstration staged for them.
 
-**The four unmarked criteria are three conditions on the access grant and one refusal.**
-Criteria 9, 10 and 11 are the deploy-workflow guard, the code-owner requirement and the
-limitations page -- conditions on granting write access rather than guards on a run.
+**The five unmarked criteria are three conditions on the access grant, one refusal, and the
+deferral.** Criteria 9, 10 and 11 are the deploy-workflow guard, the code-owner requirement
+and the limitations page -- conditions on granting write access rather than guards on a run.
 Criterion 13 is the compile-time refusal of an unbuilt commit, and it is unmarked on the
 reasoning Phase 7 applies to its own two: a refusal that arrives in the wrong place spends a
-reviewer's attention, which is not one of the four harms the marker sorts on.
+reviewer's attention, which is not one of the four harms the marker sorts on. Criterion 6 is
+unmarked by the contract rather than by a judgement, because a deferred criterion may never
+be pilot-blocking.
 
-**One criterion is open, and it is open for want of a run rather than a mechanism.**
-Criterion 6 wants a GPU run under a team other than ``platform`` writing a checkpoint. All
-three pilot runs went to ``cpu-32vcpu`` and none wrote a checkpoint, so there is nothing to
-read. The team half is already demonstrated -- every one of the three claimed ``tokenizer``
-and wrote under ``teams/tokenizer/`` -- and what is missing is the GPU half.
+**Criterion 6 moved from a gap to a deferral on 2026-07-31, and the move is a relocation
+rather than a relabelling.** It wants a GPU run under a team other than ``platform`` writing
+a checkpoint. All three pilot runs went to ``cpu-32vcpu`` and none wrote a checkpoint, so
+there is nothing to read; the team half is demonstrated -- every one of the three claimed
+``tokenizer`` and wrote under ``teams/tokenizer/`` -- and what is missing is the GPU half.
+The observation now belongs to Phase 6's closeout, where it carries this phase's gate rather
+than that one's and where no build item stands in front of it. That is what makes it a
+deferral: a postponement with an owner is what the status is for, and one owned nowhere is a
+gap wearing the label.
+
+**Deferring it turns the gate green and opens the pilot rung, and both are stated rather
+than left to be noticed.** A deferral passes the gate, and a deferred criterion may not be
+pilot-blocking, so one word moves two verdicts -- which is exactly why the criterion carries
+the argument for the move in its own scope limits, why those limits say in terms that the
+re-cut is not a pass, and why the pilot limitations page gains the sentence a reader can act
+on. What Phase 5 established is that the two-person path completes. It did not establish
+that this platform carries a research workload for somebody who did not build it, and a
+green gate should not be read as though it had.
 
 **Criterion 10 is narrower than the master plan's sentence, deliberately.** The plan asks
 that a change to a workflow file cannot reach ``main`` without a code-owner review. That is
@@ -86,6 +101,7 @@ RESOLUTION = "tests/test_image_resolution.py"
 WORKFLOW = "tests/test_phase2_submit_run_workflow.py"
 DEPLOY_GUARD = "tests/test_deploy_authorization.py"
 LIMITATIONS = "tests/test_pilot_limitations.py"
+TEAM_ISOLATION = "tests/test_phase5_team_isolation.py"
 
 #: The three deploy workflows the actor guard covers, spelled as the parametrization spells
 #: them. A criterion citing the bare test name would collect nothing at all.
@@ -142,13 +158,38 @@ THE_REBUILD_CRITERION_AS_IT_WAS_WRITTEN: Final = (
     "naming an image nobody chose."
 )
 
-#: What closes criterion 6, written out because the shape of the work is not obvious from
-#: the criterion's wording and a reader deciding what to do next needs it.
-NEEDS_A_GPU_RUN_RATHER_THAN_A_MECHANISM: Final = (
-    "Nothing is missing but the run. The GPU workload role already reaches "
-    "teams/*/runs/* -- item 5.5 widened it to match the CPU role -- so a checkpoint under "
-    "any team is permitted, and the checkpoint machinery is what Phase 4 proved on three "
-    "GPU jobs under team platform. What has not happened is the two together."
+#: Why criterion 6 is a deferral rather than a gap. Written out because the distinction is
+#: the whole of the move, and because a reader of the gate's output sees this and does not
+#: see the module docstring.
+BUILT_AND_UNEXERCISED: Final = (
+    "WHAT THIS MEASURES IS BUILT AND UNEXERCISED, AND THE OBSERVATION HAS BEEN RELOCATED "
+    "RATHER THAN ABANDONED. Nothing is missing but the run. The GPU workload role already "
+    "reaches teams/*/runs/* -- item 5.5 widened it to match the CPU role -- so a checkpoint "
+    "under any team is permitted, and the checkpoint machinery is what Phase 4 proved on "
+    "three GPU jobs under team platform. What has not happened is the two together.\n\n"
+    "It is a deferral rather than a gap because the decision is recorded on both sides and "
+    "the observation is owned somewhere real. The master plan carries this check at the "
+    "head of Phase 6's list, marked as arriving from Phase 5 and as closing Phase 5's gate "
+    "rather than Phase 6's, and no Phase 6 build item stands in front of it: it needs no "
+    "registration, no deploy and no code. A postponement with an owner and a trigger is "
+    "what DEFERRED is for; one owned nowhere is a gap wearing the label, which is the move "
+    "the three-status rule exists to make visible.\n\n"
+    "It is not a prediction that the run will succeed. If the checkpoint write is refused, "
+    "this resolves to a gap and item 5.5 was wrong -- which is the outcome the trigger "
+    "exists to make somebody look at rather than infer."
+)
+
+#: What closes criterion 6. Kept separate from the reason because a reader deciding what to
+#: do next needs the action rather than the argument.
+ONE_SUBMISSION_CLOSES_IT: Final = (
+    "One GPU submission claiming a team other than platform that writes a checkpoint. It "
+    "is a submission rather than any work: the compute profile is a dropdown on the same "
+    "form, the GPU role already reaches every team's prefix, and Phase 4 proved the "
+    "checkpoint machinery. Phase 6's closeout campaign carries it and it belongs early in "
+    "that campaign, because until it runs the previous phase is not declarable complete. "
+    "Re-record this as covered against the capture, or as a gap if the write is refused; "
+    "leaving it deferred once a GPU run under another team exists is the one outcome this "
+    "trigger forbids."
 )
 
 
@@ -375,17 +416,26 @@ def phase5_criteria() -> tuple[CriterionSpec, ...]:
                 "A GPU run claiming a team other than platform writes its checkpoint "
                 "successfully."
             ),
-            status=CriterionStatus.GAP,
-            pilot_blocking=True,
-            gaps=(
-                (
-                    "No pilot run went to a GPU. All three went to cpu-32vcpu, and the "
-                    "workload they carried was a print statement and two W&B calls, so none "
-                    "of them wrote a checkpoint. There is no observation to capture."
-                ),
-                NEEDS_A_GPU_RUN_RATHER_THAN_A_MECHANISM,
+            status=CriterionStatus.DEFERRED,
+            supporting_node_ids=(
+                *_ids(TEAM_ISOLATION, "test_both_workload_roles_reach_every_team_by_decision"),
+                *_ids(TEAM_ISOLATION, "test_the_prefix_the_roles_grant_is_the_prefix_the_platform_derives"),
+                *_ids(RUN_EVIDENCE, "test_a_run_that_succeeded_recorded_where_its_output_went"),
             ),
+            deferral_reason=BUILT_AND_UNEXERCISED,
+            deferral_trigger=ONE_SUBMISSION_CLOSES_IT,
             scope_limits=(
+                (
+                    "THE RE-CUT IS A RELOCATION AND NOT A PASS, AND THE PHASE'S CLAIM IS "
+                    "NARROWER THAN A GREEN GATE WILL READ. All three pilot runs went to "
+                    "cpu-32vcpu and the workload they carried was a print statement and two "
+                    "W&B calls, so none of them wrote a checkpoint and there is nothing to "
+                    "capture. No pilot run has trained anything or touched a GPU. What Phase "
+                    "5 established is that the two-person path completes -- which had never "
+                    "been established in twenty-five prior dispatches and is the thing the "
+                    "phase is named after -- and not that this platform carries a research "
+                    "workload for somebody who did not build it."
+                ),
                 (
                     "The team half is already demonstrated and is worth separating from the "
                     "GPU half. Every one of the three pilot runs claimed team tokenizer -- the "
@@ -395,9 +445,15 @@ def phase5_criteria() -> tuple[CriterionSpec, ...]:
                     "writing a checkpoint at the end of it."
                 ),
                 (
-                    "Closing it is one submission rather than any work. The compute profile is "
-                    "a dropdown on the same form, the GPU role already reaches every team's "
-                    "prefix, and Phase 4 proved the checkpoint machinery on three GPU jobs."
+                    "The pilot-blocking marker came off as a consequence of the status rather "
+                    "than as a judgement about the harm, and the shared contract refuses the "
+                    "combination rather than leaving it to a reviewer. The harm has not "
+                    "moved: a checkpoint the workload role cannot write is a GPU run's whole "
+                    "output lost at the end of the run, after the money is spent. So it goes "
+                    "on the pilot limitations page in the words a reader can act on -- if you "
+                    "are the first to run on a GPU under your own team, check the checkpoint "
+                    "landed -- which is what a written limitation owes before it may stand in "
+                    "for a check."
                 ),
             ),
         ),

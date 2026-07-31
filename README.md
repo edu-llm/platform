@@ -103,6 +103,14 @@ position, so a resume loads the weights and starts the optimizer cold. On a shor
 that is invisible. On a long run it is a visible discontinuity in the loss curve — on
 exactly the runs that are the reason to resume at all.
 
+**Nobody has yet written a checkpoint from a GPU run under a team other than `platform`.**
+The two halves are proved separately and have never been done together: the workload role
+reaches every team's output prefix, and every GPU run that has written a checkpoint claimed
+`platform`. If you are the first, look at your run's output prefix once the job finishes and
+confirm the checkpoint landed before you rely on it — a refused write fails at the end of a
+GPU run, after the time and the money are spent. Tell us either way, because the check that
+would have caught this is waiting on exactly your run.
+
 **`team` routes your approval and is not a permission.** The team on a submission says who
 should review it. It grants nothing, restricts nothing, and is recorded rather than
 enforced: you can name a team you do not belong to and the run proceeds, with that fact on
@@ -190,19 +198,24 @@ All five exit `0` on a pass, `1` when the gate ran and a criterion failed, and `
 inputs could not be read. They report criteria only; the `operational_inventory_checks`
 group is Phase 0's and exists because that phase predates the current definition.
 
-**Phases 2, 3, 4 and 5 exit 1 today, and that is the report working rather than a broken
-gate.** All four phases are deployed and have run. Phase 2 reports twelve of twenty-two
-criteria covered, one deferred and nine gaps; Phase 3 reports thirteen of nineteen covered
-and six gaps; Phase 4 reports nine of twelve covered, one deferred and two gaps; Phase 5
-reports fourteen of fifteen covered and one gap. Run the gates for the current numbers — the
-ones above are what they printed when this paragraph was written, and a gate is the
-authority rather than this file.
+**Phases 2, 3 and 4 exit 1 today, and that is the report working rather than a broken
+gate.** All four deployed phases have run. Phase 2 reports twelve of twenty-two criteria
+covered, one deferred and nine gaps; Phase 3 reports thirteen of nineteen covered and six
+gaps; Phase 4 reports nine of twelve covered, one deferred and two gaps. Run the gates for
+the current numbers — the ones above are what they printed when this paragraph was written,
+and a gate is the authority rather than this file.
 
-**Phase 5's single gap is a different kind from the others and is worth reading as one.**
-Every other open criterion in this repository is a capture nobody has taken. Phase 5's wants
-a GPU run claiming a team other than `platform` and writing a checkpoint, and the mechanism
-for all three of those exists and has been exercised separately — so it closes on one
-submission rather than on any work.
+**Phase 5 exits 0 with something outstanding, and that is worth reading rather than
+skipping.** It reports fourteen of fifteen criteria covered and one deferred. The deferred
+one wants a GPU run claiming a team other than `platform` and writing a checkpoint; the
+mechanism for all three of those exists and has been exercised separately, so it closes on
+one submission rather than on any work, and its observation moved to Phase 6's closeout on
+2026-07-31 while still closing Phase 5's gate. A deferral passes the gate and a deferred
+criterion may not be pilot-blocking, so that one status change moved both verdicts — which
+is why the criterion carries the argument for the move, and why what it would have protected
+is on the pilot limitations page above. **Phase 5's green gate says the two-person path
+completes. It does not say anybody has run a research workload on this platform**: all three
+pilot runs were a print statement on the CPU profile.
 
 What the remaining gaps are about is worth knowing before reading them. They are not the
 submission path, which works end to end: they are captures nobody has taken and shapes of
@@ -210,6 +223,13 @@ run nobody has aimed at a criterion yet. Each gap text says what was observed, w
 missing, and what would close it. Recording them as deferrals instead would turn a gate
 green without anything changing in the account, which is exactly the move the three-status
 rule exists to make visible.
+
+That is the same sentence Phase 5's deferral has to answer, so the difference is worth
+naming rather than leaving to inference. A deferral needs a written reason and a written
+trigger, and it needs the work to be owned somewhere real; Phase 5's check has a phase, a
+position in it and no build item in front of it, and a gate that reports it prints both the
+reason and the trigger where a reviewer reads the verdict. A gap here has none of that, and
+relabelling one would be the move rather than an instance of it.
 
 One capability is missing rather than unobserved, and no gate measures it: **nothing here
 can stop a job once it has started.** Cancelling the submission workflow in GitHub does not
