@@ -31,7 +31,12 @@ from typing import Annotated, Literal, Self
 from pydantic import BeforeValidator, Field, model_validator
 
 from .base import ContractModel, require_ordered_sequence
-from .dataset import BareSha256Digest, DatasetReleaseId, PublishedDatasetPrefix
+from .dataset import (
+    PUBLISHED_DATASET_BUCKET,
+    BareSha256Digest,
+    DatasetReleaseId,
+    PublishedDatasetPrefix,
+)
 
 __all__ = [
     "DatasetRegistry",
@@ -70,7 +75,22 @@ class PublishedDatasetReference(ContractModel):
 
     reference_id: DatasetReleaseId
     uri: PublishedDatasetPrefix
+    #: Shape-only, deliberately not constrained to a family enum. The dataset standard fixes
+    #: `<family>` as a six-value enum -- pretrain, curriculum, sft, eval, probe, vendor -- and
+    #: calls adding a family "a deliberate change to this document"; the upstream reader code
+    #: carries seven, adding tokenizer. A pattern pinned to the standard's six would refuse an
+    #: address that exists -- s3://edullm-data/ holds pretrain/ and tokenizer/ as its family
+    #: prefixes, alongside the _catalog/ and _inventory/ metadata prefixes, read live 2026-07-31
+    #: -- and a pattern pinned to the code's seven would encode that drift as if it were a rule.
     dataset_id: str = Field(min_length=1, pattern=r"^[a-z0-9]+(?:[/-][a-z0-9.]+)*$")
+    #: Deliberately stays ``^v[0-9]+$`` rather than widening: upstream auto-allocates this value
+    #: and never types it by hand. Note that upstream's ``version`` in ``dataset.json`` is an
+    #: OBJECT -- ``{"id": "v3", "relation": "supersedes", "of": "v2"}`` with ``relation`` one of
+    #: ``supersedes``, ``extends``, ``sibling`` -- and this field is the ``id``, which is also
+    #: the path segment. That relation is why this plan never calls the upstream
+    #: ``resolve_latest``: under ``extends``, the highest version is not the right answer,
+    #: because the extension is consumed alongside its base and reading the latest alone
+    #: silently drops it.
     version: str = Field(min_length=1, pattern=r"^v[0-9]+$")
     #: The payload group's ``manifest_sha256``, NOT the seal's ``dataset_sha256``. Per group
     #: rather than per dataset, and present only because these corpora declare
@@ -87,9 +107,25 @@ class PublishedDatasetReference(ContractModel):
     #: the failure is a plausible loss curve rather than an exception.
     tokenizer: str = Field(min_length=1, pattern=r"^tokenizer/[a-z0-9]+(?:-[a-z0-9.]+)*$")
 
+    # Deliberately no per-release source snapshot (a corpus's constituent names and their token
+    # counts) here, though a compile-time mixture check would need exactly one and this model
+    # would be its natural home. Absent because nothing reads it. The absence is safe rather
+    # than merely deferred: adding it later is purely additive -- a defaulted tuple field, the
+    # same shape WorkloadRoleScopeEvidence uses -- so no committed registry entry has to be
+    # rewritten when the mixture fields ship.
+
     @model_validator(mode="after")
     def validate_reference(self) -> Self:
-        if not self.uri.endswith(f"/{self.dataset_id}/{self.version}/"):
+        # A suffix test is not enough here: with dataset_id="olmo-150b-dolma2" (missing its
+        # "pretrain/" segment, and therefore not the corpus's real id) and
+        # uri="s3://edullm-data/pretrain/olmo-150b-dolma2/v1/", the uri still ENDS WITH
+        # "/olmo-150b-dolma2/v1/" and `endswith` would silently accept it -- storing a
+        # dataset_id that is not this dataset's id and that a later reader passes straight
+        # to the upstream reader. Reconstructing the full uri from its parts and comparing
+        # for equality closes that gap: every uri a full match accepts, a suffix match would
+        # also accept, but not the reverse.
+        expected_uri = f"s3://{PUBLISHED_DATASET_BUCKET}/{self.dataset_id}/{self.version}/"
+        if self.uri != expected_uri:
             raise ValueError(
                 "a published reference's uri must end with its dataset id and version, "
                 "so the two fields and the prefix cannot describe different objects"
