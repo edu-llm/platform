@@ -52,6 +52,30 @@
 # handler reaches, and it needs laptop AWS credentials, so a contributor without them is
 # blocked on somebody who has. The honest reading of a moved digest is unchanged: the
 # deployed zip is not the zip this tree builds.
+#
+# THIS RECORD IS CURRENTLY OWED A RELEASE, AND THE TEST THAT SAYS SO IS RED ON PURPOSE.
+# tests/test_phase2_lambda_package.py::test_the_released_zip_is_the_one_this_tree_builds
+# fails against this tree. The cause is not a defect: adding PublishedDatasetReference to
+# src/edullm_platform/contracts/dataset_registry.py changed the bytes of a module the
+# handler imports, so the digest this tree builds no longer matches the one below.
+#
+# It was left red rather than papered over, because the two ways to make it green are both
+# worse. Writing a digest for a zip nobody uploaded would defeat the one mechanism here that
+# detects deployed-versus-tree skew, and would do it by making the record say the thing this
+# whole comment exists to prevent. Suppressing the test would be the same act with a
+# different spelling; there is no xfail anywhere in this repository, and this is not the
+# place to introduce the first one.
+#
+# What is NOT at risk, which is the part worth being precise about. The change is purely
+# additive: no existing field moved, config/datasets.yaml is unchanged, and nothing in the
+# handler's path reads the new list. The deployed validator makes byte-for-byte the same
+# admission decisions it made before. What is stale is the record, not the behaviour.
+#
+# What clears it: a release cut from a tree that already contains that change -- rebuild,
+# upload, and update both fields below. Note that this is an ordering constraint and not
+# just a chore. A release cut from a tree WITHOUT the change records a digest this tree
+# still will not match, so whoever cuts the next release has to take the contract change
+# with them.
 schema_version: 1
 
 #: The object the template's Code block names. Kept here as well so the two can be

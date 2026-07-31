@@ -690,10 +690,31 @@ def capture_secret_delivery(
     )
 
 
-#: How an IAM resource ARN for an S3 object is split into the prefix it grants. Written as a
-#: pattern rather than by slicing, because ``arn:aws:s3:::bucket`` with no key part is a
-#: grant on the bucket itself and must not be read as a grant on the prefix ``''``.
-S3_OBJECT_ARN = re.compile(r"^arn:aws[a-z-]*:s3:::(?P<bucket>[^/]+)/(?P<key>.+)$")
+#: How an IAM resource ARN for S3 is split into the bucket and the prefix it grants.
+#: Written as a pattern rather than by slicing, and the key group is optional because its
+#: absence is a fact rather than an empty value: ``arn:aws:s3:::bucket`` is a grant on the
+#: bucket itself -- ``s3:ListBucket`` and ``s3:GetBucketLocation`` cannot be granted any
+#: other way -- and must never be read as a grant on the prefix ``''``. The outputs-bucket
+#: branch below skips a match with no key for that reason, which is what the object-only
+#: pattern this replaced achieved by refusing to match at all.
+S3_RESOURCE_ARN = re.compile(r"^arn:aws[a-z-]*:s3:::(?P<bucket>[^/]+)(?:/(?P<key>.+))?$")
+
+
+def _names_an_s3_action(actions: list[str]) -> bool:
+    """Whether a statement grants anything in S3 at all, for the other-bucket record only.
+
+    Wider than the ``s3:GetObject``/``s3:PutObject`` test the outputs-bucket branch applies,
+    and the two are asked for different reasons. That branch answers what this role reads
+    and writes under its own prefixes, so a tagging or attributes action is genuinely not a
+    read; this answers what else the role touches, where every S3 action is something it
+    touches and a filter is a silence the reader of the record cannot see.
+
+    ``*`` counts. A statement granting every action on a foreign bucket grants S3 on it, and
+    the one grant this field must never miss is the widest one.
+    """
+    return any(
+        str(action).lower().startswith("s3:") or str(action) == "*" for action in actions
+    )
 
 
 def capture_role_scope(*, profile: str, region: str) -> WorkloadRoleScopeEvidence:
@@ -727,21 +748,30 @@ def capture_role_scope(*, profile: str, region: str) -> WorkloadRoleScopeEvidenc
             resources = statement.get("Resource")
             resources = [resources] if isinstance(resources, str) else list(resources or [])
             deletes = deletes or any("Delete" in action for action in actions)
+            touches_s3 = _names_an_s3_action(actions)
             for resource in resources:
                 lineage = lineage or LINEAGE_BUCKET in str(resource)
-                matched = S3_OBJECT_ARN.match(str(resource))
+                matched = S3_RESOURCE_ARN.match(str(resource))
                 if matched is None:
                     continue
                 bucket = matched.group("bucket")
                 key = matched.group("key")
-                reads = any(action in ("s3:GetObject", "s3:*") for action in actions)
-                writes = any(action in ("s3:PutObject", "s3:*") for action in actions)
                 if bucket != OUTPUTS_BUCKET:
                     # Recorded whole rather than discarded. The key portion alone is what
-                    # made a dataset read look like an outputs-bucket wildcard.
-                    if reads or writes:
-                        elsewhere.add(f"{bucket}/{key}")
+                    # made a dataset read look like an outputs-bucket wildcard. A grant on
+                    # the bucket's own ARN is recorded as the bare bucket name, which no
+                    # object grant can produce: a key is non-empty by construction and a
+                    # bucket name holds no slash.
+                    if touches_s3:
+                        elsewhere.add(f"{bucket}/{key}" if key is not None else bucket)
                     continue
+                if key is None:
+                    # The outputs bucket's own ARN, which grants s3:ListBucket rather than a
+                    # prefix. Neither tuple takes it: an empty string among key patterns is a
+                    # grant on nothing wearing the shape of a grant on everything.
+                    continue
+                reads = any(action in ("s3:GetObject", "s3:*") for action in actions)
+                writes = any(action in ("s3:PutObject", "s3:*") for action in actions)
                 if writes:
                     writable.add(key)
                 if reads:

@@ -398,8 +398,9 @@ lineage record of a cancelled run is complete in the same way a successful one i
 | --- | --- | --- | --- | --- |
 | 1 | `sbsandbox-intern-edullm-phase4-gpu-iam` | `infra/iam/batch-gpu-roles.yaml` | `…-batch-gpu-execution`, `…-batch-gpu-workload`, `…-batch-gpu-instance` and its instance profile | laptop |
 | 2 | `sbsandbox-intern-edullm-phase4-gpu` | `infra/batch-compute-gpu.yaml` | compute environment, queue, job definition, log group | CI |
+| 3 | `sbsandbox-intern-edullm-dataset-validator-iam` | `infra/iam/dataset-validator-role.yaml` | `…-dataset-validator` | laptop, not applied yet |
 
-Same rule as Phases 2, 3 and 5: **every laptop stack goes before every CI stack**. Here it is
+Same rule as Phases 2 and 3: **every laptop stack goes before every CI stack**. Here it is
 not enforced by CloudFormation at all — the comment immediately above the *Deploy Phase 4 GPU
 batch compute stack* step in `.github/workflows/deploy-phase3-batch.yml` (lines 164–166) says
 so directly, and this table exists so that comment is findable from the stack name rather than
@@ -412,6 +413,41 @@ from the workflow file.
   answer for all three — worth stating rather than assuming, because three roles in one
   template answering to different stacks would mean the template had been deployed twice
   under two names, and that is not what happened here.
+- **Stack 3 is in this table before it exists, on purpose.** The bullet above is the reason:
+  a template with no committed file naming its stack is what made a change to those three GPU
+  roles begin with a guess, and the guess is removed by one line written before the first
+  deploy rather than recovered from the account afterwards. It sits in the Phase 4 table
+  because this is the section that learned that, not because anything in Phase 4 depends on
+  it.
+
+### Stack 3: the dataset validator role, declared and deliberately not deployed
+
+Laptop-applied when it is applied, like every IAM stack in this file. The command is the one
+under *Deploying one IAM stack* above, with `sbsandbox-intern-edullm-dataset-validator-iam`
+as the stack name and `infra/iam/dataset-validator-role.yaml` as the template.
+
+**Nothing has run it, and that is the intent rather than an unfinished step.** The role is
+the identity a dataset owner's validator will assume instead of
+`sbsandbox-intern-edullm-batch-workload`, which is the shared CPU workload role every team's
+containers run as. Creating it is half a change: the other half detaches the out-of-band
+`dataset-validator` inline policy from that shared role and moves the `edullm-data`
+bucket-policy exemption onto this one, in a single swap, so that no window exists in which
+neither identity can write. That swap lands on a running pipeline: both EventBridge rules
+that can invoke a Batch job resolve the job definition by unversioned name, so a bad revision
+reaches production on the next event, and the failure mode is a manifest that lands and is
+simply never promoted — which raises nothing. So it waits for a window with that pipeline's
+operator watching, rather than going in beside a template addition.
+
+Deploying this stack on its own would be safe and would buy nothing. Until the exemption
+moves, `edullm-data`'s own bucket policy denies this role's writes;
+`infra/iam/dataset-validator-role.yaml` carries that argument beside the grants it is about,
+along with one thing that is **not established** and should be read before the cutover rather
+than during it: whether `edullm-landing` carries a bucket policy of its own.
+
+The role is registered in `role_drift.DATASET_VALIDATOR_ROLE_TEMPLATES`, because registering
+a role is part of shipping it rather than a follow-up — the same rule as Phase 2. No capture
+walks that registry yet, there being no deployed role to read; wiring it into one belongs
+with the deploy above rather than before it.
 
 ### A hazard that has expired, and the one it does not take with it
 

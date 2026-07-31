@@ -7,13 +7,22 @@ prints a line currently inherits the ability to write a dataset. This module tes
 template that declares somewhere else for that policy to live -- ``dataset-validator-role``
 -- without touching the shared role at all: nothing here detaches anything, and nothing here
 is deployed.
+
+**That policy reaches two buckets and not one**, which is worth knowing before reading the
+tests below. ``edullm-landing`` is where a candidate dataset and its manifests arrive and
+where a refusal is written back; ``edullm-data`` is where an accepted one is promoted to.
+Both are the dataset owner's and neither is ours, so a check that the validator stays out of
+our storage is a different check from one that it reaches only one bucket.
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from edullm_platform.admission_denials import LINEAGE_BUCKET
+from edullm_platform.contracts.dataset import PUBLISHED_DATASET_BUCKET
+from edullm_platform.contracts.execution import SANDBOX_RESOURCE_PREFIX
 from edullm_platform.role_drift import (
     DATASET_VALIDATOR_ROLE_TEMPLATES,
     TemplateRole,
@@ -24,7 +33,52 @@ from edullm_platform.team_isolation import WORKLOAD_ROLE_TEMPLATES
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 VALIDATOR_ROLE_NAME = "sbsandbox-intern-edullm-dataset-validator"
 VALIDATOR_TEMPLATE_PATH = PROJECT_ROOT / "infra" / "iam" / "dataset-validator-role.yaml"
-DATASET_BUCKET_ARN = "arn:${AWS::Partition}:s3:::edullm-data"
+#: Anchored on the published bucket's name in code rather than a literal, the way
+#: team_isolation.py anchors on the outputs bucket: a grant on a bucket this platform does
+#: not know by name is a different question from the one these tests ask.
+DATASET_BUCKET_ARN = f"arn:${{AWS::Partition}}:s3:::{PUBLISHED_DATASET_BUCKET}"
+
+#: The landing bucket has no constant to anchor on, and the absence is a fact rather than an
+#: oversight: nothing this repository runs reads or writes it. It appears in exactly one
+#: place, the grant this module is about, so the literal is spelled here.
+LANDING_BUCKET_ARN = "arn:${AWS::Partition}:s3:::edullm-landing"
+
+#: The dataset owner's two buckets, as a template spells them. Named as a pair because the
+#: reach test below is about which buckets are reachable at all, and both halves of an
+#: airlock are the same answer to that question.
+AIRLOCK_BUCKET_ARNS = (DATASET_BUCKET_ARN, LANDING_BUCKET_ARN)
+
+#: Every action the validator holds. Written out rather than derived from the capture the
+#: parity test reads, because a set derived from the thing it is compared against asserts
+#: nothing; the two are checked against each other by that test rather than by construction.
+EXPECTED_ACTIONS = frozenset(
+    {
+        "s3:AbortMultipartUpload",
+        "s3:GetBucketLocation",
+        "s3:GetObject",
+        "s3:GetObjectAttributes",
+        "s3:ListBucket",
+        "s3:PutObject",
+        "s3:PutObjectTagging",
+    }
+)
+
+#: The committed capture of the shared workload role, read from the account at
+#: 2026-07-31T02:54:00Z, carrying the out-of-band inline policy this template is a home for.
+#: The copy a later reader can check without an AWS session.
+SHARED_ROLE_CAPTURE = (
+    PROJECT_ROOT
+    / "fixtures"
+    / "evidence"
+    / "phase-3"
+    / "roles"
+    / "sbsandbox-intern-edullm-batch-workload.sanitized.json"
+)
+OUT_OF_BAND_POLICY_NAME = "dataset-validator"
+
+#: One statement, as (Sid, actions, resources): the whole of what a grant says, once the two
+#: sides of the comparison are spelled the same way.
+Grant = tuple[str | None, tuple[str, ...], tuple[str, ...]]
 
 
 def one_role_in(path: Path) -> TemplateRole:
@@ -37,6 +91,88 @@ def one_role_in(path: Path) -> TemplateRole:
     roles = load_template_roles(path)
     assert len(roles) == 1, f"{path} declares {len(roles)} roles, expected exactly one"
     return roles[0]
+
+
+def granted_actions(role: TemplateRole) -> set[str]:
+    """Every action the role's inline policies allow, refusing the negated spelling.
+
+    ``NotAction`` with ``Allow`` permits everything that is *not* listed, so a reader that
+    collected its list would report the narrowest-looking actions in the file on the widest
+    possible grant. The same helper for the same reason as the one over the image resolver
+    in tests/test_phase5_infrastructure.py, rather than a second shape for a trap this
+    repository has already met once.
+
+    A ``Deny`` is refused rather than skipped. What bounds this role is the dataset bucket's
+    own policy, which nothing in this repository writes, so a Deny appearing in the identity
+    policy would be a second mechanism arriving unannounced -- and its actions would be
+    counted as granted by the loop below.
+    """
+    granted: set[str] = set()
+    for policy in role.inline_policies:
+        for statement in policy.statements:
+            assert statement.effect == "Allow", (
+                f"{role.role_name} carries a {statement.effect} statement; every statement "
+                "here is a grant and this one's actions would be read as granted"
+            )
+            assert statement.action_match.element == "Action", (
+                f"{role.role_name} selects actions by {statement.action_match.element}, "
+                "which with Allow grants everything it does not list"
+            )
+            granted.update(statement.action_match.actions)
+    return granted
+
+
+def as_the_account_spells_it(resource: str) -> str:
+    """A template's ARN in the form a capture of the deployed policy holds it.
+
+    ``load_template_roles`` keeps a template string exactly as the YAML spells it, so the
+    template says ``${AWS::Partition}`` where IAM says ``aws``. Substituted here rather than
+    written into the template, because ``Fn::Sub`` over the partition is what every ARN in
+    infra/iam/ uses and a comparison is not a reason to make this template the exception.
+    """
+    return resource.replace("${AWS::Partition}", "aws")
+
+
+def grants_of(role: TemplateRole) -> set[Grant]:
+    """Every statement the role's inline policies carry, in the shape a capture holds."""
+    return {
+        (
+            statement.sid,
+            tuple(statement.action_match.actions),
+            tuple(map(as_the_account_spells_it, statement.resource_match.resources)),
+        )
+        for policy in role.inline_policies
+        for statement in policy.statements
+    }
+
+
+def grants_in_the_out_of_band_policy() -> set[Grant]:
+    """The same shape, read from the committed capture of the shared workload role.
+
+    Read as JSON rather than through ``DeployedRoleEvidence`` deliberately: this asks what
+    the account held on the day it was captured, and a freshness window that refused to load
+    an old capture would turn a question about a policy into a question about the clock.
+    """
+    captured = json.loads(SHARED_ROLE_CAPTURE.read_text(encoding="utf-8"))
+    policies = [
+        policy
+        for policy in captured["inline_policies"]
+        if policy["policy_name"] == OUT_OF_BAND_POLICY_NAME
+    ]
+
+    assert len(policies) == 1, (
+        f"{SHARED_ROLE_CAPTURE.name} carries {len(policies)} policies named "
+        f"{OUT_OF_BAND_POLICY_NAME}. A capture taken after the cutover detaches it carries "
+        "none, and the comparison this feeds retires with the policy it is against"
+    )
+    return {
+        (
+            statement["sid"],
+            tuple(statement["action_match"]["actions"]),
+            tuple(statement["resource_match"]["resources"]),
+        )
+        for statement in policies[0]["statements"]
+    }
 
 
 def test_the_validator_role_is_declared_with_the_boundary_that_lets_it_be_created() -> None:
@@ -53,26 +189,97 @@ def test_the_validator_role_is_declared_with_the_boundary_that_lets_it_be_create
 
 
 def test_the_validator_role_may_write_the_dataset_bucket_and_no_bucket_of_ours() -> None:
-    """Mutation: scope the grant to a prefix in our own account's buckets.
+    """Mutation: scope the grant to a prefix in our own account's buckets. Mutation: spell
+    a statement's resources as NotResource.
 
     The point of a separate identity is that the validator's reach and our workloads' reach
     stop being the same set. A validator that could also write our outputs would be the
     shared role again under a new name.
+
+    Two buckets rather than one, and that is the airlock rather than a widening: the
+    candidate is read out of ``edullm-landing`` and a refusal is written back to it, and an
+    accepted dataset is promoted into ``edullm-data``. Both are the dataset owner's, so what
+    this asserts is that no third bucket is named.
+
+    The prefix check is implied by the pair check above it today and is written out anyway,
+    because it is the mutation this test exists for. If the airlock ever grows a bucket, the
+    pair is the line somebody edits, and the prefix check is what stops that edit from
+    admitting one of ours.
+
+    ``NotResource`` with ``Allow`` reaches every resource *except* the ones listed, so a
+    statement spelled that way against the dataset bucket would grant its actions on every
+    bucket in the account while reading, to anything that collected resources, as the
+    narrowest grant in the file. Asserted for the same reason the trust test below asserts
+    ``Principal`` over ``NotPrincipal``: this module already knew the trap and guarded one
+    of the two places it lives.
     """
     role = one_role_in(VALIDATOR_TEMPLATE_PATH)
-    resources = {
-        resource
-        for policy in role.inline_policies
-        for statement in policy.statements
-        for resource in statement.resource_match.resources
-    }
+    statements = [statement for policy in role.inline_policies for statement in policy.statements]
 
-    assert resources, "the validator role grants nothing, so there is no reach to check"
-    for resource in resources:
-        assert resource == DATASET_BUCKET_ARN or resource.startswith(f"{DATASET_BUCKET_ARN}/"), (
-            f"{resource} reaches somewhere other than {DATASET_BUCKET_ARN}, so the "
-            "validator's grant is not limited to the dataset bucket"
+    assert statements, "the validator role grants nothing, so there is no reach to check"
+    for statement in statements:
+        assert statement.resource_match.element == "Resource", (
+            f"{statement.sid} selects resources by {statement.resource_match.element}, "
+            "which with Allow reaches everything it does not list"
         )
+        for resource in statement.resource_match.resources:
+            assert any(
+                resource == bucket or resource.startswith(f"{bucket}/")
+                for bucket in AIRLOCK_BUCKET_ARNS
+            ), (
+                f"{resource} names a bucket outside {AIRLOCK_BUCKET_ARNS}, so the "
+                "validator's reach is not the dataset owner's own storage"
+            )
+            assert SANDBOX_RESOURCE_PREFIX not in resource, (
+                f"{resource} names a bucket of ours, which is the shared role's reach "
+                "arriving under a new name"
+            )
+
+
+def test_the_validator_role_grants_the_actions_the_airlock_needs_and_no_delete() -> None:
+    """Mutation: widen the actions to ``s3:*``. Mutation: add the ``s3:DeleteObject`` that
+    somebody tidying would reach for.
+
+    Until this test nothing asserted which actions this role holds. The reach test above
+    reads resources, so ``s3:*`` on the dataset bucket passed every check in this module,
+    and so did a delete the template argues against at length. An exact set closes both at
+    once: a wildcard is not in it, and neither is an action nobody named.
+
+    The delete is asserted separately as well, and the redundancy is the point. It is the
+    one absence the template makes an argument for, and a failure naming it sends the next
+    reader to that argument rather than to a set difference.
+
+    The seven are the seven the out-of-band inline policy holds, read from the account on
+    2026-07-31. That claim is checked by the parity test below rather than restated here.
+    """
+    granted = granted_actions(one_role_in(VALIDATOR_TEMPLATE_PATH))
+
+    assert "s3:DeleteObject" not in granted, (
+        "the template's DELIBERATELY ABSENT block argues that a role which has to be "
+        "stopped by a bucket policy should not have been granted the action"
+    )
+    assert granted == EXPECTED_ACTIONS
+
+
+def test_the_validator_role_carries_the_same_grants_the_shared_role_holds_out_of_band() -> None:
+    """Mutation: drop a statement, or narrow one, while moving the policy across.
+
+    This is the check whose absence let this template ship without the landing bucket in it
+    at all. Every other test in this module reads the template against a claim written
+    beside it, so a template and its tests can agree with each other and disagree with the
+    account; this one reads the account, in the shape the committed capture holds it.
+
+    Parity is the intent rather than a coincidence. The cutover this identity exists for is
+    a change of *identity*, not a change of *reach*: narrowing on the same day would leave
+    any failure ambiguous between the new role and the smaller grant, on a pipeline that is
+    running and whose failure mode is a manifest that lands and is never promoted.
+
+    This comparison retires with the policy it is against. Once the cutover detaches
+    ``dataset-validator`` from the shared role and the capture is retaken, no policy of that
+    name is there to compare against, and ``grants_in_the_out_of_band_policy`` fails saying
+    so rather than quietly comparing against nothing.
+    """
+    assert grants_of(one_role_in(VALIDATOR_TEMPLATE_PATH)) == grants_in_the_out_of_band_policy()
 
 
 def test_the_validator_role_is_not_a_workload_role_and_its_name_is_why() -> None:

@@ -114,6 +114,24 @@ A_REFUSAL_RATHER_THAN_A_POLICY: Final = (
     "as denied in both regions when seven are authorized in one."
 )
 
+#: Why a criterion about what the role reaches also cites a test about the reader that
+#: measures reach. Attached to 4, 7 and 12, which are the three that cite
+#: test_the_role_permits_exactly_the_prefix_shape_the_platform_derives.
+THE_INSTRUMENT_IS_CITED_BESIDE_THE_MEASUREMENT: Final = (
+    "Two of that measurement's four assertions are negative -- the role cannot reach a "
+    "scratch prefix, and cannot reach anything outside teams/ at all -- and a negative "
+    "assertion is worth exactly what the reader behind it is worth. capture_role_scope "
+    "recorded the key portion of every S3 object ARN without looking at the bucket, so a "
+    "grant of s3:GetObject on edullm-data/* would have contributed the key pattern *, which "
+    "fnmatch matches against every candidate. Both negatives would have flipped to true "
+    "with nothing red anywhere.\n\n"
+    "So the test guarding the reader is cited here rather than left to the full suite. The "
+    "gate runs the node ids its criteria name and no others, which means a regression test "
+    "outside that selection protects nothing this criterion rests on, however green it is "
+    "in a full run. The grant that would trigger the defect has not been made yet; citing "
+    "the guard now costs one node id, and citing it after the grant lands would be a repair."
+)
+
 #: What closes criterion 9. Written out because the shape of the work is not obvious from
 #: the criterion's own wording, and a reader deciding what to do next needs it.
 NEEDS_THE_DETECTOR_FIRST: Final = (
@@ -251,6 +269,7 @@ def phase4_criteria() -> tuple[CriterionSpec, ...]:
             ),
             supporting_node_ids=(
                 *_ids(RUN_EVIDENCE, "test_the_role_permits_exactly_the_prefix_shape_the_platform_derives"),
+                *_ids(RUN_EVIDENCE, "test_a_grant_on_another_bucket_does_not_widen_what_the_outputs_reach_reports"),
                 *_ids(RUN_EVIDENCE, "test_the_prefix_the_container_was_given_is_the_one_the_platform_derives"),
             ),
             scope_limits=(
@@ -265,6 +284,7 @@ def phase4_criteria() -> tuple[CriterionSpec, ...]:
                     "about one prefix. It becomes a stronger claim, not a different one, when a "
                     "second team is bound."
                 ),
+                THE_INSTRUMENT_IS_CITED_BESIDE_THE_MEASUREMENT,
                 CONFIGURATION_CAPTURES_EXPIRE,
             ),
         ),
@@ -373,6 +393,7 @@ def phase4_criteria() -> tuple[CriterionSpec, ...]:
             ),
             supporting_node_ids=(
                 *_ids(RUN_EVIDENCE, "test_the_role_permits_exactly_the_prefix_shape_the_platform_derives"),
+                *_ids(RUN_EVIDENCE, "test_a_grant_on_another_bucket_does_not_widen_what_the_outputs_reach_reports"),
                 *_ids(RUN_EVIDENCE, "test_the_prefix_the_container_was_given_is_the_one_the_platform_derives"),
                 *_ids(SUBMISSION, "test_all_four_probes_are_asserted_rather_than_merely_recorded"),
             ),
@@ -406,6 +427,7 @@ def phase4_criteria() -> tuple[CriterionSpec, ...]:
                     "and a phase should not invalidate the previous phase's evidence to close "
                     "its own check."
                 ),
+                THE_INSTRUMENT_IS_CITED_BESIDE_THE_MEASUREMENT,
                 CONFIGURATION_CAPTURES_EXPIRE,
             ),
         ),
@@ -553,6 +575,7 @@ def phase4_criteria() -> tuple[CriterionSpec, ...]:
                 *_ids(RUN_EVIDENCE, "test_the_role_permits_exactly_the_prefix_shape_the_platform_derives"),
             ),
             supporting_node_ids=(
+                *_ids(RUN_EVIDENCE, "test_a_grant_on_another_bucket_does_not_widen_what_the_outputs_reach_reports"),
                 *_ids("tests/test_phase3_lifecycle_projection.py", "test_the_prefix_recorded_is_the_prefix_the_container_was_handed"),
                 *_ids("tests/test_phase3_lifecycle_projection.py", "test_a_succeeded_job_whose_output_cannot_be_located_is_refused", "the variable is absent-environment0", "the prefix names somebody else's bucket-environment1"),
             ),
@@ -576,6 +599,14 @@ def phase4_criteria() -> tuple[CriterionSpec, ...]:
                     "while every prefix said data-prep, which was a placeholder that happened to "
                     "be self-consistent."
                 ),
+                (
+                    "The role's side of the agreement is a reading rather than an observation, "
+                    "so what does the reading is part of the claim. The other two sides are "
+                    "values compared directly -- what output_prefix derives against what the "
+                    "Batch event says the container was told -- and neither goes through an "
+                    "interpreter that can be wrong about its own scope."
+                ),
+                THE_INSTRUMENT_IS_CITED_BESIDE_THE_MEASUREMENT,
             ),
         ),
     )

@@ -37,6 +37,15 @@ OPEN = ("9", "11")
 #: than about pure Python has to cite it, or it is proving something about a fixture.
 RUN_EVIDENCE = "tests/test_phase4_run_evidence.py"
 
+#: The measurement of what the workload role reaches, and the test that guards the reader
+#: behind it. Two of the measurement's four assertions are negative, and a negative
+#: assertion is worth exactly what its reader is worth -- so a criterion that cites the
+#: first without the second is protected by an instrument nothing in the gate checks.
+THE_REACH_MEASUREMENT = "test_the_role_permits_exactly_the_prefix_shape_the_platform_derives"
+THE_GUARD_ON_THE_REACH_MEASUREMENT = (
+    "test_a_grant_on_another_bucket_does_not_widen_what_the_outputs_reach_reports"
+)
+
 
 def test_the_definition_lists_every_check_the_phase_plan_names() -> None:
     """Mutation: drop a criterion.
@@ -133,6 +142,36 @@ def test_every_criterion_about_the_account_cites_the_module_that_reads_the_captu
         assert RUN_EVIDENCE in modules, (
             f"criterion {spec.number} is about the deployed account and proves it without "
             "reading a capture of it"
+        )
+
+
+def test_every_criterion_reading_the_reach_measurement_also_runs_the_test_guarding_it() -> None:
+    """Mutation: cite the reach measurement and leave its guard to the full suite.
+
+    ``execute_criteria`` runs the node ids the criteria name and nothing else, so a test
+    that is only in the full suite protects nothing any criterion rests on. The guard here
+    catches ``capture_role_scope`` going back to recording the key portion of every S3
+    object ARN without looking at the bucket -- which would make the reach measurement's
+    two negative assertions pass by measuring nothing, with three pilot-blocking criteria
+    still green.
+
+    The first assertion is what keeps this from passing over an empty loop. If a criterion
+    starts or stops reading the reach measurement, that is the moment to decide whether the
+    guard follows it, rather than a silent change to what the gate covers.
+    """
+    reach = f"{RUN_EVIDENCE}::{THE_REACH_MEASUREMENT}"
+    guard = f"{RUN_EVIDENCE}::{THE_GUARD_ON_THE_REACH_MEASUREMENT}"
+    citing = {
+        spec.number: spec.cited_node_ids
+        for spec in phase4_criteria()
+        if reach in spec.cited_node_ids
+    }
+
+    assert sorted(citing, key=int) == ["4", "7", "12"]
+    for number, cited in citing.items():
+        assert guard in cited, (
+            f"criterion {number} is decided on what the role reaches and does not run the "
+            "test that the reader measuring reach still discriminates by bucket"
         )
 
 

@@ -289,21 +289,33 @@ def test_a_grant_on_another_bucket_does_not_widen_what_the_outputs_reach_reports
     assert scope.grants_outside_the_outputs_bucket == ("edullm-data/*",)
 
 
-def test_a_grant_on_another_bucket_is_recorded_rather_than_dropped() -> None:
-    """Mutation: filter the other bucket out and record nothing.
+def test_the_role_as_captured_held_no_grant_outside_the_outputs_bucket() -> None:
+    """A characterisation of the committed capture, and deliberately not a mutation guard.
 
-    Discriminating by bucket has an obvious wrong implementation: skip the ARN. That would
-    make the two assertions above pass and would leave the capture unable to say that the
-    role reads a dataset bucket at all -- so the record would be silent about the one grant
-    this whole track is adding. Bucket-qualified, because a bare key portion from a second
-    bucket is exactly the ambiguity being removed.
+    THIS CLAIMED TO CATCH "filter the other bucket out and record nothing" AND COULD NOT.
+    The capture it loads was taken before any grant on another bucket existed, so there was
+    nothing for a filtering recorder to drop: it asserted the tuple was empty and then ran
+    an ``all(...)`` over that same empty tuple, which is true of every implementation. A
+    docstring naming a mutation its test cannot distinguish is worse than no test, because
+    the suite then reads as covering the case.
+
+    That mutation is caught where the recorder can be handed a policy with something to
+    drop -- ``tests/test_capture_phase4_evidence_cli.py``, which runs ``capture_role_scope``
+    against a synthetic document naming two buckets. Nothing in this file calls the
+    recorder; every test here reads a record it wrote against the account on some earlier
+    day, which is why none of them can vary what it was given.
+
+    What is left is true and worth an assertion of its own: on 2026-07-30 the deployed GPU
+    workload role held no S3 grant outside the outputs bucket, so both prefix tuples on that
+    record are a claim about one bucket and the reach measurement above is reading exactly
+    what it says it is. That stops being true when the read on edullm-data lands, and this
+    going red is how the regenerated capture announces the change rather than arriving
+    unread.
     """
     scope = role_scope()
 
+    assert scope.observed_at.date().isoformat() == "2026-07-30"
     assert scope.grants_outside_the_outputs_bucket == ()
-    assert all(
-        "/" in grant for grant in scope.grants_outside_the_outputs_bucket
-    ), "a grant recorded here names its bucket, or it is the ambiguity this field removed"
 
 
 # ---------------------------------------------------------------------------------------

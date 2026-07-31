@@ -124,11 +124,15 @@ class PublishedDatasetReference(ContractModel):
         # to the upstream reader. Reconstructing the full uri from its parts and comparing
         # for equality closes that gap: every uri a full match accepts, a suffix match would
         # also accept, but not the reverse.
+        # The message says "must be", not "must end with", because the rule stopped being a
+        # suffix test and the old wording was false about the one case the strengthening was
+        # for: the headline rejection is a uri that DOES end with its dataset id and version
+        # and is refused anyway.
         expected_uri = f"s3://{PUBLISHED_DATASET_BUCKET}/{self.dataset_id}/{self.version}/"
         if self.uri != expected_uri:
             raise ValueError(
-                "a published reference's uri must end with its dataset id and version, "
-                "so the two fields and the prefix cannot describe different objects"
+                "a published reference's uri must be the one its dataset id and version "
+                "name, so the two fields and the prefix cannot describe different objects"
             )
         return self
 
