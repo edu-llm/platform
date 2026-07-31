@@ -261,10 +261,49 @@ def test_the_role_permits_exactly_the_prefix_shape_the_platform_derives() -> Non
 
     assert scope.may_reach(f"teams/{TEAM}/runs/{run.run_id}/checkpoints/step-20/model.pt")
     assert scope.may_reach(f"teams/evaluation/runs/{run.run_id}/checkpoints/step-20/model.pt")
-    # Still refused, and these two are what the grant is actually bounded by: the outputs
-    # bucket's non-run keys, and anything outside the shape entirely.
     assert not scope.may_reach("teams/platform/scratch/anything")
     assert not scope.may_reach("some-other-prefix/runs/anything")
+
+
+def test_a_grant_on_another_bucket_does_not_widen_what_the_outputs_reach_reports() -> None:
+    """Mutation: record the key portion of every S3 ARN regardless of its bucket.
+
+    THIS IS THE DEFECT THIS TASK EXISTS TO REMOVE, WRITTEN AS A TEST BEFORE THE GRANT THAT
+    WOULD TRIGGER IT. A read on edullm-data/* contributes the key pattern `*`, which fnmatch
+    matches against every candidate -- so the two assertions above that establish what the
+    role CANNOT reach would both flip to true, silently, and three pilot-blocking criteria
+    would rest on a measurement that had stopped measuring.
+
+    The measurement is the thing under test, not the policy. A role that genuinely reached
+    every prefix and a reader that could not tell are indistinguishable from the outside,
+    which is why this asserts the reader against a constructed grant rather than against the
+    account.
+    """
+    scope = role_scope().model_copy(
+        update={"grants_outside_the_outputs_bucket": ("edullm-data/*",)}
+    )
+
+    assert scope.may_reach("teams/platform/runs/r/checkpoints/step-20/model.pt")
+    assert not scope.may_reach("teams/platform/scratch/anything")
+    assert not scope.may_reach("some-other-prefix/runs/anything")
+    assert scope.grants_outside_the_outputs_bucket == ("edullm-data/*",)
+
+
+def test_a_grant_on_another_bucket_is_recorded_rather_than_dropped() -> None:
+    """Mutation: filter the other bucket out and record nothing.
+
+    Discriminating by bucket has an obvious wrong implementation: skip the ARN. That would
+    make the two assertions above pass and would leave the capture unable to say that the
+    role reads a dataset bucket at all -- so the record would be silent about the one grant
+    this whole track is adding. Bucket-qualified, because a bare key portion from a second
+    bucket is exactly the ambiguity being removed.
+    """
+    scope = role_scope()
+
+    assert scope.grants_outside_the_outputs_bucket == ()
+    assert all(
+        "/" in grant for grant in scope.grants_outside_the_outputs_bucket
+    ), "a grant recorded here names its bucket, or it is the ambiguity this field removed"
 
 
 # ---------------------------------------------------------------------------------------
