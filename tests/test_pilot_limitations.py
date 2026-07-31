@@ -110,17 +110,29 @@ def test_a_submitter_is_told_that_cancelling_does_not_stop_the_job() -> None:
     assert "Ask an admin" in script
 
 
-def test_a_submitter_is_told_the_checkpoint_leaves_the_optimizer_behind() -> None:
-    """Mutation: drop it, or describe it as a checkpoint without qualification.
+def test_a_submitter_is_told_which_checkpoints_leave_the_optimizer_behind() -> None:
+    """Mutation: say it of every checkpoint, which is what this used to say.
 
     The one that silently corrupts a result rather than failing. A resumed run whose
     optimizer restarted cold produces a loss curve that looks like training and is not the
     training that was intended, and nothing in the system reports it.
+
+    **It said "a checkpoint does not include optimizer state" until 2026-07-31, and that was
+    false in the direction that costs the most.** It is true of
+    ``tools/build_gpu_training_submission.py``, which torch.saves the model and the step and
+    nothing else. It is not true of OLMo-core, whose ``Checkpointer`` saves optimizer and
+    trainer state by default and whose ``Trainer.fit`` reloads both. So the platform was
+    telling thirty-five people that long runs are not recoverable here, days before asking
+    them to do long runs -- and the ones who believed it would have written their own
+    checkpointing to work around a problem they did not have.
+
+    Both halves are asserted, because the warning is only useful if it also says what to do.
     """
     script = summary_step_script()
 
-    assert "checkpoint does not include optimizer state" in script
-    assert "restarts its optimizer cold" in script
+    assert "example training program saves weights only" in script
+    assert "restarts the optimizer cold" in script
+    assert "Trainer" in script, "a warning with no way out of it is a complaint"
 
 
 def test_a_submitter_is_told_that_team_routes_approval_rather_than_granting_access() -> None:
@@ -188,7 +200,7 @@ def test_all_three_are_on_the_page_every_accepted_submission_ends_on() -> None:
     assert heading in script
     body = script.split(heading, 1)[1]
     assert "Cancelling the workflow does not stop your job" in body
-    assert "checkpoint does not include optimizer state" in body
+    assert "example training program saves weights only" in body
     assert "does not grant you anything" in body
 
 

@@ -1246,10 +1246,12 @@ jobs:
               ),
               "",
               (
-                  "**A checkpoint does not include optimizer state.** Weights are written "
-                  "and the optimizer is not, so a resumed run restarts its optimizer cold "
-                  "rather than continuing. Fine for a smoke test, not fine for a result you "
-                  "intend to publish."
+                  "**Our example training program saves weights only, so check yours does "
+                  "better.** The demo this platform has run on GPUs writes the model and the "
+                  "step and not the optimizer, so resuming it restarts the optimizer cold. "
+                  "OLMo-core's own `Trainer` does save optimizer and schedule state and "
+                  "resumes properly from a `save_folder` — if you use it, you get a real "
+                  "resume. The warning is about our example, not about your code."
               ),
               "",
               (

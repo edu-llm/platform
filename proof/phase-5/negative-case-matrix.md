@@ -24,7 +24,7 @@ Three statuses exist and no more. **COVERED** means one or more cited tests prov
 | 8 | COVERED | 2 | 2 | An accepted run tells the submitter where its output, logs and W&B project are. |
 | 9 | COVERED | 6 | 8 | A member with write access cannot trigger a deploy workflow. |
 | 10 | COVERED | 2 | 1 | A member with write access cannot merge a workflow change without a code-owner review. |
-| 11 | COVERED | 4 | 3 | Every accepted submission tells the submitter, on the summary it ends on, that cancelling does not stop the job, that a checkpoint omits optimizer state, and that team routes approval rather than granting permission. |
+| 11 | COVERED | 4 | 3 | Every accepted submission tells the submitter, on the summary it ends on, that cancelling does not stop the job, that the example training program saves no optimizer state while OLMo-core's Trainer does, and that team routes approval rather than granting permission. |
 | 12 | COVERED | 2 | 1 | A submission that supplies a commit and no digest resolves to the image published from that commit. |
 | 13 | COVERED | 1 | 1 | A commit with no published image is refused at compile, with a reason naming the build workflow. |
 | 14 | COVERED | 1 | 3 | A commit publishes at most one image, so a submission resolving from a commit has no rebuild to choose between. |
@@ -249,7 +249,7 @@ Supporting tests (1), all executed and passing, cited as evidence rather than as
 
 - `tests/test_phase5_run_evidence.py::test_the_control_binds_members_and_the_admins_may_still_bypass_it`
 
-### Check 11 — Every accepted submission tells the submitter, on the summary it ends on, that cancelling does not stop the job, that a checkpoint omits optimizer state, and that team routes approval rather than granting permission.
+### Check 11 — Every accepted submission tells the submitter, on the summary it ends on, that cancelling does not stop the job, that the example training program saves no optimizer state while OLMo-core's Trainer does, and that team routes approval rather than granting permission.
 
 **Status: COVERED**
 
@@ -265,7 +265,7 @@ Scope:
 Proving tests (4), all executed and passing:
 
 - `tests/test_pilot_limitations.py::test_a_submitter_is_told_that_cancelling_does_not_stop_the_job`
-- `tests/test_pilot_limitations.py::test_a_submitter_is_told_the_checkpoint_leaves_the_optimizer_behind`
+- `tests/test_pilot_limitations.py::test_a_submitter_is_told_which_checkpoints_leave_the_optimizer_behind`
 - `tests/test_pilot_limitations.py::test_a_submitter_is_told_that_team_routes_approval_rather_than_granting_access`
 - `tests/test_pilot_limitations.py::test_all_three_are_on_the_page_every_accepted_submission_ends_on`
 

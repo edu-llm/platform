@@ -2,8 +2,8 @@
 
 Phase: phase-5
 Bundle schema version: 1
-Source commit: 63fa00d9e2f224c3d7462f3b159c612ac0093db0
-Generated: 2026-07-31T22:51:08+00:00
+Source commit: 1eb79fe9954c7911c4eb25d9297a3b56abafee89
+Generated: 2026-07-31T22:56:58+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 5 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase5_proof.py` at generation time. No criterion is a gap and the gate is green, and criterion 6 is deferred rather than covered -- a recorded decision not to satisfy it yet, which passes the gate without anybody having observed it. Read that entry in `negative-case-matrix.md` first: it carries the reason and the trigger, and the Known limitations below say what this phase does not establish.
 
@@ -71,7 +71,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | --- | --- |
 | .github/CODEOWNERS | sha256:defc3ec7e43f5dc70f137ff21566d23e3d961355fbc871467e3676c9ab651df4 |
 | .github/workflows/build-research-image.yml | sha256:f39972c4da20a63b3fd0f725ccaf521dd893d94c4d72d6f376456e081223e122 |
-| .github/workflows/submit-run.yml | sha256:5e7155731f019a6a24a00c4d50150d2b53aed9bf3c1a20de47e00e0d2769d571 |
+| .github/workflows/submit-run.yml | sha256:5e84834edd9a56757099660eb9d4976658fc5d7280b3aa8e15fbedfee70d7ff0 |
 | README.md | sha256:948ff1f63f976d524fd4582b36ee61f4668a70fb5aa5dd7cb4fd8312ce8dd891 |
 | config/image-exceptions.yaml | sha256:0828f4203385bbc3adbd8521f62768e7f4eb46f56382bc6223d37b89aae7a49c |
 | config/organization.yaml | sha256:cea2d2123d2fb5794614e6a4b8a362c8aaa33626f20ae28a13cb673fadf4ac78 |
