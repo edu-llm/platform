@@ -2,7 +2,7 @@
 
 Phase 4 takes the path Phase 3 proved for a CPU container and puts a real single-node GPU
 training run through it: a model on an A10G, metrics in W&B, and a checkpoint in S3 that
-this platform will resume from. This module records the twelve checks the phase must
+this platform will resume from. This module records the eleven checks the phase must
 satisfy, against the contract in :mod:`edullm_platform.criteria`.
 
 **The capability is deployed and has run.** Three jobs have gone through the GPU queue: a
@@ -11,31 +11,75 @@ olmo2_190M through twenty optimizer steps and wrote a 762MB checkpoint with a su
 marker, and one that failed. What all three left behind is captured, sanitized and
 committed under ``fixtures/evidence/phase-4/``.
 
-**Eleven of the twelve come from the master plan; the twelfth was added by this phase.**
-The plan lists eleven checks and marks nine as pilot-blocking, which is the highest
-proportion of any capability phase -- the reason is the hardware, because a GPU instance
-bills whether or not the container is using it. The twelfth is the prefix-agreement check,
-added when Phase 4 inherited a three-way disagreement about where a run writes its output.
+**Ten of the eleven come from the master plan; criterion 12 was added by this phase.** The
+plan lists eleven checks and marks nine as pilot-blocking, which is the highest proportion
+of any capability phase -- the reason is the hardware, because a GPU instance bills whether
+or not the container is using it. One of the marked nine has since left for Phase 8, so
+eight of the plan's marked checks remain here and criterion 12 is the ninth marked. That
+criterion is the prefix-agreement check, added when Phase 4 inherited a three-way
+disagreement about where a run writes its output.
 
-**Two remain gaps and they are different kinds of open.**
+**There is no criterion 9, and the absence is the record rather than a mistake.** It was
+capacity failure: that a job which cannot be placed is surfaced without losing the run
+intent. Half of it is already true and half of it could not be closed by running anything.
+AWS Batch does not fail a job it cannot place -- it leaves it ``RUNNABLE`` indefinitely --
+so "surfaced" has no mechanism behind it until the queue-wait detector of criterion 10
+exists, and criterion 10 is deferred with that detector scheduled into Phase 8. A criterion
+blocked on another phase's mechanism holds this phase's gate red for work this phase does
+not own, which is exactly the state Phase 3's three cancellation criteria were in, and it
+went the same way: the check moved to the phase building the mechanism, with its sentence
+and its number unchanged.
 
-Criterion 9 is capacity failure, and it is a gap because nobody has caused one. AWS Batch
-leaves a job in ``RUNNABLE`` indefinitely rather than failing it, so "surfaced without
-losing the run intent" needs a mechanism that notices the waiting -- and that mechanism is
-criterion 10, which is deliberately deferred. The intent record survives regardless, which
-is the half that is already true and is why this is a gap rather than a defect.
+What that costs is real and worth stating. This phase's gate no longer asks whether a
+capacity failure gets noticed, and nothing in this module will notice if the answer stays
+no. What it buys is a gate that measures what Phase 4 can be held to, and an owner for
+queue capacity who is not "nobody, indefinitely".
 
-Criterion 11 is alternate instance placement, and it is a gap on purpose rather than for
-want of effort. The GPU compute environment lists exactly one instance type. Widening it is
-one line, and the same line is what stops a submission for a cheap shape landing on an
-expensive one, so it is a cost decision somebody should take deliberately rather than a
-typo to fix overnight.
+The transfer rests on two conditions, the ones Phase 3's rested on. The criterion keeps its
+text and its number, so nothing is quietly reworded into something easier to satisfy. And
+what it protected is written where a reader can act on it: that a job which cannot get
+capacity sits in ``RUNNABLE`` rather than failing, that no alarm notices, that the intent
+record is written before Batch is reached at all so a run that never places loses nothing
+but time, and who to ask and what to quote when asking.
 
-**Criterion 10 is DEFERRED and not a gap, and the distinction is the point of two words.**
-A queued job bills nothing, so nothing is at risk while it waits; the trigger that makes it
-live again is the first time a run sits in ``RUNNABLE`` long enough for anybody to notice.
-It also needs a detector *built* rather than an alarm configured -- AWS Batch publishes no
-CloudWatch metric for queue depth or job state, so there is no series to threshold.
+**The second condition was met in the wrong place for a few hours, and where it is met now
+is better.** It was written onto the pilot limitations page in the root ``README.md``, which
+already carried the first two facts. That page then left the README on a standing decision
+about what this repository publishes -- a decision that never mentioned Phase 4 -- and the
+condition went with it. The paragraph is now printed on the summary every accepted
+submission ends on, beside the three facts Phase 5 criterion 11 holds there, and
+``tests/test_pilot_limitations.py::test_a_submitter_is_told_a_queued_run_is_waiting_rather_than_lost``
+pins it. That is the difference worth carrying forward: a page can be moved by a decision
+that never mentions the criterion it was paying for, and a cited node id cannot go quiet
+without a test going red.
+
+The number was left as a hole rather than closed up, and that is deliberate rather than
+untidy. A criterion number is an identifier: plan documents and decisions already written
+down cite Phase 4 criteria by number, so renumbering 10 down to 9 would change what every
+one of those citations means without touching the sentence it appears in. The contract in
+:mod:`edullm_platform.criteria` requires numbers to be unique and says nothing about them
+being contiguous, which is what makes the hole possible.
+
+**Both remaining open criteria are DEFERRED and neither is a relabelled gap, which is the
+whole point of having two words.** A deferral is a decision not to do something, with a
+written trigger that makes it live again; unfinished work is a gap, and recording one as the
+other is how a gate goes green while nothing changes in the account.
+
+Criterion 10 is the queue-wait detector. A queued job bills nothing, so nothing is at risk
+while it waits; the trigger that makes it live again is the first time a run sits in
+``RUNNABLE`` long enough for anybody to notice. It also needs a detector *built* rather than
+an alarm configured -- AWS Batch publishes no CloudWatch metric for queue depth or job
+state, so there is no series to threshold.
+
+Criterion 11 is alternate instance placement, and it moved from a gap to a deferral on
+2026-07-31 because what was recorded against it had always read as a decision rather than a
+shortfall. The GPU compute environment lists exactly one instance type, and that same list
+is what stops a submission for a cheap shape landing on an expensive one. Widening it is one
+line; which shape that line names is a cost decision somebody takes deliberately, and the
+trigger says what would make it worth taking. Left recorded as a gap it read as something
+nobody had got round to, which invites precisely the fast fix the narrowness exists to
+prevent. It is the one re-cut in this phase that is a judgement rather than a relocation,
+so the reason carries its own argument and the prices are in it.
 
 **A criterion cites a test, never an evidence file.** Every criterion here that is about
 the account cites tests in ``tests/test_phase4_run_evidence.py``, which read the committed
@@ -45,9 +89,10 @@ captures through :mod:`edullm_platform.phase4_capture`.
 this phase and is deliberate. A ``RecordedEventModel`` says a job ran and wrote a
 checkpoint whose digest is in the bucket; nothing about the passage of time makes that less
 true. A ``FreshEvidenceModel`` says a compute environment is configured a certain way
-today, which is one console click from being false -- so criteria 8, 10 and 11 go red
-thirty days after their capture, and re-running the capture is what the window is asking
-for.
+today, which is one console click from being false -- so criteria 4, 7 and 8 go red thirty
+days after their capture, and re-running the capture is what the window is asking for. The
+two deferrals cite nothing and so expire from nothing; what reopens them is their trigger
+and a person, which is the weaker arrangement and is said out loud beside each of them.
 
 **Criterion 7 rests on a policy statement rather than on a refusal somebody received, and
 says so.** A live cross-team denial needs a principal that can assume the workload role,
@@ -67,13 +112,15 @@ from edullm_platform.criteria import (
 )
 
 __all__ = [
+    "A_NARROW_LIST_IS_THE_CONTROL",
     "A_REFUSAL_RATHER_THAN_A_POLICY",
+    "A_SECOND_SHAPE_OR_A_QUEUE_THAT_HURTS",
     "CONFIGURATION_CAPTURES_EXPIRE",
     "PHASE4_CRITERION_COUNT",
     "phase4_criteria",
 ]
 
-PHASE4_CRITERION_COUNT: Final = 12
+PHASE4_CRITERION_COUNT: Final = 11
 
 #: The tests that read the committed captures of the three GPU jobs. Every criterion that
 #: is about the account rather than about a template or a pure function cites this module.
@@ -114,14 +161,44 @@ A_REFUSAL_RATHER_THAN_A_POLICY: Final = (
     "as denied in both regions when seven are authorized in one."
 )
 
-#: What closes criterion 9. Written out because the shape of the work is not obvious from
-#: the criterion's own wording, and a reader deciding what to do next needs it.
-NEEDS_THE_DETECTOR_FIRST: Final = (
-    "Batch does not fail a job it cannot place; it leaves it RUNNABLE indefinitely. So "
-    "'surfaced' has no mechanism behind it until the queue-wait detector of criterion 10 "
-    "exists, and this cannot be closed by running anything before then. The other half is "
-    "already true and is worth separating: the intent record is written before Batch is "
-    "reached at all, so a run that never places loses nothing but time."
+#: Why the one-item instance list is the control rather than a shortfall. Written out
+#: because the criterion's own wording reads like a defect and the record has to argue
+#: otherwise on its own, without a reader having to find this module's docstring first.
+A_NARROW_LIST_IS_THE_CONTROL: Final = (
+    "THE SINGLE-ITEM INSTANCE LIST IS THE CONTROL RATHER THAN AN OMISSION, AND THAT IS WHAT "
+    "MAKES THIS A DECISION INSTEAD OF UNFINISHED CONFIGURATION. The GPU compute environment "
+    "lists exactly one instance type, so there is no alternate to place onto, and closing "
+    "this is one line in infra/batch-compute-gpu.yaml plus a redeploy. The same line is "
+    "what stops a submission for a cheap shape landing on an expensive one: g5.xlarge is "
+    "$1.006/hr and g5.12xlarge is $5.672, so widening the list the obvious way means a job "
+    "that asked for one A10G can be given four. The narrowness is deliberate and what it "
+    "buys is a bill bounded by the shape the submitter chose.\n\n"
+    "So the work is not typing the line, it is choosing which shape it names, and that "
+    "choice is a cost decision with somebody's name on it rather than a typo to fix "
+    "overnight. The catalog already prices two single-GPU shapes cheaper than the promoted "
+    "one -- gpu-1xt4 on g4dn.xlarge at $0.526 and gpu-1xl4 on g6.xlarge at $0.805, both "
+    "unprovisioned -- so a second shape that widens placement without widening the bill is "
+    "available to whoever takes the decision.\n\n"
+    "Recorded as a gap this read as something nobody had got round to, and the next person "
+    "to read it would close it the fast way, which is the outcome the narrow list exists to "
+    "prevent. It is not a claim that waiting is free forever: if a run ever waits long "
+    "enough to cost more than the placement risk, the answer changes, and the trigger is "
+    "what makes somebody look rather than infer."
+)
+
+#: What makes criterion 11 live again. Two events rather than a state, because a trigger
+#: nobody will observe is a gap wearing a deferral's label.
+A_SECOND_SHAPE_OR_A_QUEUE_THAT_HURTS: Final = (
+    "A decision to promote a second single-GPU shape, or GPU contention making the wait "
+    "expensive enough to be worth the placement risk -- whichever comes first. The first is "
+    "an event because promoting a profile is: the catalog prices the candidates already, "
+    "and the decision is which of them the compute environment should also accept. The "
+    "second is an event somebody feels rather than measures: today one team of three shares "
+    "this account's GPU capacity and a wait surprises nobody, and that stops being true the "
+    "first time two runs want the same shape at once. Re-record this as covered against a "
+    "capture of the widened environment, or re-argue the deferral and say why waiting is "
+    "still the cheaper answer; leaving it deferred without either, once a second shape is "
+    "provisioned, is the one outcome this trigger forbids."
 )
 
 
@@ -137,7 +214,11 @@ def _ids(module: str, name: str, *params: str) -> tuple[str, ...]:
 
 
 def phase4_criteria() -> tuple[CriterionSpec, ...]:
-    """The twelve Phase 4 acceptance criteria, in the master plan's order."""
+    """The eleven Phase 4 acceptance criteria, in the master plan's order.
+
+    Numbered 1 to 12 with 9 absent. See the module docstring for why the hole is left open
+    rather than closed up.
+    """
     specs = (
         CriterionSpec(
             number="1",
@@ -155,7 +236,7 @@ def phase4_criteria() -> tuple[CriterionSpec, ...]:
             ),
             scope_limits=(
                 (
-                    "The sharpest check in the phase, and the reason nine of twelve are "
+                    "The sharpest check in the phase, and the reason nine of the eleven are "
                     "pilot-blocking. A container that fails to detect its GPU and trains on the "
                     "CPU produces a run that looks successful, costs GPU rates, and yields a "
                     "result nobody can trust. There is no symptom: the logs, the lineage records "
@@ -445,28 +526,12 @@ def phase4_criteria() -> tuple[CriterionSpec, ...]:
                 CONFIGURATION_CAPTURES_EXPIRE,
             ),
         ),
-        CriterionSpec(
-            number="9",
-            statement="Capacity failure is surfaced without losing the run intent.",
-            status=CriterionStatus.GAP,
-            pilot_blocking=True,
-            gaps=(
-                (
-                    "Nobody has caused a capacity failure. The account holds 768 vCPU of G and "
-                    "VT quota against a four-vCPU job, and no GPU instance was contending when "
-                    "any of the three runs was submitted, so there is no observation to capture."
-                ),
-                NEEDS_THE_DETECTOR_FIRST,
-            ),
-            scope_limits=(
-                (
-                    "The 'without losing the run intent' half is already structurally true and "
-                    "is worth separating from the 'surfaced' half. The intent record is written "
-                    "by admission before Batch is reached at all, so a run that never places "
-                    "still has its intent and decision in the lineage store."
-                ),
-            ),
-        ),
+        # There is no criterion 9. Capacity failure moved to Phase 8, which is where the
+        # queue-wait detector it cannot be closed without is built, and the number is a
+        # deliberate hole so that every citation written against this list goes on naming
+        # what it named. The module docstring says why, and what the check protected is
+        # printed on the summary every accepted submission ends on, held there by
+        # tests/test_pilot_limitations.py.
         CriterionSpec(
             number="10",
             statement=(
@@ -508,21 +573,9 @@ def phase4_criteria() -> tuple[CriterionSpec, ...]:
                 "A job whose preferred instance type is unavailable is placed on an alternate "
                 "permitted type rather than waiting for the one shape."
             ),
-            status=CriterionStatus.GAP,
-            gaps=(
-                (
-                    "The GPU compute environment lists exactly one instance type, so there is no "
-                    "alternate to place onto. Closing this is one line in "
-                    "infra/batch-compute-gpu.yaml and a redeploy."
-                ),
-                (
-                    "It is left open rather than fixed because the same list is what stops a "
-                    "submission for a cheap shape landing on an expensive one. g5.xlarge is "
-                    "$1.006/hr and g5.12xlarge is $5.672; adding the second means a job that "
-                    "asked for one A10G can be given four. That is a cost decision somebody "
-                    "takes deliberately, not a typo."
-                ),
-            ),
+            status=CriterionStatus.DEFERRED,
+            deferral_trigger=A_SECOND_SHAPE_OR_A_QUEUE_THAT_HURTS,
+            deferral_reason=A_NARROW_LIST_IS_THE_CONTROL,
             scope_limits=(
                 (
                     "Availability rather than harm, which is why it is not pilot-blocking: a job "
@@ -537,7 +590,15 @@ def phase4_criteria() -> tuple[CriterionSpec, ...]:
                     "authorization and returned DryRunOperation for two shapes in a zone that "
                     "offers neither."
                 ),
-                CONFIGURATION_CAPTURES_EXPIRE,
+                (
+                    "THIS DEFERRAL CITES NO TEST, SO NOTHING HERE EXPIRES AND NOTHING REOPENS "
+                    "IT ON ITS OWN. The criteria resting on captures go red thirty days after "
+                    "the capture was taken and say so; this one has no capture under it, so the "
+                    "only thing that makes it live again is somebody reading the trigger and "
+                    "acting. That is weaker than a window and it is the honest description of "
+                    "what a deferral is, which is why it is recorded here rather than left for "
+                    "a reader to work out from the absence of citations."
+                ),
             ),
         ),
         CriterionSpec(

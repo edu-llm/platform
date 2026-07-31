@@ -1,21 +1,29 @@
-"""The three things a submitter has to know, and where they are now said.
+"""What a submitter has to know, and where it is now said.
 
 **The page was taken out of the README on 2026-07-31 and is not coming back.** It moved to a
 local, gitignored document on the owner's standing decision that the README is a public
 artifact and a candid list of what this platform has not finished is not. That decision is
-settled; what follows is how the requirement behind it is met anyway.
+settled; what follows is how the requirements behind it are met anyway.
 
-**The requirement was never the page.** It was that a pilot user learns three things before
+**The requirement was never the page.** It was that a pilot user learns a few things before
 being caught out by them: that cancelling does not stop a job, that a checkpoint omits
-optimizer state, and that ``team`` routes an approval rather than granting a permission. A
-README section was one way to deliver that, and on reflection a weak one -- it puts the facts
-where somebody has already decided to go looking, and nobody looks before their first run.
+optimizer state, that ``team`` routes an approval rather than granting a permission, and that
+a job which cannot get capacity waits rather than fails. A README section was one way to
+deliver that, and on reflection a weak one -- it puts the facts where somebody has already
+decided to go looking, and nobody looks before their first run.
 
 **So they are printed in the run summary instead, and that is strictly better.** Every
 accepted submission ends on the "Your run" step summary; it is the one page in this system
 every submitter reads, at the moment each of these beliefs would otherwise form wrong. The
 tests below hold the text there. Five tests that read the README section were deleted when it
 left, and these replace them against the surface that now carries the facts.
+
+**Two phases have bought something with this file, and they bought it on different days.**
+Phase 5 criterion 11 is the three facts above arriving together, and Phase 5 criterion 6's
+deferral is the conditional GPU-checkpoint warning. Phase 4's criterion 9 transferred to
+Phase 8 in exchange for the queue paragraph, which was written against the README section
+hours before that section left; it is here instead, which is where the transfer's condition
+should have pointed in the first place.
 
 **What stayed a gap, honestly.** Nothing here claims the full page is readable, because it is
 not. The bundle records that the candid assessment is private and that the operational subset
@@ -129,6 +137,34 @@ def test_a_submitter_is_told_that_team_routes_approval_rather_than_granting_acce
     assert "Any lead may approve any run" in script
 
 
+def test_a_submitter_is_told_a_queued_run_is_waiting_rather_than_lost() -> None:
+    """Mutation: drop it, or say only that nobody is watching the queue.
+
+    **This is what Phase 4 criterion 9's transfer to Phase 8 is granted in exchange for.**
+    That criterion asked for a capacity failure to be surfaced without losing the run intent,
+    and "surfaced" has no mechanism behind it until Phase 8 builds the queue-wait detector.
+    A criterion blocked on another phase's mechanism holds this phase's gate red for work it
+    does not own, so it moved -- on the condition that what it protected is written where a
+    reader can act on it.
+
+    **The half already true is the half worth writing down, and the first attempt wrote it in
+    the wrong place.** It went on the pilot limitations page, and that page left the README
+    hours later on a decision that never mentioned Phase 4. Here it is instead, on the summary
+    the submitter is already reading, held by a node id rather than by prose.
+
+    Both halves are asserted. "Nobody is watching" alone tells a reader their run may be
+    dropped and gives them nothing to do about it; the intent record surviving is what
+    distinguishes a run that is waiting from a run that is gone, and quoting the run id is
+    what makes asking useful.
+    """
+    script = summary_step_script()
+
+    assert "Nobody is watching the queue for you" in script
+    assert "sits in `RUNNABLE` rather than failing" in script
+    assert "costs time and nothing else" in script
+    assert "quote the run id" in script
+
+
 def test_all_three_are_on_the_page_every_accepted_submission_ends_on() -> None:
     """Mutation: move one of them to a page of its own, or behind a conditional.
 
@@ -136,9 +172,18 @@ def test_all_three_are_on_the_page_every_accepted_submission_ends_on() -> None:
     document nobody opens; what makes this an improvement on the README section is that the
     three arrive together, unavoidably, on the summary a submitter is already reading to find
     their run id. Split them up and that property is gone while every test above still passes.
+
+    Three rather than four, and the name is deliberate: these three are what Phase 5
+    criterion 11 asserts, and the queue paragraph beside them is Phase 4's. They share a
+    heading and nothing else, so a check on the heading's contents is not a check on either
+    claim.
+
+    The heading carries no count. It said "Three things" until the fourth arrived, which is a
+    number that has to be maintained by whoever adds or closes a limitation and buys nothing
+    when they do.
     """
     script = summary_step_script()
-    heading = "### Three things this does not do yet"
+    heading = "### What this does not do yet"
 
     assert heading in script
     body = script.split(heading, 1)[1]
