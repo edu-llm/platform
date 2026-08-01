@@ -170,6 +170,10 @@ def batch_submit_request(
     # rather than the registry keeps this function unable to resolve anything itself, so
     # there is exactly one place the identifier is turned into facts.
     dataset_reference: PublishedDatasetReference | None = None,
+    # Whose run this is, for the cancel path to authorise against. Optional for the same
+    # reason the two above are: a run admitted before the field existed has none, and the
+    # honest record of that is an absent tag rather than an empty one.
+    submitter: str | None = None,
 ) -> dict[str, Any]:
     """The exact parameter block the state machine sends to ``batch:SubmitJob``.
 
@@ -318,6 +322,17 @@ def batch_submit_request(
             "edullm:team": manifest.team,
             "edullm:compute-profile": target.compute_profile,
         },
+        # WHOSE RUN THIS IS, ON THE JOB ITSELF, SO CANCELLATION CAN ASK BATCH RATHER THAN
+        # THE LINEAGE STORE. Appended below with the experiment tag rather than set here,
+        # because a run admitted before this field existed has no submitter to name and an
+        # empty tag would read as a run nobody submitted.
+        #
+        # The alternative was for the cancel path to read the intent record and learn the
+        # submitter from it. That would mean granting something outside admission a read
+        # over the lineage bucket, which is the one grant the whole write-once design
+        # exists to withhold -- a reader of that store can see every team's admission
+        # decisions on its way past. A tag on the job answers the same question with no
+        # new reach at all.
         # Batch propagates job tags to the underlying ECS task only when asked, and the
         # tags are what Phase 5's cost attribution will read.
         "PropagateTags": True,
@@ -380,6 +395,12 @@ def batch_submit_request(
                 {"Name": "EDULLM_DATASET_TOKENIZER", "Value": dataset_reference.tokenizer},
             )
         )
+    if submitter is not None:
+        # See the note beside the Tags block. Appended rather than always present, because
+        # a run admitted before this field existed has nobody to name and an empty tag reads
+        # as a run nobody submitted -- which is exactly the claim the cancel path must not
+        # be able to make.
+        request["Tags"]["edullm:submitter"] = submitter
     if manifest.fanout is not None:
         # Absent for a single container rather than present with size one: Batch rejects an
         # array job of size one, so emitting ArrayProperties unconditionally would fail

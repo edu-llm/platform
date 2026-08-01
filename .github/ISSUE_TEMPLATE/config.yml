@@ -3,3 +3,6 @@ contact_links:
   - name: Submit a run
     url: https://github.com/edu-llm/platform/actions/workflows/submit-run.yml
     about: Not an issue. This is the form that runs a job.
+  - name: Getting started
+    url: https://github.com/edu-llm/platform/blob/main/GETTING-STARTED.md
+    about: How to submit your first run, and the six things that bite on a real training job.

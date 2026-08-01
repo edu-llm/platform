@@ -19,9 +19,9 @@ The kind column separates a `record`, which some payload is validated against, f
 | RepositoryBinding | edullm_platform.contracts.bindings | record | unversioned | sha256:acfb98fa6a3ecffb8258ab1ea4f150e721c0f1c067e067a701e61837a9fcfd6c |
 | TeamBinding | edullm_platform.contracts.bindings | record | unversioned | sha256:ecf980a6ccba443b8f7d96455d0baf114886ddebe9d0c1e8540a1725f55b845e |
 | TeamBindingCatalog | edullm_platform.contracts.bindings | record | unversioned | sha256:722d7cd12fe48c2a07bf055fd5a5574005a041ad6ff196bf066a042ee29ffcb7 |
-| DatasetRegistry | edullm_platform.contracts.dataset_registry | record | 1 | sha256:db46fb8fd3424ab84bcb9088aa51bf790cd810c523e93c1f213b24db501512b1 |
+| DatasetRegistry | edullm_platform.contracts.dataset_registry | record | 1 | sha256:fe5d63aec1fe1ff581178a6492c0c1dc93fabc16f8c315d7f29847bbeac6a394 |
 | PublishedDatasetReference | edullm_platform.contracts.dataset_registry | record | unversioned | sha256:ede191dda61eb24ed7b84eb6ae5966b77ecf9f0660a76f58c748642f46057ab3 |
-| RegisteredDatasetRelease | edullm_platform.contracts.dataset_registry | record | unversioned | sha256:db34cb36a36150d433a41cb0668abc50d67d0882644ef4d279d459fb64040666 |
+| RegisteredDatasetRelease | edullm_platform.contracts.dataset_registry | record | unversioned | sha256:ae83ea63439eaeb2627954783bb33f3289051e4cfbc3918f30503dffe6869d49 |
 | BatchJobBinding | edullm_platform.contracts.execution | record | 1 | sha256:e42641ace737ac344e31cfe56152e7b41bf2fff4d888cd8a3741c3c7b805ba1a |
 | GitHubWorkflowRunReference | edullm_platform.contracts.image | record | unversioned | sha256:a80e5dc8c40056fbc75557716cac82f11e5f4d80ec840dcb76d33ad56c57604f |
 | ImageScanException | edullm_platform.contracts.image_scan | record | unversioned | sha256:f2aca5a4ed2373862ed4f22eef0a78dd2063d2db159e2e70670c4e6375249eb6 |
@@ -169,7 +169,7 @@ The checked-in schemas under `schemas/`, with the digest of each file as generat
 | --- | --- | --- |
 | schemas/batch-job-binding.schema.json | BatchJobBinding | sha256:41a20845192e959dd91b32f87d57da0cf3b04e5a2177e0200f27aec2cece901c |
 | schemas/checkpoint-manifest.schema.json | CheckpointManifest | sha256:f51cc8c500c81cd1d286dc86c59ff5f24b09a640127034f1527494251d76a07e |
-| schemas/datasets.schema.json | DatasetRegistry | sha256:6d5b79e4153e2241489115eaff52cf659b1f4823fedc41c15cc62d0d131c54c3 |
+| schemas/datasets.schema.json | DatasetRegistry | sha256:28c781ffa1a7df6b999fce428aa8488aec5b8d34081089205e53d5fa6e797f36 |
 | schemas/decision-record.schema.json | DecisionRecord | sha256:852ee127b92bc2a592f5da86972e32ed50e949548951bd66fed94b237b6ce821 |
 | schemas/image-exceptions.schema.json | ImageScanExceptionRegistry | sha256:e57e7388a87f331a31c9f1e871065306421772bf1da3a043b46f121bde1ffb17 |
 | schemas/intent-record.schema.json | IntentRecord | sha256:39b40c1375c470efe47179c52e898562a7623c1a79f429de8f078f46cf3ddc8d |

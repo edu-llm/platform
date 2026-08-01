@@ -116,17 +116,22 @@ def test_the_shipped_registry_is_the_set_the_representative_manifests_name() -> 
     assert manifest_releases <= load_dataset_registry().release_ids
 
 
-def test_a_registry_entry_carries_a_release_identifier_and_nothing_else() -> None:
+def test_a_registry_entry_carries_a_release_identifier_and_whether_it_is_offered() -> None:
     """Mutation: add uri, dataset_id and version here instead of to a second model.
 
-    STILL TRUE AFTER A SECOND KIND OF DATASET ARRIVED, WHICH IS WHY THIS TEST SURVIVED
-    RATHER THAN BEING DELETED. Admission asks one question of this model -- is this
-    registered -- and unregistered_dataset is a denied-outright condition evaluated on the
-    identifier alone. A corpus somebody else published needs a URI, a dataset id and a
-    version, and those are on PublishedDatasetReference, where the fields have a reader that
-    consumes them.
+    STILL TRUE AFTER TWO THINGS ARRIVED, WHICH IS WHY THIS TEST SURVIVED RATHER THAN BEING
+    DELETED. Admission asks one question of this model -- is this registered -- and
+    unregistered_dataset is a denied-outright condition evaluated on the identifier alone. A
+    corpus somebody else published needs a URI, a dataset id and a version, and those are on
+    PublishedDatasetReference, where the fields have a reader that consumes them.
+
+    ``retired`` is the second, and it is the one exception because it answers a question
+    about this list rather than about the dataset: whether the form offers the identifier,
+    which is separate from whether admission accepts it. Conflating those forced a bad
+    choice -- de-register ``dolma-2026-07`` and make every historical record unresolvable,
+    or keep offering a dataset nothing is bound to.
     """
-    assert tuple(RegisteredDatasetRelease.model_fields) == ("release_id",)
+    assert tuple(RegisteredDatasetRelease.model_fields) == ("release_id", "retired")
 
 
 @pytest.mark.parametrize(

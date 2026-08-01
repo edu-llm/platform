@@ -399,6 +399,21 @@ lineage record of a cancelled run is complete in the same way a successful one i
 | 1 | `sbsandbox-intern-edullm-phase4-gpu-iam` | `infra/iam/batch-gpu-roles.yaml` | `…-batch-gpu-execution`, `…-batch-gpu-workload`, `…-batch-gpu-instance` and its instance profile | laptop |
 | 2 | `sbsandbox-intern-edullm-phase4-gpu` | `infra/batch-compute-gpu.yaml` | compute environment, queue, job definition, log group | CI |
 | 3 | `sbsandbox-intern-edullm-dataset-validator-iam` | `infra/iam/dataset-validator-role.yaml` | `…-dataset-validator` | laptop, not applied yet |
+| 4 | `sbsandbox-intern-edullm-run-canceller-iam` | `infra/iam/run-canceller-role.yaml` | `…-run-canceller` | laptop |
+
+Stack 4 needs a repository variable as well as a deploy: `AWS_RUN_CANCELLER_ROLE_ARN`, set
+to the role's ARN, which `.github/workflows/cancel-run.yml` reads. Without it the workflow
+fails at the credential step with an empty role, which is a confusing way to say the stack
+was never applied.
+
+**Its authorisation is in the workflow rather than in the policy, and that is forced rather
+than chosen.** A trust policy cannot see who dispatched a workflow — every dispatch of a
+file presents the same `sub` — and Batch has no condition key for a job's tags on
+`TerminateJob`. So the role can stop any job on either queue, and the check that it is the
+caller's own run is a step in `cancel-run.yml`. What bounds that is the role's shape: it
+describes jobs and stops them and reaches nothing else in the account, so the worst a
+bypass achieves is stopping runs. The role's trust names that one workflow file, so a job
+that could skip the check has to be added beside the check.
 
 Same rule as Phases 2 and 3: **every laptop stack goes before every CI stack**. Here it is
 not enforced by CloudFormation at all — the comment immediately above the *Deploy Phase 4 GPU
@@ -560,6 +575,25 @@ aws s3api put-object \
   --profile sbsandbox --region us-east-1 \
   --query VersionId --output text
 ```
+
+**`tools/release_lambda.py` does all three steps in one call, and should be preferred.**
+
+```bash
+uv run python tools/release_lambda.py            # both functions
+uv run python tools/release_lambda.py --dry-run  # digests only, uploads nothing
+```
+
+It builds, uploads, writes the version id and digest into both the release record and the
+template, and then runs the tripwire test with its exit code read directly. It releases both
+functions by default, because a config edit moves both digests. It uploads every zip before
+editing any file, because a record naming a zip that failed to upload is worse than no
+record — the tripwire would then pass against a lie.
+
+That tool exists because the manual version failed on 2026-08-01: a release was cut,
+recorded and pushed in one `&&` chain where a `pytest | tail` in the middle succeeded as a
+*command* while the test inside it failed, so the chain continued and `main` landed with a
+release record that did not describe the tree. The steps below are what it automates, kept
+because a tool that cannot run is not a procedure.
 
 Paste the version id it prints into `S3ObjectVersion` in
 `infra/admission-state-machine.yaml`, commit it, and let CI deploy. The build is

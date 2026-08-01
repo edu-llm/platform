@@ -161,6 +161,33 @@ Resources:
       JobQueueName: sbsandbox-intern-edullm-gpu
       State: ENABLED
       Priority: 1
+      # A JOB THAT CANNOT BE PLACED IS CANCELLED RATHER THAN LEFT IN THE QUEUE FOREVER.
+      #
+      # Batch leaves a RUNNABLE job in the queue indefinitely when nothing can run it, and
+      # there is no notification and no terminal state. From the submitter's side that is
+      # identical to a job that is merely waiting its turn, which is the ordinary and
+      # correct condition -- so there is no observation they can make that distinguishes
+      # "your job is queued behind others" from "your job will never start".
+      #
+      # It is not hypothetical on a GPU queue. A job asking for more vCPU than the
+      # environment's ceiling, or a GPU count no registered instance type has, is
+      # unplaceable from the moment it is submitted and sits there looking patient.
+      #
+      # Thirty minutes is chosen against the thing it must not interrupt: a legitimate wait
+      # for capacity. The environment scales from zero and a g5 takes two to three minutes
+      # to come up, measured on this account tonight, so thirty minutes is an order of
+      # magnitude above the normal case and still inside the window where somebody is
+      # plausibly still watching. CANCEL rather than TERMINATE because the job never
+      # started; there is nothing running to terminate, and the distinction is what the
+      # lifecycle record will say.
+      JobStateTimeLimitActions:
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: >-
+            This run sat unplaceable for thirty minutes. Nothing in the compute environment
+            could satisfy what it asked for, so it was cancelled rather than left queued
+            with no terminal state. Check the compute profile against what is provisioned.
+          State: RUNNABLE
       # One compute environment, and deliberately not the CPU environment as a second entry.
       # A queue spanning both with BEST_FIT_PROGRESSIVE would let a CPU job land on a GPU
       # instance whenever the GPU environment had spare capacity, which is the most expensive

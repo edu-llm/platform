@@ -162,7 +162,7 @@ def corpora_a_run_could_actually_train_on() -> set[str]:
     }
 
 
-def test_the_dataset_dropdown_offers_exactly_the_registered_releases_and_references() -> None:
+def test_the_dataset_dropdown_offers_the_registered_things_a_run_could_actually_use() -> None:
     """Mutation: offer the release ids and forget the published references.
 
     ``unregistered_dataset`` is a denied-outright condition, so an option that is not in the
@@ -176,12 +176,22 @@ def test_the_dataset_dropdown_offers_exactly_the_registered_releases_and_referen
     -- but they are one dropdown, because a submitter picking a dataset is not being asked
     which of those two things it is.
 
-    REGISTERED IS NOT THE SAME AS OFFERABLE, which is the same distinction the repository
-    dropdown above draws and it arrived here the same way: by measuring rather than by
-    reasoning. See the test below for the corpus this excludes and why.
+    REGISTERED IS NOT THE SAME AS OFFERABLE, and there are two separate reasons a registered
+    thing is not offered. A published corpus can be excluded by computation: the test below
+    covers one whose tokenizer nothing here can build, and that exclusion resolves itself the
+    day OLMo-core grows a byte tokenizer. A release can only be excluded by declaration --
+    ``dolma-2026-07`` has nothing to look up, because nothing was ever published under the
+    name, so ``retired: true`` in the registry is the only place that fact can live.
+
+    Both are the same promise from a submitter's side: everything in this list works. What
+    differs is who can answer, and conflating them would mean either de-registering a release
+    that every historical intent record names, or offering a dataset that reads nothing.
     """
     document = registry("datasets.yaml")
-    registered = [entry["release_id"] for entry in document["releases"]]
+    registered = [
+        entry["release_id"] for entry in document["releases"] if not entry.get("retired", False)
+    ]
+    retired = [entry["release_id"] for entry in document["releases"] if entry.get("retired", False)]
     registered += sorted(corpora_a_run_could_actually_train_on())
     offered = options_for("dataset_release")
 
@@ -191,6 +201,15 @@ def test_the_dataset_dropdown_offers_exactly_the_registered_releases_and_referen
     # nothing -- is the option a first-time submitter reaches first.
     assert set(offered) == set(registered)
     assert len(offered) == len(registered), f"an option is listed twice: {offered!r}"
+    assert not (set(offered) & set(retired)), (
+        f"a retired release is still on the form: {sorted(set(offered) & set(retired))}"
+    )
+    # And the retirement is real rather than a flag nobody set. The moment a corpus is
+    # registered properly this assertion is what has to change, which is the intent.
+    assert retired == ["dolma-2026-07"], (
+        "dolma-2026-07 is the one release that is registered and deliberately not offered; "
+        "if that set has changed, the reasoning in config/datasets.yaml has to change with it"
+    )
 
 
 def test_a_corpus_whose_tokenizer_nothing_can_build_stays_registered_and_unoffered() -> None:

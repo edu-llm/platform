@@ -696,6 +696,79 @@ def test_the_tag_scope_is_the_submit_scope_because_it_is_the_same_call() -> None
     assert states_role_arns_for("batch:TagResource") == states_role_submit_arns()
 
 
+def test_a_batch_refusal_tells_the_submitter_what_batch_said() -> None:
+    """Mutation: restore the static Cause naming a lineage prefix.
+
+    This refusal happens after WriteIntent and WriteDecision, so the run is recorded as
+    admitted and no job exists -- the worst-shaped failure the platform has. The static
+    Cause answered it by naming `submission-failure/` in the lineage bucket, which no
+    researcher can read, so the only possible next step was asking somebody with
+    credentials.
+
+    It cost exactly that on 2026-08-01. A submission was refused with `Evaluate on exit
+    condition contains restricted characters` -- a leading asterisk in an EvaluateOnExit
+    pattern -- and finding that out took an operator reading the bucket by hand.
+
+    The error text can name an ARN, which is why the workflow masks the cause before it
+    reaches a step summary; that masking is asserted in the workflow's own tests. Withholding
+    the text instead was the previous answer and it optimised for a leak that masking already
+    prevents, at the cost of every refusal being unreadable.
+    """
+    states = state_machine_definition()["States"]
+    failed = states["SubmissionFailed"]
+
+    assert failed["Type"] == "Fail"
+    assert failed["Error"] == "BatchSubmissionFailed"
+    assert "Cause" not in failed, (
+        "a static Cause is back, so a refused submitter is again being pointed at a bucket "
+        "they cannot read"
+    )
+    # Read from the state the Catch populated, not from thin air: SubmitToBatch merges the
+    # error output under submission_failure before RecordSubmissionFailure runs, and both
+    # paths into this state come through there.
+    assert "$.submission_failure.Cause" in failed["CausePath"]
+
+
+def test_both_queues_cancel_a_job_nothing_can_ever_place() -> None:
+    """Reads BOTH files. Mutation: set the rule on one queue and not the other.
+
+    Batch leaves a RUNNABLE job in the queue indefinitely when nothing can run it, with no
+    notification and no terminal state. From the submitter's side that is identical to a
+    job waiting its turn, which is the ordinary condition -- so there is no observation
+    they can make that separates "queued behind others" from "will never start". A run
+    asking for more vCPU than the environment's ceiling, or a GPU count no registered
+    instance type has, is unplaceable from the moment it is submitted.
+
+    Asserted across both queues because a rule on one is the asymmetry that hides: the CPU
+    queue is where the cheap runs go and the GPU queue is where the expensive mistake is,
+    and whichever one was left out would be found by somebody's run rather than by this.
+
+    The thirty minutes is asserted as a floor rather than an exact value, because the thing
+    it must not do is interrupt a legitimate wait for capacity -- a cold environment takes
+    two to three minutes to bring up an instance -- and the thing it must do is terminate
+    eventually. A value below ten minutes would start cancelling real queue waits.
+    """
+    for path in COMPUTE_PATHS:
+        queue = properties_of(path, "AWS::Batch::JobQueue")
+        actions = queue.get("JobStateTimeLimitActions")
+
+        assert actions, f"{path.name} leaves an unplaceable job queued forever"
+        runnable = [action for action in actions if action.get("State") == "RUNNABLE"]
+        assert runnable, f"{path.name} sets no time limit on the RUNNABLE state"
+        for action in runnable:
+            # CANCEL rather than TERMINATE: the job never started, so there is nothing
+            # running to terminate, and the two produce different lifecycle records.
+            assert action["Action"] == "CANCEL"
+            assert action["MaxTimeSeconds"] >= 600, (
+                "a limit under ten minutes would cancel runs that were legitimately "
+                "waiting for a cold compute environment to scale up"
+            )
+            assert action.get("Reason"), (
+                "a cancelled run whose record carries no reason is the same silence this "
+                "rule exists to end"
+            )
+
+
 def test_the_event_rule_matches_the_job_queue_the_compute_stack_creates() -> None:
     """Reads BOTH files. Mutation: rename the queue in one of them.
 

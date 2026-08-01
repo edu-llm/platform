@@ -1,0 +1,196 @@
+name: Cancel a run
+
+# THE AUTHORISATION LIVES HERE AND NOT IN IAM, WHICH IS THE THING TO KNOW ABOUT THIS FILE.
+#
+# A trust policy cannot see who dispatched a workflow -- every dispatch of this file
+# presents the same `sub` and the same `job_workflow_ref` whoever pressed the button -- and
+# Batch offers no condition key for a job's tags on TerminateJob. So "may this person stop
+# this run" cannot be expressed as a grant, and the role this assumes can stop any job on
+# either queue. The check below is the whole control, and a change to it is the change to
+# review.
+#
+# What bounds the damage is the role's shape rather than its scope: it can describe jobs
+# and stop them and do nothing else in the account. It cannot submit, cannot register a job
+# definition, cannot read a bucket, cannot reach the state machine. The worst a bypass
+# achieves is stopping runs -- disruptive, recoverable, and written into the lifecycle
+# record like any other termination.
+#
+# The role's trust names this file specifically, so a job added to submit-run.yml cannot
+# reach it and a job added here is reviewed alongside the check it would bypass.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "The run to stop, as it appears on the submission that started it — run_ followed by a UUID."
+        required: true
+        type: string
+      reason:
+        description: "Why you are stopping it. Recorded on the termination, so the run's history says what happened rather than just that it ended."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  # One cancellation per run at a time. Two dispatches racing would have the second find a
+  # job already terminating and report a failure that is really a success.
+  group: cancel-${{ inputs.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  cancel:
+    name: Stop the run, if it is yours
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      # Before AWS is touched at all, because a malformed id is a mistake to answer in the
+      # workflow rather than a call to make with a credential in hand.
+      - name: Check the run id looks like one
+        env:
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${RUN_ID}" =~ ^run_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+            echo "run_id_not_well_formed" >&2
+            echo "A run id reads run_ followed by a UUID, and is printed on the submission that started it. This is not one." >&2
+            exit 1
+          fi
+
+      # The roster the authorisation check reads has to be the reviewed one on main, not a
+      # copy pasted into this file, so the repository is checked out for it.
+      - name: Check out the platform
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install the platform tooling
+        env:
+          UV_VERSION: "0.11.32"
+        run: |
+          set -euo pipefail
+          pipx install "uv==${UV_VERSION}"
+          installed="$(uv --version)"
+          if [[ "${installed}" != "uv ${UV_VERSION}" && "${installed}" != "uv ${UV_VERSION} "* ]]; then
+            echo "unexpected_uv_version" >&2
+            echo "Expected uv ${UV_VERSION} but PATH answers with: ${installed}" >&2
+            exit 1
+          fi
+          uv sync --locked
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ vars.AWS_RUN_CANCELLER_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # The run id is the Batch job *name*, which is the join this platform maintains
+      # deliberately: the S3 key, the Step Functions execution name and the job name are one
+      # identifier. Searching by name is why the role needs ListJobs.
+      - name: Find the job, and read whose it is
+        id: find
+        env:
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          set -euo pipefail
+          found=""
+          for queue in sbsandbox-intern-edullm-cpu sbsandbox-intern-edullm-gpu; do
+            for state in SUBMITTED PENDING RUNNABLE STARTING RUNNING; do
+              candidate="$(aws batch list-jobs \
+                --job-queue "${queue}" \
+                --job-status "${state}" \
+                --query "jobSummaryList[?jobName=='${RUN_ID}'].jobId" \
+                --output text)"
+              if [[ -n "${candidate}" && "${candidate}" != "None" ]]; then
+                found="${candidate}"
+                break 2
+              fi
+            done
+          done
+
+          if [[ -z "${found}" ]]; then
+            # Not an error worth a red run. A run that already finished cannot be stopped,
+            # and telling somebody their cancellation failed when what happened is that
+            # their job ended is the kind of message that sends people looking for a fault.
+            echo "not_running=true" >> "${GITHUB_OUTPUT}"
+            echo "No job is queued or running under this run id, so there is nothing to stop. It has already reached a terminal state." | tee -a "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          echo "job_id=${found}" >> "${GITHUB_OUTPUT}"
+          submitter="$(aws batch describe-jobs --jobs "${found}" \
+            --query 'jobs[0].tags."edullm:submitter"' --output text)"
+          echo "submitter=${submitter}" >> "${GITHUB_OUTPUT}"
+
+      # THE CHECK. Two ways to be allowed and no third: it is your run, or you are an
+      # organization admin. Read out of config/organization.yaml rather than from a list
+      # here, so the answer is the same one every other part of this platform gives.
+      - name: Refuse a cancellation the actor is not entitled to make
+        if: steps.find.outputs.not_running != 'true'
+        env:
+          ACTOR: ${{ github.actor }}
+          SUBMITTER: ${{ steps.find.outputs.submitter }}
+        run: |
+          set -euo pipefail
+          uv run --frozen python - <<'PY'
+          import os
+          import sys
+          from pathlib import Path
+
+          from edullm_platform.config import load_yaml
+          from edullm_platform.contracts.inventory import OrganizationInventory
+
+          actor = os.environ["ACTOR"]
+          submitter = os.environ["SUBMITTER"]
+          inventory = load_yaml(Path("config/organization.yaml"), OrganizationInventory)
+          admins = set(inventory.admins)
+
+          # An absent tag arrives from the AWS CLI as the string "None", and a run admitted
+          # before the submitter tag existed has one. It must not match anybody: comparing
+          # an actor against "None" is how a missing record turns into an authorisation.
+          if submitter in ("", "None"):
+              owns = False
+          else:
+              owns = actor == submitter
+
+          if owns or actor in admins:
+              why = "it is their run" if owns else "they are an organization admin"
+              print(f"{actor} may stop this run: {why}.")
+              sys.exit(0)
+
+          print(f"cancel_not_authorized:{actor}", file=sys.stderr)
+          print(
+              "This run was submitted by somebody else and you are not an admin, so it was "
+              "not stopped. Ask the person who submitted it, or an admin.",
+              file=sys.stderr,
+          )
+          sys.exit(1)
+          PY
+
+      - name: Stop it
+        if: steps.find.outputs.not_running != 'true'
+        env:
+          JOB_ID: ${{ steps.find.outputs.job_id }}
+          RUN_ID: ${{ inputs.run_id }}
+          REASON: ${{ inputs.reason }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          # The reason reaches the lifecycle record, which is what lets
+          # lifecycle_projection tell an operator's cancellation from a failure. Naming who
+          # asked is the half that a bare reason leaves out.
+          aws batch terminate-job --job-id "${JOB_ID}" \
+            --reason "Cancelled by ${ACTOR}: ${REASON}"
+          {
+            echo "## Run stopped"
+            echo
+            echo "\`${RUN_ID}\` was terminated at ${ACTOR}'s request."
+            echo
+            echo "The termination is recorded like any other, so the run's history says it was"
+            echo "cancelled rather than that it failed. Anything it had already written to its"
+            echo "output prefix is still there, including checkpoints."
+          } >> "${GITHUB_STEP_SUMMARY}"

@@ -713,7 +713,7 @@ Resources:
               "SubmissionFailed": {
                 "Type": "Fail",
                 "Error": "BatchSubmissionFailed",
-                "Cause": "The run was admitted and Batch refused either the job definition it registers for itself or the submission that follows. The decision is recorded under decision/ and the failure under submission-failure/ in the lineage bucket, where the key naming it says which of the two."
+                "CausePath": "States.Format('The run was admitted and Batch refused it. Batch said: {} The full failure is recorded under submission-failure/ in the lineage bucket.', $.submission_failure.Cause)"
               },
               "Rejected": {
                 "Type": "Fail",

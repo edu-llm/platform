@@ -1,5 +1,12 @@
 # edu-llm platform
 
+**If you came here to run a training job, read [GETTING-STARTED.md](GETTING-STARTED.md)
+instead.** It is about five minutes to your first run, and it lists the six things that
+will otherwise waste a twelve-hour one. Everything below this line is about how the
+platform is built, which you do not need to know to use it.
+
+---
+
 Shared control plane for eduLLM research workloads. This repository holds the
 contracts that decide whether a compute run is valid and who may approve it, the
 reviewed bindings those contracts are checked against, and the tooling that verifies
@@ -20,6 +27,7 @@ What each of the eight left behind is committed under `fixtures/evidence/` and r
 
 | Path | Contents |
 | --- | --- |
+| `GETTING-STARTED.md` | How to submit a run. The only file here a researcher needs |
 | `src/edullm_platform/` | The validation library: contracts, canonical hashing, config loading, evidence models, acceptance gate |
 | `config/` | Reviewed bindings — organization roster, approval policy, repository registry, workload and compute catalog, execution targets |
 | `infra/` | CloudFormation for everything this platform deploys, plus the runbook for the procedures that need a laptop |

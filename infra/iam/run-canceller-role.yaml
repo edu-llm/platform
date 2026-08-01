@@ -1,0 +1,110 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: GitHub Actions role that stops a running job, after the workflow has checked the actor is allowed to stop that one.
+
+Resources:
+  RunCancellerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sbsandbox-intern-edullm-run-canceller
+      PermissionsBoundary:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/InternSandboxBoundary
+      MaxSessionDuration: 3600
+      # WHY A ROLE THAT CAN STOP ANY JOB IS THE RIGHT SHAPE, WHICH IS NOT OBVIOUS.
+      #
+      # The workflow decides whether the actor may cancel this run; IAM cannot. A trust
+      # policy cannot see who dispatched the workflow -- `sub` and `job_workflow_ref` are
+      # the same for every dispatch of a file, whoever pressed the button -- and Batch has
+      # no condition key for a job's tags on TerminateJob, so the grant cannot be narrowed
+      # to "jobs whose edullm:submitter equals the caller" however it is written.
+      #
+      # So the authorisation is in the workflow, and this role is scoped by what it can do
+      # rather than by whose it can do it to: describe jobs and stop them, on two named
+      # queues, and nothing else in the account. It cannot submit, cannot register a job
+      # definition, cannot read or write S3, and cannot reach the state machine -- so the
+      # worst a bypass achieves is stopping runs, which is disruptive, recoverable, and
+      # loud in the lifecycle record.
+      #
+      # That is a real trade and it is worth naming rather than burying: the check that
+      # matters lives in YAML, and a change to that file is the change to review. It is the
+      # same shape as the approval gate, which is also enforced by a workflow rather than
+      # by a policy.
+      #
+      # The sub prefix carries owner and repository ids because this organization issues
+      # immutable subject claims, verified as
+      # `gh api repos/edu-llm/platform/actions/oidc/customization/sub` reporting
+      # sub_claim_prefix repo:edu-llm@306859726/platform@1311508598.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated:
+                Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                # One workflow file, so a job added to submit-run.yml cannot reach this and
+                # a job added to cancel-run.yml is reviewed as part of the file that owns
+                # the authorisation check.
+                token.actions.githubusercontent.com:job_workflow_ref: edu-llm/platform/.github/workflows/cancel-run.yml@refs/heads/main
+                token.actions.githubusercontent.com:repository_owner_id: "306859726"
+                token.actions.githubusercontent.com:repository_id: "1311508598"
+                token.actions.githubusercontent.com:sub: repo:edu-llm@306859726/platform@1311508598:ref:refs/heads/main
+      # Inline rather than managed, for the reason every role here is: InternSandboxBoundary
+      # denies iam:CreatePolicyVersion, so a managed policy could be created once and never
+      # amended.
+      Policies:
+        - PolicyName: stop-a-running-job-and-read-enough-to-know-whose-it-is
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # DescribeJobs and ListJobs are how the workflow learns the job's tags, which
+              # is how it learns whose run it is. Neither has a resource type in Batch --
+              # both are account-wide or nothing -- so the resource is a wildcard and the
+              # narrowing that matters is that they are reads.
+              #
+              # ListJobs is needed because a submitter knows their run id and not the Batch
+              # job id, and the two are joined by the job *name*, which only a list can
+              # search.
+              - Effect: Allow
+                Action:
+                  - batch:DescribeJobs
+                  - batch:ListJobs
+                Resource: "*"
+              # The one action that changes anything, scoped to the two queues this platform
+              # created. A job on any other queue in this shared account is out of reach.
+              - Effect: Allow
+                Action: batch:TerminateJob
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job/*
+                Condition:
+                  ArnEquals:
+                    batch:JobQueue:
+                      - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-cpu
+                      - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu
+              # DELIBERATELY ABSENT, and each for its own reason rather than as a list.
+              #
+              # batch:SubmitJob and batch:RegisterJobDefinition: a role that can cancel and
+              # submit is a role that can replace somebody's run with its own, which is a
+              # worse power than either alone.
+              #
+              # batch:CancelJob: it only affects a job that has not started, TerminateJob
+              # covers both cases, and two verbs would mean two authorisation paths.
+              #
+              # Every s3: action. The cancel path learns whose run it is from a tag on the
+              # job precisely so it never needs to read the lineage store, and a grant here
+              # would give that reasoning away for nothing.
+              #
+              # Every states: action, so this cannot interfere with an admission execution
+              # that is still deciding.
+
+Outputs:
+  RoleName:
+    Value:
+      Ref: RunCancellerRole
+  RoleArn:
+    Value:
+      Fn::GetAtt:
+        - RunCancellerRole
+        - Arn

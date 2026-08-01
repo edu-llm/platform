@@ -304,13 +304,22 @@ def test_every_target_names_infrastructure_this_project_owns() -> None:
 # ---------------------------------------------------------------------------------------
 
 
+#: Arguments of ``batch_submit_request`` itself rather than of the manifest it carries.
+#: Split out because this helper spreads everything else onto ``manifest()``, and a caller
+#: passing one of these would otherwise get an unhelpful pydantic error about a manifest
+#: field that does not exist.
+_SUBMIT_REQUEST_ARGUMENTS = frozenset({"wandb_username", "experiment", "submitter"})
+
+
 def request_for(**overrides: Any) -> Mapping[str, Any]:
+    submit = {key: overrides.pop(key) for key in list(overrides) if key in _SUBMIT_REQUEST_ARGUMENTS}
     run_manifest = manifest(**overrides)
     return batch_submit_request(
         manifest=run_manifest,
         target=target(),
         run_id=RUN_ID,
         job_definition=target().job_definition_arn,
+        **submit,
     )
 
 
@@ -521,6 +530,27 @@ def test_the_job_name_is_the_run_id_so_batch_is_a_third_join() -> None:
 
     assert request["JobName"] == RUN_ID
     assert request["Tags"]["edullm:run-id"] == RUN_ID
+
+
+def test_the_job_carries_who_submitted_it_so_cancelling_needs_no_lineage_read() -> None:
+    """Mutation: leave the submitter off, and authorise cancellation from the record.
+
+    Cancellation has to answer "is this your run", and there are two places to learn that.
+    The intent record knows, and reading it means granting something outside admission a
+    read over the lineage bucket -- the one grant the whole write-once design exists to
+    withhold, because a reader of that store sees every team's admission decisions on the
+    way past. A tag on the job answers the same question with no new reach.
+
+    Absent rather than empty when there is nobody to name. A run admitted before this field
+    existed has no submitter, and an empty tag would assert that somebody submitted it and
+    was called "" -- which is precisely the claim the cancel path must not be able to make,
+    because an actor comparing their login against it must never match.
+    """
+    named = request_for(submitter="philote-dev")
+    unnamed = request_for()
+
+    assert named["Tags"]["edullm:submitter"] == "philote-dev"
+    assert "edullm:submitter" not in unnamed["Tags"]
 
 
 def test_the_container_override_carries_the_manifest_command_unaltered() -> None:
