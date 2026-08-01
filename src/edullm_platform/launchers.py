@@ -42,6 +42,16 @@ environment, and it is per-submission -- where a checkbox is ticked once and cop
 everybody who reuses the form. What it is not is silent:
 :func:`waived_launch_check_note` puts a sentence in front of the lead who releases the run,
 because the command itself is not on the approver page.
+
+**FOUR NAMES HERE ARE PUBLIC BECAUSE A SECOND GUARD READS THE SAME COMMAND.**
+:mod:`edullm_platform.checkpoint_commands` asks whether a command under a checkpoint contract
+writes where a retry will look, which needs the same three facts this module needs: which
+programs read one argument as a whole command line, where one simple command ends and the
+next begins, and whether an exact token was written anywhere in the text. Restating them
+there would be a second reading of one wrapper, and the drift fails open in both directions
+-- a wrapper one guard can see into and the other cannot is a rule that quietly stops
+applying. The argument against sharing with ``contracts/validation.py`` does not apply here:
+neither module is packaged into either Lambda zip, so nothing about this costs a release.
 """
 
 from __future__ import annotations
@@ -58,11 +68,15 @@ from .execution import CONTAINER_SHAPES
 
 __all__ = [
     "LAUNCH_CHECK_WAIVER",
+    "MAXIMUM_WRAPPER_DEPTH",
     "SHELLS_THAT_READ_A_COMMAND_STRING",
     "LaunchPlan",
+    "carries_the_token",
     "corrected_command",
     "read_launch_plan",
     "require_a_process_for_every_device",
+    "shell_command_string",
+    "simple_command_segments",
     "waived_launch_check_note",
 ]
 
@@ -117,7 +131,7 @@ _RANKS_DECIDED_AT_RUNTIME: Final = frozenset({"auto", "gpu", "cpu"})
 
 #: One shell inside another is ordinary -- ``bash -lc 'exec bash -c ...'`` -- and a chain of
 #: them is somebody trying to get past this. Bounded rather than followed indefinitely.
-_MAXIMUM_WRAPPER_DEPTH: Final = 3
+MAXIMUM_WRAPPER_DEPTH: Final = 3
 
 #: What the corrected command is built with. ``--standalone`` is what makes a single-host run
 #: need no rendezvous endpoint, which is the whole of the multi-GPU case this platform runs.
@@ -167,7 +181,7 @@ def require_a_process_for_every_device(
     shape = CONTAINER_SHAPES.get(compute_profile)
     if shape is None or shape.gpus == 0:
         return
-    if _carries_the_waiver(command):
+    if carries_the_token(command, LAUNCH_CHECK_WAIVER):
         return
 
     plan = read_launch_plan(command)
@@ -203,7 +217,7 @@ def waived_launch_check_note(
     page for every such run would be a line readers learn to skip -- which is the failure mode
     of every warning that is not selective.
     """
-    if not _carries_the_waiver(command):
+    if not carries_the_token(command, LAUNCH_CHECK_WAIVER):
         return None
     shape = CONTAINER_SHAPES.get(compute_profile)
     if shape is None or shape.gpus == 0:
@@ -307,12 +321,13 @@ def _shell_command_position(words: Sequence[str]) -> int | None:
     return None
 
 
-def _shell_command_string(words: Sequence[str]) -> str | None:
+def shell_command_string(words: Sequence[str]) -> str | None:
+    """The one word this argv hands to a shell's ``-c``, or ``None`` if it hands none."""
     position = _shell_command_position(words)
     return None if position is None else words[position]
 
 
-def _segments(words: Sequence[str]) -> list[tuple[str, ...]]:
+def simple_command_segments(words: Sequence[str]) -> list[tuple[str, ...]]:
     """The words split into simple commands, with anything after a comment dropped.
 
     A word beginning with ``#`` starts a comment for the shell, so everything from there on is
@@ -338,9 +353,9 @@ def _segments(words: Sequence[str]) -> list[tuple[str, ...]]:
 def _simple_commands(words: Sequence[str], depth: int = 0) -> list[tuple[str, ...]]:
     """Every simple command this argv would run, looking inside shell wrappers as it goes."""
     found: list[tuple[str, ...]] = []
-    for segment in _segments(words):
-        text = _shell_command_string(segment)
-        if text is None or depth >= _MAXIMUM_WRAPPER_DEPTH:
+    for segment in simple_command_segments(words):
+        text = shell_command_string(segment)
+        if text is None or depth >= MAXIMUM_WRAPPER_DEPTH:
             found.append(segment)
             continue
         try:
@@ -448,8 +463,8 @@ def _declared_ranks(arguments: Sequence[str]) -> int | None:
     return 1
 
 
-def _carries_the_waiver(command: Sequence[str]) -> bool:
-    """Whether the exact waiver token appears as a word, wherever it is written.
+def carries_the_token(command: Sequence[str], token: str) -> bool:
+    """Whether an exact token appears as a word, wherever in the command it is written.
 
     Read over every word including comments and including the inside of wrappers, because
     which position is inert depends on the command: an assignment is consumed by a shell and a
@@ -458,15 +473,20 @@ def _carries_the_waiver(command: Sequence[str]) -> bool:
 
     Exact, and case-sensitive. Prose quoting the token -- this refusal pasted into a note,
     say -- arrives as one word after splitting and does not match.
+
+    Takes the token rather than closing over :data:`LAUNCH_CHECK_WAIVER`, because the
+    checkpoint guard offers its own waiver and the two have to be written in the same places
+    for the same reasons. One function is what makes "wherever it is written" mean the same
+    thing to a researcher whichever guard they are getting past.
     """
-    return LAUNCH_CHECK_WAIVER in _every_word(tuple(command))
+    return token in _every_word(tuple(command))
 
 
 def _every_word(words: Sequence[str], depth: int = 0) -> set[str]:
     found = set(words)
-    if depth >= _MAXIMUM_WRAPPER_DEPTH:
+    if depth >= MAXIMUM_WRAPPER_DEPTH:
         return found
-    text = _shell_command_string(words)
+    text = shell_command_string(words)
     if text is None:
         return found
     try:

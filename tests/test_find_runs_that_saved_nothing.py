@@ -34,9 +34,12 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "tools"))
 
 from find_runs_that_saved_nothing import (
+    ACKNOWLEDGEMENTS_PATH,
+    CheckpointAcknowledgements,
     CommandLineObjectStore,
     ReportInputError,
     RunCheckpointState,
+    _load_acknowledgements,
     _load_outcomes,
     checkpoint_states,
     main,
@@ -366,6 +369,7 @@ def described(
     *,
     outcome: AttemptTerminalState | None = None,
     outcome_known: bool = False,
+    acknowledged: str | None = None,
 ) -> RunCheckpointState:
     return RunCheckpointState(
         run_id=run_id,
@@ -377,6 +381,7 @@ def described(
         detail="what the reader found",
         outcome=outcome,
         outcome_known=outcome_known,
+        acknowledged=acknowledged,
     )
 
 
@@ -621,3 +626,273 @@ def test_a_failed_run_does_not_fail_the_nightly_but_a_succeeded_one_does(
     write_result(tmp_path, RUN_ID, "succeeded")
 
     assert main(["--lineage-root", str(tmp_path)]) == 1
+
+
+# ----------------------------------------------------------------------------------------
+# Runs somebody has read, and the ones nobody has
+# ----------------------------------------------------------------------------------------
+
+
+ADJUDICATED = (
+    "A --dry-run submitted while proving the submission path, which resolves the config and "
+    "trains nothing, so there was never anything to save."
+)
+
+
+def acknowledging(root: Path, *entries: tuple[str, str]) -> Path:
+    """An acknowledgement file in the shape the repository's own is in."""
+    path = root / "checkpoint-acknowledgements.yaml"
+    if not entries:
+        path.write_text("schema_version: 1\nacknowledgements: []\n", encoding="utf-8")
+        return path
+    body = ["schema_version: 1", "acknowledgements:"]
+    for run_id, reason in entries:
+        body += [
+            f"  - run_id: {run_id}",
+            f"    reason: {json.dumps(reason)}",
+            "    recorded_by: philote-dev",
+            '    recorded_at: "2026-08-01T19:05:00.000000Z"',
+        ]
+    path.write_text("\n".join(body) + "\n", encoding="utf-8")
+    return path
+
+
+def a_lineage_root_holding_one_succeeded_run(root: Path, run_id: str = RUN_ID) -> None:
+    records = root / "intent"
+    records.mkdir(exist_ok=True)
+    source = (
+        PROJECT_ROOT
+        / "fixtures"
+        / "evidence"
+        / "phase-2"
+        / "lineage"
+        / "records"
+        / "intent"
+        / f"{RUN_ID}.json"
+    )
+    loaded = json.loads(source.read_text(encoding="utf-8"))
+    if isinstance(loaded, str):
+        loaded = json.loads(loaded)
+    loaded["manifest"]["workload_profile"] = "olmo-core-train-1gpu"
+    loaded["manifest"]["compute_profile"] = "gpu-1xa10g"
+    loaded["run_id"] = run_id
+    (records / f"{run_id}.json").write_text(json.dumps(loaded), encoding="utf-8")
+    write_result(root, run_id, "succeeded")
+
+
+def test_an_acknowledged_run_is_still_read_and_still_printed(
+    catalog: WorkloadCatalog,
+) -> None:
+    """Mutation: filter acknowledged runs out before the bucket is read.
+
+    That is the version of this list that goes blind, and it is one line shorter. A run that
+    leaves the report is a run nobody looks at, and this tool exists because of a run nobody
+    looked at -- so an acknowledgement changes the exit code and nothing else. The prefix is
+    still read out of the account, so the report goes on saying what is there.
+    """
+    states = checkpoint_states(
+        [intent("olmo-core-train-1gpu")],
+        catalog,
+        store=FakeObjectStore(),
+        acknowledgements={RUN_ID: ADJUDICATED},
+    )
+
+    assert len(states) == 1
+    assert states[0].saved_nothing, "the finding is still a finding; it is only not news"
+    assert states[0].acknowledged == ADJUDICATED
+    assert states[0].judged, (
+        "an acknowledgement must not change whether the question applies, only whether the "
+        "answer is held against the build"
+    )
+    assert not states[0].held_against_the_build
+
+
+def test_an_acknowledged_run_carries_its_reason_into_the_report() -> None:
+    """The justification is printed beside the run, because a list nobody reads is a cutoff.
+
+    An entry whose reason lives only in a config file is one a reader of the report cannot
+    check, and the only thing separating this mechanism from "ignore runs before August" is
+    that every entry states what was looked at.
+    """
+    states = [
+        described(
+            RUN_ID,
+            CheckpointState.ABSENT,
+            0,
+            outcome=AttemptTerminalState.SUCCEEDED,
+            outcome_known=True,
+            acknowledged=ADJUDICATED,
+        )
+    ]
+
+    report = render(states)
+
+    assert "## Read and adjudicated" in report
+    assert ADJUDICATED in report
+    assert "## Wrote nothing" not in report, (
+        "an adjudicated run listed among the findings puts the job's one open question back "
+        "underneath a row somebody has already answered"
+    )
+    assert "1 finished successfully and have been read and adjudicated" in report
+
+
+def test_a_run_nobody_has_acknowledged_still_turns_the_job_red(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """THE ONE THAT MATTERS. Mutation: acknowledge by date, or by profile, or by team.
+
+    Every wider unit covers runs nobody has looked at, including ones submitted after it was
+    written, and this is the assertion that fails when one is substituted. The list here
+    names a real run and the offender is a different one, which is the shape the morning
+    after a new offender appears.
+    """
+    a_lineage_root_holding_one_succeeded_run(tmp_path)
+    acknowledged = acknowledging(
+        tmp_path, ("run_019fbce3-ce4b-7067-b8c7-c2cf25e6b667", ADJUDICATED)
+    )
+
+    monkeypatch.setattr(
+        "find_runs_that_saved_nothing.CommandLineObjectStore",
+        lambda **_: store_holding((0, STUB)),
+    )
+
+    assert (
+        main(["--lineage-root", str(tmp_path), "--acknowledgements", str(acknowledged)]) == 1
+    )
+
+
+def test_the_acknowledged_run_is_the_only_one_the_exit_code_forgives(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The other side of the same branch, so the list cannot pass by forgiving nothing.
+
+    Same prefix and same recorded outcome in both halves of the test above and this one.
+    What changes is whether the run's id is written down with a reason beside it.
+    """
+    a_lineage_root_holding_one_succeeded_run(tmp_path)
+
+    monkeypatch.setattr(
+        "find_runs_that_saved_nothing.CommandLineObjectStore",
+        lambda **_: store_holding((0, STUB)),
+    )
+
+    assert main(["--lineage-root", str(tmp_path), "--acknowledgements", str(acknowledging(tmp_path))]) == 1
+
+    acknowledged = acknowledging(tmp_path, (RUN_ID, ADJUDICATED))
+
+    assert (
+        main(["--lineage-root", str(tmp_path), "--acknowledgements", str(acknowledged)]) == 0
+    )
+    assert "## Read and adjudicated" in capsys.readouterr().out
+
+
+def test_an_acknowledgement_covering_nothing_is_reported_and_is_not_a_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An entry earns its place by covering a finding, and stops earning it silently.
+
+    A list that only grows stops describing anything, and the entries left in it are the ones
+    a later reader trusts least. Reported rather than failed, because a stale entry conceals
+    no run -- failing on it would turn tidying into an outage of the job.
+    """
+    a_lineage_root_holding_one_succeeded_run(tmp_path)
+    acknowledged = acknowledging(tmp_path, (RUN_ID, ADJUDICATED))
+
+    monkeypatch.setattr(
+        "find_runs_that_saved_nothing.CommandLineObjectStore",
+        lambda **_: store_holding((0, FULL_STEP)),
+    )
+
+    assert (
+        main(["--lineage-root", str(tmp_path), "--acknowledgements", str(acknowledged)]) == 0
+    )
+
+    report = capsys.readouterr().out
+    assert "## Acknowledgements that cover nothing" in report
+    assert RUN_ID in report
+
+
+def test_a_list_that_does_not_parse_stops_the_report_rather_than_acknowledging_nobody(
+    tmp_path: Path,
+) -> None:
+    """Mutation: swallow the error and carry on with an empty list.
+
+    Both directions of that are wrong and one is worse. A misspelled key that reads as no
+    acknowledgements turns a typo into a red job whose cause is a YAML error nobody is shown,
+    and the reader spends the morning on a run that was adjudicated weeks ago.
+    """
+    broken = tmp_path / "checkpoint-acknowledgements.yaml"
+    broken.write_text("schema_version: 1\nacknowledgments: []\n", encoding="utf-8")
+
+    with pytest.raises(ReportInputError, match="acknowledgement list"):
+        _load_acknowledgements(broken)
+
+
+def test_no_list_at_all_acknowledges_nothing(tmp_path: Path) -> None:
+    """The state a fresh checkout is legitimately in, and the state this repository wants."""
+    assert _load_acknowledgements(tmp_path / "absent.yaml").reasons() == {}
+
+
+def test_a_reason_too_short_to_be_one_is_refused() -> None:
+    """"Known issue" is not an adjudication, and the floor is what keeps this a record.
+
+    Carried from ``ImageScanException`` deliberately: the two files answer the same kind of
+    question, and the value of either is that a later reader can tell whether the thing was
+    understood or waved through.
+    """
+    with pytest.raises(ValueError, match="at least 40 characters"):
+        CheckpointAcknowledgements.model_validate(
+            {
+                "schema_version": 1,
+                "acknowledgements": [
+                    {
+                        "run_id": RUN_ID,
+                        "reason": "known issue",
+                        "recorded_by": "philote-dev",
+                        "recorded_at": "2026-08-01T19:05:00.000000Z",
+                    }
+                ],
+            }
+        )
+
+
+def test_a_run_cannot_be_acknowledged_twice() -> None:
+    """Two entries for one run are two different reasons, and only one of them is read.
+
+    The one that loses is invisible, which makes the file say something nobody agreed to.
+    """
+    entry = {
+        "run_id": RUN_ID,
+        "reason": ADJUDICATED,
+        "recorded_by": "philote-dev",
+        "recorded_at": "2026-08-01T19:05:00.000000Z",
+    }
+
+    with pytest.raises(ValueError, match="more than one acknowledgement"):
+        CheckpointAcknowledgements.model_validate(
+            {"schema_version": 1, "acknowledgements": [entry, dict(entry)]}
+        )
+
+
+def test_the_repositorys_own_list_names_runs_and_states_why() -> None:
+    """The file the nightly actually reads, held to what makes it defensible.
+
+    Read here rather than trusted, because the entries are the whole of the argument that
+    this is an adjudication and not a date cutoff written one line at a time.
+    """
+    acknowledgements = _load_acknowledgements(ACKNOWLEDGEMENTS_PATH)
+
+    assert acknowledgements.acknowledgements, (
+        "the list is empty, so either the historical run was resolved another way or the "
+        "path moved and the nightly is reading nothing"
+    )
+    for entry in acknowledgements.acknowledgements:
+        assert "EDULLM_CHECKPOINT_DIR" in entry.reason or "--dry-run" in entry.reason, (
+            f"the reason recorded for {entry.run_id} does not say what the run did with the "
+            "checkpoint directory, which is the question the entry is answering"
+        )

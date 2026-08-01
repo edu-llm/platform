@@ -215,33 +215,41 @@ def cpu_payload(**overrides: object) -> dict[str, object]:
     return payload
 
 
+#: What a submission on the four-GPU training workload has to say to compile at all, and
+#: every word of it is load-bearing rather than illustrative.
+#:
+#: ``olmo-core-train-4gpu`` inherits ``gpu-4xa10g`` and carries a checkpoint contract, so two
+#: command rules apply to it. ``python -m olmo_core.train`` on four devices trains on one of
+#: them and bills for four, so the launcher and its rank count are required; and a profile
+#: that promises checkpoints has to be pointed at ``EDULLM_CHECKPOINT_DIR``, or a retry the
+#: contract paid for resumes from nothing.
+#:
+#: The ``bash -lc`` wrapper is required by the second of those and by nothing else here. The
+#: container execs the command, so an unwrapped ``$EDULLM_CHECKPOINT_DIR`` reaches OLMo-core
+#: as twenty-two literal characters -- which is why every real submission carries the wrapper
+#: and why this one now does.
+#:
+#: The ``-m`` after ``--standalone`` is torchrun's own flag rather than a second interpreter
+#: ``-m``: it says the training script is a module name.
+OLMO_COMMAND = (
+    "bash",
+    "-lc",
+    (
+        "python -m torch.distributed.run --nproc-per-node=4 --standalone "
+        '-m olmo_core.train --save-folder "$EDULLM_CHECKPOINT_DIR"'
+    ),
+)
+
+
 def olmo_payload(**overrides: object) -> dict[str, object]:
-    """A submission on the four-GPU workload, which is the one with a command rule attached.
-
-    THE LAUNCHER IN THE COMMAND IS LOAD-BEARING AND WAS ADDED RATHER THAN CHOSEN.
-    ``olmo-core-train-4gpu`` inherits ``gpu-4xa10g``, and ``python -m olmo_core.train`` on
-    four devices is now refused at compile: it would train on one of them and bill for four.
-    Every test below that needs a submission which compiles needs one that starts four
-    processes, so the helper produces one.
-
-    ``-m`` after ``--standalone`` is torchrun's own flag rather than a second interpreter
-    ``-m``: it says the training script is a module name.
-    """
+    """A submission on the four-GPU workload, which is the one with command rules attached."""
     return cpu_payload(
         **{
             "repository": "OLMo-core",
             "workload_profile": OLMO_WORKLOAD,
             "team": "modeling",
             "wandb_project": "olmo-core-extended",
-            "command": [
-                "python",
-                "-m",
-                "torch.distributed.run",
-                "--nproc-per-node=4",
-                "--standalone",
-                "-m",
-                "olmo_core.train",
-            ],
+            "command": list(OLMO_COMMAND),
             **overrides,
         }
     )

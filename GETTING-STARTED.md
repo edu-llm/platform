@@ -78,26 +78,77 @@ Everything below is about `olmo-core-train-1gpu`. Set `dataset_release` to the c
 want and use this command:
 
 ```
-bash -lc 'python .edullm/train_on_corpus.py "$EDULLM_RUN_ID" --steps 4000'
+bash -lc 'python .edullm/train_on_corpus.py "$EDULLM_RUN_ID" --save-folder "$EDULLM_CHECKPOINT_DIR" --steps 4000'
 ```
 
 That is the whole thing. It opens the corpus you picked on the form, reads it at the width
 the corpus was written at, checkpoints where a retry can find them, and reports to your W&B
-project. Everything it needs it takes from the environment the container already has.
+project. Everything else it needs it takes from the environment the container already has.
 
 **`bash -lc` is not decoration.** The container runs your command directly rather than
 through a shell, so without it `$EDULLM_RUN_ID` arrives as those fourteen literal characters
 instead of your run id. Wrap the command in `bash -lc '...'` and the variable expands.
 
+**`--save-folder` is on the line even though this entry point defaults to it.** The platform
+checks that a command under a checkpoint contract expands `$EDULLM_CHECKPOINT_DIR`, and it
+cannot see inside your program to find out where it decided to save. Writing the flag costs
+nothing at runtime — the value is the same one the default would have read — and it puts the
+save folder in the run's manifest, where the lead approving it and anyone reading the record
+afterwards can see it. Leaving it out is refused, for the reason under
+[the checkpoint refusal](#the-checkpoint-refusal) below.
+
 Anything after the flags is a config override, so you can change one thing without leaving
 this entry point:
 
 ```
-bash -lc 'python .edullm/train_on_corpus.py "$EDULLM_RUN_ID" --steps 4000 --model-factory olmo2_1B optim.lr=3e-4'
+bash -lc 'python .edullm/train_on_corpus.py "$EDULLM_RUN_ID" --save-folder "$EDULLM_CHECKPOINT_DIR" --steps 4000 --model-factory olmo2_1B optim.lr=3e-4'
 ```
 
 `--dry-run` resolves the corpus, prints the whole config, and trains nothing. It is the
-cheapest way to find out that a flag you passed does not exist.
+cheapest way to find out that a flag you passed does not exist. Keep `--save-folder` on the
+line anyway, or waive the check as below — a dry run under a training profile is still a run
+that promised a checkpoint.
+
+### The checkpoint refusal
+
+`olmo-core-train-1gpu` and `olmo-core-train-4gpu` declare a checkpoint contract, which is
+what their second attempt is granted on. **A command under one of them has to expand
+`$EDULLM_CHECKPOINT_DIR`, or the submission is refused when it compiles**, before a lead is
+asked to approve it.
+
+Nothing on this platform rewrites your command, so the only thing pointing your trainer at
+the prefix a retry reads is your having said so. There is no flag the check looks for: pass
+the variable to whatever your program calls its save folder, under a shell so that it
+expands.
+
+```
+bash -lc 'python train.py --save-folder "$EDULLM_CHECKPOINT_DIR"'
+```
+
+`"$EDULLM_CHECKPOINT_DIR"` and `${EDULLM_CHECKPOINT_DIR}` both satisfy it, as does
+`${EDULLM_CHECKPOINT_DIR}/step` and anything else a shell expands. What does not is a
+mention the shell will never read: inside single quotes, behind a backslash, after a `#`, or
+in a command with no shell in front of it at all. Those reach your program as the literal
+text `$EDULLM_CHECKPOINT_DIR`, and OLMo-core creates a directory by that name rather than
+failing — so the check treats them as absent, and the refusal says which of them it found.
+
+**This is what happened instead.** A trainer that is not told where to save uses its own
+default — `/tmp` for the OLMo-core example, local disk on a machine that stops existing. The
+run trains for twelve hours, writes checkpoints nobody can reach, exits zero, and is
+recorded as an unqualified success. One run in this account is in that state and nothing is
+recoverable from it.
+
+**If your run genuinely does not save where the platform looks** — a program that derives
+its own checkpoint path, or a throwaway nobody will resume — put
+`EDULLM_CHECKPOINT_CHECK=waived` in the command:
+
+```
+bash -lc 'EDULLM_CHECKPOINT_CHECK=waived python .edullm/train_on_corpus.py "$EDULLM_RUN_ID" --dry-run'
+```
+
+Same mechanism as the launcher waiver below and deliberately the same spelling: it travels
+in the manifest, and the lead approving the run is told the run waived the check. What it
+does not do is make a retry work. A waived run that loses its machine starts from nothing.
 
 ### More than one GPU
 
@@ -111,7 +162,7 @@ platform wraps what you type — the container execs it exactly as written — s
 has to be in the command:
 
 ```
-bash -lc 'python -m torch.distributed.run --nproc-per-node=4 --standalone .edullm/train_on_corpus.py "$EDULLM_RUN_ID" --steps 4000'
+bash -lc 'python -m torch.distributed.run --nproc-per-node=4 --standalone .edullm/train_on_corpus.py "$EDULLM_RUN_ID" --save-folder "$EDULLM_CHECKPOINT_DIR" --steps 4000'
 ```
 
 `--nproc-per-node` is the device count of the machine you picked: 4 on the four-GPU shapes,
@@ -136,12 +187,16 @@ profile, an inference sweep that places its own devices — put `EDULLM_LAUNCH_C
 in the command and it goes through:
 
 ```
-bash -lc 'EDULLM_LAUNCH_CHECK=waived python benchmarks/memory.py --batch 64'
+bash -lc 'EDULLM_LAUNCH_CHECK=waived EDULLM_CHECKPOINT_CHECK=waived python benchmarks/memory.py --batch 64'
 ```
 
 That is on the record rather than a way round the check: it is in the run's manifest, and
 the lead approving the run is told the run waived the check. Picking a smaller machine to
 avoid typing it wastes exactly as much and explains nothing.
+
+`olmo-core-train-4gpu` is the only multi-GPU profile and it declares a checkpoint contract,
+so a benchmark on one of those machines is waiving that too — hence both tokens. They are
+two separate statements about the same run and each is recorded on its own.
 
 ### Why not the OLMo-core example
 
@@ -154,6 +209,9 @@ the run read a different one.
 The example also defaults `--save-folder` to `/tmp`, which is local disk on a machine that
 stops existing when your job ends. A twelve-hour run that takes the default trains for
 twelve hours, writes checkpoints nobody can reach, exits zero, and is recorded as a success.
+That one is refused now rather than left to you to remember, which is
+[the checkpoint refusal](#the-checkpoint-refusal) above. The corpus is not, because nothing
+here can tell that the corpus you named and the corpus your program opens are different.
 
 You can still run the example, and the long command under **Six things that will bite you**
 is what it takes. The entry point above exists because that list should not be something
@@ -298,5 +356,7 @@ A refusal that arrives *after* a lead approved it is usually a mismatch between 
 that were each individually valid — a workload whose repository is not registered, or a
 compute profile nothing is provisioned for. Both name a reason code; quote it in the issue.
 
-A run that succeeds and leaves an empty checkpoint prefix is the `/tmp` case above. Check
-`$EDULLM_CHECKPOINT_DIR` is on your command line before you resubmit.
+A run that succeeds and leaves an empty checkpoint prefix is the `/tmp` case above. That now
+takes either `EDULLM_CHECKPOINT_CHECK=waived` in the command or a program that took
+`$EDULLM_CHECKPOINT_DIR` and saved somewhere else, so start with the manifest: it records
+the command the run was submitted with.

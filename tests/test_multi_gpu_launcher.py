@@ -35,6 +35,7 @@ import shlex
 import pytest
 from test_phase2_submission import compile_payload, olmo_payload, render
 
+from edullm_platform.checkpoint_commands import CHECKPOINT_CHECK_WAIVER
 from edullm_platform.errors import SubmissionRefusedError
 from edullm_platform.execution import CONTAINER_SHAPES
 from edullm_platform.launchers import (
@@ -543,8 +544,21 @@ def test_a_compiled_four_gpu_submission_with_a_launcher_still_compiles() -> None
 
 
 def test_the_approver_context_carries_the_waiver_when_a_run_uses_one() -> None:
+    """A benchmark on the four-GPU training workload, which is two waivers rather than one.
+
+    ``olmo-core-train-4gpu`` carries a checkpoint contract as well as four devices, and a
+    benchmark writes no checkpoint, so the second check refuses this command too. Both are
+    waived here because both are genuinely being waived; the point of the case is that the
+    device-count one reaches the approver page, and it still does beside another.
+    """
     compiled = compile_payload(
-        olmo_payload(command=["bash", "-lc", f"{LAUNCH_CHECK_WAIVER} python bench.py"])
+        olmo_payload(
+            command=[
+                "bash",
+                "-lc",
+                f"{LAUNCH_CHECK_WAIVER} {CHECKPOINT_CHECK_WAIVER} python bench.py",
+            ]
+        )
     )
 
     assert LAUNCH_CHECK_WAIVER in render(compiled)

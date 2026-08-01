@@ -32,6 +32,10 @@ from typing import Annotated, Self
 from pydantic import BeforeValidator, Field, ValidationError, model_validator
 
 from edullm_platform.canonical import sha256_digest
+from edullm_platform.checkpoint_commands import (
+    require_a_save_folder_a_retry_can_find,
+    waived_checkpoint_check_note,
+)
 from edullm_platform.contracts.admission import ApprovalEnvironment
 from edullm_platform.contracts.authorization import is_organization_member
 from edullm_platform.contracts.base import (
@@ -428,6 +432,22 @@ def compile_submission(
         compute_profile=manifest.compute_profile,
     )
 
+    # THE OTHER HALF OF THE RULE THE ATTEMPT CHECK ABOVE ALREADY HOLDS. That one refuses a
+    # retry bound with no checkpoint contract behind it; this refuses a checkpoint contract
+    # with no command behind it, which is the direction that costs twelve hours of GPU time
+    # rather than an argument about a form field. Both say a retry bound and a checkpoint
+    # contract have to agree, and only one of them was ever checked.
+    #
+    # Beside the device-count rule rather than up beside the attempt check, because the two
+    # here are the same kind of thing -- a rule about the text of a submitted command, needing
+    # the manifest's resolved values -- and reading them in one place is what stops a third
+    # one being added somewhere else again.
+    require_a_save_folder_a_retry_can_find(
+        command=manifest.command,
+        workload_profile=manifest.workload_profile,
+        checkpoint=manifest.checkpoint,
+    )
+
     try:
         cost = compute_manifest_cost_inputs(manifest, catalog)
     except ValueError as exc:
@@ -587,20 +607,31 @@ def _routing_note(inventory: OrganizationInventory, *, claimed_team: str) -> str
 
 
 def _waiver_lines(manifest: RunManifest) -> tuple[str, ...]:
-    """The device-count waiver, said where the person releasing the run will see it.
+    """Whichever command checks this run waived, said where the person releasing it will see it.
 
     Empty for almost every submission, which is the point of it being a function rather than
-    a row in the table below. The command is not on this page -- it is long, it is often the
-    least readable thing about a submission, and a reviewer is being asked about cost and
+    two rows in the table below. The command is not on this page -- it is long, it is often
+    the least readable thing about a submission, and a reviewer is being asked about cost and
     attribution rather than about argv -- so a waiver written into it would otherwise reach
-    nobody. A row that said "not waived" on every run is the version of this that gets
+    nobody. Rows that said "not waived" on every run are the version of this that gets
     skipped.
+
+    Both waivers can be on one command and each is stated separately, because they answer
+    different questions: one says a process count is deliberate and the other says a
+    checkpoint path is, and a run that waived one has said nothing about the other.
     """
-    note = waived_launch_check_note(
-        command=manifest.command,
-        compute_profile=manifest.compute_profile,
+    notes = (
+        waived_launch_check_note(
+            command=manifest.command,
+            compute_profile=manifest.compute_profile,
+        ),
+        waived_checkpoint_check_note(
+            command=manifest.command,
+            workload_profile=manifest.workload_profile,
+            checkpoint=manifest.checkpoint,
+        ),
     )
-    return () if note is None else (note, "")
+    return tuple(line for note in notes if note is not None for line in (note, ""))
 
 
 def render_approver_context(

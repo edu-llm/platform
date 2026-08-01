@@ -1,0 +1,44 @@
+# Runs whose empty or unloadable checkpoint prefix has been read, adjudicated and cannot be
+# repaired. `tools/find_runs_that_saved_nothing.py` still inspects them, still lists them and
+# still prints what is there; the only thing an entry changes is whether the nightly job goes
+# red on it.
+#
+# THIS EXISTS BECAUSE A PERMANENTLY RED JOB REPORTS NOTHING. The run below is finished, its
+# prefix is empty, and no action available to anybody changes either fact. Left alone it holds
+# `runs that promised a checkpoint have one` red for ever, and the next real finding in that
+# job then arrives at a job that was already red.
+#
+# It is a per-run list rather than a date cutoff, which was the obvious alternative and the
+# wrong shape: "ignore runs before 2026-08-02" is one line, and it covers every run submitted
+# before that date including ones nobody has looked at, and it goes on covering them as the
+# reasons are forgotten. A run that is not named here is judged exactly as it was, so a new
+# offender turns the job red the following morning.
+#
+# `reason` has a length floor in the contract for the reason `config/image-exceptions.yaml`
+# carries one: "known issue" is not an adjudication, and the value of the entry is that a
+# later reader can tell whether the prefix was understood or waved through. Say what the run
+# was, why the prefix is empty, and why nothing can be done about it.
+#
+# An entry that stops covering a finding is reported by the tool as covering nothing and
+# should be deleted. A list that only grows stops describing anything.
+#
+# Not read by either Lambda. This file is under `config/reports/` rather than in `config/`
+# because `tools/build_admission_lambda.py` copies `config/*.yaml` into both zips, and
+# acknowledging a run should not cost a rebuild, an upload and two release records.
+schema_version: 1
+
+acknowledgements:
+  - run_id: run_019fbce3-ce4b-7067-b8c7-c2cf25e6b667
+    reason: >-
+      A --dry-run on olmo-core-train-1gpu, submitted while proving the submission path end to
+      end. The command was `python .edullm/train_on_corpus.py "$EDULLM_RUN_ID" --dry-run`,
+      which resolves the corpus, prints the config and exits before a trainer is built, so
+      the run wrote nothing anywhere and there is no checkpoint to recover from any machine.
+      The prefix cannot be filled in retrospectively and the run cannot be repeated into the
+      same run id. Submission now refuses this command outright, because the profile declares
+      a checkpoint contract and the command never expands $EDULLM_CHECKPOINT_DIR; a
+      deliberate throwaway of the same shape has to carry EDULLM_CHECKPOINT_CHECK=waived,
+      which puts the intent on the run instead of leaving it to be read off an empty prefix
+      weeks later.
+    recorded_by: philote-dev
+    recorded_at: "2026-08-01T19:05:00.000000Z"
