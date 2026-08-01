@@ -564,11 +564,52 @@ jobs:
           print(f"| Container said | {container.get('reason') or 'nothing'} |")
           print(f"| Image | `{container.get('image', 'unknown')}` |")
           print()
-          events = json.load(open(temporary + "/log.json")).get("events", [])
-          print(f"### Last {len(events)} log lines")
+
+          # THE COMMAND AND THE ENVIRONMENT, BECAUSE A RUN THAT DIES IN SECONDS DIED ON ONE OF
+          # THEM. A container that exits before its first training step usually never opened a
+          # corpus: it was handed a command it could not run, or an environment missing the
+          # variables that say which corpus to open. Both are in the job description, and both
+          # were invisible while this report printed only status and exit code.
+          print("### What it was told to run")
           print()
           print("```")
-          for event in events:
-              print(event.get("message", ""))
+          print(" ".join(container.get("command", []) or ["<nothing>"]))
           print("```")
+          print()
+
+          # Names always, values only for the ones that decide what the run reads. The rest
+          # can hold a W&B key, and this summary is readable by anyone who can see the run.
+          told = {
+              variable.get("Name", variable.get("name", "")): variable.get(
+                  "Value", variable.get("value", "")
+              )
+              for variable in container.get("environment", [])
+          }
+          shown = ("EDULLM_DATASET_ID", "EDULLM_DATASET_VERSION", "EDULLM_DATASET_TOKENIZER")
+          print("### The environment it was given")
+          print()
+          print("| Name | Value |")
+          print("| --- | --- |")
+          for name in sorted(told):
+              value = told[name] if name in shown else "(not shown)"
+              print(f"| `{name}` | {value} |")
+          for name in shown:
+              if name not in told:
+                  print(f"| `{name}` | **ABSENT** |")
+          print()
+
+          events = json.load(open(temporary + "/log.json")).get("events", [])
+          if events:
+              print(f"### Last {len(events)} log lines")
+              print()
+              print("```")
+              for event in events:
+                  print(event.get("message", ""))
+              print("```")
+          else:
+              # Not a caveat about this run: this role holds no logs:GetLogEvents, by a
+              # decision recorded in infra/iam/infra-deployer-role.yaml, so that a deploy
+              # credential can never become a way to read the logs of anyone. Saying so here
+              # keeps an empty log from reading as a container that printed nothing.
+              print("No log content. This role cannot read logs, deliberately.")
           PY
