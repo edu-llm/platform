@@ -17,9 +17,9 @@ uv run python tools/build_phase2_proof.py
 
 | measure | count |
 | --- | --- |
-| collected by pytest | 3836 |
-| executed (excluding tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py, tests/test_phase5_proof.py) | 3655 |
-| passed | 3655 |
+| collected by pytest | 3857 |
+| executed (excluding tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py, tests/test_phase5_proof.py) | 3664 |
+| passed | 3664 |
 | failed | 0 |
 | errored | 0 |
 | skipped | 0 |
@@ -31,9 +31,9 @@ Every test node id cited by the negative-case matrix, plus every test in the mod
 
 | measure | count |
 | --- | --- |
-| selected node ids | 613 |
-| executed | 613 |
-| passed | 613 |
+| selected node ids | 618 |
+| executed | 618 |
+| passed | 618 |
 | failed | 0 |
 | errored | 0 |
 | skipped | 0 |
@@ -45,14 +45,14 @@ The test modules Phase 2 added, excluding the ones that invoke a gate or this ge
 
 | module | tests | result |
 | --- | --- | --- |
-| tests/test_capture_phase2_evidence_cli.py | 6 | pass |
+| tests/test_capture_phase2_evidence_cli.py | 8 | pass |
 | tests/test_phase2_admission.py | 52 | pass |
 | tests/test_phase2_admission_denials.py | 106 | pass |
 | tests/test_phase2_admission_deployment_workflow.py | 20 | pass |
 | tests/test_phase2_admission_handler.py | 12 | pass |
 | tests/test_phase2_admission_records.py | 78 | pass |
 | tests/test_phase2_dataset_registry.py | 32 | pass |
-| tests/test_phase2_github_evidence.py | 10 | pass |
+| tests/test_phase2_github_evidence.py | 13 | pass |
 | tests/test_phase2_infrastructure.py | 37 | pass |
 | tests/test_phase2_lambda_package.py | 11 | pass |
 | tests/test_phase2_lineage_evidence.py | 12 | pass |
@@ -60,4 +60,4 @@ The test modules Phase 2 added, excluding the ones that invoke a gate or this ge
 | tests/test_phase2_submission.py | 91 | pass |
 | tests/test_phase2_submit_run_workflow.py | 104 | pass |
 
-**A green suite is not evidence that the path works.** Phase 1 shipped one over a workflow that could not complete a run, because every assertion compared the literal text of expressions rather than checking whether they named anything real. The counts above say the tests pass; `negative-case-matrix.md` says what they establish, which for nine of this phase's criteria is not the criterion.
+**A green suite is not evidence that the path works.** Phase 1 shipped one over a workflow that could not complete a run, because every assertion compared the literal text of expressions rather than checking whether they named anything real. The counts above say the tests pass; `negative-case-matrix.md` says what they establish, which for eight of this phase's criteria is not the criterion.
