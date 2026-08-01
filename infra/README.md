@@ -576,6 +576,25 @@ aws s3api put-object \
   --query VersionId --output text
 ```
 
+**`tools/release_lambda.py` does all three steps in one call, and should be preferred.**
+
+```bash
+uv run python tools/release_lambda.py            # both functions
+uv run python tools/release_lambda.py --dry-run  # digests only, uploads nothing
+```
+
+It builds, uploads, writes the version id and digest into both the release record and the
+template, and then runs the tripwire test with its exit code read directly. It releases both
+functions by default, because a config edit moves both digests. It uploads every zip before
+editing any file, because a record naming a zip that failed to upload is worse than no
+record — the tripwire would then pass against a lie.
+
+That tool exists because the manual version failed on 2026-08-01: a release was cut,
+recorded and pushed in one `&&` chain where a `pytest | tail` in the middle succeeded as a
+*command* while the test inside it failed, so the chain continued and `main` landed with a
+release record that did not describe the tree. The steps below are what it automates, kept
+because a tool that cannot run is not a procedure.
+
 Paste the version id it prints into `S3ObjectVersion` in
 `infra/admission-state-machine.yaml`, commit it, and let CI deploy. The build is
 deterministic, so re-running it on an unchanged tree produces the same bytes — if the
