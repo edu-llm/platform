@@ -17,9 +17,9 @@ uv run python tools/build_phase5_proof.py
 
 | measure | count |
 | --- | --- |
-| collected by pytest | 3819 |
-| executed (excluding tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py, tests/test_phase5_proof.py) | 3638 |
-| passed | 3638 |
+| collected by pytest | 3836 |
+| executed (excluding tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py, tests/test_phase5_proof.py) | 3655 |
+| passed | 3655 |
 | failed | 0 |
 | errored | 0 |
 | skipped | 0 |
@@ -31,9 +31,9 @@ Every test node id cited by the negative-case matrix, plus every test in the mod
 
 | measure | count |
 | --- | --- |
-| selected node ids | 91 |
-| executed | 91 |
-| passed | 91 |
+| selected node ids | 92 |
+| executed | 92 |
+| passed | 92 |
 | failed | 0 |
 | errored | 0 |
 | skipped | 0 |
@@ -48,6 +48,6 @@ The test modules Phase 5 added, excluding the ones that invoke a gate or this ge
 | tests/test_phase5_criteria.py | 10 | pass |
 | tests/test_phase5_infrastructure.py | 13 | pass |
 | tests/test_phase5_run_evidence.py | 18 | pass |
-| tests/test_phase5_team_isolation.py | 11 | pass |
+| tests/test_phase5_team_isolation.py | 12 | pass |
 
 **A green suite says nothing about whether anybody can use this.** That is the whole premise of the phase: every capability it measures was already technically possible and already covered by passing tests, while being unreachable by everybody except the person who wrote them. What changed is not the counts below -- it is that three of the runs behind `second-person-evidence.md` were submitted by somebody else.

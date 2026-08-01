@@ -6,7 +6,7 @@ This mapping is defined once, in `src/edullm_platform/phase5_criteria.py`. The a
 
 **The numbering is the migration document's eleven checks followed by four.** Criteria 1 to 11 are the checks the 2026-07-29 re-cut listed, in its order. Criteria 12 to 15 are what deriving a run's image from its declared commit owes over merely comparing the two, and they are appended rather than interleaved so that nothing already argued about had to be renumbered. Criterion 14 keeps its number after being rewritten, for the same reason.
 
-Verification run: 91 tests executed, 91 passed, 0 failed, 0 errored, pytest exit code 0.
+Verification run: 92 tests executed, 92 passed, 0 failed, 0 errored, pytest exit code 0.
 
 Three statuses exist and no more. **COVERED** means one or more cited tests prove the criterion as stated against the shipped configuration and all of them pass; the gate passes it. **DEFERRED** means an explicit recorded decision not to satisfy it yet, which requires both a written reason and a written trigger describing what makes it live again; the gate passes it. **GAP** is everything else, and the gate fails it. There is no in-between status, because an in-between status is what lets a gate be green and wrong at the same time.
 
