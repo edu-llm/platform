@@ -31,6 +31,7 @@ from edullm_platform.contracts.workload import WorkloadCatalog
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 GUIDE_PATH = PROJECT_ROOT / "GETTING-STARTED.md"
 WORKFLOW_PATH = PROJECT_ROOT / ".github" / "workflows" / "submit-run.yml"
+GPU_ROLES_PATH = PROJECT_ROOT / "infra" / "iam" / "batch-gpu-roles.yaml"
 
 
 @pytest.fixture(scope="module")
@@ -163,6 +164,80 @@ def test_the_guide_leads_with_the_command_a_researcher_copies(guide: str) -> Non
         "the guide explains the traps before it gives the command to run, which is the "
         "order somebody skimming at two in the morning reads exactly backwards"
     )
+
+
+def workload_role_actions() -> set[str]:
+    """Every action the GPU workload role grants, flattened out of the template."""
+    parsed: dict[str, Any] = yaml.safe_load(GPU_ROLES_PATH.read_text(encoding="utf-8"))
+    role = parsed["Resources"]["BatchGpuWorkloadRole"]["Properties"]
+    granted: set[str] = set()
+    for policy in role["Policies"]:
+        for statement in policy["PolicyDocument"]["Statement"]:
+            if statement.get("Effect") != "Allow":
+                continue
+            action = statement.get("Action", [])
+            granted |= {action} if isinstance(action, str) else set(action)
+    return granted
+
+
+def test_the_prune_trap_is_named_and_the_grant_it_assumes_is_still_absent(guide: str) -> None:
+    """Mutation: grant the workload role a delete, and leave the guide saying it has none.
+
+    OLMo-core keeps the last three checkpoints and deletes the rest, so the fourth write
+    is the one that calls ``s3:DeleteObject``. The role does not hold it, which turns a
+    default nobody chose into a failure eleven hours into a twelve-hour run.
+
+    The guide's advice is to keep every checkpoint, and the reason it gives is that the
+    role has no delete. Both halves are asserted, because the advice outliving its reason
+    is how a document starts lying while every sentence in it still reads true.
+    """
+    assert "max_checkpoints" in guide, (
+        "the guide no longer names the setting that stops OLMo-core pruning"
+    )
+    assert "max_checkpoints=null" in guide, (
+        "the guide names the setting without giving the value that disables the prune"
+    )
+
+    granted = workload_role_actions()
+    deletes = {action for action in granted if "Delete" in action}
+
+    assert not deletes, (
+        f"the GPU workload role now grants {sorted(deletes)}, so the guide's reason for "
+        "keeping every checkpoint is no longer true. Either withdraw the grant or rewrite "
+        "the paragraph, but do not leave the two disagreeing"
+    )
+
+
+def test_the_evaluator_trap_names_both_callbacks(guide: str) -> None:
+    """Mutation: name one evaluator and leave the other on.
+
+    The example's ``lm_evaluator`` fetches a ``.csv.gz`` metadata file that is not served
+    over HTTP, and it fails while the trainer is still being built rather than at the first
+    eval interval. ``downstream_evaluator`` fails the same way for the same reason, so a
+    guide that disables one of the two sends the reader back to an identical crash with the
+    obvious fix already applied, which is the worst place to leave somebody.
+
+    The worked command is asserted separately from the prose. A trap explained in a
+    paragraph and missing from the line people paste is a trap that is still set.
+    """
+    for callback in ("lm_evaluator", "downstream_evaluator"):
+        assert f"trainer.callbacks.{callback}.enabled=false" in guide, (
+            f"the guide does not tell a reader to disable {callback}"
+        )
+
+    # The example is named in prose as well as in the command, so the command is picked out
+    # by the `bash -lc` wrapper rather than by the script path alone.
+    worked = [
+        line
+        for line in guide.splitlines()
+        if "src/examples/llm/train.py" in line and "bash -lc" in line
+    ]
+    assert worked, "the guide no longer carries a worked command for the OLMo-core example"
+    for callback in ("lm_evaluator", "downstream_evaluator"):
+        assert all(f"trainer.callbacks.{callback}.enabled=false" in line for line in worked), (
+            f"the guide's worked command does not disable {callback}, so somebody who "
+            "copies the command rather than reading the prose still hits it"
+        )
 
 
 def test_the_tmp_trap_is_named_wherever_the_guide_puts_it(guide: str) -> None:

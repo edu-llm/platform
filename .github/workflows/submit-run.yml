@@ -39,12 +39,16 @@ on:
           - olmo-core-check-gpu
           - olmo-core-train-1gpu
       dataset_release:
-        description: "Which prepared dataset this run reads. Pick none unless you are reading one — a quick check reads nothing, and saying none is what makes the record true. regmix-10b-v1 is a published 40 GB corpus you can read but cannot write."
+        description: "Which prepared dataset this run reads. Pick none unless you are reading one — a quick check reads nothing, and saying none is what makes the record true. All five corpora are published and read-only, from 5.5B tokens up to 157B."
         required: true
         type: choice
         options:
           - none
           - regmix-10b-v1
+          - refhq-regmix-5p5b-v2
+          - olmo-original-30b-v1
+          - olmo-127b-v1
+          - olmo-150b-dolma2-v1
       team:
         description: "Your group, lower-case with hyphens, such as memory-split. It records whose work this is and points the request at a lead. Any lead may approve any run, so a typo here delays nothing."
         required: true
