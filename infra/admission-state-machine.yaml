@@ -184,7 +184,16 @@ Resources:
       # that treats absence as a default. `approver` is enumerated for exactly that
       # reason -- the handler treats it as optional and the submitting workflow always
       # sends it, so an execution without one is a hand-started execution that should stop
-      # here rather than record an approval nobody gave.
+      # here rather than record an approval nobody gave. `experiment` is enumerated for
+      # the same reason and was very nearly missed: the workflow assembled it into the
+      # request and the handler read it with `.get`, so leaving it off this list dropped
+      # it in silence -- every run would have grouped under no experiment at all, and no
+      # test would have said so, because the handler tests build their own event.
+      #
+      # That near-miss is what
+      # tests/test_phase2_admission_handler.py::test_every_event_field_the_handler_reads_is_a_field_this_payload_sends
+      # exists to stop. It reads the field names out of the handler source and out of this
+      # block and compares them, so a field added on either side without the other fails.
       #
       # The three new states, and what each is for -- with a fourth,
       # RegisterJobDefinition, added after this phase and listed below in the order the
@@ -450,6 +459,7 @@ Resources:
                     "approving_environment.$": "$.approving_environment",
                     "approved_manifest_sha256.$": "$.approved_manifest_sha256",
                     "manifest.$": "$.manifest",
+                    "experiment.$": "$.experiment",
                     "workflow_run.$": "$.workflow_run",
                     "ecr_repository.$": "$.ecr_repository",
                     "image_scan.$": "$.image_scan"
