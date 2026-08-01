@@ -778,6 +778,14 @@ def test_the_queue_view_answers_the_question_a_single_run_report_cannot() -> Non
     assert "sbsandbox-intern-edullm-gpu" in queues["run"]
     assert "sbsandbox-intern-edullm-cpu" in queues["run"]
 
+    # And it reaches the log, not only the step summary. The summary renders in the web UI
+    # and there is no API for it, so a bare redirect makes this step read as empty to anybody
+    # reading the run through the CLI -- which is how it was read the first time.
+    assert ">> \"${GITHUB_STEP_SUMMARY}\"" not in queues["run"], (
+        "write through tee so the rows are in the log as well as the summary"
+    )
+    assert "tee -a" in queues["run"]
+
     # And the per-run report must not also fire on the sentinel, which is not a run id and
     # would fail its own format check.
     reporting = next(entry for entry in steps if "Say what one run is doing" in entry.get("name", ""))
