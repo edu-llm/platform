@@ -17,13 +17,13 @@ uv run python tools/build_phase0_proof.py
 
 | measure | count |
 | --- | --- |
-| collected by pytest | 4087 |
-| executed (excluding tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py, tests/test_phase5_proof.py) | 3894 |
-| passed | 3894 |
-| failed | 0 |
+| collected by pytest | 4169 |
+| executed (excluding tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py, tests/test_phase5_proof.py) | 3976 |
+| passed | 3972 |
+| failed | 4 |
 | errored | 0 |
 | skipped | 0 |
-| pytest exit code | 0 |
+| pytest exit code | 1 |
 
 ## Targeted verification run
 

@@ -141,6 +141,18 @@
       "title": "Completed At",
       "type": "string"
     },
+    "exit_code": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Exit Code"
+    },
     "outcome": {
       "$ref": "#/$defs/AttemptTerminalState"
     },

@@ -40,6 +40,7 @@ from edullm_platform.contracts.lifecycle import (
     new_event_id,
 )
 from edullm_platform.contracts.manifest import RunManifest
+from edullm_platform.contracts.results import ResultManifest
 from edullm_platform.contracts.vocabulary import RetentionClass
 from edullm_platform.execution import batch_submit_request
 from edullm_platform.lifecycle_handler import (
@@ -411,17 +412,14 @@ def test_the_prefix_recorded_is_the_prefix_the_container_was_handed() -> None:
         job_definition=target.job_definition_arn,
     )
     told = {
-        entry["Name"]: entry["Value"]
-        for entry in submitted["ContainerOverrides"]["Environment"]
+        entry["Name"]: entry["Value"] for entry in submitted["ContainerOverrides"]["Environment"]
     }[OUTPUT_PREFIX_VARIABLE]
 
     # The submitter's own event, carrying exactly what the submitter's own request sends.
     # Comparing the projection against a constant would prove the projection self
     # consistent; comparing it against the request is what holds the two modules together.
     delivered = detail("SUCCEEDED", attempts=[attempt_block()])
-    delivered["container"] = {
-        "environment": [{"name": OUTPUT_PREFIX_VARIABLE, "value": told}]
-    }
+    delivered["container"] = {"environment": [{"name": OUTPUT_PREFIX_VARIABLE, "value": told}]}
     projected = project_batch_state_change(
         eventbridge_event_id=EVENTBRIDGE_EVENT_ID,
         detail=delivered,
@@ -897,3 +895,83 @@ def test_an_event_that_is_not_an_sqs_batch_is_refused() -> None:
     """
     with pytest.raises(LifecycleEventError):
         handler(envelope("RUNNING", attempts=[]), store=RecordingStore())
+
+
+def test_the_result_says_what_the_container_returned() -> None:
+    """How a run failed, in the only record that outlives the job.
+
+    ``outcome`` carries ``failed`` and nothing else, so a program that raised, one killed
+    for running out of memory and one whose machine went away all read the same. Batch
+    stops listing a job some days after it ends, so by the time anybody asks, this record
+    is the only place the exit code could have been.
+    """
+    projected = project("FAILED", attempts=[attempt_block(container={"exitCode": 137})])
+
+    assert projected.result is not None
+    assert projected.result.exit_code == 137
+
+
+def test_a_host_that_went_away_records_no_exit_code_rather_than_zero() -> None:
+    """Mutation: default the missing code to zero.
+
+    A reclaimed host leaves no exit code because there was no exit. Zero is the one value
+    that must not stand in for it: it is what a clean finish looks like, and this is the
+    record somebody reads to find out why a twelve-hour run ended.
+    """
+    reclaimed = attempt_block(container={"taskArn": "arn:aws:ecs:us-east-1:123456789012:task/x"})
+
+    projected = project("FAILED", attempts=[reclaimed])
+
+    assert projected.result is not None
+    assert projected.result.exit_code is None
+
+
+def test_the_exit_code_comes_from_the_attempt_rather_than_the_job() -> None:
+    """Mutation: read the job-level container instead.
+
+    Both carry a container in the published schema. On a retried job the job-level one
+    describes whichever attempt Batch last folded up, so reading it would attribute one
+    attempt's exit to another, and the record joins to an attempt id that says otherwise.
+    """
+    retried = detail(
+        "FAILED",
+        attempts=[
+            attempt_block(container={"exitCode": 1}),
+            attempt_block(container={"exitCode": 42}),
+        ],
+    )
+    retried["container"] = dict(retried["container"], exitCode=1)
+
+    projected = project_batch_state_change(
+        eventbridge_event_id=EVENTBRIDGE_EVENT_ID,
+        detail=retried,
+        occurred_at=OCCURRED_AT_INSTANT,
+    )
+
+    assert projected.result is not None
+    assert projected.result.exit_code == 42
+
+
+def test_a_boolean_is_not_read_as_an_exit_code() -> None:
+    """``True`` is an ``int`` in Python and would land in an immutable record as ``1``."""
+    projected = project("FAILED", attempts=[attempt_block(container={"exitCode": True})])
+
+    assert projected.result is not None
+    assert projected.result.exit_code is None
+
+
+def test_a_result_written_before_the_field_existed_still_parses() -> None:
+    """Every stored result record carries no exit code, and they cannot be rewritten."""
+    stored = {
+        "attempt_id": "att_019fa731-1b33-72a4-aec8-6b19c7cff944",
+        "checkpoints": [],
+        "completed_at": "2026-07-28T05:27:21.355000Z",
+        "outcome": "succeeded",
+        "output_prefixes": ["s3://sbsandbox-intern-edullm-outputs/teams/platform/runs/x/"],
+        "retention_class": "standard",
+        "run_id": "run_019fa72b-f164-70cb-b7ee-2a8ef318437c",
+        "schema_version": 1,
+        "wandb_run": None,
+    }
+
+    assert ResultManifest.model_validate(stored).exit_code is None
