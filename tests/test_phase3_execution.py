@@ -1084,8 +1084,8 @@ def test_the_image_is_pulled_from_the_repository_whose_scan_admission_read() -> 
     A digest identifies bytes and a repository is where those bytes are indexed, so the two
     references are only the same image because the repository is the same. The agreement
     used to be between a Python constant and a literal in an ASL template with nothing
-    connecting them, which is why it was asserted rather than assumed. Phase 6 connected one
-    end: the scan is read from ``$.ecr_repository``, which the submitting workflow fills out
+    connecting them, which is why it was asserted rather than assumed. The registry lookup
+    connected one end: the scan is read from ``$.ecr_repository``, which the workflow fills out
     of the registry. So the comparison moves to the registry, which is now the thing both
     sides have to agree with, and it is made for every submittable repository rather than
     for the one this constant happens to name.
@@ -1104,7 +1104,7 @@ def test_the_image_is_pulled_from_the_repository_whose_scan_admission_read() -> 
 
     # The scan is read from whatever the request carries, and what the request carries is
     # the registered name -- asserted against the submitting workflow in
-    # tests/test_phase6_infrastructure.py and against the registry in the handler. So the
+    # tests/test_image_scan_repository.py and against the registry in the handler. So the
     # repository this pulls from has to be a registered one for the seam to hold.
     assert parameters["RepositoryName.$"] == "$.ecr_repository"
     assert PUBLISHED_IMAGE_REPOSITORY in set(submittable_ecr_repositories().values())
@@ -1141,7 +1141,7 @@ def test_admission_can_read_a_scan_for_every_submittable_repository() -> None:
     """Reads the state machine against the registry. Mutation: pin any submittable
     repository's ECR repository back as a literal ``RepositoryName``.
 
-    THIS TEST ASKED FOR A FIX AND PHASE 6 MADE IT, so what it checks has changed shape and
+    THIS TEST ASKED FOR A FIX AND GOT IT, so what it checks has changed shape and
     the history is worth keeping. It used to compare a literal against the set of
     repositories a submission can name, and it stayed green only because that set had one
     member. The literal is gone: ``RepositoryName.$`` reads ``$.ecr_repository``, which the

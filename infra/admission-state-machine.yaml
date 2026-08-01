@@ -218,12 +218,12 @@ Resources:
       #
       #                   WHICH repository it reads from is `$.ecr_repository`, supplied by
       #                   the submitting workflow out of config/repositories.yaml. It was a
-      #                   literal until Phase 6, which was correct while one registered
-      #                   repository had a workload profile and silently wrong the moment a
-      #                   second did: the scan for a submission naming the second would be
-      #                   read from the first, come back ImageNotFoundException, take the
-      #                   catch below, and deny the run for findings nobody had reviewed --
-      #                   a true sentence about an image this state never looked at, after
+      #                   literal until this lookup replaced it, which was correct while one
+      #                   registered repository had a workload profile and silently wrong the
+      #                   moment a second did: the scan for a submission naming the second
+      #                   would be read from the first, come back ImageNotFoundException, take
+      #                   the catch below, and deny the run for findings nobody had reviewed
+      #                   -- a true sentence about an image this state never looked at, after
       #                   the lead had approved it. It cannot be computed here. This is the
       #                   first state, so the validator has not run and nothing in scope can
       #                   read the registry, and the mapping is not derivable anyway

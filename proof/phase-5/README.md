@@ -2,8 +2,8 @@
 
 Phase: phase-5
 Bundle schema version: 1
-Source commit: dd5c6eb50c0f07f9ff7c616fe91d99b3e0f5ef40
-Generated: 2026-08-01T07:35:08+00:00
+Source commit: 4d35878d2ad323849cc74bda76b93d12463462be
+Generated: 2026-08-01T16:33:42+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 5 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase5_proof.py` at generation time. No criterion is a gap and the gate is green, and criterion 6 is deferred rather than covered -- a recorded decision not to satisfy it yet, which passes the gate without anybody having observed it. Read that entry in `negative-case-matrix.md` first: it carries the reason and the trigger, and the Known limitations below say what this phase does not establish.
 
@@ -11,7 +11,7 @@ This bundle exists so that a reviewer can decide whether Phase 5 is done without
 
 **What this bundle does not establish is larger than its one outstanding check, and the gate being green does not shrink it.** Every one of the three runs went to the CPU profile carrying a print statement, so nothing here was trained, no checkpoint was written and no GPU was touched. What was established is that the two-person path completes, which is what the phase is named after and what had never happened. It is not evidence that this platform carries a research workload for somebody who did not build it.
 
-The one check that is outstanding is a different kind of open from every other in this repository. The others are captures nobody has taken. This one wants a GPU run claiming a team other than `platform` and writing a checkpoint, and each of those three works and has been exercised separately -- so it closes on one submission rather than on any work. Its observation moved to Phase 6's closeout on 2026-07-31 and still closes this phase's gate rather than that one's, which is why the verdict below is green while the phase is not finished. The Result table says which check, and `negative-case-matrix.md` carries the reason and the trigger.
+The one check that is outstanding is a different kind of open from every other in this repository. The others are captures nobody has taken. This one wants a GPU run claiming a team other than `platform` and writing a checkpoint, and each of those three works and has been exercised separately -- so it closes on one submission rather than on any work. Its observation moved to the closeout campaign on 2026-07-31 and still closes this phase's gate rather than the campaign's own, which is why the verdict below is green while the phase is not finished. The Result table says which check, and `negative-case-matrix.md` carries the reason and the trigger.
 
 ## Contents
 
@@ -28,10 +28,10 @@ The one check that is outstanding is a different kind of open from every other i
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3923 |
-| suite tests executed | 3730 |
-| suite passed | 3728 |
-| suite failed | 2 |
+| suite tests collected | 4099 |
+| suite tests executed | 3906 |
+| suite passed | 3905 |
+| suite failed | 1 |
 | suite errored | 0 |
 | suite skipped | 0 |
 | matrix node ids executed | 93 |
@@ -71,10 +71,10 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | --- | --- |
 | .github/CODEOWNERS | sha256:defc3ec7e43f5dc70f137ff21566d23e3d961355fbc871467e3676c9ab651df4 |
 | .github/workflows/build-research-image.yml | sha256:f39972c4da20a63b3fd0f725ccaf521dd893d94c4d72d6f376456e081223e122 |
-| .github/workflows/submit-run.yml | sha256:9d5befa5f1b4ed558f9591206029bbeba8f5e85ddd8166d929cf4a6ed1b5f4c6 |
-| README.md | sha256:1e5612ac908f1728593a8d413875f1988d3ee73a1fc3fe380d6892359a304949 |
+| .github/workflows/submit-run.yml | sha256:66f0ed1797799a83938974a6328a237e0d55e81538771062de5b83ca8c06c4cb |
+| README.md | sha256:024fade809e749f1a33a1a23cc588e4617bba209dc1e50b829ac853adf69fc8e |
 | config/image-exceptions.yaml | sha256:0828f4203385bbc3adbd8521f62768e7f4eb46f56382bc6223d37b89aae7a49c |
-| config/organization.yaml | sha256:cea2d2123d2fb5794614e6a4b8a362c8aaa33626f20ae28a13cb673fadf4ac78 |
+| config/organization.yaml | sha256:b78c80269ffbf2fffeb034b4967dbbe232879614b1b51ea0f6cc5874cdb32131 |
 | fixtures/evidence/phase-5/branch-protection.sanitized.json | sha256:99a949fb3cae169e5b77cc53661e660410928552213615314bab97ec83100ef5 |
 | fixtures/evidence/phase-5/published-image.sanitized.json | sha256:65f9b7ef2f121541a121944641c51d5e3548675b9da58f15e5aa2dee2d313d37 |
 | src/edullm_platform/image_resolution.py | sha256:0bd11cece57c91d6d82680dbffb1e959dade2ea9f60094a5a1a747accbf554fd |
@@ -83,9 +83,9 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 
 - Everything about people here rests on three runs by one submitter on one day. That is enough to establish that the two-person path completes, which is the thing that had never been established; it is not a sample from which anything about how the platform behaves for a second, third or tenth person follows.
 - The cohort is three and two of them are leads, who authorize their own routine runs by design. So the only person in it whose submission needs releasing by somebody else at all is the one non-lead, and check 2 -- covered -- rests entirely on him. If he had dropped out the phase would have lost its point rather than a participant, and the correct response would have been to seat another non-lead rather than to record the criterion closed by self-authorization.
-- Check 6 is deferred, which passes the gate and proves nothing. All three runs went to the CPU profile carrying a print statement and two W&B calls, so no pilot run has trained anything, written a checkpoint, or touched a GPU -- and that is the largest thing this bundle does not establish. The deferral moved the observation to Phase 6's closeout, where it still closes this phase's gate; it did not make the observation less necessary, and a reader who takes the green verdict for a research workload having run is reading it wrong.
+- Check 6 is deferred, which passes the gate and proves nothing. All three runs went to the CPU profile carrying a print statement and two W&B calls, so no pilot run has trained anything, written a checkpoint, or touched a GPU -- and that is the largest thing this bundle does not establish. The deferral moved the observation to the closeout campaign, where it still closes this phase's gate; it did not make the observation less necessary, and a reader who takes the green verdict for a research workload having run is reading it wrong.
 - No CPU run could reach Weights and Biases while these three ran. `CONTAINER_SHAPES['cpu-32vcpu']` declared `secrets=()` while `gpu-1xa10g` named the W&B secret, so the third pilot run's command failed on `No API key configured`. Check 8 is covered on what the submitter is told, which was honest and, on that profile and that day, pointed at a project nothing could write to. The gap is closed -- both profiles now carry the same secrets -- so what these runs demonstrate about W&B is the defect rather than the remedy.
-- The result manifest names no W&B run for any of these, because `lifecycle_projection` hardcodes `wandb_run=None` on every one it writes. That is Phase 7 item 7.4 and it is asserted rather than worked around, so the day it changes a test fails and this sentence gets reread.
+- The result manifest names no W&B run for any of these, because `lifecycle_projection` hardcodes `wandb_run=None` on every one it writes. Recording the run in lineage is unbuilt, and the current behaviour is asserted rather than worked around, so the day it changes a test fails and this sentence gets reread.
 - Check 7 is covered against the workflow rather than against a refusal somebody received, which is one step weaker. No pilot submission has been refused on its merits: the two failed dispatches were a tool invoked without a required argument and a container that could not start, and neither is a refusal. What is asserted is what the workflow does with a refusal it is given.
 - The branch-protection record expires thirty days after it was observed, and the cited tests fail once it does. Nothing about the runs will have changed on that date -- every lineage object is in a write-once store -- and what will have lapsed is anybody's knowledge of how the repository is configured. That is the window working rather than a defect.
 - `enforce_admins` is off, so the three admins may merge a workflow change without a code-owner review. Check 10 says `a member` for that reason and the captured record carries the field, but a reader should not leave this bundle believing the control binds everybody.

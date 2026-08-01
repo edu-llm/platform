@@ -619,8 +619,8 @@ def test_a_submission_naming_a_repository_nothing_registers_is_refused_before_a_
     registers is refused for naming a profile that belongs to a different one, and the
     registry is never consulted. ``dolma`` is the only name that gets there, because it is
     the one repository with a workload profile in config/workload-catalog.yaml and no entry
-    in config/repositories.yaml. Registering it -- which Phase 6 does -- takes this path out
-    of reach, and this test with it.
+    in config/repositories.yaml. Registering it takes this path out of reach, and this test
+    with it.
     """
     with pytest.raises(SubmissionRefusedError) as exc_info:
         compile_payload(cpu_payload(repository="dolma", workload_profile=DOLMA_WORKLOAD))

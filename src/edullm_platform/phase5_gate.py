@@ -15,7 +15,7 @@ reading slowly.** Fourteen of fifteen are covered and the fifteenth is deferred.
 wants a GPU run under a team other than ``platform`` writing a checkpoint, and it is
 outstanding for want of a submission rather than for want of a mechanism: the three pilot
 runs all went to the CPU profile carrying a print statement and none of them wrote a
-checkpoint. The observation moved to Phase 6's closeout on 2026-07-31, where it still
+checkpoint. The observation moved to the closeout campaign on 2026-07-31, where it still
 carries this phase's gate; ``phase5_criteria`` argues the move where a reader of the gate's
 output will see it.
 
