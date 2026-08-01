@@ -416,12 +416,13 @@ name the stack instead, but the guard is a better message rather than a substitu
 
 **Its authorisation is in the workflow rather than in the policy, and that is forced rather
 than chosen.** A trust policy cannot see who dispatched a workflow — every dispatch of a
-file presents the same `sub` — and Batch has no condition key for a job's tags on
-`TerminateJob`. So the role can stop any job on either queue, and the check that it is the
-caller's own run is a step in `cancel-run.yml`. What bounds that is the role's shape: it
-describes jobs and stops them and reaches nothing else in the account, so the worst a
-bypass achieves is stopping runs. The role's trust names that one workflow file, so a job
-that could skip the check has to be added beside the check.
+file presents the same `sub`. The job's `edullm:submitter` tag is readable through
+`aws:ResourceTag`, and there is nothing to compare it against, because the identity in hand
+is the workflow rather than the person who ran it. So the role can stop any run this
+platform submitted, and the check that it is the caller's own is a step in `cancel-run.yml`.
+What bounds that is the role's shape: it describes jobs and stops them and reaches nothing
+else in the account, so the worst a bypass achieves is stopping runs. The role's trust names
+that one workflow file, so a job that could skip the check has to be added beside the check.
 
 Same rule as Phases 2 and 3: **every laptop stack goes before every CI stack**. Here it is
 not enforced by CloudFormation at all — the comment immediately above the *Deploy Phase 4 GPU
@@ -494,19 +495,32 @@ one IAM stack* above, with `sbsandbox-intern-edullm-run-canceller-iam` as the st
 the same sitting: a deploy without the variable leaves `cancel-run.yml` refusing at its own
 guard, which reads as a broken workflow rather than as half a step.
 
-**The queue condition was verified by stopping a job, not by reading the template back, and
-the reason is a limit of the simulator worth knowing before the next role.**
-`iam simulate-principal-policy` accepts no `arn` context key type, and an `ArnEquals`
-condition does not match a value supplied as a `string` — so it answers `implicitDeny` for
-`batch:TerminateJob` on either queue, for a grant that works. Read alone that is a false
-report of a broken role.
+**Verified by stopping a real job, and nothing weaker would have done.** The template
+reviewed fine, the deploy reported `CREATE_COMPLETE`, the role read back byte-identical to
+what was committed, every test in the repository was green — and `batch:TerminateJob` was
+refused, because its `ArnEquals` on `batch:JobQueue` could never be satisfied. `TerminateJob`
+takes a job id and a reason and nothing else, so the queue is never in the request context.
+The role described and listed and could not stop anything.
 
-What the simulator does settle is the rest of the shape, and it was used for that:
-`batch:DescribeJobs` and `batch:ListJobs` allowed, and `batch:SubmitJob`,
-`batch:RegisterJobDefinition`, `states:StartExecution` and `s3:GetObject` all implicit
-denies. The condition itself was then measured the only way left — a CPU run submitted for
-the purpose, `cancel-run.yml` dispatched against it in both modes, and the termination read
-back off the job.
+**Two things hid it, and both are worth carrying to the next role.** The denial reads
+`no identity-based policy allows the batch:TerminateJob action`, which names a missing grant
+rather than a condition that cannot match — so the message points at the statement that is
+present and correct. And `iam simulate-principal-policy` does not separate the two either:
+it accepts no `arn` context key type, so an `ArnEquals` is unsatisfiable in the simulator as
+well, and it answers `implicitDeny` for grants that do work. A simulator run alone is
+therefore evidence about the actions and not about their conditions.
+
+The grant is now conditioned on `aws:ResourceTag/edullm:run-id` matching `run_*`, which is
+the condition key Batch does offer on a job, and which selects the jobs this platform
+submitted rather than the queues it created. `infra/iam/run-canceller-role.yaml` carries the
+argument beside the statement.
+
+The simulator was still used, for the half it does settle: `batch:DescribeJobs` and
+`batch:ListJobs` allowed, and `batch:SubmitJob`, `batch:RegisterJobDefinition`,
+`states:StartExecution` and `s3:GetObject` all implicit denies. The rest was measured by
+submitting a CPU run for the purpose, dispatching `cancel-run.yml` against it in both modes,
+and reading the termination back off the job — `statusReason` naming the actor and the
+reason, which is what `lifecycle_projection` reads to tell a cancellation from a failure.
 
 ### Stack 5: the nightly reader role, deployed 2026-08-01
 

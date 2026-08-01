@@ -34,10 +34,26 @@ is worth having. This runs from a laptop or from the nightly workflow against cr
 that already exist, answers the same question, and is what the person triaging a cohort's
 first week actually needs.
 
-**What it cannot tell you.** A run still going has not written its first checkpoint yet, and
-a run that failed before its first interval never would have. Neither is distinguished here
-from a run that finished and saved nothing, because the intent record does not say which
-happened; the state of the prefix is what this reports.
+**IT ASKS ABOUT RUNS THE PLATFORM RECORDED AS A SUCCESS, WHICH IS THE CASE IT NAMES ABOVE.**
+An intent record says what a run was submitted as and nothing about how it ended, so reading
+intents alone this could not tell a run that finished and saved nothing from one that never
+reached its first interval. That is not a small gap. Fifteen runs carried a contract, one
+finished, and the other fourteen were reported every night as though the checkpointer had
+failed them. It had not: they died at ``wandb.init()``, in the checkpointer's own teardown,
+and on an evaluator fetching a file that is not served. Every one of those is recorded as a
+failure already, with an exit code, and repeating it here says nothing new while burying the
+run that does.
+
+So the result records scope the question. A run recorded as ``failed`` is listed and not
+judged, and so is one with no result record yet, because it has not finished. This is not
+the same as trusting the record: the outcome decides *whether to ask*, and the prefix still
+decides the answer. A run recorded as a success is read exactly as before, which is the
+whole point, since a success that saved nothing is the failure nothing else reports.
+
+**Without the result records it behaves as it did.** They are a separate prefix in the
+lineage bucket and the nightly reader role does not hold it yet, so when no ``result/`` tree
+is present every contracted run is judged, as before. Nothing is silently let through by a
+sync that did not happen.
 """
 
 from __future__ import annotations
@@ -66,7 +82,8 @@ from edullm_platform.checkpoints import (
 )
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.admission import IntentRecord
-from edullm_platform.contracts.results import output_prefix
+from edullm_platform.contracts.lifecycle import AttemptTerminalState
+from edullm_platform.contracts.results import ResultManifest, output_prefix
 from edullm_platform.contracts.workload import WorkloadCatalog
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -222,6 +239,25 @@ class RunCheckpointState:
     objects: int
     state: CheckpointState
     detail: str
+    #: What the run's result record says it ended as, or ``None`` for a run with no result
+    #: record. ``None`` also covers the case where no result records were read at all.
+    outcome: AttemptTerminalState | None = None
+    #: Whether the outcome above was looked for. False means no ``result/`` tree was present,
+    #: which is not the same as a run having no result record, and the two must not be
+    #: collapsed: one is an absent permission and the other is a run that has not finished.
+    outcome_known: bool = False
+
+    @property
+    def judged(self) -> bool:
+        """Whether this run's prefix is held against it.
+
+        A run is judged when the platform recorded it as a success, which is the state this
+        report exists to contradict. With no result records read at all, every run is judged,
+        because a report that quietly stopped asking would be the failure it looks for.
+        """
+        if not self.outcome_known:
+            return True
+        return self.outcome is AttemptTerminalState.SUCCEEDED
 
     @property
     def saved_nothing(self) -> bool:
@@ -274,6 +310,37 @@ def _load_intents(directory: Path) -> list[IntentRecord]:
     return records
 
 
+def _load_outcomes(directory: Path) -> dict[str, AttemptTerminalState] | None:
+    """How each run ended, or ``None`` when the result records were not read at all.
+
+    ``None`` rather than an empty mapping, because the two mean opposite things. An empty
+    mapping is "these runs finished and none of them succeeded"; ``None`` is "nobody looked",
+    and a report that treated the second as the first would pass every night by knowing less.
+    """
+    root = directory / "result"
+    if not root.is_dir():
+        return None
+    outcomes: dict[str, AttemptTerminalState] = {}
+    for path in sorted(root.rglob("*.json")):
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except ValueError as error:
+            raise ReportInputError(f"{path} is not readable JSON: {error}") from error
+        if isinstance(loaded, str):
+            loaded = json.loads(loaded)
+        if not isinstance(loaded, dict):
+            continue
+        try:
+            record = ResultManifest.model_validate(loaded)
+        except ValueError:
+            # Left out rather than guessed at. A result this tree cannot read says nothing
+            # about how the run ended, and the run stays unjudged, which is the safe way to
+            # be wrong here: it is listed and reported on, just not held against the build.
+            continue
+        outcomes[record.run_id] = AttemptTerminalState(record.outcome)
+    return outcomes
+
+
 def _objects_under(store: CheckpointStore, prefix: str) -> int:
     location = urlparse(prefix)
     answer = store.list_objects_v2(Bucket=location.netloc, Prefix=location.path.lstrip("/"))
@@ -287,12 +354,16 @@ def checkpoint_states(
     store: CheckpointStore | None = None,
     profile: str | None = None,
     region: str | None = None,
+    outcomes: Mapping[str, AttemptTerminalState] | None = None,
 ) -> list[RunCheckpointState]:
     """One entry per run whose profile promised checkpoints, newest last.
 
     Runs whose profile carries no checkpoint contract are skipped rather than reported as
     saving nothing, because for them that is the correct outcome and mixing the two would
     make the report noise.
+
+    ``outcomes`` scopes which of them are judged rather than which appear. Every contracted
+    run is still inspected and still listed, so nothing leaves the report by ending badly.
     """
     reader = store if store is not None else CommandLineObjectStore(profile=profile, region=region)
     known = {workload.name for workload in catalog.workloads}
@@ -323,6 +394,8 @@ def checkpoint_states(
                 objects=_objects_under(reader, prefix),
                 state=inspected.state,
                 detail=inspected.detail,
+                outcome=None if outcomes is None else outcomes.get(record.run_id),
+                outcome_known=outcomes is not None,
             )
         )
     if retired:
@@ -342,14 +415,22 @@ def render(states: Sequence[RunCheckpointState]) -> str:
             "so there is nothing here to be wrong.\n"
         )
 
-    silent = [state for state in states if state.saved_nothing]
-    unloadable = [state for state in states if state.wrote_something_unloadable]
-    loadable = [state for state in states if state.is_loadable]
+    judged = [state for state in states if state.judged]
+    unjudged = [state for state in states if not state.judged]
+    silent = [state for state in judged if state.saved_nothing]
+    unloadable = [state for state in judged if state.wrote_something_unloadable]
+    loadable = [state for state in judged if state.is_loadable]
     headline = (
         f"{len(states)} run(s) were submitted under a profile carrying a checkpoint "
-        f"contract. {len(silent)} wrote nothing, {len(unloadable)} wrote something no "
-        f"loader will accept, and {len(loadable)} can be resumed from."
+        f"contract. Of the {len(judged)} the platform recorded as finishing successfully, "
+        f"{len(silent)} wrote nothing, {len(unloadable)} wrote something no loader will "
+        f"accept, and {len(loadable)} can be resumed from."
     )
+    if unjudged:
+        headline += (
+            f" The other {len(unjudged)} did not finish successfully and are listed at the "
+            "end without being held against anything."
+        )
     lines = ["# Runs that promised a checkpoint", "", headline, ""]
 
     if silent:
@@ -407,6 +488,29 @@ def render(states: Sequence[RunCheckpointState]) -> str:
         ]
         lines.append("")
 
+    if unjudged:
+        explanation = (
+            "These never reached the state this report is about. A run the platform recorded "
+            "as failed has already said so, with an exit code, and one with no result record "
+            "has not finished. Neither is a checkpoint that went missing, and an empty prefix "
+            "under a run that died before its first interval is the expected shape."
+        )
+        lines += [
+            "## Not asked about",
+            "",
+            explanation,
+            "",
+            "| Run | Team | Recorded as | Objects |",
+            "| --- | --- | --- | --- |",
+        ]
+        lines += [
+            f"| `{state.run_id}` | {state.team} | "
+            f"{state.outcome.value if state.outcome else 'no result record'} | "
+            f"{state.objects} |"
+            for state in unjudged
+        ]
+        lines.append("")
+
     return "\n".join(lines)
 
 
@@ -429,9 +533,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     options = build_parser().parse_args(argv)
     try:
         records = _load_intents(options.lineage_root)
+        outcomes = _load_outcomes(options.lineage_root)
         catalog = load_yaml(options.config_dir / "workload-catalog.yaml", WorkloadCatalog)
         states = checkpoint_states(
-            records, catalog, profile=options.profile, region=options.region
+            records,
+            catalog,
+            profile=options.profile,
+            region=options.region,
+            outcomes=outcomes,
         )
     except ReportInputError as error:
         print(f"error: {error}", file=sys.stderr)
@@ -446,10 +555,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     # A non-zero exit so this can gate something without being rewritten. It is not an error
     # in the tool; it is the tool having found what it looks for. Both failing states count:
     # a run that wrote a fragment is no more resumable than one that wrote nothing, and the
-    # fragment is the one nothing else on the platform reports.
+    # fragment is the one nothing else on the platform reports. Only judged runs count, since
+    # a run that is recorded as having failed is one the platform already reported.
     return (
         EXIT_FOUND_SILENT_FAILURES
-        if any(not state.is_loadable for state in states)
+        if any(not state.is_loadable for state in states if state.judged)
         else 0
     )
 

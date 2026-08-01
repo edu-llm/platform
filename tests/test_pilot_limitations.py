@@ -20,8 +20,8 @@ left, and these replace them against the surface that now carries the facts.
 
 **Two phases have bought something with this file, and they bought it on different days.**
 Phase 5 criterion 11 is the three facts above arriving together, and Phase 5 criterion 6's
-deferral is the conditional GPU-checkpoint warning. Phase 4's criterion 9 transferred to
-Phase 8 in exchange for the queue paragraph, which was written against the README section
+deferral is the conditional GPU-checkpoint warning. Phase 4's criterion 9 transferred out of
+that phase in exchange for the queue paragraph, which was written against the README section
 hours before that section left; it is here instead, which is where the transfer's condition
 should have pointed in the first place.
 
@@ -158,12 +158,12 @@ def test_a_submitter_is_told_that_team_routes_approval_rather_than_granting_acce
 def test_a_submitter_is_told_a_queued_run_is_waiting_rather_than_lost() -> None:
     """Mutation: drop it, or say only that nobody is watching the queue.
 
-    **This is what Phase 4 criterion 9's transfer to Phase 8 is granted in exchange for.**
-    That criterion asked for a capacity failure to be surfaced without losing the run intent,
-    and "surfaced" has no mechanism behind it until Phase 8 builds the queue-wait detector.
-    A criterion blocked on another phase's mechanism holds this phase's gate red for work it
-    does not own, so it moved -- on the condition that what it protected is written where a
-    reader can act on it.
+    **This is what Phase 4 criterion 9's transfer out of that phase is granted in exchange
+    for.** That criterion asked for a capacity failure to be surfaced without losing the run
+    intent, and "surfaced" has no mechanism behind it until the queue-wait detector exists.
+    A criterion blocked on a mechanism its phase does not build holds that phase's gate red
+    for work it does not own, so it moved, on the condition that what it protected is written
+    where a reader can act on it.
 
     **The half already true is the half worth writing down, and the first attempt wrote it in
     the wrong place.** It went on the pilot limitations page, and that page left the README

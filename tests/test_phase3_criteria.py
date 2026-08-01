@@ -66,10 +66,11 @@ CRITERIA_THAT_DO_NOT_WAIT_FOR_A_DEPLOY = ("20", "22")
 #: captures expire.
 COVERED_ON_A_CAPTURED_RUN = ("1", "2", "3", "4", "8", "9", "15", "16", "17", "19", "21")
 
-#: The numbers no criterion carries. Cancellation moved to the phase that will build it,
-#: and the numbers were not reused, so a citation written against the old list still names
-#: what it named. Recorded here so that reinstating one is a change to this file too.
-MOVED_TO_A_LATER_PHASE = ("5", "6", "7")
+#: The numbers no criterion carries. Cancellation is owned beside the mechanism that will
+#: stop a job, and the numbers were not reused, so a citation written against the old list
+#: still names what it named. Recorded here so that reinstating one is a change to this file
+#: too.
+TRANSFERRED_OUT_OF_THIS_PHASE = ("5", "6", "7")
 
 #: The four that need a run aimed at them and no new infrastructure.
 NEEDING_A_RUN_AIMED_AT_THEM = ("10", "11", "12", "13")
@@ -90,7 +91,7 @@ def test_the_definition_lists_every_check_the_phase_plan_names() -> None:
     hole; this is what keeps it open.
     """
     specs = phase3_criteria()
-    expected = [str(n) for n in range(1, 23) if str(n) not in MOVED_TO_A_LATER_PHASE]
+    expected = [str(n) for n in range(1, 23) if str(n) not in TRANSFERRED_OUT_OF_THIS_PHASE]
 
     assert len(specs) == PHASE3_CRITERION_COUNT == 19
     assert [spec.number for spec in specs] == expected

@@ -84,12 +84,27 @@ def test_the_canceller_can_stop_a_job_and_do_nothing_else(role: dict[str, Any]) 
     assert granted == {"batch:DescribeJobs", "batch:ListJobs", "batch:TerminateJob"}
 
 
-def test_stopping_a_job_is_confined_to_this_platforms_two_queues(role: dict[str, Any]) -> None:
-    """Mutation: drop the queue condition, leaving TerminateJob on job/*.
+def test_stopping_a_job_is_confined_to_the_runs_this_platform_submitted(
+    role: dict[str, Any],
+) -> None:
+    """Mutation: drop the condition, leaving TerminateJob on job/*.
 
-    This is a shared sandbox account with other people's Batch estates in it. Without the
-    condition this role could stop anything anybody in the account is running, and the
-    workflow check above it only ever asks about runs this platform submitted.
+    This is a shared sandbox account with other people's Batch estates in it. Unconditioned,
+    this role could stop anything anybody in the account is running, and the workflow check
+    above it only ever asks about runs this platform submitted.
+
+    **The condition has to be one TerminateJob can actually satisfy, and the obvious one is
+    not.** Scoping by queue is the natural way to write "our jobs" and it cannot work here:
+    ``TerminateJob`` takes a job id and a reason, so ``batch:JobQueue`` is never in the
+    request context and an ``ArnEquals`` on it matches nothing. A role written that way is
+    refused with *no identity-based policy allows the batch:TerminateJob action* -- a message
+    that names the missing grant rather than the unsatisfiable condition -- and reads clean
+    in every template test, including this one as it used to be written.
+
+    So the shape is asserted rather than the queue names: exactly one statement, conditioned
+    on a resource tag, keyed on the one tag ``batch_submit_request`` sets unconditionally.
+    The value pattern is asserted too, because a bare presence check would accept a tag
+    somebody else writes under the same key.
     """
     terminate = [
         statement
@@ -101,12 +116,63 @@ def test_stopping_a_job_is_confined_to_this_platforms_two_queues(role: dict[str,
     ]
 
     assert len(terminate) == 1
-    queues = terminate[0]["Condition"]["ArnEquals"]["batch:JobQueue"]
-    rendered = [queue["Fn::Sub"] for queue in queues]
+    condition = terminate[0]["Condition"]
 
-    assert any("sbsandbox-intern-edullm-cpu" in queue for queue in rendered)
-    assert any("sbsandbox-intern-edullm-gpu" in queue for queue in rendered)
-    assert len(rendered) == 2
+    assert "ArnEquals" not in condition, (
+        "an ArnEquals here is almost certainly on batch:JobQueue, which TerminateJob never "
+        "supplies -- the role would describe and list and stop nothing"
+    )
+    assert condition == {"StringLike": {"aws:ResourceTag/edullm:run-id": "run_*"}}
+
+
+def test_the_tag_the_grant_keys_on_is_the_one_every_submission_sets(
+    role: dict[str, Any],
+) -> None:
+    """Reads BOTH the role and a submission. Mutation: rename the tag on either side.
+
+    Nothing else links the policy to the code that writes the tag it keys on. Rename it in
+    ``batch_submit_request`` and this role goes on deploying, reads back byte-identical to
+    its committed template, passes every other test in this file, and refuses every
+    termination -- reporting a missing grant rather than a tag that moved.
+
+    ``edullm:run-id`` rather than ``edullm:submitter`` or ``edullm:experiment``, and the
+    request below is built without either of those on purpose. Both are appended only when
+    there is a value, so a grant keyed on one of them would be unsatisfiable for exactly the
+    runs that record no submitter -- which are the runs nobody can be shown to own, and the
+    worst set to be unable to stop.
+    """
+    from fnmatch import fnmatchcase
+
+    from edullm_platform.execution import batch_submit_request
+    from tests.test_phase3_execution import RUN_ID, manifest, target
+
+    terminate = next(
+        statement
+        for policy in role["Policies"]
+        for statement in policy["PolicyDocument"]["Statement"]
+        if "batch:TerminateJob" in (
+            statement["Action"] if isinstance(statement["Action"], list) else [statement["Action"]]
+        )
+    )
+    ((key, pattern),) = terminate["Condition"]["StringLike"].items()
+    tag = key.removeprefix("aws:ResourceTag/")
+    assert tag != key, f"the grant is conditioned on {key}, which is not a resource tag"
+
+    tags = batch_submit_request(
+        manifest=manifest(),
+        target=target(),
+        run_id=RUN_ID,
+        job_definition=target().job_definition_arn,
+    )["Tags"]
+
+    assert tag in tags, (
+        f"the grant is conditioned on {tag!r} and a submission does not put that tag on the "
+        f"job, so no termination can ever be authorised. A submission tags {sorted(tags)}"
+    )
+    assert fnmatchcase(tags[tag], pattern), (
+        f"a submission tags the job {tag}={tags[tag]!r} and the grant accepts {pattern!r}, "
+        "so the condition cannot match"
+    )
 
 
 def test_the_role_trusts_only_the_file_that_carries_the_check(role: dict[str, Any]) -> None:
@@ -329,3 +395,81 @@ def test_a_missing_canceller_role_is_named_rather_than_reported_as_no_credential
         "the guard should name the workflow an admin can read a run through, since that is "
         "the thing the person dispatching this actually wanted"
     )
+
+
+def test_the_run_id_can_be_left_blank_because_no_dropdown_is_possible(
+    workflow: dict[str, Any],
+) -> None:
+    """The field people arrive without, and the reason it is a field rather than a menu.
+
+    ``workflow_dispatch`` choice options are static text in the file, so a dropdown listing
+    the dispatcher's own jobs cannot be built. Optional plus a look-up is the nearest thing
+    available, and a required field is what it replaces.
+    """
+    run_id = dispatch_inputs(workflow)["run_id"]
+
+    assert run_id.get("required") is False
+    assert run_id.get("default") == ""
+    assert "blank" in run_id["description"].lower()
+
+
+def test_a_blank_run_id_finds_the_runs_belonging_to_whoever_dispatched(
+    workflow: dict[str, Any],
+) -> None:
+    """The look-up keys on the tag the authorisation step already trusts.
+
+    Reading ownership from the job rather than from the lineage store is what keeps this
+    free of any new permission, and it is the same fact the refusal below reads. A look-up
+    that keyed on anything else would be a second, quieter answer to who owns a run.
+    """
+    body = workflow_step(workflow, "Work out which run")["run"]
+
+    assert "edullm:submitter" in body
+    assert "ACTOR" in body
+    assert "describe-jobs" in body, "tags do not come back on a list, only on a describe"
+
+
+def test_stopping_still_names_its_run_rather_than_guessing(workflow: dict[str, Any]) -> None:
+    """The asymmetry the blank default is only safe because of.
+
+    Reporting on the wrong run costs a page of output. Terminating the wrong one costs
+    somebody their work, and "my newest" is most likely to be wrong exactly under a retry,
+    where the run somebody means to stop is not the attempt that just started.
+    """
+    body = workflow_step(workflow, "Check the run id looks like one")["run"]
+
+    assert "stopping_requires_a_run_id" in body
+    assert 'STOP' in body
+
+
+def test_every_step_that_acts_on_a_run_uses_the_resolved_id(workflow: dict[str, Any]) -> None:
+    """Mutation: leave one step reading the raw input.
+
+    A step still reading ``inputs.run_id`` would receive the empty string on the path this
+    change exists for, and would report on nothing while the step beside it reported on a
+    real job. The format check and the look-up itself read the raw input on purpose,
+    because deciding whether one was given is their whole job.
+    """
+    reads_raw = {
+        step["name"]
+        for step in workflow["jobs"]["cancel"]["steps"]
+        if "inputs.run_id" in yaml.safe_dump(step.get("env", {}))
+    }
+
+    assert reads_raw == {
+        "Check the run id looks like one",
+        "Work out which run, if you did not name one",
+    }, f"these steps read the raw input where they need the resolved one: {reads_raw}"
+
+
+def test_two_people_looking_at_their_own_runs_do_not_queue_behind_each_other(
+    workflow: dict[str, Any],
+) -> None:
+    """Mutation: leave the concurrency group keyed on the input alone.
+
+    Blank, every look-up dispatch would land in the group ``cancel-`` and serialise against
+    every other, which reads as the workflow hanging rather than as a queue.
+    """
+    group = workflow["concurrency"]["group"]
+
+    assert "github.run_id" in group, f"a blank run id collapses every dispatch into {group}"

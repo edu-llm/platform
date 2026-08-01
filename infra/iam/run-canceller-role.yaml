@@ -13,13 +13,14 @@ Resources:
       #
       # The workflow decides whether the actor may cancel this run; IAM cannot. A trust
       # policy cannot see who dispatched the workflow -- `sub` and `job_workflow_ref` are
-      # the same for every dispatch of a file, whoever pressed the button -- and Batch has
-      # no condition key for a job's tags on TerminateJob, so the grant cannot be narrowed
-      # to "jobs whose edullm:submitter equals the caller" however it is written.
+      # the same for every dispatch of a file, whoever pressed the button -- so the grant
+      # cannot be narrowed to "jobs whose edullm:submitter equals the caller" however it is
+      # written. The tag is readable through aws:ResourceTag and there is nothing to compare
+      # it against: the identity in hand is the workflow, never the person who ran it.
       #
       # So the authorisation is in the workflow, and this role is scoped by what it can do
-      # rather than by whose it can do it to: describe jobs and stop them, on two named
-      # queues, and nothing else in the account. It cannot submit, cannot register a job
+      # rather than by whose it can do it to: describe jobs and stop the ones this platform
+      # submitted, and nothing else in the account. It cannot submit, cannot register a job
       # definition, cannot read or write S3, and cannot reach the state machine -- so the
       # worst a bypass achieves is stopping runs, which is disruptive, recoverable, and
       # loud in the lifecycle record.
@@ -72,17 +73,40 @@ Resources:
                   - batch:DescribeJobs
                   - batch:ListJobs
                 Resource: "*"
-              # The one action that changes anything, scoped to the two queues this platform
-              # created. A job on any other queue in this shared account is out of reach.
+              # The one action that changes anything, scoped to the jobs this platform
+              # submitted. A job anybody else in this shared account is running is out of
+              # reach.
+              #
+              # NOT SCOPED BY QUEUE, AND THAT IS MECHANICAL RATHER THAN A PREFERENCE.
+              # TerminateJob takes a job id and a reason and nothing else, so batch:JobQueue
+              # is never in the request context and a condition on it can never be satisfied.
+              # A role written that way describes and lists and cannot stop anything, and it
+              # says so as "no identity-based policy allows the batch:TerminateJob action" --
+              # which reads as a missing grant rather than as a condition that cannot match.
+              # `iam simulate-principal-policy` does not separate the two either: it accepts
+              # no arn context key type, so an ArnEquals is unsatisfiable there as well and
+              # the simulator answers implicitDeny for grants that work. Only a real
+              # termination settles this shape, which is why one was performed.
+              #
+              # aws:ResourceTag is the condition key Batch does offer on a job, and it fits
+              # what this role is for better than the queue did. edullm:run-id is set on
+              # every submission unconditionally -- unlike edullm:submitter and
+              # edullm:experiment, which are appended only when there is one -- so it selects
+              # exactly the jobs this platform started. The value is matched as well as the
+              # key, because a tag somebody else writes under the same name would otherwise
+              # be enough on its own.
+              #
+              # What this gives up, stated rather than discovered: a job admitted before the
+              # tag existed cannot be stopped through this role. The workflow already refuses
+              # those, since an absent edullm:submitter authorises nobody, and Batch stops
+              # listing a job some days after it ends -- so the set is empty in practice.
               - Effect: Allow
                 Action: batch:TerminateJob
                 Resource:
                   Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job/*
                 Condition:
-                  ArnEquals:
-                    batch:JobQueue:
-                      - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-cpu
-                      - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu
+                  StringLike:
+                    aws:ResourceTag/edullm:run-id: "run_*"
               # DELIBERATELY ABSENT, and each for its own reason rather than as a list.
               #
               # batch:SubmitJob and batch:RegisterJobDefinition: a role that can cancel and

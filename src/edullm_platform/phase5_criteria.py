@@ -28,8 +28,8 @@ Criteria 9, 10 and 11 are the deploy-workflow guard, the code-owner requirement 
 limitations a submitter is shown -- conditions on granting write access rather than guards on
 a run.
 Criterion 13 is the compile-time refusal of an unbuilt commit, and it is unmarked on the
-reasoning Phase 7 applies to its own two: a refusal that arrives in the wrong place spends a
-reviewer's attention, which is not one of the four harms the marker sorts on.
+reasoning every compile-time refusal is unmarked on: a refusal that arrives in the wrong place
+spends a reviewer's attention, which is not one of the four harms the marker sorts on.
 
 **Criterion 11 was re-cut on 2026-07-31 and criterion 6 moved twice the same day, both out of
 one decision.** The pilot limitations page was taken out of the README and moved to a local,
@@ -281,9 +281,9 @@ def phase5_criteria() -> tuple[CriterionSpec, ...]:
                 (
                     "team_verified is false on every record and is cited as supporting for "
                     "that reason. The team a submitter claims is recorded and not enforced, "
-                    "because nothing binds a team to a person yet -- that is Phase 6 item "
-                    "6.5. A record claiming a verified team would be evidence for a control "
-                    "that does not exist."
+                    "because nothing binds a team to a person yet and the bindings that "
+                    "would are unbuilt. A record claiming a verified team would be evidence "
+                    "for a control that does not exist."
                 ),
             ),
         ),
@@ -446,8 +446,8 @@ def phase5_criteria() -> tuple[CriterionSpec, ...]:
             deferral_trigger=(
                 "One GPU submission claiming a team other than platform that writes a "
                 "checkpoint closes it, and the criterion is re-recorded as COVERED or GAP "
-                "against that capture rather than against this text. Phase 6's closeout "
-                "campaign carries it as its first item. Until it runs this phase is not "
+                "against that capture rather than against this text. The closeout campaign "
+                "that follows this phase carries it as its first item. Until it runs this phase is not "
                 "declarable complete, and if the campaign is abandoned this returns to a gap "
                 "rather than remaining deferred."
             ),
@@ -568,7 +568,7 @@ def phase5_criteria() -> tuple[CriterionSpec, ...]:
                     "run id, but W&B mints its own id for the URL and the entity belongs to "
                     "the API key rather than to any reviewed configuration in this repository, "
                     "so what can be stated truthfully is the project and the name to search "
-                    "for. Recording the run itself in lineage is Phase 7 item 7.4: "
+                    "for. Recording the run itself in lineage is unbuilt: "
                     "lifecycle_projection hardcodes wandb_run=None on every result manifest, "
                     "which the supporting test asserts rather than works around."
                 ),
@@ -727,7 +727,7 @@ def phase5_criteria() -> tuple[CriterionSpec, ...]:
                 (
                     "The cancellation wording is fixed rather than free, and the test asserts "
                     "the sentence rather than the topic. Phase 3's three cancellation criteria "
-                    "transfer to Phase 8 on the condition that a user is told, in words they "
+                    "transfer out of that phase on the condition that a user is told, in words they "
                     "can act on, that cancelling the workflow does not stop the job -- so "
                     "wording that mentioned cancellation vaguely would quietly withdraw the "
                     "grounds for that transfer."

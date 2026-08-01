@@ -20,9 +20,9 @@ says so in the detail it prints beside each of them.
 **The gate was red until 2026-07-31 and the change was not a run.** It was red on capacity
 failure, which could not be closed by running anything -- Batch leaves a job it cannot place
 in RUNNABLE indefinitely, so nothing surfaces it until the detector of criterion 10 exists,
-and that detector belongs to Phase 8. A criterion blocked on another phase's mechanism
-measures that phase rather than this one, so it moved to Phase 8 with its sentence and its
-number, on the terms Phase 3's cancellation criteria moved on. What it protected is on the
+and that detector is unbuilt. A criterion blocked on a mechanism nothing here builds
+measures that work rather than this phase, so it moved out with its sentence and its number
+intact, on the terms Phase 3's cancellation criteria moved on. What it protected is on the
 pilot limitations page instead. The hole where criterion 9 used to be is deliberate and
 :mod:`edullm_platform.phase4_criteria` says why.
 

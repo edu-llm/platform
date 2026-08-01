@@ -1,9 +1,10 @@
 """What the committed captures of the GPU runs establish, and what they refuse to.
 
 Every Phase 4 criterion that is not about pure Python cites a test in this file. The
-records these read were taken from the live account against three real jobs: one that
-trained, one that probed the hardware, and one that failed. All three are committed,
-because a phase whose evidence is only its successes is a phase that has not been tested.
+records these read were taken from the live account against real jobs: one that trained on
+a published corpus, two that trained on tokens they generated, one that probed the
+hardware, and one that failed. All of them are committed, because a phase whose evidence is
+only its successes is a phase that has not been tested.
 
 **The first test is the one that makes the rest mean anything.** A test written as "load
 the record, assert the field" passes the moment the record stops being there, and a green
@@ -19,7 +20,10 @@ from pathlib import Path
 import pytest
 
 from edullm_platform.checkpoints import MARKER_OBJECT
+from edullm_platform.config import load_yaml
+from edullm_platform.contracts.dataset_registry import DatasetRegistry
 from edullm_platform.contracts.results import OUTPUTS_BUCKET, output_prefix
+from edullm_platform.execution import job_definition_name
 from edullm_platform.phase4_capture import (
     BATCH_JOB_RECORD,
     CAPTURE_ROOT,
@@ -42,28 +46,13 @@ from edullm_platform.phase4_evidence import (
 
 TEAM = "platform"
 
-#: A digest that is deployed and has not yet carried a training run, declared here so the gap
-#: is visible rather than silent.
-#:
-#: WHY THIS EXISTS AT ALL. Re-pinning the GPU job definition and running against it cannot
-#: happen in one step: the deployer role's trust policy pins job_workflow_ref to
-#: ``@refs/heads/main``, so nothing deploys from a branch, so the new image is not runnable
-#: until the re-pin has already merged. The test below is the one that refuses a re-pin with
-#: no re-run, and it is right to -- without something like this, the only way to land a new
-#: image is to merge it red and hope somebody finishes.
-#:
-#: WHAT KEEPS IT FROM BECOMING PERMANENT. The test asserts this digest is the deployed one, so
-#: a second re-pin without a second declaration fails; and it asserts no committed run has
-#: used it yet, so the declaration must be deleted in the same change that commits the run's
-#: evidence. It cannot be left behind and it cannot cover a digest other than the one in the
-#: template.
-#:
-#: 2026-08-01: OLMo-core 298afac6. Its predecessor, 2f111723, opened a corpus and trained on
-#: one. What it did not do is report itself: the summary the capture reads is printed by the
-#: entry point, and that print is what this image adds.
-AWAITING_ITS_FIRST_TRAINING_RUN = (
-    "sha256:50e2488ab3c77e859a8fe3e6d4a06d7d54f5c852bc7c5dd201fb9db53bff455b"
-)
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+
+#: The definition ``infra/batch-compute-gpu.yaml`` registers, which every GPU run used until
+#: admission began registering one per submission. Spelled here rather than imported from the
+#: capture tool, because a test that read the name from the thing it is checking would agree
+#: with a renamed stack and notice nothing.
+DEPLOYED_GPU_JOB_DEFINITION = "sbsandbox-intern-edullm-gpu-run"
 
 
 # ---------------------------------------------------------------------------------------
@@ -191,21 +180,117 @@ def test_the_gpu_container_is_not_told_to_expect_the_conventional_visibility_var
 
 
 def test_a_real_model_went_through_a_real_optimizer_and_the_loss_moved() -> None:
-    """Mutation: assert the loss fell.
+    """Mutation: assert a loss value rather than a direction.
 
-    It is not asserted to have fallen and must not be. Twenty steps on synthetic tokens is
-    not a claim about learning, and dressing it as one would be the kind of evidence this
-    repository spends its time removing. What the movement does establish is that the
-    backward pass did something: a loss identical at step one and step twenty is an
-    optimizer that never applied a gradient.
+    THIS USED TO REFUSE TO ASSERT THAT THE LOSS FELL, AND THAT WAS RIGHT ABOUT THE RUN IT
+    DESCRIBED. Twenty steps on tokens the program generated itself moved the loss by 0.03,
+    and calling that learning would have been the kind of evidence this repository spends
+    its time removing. The most recent training run read a published corpus for a hundred
+    and fifty steps, so the direction is worth asserting and the magnitude is not: what a
+    falling loss establishes here is that the optimizer applied gradients to something with
+    structure in it, and a loss identical at the first step and the last is a backward pass
+    that did nothing.
+
+    Which corpus, and how much of it, is asserted separately below. This is the optimizer.
     """
     summary = training_run().training
     assert summary is not None
 
-    assert summary.parameters == 190_550_784, "olmo2_190M, and the count says so"
-    assert summary.steps == 20
-    assert summary.first_loss != summary.last_loss
+    assert summary.parameters == 267_424_512, "olmo2_190M over dolma2's padded vocabulary"
+    assert summary.steps == 150
+    assert summary.last_loss < summary.first_loss
     assert summary.seconds > 0
+
+
+# ---------------------------------------------------------------------------------------
+# Check 2, the other half -- the tokens came from a published corpus and not from nowhere
+# ---------------------------------------------------------------------------------------
+
+
+def test_the_run_built_its_dataset_from_the_release_its_submission_named() -> None:
+    """Reads BOTH sides. Mutation: record what the job was told instead of what it resolved.
+
+    The form field, the decision record and ``EDULLM_DATASET_ID`` all say which release was
+    *requested*, and all three would say the same thing about a run whose training program
+    ignored them and read something else. That is not hypothetical: the upstream example
+    this platform runs streams one C4 shard from ``olmo-data.org`` with the path and the
+    tokenizer both hard-coded, so a researcher who picked a corpus on the form and ran it
+    would get a loss curve, a checkpoint and a lineage record naming a corpus nothing opened.
+
+    So one side is the container's environment, and the other is the config OLMo-core's
+    config saver wrote into the checkpoint directory out of the paths its dataset was built
+    from. A record taken from one of those could not disagree with itself.
+    """
+    run = training_run()
+    corpus = run.corpus
+
+    assert corpus is not None, (
+        "the most recent training run carries no corpus record, so nothing here establishes "
+        "that it opened one"
+    )
+    assert corpus.dataset_id == run.job.told("EDULLM_DATASET_ID")
+    assert corpus.dataset_version == run.job.told("EDULLM_DATASET_VERSION")
+
+
+def test_every_shard_the_run_opened_came_from_the_release_it_named() -> None:
+    """Mutation: check the first path, or accept any path under the corpus bucket.
+
+    A dataset assembled from one shard of the right release and the rest of another would
+    train, and the id in the record above would be true of it. What has to hold is over all
+    of them, which is why the record carries the directories rather than a verdict.
+    """
+    corpus = training_run().corpus
+    assert corpus is not None
+
+    assert corpus.read_only_the_release_it_named, corpus.prefixes_outside_the_release
+    assert corpus.shard_count > 1, "one shard is a sample of a corpus rather than the corpus"
+
+
+def test_the_release_the_run_opened_is_the_one_the_registry_publishes() -> None:
+    """The third side, read off the registry the submission form is generated from.
+
+    Mutation: assert the two above and stop. Together they establish that the container read
+    what it was told to; neither says the thing it was told to read is a corpus anybody
+    published, at the address this platform records for it. A release the registry resolves
+    to one prefix and the reader to another would satisfy both and is exactly the
+    disagreement a content pin exists to catch.
+    """
+    corpus = training_run().corpus
+    assert corpus is not None
+
+    registry = load_yaml(REPOSITORY_ROOT / "config" / "datasets.yaml", DatasetRegistry)
+    named = [
+        reference
+        for reference in registry.published
+        if reference.dataset_id == corpus.dataset_id
+        and reference.version == corpus.dataset_version
+    ]
+
+    assert len(named) == 1, f"{corpus.dataset_id}/{corpus.dataset_version} is not registered once"
+    assert named[0].uri == corpus.release_prefix
+
+
+def test_the_run_drew_corpus_bytes_in_a_quantity_no_metadata_read_could_produce() -> None:
+    """The read as a number, and the two factors come from different records.
+
+    Mutation: assert the shard list and stop there. A dataset can be *built* over forty-one
+    objects and read almost none of them -- resolving a manifest and memmapping a file are
+    both cheap, and a run that died in its first step would have written the same config.
+
+    The batch size is the saved config's, the step count is what the run reported finishing,
+    and the width is the corpus's own declared dtype -- the one number the entry point
+    refuses to infer, because inferring it reads a uint32 corpus two bytes at a time and
+    raises nothing. The product is what the loader drew rather than an estimate of it.
+    """
+    run = training_run()
+    corpus = run.corpus
+    summary = run.training
+    assert corpus is not None
+    assert summary is not None
+
+    assert corpus.token_dtype == "uint32"
+    assert corpus.sequence_length == 2048
+    assert corpus.bytes_read_over(summary.steps) == 157_286_400
 
 
 # ---------------------------------------------------------------------------------------
@@ -228,7 +313,12 @@ def test_the_wandb_run_is_named_for_the_run_id_and_lives_in_the_platforms_projec
 
     assert summary.wandb_project == run.job.told("EDULLM_WANDB_PROJECT")
     assert summary.wandb_run_url.startswith("https://wandb.ai/")
-    assert set(summary.metric_keys) == {"train/ce_loss", "train/step"}
+    assert set(summary.metric_keys) == {
+        "train/CE loss",
+        "optim/LR (group 0)",
+        "throughput/device/TPS",
+        "throughput/total tokens",
+    }
 
 
 # ---------------------------------------------------------------------------------------
@@ -352,14 +442,43 @@ def test_the_checkpoint_the_run_wrote_is_one_this_platform_will_resume_from() ->
     Everything else in this evidence is the run describing itself. This is the platform's
     own reader run against the objects in the bucket, which is the only way to catch the
     one failure a run cannot detect about its own output.
+
+    THE MOST RECENT CHECKPOINT IS THE SHAPE A LIBRARY WROTE, AND THAT IS THE ORDINARY CASE
+    NOW. The demo runs wrote one object and a ``_SUCCESS`` marker carrying its digest,
+    because their training program was a form field that could be told to. OLMo-core writes
+    a ``step{N}`` directory of sharded tensors and no marker of ours, so the reader judges it
+    by the rules the library's own loader applies. Both readings are exercised, and the
+    marked one is asserted below rather than lost.
     """
     checkpoint = training_run().checkpoint
     assert checkpoint is not None
 
     assert checkpoint.state == "committed"
     assert checkpoint.is_resumable
-    assert checkpoint.success_marker_uri == checkpoint.prefix + MARKER_OBJECT
-    assert checkpoint.size_bytes == 762_258_865
+    assert checkpoint.step == 150
+    assert checkpoint.size_bytes == 3_212_619_747
+
+
+def test_a_checkpoint_this_platform_wrote_itself_is_certified_by_the_marker_beside_it() -> None:
+    """The stronger of the two readings, kept on the runs that can still answer it.
+
+    Mutation: read resumability off the most recent run and stop. A library-written
+    directory is accepted because OLMo-core's own loader would accept it, which says the
+    bytes will load and not that they are the bytes somebody committed; the marker protocol
+    says both, and a test that followed ``training_run()`` would have stopped covering it on
+    the day a real training run replaced the demo that produced it.
+    """
+    marked = [
+        run.checkpoint
+        for run in captured_runs()
+        if run.checkpoint is not None and run.checkpoint.success_marker_uri is not None
+    ]
+
+    assert marked, "no committed checkpoint carries a marker this platform wrote"
+    for checkpoint in marked:
+        assert checkpoint.is_resumable
+        assert checkpoint.success_marker_uri == checkpoint.prefix + MARKER_OBJECT
+        assert checkpoint.size_bytes == 762_258_865
 
 
 def test_what_the_run_said_it_wrote_is_what_the_store_says_it_holds() -> None:
@@ -369,15 +488,26 @@ def test_what_the_run_said_it_wrote_is_what_the_store_says_it_holds() -> None:
     the container printed before either object existed. The first two are compared by
     ``inspect_checkpoint``; the third closes the loop between the process and the bucket,
     and is the one that would catch a marker written for a payload from another attempt.
-    """
-    run = training_run()
-    checkpoint = run.checkpoint
-    summary = run.training
-    assert checkpoint is not None
-    assert summary is not None
 
-    assert checkpoint.store_agrees_with_the_container
-    assert checkpoint.prefix.startswith(summary.checkpoint_uri.rstrip("/").rsplit("/", 1)[0])
+    Read over the runs that printed a digest rather than the most recent one, because
+    OLMo-core prints none and has no reason to: its checkpoint is a directory a library
+    wrote and there is no single payload to digest. That absence is recorded as a null
+    rather than inferred from a record's silence, which is what lets this select on it.
+    """
+    joined = [
+        run
+        for run in captured_runs()
+        if run.checkpoint is not None and run.checkpoint.container_claimed_checksum is not None
+    ]
+
+    assert joined, "no committed run printed a digest for the checkpoint it wrote"
+    for run in joined:
+        checkpoint = run.checkpoint
+        summary = run.training
+        assert checkpoint is not None
+        assert summary is not None
+        assert checkpoint.store_agrees_with_the_container
+        assert checkpoint.prefix.startswith(summary.checkpoint_uri.rstrip("/").rsplit("/", 1)[0])
 
 
 # ---------------------------------------------------------------------------------------
@@ -682,47 +812,45 @@ def test_the_run_that_trained_most_recently_ran_the_image_that_is_deployed() -> 
     What must hold is narrower and is the thing that matters: the most recent training run
     ran the digest the deployed definition still names. Read from the template, so a re-pin
     without a re-run fails here rather than at the next submission.
-
-    The one exception is a digest declared in ``AWAITING_ITS_FIRST_TRAINING_RUN``, which
-    exists because a re-pin cannot be deployed from a branch and therefore cannot be run
-    against before it merges. The two assertions around it are what keep it from being a way
-    to skip the re-run entirely.
     """
-    template = (
-        Path(__file__).resolve().parents[1] / "infra" / "batch-compute-gpu.yaml"
-    ).read_text()
-
-    if AWAITING_ITS_FIRST_TRAINING_RUN:
-        assert AWAITING_ITS_FIRST_TRAINING_RUN in template, (
-            "the declared digest is not the deployed one, so it is a leftover from an "
-            "earlier re-pin rather than a statement about this one"
-        )
-        assert AWAITING_ITS_FIRST_TRAINING_RUN not in {
-            run.job.image_digest for run in captured_runs()
-        }, (
-            "a committed run has already used this digest, so the declaration has done its "
-            "job and belongs in the same change that removed it"
-        )
-        return
+    template = (REPOSITORY_ROOT / "infra" / "batch-compute-gpu.yaml").read_text()
 
     assert training_run().job.image_digest in template
 
 
-def test_the_job_definition_revision_moved_once_per_image_and_no_more() -> None:
-    """Batch's own count of how many times the image was re-pinned, read against ours.
+def test_every_run_took_its_job_definition_from_the_deployment_or_from_its_own_submission() -> None:
+    """Where a run's definition came from, which since admission shipped is two places.
 
-    Mutation: let the definition be re-registered without the digest changing, or the
-    reverse. A revision that moved for something other than an image is a change to how jobs
-    run that nobody attributed to anything; a digest that changed without a revision would
-    mean a job ran an image its definition does not name.
+    Mutation: accept any definition name. The first GPU runs used the one the GPU stack
+    deploys, re-registered by hand once per image. A run submitted through the form gets one
+    registered against its own run id, because a submission overrides the image, the command
+    and the environment, and a shared definition cannot carry four submissions at once. A
+    name from neither place is a job somebody registered outside the platform, whose image
+    and role nothing here reviewed.
 
-    Not one revision per run. Two runs sharing a revision is the ordinary case -- it is what
-    running the same image twice looks like -- so what is compared is the number of distinct
-    revisions against the number of distinct digests.
+    The shared definition's revisions are still counted against the digests that ran on
+    them. A revision that moved for something other than an image is a change to how jobs run
+    that nobody attributed to anything; a digest that changed without a revision would mean a
+    job ran an image its definition does not name. Not one revision per run -- two runs
+    sharing one is what running the same image twice looks like.
     """
     runs = captured_runs()
-    revisions = {run.job.job_definition_name for run in runs}
-    digests = {run.job.image_digest for run in runs}
+    deployed = [
+        run
+        for run in runs
+        if run.job.job_definition_name.startswith(f"{DEPLOYED_GPU_JOB_DEFINITION}:")
+    ]
+    submitted = [
+        run
+        for run in runs
+        if run.job.job_definition_name.startswith(f"{job_definition_name(run.run_id)}:")
+    ]
 
-    assert len(revisions) == len(digests)
-    assert all(name.startswith("sbsandbox-intern-edullm-gpu-run:") for name in revisions)
+    assert len(deployed) + len(submitted) == len(runs), (
+        "a committed run names a job definition that is neither the deployed one nor the "
+        "one the platform derives from its run id"
+    )
+    assert submitted, "no committed run went through the submission path"
+    assert len({run.job.job_definition_name for run in deployed}) == len(
+        {run.job.image_digest for run in deployed}
+    )

@@ -17,7 +17,7 @@ fill in five fields. The rest have defaults that are correct for a first run.
 | --- | --- |
 | `commit_sha` | Your branch name. A tag or a full commit works too. |
 | `workload_profile` | `olmo-core-check-cpu` |
-| `team` | Your group, lower-case with hyphens, like `memory-split` |
+| `team` | Your group, picked from the list. `scratch` if this is a throwaway. |
 | `experiment` | Anything, like `onboarding`. You are making it up; it needs no registering. |
 | `wandb_project` | Your Weights and Biases project |
 
@@ -39,8 +39,12 @@ the retry limit together, so you do not have to know any of them. There are thre
 - `olmo-core-train-1gpu` — one A10G, twelve hours, two attempts, checkpointing required.
   This is the one for real training.
 
-**`team` routes the approval and nothing else.** It records whose work a run is. Any lead
-may approve any run, so a typo delays nothing and grants nothing.
+**`team` routes the approval and books the cost.** It records whose work a run is, decides
+which lead is asked, and is the S3 prefix your outputs land under. Any lead may approve any
+run, so picking a group you are not on mis-routes the request rather than refusing it, and it
+grants nothing either way. It is a dropdown over the eight declared groups, so there is no
+typo to make; pick `scratch` for work you do not intend to keep, which is what keeps it off a
+research group's total.
 
 **`experiment` groups related runs** — a sweep, an ablation, one week of work. It is also
 what the cost view groups by, so it is worth being consistent within a project.
@@ -141,20 +145,30 @@ what the entry point is doing on your behalf, since none of it is obvious from t
 otherwise, in the first seconds, before anything trains. Set it to `null` if you do not
 want ephemeral checkpoints.
 
-**Turn off checkpoint pruning.** OLMo-core defaults to keeping the last three checkpoints
-and deleting the rest. The workload role deliberately has no delete permission — every run
-writes under its own id, so nothing ever needs to be deleted — and the prune fails. Pass
-`trainer.callbacks.checkpointer.max_checkpoints=null` and keep them all.
+**Turn off checkpoint pruning.** OLMo-core keeps the last three permanent checkpoints and
+deletes the rest, and the one written at step 0 counts toward the three, so at
+`save_interval=200` the fourth is step 600 and the prune fires early in the run rather than
+late. It deletes with `s3:DeleteObject`, one call per object. The workload role does not
+hold that action, because every run writes under its own id and nothing ever needs
+removing, and the refusal is not caught: the run stops with `OLMoNetworkError` on the step
+after that fourth save. Pass `trainer.callbacks.checkpointer.max_checkpoints=null` and keep
+them all.
 
 **`torch.compile` needs a C compiler, and the image now has one.** It did not, and a run
 died on the first compiled region with `Failed to find C compiler` — after the GPU had been
 paid for. If you are on an older image digest than the one the GPU job definition pins, pass
 `train_module.compile_model=false`.
 
-**Turn off the evaluators, or point them at local data.** The example's `lm_evaluator` wants
-a `.csv.gz` metadata file that is not served over HTTP, so it fails while the trainer is
-still being built. Pass `trainer.callbacks.lm_evaluator.enabled=false` and
-`trainer.callbacks.downstream_evaluator.enabled=false` unless you have set up eval data.
+**Turn off both evaluators. They fail for two different reasons.** The example's
+`lm_evaluator` reads a C4 validation shard from `olmo-data.org` and needs a `.csv.gz` index
+beside it saying where each document starts. That index was never published for the
+validation shard: the URL answers 404, while the same file for the training shard answers
+200. The server is reachable and serves that kind of file; this one was never put there.
+`downstream_evaluator` scores HellaSwag through `ai2-olmo-eval`, which is an optional
+OLMo-core dependency the training image does not install, so it fails on the import. Both
+happen while the trainer is being built, in the first seconds, before the first step.
+Pass `trainer.callbacks.lm_evaluator.enabled=false` and
+`trainer.callbacks.downstream_evaluator.enabled=false`.
 
 **Set `max_duration` explicitly.** It defaults to one epoch, which may be far more or far
 less than the twelve hours you have.

@@ -45,7 +45,10 @@ from edullm_platform.contracts.base import ContractModel
 
 PROFILE = "sandbox"
 REGION = "us-east-1"
-ALLOWED_SUFFIX = Path("docs-frank/working/phase-9-evidence")
+#: Deliberately not the suffix any real capture tool passes. What is under test is that the
+#: check enforces whatever suffix it is given, so borrowing a live tool's value would let a
+#: hardcoded comparison pass.
+ALLOWED_SUFFIX = Path("docs-frank/working/example-evidence")
 
 #: A real twelve-digit number, because what these tests are for is that none of it reaches
 #: a file. AWS's own documentation example, which is the one value the tracked-tree

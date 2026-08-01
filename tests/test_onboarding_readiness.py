@@ -159,11 +159,10 @@ def test_a_person_who_has_done_every_step_is_reported_as_missing_nothing() -> No
 def test_a_person_absent_from_the_roster_is_reported_as_needing_a_pull_request() -> None:
     """Mutation: build the report from the roster, so the organization's extra people vanish.
 
-    Somebody the GitHub organization holds and `config/organization.yaml` does not is the
-    quietest failure on this platform: they can see the Run button, fill in the whole form
-    and spend a lead's attention having it released, and admission refuses the run inside
-    AWS with `submitter_not_in_roster` afterwards. A report built from the roster alone
-    cannot see that person at all, which is the one reader who most needs to.
+    Somebody the GitHub organization holds and `config/organization.yaml` does not can see
+    the Run button and fill in the whole form, and every submission they dispatch is
+    refused. A report built from the roster alone cannot see that person at all, which is
+    the one reader who most needs to.
     """
     people = readiness(inventory(), access(organization_members=[*EVERYBODY, "mccorkel"]))
 
@@ -174,7 +173,7 @@ def test_a_person_absent_from_the_roster_is_reported_as_needing_a_pull_request()
 
     step = next(item for item in stranger.missing if item.name == STEP_ROSTER)
     assert "pull request" in step.action
-    assert "submitter_not_in_roster" in step.action
+    assert "before a reviewer is asked" in step.action
 
 
 def test_a_person_on_the_roster_and_not_in_the_organization_is_sent_to_an_owner() -> None:
@@ -595,14 +594,20 @@ def test_the_report_says_nobody_is_here_rather_than_printing_an_empty_document()
     assert "nobody here to be ready" in render([], access())
 
 
-def test_the_shipped_roster_reports_the_person_nothing_can_attribute() -> None:
-    """`aryanjverma` submitted both runs Phase 5 rests on and has no W&B account here.
+def test_the_shipped_roster_reports_the_people_nothing_can_attribute() -> None:
+    """Six people have no W&B account, and the report is where that is said out loud.
 
-    The roster records that deliberately, because a guessed login produces a run that logs as
-    the service account and looks exactly like a correctly attributed one. What was missing
-    is anywhere that says out loud whose runs are affected, and this is it. The GitHub half
-    is synthesized as everything being right, so the only thing this can find is the gap the
+    The roster leaves them blank deliberately, because a guessed login produces a run that
+    logs as the service account and looks exactly like a correctly attributed one. What was
+    missing is anywhere that names whose runs are affected, and this is it. The GitHub half is
+    synthesized as everything being right, so the only thing this can find is the gap the
     roster itself records.
+
+    `aryanjverma` used to be the example here and is now the counter-example. He submitted
+    both of the runs Phase 5 rests on, the roster called him unattributable, and the `eduLLM`
+    entity had held `aryan-jaden-verma` under an exact display-name match all along. Asserted
+    from the roster rather than against a name written twice, so that recording one of the six
+    moves this test without editing it.
     """
     shipped = load_yaml(PROJECT_ROOT / "config" / "organization.yaml", OrganizationInventory)
     logins = [member.github_login for member in shipped.members]
@@ -614,10 +619,20 @@ def test_the_shipped_roster_reports_the_person_nothing_can_attribute() -> None:
             team_members={"team-leads": list(shipped.team_leads)},
         ),
     )
+    unattributable = [
+        member.github_login for member in shipped.members if member.wandb_username is None
+    ]
 
-    aryan = person(people, "aryanjverma")
-    assert missing_names(aryan) == {STEP_WANDB, STEP_TEAM}
-    assert aryan.blocked is False
+    assert len(unattributable) == 6
+    for login in unattributable:
+        entry = person(people, login)
+        # A superset rather than equality: BritishAmericqn is an admin, and the synthesized
+        # access above grants nobody admin approval authority on GitHub, so he carries a
+        # third step that has nothing to do with attribution.
+        assert {STEP_WANDB, STEP_TEAM} <= missing_names(entry)
+        # Unattributed is a whole run that works, so none of this blocks anybody.
+        assert entry.blocked is False
+    assert missing_names(person(people, "aryanjverma")) == {STEP_TEAM}
 
 
 def test_gathered_facts_missing_a_key_are_refused_rather_than_read_as_an_empty_list() -> None:

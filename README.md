@@ -236,8 +236,8 @@ relabelling one would be the move rather than an instance of it.
 
 One capability sits outside every gate, and no phase measures it: **stopping a job once it
 has started.** [Look at a run, or stop it](../../actions/workflows/cancel-run.yml) does it,
-on a role whose whole reach is describing jobs and stopping them on this platform's two
-queues. Cancelling the submission workflow is a different thing and stops nothing in AWS,
+on a role whose whole reach is describing jobs and stopping the ones this platform
+submitted. Cancelling the submission workflow is a different thing and stops nothing in AWS,
 which that workflow says where an operator will see it; what bounds a run nobody stops is
 the mandatory per-attempt timeout, which every submission carries and which has been
 observed stopping a real job. Phase 3's criteria do not carry cancellation, so its numbering

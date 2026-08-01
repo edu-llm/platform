@@ -38,7 +38,6 @@ from infrastructure_support import (
 )
 from workflow_support import (
     WORKFLOWS_ROOT,
-    command_tokens,
     load_workflow,
     run_step_script,
     step,
@@ -158,24 +157,35 @@ def test_the_nightly_runs_the_wandb_credential_check(workflow: dict[str, Any]) -
     assert "uv run --frozen python" in body
 
 
-def test_the_reconciliation_fetches_only_the_prefix_the_role_can_list(
+def test_the_reconciliation_fetches_only_the_prefixes_the_role_can_list(
     workflow: dict[str, Any],
     role: dict[str, Any],
 ) -> None:
     """Mutation: sync the whole lineage bucket, which is one path segment away.
 
-    The role's listing grant is conditioned on the `intent/` prefix, so a wider sync fails at
-    05:00 as an access denial rather than here. The narrower reason is the better one: the
-    result records would say how each run ended, and this check deliberately does not ask,
-    because its entire point is that a run recorded as a success can have saved nothing.
+    The role's listing grant is conditioned, so a wider sync fails at 05:00 as an access
+    denial rather than here. Both sides are read so that widening either one alone fails.
 
-    Both sides are read here so that widening either one alone fails.
+    THIS USED TO ASSERT `intent/` ALONE, AND SAID THE RESULT RECORDS WERE DELIBERATELY NOT
+    ASKED FOR, because a run recorded as a success can have saved nothing. That reason was
+    right about the answer and wrong about the question. Reading the outcome to decide
+    *whether to ask* is not the same as believing it: a run recorded as a success is still
+    read out of the bucket exactly as before. What the old scope bought was a report that
+    could not tell a run which finished and saved nothing from one that died at
+    `wandb.init()`, and it spent fourteen of those against the one that mattered.
     """
     reconciliation = workflow["jobs"][RECONCILE_JOB]
     fetch = step(reconciliation, "Fetch the intent records")
 
     assert fetch["env"]["LINEAGE_BUCKET"] == LINEAGE_BUCKET
-    assert command_tokens(fetch["run"], "s3", "sync")[3] == "s3://${LINEAGE_BUCKET}/intent/"
+
+    synced = {
+        line.split("s3://${LINEAGE_BUCKET}/")[1].split()[0].strip('"').rstrip("/")
+        for line in fetch["run"].splitlines()
+        if "s3://${LINEAGE_BUCKET}/" in line
+    }
+
+    assert synced == {"intent", "result"}
 
     listable = [
         statement
@@ -184,7 +194,27 @@ def test_the_reconciliation_fetches_only_the_prefix_the_role_can_list(
     ]
 
     assert len(listable) == 1
-    assert listable[0]["Condition"] == {"StringLike": {"s3:prefix": "intent/*"}}
+    assert listable[0]["Condition"] == {"StringLike": {"s3:prefix": ["intent/*", "result/*"]}}
+
+
+def test_a_result_sync_that_is_refused_leaves_no_half_read_tree(
+    workflow: dict[str, Any],
+) -> None:
+    """Mutation: drop the `rm -rf`, or soften the sync to `|| true`.
+
+    The nightly reader role does not hold `result/` until the stack is applied from a laptop,
+    so a denial is the expected answer for now and the job has to survive it. What it must
+    not do is carry on with a partial tree. A run whose result did not sync reads as one that
+    never finished, and a report that stopped asking about the runs that did would be the
+    silent failure this whole check exists to find, pointed at itself.
+    """
+    fetch = step(workflow["jobs"][RECONCILE_JOB], "Fetch the intent records")["run"]
+
+    assert "rm -rf lineage/result" in fetch, (
+        "a refused result sync leaves a partial tree behind, which reads as runs that never "
+        "finished and quietly narrows what the report asks about"
+    )
+    assert "|| true" not in fetch
 
 
 # ----------------------------------------------------------------------------------------
@@ -506,6 +536,7 @@ def test_the_role_reads_the_two_buckets_the_reconciliation_asks_about(
             "s3:GetBucketLocation",
         },
         f"arn:${{AWS::Partition}}:s3:::{LINEAGE_BUCKET}/intent/*": {"s3:GetObject"},
+        f"arn:${{AWS::Partition}}:s3:::{LINEAGE_BUCKET}/result/*": {"s3:GetObject"},
         f"arn:${{AWS::Partition}}:s3:::{OUTPUTS_BUCKET}": {
             "s3:ListBucket",
             "s3:GetBucketLocation",
@@ -531,7 +562,10 @@ def test_listing_is_confined_to_the_prefixes_each_check_reads(role: dict[str, An
         if "s3:ListBucket" in str(statement["Action"])
     }
 
-    assert conditions == {LINEAGE_BUCKET: "intent/*", OUTPUTS_BUCKET: "teams/*/runs/*"}
+    assert conditions == {
+        LINEAGE_BUCKET: ["intent/*", "result/*"],
+        OUTPUTS_BUCKET: "teams/*/runs/*",
+    }
 
 
 def test_the_secret_grant_names_one_secret_rather_than_the_account(
