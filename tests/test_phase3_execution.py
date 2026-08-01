@@ -377,7 +377,45 @@ def test_the_retry_strategy_is_the_manifest_attempt_count(attempts: int) -> None
     )
     request = request_for(maximum_attempts=attempts, checkpoint=checkpoint)
 
-    assert request["RetryStrategy"] == {"Attempts": attempts}
+    assert request["RetryStrategy"]["Attempts"] == attempts
+
+
+@pytest.mark.parametrize("attempts", [1, 2, 3])
+def test_a_retry_fires_on_a_lost_host_and_on_nothing_else(attempts: int) -> None:
+    """Mutation: send Attempts alone, the way this did until it cost two instance starts.
+
+    A twelve-hour submission carried a config override OLMo-core refuses and the program
+    died in the first few seconds. With no exit rules, Batch pulled a three-gigabyte image
+    onto a second GPU instance and ran the identical command into the identical error.
+    Nothing about the first failure could have been different the second time.
+
+    The order is the policy, because Batch takes the first rule that matches: a lost host
+    retries, an OOM does not because it will not fit on the identical instance either, and
+    the catch-all sits last and covers every exit code including the 1 a traceback
+    produces. Asserted as an ordered list rather than a set for exactly that reason -- the
+    same three rules with the catch-all first would retry nothing at all, and would look
+    right to a reader comparing membership.
+
+    Sent even for a single attempt. It changes no behaviour there, and a rule set that
+    appeared only above one attempt would be one nothing exercised until the first
+    retryable run.
+    """
+    checkpoint = (
+        None
+        if attempts == 1
+        else {
+            "interval_minutes": 30,
+            "destination_prefix": "s3://sbsandbox-intern-edullm-checkpoints/runs/",
+            "resume_required": True,
+        }
+    )
+    request = request_for(maximum_attempts=attempts, checkpoint=checkpoint)
+
+    assert request["RetryStrategy"]["EvaluateOnExit"] == [
+        {"onStatusReason": "Host EC2*", "action": "RETRY"},
+        {"onReason": "*OutOfMemoryError*", "action": "EXIT"},
+        {"onExitCode": "*", "action": "EXIT"},
+    ]
 
 
 def test_a_single_container_submits_no_array_properties() -> None:

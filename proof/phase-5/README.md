@@ -2,8 +2,8 @@
 
 Phase: phase-5
 Bundle schema version: 1
-Source commit: 8ea980e925db9d474bf0aaaed7a3af669b395c92
-Generated: 2026-08-01T05:33:56+00:00
+Source commit: 497386522d12cbd76fab6d28691439632f5dd8b8
+Generated: 2026-08-01T06:32:05+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 5 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase5_proof.py` at generation time. No criterion is a gap and the gate is green, and criterion 6 is deferred rather than covered -- a recorded decision not to satisfy it yet, which passes the gate without anybody having observed it. Read that entry in `negative-case-matrix.md` first: it carries the reason and the trigger, and the Known limitations below say what this phase does not establish.
 
@@ -28,14 +28,14 @@ The one check that is outstanding is a different kind of open from every other i
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3884 |
-| suite tests executed | 3691 |
-| suite passed | 3691 |
+| suite tests collected | 3888 |
+| suite tests executed | 3695 |
+| suite passed | 3695 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
-| matrix node ids executed | 92 |
-| matrix node ids passed | 92 |
+| matrix node ids executed | 93 |
+| matrix node ids passed | 93 |
 | matrix node ids failed | 0 |
 | phase criteria | 15 |
 | criteria COVERED | 14 (1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15) |

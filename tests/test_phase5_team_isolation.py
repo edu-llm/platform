@@ -233,13 +233,21 @@ def test_read_and_write_are_recorded_separately_because_they_fail_differently() 
     )
 
 
-def test_the_list_grant_is_scoped_by_prefix_and_not_only_by_bucket() -> None:
+def test_the_list_grant_on_the_outputs_bucket_is_scoped_by_prefix() -> None:
     """Mutation: read only resource ARNs and ignore the condition.
 
     ``s3:ListBucket`` is a bucket-level action, so it cannot be scoped by an object ARN at
     all -- the resource is the bucket. An unconditioned grant lets a container enumerate
     every team's output while its object grants look perfectly narrow, and a reader that
     only looked at resources would report that role as reaching one team.
+
+    THE RULE IS ABOUT THIS BUCKET AND NOT ABOUT LISTING. It used to read every ListBucket
+    statement on the role and demand a prefix of each, which was the same assertion while
+    the outputs bucket was the only bucket the role could list. It stopped being the same
+    assertion the moment the role was granted read on the dataset library, and the
+    difference is what the condition is for: the outputs bucket is partitioned by team, so
+    the prefix is the partition, and the dataset library is a published catalogue with no
+    team dimension at all. The test below carries that half, so neither is left implied.
     """
     role = role_named(GPU_WORKLOAD)
     listing = [
@@ -247,9 +255,10 @@ def test_the_list_grant_is_scoped_by_prefix_and_not_only_by_bucket() -> None:
         for policy in role.inline_policies  # type: ignore[attr-defined]
         for statement in policy.statements
         if "s3:ListBucket" in statement.action_match.actions
+        and any(OUTPUTS_BUCKET in resource for resource in statement.resource_match.resources)
     ]
 
-    assert listing, "the reader assumes a ListBucket grant exists to be scoped"
+    assert listing, "the reader assumes a ListBucket grant on the outputs bucket exists"
     for statement in listing:
         prefixes = [
             value
@@ -257,8 +266,38 @@ def test_the_list_grant_is_scoped_by_prefix_and_not_only_by_bucket() -> None:
             if condition.condition_key == "s3:prefix"
             for value in condition.values
         ]
-        assert prefixes, f"{role.role_name} lists the bucket with no prefix condition"
+        assert prefixes, f"{role.role_name} lists the outputs bucket with no prefix condition"
         assert all(prefix.startswith("teams/") for prefix in prefixes)
+
+
+def test_the_dataset_library_is_readable_and_not_writable_from_the_training_role() -> None:
+    """The grant that let a training run read real data, and the shape of it.
+
+    Read-only is asymmetric on purpose. ``edullm-data`` is an airlock: a producer writes to
+    a landing bucket, a validator promotes into this one, and the bucket's own policy denies
+    PutObject, PutObjectTagging, AbortMultipartUpload, DeleteObject and DeleteObjectVersion
+    to everything but two named roles. So a write from here would be refused anyway --
+    granting only GetObject means the refusal is *also* true one layer earlier, where it can
+    be read off a role diff instead of inferred from a bucket policy in another stack.
+
+    The listing is deliberately unconditioned, which the test above would once have failed.
+    A prefix condition on a published catalogue would only stop a trainer discovering which
+    corpora exist, which is the first thing it has to do before reading one.
+    """
+    role = role_named(GPU_WORKLOAD)
+    statements = [
+        statement
+        for policy in role.inline_policies  # type: ignore[attr-defined]
+        for statement in policy.statements
+        if any("edullm-data" in resource for resource in statement.resource_match.resources)
+    ]
+
+    assert statements, "the training role can no longer read the dataset library at all"
+    granted = {action for statement in statements for action in statement.action_match.actions}
+    assert granted == {"s3:GetObject", "s3:ListBucket"}, (
+        "the training role's reach into the dataset library must stay read-only; it is a "
+        f"sealed library and this role is a consumer of it, and it now holds {sorted(granted)}"
+    )
 
 
 def test_the_prefix_the_roles_grant_is_the_prefix_the_platform_derives() -> None:

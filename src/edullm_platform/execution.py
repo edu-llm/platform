@@ -292,7 +292,13 @@ def batch_submit_request(
         },
         # Unconditional. See the module docstring for why there is no branch here.
         "Timeout": {"AttemptDurationSeconds": attempt_duration_seconds(manifest)},
-        "RetryStrategy": {"Attempts": manifest.maximum_attempts},
+        "RetryStrategy": {
+            "Attempts": manifest.maximum_attempts,
+            # A list rather than the module constant's tuple, because this dict is
+            # serialised to JSON for Step Functions and compared against what the ASL
+            # carries; a tuple would round-trip as a list and make the two look different.
+            "EvaluateOnExit": [dict(rule) for rule in RETRY_ONLY_WHAT_A_RETRY_FIXES],
+        },
         "Tags": {
             "edullm:run-id": run_id,
             "edullm:team": manifest.team,
@@ -365,6 +371,37 @@ class ContainerOverridesTooLargeError(ValueError):
     """
 
     reason_code = "container_overrides_too_large"
+
+
+#: When a second attempt is worth paying for, in the order Batch reads them -- it takes the
+#: first rule that matches and ignores the rest, so the order is the policy.
+#:
+#: THIS COST TWO INSTANCE STARTS TO LEARN, ON THE NIGHT IT WAS WRITTEN. A twelve-hour
+#: submission carried a config override OLMo-core refuses -- ``ephemeral_save_interval``
+#: has to be below ``save_interval`` -- and the program died in the first few seconds.
+#: ``RetryStrategy`` carried ``Attempts`` and nothing else, so Batch dutifully pulled a
+#: three-gigabyte image onto a second GPU instance and ran the identical command into the
+#: identical error. Nothing about the first failure could have been different the second
+#: time, and the platform had no way to say so.
+#:
+#: The distinction the rules draw is whether the failure was about *this run* or about *the
+#: machine it landed on*. A host going away is the only one a retry genuinely fixes, and it
+#: is the one that matters most here: a reclaimed instance eleven hours into a twelve-hour
+#: run is exactly the case the checkpoint contract exists for.
+RETRY_ONLY_WHAT_A_RETRY_FIXES: Final = (
+    # The host went away underneath a running attempt: hardware failure today, a Spot
+    # reclaim once the A100 tier is promoted. The attempt died with work behind it and the
+    # next one resumes from the last checkpoint, which is the whole argument for two
+    # attempts.
+    {"onStatusReason": "Host EC2*", "action": "RETRY"},
+    # A container that did not fit will not fit on the identical instance type. Retrying
+    # buys a second identical OOM and a second hour of the approved ceiling.
+    {"onReason": "*OutOfMemoryError*", "action": "EXIT"},
+    # Everything else, which is every exit code including 1 -- what a Python traceback
+    # produces, and what a bad config override produces. Last, because Batch stops at the
+    # first match and this one matches everything.
+    {"onExitCode": "*", "action": "EXIT"},
+)
 
 
 def refuse_an_oversized_override(overrides: Mapping[str, Any]) -> None:

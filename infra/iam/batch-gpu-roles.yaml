@@ -192,6 +192,45 @@ Resources:
                 Condition:
                   StringLike:
                     s3:prefix: teams/*/runs/*
+              # READ ON THE SEALED DATASET LIBRARY, WHICH IS THE LAST THING BETWEEN A
+              # TRAINING RUN AND REAL DATA.
+              #
+              # edullm-data is the dataset owner's airlock: a producer writes to
+              # edullm-landing, a validator promotes into edullm-data, and nothing else can
+              # write there. It holds nine sealed corpora, including a dolma2-tokenized
+              # pretraining set of 157,467,202,883 tokens. Until this statement, no training
+              # role on this platform could read a byte of it, and every GPU run trained on
+              # synthetic tokens or on data streamed from the public internet.
+              #
+              # THIS NEEDED NOBODY'S PERMISSION, WHICH IS WORTH RECORDING BECAUSE IT WAS
+              # BELIEVED TO. The read path was carried for some time as blocked on a
+              # coordinated window with the pipeline's operator. Reading the live bucket
+              # policy on 2026-08-01 settled it: edullm-data denies s3:PutObject,
+              # s3:PutObjectTagging, s3:AbortMultipartUpload, s3:DeleteObject and
+              # s3:DeleteObjectVersion, and denies nothing else. There is no Deny on reads,
+              # so a read grant is entirely a statement about our own role in our own
+              # template. The operator's cutover -- moving his validator off the shared CPU
+              # workload role onto an identity of its own -- is a real and separate piece of
+              # work about write access, and it gates no researcher.
+              #
+              # Read-only and asymmetric on purpose. The bucket's own policy would refuse a
+              # write from this role anyway; granting only GetObject means the refusal is
+              # also true one layer earlier, where it can be read off a role diff rather
+              # than inferred from a bucket policy in someone else's stack.
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::edullm-data/*
+              # Unconditioned, unlike the outputs listing above, and the difference is the
+              # point. The outputs bucket is partitioned by team and the prefix condition is
+              # what stops one team enumerating another's runs. The dataset library is a
+              # published catalogue every team is meant to read; a prefix condition here
+              # would only stop a trainer discovering which corpora exist, which is the one
+              # thing it needs to do before reading one.
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::edullm-data
               # DELIBERATELY ABSENT: s3:DeleteObject, and the reason is a property rather
               # than a preference.
               #

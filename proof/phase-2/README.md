@@ -2,8 +2,8 @@
 
 Phase: phase-2
 Bundle schema version: 1
-Source commit: 8ea980e925db9d474bf0aaaed7a3af669b395c92
-Generated: 2026-08-01T05:30:10+00:00
+Source commit: 497386522d12cbd76fab6d28691439632f5dd8b8
+Generated: 2026-08-01T06:28:13+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 2 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase2_proof.py` at generation time. It is not done, and the Result table below says by how much.
 
@@ -44,9 +44,9 @@ This run evaluated 22 acceptance criteria: thirteen criteria are covered, one cr
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3884 |
-| suite tests executed | 3691 |
-| suite passed | 3691 |
+| suite tests collected | 3888 |
+| suite tests executed | 3695 |
+| suite passed | 3695 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
@@ -109,7 +109,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | fixtures/evidence/phase-2/lineage/records/intent/run_019fa46a-5478-70ea-aab6-28de23c41f7f.json | sha256:89ad215366a6c1e6177e24a04de4db99f0687529175d9bccae39ef3dfadd4ba1 |
 | fixtures/evidence/phase-2/lineage/records/intent/run_019fa471-0173-7050-a41b-22ca01969b52.json | sha256:e1e6f323427445671f554e4af5d23ea7a2020b578d926d6e934d3144604be0ba |
 | fixtures/evidence/phase-2/lineage/records/intent/run_019fa4c0-390d-7081-b539-08d9ff6b58be.json | sha256:be35e6f2797c899e1a5b44544ed64d053b125f6d17cb47fb0cc6932f2fd976a5 |
-| infra/admission-state-machine.yaml | sha256:743f8aa7979d4feb31f44201566350582b4f5d0d20a9bb22f368bce39e65fece |
+| infra/admission-state-machine.yaml | sha256:300876ab2c0c1917b942b7af0f0a14dea4acd3cc60b510a43b62d4bab9d603da |
 | infra/iam/admission-role.yaml | sha256:e5e5b2db0ae9b7d1cdf8d46ab3568f35279a33344fe1ec337cf69e82b9c9e841 |
 | infra/iam/admission-service-roles.yaml | sha256:fd826897cc8ff59b345a648cf6063dd470942ec0680751f8a550d9ccca3793d2 |
 | infra/iam/infra-deployer-role.yaml | sha256:596abb25126c0f10d734cbecd01bec08495cac63b19a81ab46870318504774ac |
