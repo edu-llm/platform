@@ -67,5 +67,5 @@
 # releases and the workflow that can upload only runs on main.
 schema_version: 1
 s3_key: lifecycle-recorder/lifecycle-recorder.zip
-s3_object_version: LlqfzHya0jKYV.A_QygCJR_4.WjWWJYf
-sha256: 315474129adc97e6ab36ba07b9a447f25e816e6660867c864a26bd460be91c37
+s3_object_version: vJzKSu6M3r3tvXS4ENVglOMq_DaEoZZH
+sha256: 7b757107b8c8d3e0a2bc98f9a85f904b47a3e193709f659f41c5d0a5ef228c16
