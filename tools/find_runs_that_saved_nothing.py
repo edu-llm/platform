@@ -168,15 +168,20 @@ class CommandLineObjectStore:
         cached = self._listings.get((bucket, prefix))
         if cached is None:
             # Cached because inspect_checkpoint lists the same prefix a second time when it
-            # holds no step directory, and the report asks for the count as well. The CLI
-            # pages the listing itself, so a prefix past one page still arrives whole.
+            # holds no step directory, and the report asks for the count as well.
             answer = self._json(
                 ["s3api", "list-objects-v2", "--bucket", bucket, "--prefix", prefix]
             )
             contents = answer.get("Contents") or []
             cached = [entry for entry in contents if isinstance(entry, Mapping)]
             self._listings[(bucket, prefix)] = cached
-        return {"Contents": list(cached)}
+        # IsTruncated is stated rather than omitted, and it is the one line here that is
+        # about the caller. The CLI follows the continuation itself and hands back one
+        # merged answer -- measured against a thirteen-object prefix with --page-size 3 --
+        # so this is always the whole listing. inspect_checkpoint asks for the next page
+        # while a store says there is one, and a store that answered from a cache keyed on
+        # the prefix while claiming truncation would hand back the same page for ever.
+        return {"Contents": list(cached), "IsTruncated": False}
 
     def head_object(self, **arguments: Any) -> Any:
         call = ["s3api", "head-object", "--bucket", str(arguments["Bucket"])]

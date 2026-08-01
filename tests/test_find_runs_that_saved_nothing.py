@@ -188,14 +188,20 @@ def test_the_shape_a_run_that_checkpointed_writes_is_reported_as_loadable(
     assert "model, optimizer and trainer state" in states[0].detail
 
 
-def test_a_run_whose_newest_step_is_a_fragment_is_reported_however_good_the_earlier_ones_are(
+def test_a_torn_newest_step_is_not_a_finding_when_an_earlier_one_still_loads(
     catalog: WorkloadCatalog,
 ) -> None:
-    """Mutation: accept the prefix if any step directory under it loads.
+    """Mutation: call the prefix unloadable because its highest step directory is torn.
 
-    A resume reads the newest step, so a run killed part way through writing step2 is not
-    resumable however complete step0 and step1 are. Judging the prefix by its best directory
-    would report that run healthy and send its retry to a checkpoint the loader refuses.
+    An attempt reclaimed part way through writing step2 resumes from step1 and keeps going,
+    because ``find_checkpoints`` skips a directory failing ``dir_is_checkpoint`` and
+    ``latest_checkpoint`` takes the highest of what survives. Reporting that run as having
+    nothing to load would have the report and the trainer disagreeing about the one question
+    the report is asked, and the trainer is the one that is right.
+
+    The tool does not decide this and must not appear to. It carries what the reader found,
+    including the warning about the torn directory, which is the half an operator needs to
+    know a write did not finish even though the run is fine.
     """
     states = checkpoint_states(
         [intent("olmo-core-train-1gpu")],
@@ -203,8 +209,27 @@ def test_a_run_whose_newest_step_is_a_fragment_is_reported_however_good_the_earl
         store=store_holding((0, FULL_STEP), (1, FULL_STEP), (2, STUB)),
     )
 
+    assert states[0].is_loadable
+    assert "step1" in states[0].detail
+    assert "step2 is newer but unfinished" in states[0].detail
+
+
+def test_a_prefix_whose_every_step_is_torn_is_a_finding(catalog: WorkloadCatalog) -> None:
+    """The other side of the fallback, and the shape eight runs in the account are in.
+
+    Falling back to an earlier complete directory is right, and it must not become "there is
+    probably something further down". A prefix where no step directory loads has nothing to
+    resume from however many of them there are.
+    """
+    states = checkpoint_states(
+        [intent("olmo-core-train-1gpu")],
+        catalog,
+        store=store_holding((0, STUB), (1, STUB)),
+    )
+
     assert states[0].wrote_something_unloadable
-    assert "step2" in states[0].detail
+    assert "step1" in states[0].detail
+    assert "no earlier step directory here is one either" in states[0].detail
 
 
 def test_a_missing_success_marker_is_an_absence_rather_than_an_outage(
