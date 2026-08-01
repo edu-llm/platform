@@ -400,6 +400,7 @@ lineage record of a cancelled run is complete in the same way a successful one i
 | 2 | `sbsandbox-intern-edullm-phase4-gpu` | `infra/batch-compute-gpu.yaml` | compute environment, queue, job definition, log group | CI |
 | 3 | `sbsandbox-intern-edullm-dataset-validator-iam` | `infra/iam/dataset-validator-role.yaml` | `…-dataset-validator` | laptop, not applied yet |
 | 4 | `sbsandbox-intern-edullm-run-canceller-iam` | `infra/iam/run-canceller-role.yaml` | `…-run-canceller` | laptop |
+| 5 | `sbsandbox-intern-edullm-nightly-reader-iam` | `infra/iam/nightly-reader-role.yaml` | `…-nightly-reader` | laptop, not applied yet |
 
 Stack 4 needs a repository variable as well as a deploy: `AWS_RUN_CANCELLER_ROLE_ARN`, set
 to the role's ARN, which `.github/workflows/cancel-run.yml` reads. Without it the workflow
@@ -414,6 +415,27 @@ caller's own run is a step in `cancel-run.yml`. What bounds that is the role's s
 describes jobs and stops them and reaches nothing else in the account, so the worst a
 bypass achieves is stopping runs. The role's trust names that one workflow file, so a job
 that could skip the check has to be added beside the check.
+
+Stack 5 needs a repository variable in the same way: `AWS_NIGHTLY_READER_ROLE_ARN`, set to
+the role's ARN, which the `runs-that-saved-nothing` job in `.github/workflows/nightly.yml`
+reads. Until the stack is applied and the variable is set, that job refuses before it takes
+a credential, printing `nightly_reader_role_not_deployed` and naming this section. The
+other three jobs in that file reach no AWS API and are unaffected.
+
+**No existing role could have been reused for it, and the reason is the same condition that
+makes the others safe.** Every GitHub role in this directory pins
+`token.actions.githubusercontent.com:job_workflow_ref` to one workflow file with a
+`StringEquals`: `submit-run.yml` for the admission and image-resolver roles,
+`build-research-image.yml` for the publisher, `cancel-run.yml` for the canceller, and the
+three deploy files for the deployer. A token minted for `nightly.yml` matches none of them.
+The new role reads the `intent/` prefix of the lineage store and lists the two buckets a
+run's checkpoints would be under. It holds no write, no delete, and no
+`secretsmanager:GetSecretValue`.
+
+It sits in this table for the reason stack 3 does rather than because Phase 4 depends on it:
+a template with no committed file naming its stack is a template whose next change begins
+with a guess, and one line written before the first deploy is cheaper than recovering the
+name from the account afterwards.
 
 Same rule as Phases 2 and 3: **every laptop stack goes before every CI stack**. Here it is
 not enforced by CloudFormation at all — the comment immediately above the *Deploy Phase 4 GPU

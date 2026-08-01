@@ -1,0 +1,122 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: GitHub Actions role that reads the admission intents and lists what the runs wrote, so the scheduled report can find a run that promised a checkpoint and saved none.
+
+Resources:
+  NightlyReaderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sbsandbox-intern-edullm-nightly-reader
+      PermissionsBoundary:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/InternSandboxBoundary
+      MaxSessionDuration: 3600
+      # A SCHEDULED JOB HOLDING A CREDENTIAL IS THE QUESTION ABOUT THIS ROLE, SO IT IS
+      # ANSWERED HERE RATHER THAN IN A REVIEW COMMENT.
+      #
+      # `nightly.yml` reached no AWS API at all before this, and that was a property worth
+      # keeping: a job nobody is watching, running at 05:00 against the default branch, is
+      # the worst place in this repository to put an identity that can change something.
+      # This one cannot. It lists two buckets and reads the admission intents, which is
+      # what `tools/find_runs_that_saved_nothing.py` needs in order to ask whether a run
+      # whose profile promised a checkpoint left its prefix empty, and it is the whole of
+      # what the role can do in the account.
+      #
+      # A trust policy cannot distinguish jobs within a workflow, so every job in
+      # `nightly.yml` presents the same `job_workflow_ref` and the same `sub` and any of
+      # them can assume this, including one added later. That is acceptable only because
+      # the role is read-only, which is why `tests/test_nightly_workflow.py` asserts the
+      # action set exactly rather than asserting that nothing dangerous is in it.
+      #
+      # The sub prefix carries owner and repository ids because this organization issues
+      # immutable subject claims, verified the same way the canceller role's was:
+      # `gh api repos/edu-llm/platform/actions/oidc/customization/sub` reports
+      # sub_claim_prefix repo:edu-llm@306859726/platform@1311508598.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated:
+                Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                # One workflow file, and no existing role could have been reused for it:
+                # every other GitHub role here pins this key to submit-run.yml,
+                # build-research-image.yml, cancel-run.yml or the three deploy files, and
+                # the condition is a StringEquals, so a token minted for this file matches
+                # none of them.
+                token.actions.githubusercontent.com:job_workflow_ref: edu-llm/platform/.github/workflows/nightly.yml@refs/heads/main
+                token.actions.githubusercontent.com:repository_owner_id: "306859726"
+                token.actions.githubusercontent.com:repository_id: "1311508598"
+                token.actions.githubusercontent.com:sub: repo:edu-llm@306859726/platform@1311508598:ref:refs/heads/main
+      # Inline rather than a customer managed policy. InternSandboxBoundary denies
+      # iam:CreatePolicyVersion on every policy, so a managed policy could be created once
+      # and never amended; the first permission change would fail the stack update. Inline
+      # policies go through iam:PutRolePolicy, which the boundary permits on this name.
+      Policies:
+        - PolicyName: read-the-intents-and-list-what-the-runs-wrote
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # The intents are the list of runs worth asking about. Each one carries the
+              # team and the workload profile, and the profile is what says whether a
+              # checkpoint was promised at all; a run whose profile promises nothing is
+              # correct to have written nothing, and reporting those would make this noise.
+              #
+              # Listing and reading are separate actions on separate resources in S3, so
+              # syncing one prefix needs both. The prefix condition is what keeps the list
+              # off `decision/`, `conflicts/`, `attempt/` and `result/`: ListBucket is a
+              # bucket-level action, an object ARN cannot scope it, and the condition is
+              # the only place the narrowing can go.
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-lineage
+                Condition:
+                  StringLike:
+                    s3:prefix: intent/*
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-lineage/intent/*
+              # Listing is the whole of the question asked of the outputs bucket. The
+              # report counts objects under a checkpoint prefix and never opens one, so
+              # there is no s3:GetObject here and a training checkpoint stays unreadable
+              # by this role. The prefix condition names the shape `output_prefix` in
+              # src/edullm_platform/contracts/results.py builds, which is the same
+              # condition the CPU workload role lists under in infra/iam/batch-roles.yaml.
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-outputs
+                Condition:
+                  StringLike:
+                    s3:prefix: teams/*/runs/*
+              # DELIBERATELY ABSENT, and each for its own reason rather than as a list.
+              #
+              # Every s3 write and every s3 delete. This role runs unattended on a
+              # schedule and its whole output is a report, so nothing it does should be
+              # visible in either bucket afterwards. On the lineage store that is not only
+              # a preference: the bucket refuses an unconditional write by policy, and a
+              # grant here would be a permission that exists to be denied.
+              #
+              # s3:GetObject on the outputs bucket, so this cannot read a team's training
+              # output on its way past counting it.
+              #
+              # secretsmanager:GetSecretValue. Nothing this job runs authenticates to a
+              # service outside the account, so a secret read would be a grant with no
+              # caller.
+              #
+              # Every batch:, states: and ecr: action. The report reads records of what
+              # already happened and must not be able to start, stop or publish anything.
+
+Outputs:
+  RoleName:
+    Value:
+      Ref: NightlyReaderRole
+  RoleArn:
+    Value:
+      Fn::GetAtt:
+        - NightlyReaderRole
+        - Arn

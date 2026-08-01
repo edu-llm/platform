@@ -51,6 +51,11 @@ REQUIRED_CHECK_NAMES = {"checks (python 3.12)", "checks (python 3.13)"}
 #: constant from the same place would pass while the two had drifted apart.
 REPRODUCE_ENV = "EDULLM_REPRODUCE_PROOFS"
 
+#: The one scheduled job that holds an AWS credential, and the only one that may. Named
+#: rather than derived from the file, because the check it appears in is about how many
+#: jobs reach AWS and a check reading that off the file would agree with whatever it said.
+CREDENTIALLED_NIGHTLY_JOB = "runs-that-saved-nothing"
+
 
 def _load_workflow(path: Path = WORKFLOW_PATH) -> dict[str, Any]:
     return load_workflow(path)
@@ -191,20 +196,35 @@ def test_the_nightly_run_reproduces_what_the_pull_request_path_skips() -> None:
     assert "continue-on-error" not in job
 
 
-def test_no_scheduled_job_can_reach_aws_or_a_secret() -> None:
-    # The gates read committed records, so they need no credentials. Saying so here means
-    # a later attempt to make one of them re-capture live evidence has to change a test —
-    # and a scheduled job is exactly where somebody would be tempted to put a re-capture.
+def test_only_the_one_scheduled_job_that_reads_s3_can_reach_aws() -> None:
+    # The gates read committed records and the reproduction runs the suite, so three of
+    # the four scheduled jobs need no credentials and should stay unable to take one. The
+    # fourth asks a question about the account, which no commit can answer, and it holds
+    # the token on the job rather than at the top of the file so the widening stops there.
+    # What that identity may then do is pinned in tests/test_nightly_workflow.py; what is
+    # held here is the count, because a second job quietly acquiring a credential is the
+    # change this file is placed to notice.
     workflow = _load_workflow(NIGHTLY_PATH)
     workflow_text = NIGHTLY_PATH.read_text(encoding="utf-8")
 
     assert workflow["permissions"] == {"contents": "read"}
-    for job_id in workflow["jobs"]:
-        assert "permissions" not in workflow["jobs"][job_id]
+    assert {job_id for job_id, job in workflow["jobs"].items() if "permissions" in job} == {
+        CREDENTIALLED_NIGHTLY_JOB
+    }
+    assert workflow["jobs"][CREDENTIALLED_NIGHTLY_JOB]["permissions"] == {
+        "contents": "read",
+        "id-token": "write",
+    }
+    for job_id, job in workflow["jobs"].items():
+        if job_id == CREDENTIALLED_NIGHTLY_JOB:
+            continue
+        reaching = [step for step in job["steps"] if "aws-actions/" in step.get("uses", "")]
+        assert reaching == [], f"{job_id} reads committed records and needs no credential"
 
+    # No secret reaches this file at all, credentialled job or not. The role ARN is a
+    # repository variable rather than a secret, because it names an identity and hiding
+    # the name of an identity buys nothing.
     assert not re.search(r"\$\{\{[^}]*secrets\.", workflow_text)
-    assert "aws-actions/" not in workflow_text
-    assert "id-token" not in workflow_text
     assert not re.search(r"(?<!\d)\d{12}(?!\d)", workflow_text)
 
 
@@ -231,5 +251,7 @@ def test_the_nightly_file_says_why_each_check_is_not_on_the_pull_request_path() 
     assert "continue-on-error" in header, "say why nothing here is informational"
     assert "expire" in header, "say why the gates cannot sit on the pull-request path"
     assert "required" in header, "say what does block a merge"
-    for job_id in ("proof-bundles-reproduce", *GATE_JOBS):
+    # Read off the file's own job list rather than from a tuple here, so a job added
+    # without a paragraph is a failure rather than a job the header has stopped covering.
+    for job_id in _load_workflow(NIGHTLY_PATH)["jobs"]:
         assert job_id in header, f"{job_id} is not accounted for in the header"
