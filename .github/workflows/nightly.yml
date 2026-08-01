@@ -1,10 +1,10 @@
 name: Nightly (the checks that are not about one change)
 
-# Three checks that answer a question about the repository rather than about a change,
-# and that either cost too much or fail too unpredictably to sit on the pull-request
-# path. Nothing here is continue-on-error, and that is the whole point of moving them:
-# there is no alerting infrastructure, so a red scheduled run is the signal, and a job
-# that cannot go red is not one.
+# Five checks that answer a question about the repository or about the account rather
+# than about a change, and that either cost too much or fail too unpredictably to sit on
+# the pull-request path. Nothing here is continue-on-error, and that is the whole point of
+# moving them: there is no alerting infrastructure, so a red scheduled run is the signal,
+# and a job that cannot go red is not one.
 #
 # Why each is here rather than in ci.yml:
 #
@@ -27,6 +27,22 @@ name: Nightly (the checks that are not about one change)
 #     comment in ci.yml wanted from them and never got. Both are also red whenever a
 #     criterion of theirs is a recorded gap; that is a statement about the phase, and it
 #     is a statement worth waking up to rather than one worth suppressing.
+#
+#   checkpoint-reconciliation and wandb-credential — these two read the account, and that
+#     is why they are here rather than on the pull-request path. Both describe a state a
+#     change cannot cause and cannot be blamed for: a run that trained for hours and saved
+#     nothing did so before the diff under review existed, and a credential pasted wrongly
+#     into Secrets Manager has nothing to do with any file. They also need an AWS identity,
+#     and putting one on the pull-request path would mean a fork's pull request runs with
+#     it in reach.
+#
+# Both assume sbsandbox-intern-edullm-nightly-reader, which can read the intent records,
+# what the runs wrote, and one secret, and holds no write anywhere in the account.
+# infra/iam/nightly-reader-role.yaml argues each grant; the short version is that a check
+# able to change what it is checking can produce its own all-clear. The role is applied
+# from a laptop like every IAM stack here, so a fresh clone of this repository does not
+# bring it with it, and both jobs say so by name rather than failing at the credential
+# step with an empty role.
 #
 # The contract rules the gates enforce are covered by the test suite in ci.yml, which is
 # what blocks a merge. Nothing here is a required check and nothing here should become
@@ -112,3 +128,155 @@ jobs:
       # reason it is here rather than on the pull-request path.
       - name: Run the acceptance gate
         run: uv run --frozen python tools/validate_phase1.py
+
+  checkpoint-reconciliation:
+    name: runs that promised a checkpoint have one
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Only these two jobs mint a token, so the three gates above keep the read-only
+      # permission the file declares and cannot assume anything.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      # Before the credential step, because configure-aws-credentials meets an empty role
+      # with "Credentials could not be loaded", which reads as broken federation and sends
+      # the reader to the OIDC configuration rather than to a stack nobody applied.
+      - name: Check the nightly reader role is deployed
+        env:
+          ROLE_ARN: ${{ vars.AWS_NIGHTLY_READER_ROLE_ARN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${ROLE_ARN}" ]]; then
+            echo "nightly_reader_role_not_deployed" >&2
+            echo "AWS_NIGHTLY_READER_ROLE_ARN is unset, so this job has no identity to assume." >&2
+            echo "The role is infra/iam/nightly-reader-role.yaml, applied from a laptop like" >&2
+            echo "every IAM stack here. See infra/README.md for the stack name and the" >&2
+            echo "repository variable it needs." >&2
+            exit 1
+          fi
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ vars.AWS_NIGHTLY_READER_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # The whole intent tree, because the report is handed no list of run ids and an
+      # intent record is what says a run was submitted under a profile promising
+      # checkpoints. Nothing else in the lineage store is fetched, and the role can reach
+      # nothing else in it.
+      - name: Fetch the intent records
+        env:
+          LINEAGE_BUCKET: sbsandbox-intern-edullm-lineage
+        run: |
+          set -euo pipefail
+          aws s3 sync "s3://${LINEAGE_BUCKET}/intent/" lineage/intent/ --only-show-errors
+
+      # THIS JOB IS RED TODAY AND THAT IS THE FINDING, NOT A FAULT IN IT. Fourteen of the
+      # fifteen runs carrying a checkpoint contract have nothing a resume could load: six
+      # wrote nothing at all, and eight wrote a step0 holding only train/rank0.pt, which is
+      # rank 0's trainer state with no weights and no optimizer beside it. The second group
+      # is the reason this check exists -- they wrote, so every count-based reading of the
+      # bucket called them healthy.
+      - name: Reconcile what those runs actually wrote
+        run: |
+          set -uo pipefail
+          status=0
+          uv run --frozen python tools/find_runs_that_saved_nothing.py \
+            --lineage-root lineage \
+            --output reconciliation.md || status=$?
+
+          if [[ -s reconciliation.md ]]; then
+            cat reconciliation.md >> "${GITHUB_STEP_SUMMARY}"
+            cat reconciliation.md
+          fi
+
+          # Two ways to be non-zero and they are not the same answer. The report exits 2
+          # when it could not read the records or the bucket, which is never a statement
+          # that nothing is wrong, and a reader who cannot tell that from a real finding
+          # goes looking for runs that are fine.
+          if [[ "${status}" -eq 2 ]]; then
+            echo "checkpoint_reconciliation_unusable" >&2
+            echo "The report could not read the lineage records or the outputs bucket, so it" >&2
+            echo "has not said anything about the runs. The error above says which." >&2
+            exit 1
+          fi
+          if [[ "${status}" -ne 0 ]]; then
+            echo "runs_promised_a_checkpoint_and_have_none" >&2
+            echo "A run declared a checkpoint contract and a resume would find nothing to" >&2
+            echo "load. The table above says which runs, and whether each wrote nothing or" >&2
+            echo "wrote something no loader will accept." >&2
+            exit 1
+          fi
+
+  wandb-credential:
+    name: the stored W&B key is one W&B accepts
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check the nightly reader role is deployed
+        env:
+          ROLE_ARN: ${{ vars.AWS_NIGHTLY_READER_ROLE_ARN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${ROLE_ARN}" ]]; then
+            echo "nightly_reader_role_not_deployed" >&2
+            echo "AWS_NIGHTLY_READER_ROLE_ARN is unset, so this job has no identity to assume." >&2
+            echo "The role is infra/iam/nightly-reader-role.yaml, applied from a laptop like" >&2
+            echo "every IAM stack here. See infra/README.md for the stack name and the" >&2
+            echo "repository variable it needs." >&2
+            exit 1
+          fi
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ vars.AWS_NIGHTLY_READER_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # WHAT THIS CATCHES IS A ROTATION, NOT A TRAINING BUG. The value before the one
+      # stored now was a good key with the literal word `api` glued to the front, which is
+      # what pasting W&B's netrc line as a single token produces. W&B refused it outright
+      # and nothing on this platform went red, because a training run does not fail when
+      # W&B declines it -- the run trains, logs nowhere, and exits zero. The check resolves
+      # the key against W&B rather than only measuring it, because the shape was very
+      # nearly right and only W&B's answer settles it.
+      #
+      # It never prints the key. The output is a length, a truncated digest and the entity
+      # W&B resolved it to.
+      - name: Ask W&B whether it would accept the stored key
+        run: |
+          set -uo pipefail
+          status=0
+          uv run --frozen python tools/verify_wandb_credential.py || status=$?
+          if [[ "${status}" -ne 0 ]]; then
+            echo "wandb_credential_would_be_refused" >&2
+            echo "The looks_wrong list above names the fault. The secret is set from a" >&2
+            echo "laptop and from nowhere else, so repairing it is a person rather than a" >&2
+            echo "re-run of this job." >&2
+            exit 1
+          fi

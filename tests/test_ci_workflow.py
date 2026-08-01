@@ -2,9 +2,14 @@
 
 There are two workflows and the split between them is the point. ``ci.yml`` runs on every
 change and everything in it can fail a build. ``nightly.yml`` runs on a schedule and holds
-the checks that answer a question about the repository rather than about the change: the
-two acceptance gates, which read evidence that expires, and the reproduction of the
-recorded suite results, which runs the suite inside the suite.
+the checks that answer a question about the repository or about the account rather than
+about the change: the two acceptance gates, which read evidence that expires; the
+reproduction of the recorded suite results, which runs the suite inside the suite; and two
+that read the account, where the thing being described was true before the change existed.
+
+What those last two need and the first three do not is an AWS identity, so the permission
+to mint one is declared per job here rather than for the file. ``tests/test_nightly_workflow.py``
+holds the two checks themselves; this module holds the split.
 
 Both gates were pull-request jobs and both were ``continue-on-error``, because a gate that
 reads expiring evidence can go red for reasons unrelated to the change under review. The
@@ -41,6 +46,11 @@ GATE_JOBS = {
     "contract-and-manifest-gate": "tools/validate_phase0.py",
     "branch-to-image-gate": "tools/validate_phase1.py",
 }
+
+#: The scheduled jobs that read the account rather than the tree, and so the only ones that
+#: may mint an OIDC token. Named here rather than derived, because the point of the list is
+#: that a job joining it is a review of this line.
+CREDENTIALED_NIGHTLY_JOBS = frozenset({"checkpoint-reconciliation", "wandb-credential"})
 
 #: The contexts pinned in branch protection on ``main``. They are job names, so renaming
 #: either one silently stops the protection matching anything.
@@ -191,20 +201,39 @@ def test_the_nightly_run_reproduces_what_the_pull_request_path_skips() -> None:
     assert "continue-on-error" not in job
 
 
-def test_no_scheduled_job_can_reach_aws_or_a_secret() -> None:
-    # The gates read committed records, so they need no credentials. Saying so here means
-    # a later attempt to make one of them re-capture live evidence has to change a test —
-    # and a scheduled job is exactly where somebody would be tempted to put a re-capture.
+def test_only_the_jobs_that_read_the_account_can_reach_it() -> None:
+    # This said no scheduled job could reach AWS at all, which was true while every check
+    # here read committed records. Two now ask the account a question no committed file
+    # answers: whether the runs that promised a checkpoint have one, and whether the stored
+    # W&B key is one W&B accepts.
+    #
+    # The claim worth keeping is the narrower one, and it is stronger than a file-wide
+    # string search was. id-token is declared per job rather than for the file, so a gate
+    # that started re-capturing live evidence -- which is exactly what somebody would be
+    # tempted to put in a scheduled job -- cannot mint a token without adding a permissions
+    # block, and adding one fails here.
     workflow = _load_workflow(NIGHTLY_PATH)
-    workflow_text = NIGHTLY_PATH.read_text(encoding="utf-8")
 
     assert workflow["permissions"] == {"contents": "read"}
-    for job_id in workflow["jobs"]:
-        assert "permissions" not in workflow["jobs"][job_id]
+    for job_id, job in workflow["jobs"].items():
+        if job_id in CREDENTIALED_NIGHTLY_JOBS:
+            assert job["permissions"] == {"contents": "read", "id-token": "write"}, job_id
+            continue
+        assert "permissions" not in job, f"{job_id} reads committed records and needs none"
+        # The permission and the step are separate mutations. A gate that gained a
+        # configure-aws-credentials without a permissions block fails at 05:00 rather than
+        # here, and a reader of that failure has no reason to look at this list.
+        reaching = [step for step in job["steps"] if "aws-actions/" in step.get("uses", "")]
+        assert reaching == [], f"{job_id} reads committed records and needs no credential"
+
+
+def test_no_scheduled_job_takes_a_secret_or_names_the_account() -> None:
+    # Unchanged in force by the two credentialed jobs. Both assume a role by OIDC and read
+    # its ARN from a repository variable, so there is still no long-lived credential in
+    # this file and still no account id to read off it.
+    workflow_text = NIGHTLY_PATH.read_text(encoding="utf-8")
 
     assert not re.search(r"\$\{\{[^}]*secrets\.", workflow_text)
-    assert "aws-actions/" not in workflow_text
-    assert "id-token" not in workflow_text
     assert not re.search(r"(?<!\d)\d{12}(?!\d)", workflow_text)
 
 
@@ -224,12 +253,15 @@ def test_the_pull_request_path_cannot_reach_aws_or_a_secret_either() -> None:
 
 def test_the_nightly_file_says_why_each_check_is_not_on_the_pull_request_path() -> None:
     # The reasoning lives in the file because the arrangement looks like an oversight
-    # from the outside: three checks nobody has to pass in order to merge. The next
+    # from the outside: five checks nobody has to pass in order to merge. The next
     # person to notice should find the argument rather than reconstruct it.
+    #
+    # Read off the workflow rather than from a list here, so a job added later has to be
+    # argued for in the header instead of merely not being on a list somebody forgot.
     header = NIGHTLY_PATH.read_text(encoding="utf-8").split("\non:", 1)[0].lower()
 
     assert "continue-on-error" in header, "say why nothing here is informational"
     assert "expire" in header, "say why the gates cannot sit on the pull-request path"
     assert "required" in header, "say what does block a merge"
-    for job_id in ("proof-bundles-reproduce", *GATE_JOBS):
+    for job_id in _load_workflow(NIGHTLY_PATH)["jobs"]:
         assert job_id in header, f"{job_id} is not accounted for in the header"
