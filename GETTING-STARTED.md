@@ -49,6 +49,23 @@ what the cost view groups by, so it is worth being consistent within a project.
 The image is resolved from the commit you named, and the machine comes from the workload
 profile.
 
+## Which corpus to pick
+
+Five are published and readable. All use the dolma2 tokenizer, all are frozen, and none can
+be written to by anything you run.
+
+| `dataset_release` | Train tokens | Objects |
+| --- | --- | --- |
+| `refhq-regmix-5p5b-v2` | 5.5B | 24 |
+| `regmix-10b-v1` | 10.0B | 41 |
+| `olmo-original-30b-v1` | 31.3B | 120 |
+| `olmo-127b-v1` | 126.5B | 474 |
+| `olmo-150b-dolma2-v1` | 157.2B | 6,851 |
+
+Size costs you nothing up front — the shards are memory-mapped from S3 as the loader reaches
+them, so a 157B corpus starts as quickly as a 5B one and reads only what your step count
+needs. Pick by what you are training, not by what you can afford to download.
+
 ## Real training: one line
 
 Everything below is about `olmo-core-train-1gpu`. Set `dataset_release` to the corpus you
