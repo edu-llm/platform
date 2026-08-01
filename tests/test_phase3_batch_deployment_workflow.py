@@ -424,7 +424,9 @@ def test_every_run_body_is_strict_about_failures_and_unset_variables() -> None:
     # makes strictness matter more rather than less -- a diagnostic that swallowed its own
     # error would report nothing and still let the job finish reporting the deploy failure,
     # which is indistinguishable from the diagnostic having found nothing to say.
-    assert len(scripts) == len(DEPLOYMENT_ORDER) + 5
+    # Six deploys, plus: the dispatch gate, validate, the failure diagnostic, verify, the
+    # queue view, and the per-run report.
+    assert len(scripts) == len(DEPLOYMENT_ORDER) + 6
     assert all(script.startswith("set -euo pipefail\n") for script in scripts)
 
 
@@ -754,4 +756,29 @@ def test_asking_about_a_run_deploys_nothing() -> None:
         )
 
     reporting = next(entry for entry in steps if "Say what one run is doing" in entry.get("name", ""))
-    assert reporting["if"] == "inputs.describe_run != ''"
+    assert "inputs.describe_run != ''" in reporting["if"]
+
+
+def test_the_queue_view_answers_the_question_a_single_run_report_cannot() -> None:
+    """Mutation: leave people to poll their own run id and infer the rest.
+
+    RUNNABLE is the commonest answer this workflow gives and Batch never says why. One A10G
+    sits behind the GPU queue, so the usual cause is that another job holds it -- and the
+    per-run report cannot show that, because it only looks at the run it was handed. Two
+    people polling their own runs both see "queued, no reason" and neither learns they are
+    queued behind each other.
+    """
+    steps = workflow()["jobs"]["deploy"]["steps"]
+    queues = next(entry for entry in steps if "what is on the queues" in entry.get("name", ""))
+
+    assert queues["if"] == "inputs.describe_run == 'queues'"
+    # Both queues, and the states a job passes through before it is anybody's answer.
+    for state in ("RUNNING", "STARTING", "RUNNABLE"):
+        assert state in queues["run"]
+    assert "sbsandbox-intern-edullm-gpu" in queues["run"]
+    assert "sbsandbox-intern-edullm-cpu" in queues["run"]
+
+    # And the per-run report must not also fire on the sentinel, which is not a run id and
+    # would fail its own format check.
+    reporting = next(entry for entry in steps if "Say what one run is doing" in entry.get("name", ""))
+    assert "inputs.describe_run != 'queues'" in reporting["if"]

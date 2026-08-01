@@ -59,7 +59,7 @@ on:
       # worry is answered by a test that holds every step which touches the account to
       # carrying that condition, rather than by trusting the list to stay complete.
       describe_run:
-        description: "A run id to report on — status, why, exit code, the command it was given. Reports only: no stack is deployed. Leave empty for an ordinary deploy."
+        description: "A run id to report on — status, why, exit code, the command it was given. Or `queues` for everything waiting. Reports only: no stack is deployed. Leave empty for an ordinary deploy."
         required: false
         default: ""
         type: string
@@ -539,8 +539,42 @@ jobs:
       #
       # continue-on-error, because a report that cannot be produced must not turn a successful
       # deploy red. The deploy already happened by this point.
+      # WHAT IS ON THE QUEUES AT ALL, which is a different question from what one run is
+      # doing and the one that explains the commonest confusing answer: RUNNABLE.
+      #
+      # A job sits in RUNNABLE while Batch looks for capacity, and reports no reason for it
+      # ever. There is one A10G behind the GPU queue, so the usual cause is that somebody
+      # else's job has it -- which the per-run report cannot show, because it only ever looks
+      # at the run it was given. Two people each polling their own run both see "queued, no
+      # reason" and neither learns that they are queued behind each other.
+      - name: Say what is on the queues
+        if: inputs.describe_run == 'queues'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          {
+            echo "## What is on the queues"
+            echo
+            echo "| Queue | State | Run | Started |"
+            echo "| --- | --- | --- | --- |"
+          } >> "${GITHUB_STEP_SUMMARY}"
+          for queue in sbsandbox-intern-edullm-gpu sbsandbox-intern-edullm-cpu; do
+            for state in RUNNING STARTING RUNNABLE PENDING SUBMITTED; do
+              aws batch list-jobs \
+                --job-queue "${queue}" \
+                --job-status "${state}" \
+                --query "jobSummaryList[].[jobName,startedAt]" \
+                --output text > "${RUNNER_TEMP}/q-${queue}-${state}.txt"
+              while read -r name started; do
+                [[ -z "${name}" ]] && continue
+                echo "| ${queue##*-} | ${state} | \`${name}\` | ${started} |" >> "${GITHUB_STEP_SUMMARY}"
+              done < "${RUNNER_TEMP}/q-${queue}-${state}.txt"
+            done
+          done
+          echo "Nothing above means both queues are empty of live work." >> "${GITHUB_STEP_SUMMARY}"
+
       - name: Say what one run is doing
-        if: inputs.describe_run != ''
+        if: inputs.describe_run != '' && inputs.describe_run != 'queues'
         continue-on-error: true
         env:
           RUN_ID: ${{ inputs.describe_run }}
