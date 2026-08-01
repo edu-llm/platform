@@ -42,6 +42,28 @@ from edullm_platform.phase4_evidence import (
 
 TEAM = "platform"
 
+#: A digest that is deployed and has not yet carried a training run, declared here so the gap
+#: is visible rather than silent.
+#:
+#: WHY THIS EXISTS AT ALL. Re-pinning the GPU job definition and running against it cannot
+#: happen in one step: the deployer role's trust policy pins job_workflow_ref to
+#: ``@refs/heads/main``, so nothing deploys from a branch, so the new image is not runnable
+#: until the re-pin has already merged. The test below is the one that refuses a re-pin with
+#: no re-run, and it is right to -- without something like this, the only way to land a new
+#: image is to merge it red and hope somebody finishes.
+#:
+#: WHAT KEEPS IT FROM BECOMING PERMANENT. The test asserts this digest is the deployed one, so
+#: a second re-pin without a second declaration fails; and it asserts no committed run has
+#: used it yet, so the declaration must be deleted in the same change that commits the run's
+#: evidence. It cannot be left behind and it cannot cover a digest other than the one in the
+#: template.
+#:
+#: 2026-08-01: OLMo-core 7eeba5af, the first image carrying a C compiler, the edullm-data
+#: reader and .edullm/train_on_corpus.py. The run against it is the point of pinning it.
+AWAITING_ITS_FIRST_TRAINING_RUN = (
+    "sha256:5578c59c606449001ea17eab7a8f7f6fa5036b73747412ae40ebce16025012a6"
+)
+
 
 # ---------------------------------------------------------------------------------------
 # The reader, which is what stops every test below passing vacuously
@@ -659,10 +681,28 @@ def test_the_run_that_trained_most_recently_ran_the_image_that_is_deployed() -> 
     What must hold is narrower and is the thing that matters: the most recent training run
     ran the digest the deployed definition still names. Read from the template, so a re-pin
     without a re-run fails here rather than at the next submission.
+
+    The one exception is a digest declared in ``AWAITING_ITS_FIRST_TRAINING_RUN``, which
+    exists because a re-pin cannot be deployed from a branch and therefore cannot be run
+    against before it merges. The two assertions around it are what keep it from being a way
+    to skip the re-run entirely.
     """
     template = (
         Path(__file__).resolve().parents[1] / "infra" / "batch-compute-gpu.yaml"
     ).read_text()
+
+    if AWAITING_ITS_FIRST_TRAINING_RUN:
+        assert AWAITING_ITS_FIRST_TRAINING_RUN in template, (
+            "the declared digest is not the deployed one, so it is a leftover from an "
+            "earlier re-pin rather than a statement about this one"
+        )
+        assert AWAITING_ITS_FIRST_TRAINING_RUN not in {
+            run.job.image_digest for run in captured_runs()
+        }, (
+            "a committed run has already used this digest, so the declaration has done its "
+            "job and belongs in the same change that removed it"
+        )
+        return
 
     assert training_run().job.image_digest in template
 

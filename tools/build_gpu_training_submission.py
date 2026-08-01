@@ -51,7 +51,7 @@ from edullm_platform.execution import batch_submit_request, refuse_an_oversized_
 #: cannot drift from the definition that will run it; a submission naming a different digest
 #: is refused at admission, which is the right answer but a slow way to learn it.
 TRAINING_IMAGE_DIGEST: Final = (
-    "sha256:e8f4d5aaea4c7a6e0f723f9b49fccf406ee63017baab4cea4e8b94b8e23e079f"
+    "sha256:5578c59c606449001ea17eab7a8f7f6fa5036b73747412ae40ebce16025012a6"
 )
 
 PROJECT_ROOT: Final = Path(__file__).resolve().parents[1]

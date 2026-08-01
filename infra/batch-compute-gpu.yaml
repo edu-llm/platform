@@ -203,8 +203,25 @@ Resources:
         # Its findings are recorded as reviewed in config/image-exceptions.yaml, and that
         # entry is worth reading rather than assuming, because what it accepts changed when
         # the image did.
+        #
+        # RE-PINNED 2026-08-01 TO OLMo-core 7eeba5af, WHICH IS THE FIRST IMAGE A TRAINING RUN
+        # CAN FINISH IN. Three things arrived in it together and each of them was, on its own,
+        # a run that failed or lied:
+        #
+        #   - a C compiler, without which Inductor kills a run on its first compiled region,
+        #     after the GPU has been paid for and the first checkpoint written;
+        #   - the edullm-data reader, without which a container told which corpus it may read
+        #     has no way to open it;
+        #   - .edullm/train_on_corpus.py, which resolves that corpus and reads it at the width
+        #     the manifest declares rather than the width OLMo-core would infer from the
+        #     tokenizer's vocabulary size.
+        #
+        # The digest below is what the build of that commit published, read out of the run log
+        # rather than resolved locally. A submission naming any other digest is refused at
+        # admission, which is why this line and TRAINING_IMAGE_DIGEST in
+        # tools/build_gpu_training_submission.py have to move together.
         Image:
-          Fn::Sub: ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/sbsandbox-intern-edullm-olmo-core@sha256:e8f4d5aaea4c7a6e0f723f9b49fccf406ee63017baab4cea4e8b94b8e23e079f
+          Fn::Sub: ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/sbsandbox-intern-edullm-olmo-core@sha256:5578c59c606449001ea17eab7a8f7f6fa5036b73747412ae40ebce16025012a6
         ExecutionRoleArn:
           Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-execution
         JobRoleArn:
