@@ -444,6 +444,34 @@ from the workflow file.
   because this is the section that learned that, not because anything in Phase 4 depends on
   it.
 
+### Stack 1: the delete a retry needs, re-applied 2026-08-01
+
+Laptop-applied, with `sbsandbox-intern-edullm-phase4-gpu-iam` as the stack name and
+`infra/iam/batch-gpu-roles.yaml` as the template. Two statements changed on
+`…-batch-gpu-workload`: an Allow of `s3:DeleteObject` on
+`teams/*/runs/*/checkpoints/*`, and a Deny of the same action on
+`teams/*/runs/*/checkpoints/*/.metadata.json`.
+
+The reason is a run rather than a preference. `run_019fbe1f-b84f-703a-8eb8-2b4504232948`
+lost its host at step 100 immediately after `checkpoints/step100/train/rank0.pt` was
+written, leaving that one object. Attempt 2 resumed from `step50` correctly, trained back
+to step 100, and died in `Checkpointer._prepare_dir` with `FileExistsError` on a directory
+that is not empty. That is deterministic, so with two attempts a mid-write kill ends the
+run.
+
+The template's own comments carry the argument. Two facts about the account decide that
+the grant is bounded rather than merely narrow, and both were read live on 2026-08-01: the
+outputs bucket has versioning **Enabled**, and the role holds neither
+`s3:DeleteObjectVersion` nor `s3:PutBucketVersioning`, so every delete it can make is a
+delete marker over versions that stay. The `InternSandboxBoundary` permits it — the
+boundary's only S3 statement is `Allow "*"` on `"*"`, and nothing in it denies an S3
+action.
+
+**Not re-captured.** `fixtures/evidence/phase-4/workload-role-scope.sanitized.json` still
+records the role as observed on 2026-07-30, with `grants_delete: false`, and that is still
+a true statement about that date. `tests/test_phase4_run_evidence.py` pins the capture's
+date deliberately, so regenerating it is a separate change with its own reading.
+
 ### Stack 3: the dataset validator role, deployed 2026-08-01
 
 Laptop-applied, like every IAM stack in this file. The command is the one under *Deploying

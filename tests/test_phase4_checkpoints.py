@@ -27,6 +27,7 @@ from edullm_platform.checkpoints import (
     commit_checkpoint,
     crc32c,
     inspect_checkpoint,
+    olmo_core_checkpoint_shape,
     resumable_checkpoint,
     success_marker_bytes,
 )
@@ -453,9 +454,9 @@ def test_a_half_written_directory_is_uncommitted_rather_than_committed() -> None
 def test_the_newest_step_directory_is_the_one_resumed_from() -> None:
     """Mutation: take the first, or the lowest, or all of them.
 
-    This platform requires keeping every checkpoint -- the workload role holds no
-    s3:DeleteObject, so a trainer configured to prune is denied -- which means a long run
-    accumulates complete directories that are all irrelevant except the last. Sorted as
+    This platform requires keeping every checkpoint -- the workload role is denied the delete
+    a prune starts with, so a trainer configured to prune stops instead -- which means a long
+    run accumulates complete directories that are all irrelevant except the last. Sorted as
     integers rather than as strings, because step1000 sorts before step200 as text.
     """
     store = _library_checkpoint(200, ["train/rank0.pt", "model_and_optim/.metadata", ".metadata.json"])
@@ -533,6 +534,66 @@ def test_the_newer_unfinished_directory_is_named_rather_than_passed_over_silentl
     assert "step200" in inspected.detail
     assert "step400" in inspected.detail
     assert "unfinished" in inspected.detail
+
+
+#: What a lost host actually leaves, taken from run_019fbe1f-b84f-703a-8eb8-2b4504232948.
+#: The instance was terminated at step 100 immediately after this object was written and
+#: before the first ``model_and_optim`` shard started, and ``step100/`` then held exactly one
+#: object of 15,317 bytes. Not a hypothesis about which file might be missing: the
+#: checkpointer writes the train state, then the shards, then ``.metadata.json``, so this is
+#: the widest window a kill can land in and the shape it leaves most often.
+TORN_BY_A_LOST_HOST = ("train/rank0.pt",)
+
+
+def test_the_shape_a_lost_host_leaves_is_not_one_the_loader_accepts() -> None:
+    """The observed torn shape, asserted against the shape reader directly.
+
+    THE READ PATH BEING RIGHT ABOUT THIS IS WHAT MADE THE WRITE PATH'S FAILURE HARD TO SEE.
+    The tests above establish that a resume skips this directory and continues from the
+    complete one below it, which is correct and was proven on a real run. It is also only
+    half of what the shape decides. The other half is that the trainer reaches that step
+    number again and ``Checkpointer._prepare_dir`` raises ``FileExistsError`` on a directory
+    that is not empty, so the run dies at the step it resumed past -- deterministically, on
+    every attempt.
+
+    Asserted here rather than only through ``inspect_checkpoint`` because this function is
+    the single judgement both halves rest on. ``.edullm/train_on_corpus.py`` clears exactly
+    the directories this returns None for, using OLMo-core's own ``dir_is_checkpoint``, so a
+    reading of "torn" that drifted from the library's would put the repair and the loader out
+    of step with each other and leave the run failing again.
+    """
+    assert olmo_core_checkpoint_shape(TORN_BY_A_LOST_HOST) is None
+
+    # And the same directory once the write finishes. The three names are what the loader
+    # requires, so a checkpoint is one object away from torn until the last of them lands.
+    assert (
+        olmo_core_checkpoint_shape(
+            (*TORN_BY_A_LOST_HOST, "model_and_optim/.metadata", ".metadata.json")
+        )
+        == "model, optimizer and trainer state"
+    )
+
+
+def test_the_torn_directory_is_named_by_the_step_it_poisons() -> None:
+    """The operator's version of the same fact, and the number they need.
+
+    A resume that continued from step 200 and a run that never reached step 400 read the
+    same in a manifest. The step of the directory that did not finish is what tells them
+    apart, and it is also the step number a rewrite has to clear before the retry can save
+    there, so it is the one number worth having in the detail line.
+    """
+    store = FakeStore()
+    _add_step(store, 50, FULL_SHAPE)
+    _add_step(store, 100, TORN_BY_A_LOST_HOST)
+
+    inspected = inspect_checkpoint(
+        store, prefix=f"s3://{BUCKET}/teams/platform/runs/{RUN_ID}/checkpoints/"
+    )
+
+    assert inspected.state is CheckpointState.COMMITTED
+    assert inspected.manifest is not None
+    assert inspected.manifest.step == 50
+    assert "step100 is newer but unfinished" in inspected.detail
 
 
 def test_a_prefix_whose_every_step_directory_is_torn_is_still_uncommitted() -> None:

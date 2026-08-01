@@ -173,29 +173,48 @@ def test_the_guide_leads_with_the_command_a_researcher_copies(guide: str) -> Non
     )
 
 
-def workload_role_actions() -> set[str]:
-    """Every action the GPU workload role grants, flattened out of the template."""
+def workload_role_statements() -> list[dict[str, Any]]:
+    """Every statement on the GPU workload role, Deny included.
+
+    Deny included because that is where the interesting half now is. A reader that kept only
+    the Allows would report the delete this role holds and not the refusal that bounds it,
+    which is the more important of the two facts.
+    """
     parsed: dict[str, Any] = yaml.safe_load(GPU_ROLES_PATH.read_text(encoding="utf-8"))
     role = parsed["Resources"]["BatchGpuWorkloadRole"]["Properties"]
-    granted: set[str] = set()
-    for policy in role["Policies"]:
-        for statement in policy["PolicyDocument"]["Statement"]:
-            if statement.get("Effect") != "Allow":
-                continue
-            action = statement.get("Action", [])
-            granted |= {action} if isinstance(action, str) else set(action)
-    return granted
+    return [
+        statement
+        for policy in role["Policies"]
+        for statement in policy["PolicyDocument"]["Statement"]
+    ]
 
 
-def test_the_prune_trap_is_named_and_the_grant_it_assumes_is_still_absent(guide: str) -> None:
-    """Mutation: grant the workload role a delete, and leave the guide saying it has none.
+def _actions_of(statement: dict[str, Any]) -> set[str]:
+    action = statement.get("Action", [])
+    return {action} if isinstance(action, str) else set(action)
+
+
+def _resources_of(statement: dict[str, Any]) -> set[str]:
+    """The ARNs a statement names, with ``Fn::Sub`` unwrapped to the string inside it.
+
+    Every resource in this template is written as a ``Fn::Sub`` so that the partition comes
+    from the stack rather than being hard-coded, which means the plain YAML load hands back a
+    one-key mapping rather than a string.
+    """
+    resource = statement.get("Resource", [])
+    listed = [resource] if isinstance(resource, (str, dict)) else list(resource)
+    return {one["Fn::Sub"] if isinstance(one, dict) else one for one in listed}
+
+
+def test_the_prune_trap_is_named_and_the_refusal_it_assumes_still_happens(guide: str) -> None:
+    """Mutation: grant the delete without the deny, and leave the guide saying a prune fails.
 
     ``CheckpointerCallback.max_checkpoints`` defaults to 3 and counts permanent checkpoints
     only, which means the one written at step 0 plus those at ``save_interval`` and
     ``fixed_steps``. The fourth of those schedules the oldest for removal, and the removal
     runs at the top of the following ``post_train_batch``. It deletes the step directory's
     ``.metadata.json`` first, through ``remove_file``, which is a single ``s3:DeleteObject``
-    and is the call the role does not hold.
+    and is the call the role is refused.
 
     THE REFUSAL IS NOT SWALLOWED, WHICH IS WHY THIS IS A TRAP RATHER THAN AN UNTIDY BUCKET.
     ``_s3_remove_file`` re-raises anything that is not a 404, ``@retriable`` treats every
@@ -208,9 +227,17 @@ def test_the_prune_trap_is_named_and_the_grant_it_assumes_is_still_absent(guide:
     It fires early, not late. At ``--save-interval 200`` the fourth permanent checkpoint is
     step 600, which on one A10G is a bit over an hour in.
 
-    The guide's advice is to keep every checkpoint, and the reason it gives is that the
-    role has no delete. Both halves are asserted, because the advice outliving its reason
-    is how a document starts lying while every sentence in it still reads true.
+    **WHAT THIS ASSERTED UNTIL THE ROLE GAINED A DELETE, AND WHY THE CONCLUSION SURVIVED.**
+    It read every action on the role and required that none of them be a delete, which was
+    the same assertion while the role held no delete at all. It does now, scoped to
+    ``checkpoints/*``, because a retry has to rewrite the step directory its own lost attempt
+    tore -- and the mechanism the guide describes is unchanged, because the prune's first
+    call is a delete of ``.metadata.json`` and that key is denied by name.
+
+    So the assertion moved from "no delete exists" to "this delete is refused", which is the
+    thing the paragraph actually claims. The wider reading would now be satisfied by
+    withdrawing the repair's grant, and the narrower one is satisfied only by the refusal the
+    guide says a person will hit.
     """
     assert "max_checkpoints" in guide, (
         "the guide no longer names the setting that stops OLMo-core pruning"
@@ -219,13 +246,19 @@ def test_the_prune_trap_is_named_and_the_grant_it_assumes_is_still_absent(guide:
         "the guide names the setting without giving the value that disables the prune"
     )
 
-    granted = workload_role_actions()
-    deletes = {action for action in granted if "Delete" in action}
+    denied = {
+        resource
+        for statement in workload_role_statements()
+        if statement.get("Effect") == "Deny"
+        for resource in _resources_of(statement)
+        if "s3:DeleteObject" in _actions_of(statement)
+    }
 
-    assert not deletes, (
-        f"the GPU workload role now grants {sorted(deletes)}, so the guide's reason for "
-        "keeping every checkpoint is no longer true. Either withdraw the grant or rewrite "
-        "the paragraph, but do not leave the two disagreeing"
+    assert any(resource.endswith("/checkpoints/*/.metadata.json") for resource in denied), (
+        "nothing denies the GPU workload role a delete of .metadata.json, so a prune left "
+        "at OLMo-core's default of three now succeeds and deletes a finished checkpoint. "
+        "The guide's paragraph describes a refusal that would no longer happen: either "
+        "restore the deny or rewrite the paragraph, but do not leave the two disagreeing"
     )
 
 
