@@ -558,6 +558,15 @@ So the rule is: **promoting a compute profile, or changing anything else under `
 that admission reads, is a validator release.** Rebuild, upload, edit `S3ObjectVersion`,
 and let CI deploy — before submitting anything that depends on the change.
 
+**And it is two releases, not one.** `build_package` in `tools/build_admission_lambda.py`
+copies `config/*.yaml` into whatever zip it is building, and
+`tools/build_lifecycle_lambda.py` calls that same function — so a change to a config file
+moves the lifecycle recorder's digest as well, even though nothing the recorder does reads
+the catalog. Renaming the four workload profiles found this: the validator release was
+expected and planned for, the recorder's was not, and its tripwire is what said so. Both
+release procedures below have to be run for one edit to `config/`, and the table at the top
+of this section lists the two functions precisely so the second is not forgotten.
+
 The deployer role needs `s3:ListBucketVersions` on the artifacts bucket for this to work,
 and that is not obvious: Lambda fetches the versioned code object as the deploying
 principal, and needs a bucket-level action as well as `s3:GetObjectVersion` on the object.
