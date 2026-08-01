@@ -133,6 +133,19 @@ Resources:
       JobQueueName: sbsandbox-intern-edullm-cpu
       State: ENABLED
       Priority: 1
+      # The same rule as the GPU queue, and the argument is written out there in full. A
+      # RUNNABLE job nothing can place stays queued forever with no notification and no
+      # terminal state, and from the submitter's side that is indistinguishable from
+      # waiting its turn. Thirty minutes is an order of magnitude above the two to three a
+      # cold environment takes to scale up, so it cannot interrupt a legitimate wait.
+      JobStateTimeLimitActions:
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: >-
+            This run sat unplaceable for thirty minutes. Nothing in the compute environment
+            could satisfy what it asked for, so it was cancelled rather than left queued
+            with no terminal state. Check the compute profile against what is provisioned.
+          State: RUNNABLE
       ComputeEnvironmentOrder:
         - Order: 1
           ComputeEnvironment:

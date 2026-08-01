@@ -696,6 +696,46 @@ def test_the_tag_scope_is_the_submit_scope_because_it_is_the_same_call() -> None
     assert states_role_arns_for("batch:TagResource") == states_role_submit_arns()
 
 
+def test_both_queues_cancel_a_job_nothing_can_ever_place() -> None:
+    """Reads BOTH files. Mutation: set the rule on one queue and not the other.
+
+    Batch leaves a RUNNABLE job in the queue indefinitely when nothing can run it, with no
+    notification and no terminal state. From the submitter's side that is identical to a
+    job waiting its turn, which is the ordinary condition -- so there is no observation
+    they can make that separates "queued behind others" from "will never start". A run
+    asking for more vCPU than the environment's ceiling, or a GPU count no registered
+    instance type has, is unplaceable from the moment it is submitted.
+
+    Asserted across both queues because a rule on one is the asymmetry that hides: the CPU
+    queue is where the cheap runs go and the GPU queue is where the expensive mistake is,
+    and whichever one was left out would be found by somebody's run rather than by this.
+
+    The thirty minutes is asserted as a floor rather than an exact value, because the thing
+    it must not do is interrupt a legitimate wait for capacity -- a cold environment takes
+    two to three minutes to bring up an instance -- and the thing it must do is terminate
+    eventually. A value below ten minutes would start cancelling real queue waits.
+    """
+    for path in COMPUTE_PATHS:
+        queue = properties_of(path, "AWS::Batch::JobQueue")
+        actions = queue.get("JobStateTimeLimitActions")
+
+        assert actions, f"{path.name} leaves an unplaceable job queued forever"
+        runnable = [action for action in actions if action.get("State") == "RUNNABLE"]
+        assert runnable, f"{path.name} sets no time limit on the RUNNABLE state"
+        for action in runnable:
+            # CANCEL rather than TERMINATE: the job never started, so there is nothing
+            # running to terminate, and the two produce different lifecycle records.
+            assert action["Action"] == "CANCEL"
+            assert action["MaxTimeSeconds"] >= 600, (
+                "a limit under ten minutes would cancel runs that were legitimately "
+                "waiting for a cold compute environment to scale up"
+            )
+            assert action.get("Reason"), (
+                "a cancelled run whose record carries no reason is the same silence this "
+                "rule exists to end"
+            )
+
+
 def test_the_event_rule_matches_the_job_queue_the_compute_stack_creates() -> None:
     """Reads BOTH files. Mutation: rename the queue in one of them.
 
