@@ -173,6 +173,39 @@ workloads:
     maximum_runtime_hours: "1"
     maximum_attempts: 1
     checkpoint: null
+  # The first profile on this platform that is for training rather than for proving the
+  # platform works. One A10G, twelve hours, two attempts.
+  #
+  # TWELVE HOURS IS THE POLICY CEILING AND NOT A ROUND NUMBER. config/policy.yaml sets
+  # routine_maximum_runtime_hours to 12, so this is the longest run that still routes to an
+  # ordinary lead approval; a thirteenth hour would make every submission an exception and
+  # put a second person in the path of every training job. At the A10G's $1.006/hour that is
+  # $12.07 an attempt and $24.14 across both, against a routine cost ceiling of $500.
+  #
+  # TWO ATTEMPTS IS THE POINT OF THE ENTRY, AND IT IS ONLY SAFE BECAUSE OF THREE THINGS THAT
+  # ARE NOW TRUE TOGETHER. EDULLM_RUN_ID is in the container environment, so a Batch retry
+  # re-runs the same container with the same environment and therefore the same
+  # EDULLM_CHECKPOINT_DIR. OLMo-core's Trainer.fit() auto-resumes from its save folder with
+  # load_trainer_state and load_optim_state both hard-coded true. And the checkpoint the
+  # first attempt left is now readable rather than reported corrupt, which it was until the
+  # write path moved to CRC32C. Remove any one of the three and the second attempt silently
+  # repeats the first at full price.
+  #
+  # resume_required: true is still a declaration -- no code branches on the field. What makes
+  # it true in practice is the paragraph above, and what makes it checkable is that a run
+  # whose save folder was left at OLMo-core's /tmp default writes nothing here at all.
+  - name: olmo-core-train-1gpu
+    repository: OLMo-core
+    compute_profile: gpu-1xa10g
+    maximum_runtime_hours: "12"
+    maximum_attempts: 2
+    checkpoint:
+      interval_minutes: 30
+      # The root the per-run prefix hangs under, not a path anything writes to; the value the
+      # container is handed is output_prefix(team, run_id) + "checkpoints/". Same string as
+      # the four-GPU entry below, and for the same reason recorded there.
+      destination_prefix: "s3://sbsandbox-intern-edullm-outputs/teams/"
+      resume_required: true
   - name: olmo-core-train-4gpu
     repository: OLMo-core
     compute_profile: gpu-4xa10g

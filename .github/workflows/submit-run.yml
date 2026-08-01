@@ -37,6 +37,7 @@ on:
         options:
           - olmo-core-check-cpu
           - olmo-core-check-gpu
+          - olmo-core-train-1gpu
       dataset_release:
         description: "Which prepared dataset this run reads. Pick none unless you are reading one — a quick check reads nothing, and saying none is what makes the record true."
         required: true

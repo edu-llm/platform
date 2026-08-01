@@ -215,6 +215,30 @@ def batch_submit_request(
                     "Name": "EDULLM_OUTPUT_PREFIX",
                     "Value": output_prefix(team=manifest.team, run_id=run_id),
                 },
+                # WHERE CHECKPOINTS GO, FOR THE SAME REASON AND WITH A SHARPER EDGE. The
+                # suffix is not a secret -- config/workload-catalog.yaml already records
+                # that the path is output_prefix(team, run_id) + "checkpoints/" -- so this
+                # is telling the container something the platform decided rather than
+                # inventing a location.
+                #
+                # It is its own variable because of what the alternative costs. OLMo-core's
+                # example defaults --save-folder to /tmp/{run_name}, which is on the
+                # instance and gone when the instance is. A twelve-hour run that took the
+                # default trains for twelve hours, writes checkpoints nobody can reach,
+                # exits zero, and is recorded as a success. Making the path a variable is
+                # what lets the guide print `--save-folder "$EDULLM_CHECKPOINT_DIR"` as one
+                # line to copy, instead of a sentence about joining a prefix to a word --
+                # which is the shape of instruction people get wrong at two in the morning.
+                #
+                # The run id is minted at compile time, so this cannot be filled in on the
+                # form. It has to arrive through the environment, which is why a command
+                # that needs it has to run under a shell: ContainerOverrides.Command is exec
+                # form, and an unexpanded $EDULLM_CHECKPOINT_DIR reaches OLMo-core as a
+                # literal path it will cheerfully create.
+                {
+                    "Name": "EDULLM_CHECKPOINT_DIR",
+                    "Value": output_prefix(team=manifest.team, run_id=run_id) + "checkpoints/",
+                },
                 # THE PROJECT COMES FROM THE MANIFEST, NOT FROM THE COMMAND, AND THAT IS
                 # THE WHOLE OF D4 IN ONE LINE.
                 #
