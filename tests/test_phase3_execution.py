@@ -961,6 +961,73 @@ def test_the_registered_definition_asks_for_the_shape_its_profile_was_priced_at(
     assert wants_a_gpu == (compute_profile.startswith("gpu-"))
 
 
+def deployed_compute_environment(path: Path) -> dict[str, Any]:
+    """The compute environment one template creates, read for its vCPU ceiling.
+
+    Read rather than restated for the same reason the job definition above is: the ceiling
+    and the reservation together are what decides how many first runs start at once, and a
+    restated ceiling would keep agreeing with a template that had moved.
+    """
+    matching = [
+        resource["Properties"]
+        for resource in load_template(path)["Resources"].values()
+        if isinstance(resource, dict)
+        and resource.get("Type") == "AWS::Batch::ComputeEnvironment"
+    ]
+    assert len(matching) == 1, f"expected exactly one compute environment in {path.name}"
+    return matching[0]
+
+
+#: What one instance of each promoted profile's instance type offers a container: the
+#: hardware's vCPU count, and its memory less the few GiB the ECS agent and the host need.
+#: Both templates state the second in prose beside their reservations.
+C7I_8XLARGE = (32, 61440)
+G5_XLARGE = (4, 15360)
+
+
+def test_the_cpu_check_reserves_an_eighth_of_a_machine_rather_than_all_of_one() -> None:
+    """Mutation: put 32 vCPU and 61440 MiB back, or reduce only one of the two.
+
+    olmo-core-check-cpu is the run GETTING-STARTED.md sends a new researcher to first, and
+    it prints an interpreter version in under a second. Reserving a whole c7i.8xlarge for it
+    made the CPU queue four wide, so a group onboarding together waited hours for seconds of
+    work.
+
+    Reducing only vCPU does not fix it and looks like it has. Batch places on vCPU and
+    memory at once, so a 4 vCPU container still holding 60 GiB is still one job per
+    instance: the vCPU arithmetic says thirty-two and the machine gives four. Both axes are
+    asserted here, and they are asserted as agreeing with each other, because the smaller of
+    the two is what decides concurrency and nothing reports which one that was.
+    """
+    shape = CONTAINER_SHAPES[PROMOTED_PROFILE]
+    instance_vcpus, instance_memory_mib = C7I_8XLARGE
+    ceiling = deployed_compute_environment(INFRA_ROOT / "batch-compute.yaml")["ComputeResources"]
+
+    assert shape.vcpus == 4
+    assert shape.memory_mib == 7680
+    assert instance_vcpus // shape.vcpus == instance_memory_mib // shape.memory_mib == 8
+    assert ceiling["MaxvCpus"] // shape.vcpus == 32
+
+
+def test_the_gpu_shape_still_takes_a_whole_g5_because_the_device_is_the_scarce_thing() -> None:
+    """Mutation: shrink the GPU reservation the way the CPU one was shrunk.
+
+    It would change nothing and cost the shape's honesty. A g5.xlarge carries one A10G, a
+    container without a GPU entry gets no device at all, and Batch has no way to give two
+    jobs a share of one card. So the four vCPU are already the whole machine's four, the
+    queue is already 128 / 4 wide, and a smaller reservation would only let Batch place a
+    second job on an instance whose one device is taken.
+    """
+    shape = CONTAINER_SHAPES["gpu-1xa10g"]
+    instance_vcpus, instance_memory_mib = G5_XLARGE
+    ceiling = deployed_compute_environment(INFRA_ROOT / "batch-compute-gpu.yaml")[
+        "ComputeResources"
+    ]
+
+    assert (shape.vcpus, shape.memory_mib, shape.gpus) == (instance_vcpus, instance_memory_mib, 1)
+    assert ceiling["MaxvCpus"] // shape.vcpus == 32
+
+
 @pytest.mark.parametrize("compute_profile", PROMOTED_PROFILES)
 def test_the_registered_definition_is_the_deployed_one_with_the_image_swapped(
     compute_profile: str,
