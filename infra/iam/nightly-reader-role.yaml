@@ -1,0 +1,158 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: GitHub Actions role for the nightly checks that read the account and change nothing in it.
+
+Resources:
+  NightlyReaderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sbsandbox-intern-edullm-nightly-reader
+      PermissionsBoundary:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/InternSandboxBoundary
+      MaxSessionDuration: 3600
+      # WHY A NEW ROLE RATHER THAN ONE OF THE FIVE THAT ALREADY EXIST.
+      #
+      # Every OIDC role here pins `job_workflow_ref` with `StringEquals` to one workflow
+      # file, which is deliberate and is what makes each role's blast radius readable off
+      # the file that can assume it. The consequence is that a token minted for nightly.yml
+      # matches none of them, so a nightly check needing AWS has no identity at all -- and
+      # the two checks that need one, checkpoint reconciliation and the W&B credential,
+      # could not run.
+      #
+      # Widening an existing role's `job_workflow_ref` to a list was the smaller diff and
+      # the worse change. The admission role can start an execution and the canceller can
+      # stop any job on either queue; adding nightly.yml to either would put those powers
+      # behind a scheduled workflow that nobody watches dispatch. This role is instead
+      # scoped by what it can do: read three named things and nothing else in the account.
+      #
+      # The sub prefix carries owner and repository ids because this organization issues
+      # immutable subject claims, verified as
+      # `gh api repos/edu-llm/platform/actions/oidc/customization/sub` reporting
+      # sub_claim_prefix repo:edu-llm@306859726/platform@1311508598.
+      #
+      # refs/heads/main is the only ref in the subject, and a schedule cannot present
+      # another one: GitHub runs a scheduled workflow on the default branch. So the same
+      # condition that pins the file also means a branch cannot borrow this role by adding
+      # a job to nightly.yml and dispatching it from the branch.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated:
+                Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:job_workflow_ref: edu-llm/platform/.github/workflows/nightly.yml@refs/heads/main
+                token.actions.githubusercontent.com:repository_owner_id: "306859726"
+                token.actions.githubusercontent.com:repository_id: "1311508598"
+                token.actions.githubusercontent.com:sub: repo:edu-llm@306859726/platform@1311508598:ref:refs/heads/main
+      # Inline rather than managed, for the reason every role here is: InternSandboxBoundary
+      # denies iam:CreatePolicyVersion, so a managed policy could be created once and never
+      # amended.
+      Policies:
+        - PolicyName: read-what-the-nightly-checks-ask-about
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # The intent records, which are how the reconciliation learns which runs were
+              # submitted under a profile carrying a checkpoint contract. Object-level and
+              # confined to one prefix: the same bucket holds decision, binding, attempt and
+              # result records, and this check reads none of them.
+              - Sid: ReadIntentRecords
+                Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-lineage/intent/*
+              # Listing is a bucket-level action, so it cannot be scoped by an object ARN and
+              # the prefix condition is the narrowing. Granted because the check has to
+              # enumerate the intent tree; it is handed no list of run ids.
+              - Sid: ListIntentRecords
+                Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-lineage
+                Condition:
+                  StringLike:
+                    s3:prefix: intent/*
+              # What a run wrote. GetObject rather than a listing alone because deciding
+              # whether a checkpoint would load means reading it: HeadObject is authorized as
+              # s3:GetObject, and a `_SUCCESS` marker has to be fetched to be compared
+              # against what the store attests.
+              - Sid: ReadRunOutput
+                Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-outputs/teams/*/runs/*
+              # Same shape and the same reason as the workload roles' own listing grant, and
+              # the same prefix condition, so this cannot enumerate anything in the bucket
+              # that is not a run's output.
+              - Sid: ListRunOutput
+                Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-outputs
+                Condition:
+                  StringLike:
+                    s3:prefix: teams/*/runs/*
+              # THE WILDCARD ON THIS ARN IS LOAD-BEARING AND IS NOT A PREFIX GRANT. Secrets
+              # Manager appends a random six-character suffix to every secret ARN -- here
+              # -fnwEVp -- which is not predictable and not stable across a
+              # delete-and-recreate, so a grant written against the exact ARN works until
+              # somebody recreates the secret and then fails as an access denial that reads
+              # like a policy error. The trailing -* matches that suffix and nothing else:
+              # the name it follows is complete, so this cannot reach a second secret unless
+              # somebody creates one whose name begins with this one.
+              #
+              # The check reads the value because the fault it exists to catch is only
+              # visible in the value. A key with the literal word `api` glued to the front --
+              # what pasting W&B's netrc line as one token produces -- is the right length,
+              # the right shape at a glance, and refused by W&B; nothing goes red, because a
+              # training run does not fail when W&B declines it.
+              - Sid: ReadTheWandbKeyTheCheckValidates
+                Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sbsandbox-intern-edullm-wandb-api-key-*
+              # DELIBERATELY ABSENT, and each for its own reason rather than as a list.
+              #
+              # Every write. This role exists to describe the account and a check that can
+              # change what it is checking can manufacture its own all-clear. It is the one
+              # property of this role worth holding to a test, and
+              # tests/test_nightly_workflow.py does.
+              #
+              # s3:GetObject on the rest of the lineage store. The reconciliation asks which
+              # runs promised a checkpoint, which the intent record answers on its own. The
+              # result records would tell it how each run ended, and that is a second
+              # question this check deliberately does not ask: the whole point is that a run
+              # recorded as a success can have saved nothing.
+              #
+              # s3:DeleteObject, for the reason the GPU workload role omits it. Checkpoints
+              # are kept because nothing on this platform can remove one, and a nightly job
+              # holding the delete would be the first identity able to tidy up the evidence.
+              #
+              # secretsmanager:PutSecretValue, UpdateSecret and DeleteSecret. The check
+              # reports that a rotation was wrong; repairing it is a laptop and a person.
+              #
+              # secretsmanager:ListSecrets. It has no resource type, so granting it would be
+              # an account-wide enumeration of sixteen other teams' secret names to save a
+              # call this role never makes.
+              #
+              # Every batch:, states: and logs: action. Neither check asks what is running,
+              # and a scheduled workflow that could reach the queues or the state machine
+              # would be a way to touch a run without anybody dispatching anything.
+
+Outputs:
+  RoleName:
+    Value:
+      Ref: NightlyReaderRole
+  RoleArn:
+    Value:
+      Fn::GetAtt:
+        - NightlyReaderRole
+        - Arn
