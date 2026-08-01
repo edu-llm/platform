@@ -609,6 +609,19 @@ jobs:
             exit 0
           fi
           aws batch describe-jobs --jobs "${found}" --output json > "${RUNNER_TEMP}/job.json"
+          # WHAT THE RUN LEFT BEHIND, WHICH IS EVIDENCE THE EXIT CODE DOES NOT CARRY.
+          #
+          # A checkpoint object under the prefix of a run means the trainer got past its first
+          # save; an empty prefix on a run that reported forty seconds of life means it never
+          # reached one. Neither is visible in a status of FAILED and an exit code of 1.
+          #
+          # Listing only. The deployer holds s3:ListBucket over the buckets carrying our
+          # prefix and s3:GetObject over the artifacts bucket alone, so this can say what
+          # exists and never what is in it -- which is the right shape for a role whose job
+          # is to deploy stacks rather than to read the results of a team.
+          aws s3 ls "s3://sbsandbox-intern-edullm-outputs/teams/" --recursive \
+            > "${RUNNER_TEMP}/outputs.txt" 2>/dev/null || : > "${RUNNER_TEMP}/outputs.txt"
+          grep -F "${RUN_ID}" "${RUNNER_TEMP}/outputs.txt" > "${RUNNER_TEMP}/wrote.txt" || : > "${RUNNER_TEMP}/wrote.txt"
           # python3, not `uv run`: this workflow never installs uv, and the report imports
           # nothing outside the standard library.
           stream="$(python3 -c "import json,os;print(json.load(open(os.environ['RUNNER_TEMP']+'/job.json'))['jobs'][0].get('container',{}).get('logStreamName') or '')")"
@@ -648,6 +661,24 @@ jobs:
           print(f"| Exit code | {container.get('exitCode', 'none yet')} |")
           print(f"| Container said | {container.get('reason') or 'nothing'} |")
           print(f"| Image | `{container.get('image', 'unknown')}` |")
+          print()
+
+          # WHETHER IT WROTE ANYTHING, which distinguishes two failures that read alike. A
+          # run that reached its first checkpoint and then died is a training problem; one
+          # whose prefix is empty after forty seconds never got that far. Status FAILED and
+          # exit code 1 are identical in both.
+          wrote = [line for line in open(temporary + "/wrote.txt").read().splitlines() if line]
+          print("### What it wrote")
+          print()
+          if wrote:
+              print("```")
+              for line in wrote[:40]:
+                  print(line)
+              if len(wrote) > 40:
+                  print(f"... and {len(wrote) - 40} more objects")
+              print("```")
+          else:
+              print("Nothing under this run's output prefix.")
           print()
 
           # THE COMMAND AND THE ENVIRONMENT, BECAUSE A RUN THAT DIES IN SECONDS DIED ON ONE OF

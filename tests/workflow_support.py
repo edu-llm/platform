@@ -91,7 +91,20 @@ def aws_commands(script: str) -> list[list[str]]:
     normalized = re.sub(r"\\\s*\n", " ", script)
     commands = []
     for line in normalized.splitlines():
-        tokens = shlex.split(line)
+        # SAY WHICH LINE, BECAUSE shlex's OWN MESSAGE NAMES NOTHING. An apostrophe in a
+        # comment -- "the run's prefix" -- is an unclosed single quote to the lexer, and
+        # what a reader gets is `ValueError: No closing quotation` with no file, no line and
+        # no hint that a comment they wrote in prose is the cause. This has cost three
+        # separate debugging sessions on three different workflows.
+        try:
+            tokens = shlex.split(line)
+        except ValueError as unbalanced:
+            raise ValueError(
+                f"{unbalanced} while reading this line of a workflow script:\n"
+                f"    {line.strip()}\n"
+                "An apostrophe inside a shell comment reads as an unclosed quote here. "
+                "Reword it -- 'the prefix of a run' rather than 'the run's prefix'."
+            ) from None
         if tokens[:1] == ["aws"]:
             commands.append(tokens)
     assert aws_word_count(normalized) == len(commands), (
