@@ -327,8 +327,8 @@ def _lineage_signals(
     """What this person has run, and under which name.
 
     A claimed team the bindings do not carry is reported rather than dropped. It is a
-    finding about the roster or about the submission form's free-text team box, and the
-    person who typed it is the person whose group is being decided.
+    finding about the roster, or about a group that has been renamed since the record was
+    written, and the person who claimed it is the person whose group is being decided.
     """
     wanted = normalize_github_login(login)
     mine = [run for run in runs if normalize_github_login(run.submitter) == wanted]

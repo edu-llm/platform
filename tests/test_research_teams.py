@@ -1,14 +1,14 @@
 """The research groups this platform recognizes, and the GitHub teams they are.
 
-A run has declared a ``team`` since Phase 0 and nothing has ever been able to say whether
-the value was a real group. The form takes free text, its own help says a typo delays
+A run has declared a ``team`` since Phase 0 and for most of that time nothing could say
+whether the value was a real group. The form took free text, its own help said a typo delays
 nothing, and the only GitHub teams in the organization were ``team-leads`` and
 ``team-members``, neither of which is a research group. So the string travelled the whole
 length of the system, into the manifest, into the immutable decision record, into the S3
 prefix and onto the Batch job as ``edullm:team``, and the first reader able to notice it was
 wrong was a person reading a cost report.
 
-These hold the two halves of closing that. ``config/organization.yaml`` now declares the
+These hold the two halves of closing that. ``config/organization.yaml`` declares the
 groups, and each declaration names the GitHub team it is; the tests below check the
 declaration against the platform's own run records on one side and against a capture of the
 live organization on the other.
