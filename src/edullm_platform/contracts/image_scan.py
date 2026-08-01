@@ -72,12 +72,14 @@ __all__ = [
     "ImageScanSeverity",
     "ImageScanStatus",
     "ImageScanSummary",
+    "ImageScanVerdict",
     "ReviewedVulnerability",
     "ScanFinding",
     "VulnerabilityId",
     "blocking_findings_from_ecr",
     "image_scan_is_reviewed",
     "image_scan_summary_from_ecr",
+    "image_scan_verdict",
     "unreviewed_blocking_findings",
 ]
 
@@ -98,6 +100,35 @@ class ImageScanStatus(StrEnum):
     IN_PROGRESS = "IN_PROGRESS"
     FAILED = "FAILED"
     UNSUPPORTED_IMAGE = "UNSUPPORTED_IMAGE"
+
+
+class ImageScanVerdict(StrEnum):
+    """What the gate concluded, at the resolution a refusal has to be written at.
+
+    The gate answers yes or no and the four ways of saying no are not interchangeable,
+    because two of them are questions for a person and two of them are this platform
+    reporting that it could not find out. An operator told that findings are unreviewed goes
+    and reviews findings; that is the right response to exactly one member of this enum, and
+    for as long as the answer was a bare boolean it was the response every refusal invited.
+
+    Not a contract model and not written into any record. What is recorded is the decision's
+    ``detail``, and this is what decides which sentence that detail carries.
+    """
+
+    #: Clean, every blocking finding reviewed, or covered by a recorded exception.
+    REVIEWED = "reviewed"
+    #: Nothing that parses as a describe result reached the decision, so the findings were
+    #: never read. A read that failed and an answer this cannot parse arrive the same way.
+    SCAN_UNREADABLE = "scan_unreadable"
+    #: The registry has a scan and has not finished it, or it failed, or it cannot scan this
+    #: image at all. There is no settled set of findings for anybody to have reviewed.
+    SCAN_INCOMPLETE = "scan_incomplete"
+    #: Fewer findings at a blocking severity arrived than the registry counts. Whatever the
+    #: reviews say, the findings that would need one are not here to be matched against them.
+    FINDINGS_UNREAD = "findings_unread"
+    #: Every finding the registry counts arrived and at least one carries no recorded review.
+    #: The only verdict a person can clear by writing something down.
+    FINDINGS_UNREVIEWED = "findings_unreviewed"
 
 
 ImageScanSeverityValue = Annotated[
@@ -429,15 +460,15 @@ def unreviewed_blocking_findings(
     )
 
 
-def image_scan_is_reviewed(
+def image_scan_verdict(
     *,
     image_digest: str,
     summary: ImageScanSummary | None,
     policy: ImageScanPolicy,
     registry: ImageScanExceptionRegistry,
     blocking_findings: Sequence[ScanFinding] | None = None,
-) -> bool:
-    """Whether this digest may run: clean, every blocking finding reviewed, or excepted.
+) -> ImageScanVerdict:
+    """Whether this digest may run, and when it may not, which kind of no it is.
 
     Fails closed on every kind of not-knowing. A missing summary, a scan that has not
     finished, and a scan that failed are all "nobody has seen the findings", and none of
@@ -455,16 +486,61 @@ def image_scan_is_reviewed(
     open. ``blocking_findings`` therefore defaults to ``None`` and that default refuses any
     image with a blocking finding, so a caller cannot reach the permissive branch by
     omission.
+
+    **The counts are a fact about the whole scan and the list is a fact about what arrived,
+    which is what makes the comparison precise rather than approximate.** Measured against
+    this account on 2026-08-01: a call that returned a hundred of an image's two hundred and
+    thirteen findings still reported thirteen criticals in ``findingSeverityCounts``. So the
+    comparison answers exactly the question that matters -- did every finding that blocks
+    reach this decision -- for a partial read as well as a complete one.
+
+    **Which is also why the shortfall is its own verdict rather than folded into the
+    unreviewed one, and that distinction is the reason this returns an enum.** The two
+    outcomes refuse identically and ask opposite things of whoever reads the refusal. An
+    unreviewed finding is a question for a person, who can answer it by recording a review.
+    A count the list does not reach is this platform not having fetched something, and no
+    review anybody writes will change it. Reporting the second as the first sent an operator
+    to write reviews that already existed, for an image whose thirteen criticals had all
+    been accepted and four of which had been read.
     """
     if registry.exception_for(image_digest) is not None:
-        return True
-    if summary is None or not summary.complete:
-        return False
+        return ImageScanVerdict.REVIEWED
+    if summary is None:
+        return ImageScanVerdict.SCAN_UNREADABLE
+    if not summary.complete:
+        return ImageScanVerdict.SCAN_INCOMPLETE
     expected = policy.blocking_findings(summary)
     if expected == 0:
-        return True
+        return ImageScanVerdict.REVIEWED
     if blocking_findings is None or len(blocking_findings) != expected:
-        return False
-    return not unreviewed_blocking_findings(
-        blocking_findings=blocking_findings, registry=registry
+        return ImageScanVerdict.FINDINGS_UNREAD
+    if unreviewed_blocking_findings(blocking_findings=blocking_findings, registry=registry):
+        return ImageScanVerdict.FINDINGS_UNREVIEWED
+    return ImageScanVerdict.REVIEWED
+
+
+def image_scan_is_reviewed(
+    *,
+    image_digest: str,
+    summary: ImageScanSummary | None,
+    policy: ImageScanPolicy,
+    registry: ImageScanExceptionRegistry,
+    blocking_findings: Sequence[ScanFinding] | None = None,
+) -> bool:
+    """Whether this digest may run: clean, every blocking finding reviewed, or excepted.
+
+    Derived from :func:`image_scan_verdict` rather than deciding anything of its own, so the
+    boolean the gate acts on and the verdict the refusal describes cannot disagree. A second
+    implementation of one question would be a message describing an outcome the decision did
+    not take, which is the same class of untruth this pair was split apart to remove.
+    """
+    return (
+        image_scan_verdict(
+            image_digest=image_digest,
+            summary=summary,
+            policy=policy,
+            registry=registry,
+            blocking_findings=blocking_findings,
+        )
+        is ImageScanVerdict.REVIEWED
     )
