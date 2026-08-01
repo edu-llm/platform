@@ -128,7 +128,7 @@ def manifest(**overrides: Any) -> RunManifest:
         "command": ["python", "-m", "olmo_core.train", "--config", "smoke"],
         "team": "memory-split",
         "wandb_project": "olmo-core-memory-split",
-        "workload_profile": "olmo-core-cpu-smoke",
+        "workload_profile": "olmo-core-check-cpu",
         "compute_profile": PROMOTED_PROFILE,
         "maximum_runtime_hours": "1",
         "maximum_attempts": 1,
@@ -1049,7 +1049,7 @@ def test_an_unprovisioned_profile_is_a_refusal_rather_than_a_crash() -> None:
     outcome = admit_manifest(
         run_manifest=manifest(
             compute_profile=UNPROVISIONED_PROFILE,
-            workload_profile="olmo-core-train-smoke",
+            workload_profile="olmo-core-train-4gpu",
         )
     )
 
@@ -1075,7 +1075,7 @@ def test_the_two_ways_of_having_nowhere_to_run_are_distinguishable_in_the_record
     outcome = admit_manifest(
         run_manifest=manifest(
             compute_profile=UNPROVISIONED_PROFILE,
-            workload_profile="olmo-core-train-smoke",
+            workload_profile="olmo-core-train-4gpu",
         ),
         catalog=catalog.model_copy(update={"compute_profiles": promoted}),
     )
@@ -1094,7 +1094,7 @@ def test_a_refusal_for_want_of_capacity_still_records_the_price_and_the_authoriz
     outcome = admit_manifest(
         run_manifest=manifest(
             compute_profile=UNPROVISIONED_PROFILE,
-            workload_profile="olmo-core-train-smoke",
+            workload_profile="olmo-core-train-4gpu",
         )
     )
     decision = outcome.decision

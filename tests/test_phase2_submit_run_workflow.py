@@ -1149,7 +1149,7 @@ FORM_ENVIRONMENT = {
     "FORM_REPOSITORY": "dolma",
     "FORM_COMMIT_SHA": "a" * 40,
     "FORM_IMAGE_DIGEST": "sha256:" + "b" * 64,
-    "FORM_WORKLOAD_PROFILE": "dolma-tokenize-smoke",
+    "FORM_WORKLOAD_PROFILE": "dolma-tokenize",
     "FORM_DATASET_RELEASE": "dolma-2026-07",
     "FORM_TEAM": "data-prep",
     "FORM_WANDB_PROJECT": "dolma-tokenize",

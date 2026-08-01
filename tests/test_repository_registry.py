@@ -87,7 +87,7 @@ def test_the_registry_and_the_pilot_list_are_asked_different_questions() -> None
     "is this repository registered" from the first of them.
 
     Both directions were live at once. ``dolma`` is a pilot with no registration, and a
-    submission naming it with ``dolma-tokenize-smoke`` was accepted, routed to a lead and
+    submission naming it with ``dolma-tokenize`` was accepted, routed to a lead and
     would have been submitted to the CPU queue -- where it would have run the OLMo-core
     image, because the image is pinned in the job definition rather than chosen by the
     submission. ``edullm-data`` is registered and is not a pilot, so the first workload
@@ -142,7 +142,7 @@ def test_is_registered_answers_for_every_repository_the_catalog_names() -> None:
 
     ``is_registered`` is the one answer, so this checks it against the file rather than
     against a remembered list, and names the one workload repository that fails it -- which
-    is why ``dolma-tokenize-smoke`` is absent from the submission form.
+    is why ``dolma-tokenize`` is absent from the submission form.
     """
     root = Path(__file__).resolve().parents[1]
     registry = load_yaml(root / "config" / "repositories.yaml", RepositoryRegistry)

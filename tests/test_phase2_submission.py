@@ -57,14 +57,14 @@ FIRST_PUSH = datetime(2026, 7, 26, 9, 2, tzinfo=UTC)
 SECOND_PUSH = datetime(2026, 7, 26, 18, 30, tzinfo=UTC)
 
 #: The registered workload most of this module compiles against. It was
-#: ``dolma-tokenize-smoke`` until ``repository_registered`` started reading
+#: ``dolma-tokenize`` until ``repository_registered`` started reading
 #: ``config/repositories.yaml`` rather than the roster's pilot list: dolma is a pilot
 #: repository and has no registration, so a submission naming it is now denied outright and
 #: cannot stand in for an ordinary one. ``DOLMA_WORKLOAD`` is kept below for the tests that
 #: are about the catalog rather than about a submission that compiles.
-CPU_WORKLOAD = "olmo-core-cpu-smoke"
-DOLMA_WORKLOAD = "dolma-tokenize-smoke"
-OLMO_WORKLOAD = "olmo-core-train-smoke"
+CPU_WORKLOAD = "olmo-core-check-cpu"
+DOLMA_WORKLOAD = "dolma-tokenize"
+OLMO_WORKLOAD = "olmo-core-train-4gpu"
 REGISTERED_DATASET = "dolma-2026-07"
 UNREGISTERED_DATASET = "dolma-2026-99"
 UNREGISTERED_COMPUTE_PROFILE = "cpu-1024vcpu"
@@ -855,7 +855,7 @@ def test_a_workload_profile_from_another_repository_is_refused() -> None:
     """Mutation: drop the comparison and let the two fields disagree.
 
     MEASURED BEFORE IT WAS FIXED: a submission naming repository OLMo-core with workload
-    profile dolma-tokenize-smoke compiled cleanly, classified routine, and routed to a
+    profile dolma-tokenize compiled cleanly, classified routine, and routed to a
     lead. Two fields that must agree, and nothing compared them -- the same defect shape as
     the three-way output-prefix disagreement Phase 4 inherited.
 
@@ -864,7 +864,7 @@ def test_a_workload_profile_from_another_repository_is_refused() -> None:
     checkpoint contract would all have been the other repository's.
     """
     with pytest.raises(SubmissionRefusedError, match="belongs to repository"):
-        compile_payload(olmo_payload(workload_profile="dolma-tokenize-smoke"))
+        compile_payload(olmo_payload(workload_profile="dolma-tokenize"))
 
 
 def test_the_refusal_names_both_repositories_so_the_reader_knows_which_to_change() -> None:
@@ -875,7 +875,7 @@ def test_the_refusal_names_both_repositories_so_the_reader_knows_which_to_change
     the second attempt fails for the same reason with the same message.
     """
     with pytest.raises(SubmissionRefusedError) as refusal:
-        compile_payload(olmo_payload(workload_profile="dolma-tokenize-smoke"))
+        compile_payload(olmo_payload(workload_profile="dolma-tokenize"))
 
     assert "dolma" in str(refusal.value)
     assert "OLMo-core" in str(refusal.value)

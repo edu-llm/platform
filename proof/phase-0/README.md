@@ -2,8 +2,8 @@
 
 Phase: phase-0
 Bundle schema version: 1
-Source commit: 5707d1480a6e5b778e51fe820d521583a33a4d2f
-Generated: 2026-08-01T03:51:54+00:00
+Source commit: 5744b5dbce09cbe3d3a1397b42afe7525bcdeda9
+Generated: 2026-08-01T04:03:21+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 0 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase0_proof.py` at generation time.
 
@@ -20,8 +20,8 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 | --- | --- |
 | suite tests collected | 3879 |
 | suite tests executed | 3686 |
-| suite passed | 3686 |
-| suite failed | 0 |
+| suite passed | 3684 |
+| suite failed | 2 |
 | suite errored | 0 |
 | suite skipped | 0 |
 | matrix node ids executed | 254 |
@@ -88,16 +88,16 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | --- | --- |
 | config/organization.yaml | sha256:cea2d2123d2fb5794614e6a4b8a362c8aaa33626f20ae28a13cb673fadf4ac78 |
 | config/policy.yaml | sha256:8efa2f00527f9ad1677ed27452a2b6093a6a8c9e8190cf3e0a583b0f68787b39 |
-| config/workload-catalog.yaml | sha256:dbd10c9d4655be66f829b8c43e150544ba17ca778988f86d14d22e51600feec6 |
+| config/workload-catalog.yaml | sha256:9d5d346254b61527cfab6babc3c5d8af637854b24c8efd50a351fb689b85eb15 |
 | fixtures/authorization/admin-exception.yaml | sha256:4ad48b8ecd405d11428cf446f74d0a8aeabf904365f3fee7b599b6a7ed0b6fa0 |
 | fixtures/authorization/lead-self-authorization.yaml | sha256:0e65da633a3880b11e5f14d380d54497a2be7124da1121f34ec3d21d4b4e83d0 |
 | fixtures/authorization/member-approval.yaml | sha256:a39cbdcbec68bf2fd8067f624ee1cf08aac008757e9fdaf69d812b76ea44e2de |
-| fixtures/manifests/cpu-routine.yaml | sha256:51044b73c9b10163a817454f42949ac011b449d126bcfdafbe2b457026694491 |
-| fixtures/manifests/gpu-exception.yaml | sha256:ac493344c543e7ef49ac5368bb19b9f391afedf8675aeb29650ebd2b7f207db9 |
-| fixtures/manifests/gpu-routine.yaml | sha256:c32d8c289c1f2c6b568bda5cc43a8a35b3b52ff0c435a214b4cefd6f82d1dd6f |
-| fixtures/manifests/multiseed-routine.yaml | sha256:0241fc78bc6e165b4f06c0e0223607f39f4f1a4fee4700f56348b488619743bd |
-| fixtures/manifests/olmo-branch-routine.yaml | sha256:111be4025328f27d4f9d6d4a8b204bc5c26322cf2e4b66f4207a4ecc70d3db86 |
-| fixtures/manifests/sagemaker-routine.yaml | sha256:3a7277b614e990f9e1a827f272ff917603b8059f831abae1d4342d15be12956a |
+| fixtures/manifests/cpu-routine.yaml | sha256:38bb87c5171d9bb9eb6ba74172d07cd975477c96cdbf6493c17a1ca1d3628467 |
+| fixtures/manifests/gpu-exception.yaml | sha256:e604a1f06ca7dba632dfa180a3f865500f54552447ca4adf7fdde1051f4b0874 |
+| fixtures/manifests/gpu-routine.yaml | sha256:e649a5d4099a8c282d8870d36bcec6654a28156e1fc2f08703cccbccb261b8d6 |
+| fixtures/manifests/multiseed-routine.yaml | sha256:e4775ba478e52ecdb710d2d7a70cfc75177acfb3724e2b8f7d787a4f2223202d |
+| fixtures/manifests/olmo-branch-routine.yaml | sha256:4921b4616fa15393b1a7631d6a25bf63ca19b2ae4233a3a7b34a4d2305fae55c |
+| fixtures/manifests/sagemaker-routine.yaml | sha256:d5d57c6970bb5c8c618cd70bfedc9dcb3d7fef8393592d9543a6b22dd6e2af2b |
 | schemas/batch-job-binding.schema.json | sha256:41a20845192e959dd91b32f87d57da0cf3b04e5a2177e0200f27aec2cece901c |
 | schemas/checkpoint-manifest.schema.json | sha256:f51cc8c500c81cd1d286dc86c59ff5f24b09a640127034f1527494251d76a07e |
 | schemas/datasets.schema.json | sha256:6d5b79e4153e2241489115eaff52cf659b1f4823fedc41c15cc62d0d131c54c3 |

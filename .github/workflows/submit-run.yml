@@ -31,12 +31,12 @@ on:
         type: string
         default: ""
       workload_profile:
-        description: "What kind of run this is. For a first test pick olmo-core-cpu-smoke. Your choice fixes the machine, the time limit and the retry limit, so you do not have to."
+        description: "What kind of run this is. For a first test pick olmo-core-check-cpu. Your choice fixes the machine, the time limit and the retry limit, so you do not have to."
         required: true
         type: choice
         options:
-          - olmo-core-cpu-smoke
-          - olmo-core-gpu-smoke
+          - olmo-core-check-cpu
+          - olmo-core-check-gpu
       dataset_release:
         description: "Which prepared dataset this run reads. Pick none unless you are reading one — a quick check reads nothing, and saying none is what makes the record true."
         required: true

@@ -44,7 +44,7 @@ def catalog_payload() -> dict[str, object]:
         ],
         "workloads": [
             {
-                "name": "dolma-tokenize-smoke",
+                "name": "dolma-tokenize",
                 "repository": "dolma",
                 "compute_profile": "cpu-32vcpu",
                 "maximum_runtime_hours": "2",
@@ -52,7 +52,7 @@ def catalog_payload() -> dict[str, object]:
                 "checkpoint": None,
             },
             {
-                "name": "olmo-core-train-smoke",
+                "name": "olmo-core-train-4gpu",
                 "repository": "OLMo-core",
                 "compute_profile": "gpu-4xa10g",
                 "maximum_runtime_hours": "1",
@@ -295,19 +295,19 @@ def test_workload_catalog_yaml_validates_against_contract() -> None:
     assert len(catalog.compute_profiles) == 12
     assert len(catalog.workloads) == 4
     # The CPU workload Phase 3 runs. It names OLMo-core because that is the only
-    # registered repository with a published image; dolma-tokenize-smoke is the same
+    # registered repository with a published image; dolma-tokenize is the same
     # shape against a repository that has neither.
     runnable_cpu = next(
-        workload for workload in catalog.workloads if workload.name == "olmo-core-cpu-smoke"
+        workload for workload in catalog.workloads if workload.name == "olmo-core-check-cpu"
     )
     assert runnable_cpu.repository == "OLMo-core"
     assert runnable_cpu.compute_profile == "cpu-32vcpu"
     profile_by_name = {profile.name: profile for profile in catalog.compute_profiles}
     cpu_workload = next(
-        workload for workload in catalog.workloads if workload.name == "dolma-tokenize-smoke"
+        workload for workload in catalog.workloads if workload.name == "dolma-tokenize"
     )
     gpu_workload = next(
-        workload for workload in catalog.workloads if workload.name == "olmo-core-train-smoke"
+        workload for workload in catalog.workloads if workload.name == "olmo-core-train-4gpu"
     )
     cpu_profile = profile_by_name[cpu_workload.compute_profile]
     gpu_profile = profile_by_name[gpu_workload.compute_profile]

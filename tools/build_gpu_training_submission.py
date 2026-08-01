@@ -389,7 +389,7 @@ def dispatch_form(
         "repository": "OLMo-core",
         "commit_sha": commit_sha,
         "image_digest": TRAINING_IMAGE_DIGEST,
-        "workload_profile": "olmo-core-gpu-smoke",
+        "workload_profile": "olmo-core-check-gpu",
         "dataset_release": "dolma-2026-07",
         "team": "platform",
         "wandb_project": "edullm-platform-smoke",

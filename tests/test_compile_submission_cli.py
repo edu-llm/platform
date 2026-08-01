@@ -54,7 +54,7 @@ def form(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
         "repository": "OLMo-core",
         "commit_sha": COMMIT_SHA,
-        "workload_profile": "olmo-core-cpu-smoke",
+        "workload_profile": "olmo-core-check-cpu",
         "dataset_release": "dolma-2026-07",
         "team": "data-prep",
         "wandb_project": "olmo-core-tokenize",

@@ -12,7 +12,7 @@ command:
   - configs/curriculum-order.yaml
 team: curriculum
 wandb_project: olmo-core-curriculum
-workload_profile: olmo-core-train-smoke
+workload_profile: olmo-core-train-4gpu
 compute_profile: gpu-1xa10g
 maximum_runtime_hours: "6"
 maximum_attempts: 1
