@@ -120,8 +120,12 @@ on:
         required: false
         type: string
         default: ""
+      # RECORDED AS YOUR INTENT, NOT APPLIED AS A LIMIT. Batch's SubmitJob takes a size for
+      # an array job and no concurrency cap, so there is nowhere to send this. What bounds
+      # how many cells run at once is the compute environment's vCPU ceiling divided by
+      # what one cell reserves.
       fanout_parallelism:
-        description: How many fan-out cells may run at once. Declare all three fan-out fields or none of them.
+        description: How many cells you expect to run at once. Recorded on the run, not enforced by Batch, which caps concurrency by available capacity instead. Declare all three fan-out fields or none of them.
         required: false
         type: string
         default: ""

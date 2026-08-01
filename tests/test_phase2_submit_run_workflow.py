@@ -232,7 +232,9 @@ def test_no_optional_field_defaults_to_a_value_somebody_could_have_meant() -> No
     the name of a compute profile nothing has registered.
     """
     declared = _load()["on"]["workflow_dispatch"]["inputs"]
-    optional = [name for name, field in SubmissionInputs.model_fields.items() if not field.is_required()]
+    optional = [
+        name for name, field in SubmissionInputs.model_fields.items() if not field.is_required()
+    ]
 
     # Seven since ``image_digest`` stopped being required: a run's image is derived from
     # the commit it declares, and what survives is an override for a deliberate pin.
@@ -524,7 +526,9 @@ def test_nothing_lets_the_submit_job_run_after_a_gate_has_failed() -> None:
 
 
 def test_the_tools_the_run_bodies_reach_for_exist_on_disk() -> None:
-    referenced = sorted({match for _name, script in _run_bodies() for match in TOOL_PATH_PATTERN.findall(script)})
+    referenced = sorted(
+        {match for _name, script in _run_bodies() for match in TOOL_PATH_PATTERN.findall(script)}
+    )
 
     assert referenced == [
         "tools/compile_submission.py",
@@ -603,12 +607,18 @@ def test_the_workflow_makes_exactly_these_aws_calls_in_exactly_this_order() -> N
     # that define them, so adding a probe or renaming an action changes this list rather
     # than slipping past it.
     assert _aws_reaching_calls() == [
-        *[(f"resolve:{RESOLVE_STEP}", ("image-resolver", action)) for action in RESOLVER_ECR_ACTIONS],
+        *[
+            (f"resolve:{RESOLVE_STEP}", ("image-resolver", action))
+            for action in RESOLVER_ECR_ACTIONS
+        ],
         (
             f"deny-unapproved:{DENY_STEP}",
             ("aws", "sts", "assume-role-with-web-identity"),
         ),
-        *[(f"submit:{DENIALS_STEP}", ("denial-probe", action)) for action in ADMISSION_DENIED_ACTIONS],
+        *[
+            (f"submit:{DENIALS_STEP}", ("denial-probe", action))
+            for action in ADMISSION_DENIED_ACTIONS
+        ],
         *[
             (f"submit:{BATCH_DENIALS_STEP}", ("denial-probe", action))
             for action in ADMISSION_BATCH_DENIED_ACTIONS
@@ -704,9 +714,7 @@ def test_the_approver_context_survives_the_run_that_showed_it() -> None:
     assert upload["with"]["if-no-files-found"] == "error"
     assert "approver-context.md" in upload["with"]["path"]
     assert "approver-context.md" in publish["run"]
-    assert names.index("Publish the approver context") < names.index(
-        "Upload the approver context"
-    )
+    assert names.index("Publish the approver context") < names.index("Upload the approver context")
 
 
 def test_the_file_documents_the_three_things_a_reader_will_otherwise_undo() -> None:
@@ -1066,9 +1074,7 @@ def test_the_cancellation_step_neither_claims_to_stop_a_job_nor_can() -> None:
         for policy in resource["Properties"].get("Policies", [])
         for statement in policy["PolicyDocument"]["Statement"]
         for action in (
-            [statement["Action"]]
-            if isinstance(statement["Action"], str)
-            else statement["Action"]
+            [statement["Action"]] if isinstance(statement["Action"], str) else statement["Action"]
         )
     ]
 
@@ -1365,8 +1371,7 @@ DENY_ENVIRONMENT = {
 def _sts_error(code: str, detail: str) -> str:
     """An `aws` stub that answers the way the CLI reports an STS refusal."""
     message = (
-        f"An error occurred ({code}) when calling the AssumeRoleWithWebIdentity "
-        f"operation: {detail}"
+        f"An error occurred ({code}) when calling the AssumeRoleWithWebIdentity operation: {detail}"
     )
     return f'echo "{message}" >&2\nexit 254\n'
 
@@ -1462,7 +1467,10 @@ def test_a_probe_that_failed_for_an_unrelated_reason_establishes_nothing(
     ("overrides", "expected"),
     [
         ({"ADMISSION_ROLE_ARN": ""}, "admission_role_arn_unset"),
-        ({"ADMISSION_ROLE_ARN": "sbsandbox-intern-edullm-admission"}, "admission_role_arn_malformed"),
+        (
+            {"ADMISSION_ROLE_ARN": "sbsandbox-intern-edullm-admission"},
+            "admission_role_arn_malformed",
+        ),
         ({"PROBE_AWS_REGION": ""}, "aws_region_unset"),
         ({"ACTIONS_ID_TOKEN_REQUEST_TOKEN": ""}, "oidc_token_request_unavailable"),
         ({"ACTIONS_ID_TOKEN_REQUEST_URL": ""}, "oidc_token_request_unavailable"),
@@ -1970,9 +1978,7 @@ def test_an_execution_that_did_not_succeed_fails_the_job(tmp_path: Path, status:
 def test_the_poll_is_bounded_and_says_so_rather_than_claiming_a_decision(
     tmp_path: Path,
 ) -> None:
-    result, sleeps, _summary = _run_wait_step(
-        tmp_path, statuses="RUNNING", maximum_attempts="3"
-    )
+    result, sleeps, _summary = _run_wait_step(tmp_path, statuses="RUNNING", maximum_attempts="3")
 
     assert result.returncode == 1
     assert sleeps == 3
@@ -2203,3 +2209,21 @@ def test_a_profile_this_checkout_cannot_resolve_is_reported_as_unknown(
     assert result.returncode == 0, result.stderr
     assert "| Batch job queue | `not resolvable from this checkout` |" in summary
     assert f"| Run id | `{RUN_ID}` |" in summary
+
+
+def test_the_form_does_not_present_fanout_parallelism_as_a_limit() -> None:
+    """Mutation: describe it as how many cells may run at once.
+
+    Batch's SubmitJob takes a size for an array job and no concurrency cap, so this value
+    has nowhere to go and `batch_submit_request` correctly never sends it. A form that
+    collected it, showed it to an approver and called it a limit was describing a control
+    that does not exist, which is worse than not offering it: somebody sizing a fan-out
+    against a cap would be sizing against nothing.
+    """
+    described = _load()["on"]["workflow_dispatch"]["inputs"]["fanout_parallelism"]["description"]
+
+    assert "not enforced" in described
+    assert "capacity" in described
+    assert "may run at once" not in described, (
+        "this is the wording that claimed a limit Batch cannot apply"
+    )
