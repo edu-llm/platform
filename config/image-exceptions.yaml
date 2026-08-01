@@ -40,11 +40,18 @@ exceptions: []
 
 # One vulnerability, read and accepted, covering every image that carries it.
 #
-# All four are the Debian base's, inherited by everything built from the digest this project
-# registers, and identical across both images published so far -- which is what makes them a
-# fact about the base rather than about any image. None is fixable from this repository, and
-# there is no patched base to move to: the digest registered in config/repositories.yaml is
-# what Docker Hub serves for python:3.12-slim today.
+# TWO BASES NOW, AND THE LIST IS IN TWO PARTS BECAUSE OF IT. The first four are Debian's,
+# from python:3.12-slim, which OLMo-core and edullm-data build on. The twelve after them are
+# Ubuntu 24.04's, from nvidia/cuda:12.8.1-runtime-ubuntu24.04, which olmo-eval-full builds
+# on because an evaluation backend needs CUDA userspace libraries matching the host driver
+# and a Dockerfile cannot install those. Different distributions at different versions, so
+# they are different findings and are reviewed separately rather than as one list that
+# happens to be longer.
+#
+# None is fixable from this repository, and that is a measurement rather than a position:
+# the registry reports no fixed_in_version for any of the sixteen, so upgrading the package
+# inside the Dockerfile would install the same version. Nor is there a patched base to move
+# to; both digests are what their registries serve today.
 #
 # THE RESIDUAL, STATED WHERE IT APPLIES. This registry is on BASIC scanning, which reads the
 # operating system package database and does not look at Python distributions at all. The
@@ -52,6 +59,11 @@ exceptions: []
 # three gigabytes of Python that no finding below refers to, because nothing scanned it. The
 # reviews here are reviews of what was looked at. Enhanced scanning is what would cover the
 # rest and is not enabled.
+#
+# The residual is larger for the CUDA image than for the other two and worth saying so. That
+# image is 2.5 GB, most of it CUDA libraries that arrive as files in the base rather than as
+# packages in the database, so BASIC scanning has even less of it in view. Nothing below is a
+# statement about libcudart, cuBLAS or cuDNN.
 reviewed_vulnerabilities:
   - vulnerability_id: CVE-2026-57433
     package_name: perl
@@ -89,9 +101,132 @@ reviewed_vulnerabilities:
       Debian glibc 2.41-12+deb13u3, inherited from the digest-pinned base. Unlike the perl
       findings this one is in a library every process links, so it is accepted on
       unfixability rather than on unreachability: it comes from the base, no patched base
-      exists upstream, and the alternative is to publish no images at all. Worth revisiting
+      exists upstream, and the alternative is to publish no images at all.       Worth revisiting
       the day Docker Hub republishes python:3.12-slim -- that is a re-pin of one digest in
       config/repositories.yaml and a rebuild, and it is the only action that would retire
       this entry rather than renew it.
     recorded_by: philote-dev
     recorded_at: "2026-07-30T17:20:00.000000Z"
+
+  # THE UBUNTU 24.04 FINDINGS, FROM THE CUDA BASE, ENUMERATED FROM THE REGISTRY RATHER THAN
+  # ASSUMED. describeImageScanFindings on
+  # sha256:2e79cc82f71db61f385067a803330435c816c1e36c689430d4314d314143af7f, the first image
+  # olmo-eval-full published, reported 13 critical findings covering six CVEs. Twelve entries
+  # rather than thirteen, and six CVEs rather than twelve: ECR reports a finding per source
+  # package and per binary package, so openssl and libssl3t64 are the same CVE named twice,
+  # and CVE-2026-5450 arrives as glibc, libc6 and libc-bin. The glibc one is already reviewed
+  # above against the Debian base, and a review matches on the package name as well as the
+  # identifier, so the two Ubuntu binary package names still need their own entries.
+  #
+  # None of the six has a fixed_in_version in the registry's own report. That is the fact
+  # that makes "unfixable" checkable here: apt in the Dockerfile would install the version
+  # that is already installed.
+  - vulnerability_id: CVE-2026-31789
+    package_name: openssl
+    reason: >-
+      Ubuntu openssl 3.0.13-0ubuntu3.5, inherited from the digest-pinned
+      nvidia/cuda:12.8.1-runtime-ubuntu24.04 base that olmo-eval-full builds from. Accepted
+      on unfixability rather than on unreachability, because this one is reachable: an
+      evaluation run reads corpora from S3 and may call a model endpoint, and both are TLS
+      through a library that links libssl. The registry reports no fixed version, and Ubuntu
+      has published no patched 24.04 openssl, so the alternatives are to run this or to run
+      no evaluation image at all. Retired by a re-pin of the base digest in
+      config/repositories.yaml once NVIDIA republishes on a patched Ubuntu, and by nothing
+      else.
+    recorded_by: philote-dev
+    recorded_at: "2026-08-01T18:27:41.000000Z"
+  - vulnerability_id: CVE-2026-31789
+    package_name: libssl3t64
+    reason: >-
+      The binary package ECR names alongside the openssl source package for CVE-2026-31789,
+      at the same 3.0.13-0ubuntu3.5. One package at one version and one reachability
+      question, answered against the openssl entry above; this exists because a review is
+      matched on the package name and the registry reports both names.
+    recorded_by: philote-dev
+    recorded_at: "2026-08-01T18:27:41.000000Z"
+  - vulnerability_id: CVE-2026-34182
+    package_name: openssl
+    reason: >-
+      Ubuntu openssl 3.0.13-0ubuntu3.5, the second critical against the same package at the
+      same version, reviewed together with CVE-2026-31789 because it is the same
+      reachability question about the same bytes. Reachable, unfixable, no patched Ubuntu
+      package published, retired only by a re-pin of the CUDA base digest.
+    recorded_by: philote-dev
+    recorded_at: "2026-08-01T18:27:41.000000Z"
+  - vulnerability_id: CVE-2026-34182
+    package_name: libssl3t64
+    reason: >-
+      The binary package name for CVE-2026-34182, at openssl 3.0.13-0ubuntu3.5. Same package,
+      same version and same review as the openssl entry above it, recorded separately because
+      the registry reports the finding under both names.
+    recorded_by: philote-dev
+    recorded_at: "2026-08-01T18:27:41.000000Z"
+  - vulnerability_id: CVE-2026-42010
+    package_name: gnutls28
+    reason: >-
+      Ubuntu gnutls28 3.8.3-1.1ubuntu3.2, inherited from the CUDA base. Accepted on
+      unreachability as well as unfixability, which is the stronger case: nothing this image
+      runs uses GnuTLS. The evaluation harness is Python, its TLS goes through OpenSSL, and
+      gnutls is present only because apt and its dependency chain link it. It is not on any
+      path a workload takes. No fixed version is published, so it cannot be upgraded away.
+    recorded_by: philote-dev
+    recorded_at: "2026-08-01T18:27:41.000000Z"
+  - vulnerability_id: CVE-2026-42010
+    package_name: libgnutls30t64
+    reason: >-
+      The binary package name for CVE-2026-42010, at gnutls28 3.8.3-1.1ubuntu3.2. Reviewed
+      with the source package entry above: no process this image starts loads GnuTLS, and no
+      patched Ubuntu package exists to move to.
+    recorded_by: philote-dev
+    recorded_at: "2026-08-01T18:27:41.000000Z"
+  - vulnerability_id: CVE-2026-33845
+    package_name: gnutls28
+    reason: >-
+      The second critical against gnutls28 3.8.3-1.1ubuntu3.2, reviewed together with
+      CVE-2026-42010 for the reason recorded there: one package, one version, one
+      reachability question, and no GnuTLS on any path an evaluation run takes.
+    recorded_by: philote-dev
+    recorded_at: "2026-08-01T18:27:41.000000Z"
+  - vulnerability_id: CVE-2026-33845
+    package_name: libgnutls30t64
+    reason: >-
+      The binary package name for CVE-2026-33845, at gnutls28 3.8.3-1.1ubuntu3.2, reviewed
+      with the three other GnuTLS entries as one question about one unused library.
+    recorded_by: philote-dev
+    recorded_at: "2026-08-01T18:27:41.000000Z"
+  - vulnerability_id: CVE-2025-3277
+    package_name: sqlite3
+    reason: >-
+      Ubuntu sqlite3 3.45.1-1ubuntu2.1, inherited from the CUDA base. An integer overflow
+      reached by processing a crafted database, and this image opens none: results are
+      written as objects to S3 and the optional Postgres storage backend is not installed.
+      Python links libsqlite3 whether or not anything imports the module, which is why the
+      package is present. No fixed Ubuntu version is published.
+    recorded_by: philote-dev
+    recorded_at: "2026-08-01T18:27:41.000000Z"
+  - vulnerability_id: CVE-2025-3277
+    package_name: libsqlite3-0
+    reason: >-
+      The binary package name for CVE-2025-3277, at sqlite3 3.45.1-1ubuntu2.1. Same review as
+      the source package entry above: no workload opens a SQLite database, and the package
+      cannot be upgraded from here.
+    recorded_by: philote-dev
+    recorded_at: "2026-08-01T18:27:41.000000Z"
+  - vulnerability_id: CVE-2026-5450
+    package_name: libc6
+    reason: >-
+      Ubuntu glibc 2.39-0ubuntu8.3, which is the same CVE already reviewed above against
+      Debian's glibc and accepted there on unfixability. The same reasoning holds and for the
+      same reason: it is in a library every process links, so unreachability is not available
+      as an argument, and no patched Ubuntu 24.04 package exists. This entry exists because a
+      review is matched on the package name and Ubuntu's binary package is not called glibc.
+    recorded_by: philote-dev
+    recorded_at: "2026-08-01T18:27:41.000000Z"
+  - vulnerability_id: CVE-2026-5450
+    package_name: libc-bin
+    reason: >-
+      The third package name ECR reports CVE-2026-5450 under, at glibc 2.39-0ubuntu8.3.
+      Reviewed with the libc6 entry above and the Debian glibc entry further up: one
+      vulnerability, three names, one decision, accepted on unfixability.
+    recorded_by: philote-dev
+    recorded_at: "2026-08-01T18:27:41.000000Z"
