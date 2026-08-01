@@ -79,7 +79,14 @@
 # CUDA base olmo-eval-full builds on. The recorder does not read that file and does not
 # consult the image gate at all; it owes this release because the builder copies
 # config/*.yaml into whatever zip it builds. Same shared-config case as every entry above.
+#
+# AND AGAIN, FROM 83318b3. #167 changed the image-scan gate in
+# src/edullm_platform/contracts/image_scan.py, which this zip carries because the recorder
+# imports the contracts package, and src/edullm_platform/admission.py, which it does not.
+# Neither reaches anything the recorder does: it projects Batch events into lineage and
+# never evaluates an image scan. Released because the packaged bytes moved, which is the
+# only claim the tripwire makes.
 schema_version: 1
 s3_key: lifecycle-recorder/lifecycle-recorder.zip
-s3_object_version: rAzYU3UI5HktR.SRsm6E2gohemQu_1Ov
-sha256: 66ae2027edb8b4afc572afc6bd304d471e51477e231084f14fda071155773a10
+s3_object_version: .R9b08klWqJ3BBwcjIUsvP9evS7uiZHW
+sha256: 82059b54575dd7264f1132d81f634cb8e5d76d6c4cf65de0fc676ada9aa6feeb
