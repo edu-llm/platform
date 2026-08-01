@@ -85,6 +85,7 @@ from edullm_platform.phase1_evidence import DeployedRoleEvidence
 
 __all__ = [
     "COMMITTED_ROLE_TEMPLATES",
+    "DATASET_VALIDATOR_ROLE_TEMPLATES",
     "EVIDENCE_ONLY_ROLE_FIELDS",
     "FOREIGN_ACCOUNT_PLACEHOLDER",
     "INFRA_DEPLOYER_ROLE_NAME",
@@ -160,6 +161,23 @@ PHASE3_ROLE_TEMPLATES: Final[tuple[tuple[str, str], ...]] = (
 #: committed golden for a reason that has nothing to do with Phase 1.
 PHASE5_ROLE_TEMPLATES: Final[tuple[tuple[str, str], ...]] = (
     ("sbsandbox-intern-edullm-image-resolver", "infra/iam/image-resolver-role.yaml"),
+)
+
+#: The role a dataset owner's own validator runs as, instead of our shared CPU workload
+#: role, and the committed template that declares it.
+#:
+#: A tuple of its own, for the reason written above ``PHASE3_ROLE_TEMPLATES``: one registry
+#: per unit of work, because the Phase 1 proof bundle counts ``COMMITTED_ROLE_TEMPLATES`` in
+#: its README and appending here would move a committed golden for a reason that has nothing
+#: to do with Phase 1.
+#:
+#: Deliberately NOT in ``team_isolation.WORKLOAD_ROLE_TEMPLATES``. That registry is the set
+#: of roles an untrusted command of *ours* runs as, and every check over it is about the
+#: ``teams/{team}/runs/`` prefix shape -- which this role exists to reach outside of. The
+#: role's name not ending in ``-workload`` is what keeps the glob in
+#: ``tests/test_phase5_team_isolation.py`` from conscripting it.
+DATASET_VALIDATOR_ROLE_TEMPLATES: Final[tuple[tuple[str, str], ...]] = (
+    ("sbsandbox-intern-edullm-dataset-validator", "infra/iam/dataset-validator-role.yaml"),
 )
 
 #: What ``DeployedRoleEvidence`` carries that a template projection cannot: the evidence

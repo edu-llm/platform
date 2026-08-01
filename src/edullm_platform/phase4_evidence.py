@@ -529,13 +529,45 @@ class WorkloadRoleScopeEvidence(FreshEvidenceModel):
     readable_prefixes: tuple[SecretFreeStr, ...] = Field(strict=False)
     grants_delete: bool
     reaches_the_lineage_bucket: bool
+    #: Every S3 grant on a bucket that is not the outputs bucket, as ``bucket/key`` -- or as
+    #: the bare bucket name where the grant is on the bucket's own ARN, which carries no key.
+    #: Recorded rather than filtered away: the two prefix tuples above are a claim about the
+    #: outputs bucket and folding a dataset grant into them turned "cannot reach" into
+    #: "reaches everything" without any test noticing. Defaulted to an empty tuple so the
+    #: capture taken on 2026-07-30 still loads and still says something true about the role as
+    #: deployed then.
+    #:
+    #: WHAT COUNTS AS A GRANT HERE IS WIDER THAN WHAT COUNTS AS A READ OR A WRITE ABOVE, and
+    #: the asymmetry is the point rather than an oversight. A statement is recorded if it
+    #: names any ``s3:`` action, or ``*``. The prefix tuples read ``s3:GetObject`` and
+    #: ``s3:PutObject`` alone because they answer what this role reads and writes under its
+    #: own prefixes; this answers what else it touches, and a Get/Put filter here dropped
+    #: ``s3:ListBucket``, ``s3:GetBucketLocation``, ``s3:GetObjectAttributes``,
+    #: ``s3:PutObjectTagging`` and ``s3:AbortMultipartUpload`` without trace. All five are in
+    #: an inline policy this platform carries on a shared role, read live 2026-07-31, so the
+    #: silence was over real actions rather than imagined ones.
+    #:
+    #: ONE THING IS STILL NOT RECORDED AND CANNOT BE FROM HERE: a statement whose ``Resource``
+    #: is ``*`` rather than an S3 ARN. Such a grant covers the outputs bucket as well as every
+    #: other one, so calling it a grant outside the outputs bucket would be half a truth, and
+    #: putting ``*`` into the prefix tuples is the exact inversion this field exists to
+    #: prevent. Neither branch reads one, and a role that carried such a statement would be
+    #: described here as reaching less than it does.
+    grants_outside_the_outputs_bucket: tuple[SecretFreeStr, ...] = Field(
+        default=(), strict=False
+    )
 
     def may_reach(self, prefix: str) -> bool:
-        """Whether any grant on this role covers a given S3 key prefix.
+        """Whether any grant on this role covers a given key in the OUTPUTS bucket.
 
-        Wildcards are expanded the way IAM reads them -- ``*`` matches any run of
-        characters -- rather than compared literally, because ``teams/*/runs/*`` and
-        ``teams/other/runs/x`` do not look alike and IAM says one covers the other.
+        The bucket is part of the question and used not to be. Wildcards are expanded the way
+        IAM reads them -- ``*`` matches any run of characters -- because ``teams/*/runs/*``
+        and ``teams/other/runs/x`` do not look alike and IAM says one covers the other.
+
+        Grants on other buckets are in ``grants_outside_the_outputs_bucket`` and are
+        deliberately not consulted here. A dataset read is not a wider reach into this
+        platform's outputs, and a reader that could not say so reported the first as the
+        second.
         """
         return any(
             fnmatch.fnmatchcase(prefix, pattern)

@@ -2,8 +2,8 @@
 
 Phase: phase-3
 Bundle schema version: 1
-Source commit: dc4b6cebd3be115b895399a624487100d1b8ecb9
-Generated: 2026-08-01T03:19:57+00:00
+Source commit: fdc5b5b934ab7380c48b4bac7077122b99976009
+Generated: 2026-08-01T02:57:21+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 3 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase3_proof.py` at generation time. It is not done, and the Result table below says by how much.
 
@@ -29,9 +29,9 @@ What is not done is captures rather than mechanism, which is a change in this bu
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3841 |
-| suite tests executed | 3648 |
-| suite passed | 3648 |
+| suite tests collected | 3836 |
+| suite tests executed | 3655 |
+| suite passed | 3655 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |

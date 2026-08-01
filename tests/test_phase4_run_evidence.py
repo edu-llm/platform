@@ -261,10 +261,61 @@ def test_the_role_permits_exactly_the_prefix_shape_the_platform_derives() -> Non
 
     assert scope.may_reach(f"teams/{TEAM}/runs/{run.run_id}/checkpoints/step-20/model.pt")
     assert scope.may_reach(f"teams/evaluation/runs/{run.run_id}/checkpoints/step-20/model.pt")
-    # Still refused, and these two are what the grant is actually bounded by: the outputs
-    # bucket's non-run keys, and anything outside the shape entirely.
     assert not scope.may_reach("teams/platform/scratch/anything")
     assert not scope.may_reach("some-other-prefix/runs/anything")
+
+
+def test_a_grant_on_another_bucket_does_not_widen_what_the_outputs_reach_reports() -> None:
+    """Mutation: record the key portion of every S3 ARN regardless of its bucket.
+
+    THIS IS THE DEFECT THIS TASK EXISTS TO REMOVE, WRITTEN AS A TEST BEFORE THE GRANT THAT
+    WOULD TRIGGER IT. A read on edullm-data/* contributes the key pattern `*`, which fnmatch
+    matches against every candidate -- so the two assertions above that establish what the
+    role CANNOT reach would both flip to true, silently, and three pilot-blocking criteria
+    would rest on a measurement that had stopped measuring.
+
+    The measurement is the thing under test, not the policy. A role that genuinely reached
+    every prefix and a reader that could not tell are indistinguishable from the outside,
+    which is why this asserts the reader against a constructed grant rather than against the
+    account.
+    """
+    scope = role_scope().model_copy(
+        update={"grants_outside_the_outputs_bucket": ("edullm-data/*",)}
+    )
+
+    assert scope.may_reach("teams/platform/runs/r/checkpoints/step-20/model.pt")
+    assert not scope.may_reach("teams/platform/scratch/anything")
+    assert not scope.may_reach("some-other-prefix/runs/anything")
+    assert scope.grants_outside_the_outputs_bucket == ("edullm-data/*",)
+
+
+def test_the_role_as_captured_held_no_grant_outside_the_outputs_bucket() -> None:
+    """A characterisation of the committed capture, and deliberately not a mutation guard.
+
+    THIS CLAIMED TO CATCH "filter the other bucket out and record nothing" AND COULD NOT.
+    The capture it loads was taken before any grant on another bucket existed, so there was
+    nothing for a filtering recorder to drop: it asserted the tuple was empty and then ran
+    an ``all(...)`` over that same empty tuple, which is true of every implementation. A
+    docstring naming a mutation its test cannot distinguish is worse than no test, because
+    the suite then reads as covering the case.
+
+    That mutation is caught where the recorder can be handed a policy with something to
+    drop -- ``tests/test_capture_phase4_evidence_cli.py``, which runs ``capture_role_scope``
+    against a synthetic document naming two buckets. Nothing in this file calls the
+    recorder; every test here reads a record it wrote against the account on some earlier
+    day, which is why none of them can vary what it was given.
+
+    What is left is true and worth an assertion of its own: on 2026-07-30 the deployed GPU
+    workload role held no S3 grant outside the outputs bucket, so both prefix tuples on that
+    record are a claim about one bucket and the reach measurement above is reading exactly
+    what it says it is. That stops being true when the read on edullm-data lands, and this
+    going red is how the regenerated capture announces the change rather than arriving
+    unread.
+    """
+    scope = role_scope()
+
+    assert scope.observed_at.date().isoformat() == "2026-07-30"
+    assert scope.grants_outside_the_outputs_bucket == ()
 
 
 # ---------------------------------------------------------------------------------------

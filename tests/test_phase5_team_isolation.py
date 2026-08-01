@@ -74,6 +74,21 @@ def test_the_registry_holds_every_role_a_container_actually_runs_as() -> None:
     assert declared == {name for name, _path in WORKLOAD_ROLE_TEMPLATES}
 
 
+def test_a_new_role_template_does_not_join_the_workload_registry_by_accident() -> None:
+    """Mutation: add a template under infra/iam/ declaring a `-workload` role.
+
+    The registry check above is a glob over a directory, so it is satisfied by editing a
+    tuple and cannot be satisfied by intent. This asserts the count from the other side: two
+    workload roles, both in batch templates, and every other role under infra/iam/ outside
+    the set -- so a third arriving is a failure here rather than three failures elsewhere.
+    """
+    assert len(WORKLOAD_ROLE_TEMPLATES) == 2
+    assert {path for _name, path in WORKLOAD_ROLE_TEMPLATES} == {
+        "infra/iam/batch-roles.yaml",
+        "infra/iam/batch-gpu-roles.yaml",
+    }
+
+
 def test_no_workload_role_reaches_outside_the_team_prefix_shape() -> None:
     """Mutation: grant a workload role the whole outputs bucket.
 
