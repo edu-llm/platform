@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -71,6 +72,14 @@ def parser_for(tool: str) -> argparse.ArgumentParser | None:
     spec = importlib.util.spec_from_file_location(path.stem, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    # Registered before execution, for the reason `tests/gate_support.py` gives at its own
+    # loader: `@dataclass` resolves a string annotation by looking the defining module up in
+    # sys.modules, and a module built from a file path is not there unless it is put there.
+    # This loader went years without it because no tool a workflow runs held a dataclass.
+    # The first one that did failed with an AttributeError raised inside dataclasses.py,
+    # naming neither this file nor the tool, and only under a run that had not already
+    # imported the tool by some other route -- so it passed locally and failed in CI.
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     build = getattr(module, "build_parser", None)
     if not callable(build):
