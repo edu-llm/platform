@@ -72,8 +72,8 @@ Resources:
         # whether or not anything is queued, which bills continuously from the day it
         # merges and shows up as a monthly figure nobody can attribute to a change. It buys
         # faster job start -- roughly the two to three minutes an instance takes to boot and
-        # join the cluster -- and that is a real trade Phase 7 may want to make for an
-        # interactive workload. It is not a trade to make by accident here, so
+        # join the cluster -- and that is a real trade to make deliberately if an interactive
+        # workload ever needs it. It is not a trade to make by accident here, so
         # tests/test_phase3_infrastructure.py pins it at 0.
         MinvCpus: 0
         # Four c7i.8xlarge at 32 vCPU each. The account's Standard on-demand vCPU quota is
