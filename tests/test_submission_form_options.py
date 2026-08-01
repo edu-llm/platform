@@ -400,6 +400,34 @@ def test_every_offered_workload_inherits_a_compute_profile_with_somewhere_to_run
     }
 
 
+def test_a_workload_that_reads_a_corpus_is_offered_and_has_somewhere_to_run() -> None:
+    """Mutation: drop the training profile from the dropdown and leave the checks above.
+
+    Every test around this one compares the two directions of a list, so all of them pass
+    on an empty dropdown -- offering nothing offers nothing unbacked. What none of them
+    says is that the one workload a researcher actually came here for is on the menu.
+
+    That workload is ``olmo-core-train-1gpu``. It is the only entry that is for training
+    rather than for proving the platform works: twelve hours against the policy ceiling,
+    two attempts, and a checkpoint contract so the second attempt resumes instead of
+    repeating the first at full price. The sibling ``olmo-core-train-4gpu`` has the same
+    shape on ``gpu-4xa10g``, which is priced and not provisioned -- so picking the
+    plausible one costs a lead's approval and then a ``no_execution_target``.
+    """
+    offered = options_for("workload_profile")
+    assert "olmo-core-train-1gpu" in offered
+
+    workload = next(
+        candidate
+        for candidate in workload_catalog().workloads
+        if candidate.name == "olmo-core-train-1gpu"
+    )
+    assert resolution_failure(workload.compute_profile) is None
+    # A run long enough to read a corpus, with somewhere for the interrupted half to live.
+    assert int(workload.maximum_runtime_hours) > 1
+    assert workload.checkpoint is not None
+
+
 def test_resolving_a_compute_profile_is_the_same_question_the_provisioned_flag_answers() -> None:
     """Mutation: mark a profile provisioned and deploy no execution target for it.
 
