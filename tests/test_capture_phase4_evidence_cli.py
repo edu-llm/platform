@@ -483,3 +483,17 @@ def test_a_credential_inside_one_segment_of_a_key_is_still_refused() -> None:
 
     with pytest.raises(ValueError, match="must not contain credentials"):
         scan_object_key(f"teams/{EXAMPLE_ACCOUNT_ID}/model.pt")
+
+
+def test_the_backstop_allows_the_key_the_field_annotation_allows(tmp_path: Path) -> None:
+    """A backstop stricter than the annotation refuses the document, not the field.
+
+    Real checkpoint keys pass forty characters of the base64 alphabet, slashes included, so
+    a whole-string read of one refuses a capture of every run that saved a checkpoint.
+    """
+    destination = tmp_path / "record.json"
+    key = "teams/platform/runs/run_019fbd3f-8b72-70e9-8ffb/checkpoints/step1000/config.json"
+
+    write_record(destination, {"objects": [{"key": key}]})
+
+    assert json.loads(destination.read_text())["objects"][0]["key"] == key

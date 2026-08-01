@@ -72,7 +72,7 @@ from edullm_platform.evidence import (
     AWS_ACCOUNT_ID_PATTERN,
     redact_aws_account_ids,
     redact_content_digests,
-    scan_for_secrets,
+    scan_object_key,
 )
 
 __all__ = [
@@ -272,11 +272,16 @@ def write_record(
     the account ID pattern reads any such run as an account ID; a parameter count in the
     hundreds of billions is twelve digits outright. Nothing a credential can be is a JSON
     number, so nothing is given up.
+
+    Read a path segment at a time, for the reason ``scan_object_key`` gives: a record holds
+    object keys, and a backstop that refuses what the annotation on the field allows refuses
+    the whole document instead of the field. For a string with no slash in it this is the
+    plain scan.
     """
     serialized = json.dumps(record, indent=2, sort_keys=True) + "\n"
     for text in strings_in(record):
         try:
-            scan_for_secrets(redact_content_digests(text) if allow_content_digests else text)
+            scan_object_key(redact_content_digests(text) if allow_content_digests else text)
         except ValueError as error:
             raise CaptureFailedError("record_holds_a_credential") from error
     path.parent.mkdir(parents=True, exist_ok=True)
