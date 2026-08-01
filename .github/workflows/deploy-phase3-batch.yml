@@ -5,6 +5,33 @@ name: "Deploy: Batch execution estate"
 # Renaming or moving this file silently revokes every deployment. Do not rename it.
 on:
   workflow_dispatch:
+    inputs:
+      # AN OPERATOR'S VIEW OF A RUN, HERE BECAUSE THIS IS WHERE THE CREDENTIAL IS.
+      #
+      # cancel-run.yml is the workflow researchers use to look at a run, and it assumes
+      # sbsandbox-intern-edullm-run-canceller -- a role that describes jobs and stops them
+      # and reaches nothing else. That is the right shape for a button thirty-four people
+      # can press, and it is not deployed: creating it needs iam:CreateRole, the deployer
+      # role deliberately has none, and the credential that does is a laptop one.
+      #
+      # This deployer role already holds batch:DescribeJobs, batch:ListJobs and
+      # logs:GetLogEvents, and this dispatch is already limited to two admins by the step
+      # below. So the operator view costs no new grant and no new role: it is a report at
+      # the end of a deploy that has already run.
+      #
+      # It reads the log, which cancel-run.yml cannot -- that one names the stream and stops,
+      # because widening a two-verb role to read logs would spend the argument for its shape.
+      # Here the grant is already spent.
+      #
+      # A dispatch carrying a run id still deploys first. That is deliberate rather than
+      # sloppy: gating eight deploy steps on an input is eight chances to gate one wrongly,
+      # and `cloudformation deploy` with nothing to change exits successfully having done
+      # nothing. The cost of the honest version is about three minutes.
+      describe_run:
+        description: "A run id to report on after deploying — status, why, exit code, and the tail of its log. Leave empty for an ordinary deploy."
+        required: false
+        default: ""
+        type: string
   push:
     branches:
       - main
@@ -449,4 +476,97 @@ jobs:
               raise SystemExit("batch verification failed:\n" + "\n".join(failures))
 
           print("PHASE3_BATCH_VERIFICATION_PASSED")
+          PY
+
+      # WHAT ONE RUN IS DOING, INCLUDING WHAT IT PRINTED.
+      #
+      # Runs only when the dispatch named a run, so an ordinary deploy is unchanged. See the
+      # note on the input for why this lives in a deploy workflow rather than in a workflow of
+      # its own.
+      #
+      # The log tail is the part that is not available anywhere else in this repository. A run
+      # that dies before its first step -- an unreadable corpus, a missing permission, a
+      # tokenizer the image cannot build -- writes its reason to CloudWatch and nothing else,
+      # and until now reading it needed a laptop credential.
+      #
+      # continue-on-error, because a report that cannot be produced must not turn a successful
+      # deploy red. The deploy already happened by this point.
+      - name: Say what one run is doing
+        if: inputs.describe_run != ''
+        continue-on-error: true
+        env:
+          RUN_ID: ${{ inputs.describe_run }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${RUN_ID}" =~ ^run_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+            echo "run_id_not_well_formed" >&2
+            exit 1
+          fi
+          found=""
+          queue_of=""
+          for queue in sbsandbox-intern-edullm-gpu sbsandbox-intern-edullm-cpu; do
+            for state in RUNNING STARTING RUNNABLE PENDING SUBMITTED SUCCEEDED FAILED; do
+              candidate="${RUNNER_TEMP}/list-${queue}-${state}.txt"
+              aws batch list-jobs \
+                --job-queue "${queue}" \
+                --job-status "${state}" \
+                --query "jobSummaryList[?jobName=='${RUN_ID}'].jobId" \
+                --output text > "${candidate}"
+              if [[ -s "${candidate}" && "$(cat "${candidate}")" != "None" ]]; then
+                found="$(cat "${candidate}")"
+                queue_of="${queue}"
+                break 2
+              fi
+            done
+          done
+          if [[ -z "${found}" ]]; then
+            echo "No job under ${RUN_ID} on either queue, within the window Batch still lists." | tee -a "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          aws batch describe-jobs --jobs "${found}" --output json > "${RUNNER_TEMP}/job.json"
+          stream="$(uv run --frozen python -c "import json,os;print(json.load(open(os.environ['RUNNER_TEMP']+'/job.json'))['jobs'][0].get('container',{}).get('logStreamName') or '')")"
+          if [[ -n "${stream}" ]]; then
+            aws logs get-log-events \
+              --log-group-name "/aws/batch/${queue_of}" \
+              --log-stream-name "${stream}" \
+              --limit 120 \
+              --output json > "${RUNNER_TEMP}/log.json" || echo '{"events":[]}' > "${RUNNER_TEMP}/log.json"
+          else
+            echo '{"events":[]}' > "${RUNNER_TEMP}/log.json"
+          fi
+          uv run --frozen python - <<'PY' | tee -a "${GITHUB_STEP_SUMMARY}"
+          import json
+          import os
+          from datetime import datetime, timezone
+
+          temporary = os.environ["RUNNER_TEMP"]
+          job = json.load(open(temporary + "/job.json"))["jobs"][0]
+          container = job.get("container", {})
+
+          def when(key):
+              milliseconds = job.get(key)
+              if not milliseconds:
+                  return "not yet"
+              return datetime.fromtimestamp(milliseconds / 1000, timezone.utc).isoformat()
+
+          print("## " + os.environ["RUN_ID"])
+          print()
+          print("| | |")
+          print("| --- | --- |")
+          print(f"| Status | `{job.get('status')}` |")
+          print(f"| Why | {job.get('statusReason') or 'nothing reported'} |")
+          print(f"| Queued | {when('createdAt')} |")
+          print(f"| Started | {when('startedAt')} |")
+          print(f"| Stopped | {when('stoppedAt')} |")
+          print(f"| Exit code | {container.get('exitCode', 'none yet')} |")
+          print(f"| Container said | {container.get('reason') or 'nothing'} |")
+          print(f"| Image | `{container.get('image', 'unknown')}` |")
+          print()
+          events = json.load(open(temporary + "/log.json")).get("events", [])
+          print(f"### Last {len(events)} log lines")
+          print()
+          print("```")
+          for event in events:
+              print(event.get("message", ""))
+          print("```")
           PY
