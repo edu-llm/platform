@@ -58,10 +58,13 @@ TEAM = "platform"
 #: evidence. It cannot be left behind and it cannot cover a digest other than the one in the
 #: template.
 #:
-#: 2026-08-01: OLMo-core 7eeba5af, the first image carrying a C compiler, the edullm-data
-#: reader and .edullm/train_on_corpus.py. The run against it is the point of pinning it.
+#: 2026-08-01: OLMo-core 2f111723. Its predecessor, 7eeba5af, carried the C compiler, the
+#: reader and .edullm/train_on_corpus.py and still could not open a corpus -- the entry point
+#: handed edullm_data a boto3 client, which does not implement the four-method protocol the
+#: reader types that parameter against, so every run died with an AttributeError in under a
+#: second. That image never carried a training run and never will; this one is the re-pin.
 AWAITING_ITS_FIRST_TRAINING_RUN = (
-    "sha256:5578c59c606449001ea17eab7a8f7f6fa5036b73747412ae40ebce16025012a6"
+    "sha256:6e0dd3532a60651acf6e94798425f3bc0cfcf74471d8451f2a7f4a65d84388e7"
 )
 
 

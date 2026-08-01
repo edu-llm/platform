@@ -257,12 +257,29 @@ Resources:
         #     the manifest declares rather than the width OLMo-core would infer from the
         #     tokenizer's vocabulary size.
         #
+        # RE-PINNED AGAIN, HOURS LATER, TO OLMo-core 2f111723. The image above carried all
+        # three of those things and still could not open a corpus, because the entry point
+        # handed edullm_data a boto3 client. The reader types that parameter against its own
+        # four-method protocol -- get, head, get_range, list -- which a boto3 client does not
+        # implement, so `_require_validated` called `s3.head(...)` and every run died with an
+        # AttributeError in under a second, before a byte left the account.
+        #
+        # It is worth recording how that was found, because the ordinary way was unavailable.
+        # The container writes its traceback to CloudWatch and nowhere else, and the deploy
+        # credential deliberately holds no logs:GetLogEvents. What worked was submitting a
+        # probe whose exit code encoded which stage failed: 11 for the import, 12 for a denial,
+        # 13 for anything else, 20 for a corpus that resolved with a uint32 dtype. The first
+        # probe answered 13 and the second, against the corrected call, answered 20 -- which is
+        # also the first proof from inside a GPU container that the workload role can read
+        # s3://edullm-data, that the seal verifies, and that regmix-10b/v1 has trainable
+        # shards.
+        #
         # The digest below is what the build of that commit published, read out of the run log
         # rather than resolved locally. A submission naming any other digest is refused at
         # admission, which is why this line and TRAINING_IMAGE_DIGEST in
         # tools/build_gpu_training_submission.py have to move together.
         Image:
-          Fn::Sub: ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/sbsandbox-intern-edullm-olmo-core@sha256:5578c59c606449001ea17eab7a8f7f6fa5036b73747412ae40ebce16025012a6
+          Fn::Sub: ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/sbsandbox-intern-edullm-olmo-core@sha256:6e0dd3532a60651acf6e94798425f3bc0cfcf74471d8451f2a7f4a65d84388e7
         ExecutionRoleArn:
           Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-execution
         JobRoleArn:
