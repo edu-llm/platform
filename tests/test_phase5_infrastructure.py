@@ -76,6 +76,7 @@ from infrastructure_support import (
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.execution import ExecutionTargetCatalog
 from edullm_platform.contracts.manifest import RunManifest
+from edullm_platform.contracts.repository_registry import RepositoryRegistry
 from edullm_platform.contracts.workload import WorkloadCatalog
 from edullm_platform.execution import (
     batch_register_job_definition_request,
@@ -287,6 +288,12 @@ def every_register_request_field() -> frozenset[str]:
                 account_id=EXAMPLE_ACCOUNT,
             ),
             run_id=RUN_ID,
+            # Any registered destination. This asks which keys the request carries, and the
+            # repository an image is pinned in changes the value of one of them rather than
+            # the set, so the answer is the same for every submittable repository.
+            ecr_repository=load_yaml(
+                PROJECT_ROOT / "config" / "repositories.yaml", RepositoryRegistry
+            ).repositories[0].ecr_repository,
         )
     )
 

@@ -60,7 +60,6 @@ from edullm_platform.execution import (
     CONTAINER_SHAPES,
     MAXIMUM_CONTAINER_OVERRIDES_BYTES,
     MINIMUM_ATTEMPT_DURATION_SECONDS,
-    PUBLISHED_IMAGE_REPOSITORY,
     WANDB_ENTITY,
     ContainerOverridesTooLargeError,
     UnshapedComputeProfileError,
@@ -821,13 +820,23 @@ def test_the_prefix_the_container_is_told_is_the_one_the_shared_function_builds(
 # ---------------------------------------------------------------------------------------
 
 
+#: Where OLMo-core's images live, which is what a registration composed for a submission
+#: naming OLMo-core pins against. Spelled here rather than imported, because the constant
+#: this replaces was the defect: a repository name in the platform's own code is a name that
+#: is right for one submission and silently wrong for the next.
+OLMO_CORE_ECR_REPOSITORY = f"{SANDBOX_RESOURCE_PREFIX}olmo-core"
+
+
 def registration_for(
-    compute_profile: str = PROMOTED_PROFILE, **overrides: Any
+    compute_profile: str = PROMOTED_PROFILE,
+    ecr_repository: str = OLMO_CORE_ECR_REPOSITORY,
+    **overrides: Any,
 ) -> dict[str, Any]:
     return batch_register_job_definition_request(
         manifest=manifest(compute_profile=compute_profile, **overrides),
         target=target(compute_profile),
         run_id=RUN_ID,
+        ecr_repository=ecr_repository,
     )
 
 
@@ -875,7 +884,10 @@ def test_the_registered_definition_runs_the_image_the_manifest_declares() -> Non
     """
     declared = manifest()
     request = batch_register_job_definition_request(
-        manifest=declared, target=target(), run_id=RUN_ID
+        manifest=declared,
+        target=target(),
+        run_id=RUN_ID,
+        ecr_repository=OLMO_CORE_ECR_REPOSITORY,
     )
     image = request["ContainerProperties"]["Image"]
 
@@ -1108,9 +1120,10 @@ def test_the_image_is_pulled_from_the_repository_whose_scan_admission_read() -> 
     sides have to agree with, and it is made for every submittable repository rather than
     for the one this constant happens to name.
 
-    ``PUBLISHED_IMAGE_REPOSITORY`` is the end still unconnected. It is correct only while one
-    repository is submittable, and the test below this one is the coverage check that fires
-    when a second becomes so.
+    Both ends are connected now. The scan is read from ``$.ecr_repository`` and the image is
+    composed from an ``ecr_repository`` argument, and the registry is what fills each, so
+    what this compares is that they agree for the repository in hand rather than that two
+    literals happen to match.
     """
     definition = json.loads(
         load_template(STATE_MACHINE_TEMPLATE_PATH)["Resources"]["AdmissionStateMachine"][
@@ -1125,8 +1138,8 @@ def test_the_image_is_pulled_from_the_repository_whose_scan_admission_read() -> 
     # tests/test_image_scan_repository.py and against the registry in the handler. So the
     # repository this pulls from has to be a registered one for the seam to hold.
     assert parameters["RepositoryName.$"] == "$.ecr_repository"
-    assert PUBLISHED_IMAGE_REPOSITORY in set(submittable_ecr_repositories().values())
-    assert image.split("@", maxsplit=1)[0].endswith(f"/{PUBLISHED_IMAGE_REPOSITORY}")
+    assert OLMO_CORE_ECR_REPOSITORY in set(submittable_ecr_repositories().values())
+    assert image.split("@", maxsplit=1)[0].endswith(f"/{OLMO_CORE_ECR_REPOSITORY}")
 
 
 def submittable_ecr_repositories() -> dict[str, str]:
@@ -1204,36 +1217,50 @@ def test_admission_can_read_a_scan_for_every_submittable_repository() -> None:
 
 
 def test_a_run_can_pin_an_image_from_every_submittable_repository() -> None:
-    """Reads the Python against the registry. Mutation: give a second registered repository
-    a workload profile and leave this constant naming the first.
+    """Reads the Python against the registry. Mutation: put the repository back in a constant.
 
     The other half of the seam test above, asked as coverage rather than as consistency.
-    That test proves this constant and the state machine name the same repository, which
+    That test proves the definition and the state machine name the same repository, which
     they would still do if that repository were the wrong one for the submission in hand;
     this proves the name is right for every submission that can be made.
 
-    ``PUBLISHED_IMAGE_REPOSITORY`` is not a fact about the platform. It is a fact about the
+    ``PUBLISHED_IMAGE_REPOSITORY`` was a constant naming OLMo-core's ECR repository, and it
+    is gone. Where an image lives is not a fact about the platform. It is a fact about the
     submission's source repository -- ``config/repositories.yaml`` maps each registration to
-    an ``ecr_repository`` and the mapping is not derivable from the name -- so the constant
-    is only correct while one repository is submittable. The digest a second repository's
-    manifest declares does not exist under this name, so the reference composed here is a
-    reference to nothing, and Batch validates no image at registration: the run is accepted,
-    the definition registers, the job is submitted and an instance scales before anything
-    notices.
+    an ``ecr_repository`` and the mapping is not derivable from the name -- so a constant was
+    only correct while one repository was submittable. A digest a second repository's
+    manifest declares does not exist under the first's name, so the reference composed there
+    would have been a reference to nothing, and Batch validates no image at registration: the
+    run is accepted, the definition registers, the job is submitted and an instance scales
+    before anything notices.
+
+    So this asks the function for a definition per submittable repository and reads the
+    repository back out of the image reference. A constant reintroduced anywhere on that path
+    fails here for every repository but one.
     """
-    unreachable = sorted(
-        f"{repository} (images in {ecr_repository})"
+    registry = load_yaml(CONFIG_DIR / "repositories.yaml", RepositoryRegistry)
+    mispinned = sorted(
+        f"{repository} pinned a digest in "
+        f"{registration_for(ecr_repository=ecr_repository)['ContainerProperties']['Image']}"
         for repository, ecr_repository in submittable_ecr_repositories().items()
-        if ecr_repository != PUBLISHED_IMAGE_REPOSITORY
+        if not registration_for(ecr_repository=ecr_repository)["ContainerProperties"]["Image"]
+        .split("@", maxsplit=1)[0]
+        .endswith(f"/{ecr_repository}")
     )
 
-    assert not unreachable, (
+    assert not mispinned, (
         "the job definition an accepted run registers for itself composes its image "
-        f"reference against {PUBLISHED_IMAGE_REPOSITORY}, so a submission naming "
-        f"{', '.join(unreachable)} would pin a digest that repository does not hold. "
-        "src/edullm_platform/execution.py, the PUBLISHED_IMAGE_REPOSITORY constant, is "
-        "what would have to change."
+        "reference against a repository that is not the one the submission's source "
+        f"repository is registered against: {', '.join(mispinned)}. "
+        "src/edullm_platform/execution.py, the ecr_repository argument, is what would have "
+        "to change."
     )
+    # The lookup the handler performs at the call site, asserted here rather than left to
+    # the handler's own tests: every submittable repository has an ecr_repository to pass,
+    # so the argument can be resolved for any submission that reaches this point.
+    assert set(submittable_ecr_repositories()) <= {
+        entry.repository for entry in registry.repositories
+    }
 
 
 def test_a_profile_with_a_target_and_no_container_shape_is_refused_rather_than_guessed() -> None:
@@ -1249,7 +1276,10 @@ def test_a_profile_with_a_target_and_no_container_shape_is_refused_rather_than_g
 
     with pytest.raises(UnshapedComputeProfileError, match="cpu-1024vcpu"):
         batch_register_job_definition_request(
-            manifest=manifest(), target=unshaped, run_id=RUN_ID
+            manifest=manifest(),
+            target=unshaped,
+            run_id=RUN_ID,
+            ecr_repository=OLMO_CORE_ECR_REPOSITORY,
         )
 
 

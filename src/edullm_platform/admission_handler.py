@@ -297,6 +297,13 @@ def handler(event: Mapping[str, Any], context: object = None) -> dict[str, Any]:
             manifest=outcome.intent.manifest,
             target=outcome.execution,
             run_id=run_id,
+            # The same registry that answered where to read the scan from, so the definition
+            # pulls the bytes the gate was applied to. Safe to look up unconditionally here:
+            # an accepted outcome is one admission did not refuse, and an unregistered
+            # repository is refused, so this name is registered by the time it is asked for.
+            ecr_repository=repositories.repository_by_name(
+                outcome.intent.manifest.repository
+            ).ecr_repository,
         )
         answer["execution"] = {
             "target": json.loads(canonical_json_bytes(outcome.execution)),

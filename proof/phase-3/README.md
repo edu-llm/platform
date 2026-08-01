@@ -2,8 +2,8 @@
 
 Phase: phase-3
 Bundle schema version: 1
-Source commit: cfdfd437a02e367b8950f4bff528a3793c4b9031
-Generated: 2026-08-01T06:51:53+00:00
+Source commit: 416943f1a77ea077577816069feaaa34bc728db0
+Generated: 2026-08-01T17:55:59+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 3 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase3_proof.py` at generation time. It is not done, and the Result table below says by how much.
 
@@ -29,15 +29,15 @@ What is not done is captures rather than mechanism, which is a change in this bu
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3898 |
-| suite tests executed | 3705 |
-| suite passed | 3705 |
-| suite failed | 0 |
+| suite tests collected | 4201 |
+| suite tests executed | 4008 |
+| suite passed | 4006 |
+| suite failed | 2 |
 | suite errored | 0 |
 | suite skipped | 0 |
-| matrix node ids executed | 385 |
-| matrix node ids passed | 385 |
-| matrix node ids failed | 0 |
+| matrix node ids executed | 420 |
+| matrix node ids passed | 419 |
+| matrix node ids failed | 1 |
 | phase criteria | 19 |
 | criteria COVERED | 13 (1, 2, 3, 4, 8, 9, 15, 16, 17, 19, 20, 21, 22) |
 | criteria DEFERRED | 0 |
@@ -71,18 +71,18 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 
 | file | digest |
 | --- | --- |
-| .github/workflows/deploy-phase3-batch.yml | sha256:9de1368084d6620fd27488d8373793d632e278926be6bfed6e6b4562504c7ae5 |
-| .github/workflows/submit-run.yml | sha256:090aaa8c5193f29ec1578eecf3d31f7270617d9467c50661758bf3e252ef0a3c |
-| config/execution-targets.yaml | sha256:29ac71f9287e75d773cfd2b03de879eb26b20ea6709d2da68778956b8c5cc37e |
+| .github/workflows/deploy-phase3-batch.yml | sha256:be58ed1f5bd3af732b46ecbfcade1ae1a01555a4c9e55fef8a2536fd4267a199 |
+| .github/workflows/submit-run.yml | sha256:953db400f389bf04eae7c0b37cd2923a4227daea64dbf71371352fc06184696e |
+| config/execution-targets.yaml | sha256:b8770462c7c7a0ec701a43fe9a478ee59ecf3aba00bba6c0aa3d6ac542bbc910 |
 | config/image-exceptions.yaml | sha256:0828f4203385bbc3adbd8521f62768e7f4eb46f56382bc6223d37b89aae7a49c |
-| config/workload-catalog.yaml | sha256:caccfdc8ecf5877119c2c39277f1a6b1bfe05e55b3f0c2a963d63e97d8479531 |
+| config/workload-catalog.yaml | sha256:2afed382660cff26bc6759fc81ba40bbe7ca38d5873aed36ab1c15ad3b8530df |
 | fixtures/evidence/phase-3/account-measurements.sanitized.json | sha256:02a7cafae966f04037c13f4e2a57b958a7b5e2c435c46a0eba4a6839d4a4c127 |
-| infra/admission-state-machine.yaml | sha256:a7cfc8f823c30ca907665f48d3a2d6ebbc64063a1523ec991e038176a508e562 |
-| infra/batch-compute.yaml | sha256:39a44a2d045f2434b3d5f259e7aa78447155859634a16c4e44a172d2d5621af9 |
-| infra/batch-events.yaml | sha256:87dde53cdd9f109583052186ec576b889ad0bdf9eb43bec0cb162d480f634e01 |
-| infra/batch-network.yaml | sha256:699a82646fa0d9d2a3446471c5451a2847d4c5d1d8978ebe7a2525fa98d2154d |
-| infra/iam/admission-service-roles.yaml | sha256:fd826897cc8ff59b345a648cf6063dd470942ec0680751f8a550d9ccca3793d2 |
-| infra/iam/batch-roles.yaml | sha256:c6d61301ddd068d0d02b13e90433ef1e7de257db2e8371fea7b0084fc052e384 |
+| infra/admission-state-machine.yaml | sha256:edc3df0acc0683c25a74f6d287e001856cb255a7736af0d979afaeccca924ae1 |
+| infra/batch-compute.yaml | sha256:b3de2756ff2d245fb4524ca0278b0a893a65f67f339c38626d9cbe984196b913 |
+| infra/batch-events.yaml | sha256:21e473ae08cd21c55a420b304c8f65c95c9ff54bbc09e2d5f954aef34a063697 |
+| infra/batch-network.yaml | sha256:758e977fe9c6c0e32c0c5476db98b587b08ce21c7607a210e1b86d4602e8cee3 |
+| infra/iam/admission-service-roles.yaml | sha256:2620fd16df8bde86cf0e894a56848e377712b42ad00f9267e3c342f98674bb31 |
+| infra/iam/batch-roles.yaml | sha256:1ce900138a96c9c9fd3a8fd3a737df1fbcbb1bd35654bf29037b3a6aa7eba0d7 |
 | infra/iam/infra-deployer-role.yaml | sha256:596abb25126c0f10d734cbecd01bec08495cac63b19a81ab46870318504774ac |
 | infra/iam/lifecycle-lambda-role.yaml | sha256:f23ec64e8e2cd611eedb4748cbd7ae7ed26a1cd74d9c8569d6d5af93ed28f53c |
 | infra/outputs-bucket.yaml | sha256:7ea6c087d7e2e4f5531e1ccf88120d9836ad7591fec30c52e762b56c76347fe2 |

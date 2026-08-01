@@ -78,7 +78,6 @@ from .contracts.workload import (
 
 __all__ = [
     "MINIMUM_ATTEMPT_DURATION_SECONDS",
-    "PUBLISHED_IMAGE_REPOSITORY",
     "UnshapedComputeProfileError",
     "attempt_duration_seconds",
     "batch_register_job_definition_request",
@@ -516,24 +515,6 @@ def refuse_an_oversized_override(overrides: Mapping[str, Any]) -> None:
 # The job definition a run registers for itself
 # ---------------------------------------------------------------------------------------
 
-#: The ECR repository the images this platform runs are published to.
-#:
-#: A constant, and the honest reading of that is that this is the *second* place the
-#: repository is hardcoded rather than looked up: the admission state machine's
-#: ReadImageScan state names the same string when it asks ECR for the declared digest's
-#: findings. The two have to agree or the scan that gated admission was read against a
-#: different image, so a seam test compares them.
-#:
-#: WHAT IS DELIBERATELY ABSENT AND WHERE IT BELONGS. The repository an image lives in is
-#: properly a fact about the submission's source repository -- config/repositories.yaml
-#: maps OLMo-core to sbsandbox-intern-edullm-olmo-core and edullm-data to
-#: sbsandbox-intern-edullm-data, and the mapping is not derivable from the name. Looking it
-#: up here would mean passing the registry in, and the state machine would still be reading
-#: the scan from the wrong repository. Both are the same edit and it is not this one; the
-#: first submission naming edullm-data is what forces it, and it will fail loudly at the
-#: image pull rather than quietly.
-PUBLISHED_IMAGE_REPOSITORY: Final = f"{SANDBOX_RESOURCE_PREFIX}olmo-core"
-
 #: The W&B entity every run logs into, which is the parent team of the service account whose
 #: key ``CONTAINER_SHAPES`` injects. The two belong together: a team-scoped service account
 #: can only log to its own team, so changing one without the other is a run that authenticates
@@ -772,6 +753,7 @@ def batch_register_job_definition_request(
     manifest: RunManifest,
     target: ExecutionTarget,
     run_id: str,
+    ecr_repository: str,
 ) -> dict[str, Any]:
     """The exact parameter block the state machine sends to ``batch:RegisterJobDefinition``.
 
@@ -788,6 +770,18 @@ def batch_register_job_definition_request(
     Batch takes them when a definition is registered and nowhere else -- which is what
     :class:`~.contracts.execution.ExecutionTarget` already says about why it carries two
     roles that no submit request mentions.
+
+    ``ecr_repository`` WAS A CONSTANT NAMING OLMo-core UNTIL A SECOND REPOSITORY BECAME
+    SUBMITTABLE. Where an image lives is a fact about the submission's source repository:
+    config/repositories.yaml maps each registration to an ``ecr_repository`` and the mapping
+    is not derivable from the GitHub name. So it arrives as an argument, resolved from the
+    registry by the caller, which is the same registry the state machine reads the scan
+    findings from. The two have to name the same repository or the scan that gated admission
+    described different bytes than the ones Batch runs, and a seam test compares them.
+
+    It is a parameter rather than a registry lookup here because this module holds no
+    registry and should not load one. The caller has it already, and admission has refused
+    an unregistered repository long before this function is reached.
     """
     shape = CONTAINER_SHAPES.get(target.compute_profile)
     if shape is None:
@@ -816,7 +810,7 @@ def batch_register_job_definition_request(
         # would stop being the bytes the decision record names.
         "Image": (
             f"{account_id}.dkr.ecr.{target.region}.amazonaws.com/"
-            f"{PUBLISHED_IMAGE_REPOSITORY}@{manifest.image_digest}"
+            f"{ecr_repository}@{manifest.image_digest}"
         ),
         # Two roles, and the difference between them is the point. The execution role is
         # ECS's identity while it starts the task -- it pulls the image and opens the log

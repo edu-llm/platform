@@ -298,13 +298,25 @@ Resources:
               # else: a caller that could supply its own scan findings could declare its
               # own image clean, so the state machine reads them itself.
               #
-              # Read-only and scoped to the one repository this project publishes to.
-              # ecr:PutImage, ecr:InitiateLayerUpload and the rest of the push path are
-              # absent: admission reads what the publisher recorded and publishes nothing.
+              # Read-only, and scoped to every repository a submission can name rather than
+              # to the one this project used to publish to. ecr:PutImage,
+              # ecr:InitiateLayerUpload and the rest of the push path are absent: admission
+              # reads what the publisher recorded and publishes nothing.
+              #
+              # WIDENING THIS IS NOT OPTIONAL NOW THAT ReadImageScan TAKES ITS REPOSITORY
+              # FROM THE SUBMISSION, AND THE DENIAL IT PREVENTS NEVER REACHES ANYBODY AS A
+              # DENIAL. ReadImageScan catches States.ALL, so an AccessDenied arrives at the
+              # validator in the same branch an unscanned image does, and
+              # image_scan_is_reviewed consults config/image-exceptions.yaml before it looks
+              # at the summary at all. A digest with an exception would therefore be admitted
+              # on a scan nobody read, which is the image gate passing because it could not
+              # run rather than because it found nothing.
               - Effect: Allow
                 Action: ecr:DescribeImageScanFindings
                 Resource:
-                  Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-olmo-core
+                  - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-olmo-core
+                  - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-data
+                  - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-olmo-eval-full
               # "*" is the narrowest grant that exists for the delivery half of this list.
               # CreateLogDelivery, GetLogDelivery, UpdateLogDelivery, DeleteLogDelivery,
               # ListLogDeliveries, PutResourcePolicy and DescribeResourcePolicies are
