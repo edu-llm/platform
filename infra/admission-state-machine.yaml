@@ -238,6 +238,64 @@ Resources:
       #                   ValidateAndDecide below for exactly that check and for nothing
       #                   else. Without it a hand-started execution could aim the read at a
       #                   repository whose findings are clean.
+      #
+      #                   HOW MANY FINDINGS IT READS, AND WHY THE ANSWER IS NOT "ONE PAGE".
+      #                   This asked for no MaxResults until 2026-08-01, so ECR answered with
+      #                   its default page. Measured against
+      #                   sbsandbox-intern-edullm-olmo-eval-full that day: 100 findings of
+      #                   213, carrying 4 of the image's 13 criticals, with a NextToken nobody
+      #                   read. Every submission against that repository was then denied
+      #                   outright, correctly -- the count guard in image_scan_verdict saw 13
+      #                   counted against 4 received and failed closed -- and the reason it
+      #                   gave named unreviewed findings, when all 13 had been reviewed and
+      #                   9 of them had simply never been fetched. The repository was
+      #                   unusable for as long as that read was paged.
+      #
+      #                   MaxResults is 1000 because that is the largest page ECR will return,
+      #                   so one call now reads as much as the API can be asked for at once.
+      #                   There is no NextToken loop, and that is a decision rather than an
+      #                   omission. A loop would have to accumulate findings across iterations
+      #                   into a state whose payload is capped at 256 KB, which is the
+      #                   constraint that actually binds here -- and the guard it would exist
+      #                   to satisfy is already satisfied more precisely by the count
+      #                   comparison downstream. A token coming back means some finding went
+      #                   unread; it does not mean a BLOCKING one did. Refusing on the token
+      #                   would refuse an image whose every critical arrived and was reviewed,
+      #                   because a medium fell off the end. Refusing on the count refuses
+      #                   exactly when a finding that gates has not arrived, which is the
+      #                   question being asked. So the token is not read and not forwarded:
+      #                   forwarding it would invite a second, weaker check beside the one
+      #                   that is right.
+      #
+      #                   WHICH LEAVES THE PAYLOAD, AND THE PROJECTION IS WHAT MAKES 1000
+      #                   FIT. The full describe result for those 213 findings is 209 KB, or
+      #                   82% of the state limit, because each finding carries a Description
+      #                   paragraph, a Uri, and a dozen CVSS attributes. A thousand of them
+      #                   would be about a megabyte and the state would fail with
+      #                   States.DataLimitExceeded -- caught below, and reported as a scan
+      #                   nobody could read, which is honest but is not a fix.
+      #
+      #                   The Output projection keeps the three things the validator's mapping
+      #                   in contracts/image_scan.py actually reads off a finding: Name,
+      #                   Severity, and the package_name attribute. Measured through
+      #                   `aws stepfunctions test-state` on the same image: 22 KB for 213
+      #                   findings, 104 bytes each, so a full 1000-finding page is about
+      #                   104 KB and the state's capacity sits above the largest answer ECR
+      #                   will give. The counts in FindingSeverityCounts are untouched and
+      #                   describe the whole scan rather than the page, which is what the
+      #                   guard compares against.
+      #
+      #                   The narrowing is a coupling to that mapping and is pinned by
+      #                   tests/test_phase3_image_scan.py, which runs both halves of the
+      #                   mapping over a projected result captured from this state and
+      #                   asserts it reads identically to an unprojected one. An attribute
+      #                   the mapping starts needing has to be added here in the same change.
+      #
+      #                   It is a JSONata state for the reason RegisterJobDefinition and
+      #                   SubmitToBatch below are: a JSONPath ResultSelector can rename and
+      #                   drop fields at the top level and cannot reach inside an array. The
+      #                   per-state switch is what Step Functions supports, and the Output
+      #                   merge reproduces exactly what "ResultPath": "$.image_scan" did.
       #   RegisterJobDefinition
       #                   registers the job definition this run is executed on, with the
       #                   image pinned to the digest the manifest declared, and feeds the
@@ -430,18 +488,20 @@ Resources:
             "States": {
               "ReadImageScan": {
                 "Type": "Task",
+                "QueryLanguage": "JSONata",
                 "Resource": "arn:${AWS::Partition}:states:::aws-sdk:ecr:describeImageScanFindings",
-                "Parameters": {
-                  "RepositoryName.$": "$.ecr_repository",
+                "Arguments": {
+                  "RepositoryName": "{% $states.input.ecr_repository %}",
                   "ImageId": {
-                    "ImageDigest.$": "$.manifest.image_digest"
-                  }
+                    "ImageDigest": "{% $states.input.manifest.image_digest %}"
+                  },
+                  "MaxResults": 1000
                 },
-                "ResultPath": "$.image_scan",
+                "Output": "{% $merge([$states.input, {'image_scan': $states.result ~> |ImageScanFindings.Findings|{'Attributes': [Attributes[Key='package_name']]}, ['Description', 'Uri']|}]) %}",
                 "Catch": [
                   {
                     "ErrorEquals": ["States.ALL"],
-                    "ResultPath": "$.image_scan",
+                    "Output": "{% $merge([$states.input, {'image_scan': $states.errorOutput}]) %}",
                     "Next": "ValidateAndDecide"
                   }
                 ],

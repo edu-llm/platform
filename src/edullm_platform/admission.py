@@ -60,8 +60,12 @@ from edullm_platform.contracts.execution import (
 from edullm_platform.contracts.image import GitHubWorkflowRunReference
 from edullm_platform.contracts.image_scan import (
     ImageScanExceptionRegistry,
+    ImageScanPolicy,
     ImageScanSummary,
+    ImageScanVerdict,
     ScanFinding,
+    image_scan_verdict,
+    unreviewed_blocking_findings,
 )
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.manifest import RunManifest
@@ -88,7 +92,14 @@ __all__ = [
     "UnreadableManifestError",
     "admit",
     "denied_outright_conditions",
+    "image_scan_refusal_detail",
 ]
+
+#: How many unreviewed findings a refusal names before it stops listing them. An image with
+#: forty of them produces a decision record nobody reads and a detail field wider than the
+#: column it is printed in; the count is stated either way, so the list is an example rather
+#: than the evidence.
+_NAMED_FINDINGS_LIMIT = 5
 
 #: Which ``denied_outright`` condition each fact, when false, corresponds to. Kept as data
 #: rather than a chain of ``if`` statements so that a condition named in policy and never
@@ -149,6 +160,69 @@ def denied_outright_conditions(
     }
     return tuple(
         condition for condition in policy.denied_outright if condition in tripped
+    )
+
+
+def image_scan_refusal_detail(
+    verdict: ImageScanVerdict,
+    *,
+    summary: ImageScanSummary | None,
+    policy: ImageScanPolicy,
+    registry: ImageScanExceptionRegistry,
+    blocking_findings: Sequence[ScanFinding] | None,
+) -> str:
+    """The sentence a refused image earns, chosen by which kind of no the gate reached.
+
+    Written as four separate sentences rather than one parameterised one because they ask
+    four different things of whoever reads the decision record, and only one of them asks
+    for a review. A refusal that named unreviewed findings when the findings had never been
+    fetched sent an operator to write reviews for vulnerabilities that already had them --
+    the image stayed refused, correctly, and nothing they could do to the exception file
+    would have changed that. Saying which of the four happened is the difference between a
+    person fixing the image and a person fixing this platform.
+
+    The counts are quoted rather than described because the arithmetic is the evidence: a
+    reader who can see thirteen counted against four received does not have to take the
+    conclusion on trust.
+    """
+    counted = policy.blocking_findings(summary) if summary is not None else 0
+    severities = ", ".join(severity.value for severity in policy.blocking_severities)
+    if verdict is ImageScanVerdict.SCAN_UNREADABLE:
+        return (
+            "No registry scan result reached this decision, so nothing is known about this "
+            "image's findings. Recording a review cannot clear this: the scan has to be "
+            "read before there is anything to review."
+        )
+    if verdict is ImageScanVerdict.SCAN_INCOMPLETE:
+        status = summary.status.value if summary is not None else "unknown"
+        return (
+            f"The registry reports this image's scan as {status} rather than COMPLETE, so "
+            "there is no settled set of findings. Recording a review cannot clear this: the "
+            "scan has to finish first."
+        )
+    if verdict is ImageScanVerdict.FINDINGS_UNREAD:
+        received = 0 if blocking_findings is None else len(blocking_findings)
+        return (
+            f"The registry counts {counted} findings at {severities} against this image and "
+            f"{received} reached this decision, so this platform did not read them all. "
+            "Recording a review cannot clear this: the findings a review would name are not "
+            "here to be matched against one."
+        )
+    unreviewed = unreviewed_blocking_findings(
+        blocking_findings=blocking_findings or (), registry=registry
+    )
+    named = ", ".join(
+        f"{finding.vulnerability_id} in {finding.package_name}"
+        for finding in unreviewed[:_NAMED_FINDINGS_LIMIT]
+    )
+    remainder = len(unreviewed) - _NAMED_FINDINGS_LIMIT
+    listed = named if remainder <= 0 else f"{named}, and {remainder} more"
+    return (
+        f"The registry counts {counted} findings at {severities} against this image, all "
+        f"{counted} reached this decision, and {len(unreviewed)} of them "
+        f"{'carries' if len(unreviewed) == 1 else 'carry'} no recorded review: {listed}. "
+        "Recording a review in config/image-exceptions.yaml clears this, as does rebuilding "
+        "the image without them."
     )
 
 
@@ -280,12 +354,36 @@ def admit(
 
     tripped = denied_outright_conditions(facts, policy)
     if tripped:
+        # The condition names say which gate refused and nothing about why, which is enough
+        # for the four inputs that are simply absent from a registry: a reader can go and
+        # look at the file. An image scan is the one condition whose name was actively
+        # misleading, because the same name covered a finding nobody had reviewed and a scan
+        # this platform had failed to read, and those send a reader to opposite places.
+        scan_detail = (
+            ""
+            if _CONDITION_FOR_FALSE_FACT["image_scan_reviewed"] not in tripped
+            else " "
+            + image_scan_refusal_detail(
+                image_scan_verdict(
+                    image_digest=manifest.image_digest,
+                    summary=image_scan_summary,
+                    policy=policy.image_scan,
+                    registry=image_scan_registry,
+                    blocking_findings=image_scan_findings,
+                ),
+                summary=image_scan_summary,
+                policy=policy.image_scan,
+                registry=image_scan_registry,
+                blocking_findings=image_scan_findings,
+            )
+        )
         return decide(
             reason=AdmissionReason.DENIED_OUTRIGHT,
             detail=(
                 "The submission trips conditions policy denies outright rather than "
                 f"classifies: {', '.join(tripped)}. These are not expensive requests "
                 "somebody may approve; they are requests whose inputs cannot be resolved."
+                f"{scan_detail}"
             ),
             approval_class=approval_class,
             authorization=authorization,

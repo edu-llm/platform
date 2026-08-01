@@ -33,11 +33,13 @@ from edullm_platform.contracts.image_scan import (
     ImageScanSeverity,
     ImageScanStatus,
     ImageScanSummary,
+    ImageScanVerdict,
     ReviewedVulnerability,
     ScanFinding,
     blocking_findings_from_ecr,
     image_scan_is_reviewed,
     image_scan_summary_from_ecr,
+    image_scan_verdict,
     unreviewed_blocking_findings,
 )
 from edullm_platform.contracts.policy import (
@@ -357,6 +359,84 @@ PASCAL_CASE_DESCRIBE_RESULT = {
 }
 
 
+#: The same answer again, after ``ReadImageScan``'s Output projection has run over it. Not
+#: written by hand and not produced by reimplementing the JSONata in Python, either of which
+#: would assert this file's idea of the transform rather than the engine's: the fixture above
+#: was fed to a Pass state carrying the projection verbatim out of
+#: ``infra/admission-state-machine.yaml`` through ``aws stepfunctions test-state``, and this
+#: is what came back.
+#:
+#: Why the state narrows the findings at all is in that file's comment: an unprojected result
+#: is about a kilobyte a finding and a full page of them does not fit in a state's 256 KB.
+PROJECTED_DESCRIBE_RESULT = {
+    "ImageId": {"ImageDigest": OTHER_DIGEST},
+    "RegistryId": "example",
+    "RepositoryName": "sbsandbox-intern-edullm-olmo-core",
+    "ImageScanStatus": {"Status": "COMPLETE", "Description": "The scan was completed."},
+    "ImageScanFindings": {
+        "ImageScanCompletedAt": "2026-07-30T18:23:46Z",
+        "FindingSeverityCounts": {"CRITICAL": 1, "HIGH": 8, "MEDIUM": 3},
+        "Findings": [
+            {
+                "Name": GLIBC_CVE,
+                "Severity": "CRITICAL",
+                "Attributes": [{"Key": "package_name", "Value": "glibc"}],
+            },
+            {
+                "Name": "CVE-2026-48962",
+                "Severity": "HIGH",
+                "Attributes": [{"Key": "package_name", "Value": "perl"}],
+            },
+        ],
+    },
+}
+
+
+def test_a_projected_describe_result_reads_the_same_as_the_whole_one() -> None:
+    """The seam the state machine's projection sits on, asserted from the reading end.
+
+    ``ReadImageScan`` strips ``Description`` and ``Uri`` off every finding and keeps one
+    attribute, which is what lets a thousand of them fit in a state. That is a coupling
+    between an ASL expression and this mapping, held together by nothing the type system can
+    see: an attribute this starts reading, or a field the projection stops keeping, breaks
+    admission for every image at once and does it in the fail-closed direction, so the
+    symptom is every repository refusing rather than an error anybody can read.
+
+    Both halves of the mapping are run because they read different parts of the payload. The
+    summary comes from ``FindingSeverityCounts``, which the projection does not touch and
+    must not, since it is the count the gate compares against.
+    """
+    policy = critical_only_policy()
+
+    assert image_scan_summary_from_ecr(PROJECTED_DESCRIBE_RESULT) == (
+        image_scan_summary_from_ecr(PASCAL_CASE_DESCRIBE_RESULT)
+    )
+    assert blocking_findings_from_ecr(
+        PROJECTED_DESCRIBE_RESULT, policy=policy
+    ) == blocking_findings_from_ecr(PASCAL_CASE_DESCRIBE_RESULT, policy=policy)
+
+
+def test_a_projection_that_dropped_the_package_would_refuse_rather_than_pass() -> None:
+    """Mutation: narrow the projection to Name and Severity and keep no attributes.
+
+    It is the obvious next saving and it costs the mapping the package name, which every
+    ``ScanFinding`` requires. The direction that lands in is the one worth pinning: the whole
+    answer becomes unreadable rather than a finding becoming anonymous, so the count guard
+    refuses instead of matching a review against a finding it cannot name.
+    """
+    stripped = {
+        **PROJECTED_DESCRIBE_RESULT,
+        "ImageScanFindings": {
+            **PROJECTED_DESCRIBE_RESULT["ImageScanFindings"],
+            "Findings": [
+                {"Name": GLIBC_CVE, "Severity": "CRITICAL"},
+            ],
+        },
+    }
+
+    assert blocking_findings_from_ecr(stripped, policy=critical_only_policy()) is None
+
+
 def test_the_summary_reads_the_casing_the_state_machine_actually_returns() -> None:
     """THIS WAS BROKEN FOR AS LONG AS IT HAS EXISTED AND NOTHING NOTICED.
 
@@ -481,6 +561,168 @@ def test_a_scan_that_did_not_complete_is_refused(status: ImageScanStatus) -> Non
 def test_an_exception_covers_an_image_the_registry_cannot_scan() -> None:
     """A human saying they looked is stronger than a scan result, so it overrides absence."""
     assert reviewed(scan=None, registry=registry_with(OTHER_DIGEST))
+
+
+# ---------------------------------------------------------------------------------------
+# Which kind of no, and why the difference is worth a type
+# ---------------------------------------------------------------------------------------
+
+
+def verdict(
+    *,
+    digest: str = OTHER_DIGEST,
+    scan: ImageScanSummary | None,
+    registry: ImageScanExceptionRegistry | None = None,
+    findings: tuple[ScanFinding, ...] | None = None,
+) -> ImageScanVerdict:
+    return image_scan_verdict(
+        image_digest=digest,
+        summary=scan,
+        policy=critical_only_policy(),
+        registry=registry if registry is not None else empty_registry(),
+        blocking_findings=findings,
+    )
+
+
+def test_one_call_carrying_every_finding_the_registry_counts_admits_the_image() -> None:
+    """The whole answer in hand, every blocking finding reviewed, so the gate lets it run.
+
+    This is the case ``olmo-eval-full`` could not reach. The registry counted thirteen
+    criticals and the read returned four of them, because ECR pages its findings and the
+    request asked for a default page. The image had nothing wrong with it.
+    """
+    findings = tuple(finding(cve) for cve in PERL_CVES) + (finding(GLIBC_CVE, "glibc"),)
+    registry = registry_reviewing(
+        *(review(cve) for cve in PERL_CVES), review(GLIBC_CVE, "glibc")
+    )
+
+    assert verdict(scan=summary(critical=4), registry=registry, findings=findings) is (
+        ImageScanVerdict.REVIEWED
+    )
+
+
+def test_an_answer_that_stops_short_of_the_count_says_it_was_not_read() -> None:
+    """THE DEFECT THIS TYPE EXISTS FOR, AND IT IS THE MESSAGE RATHER THAN THE OUTCOME.
+
+    Four of thirteen findings arrived and all four are reviewed. Refusing is right and was
+    always right. Calling it unreviewed is what sent an operator to write reviews for
+    findings that had already been reviewed, against an image that was refused because
+    nobody had fetched them.
+    """
+    findings = tuple(finding(cve) for cve in PERL_CVES)
+    registry = registry_reviewing(*(review(cve) for cve in PERL_CVES))
+
+    assert verdict(scan=summary(critical=13), registry=registry, findings=findings) is (
+        ImageScanVerdict.FINDINGS_UNREAD
+    )
+
+
+def test_no_findings_at_all_against_a_count_is_also_a_read_that_did_not_happen() -> None:
+    """``None`` from the mapping and a short list are the same fact: they are not in hand.
+
+    Kept separate from the unreviewed verdict rather than folded into it, because a caller
+    that stopped sending findings is a platform failure and an unreviewed finding is a
+    request for a human. Only one of the two can be answered by a person.
+    """
+    assert verdict(scan=summary(critical=4), findings=None) is ImageScanVerdict.FINDINGS_UNREAD
+    assert verdict(scan=summary(critical=4), findings=()) is ImageScanVerdict.FINDINGS_UNREAD
+
+
+def test_an_empty_result_on_a_scan_that_found_nothing_is_a_pass() -> None:
+    """No findings and no count is a clean image, not an unread one.
+
+    The distinction the verdict has to get right: an empty list is a refusal when the
+    summary counts something and a pass when it counts nothing.
+    """
+    assert verdict(scan=summary(), findings=()) is ImageScanVerdict.REVIEWED
+    assert verdict(scan=summary(high=8, medium=3), findings=()) is ImageScanVerdict.REVIEWED
+
+
+def test_every_finding_read_with_one_unreviewed_is_the_case_a_person_can_clear() -> None:
+    """The genuine unreviewed case, which must stay refused and must keep its own words.
+
+    Every finding the registry counts arrived, so the platform knows exactly which one has
+    no review against it. That is the only outcome where recording a review changes the
+    answer.
+    """
+    findings = tuple(finding(cve) for cve in PERL_CVES) + (finding("CVE-2026-99999", "zlib"),)
+    registry = registry_reviewing(*(review(cve) for cve in PERL_CVES))
+
+    assert verdict(scan=summary(critical=4), registry=registry, findings=findings) is (
+        ImageScanVerdict.FINDINGS_UNREVIEWED
+    )
+
+
+def test_a_truncated_read_and_an_unreviewed_finding_are_not_the_same_verdict() -> None:
+    """Stated as one assertion because the two being equal is the defect.
+
+    Both refuse. They ask different things of whoever reads the refusal, and the platform
+    told somebody the wrong one of the two for as long as the read was paged.
+    """
+    reviews = registry_reviewing(*(review(cve) for cve in PERL_CVES))
+    short = verdict(
+        scan=summary(critical=13),
+        registry=reviews,
+        findings=tuple(finding(cve) for cve in PERL_CVES),
+    )
+    unreviewed = verdict(
+        scan=summary(critical=4),
+        registry=reviews,
+        findings=tuple(finding(cve) for cve in PERL_CVES) + (finding("CVE-2026-99999", "zlib"),),
+    )
+
+    assert short is not unreviewed
+
+
+def test_no_scan_result_and_an_unfinished_scan_are_told_apart_too() -> None:
+    """Neither is a review question either, and neither is the other.
+
+    A payload that is not a describe result means the read failed; a scan reporting
+    anything but COMPLETE means the registry has not finished. Both were reported as
+    unreviewed findings before this type existed.
+    """
+    unfinished = ImageScanSummary(
+        schema_version=1, status=ImageScanStatus.IN_PROGRESS, scanned_at=SCANNED_AT
+    )
+
+    assert verdict(scan=None) is ImageScanVerdict.SCAN_UNREADABLE
+    assert verdict(scan=unfinished) is ImageScanVerdict.SCAN_INCOMPLETE
+
+
+def test_a_recorded_exception_is_still_the_first_thing_consulted() -> None:
+    """A human saying they looked outranks every kind of not-knowing, as it always did."""
+    assert verdict(scan=None, registry=registry_with(OTHER_DIGEST)) is ImageScanVerdict.REVIEWED
+
+
+@pytest.mark.parametrize(
+    "scan,findings",
+    [
+        (None, None),
+        (summary(), ()),
+        (summary(critical=4), None),
+        (summary(critical=4), ()),
+        (summary(critical=3), tuple(finding(cve) for cve in PERL_CVES)),
+        (summary(critical=4), tuple(finding(cve) for cve in PERL_CVES)),
+    ],
+)
+def test_the_boolean_gate_is_the_verdict_and_cannot_drift_from_it(
+    scan: ImageScanSummary | None, findings: tuple[ScanFinding, ...] | None
+) -> None:
+    """Mutation: reimplement the boolean instead of deriving it.
+
+    ``image_scan_is_reviewed`` is what every caller asks and what the denial condition is
+    wired to, and the verdict is what the refusal message reads. Two implementations of one
+    question is two chances for the message to describe an outcome the decision did not
+    take -- which is the class of defect this whole change is about, arriving one layer up.
+    """
+    registry = registry_reviewing(*(review(cve) for cve in PERL_CVES))
+    both = {
+        "scan": scan,
+        "registry": registry,
+        "findings": findings,
+    }
+
+    assert reviewed(**both) is (verdict(**both) is ImageScanVerdict.REVIEWED)
 
 
 # ---------------------------------------------------------------------------------------

@@ -5,7 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from edullm_platform.admission import AdmissionOutcome, UnreadableManifestError, admit
+from edullm_platform.admission import (
+    AdmissionOutcome,
+    UnreadableManifestError,
+    admit,
+    image_scan_refusal_detail,
+)
 from edullm_platform.canonical import sha256_digest
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.admission import AdmissionReason, ApprovalEnvironment
@@ -15,7 +20,10 @@ from edullm_platform.contracts.execution import ExecutionTargetCatalog
 from edullm_platform.contracts.image import GitHubWorkflowRunReference
 from edullm_platform.contracts.image_scan import (
     ImageScanExceptionRegistry,
+    ImageScanStatus,
     ImageScanSummary,
+    ImageScanVerdict,
+    ReviewedVulnerability,
     ScanFinding,
 )
 from edullm_platform.contracts.inventory import OrganizationInventory
@@ -53,6 +61,11 @@ EXCEPTION_COMPUTE_PROFILE = "gpu-4xa10g"
 UNREGISTERED_DATASET = "dolma-2026-99"
 UNREGISTERED_REPOSITORY = "not-a-registered-repository"
 UNREGISTERED_COMPUTE_PROFILE = "cpu-1024vcpu"
+
+#: Four criticals with a review recorded against each, which is what the image-scan refusals
+#: below vary the arithmetic around rather than the reviews. Four because that is how many of
+#: ``olmo-eval-full``'s thirteen a default-sized page of findings carried.
+REVIEWED_CVES = ("CVE-2026-57433", "CVE-2026-12087", "CVE-2026-13221", "CVE-2026-4067")
 
 
 def load_organization_inventory() -> OrganizationInventory:
@@ -463,6 +476,136 @@ def test_an_input_that_cannot_be_resolved_is_denied_outright_and_the_condition_n
         "this submission is also at the wrong gate for its class, and it is still denied "
         "outright: an unresolvable input is not an expensive request somebody may approve"
     )
+
+
+def scan_refusal(
+    *, counted: int, findings: tuple[ScanFinding, ...] | None, reviews: tuple[str, ...] = ()
+) -> str:
+    """The detail one image-scan refusal recorded, so two of them can be read side by side."""
+    registry = ImageScanExceptionRegistry(
+        schema_version=1,
+        reviewed_vulnerabilities=tuple(
+            ReviewedVulnerability(
+                vulnerability_id=identifier,
+                package_name="perl",
+                reason=(
+                    "Inherited from the pinned base, unreachable from the entrypoint, and "
+                    "unfixable from this repository until Debian ships a patched package."
+                ),
+                recorded_by=ADMIN,
+                recorded_at=RECORDED_AT,
+            )
+            for identifier in reviews
+        ),
+    )
+    outcome = admit_submission(
+        image_scan_registry=registry,
+        image_scan_summary=ImageScanSummary(
+            schema_version=1,
+            status=ImageScanStatus.COMPLETE,
+            scanned_at=RECORDED_AT,
+            critical=counted,
+        ),
+        image_scan_findings=findings,
+    )
+    assert outcome.decision.reason is AdmissionReason.DENIED_OUTRIGHT
+    return outcome.decision.detail
+
+
+def test_a_scan_this_platform_did_not_read_in_full_says_so_rather_than_blaming_a_reviewer(
+) -> None:
+    """WHAT THIS RECORDED BEFORE IS WHY THE WHOLE CHANGE EXISTS.
+
+    ``olmo-eval-full`` carries thirteen criticals, every one of them reviewed, and the read
+    returned four. The refusal named ``image_scan_findings_unreviewed`` and nothing else, so
+    the reading available to an operator was that the reviews were missing -- and writing
+    more of them could not have worked, because the findings that would have needed one
+    were never fetched.
+    """
+    detail = scan_refusal(
+        counted=13,
+        findings=tuple(
+            ScanFinding(vulnerability_id=identifier, package_name="perl")
+            for identifier in REVIEWED_CVES
+        ),
+        reviews=REVIEWED_CVES,
+    )
+
+    assert "13" in detail and "4" in detail
+    assert "did not read them all" in detail
+    assert "Recording a review cannot clear this" in detail
+
+
+def test_a_finding_nobody_reviewed_still_asks_for_a_review_and_names_it() -> None:
+    """The other half of the pair, unchanged in outcome and now unambiguous in words.
+
+    Every finding the registry counted arrived, so the platform can name the one that has
+    no review against it and can say that recording one is what clears it. That sentence is
+    true here and was false in the refusal above, which is the distinction being drawn.
+    """
+    detail = scan_refusal(
+        counted=5,
+        findings=tuple(
+            ScanFinding(vulnerability_id=identifier, package_name="perl")
+            for identifier in (*REVIEWED_CVES, "CVE-2026-99999")
+        ),
+        reviews=REVIEWED_CVES,
+    )
+
+    assert "CVE-2026-99999 in perl" in detail
+    assert "config/image-exceptions.yaml" in detail
+    assert "did not read them all" not in detail
+
+
+def test_the_two_image_scan_refusals_do_not_read_the_same() -> None:
+    """Stated once, directly, because the two being indistinguishable is the defect.
+
+    Both refuse and both name ``image_scan_findings_unreviewed``, because that is the
+    condition policy denies on. What must differ is what the sentence after it asks the
+    reader to do.
+    """
+    findings = tuple(
+        ScanFinding(vulnerability_id=identifier, package_name="perl")
+        for identifier in REVIEWED_CVES
+    )
+    unread = scan_refusal(counted=13, findings=findings, reviews=REVIEWED_CVES)
+    unreviewed = scan_refusal(counted=4, findings=findings, reviews=REVIEWED_CVES[:3])
+
+    assert "image_scan_findings_unreviewed" in unread
+    assert "image_scan_findings_unreviewed" in unreviewed
+    assert unread != unreviewed
+
+
+@pytest.mark.parametrize(
+    ("verdict", "expected"),
+    [
+        (ImageScanVerdict.SCAN_UNREADABLE, "No registry scan result reached this decision"),
+        (ImageScanVerdict.SCAN_INCOMPLETE, "IN_PROGRESS"),
+    ],
+)
+def test_a_scan_that_was_never_read_is_not_reported_as_an_unreviewed_finding(
+    verdict: ImageScanVerdict, expected: str
+) -> None:
+    """The two remaining ways of not knowing, which also used to read as unreviewed.
+
+    ``ReadImageScan`` catches every failure and hands the error object to the validator in
+    place of the findings, so an image nobody could read and an image whose scan has not
+    finished both arrive as an absent or unfinished summary. Neither is a question a
+    reviewer can answer, and both said they were.
+    """
+    unfinished = ImageScanSummary(
+        schema_version=1, status=ImageScanStatus.IN_PROGRESS, scanned_at=RECORDED_AT
+    )
+    detail = image_scan_refusal_detail(
+        verdict,
+        summary=None if verdict is ImageScanVerdict.SCAN_UNREADABLE else unfinished,
+        policy=load_approval_policy().image_scan,
+        registry=ImageScanExceptionRegistry(schema_version=1),
+        blocking_findings=None,
+    )
+
+    assert expected in detail
+    assert "Recording a review cannot clear this" in detail
 
 
 def test_a_pilot_repository_with_no_registration_is_refused_rather_than_admitted() -> None:

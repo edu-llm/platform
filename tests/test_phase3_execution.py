@@ -1130,14 +1130,14 @@ def test_the_image_is_pulled_from_the_repository_whose_scan_admission_read() -> 
             "Properties"
         ]["DefinitionString"]["Fn::Sub"]
     )
-    parameters = definition["States"]["ReadImageScan"]["Parameters"]
+    arguments = definition["States"]["ReadImageScan"]["Arguments"]
     image = registration_for()["ContainerProperties"]["Image"]
 
     # The scan is read from whatever the request carries, and what the request carries is
     # the registered name -- asserted against the submitting workflow in
     # tests/test_image_scan_repository.py and against the registry in the handler. So the
     # repository this pulls from has to be a registered one for the seam to hold.
-    assert parameters["RepositoryName.$"] == "$.ecr_repository"
+    assert arguments["RepositoryName"] == "{% $states.input.ecr_repository %}"
     assert OLMO_CORE_ECR_REPOSITORY in set(submittable_ecr_repositories().values())
     assert image.split("@", maxsplit=1)[0].endswith(f"/{OLMO_CORE_ECR_REPOSITORY}")
 
@@ -1192,28 +1192,32 @@ def test_admission_can_read_a_scan_for_every_submittable_repository() -> None:
     into the lineage record. An exception is the ordinary case rather than the exotic one:
     the registry is on BASIC scanning and both registrations pin the same base digest,
     whose four critical findings are what the two entries in that file exist to accept.
+
+    The state reads in JSONata since the paged-read fix, so the reference it is checked
+    against is ``$states.input.ecr_repository`` rather than ``$.ecr_repository``. The
+    question is unchanged: a pinned name here is a name that does not follow the submission.
     """
     definition = json.loads(
         load_template(STATE_MACHINE_TEMPLATE_PATH)["Resources"]["AdmissionStateMachine"][
             "Properties"
         ]["DefinitionString"]["Fn::Sub"]
     )
-    parameters = definition["States"]["ReadImageScan"]["Parameters"]
+    arguments = definition["States"]["ReadImageScan"]["Arguments"]
+    named = arguments.get("RepositoryName")
     pinned = sorted(
         f"{repository} (images in {ecr_repository})"
         for repository, ecr_repository in submittable_ecr_repositories().items()
-        if parameters.get("RepositoryName") == ecr_repository
+        if ecr_repository in str(named)
     )
 
     assert not pinned, (
-        "ReadImageScan reads scan findings from "
-        f"{parameters.get('RepositoryName')} and from nowhere else, so an approved "
-        f"submission naming any repository other than {', '.join(pinned)} would be "
+        f"ReadImageScan reads scan findings from {named} and from nowhere else, so an "
+        f"approved submission naming any repository other than {', '.join(pinned)} would be "
         "admitted against findings for an image that repository never published. "
         "infra/admission-state-machine.yaml, the ReadImageScan state's "
-        "Parameters.RepositoryName, is what would have to change."
+        "Arguments.RepositoryName, is what would have to change."
     )
-    assert parameters["RepositoryName.$"] == "$.ecr_repository"
+    assert named == "{% $states.input.ecr_repository %}"
 
 
 def test_a_run_can_pin_an_image_from_every_submittable_repository() -> None:

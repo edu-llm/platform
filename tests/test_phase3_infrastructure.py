@@ -1187,7 +1187,13 @@ def test_the_validator_payload_is_built_field_by_field_and_never_forwarded() -> 
 
     assert "Payload.$" not in states["ValidateAndDecide"]["Parameters"]
     assert payload["image_scan.$"] == "$.image_scan"
-    assert states["ReadImageScan"]["ResultPath"] == "$.image_scan"
+    # ReadImageScan runs in JSONata since the paged-read fix, so what puts the findings under
+    # $.image_scan is an Output merge rather than a ResultPath. The property being held is
+    # the same one and it is the reason this line sits in this test: the key the validator
+    # reads is written by that state, so a rename on either side is caught here.
+    assert states["ReadImageScan"]["Output"].startswith(
+        "{% $merge([$states.input, {'image_scan':"
+    )
     # Every other field is the caller's and is read from the execution input, one at a time,
     # so a missing one fails here rather than reaching a handler that defaults it.
     assert {key.removesuffix(".$") for key in payload} == {
@@ -1279,15 +1285,68 @@ def test_the_image_scan_is_read_before_anything_is_judged_and_fails_open_to_clos
 
     assert definition["StartAt"] == "ReadImageScan"
     assert read["Resource"].endswith(":aws-sdk:ecr:describeImageScanFindings")
-    assert read["Parameters"]["ImageId"]["ImageDigest.$"] == "$.manifest.image_digest"
+    assert read["Arguments"]["ImageId"]["ImageDigest"] == (
+        "{% $states.input.manifest.image_digest %}"
+    )
     assert read["Next"] == "ValidateAndDecide"
     assert read["Catch"] == [
         {
             "ErrorEquals": ["States.ALL"],
-            "ResultPath": "$.image_scan",
+            # The JSONata spelling of "ResultPath": "$.image_scan", which is what this said
+            # before the read was paged. The error object still lands where the findings
+            # would have been, which is the whole point of the catch.
+            "Output": "{% $merge([$states.input, {'image_scan': $states.errorOutput}]) %}",
             "Next": "ValidateAndDecide",
         }
     ]
+
+
+def test_the_read_asks_ecr_for_as_many_findings_as_it_will_return_in_one_answer() -> None:
+    """Mutation: drop ``MaxResults``, which is what this said until 2026-08-01.
+
+    ECR pages ``DescribeImageScanFindings`` and answers a request without ``maxResults``
+    with a default page. Measured that day against the digest
+    ``sha256:2e79cc82f71db61f385067a803330435c816c1e36c689430d4314d314143af7f`` in
+    ``sbsandbox-intern-edullm-olmo-eval-full``: 100 findings of 213, carrying 4 of the
+    image's 13 criticals. Every submission against that repository was denied outright, and
+    no test said so, because the missing findings are invisible from the shape of the state.
+
+    1000 is ECR's documented ceiling, so this is a whole answer rather than a bigger page.
+    There is deliberately no ``NextToken`` loop: the count guard in ``image_scan_verdict``
+    already refuses when a finding that gates has not arrived, and it refuses on exactly
+    that rather than on a token, which can come back for an image whose every blocking
+    finding was read.
+    """
+    read = state_machine_definition()["States"]["ReadImageScan"]
+
+    assert read["Arguments"]["MaxResults"] == 1000
+
+
+def test_the_findings_are_narrowed_to_what_the_validator_reads_so_a_full_page_fits() -> None:
+    """Mutation: drop the projection and forward ``$states.result`` whole.
+
+    A Step Functions state's payload is capped at 256 KB and an unprojected describe result
+    runs about 1 KB per finding, most of it a ``Description`` paragraph and a ``Uri`` nobody
+    downstream opens: 209 KB for the 213 findings above, so a full 1000-finding page would
+    fail the state with ``States.DataLimitExceeded``. Asking for 1000 without narrowing what
+    comes back would trade a silent truncation for a loud one.
+
+    Measured through ``aws stepfunctions test-state`` on the same image: 22 KB projected,
+    104 bytes a finding, so a full page is about 104 KB and the state has room for more
+    findings than ECR will return at once.
+
+    What the projection keeps is what ``blocking_findings_from_ecr`` reads, which is a
+    coupling with a test on the other end of it --
+    ``test_a_projected_describe_result_reads_the_same_as_the_whole_one`` runs the mapping
+    over a result captured from this state. This half asserts the projection has not
+    quietly widened past ``package_name``, because a projection that kept everything would
+    pass that test and reintroduce the size problem.
+    """
+    output = state_machine_definition()["States"]["ReadImageScan"]["Output"]
+
+    assert "|ImageScanFindings.Findings|" in output
+    assert "['Description', 'Uri']" in output
+    assert "Attributes[Key='package_name']" in output
 
 
 def test_the_scan_is_read_from_the_repository_the_submission_names_rather_than_a_pinned_one() -> (
@@ -1307,13 +1366,16 @@ def test_the_scan_is_read_from_the_repository_the_submission_names_rather_than_a
     digest path, the ``Next`` and the ``Catch``, all four of which stay correct. The
     repository name was the one parameter nobody asserted.
     """
-    parameters = state_machine_definition()["States"]["ReadImageScan"]["Parameters"]
+    arguments = state_machine_definition()["States"]["ReadImageScan"]["Arguments"]
 
-    assert "RepositoryName" not in parameters, (
+    # A JSONata state has no ".$" suffix to distinguish a literal from a reference, so the
+    # shape this used to assert -- that the plain key is absent -- says nothing here. What
+    # separates the two is the "{% ... %}" wrapper, and a literal name is a string without
+    # one, so that is what is asserted instead.
+    assert arguments["RepositoryName"] == "{% $states.input.ecr_repository %}", (
         "ReadImageScan names an ECR repository literally, so every submission's scan is "
         "read from that one repository whatever the manifest says"
     )
-    assert parameters["RepositoryName.$"] == "$.ecr_repository"
 
 
 def test_the_binding_write_is_conditional_and_checksummed_like_every_lineage_write() -> None:
