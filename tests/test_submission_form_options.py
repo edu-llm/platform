@@ -40,6 +40,7 @@ from edullm_platform.contracts.execution import (
 from edullm_platform.contracts.manifest import RunManifest
 from edullm_platform.contracts.workload import ComputeProfileResolutionError, WorkloadCatalog
 from edullm_platform.execution import resolve_execution_target
+from tools.build_gpu_training_submission import TOKENIZERS
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "submit-run.yml"
@@ -147,14 +148,41 @@ def test_the_repository_dropdown_offers_the_registered_repositories_that_have_a_
     )
 
 
-def test_the_dataset_dropdown_offers_exactly_the_registered_releases() -> None:
-    """Mutation: add a release to the form that admission does not know.
+def corpora_a_run_could_actually_train_on() -> set[str]:
+    """Registered published corpora whose declared tokenizer this platform can build.
+
+    The join that makes the dropdown a promise rather than a list. A corpus is offerable when
+    it is registered AND something can turn its tokenizer into a model, and the second half is
+    a fact about OLMo-core rather than about the registry.
+    """
+    return {
+        entry["reference_id"]
+        for entry in registry("datasets.yaml").get("published", [])
+        if entry["tokenizer"] in TOKENIZERS
+    }
+
+
+def test_the_dataset_dropdown_offers_exactly_the_registered_releases_and_references() -> None:
+    """Mutation: offer the release ids and forget the published references.
 
     ``unregistered_dataset`` is a denied-outright condition, so an option that is not in the
     registry is a menu item whose only outcome is a refusal -- and the refusal arrives after
     the approval gate, having spent somebody's attention.
+
+    Two lists on one registry means two ways to be incomplete, which is why this reads both.
+    ``releases`` are identifiers this platform will itself produce; ``published`` are corpora
+    somebody else built and sealed. They are separate keys because they are separate claims --
+    see ``PublishedDatasetReference`` for why a published corpus cannot be a ``DatasetRelease``
+    -- but they are one dropdown, because a submitter picking a dataset is not being asked
+    which of those two things it is.
+
+    REGISTERED IS NOT THE SAME AS OFFERABLE, which is the same distinction the repository
+    dropdown above draws and it arrived here the same way: by measuring rather than by
+    reasoning. See the test below for the corpus this excludes and why.
     """
-    registered = [entry["release_id"] for entry in registry("datasets.yaml")["releases"]]
+    document = registry("datasets.yaml")
+    registered = [entry["release_id"] for entry in document["releases"]]
+    registered += sorted(corpora_a_run_could_actually_train_on())
     offered = options_for("dataset_release")
 
     # Set equality rather than sorted order. What this test is for is that no option can be
@@ -163,6 +191,119 @@ def test_the_dataset_dropdown_offers_exactly_the_registered_releases() -> None:
     # nothing -- is the option a first-time submitter reaches first.
     assert set(offered) == set(registered)
     assert len(offered) == len(registered), f"an option is listed twice: {offered!r}"
+
+
+def test_a_corpus_whose_tokenizer_nothing_can_build_stays_registered_and_unoffered() -> None:
+    """Mutation: offer every registered corpus, since all of them are real and readable.
+
+    ``lean4-mathlib-bytes-v3`` is published, sealed, frozen and 326 MB -- the cheapest thing
+    any run here could read. It is still not offerable, and the reason is not about the corpus
+    at all. It depends on ``tokenizer/bytes-utf8``, and OLMo-core has no byte tokenizer:
+    ``TokenizerConfig`` offers dolma2, dolma2_sigdig, gpt_neox_olmo_dolma_v1_5, gpt2 and
+    from_hf, and nothing under ``olmo_core/data/`` mentions bytes or utf8 at all. Measured
+    against the checkout the training image builds from, on 2026-08-01.
+
+    So a submitter picking it would fill in eight fields, wait for a lead, and reach a
+    container that cannot construct a model for the tokens it just resolved. That is the
+    ``unregistered_repository`` shape this module was written about, arriving through a field
+    nobody had connected to the tokenizer before.
+
+    IT STAYS IN THE REGISTRY, and the split is the point. The registry answers "may a
+    submission name this", and the honest answer is yes -- it is a real corpus, admission can
+    resolve it, and a workload that is not an OLMo-core training run could read it tomorrow.
+    The dropdown answers "will this work", which today it will not.
+
+    Self-retiring, in both directions, which is why the exclusion is computed rather than
+    listed. Add ``tokenizer/bytes-utf8`` to ``TOKENIZERS`` and the test above starts demanding
+    the option; publish a corpus on a tokenizer nothing can build and it starts demanding its
+    absence. Neither needs anybody to remember this test exists.
+    """
+    registered = {
+        entry["reference_id"] for entry in registry("datasets.yaml").get("published", [])
+    }
+    offerable = corpora_a_run_could_actually_train_on()
+
+    assert "lean4-mathlib-bytes-v3" in registered
+    assert "lean4-mathlib-bytes-v3" not in offerable
+    assert "lean4-mathlib-bytes-v3" not in options_for("dataset_release")
+    assert "regmix-10b-v1" in offerable, (
+        "at least one registered corpus must be trainable, or the dropdown offers no real "
+        "data at all and the exclusion above has quietly become the rule"
+    )
+
+
+def test_every_offered_dataset_resolves_to_something_a_reader_could_open() -> None:
+    """Mutation: register a reference whose version nobody published.
+
+    A ``reference_id`` in the registry is a promise the corpus can be read. ``dataset_id`` and
+    ``version`` are what the reader is called with, so an entry whose version is wrong is a
+    submission that compiles, classifies, routes to a lead, is approved, reaches the container
+    and fails there -- the most expensive place in the path to learn it.
+
+    Checked as agreement between the URI and the two reader arguments rather than by asking
+    S3, deliberately. What can go wrong offline is that the three fields stop being one
+    statement: ``PublishedDatasetReference`` stores ``dataset_id`` and ``version`` apart from
+    the URI precisely so nothing has to re-split the string, and the cost of storing them
+    apart is that they can disagree. A unit test cannot know the corpus is still there --
+    that is D3's job, in a container, against the account -- but it can know that whoever
+    reads the URI and whoever reads the pair are asking for the same thing.
+    """
+    for entry in registry("datasets.yaml").get("published", []):
+        assert entry["uri"] == f"s3://edullm-data/{entry['dataset_id']}/{entry['version']}/", (
+            f"{entry['reference_id']}'s uri, dataset_id and version disagree; the reader is "
+            "called with the pair and a human reads the uri, so these must be one statement"
+        )
+
+
+def test_no_offered_dataset_is_one_a_training_run_cannot_use_as_a_corpus() -> None:
+    """Mutation: offer tokenizer/dolma2-bpe, which is published, sealed and readable.
+
+    IT IS ALL THREE AND IT IS STILL NOT A CORPUS. It declares no partitions, so the reader
+    returns every object and no trainable split; its group's container types itself, so the
+    resolved dtype is ``None``; and a ``NumpyFSLDatasetConfig`` handed ``None`` takes
+    OLMo-core's ``uint16`` default and memmaps ``tokenizer.json`` as tokens. The run trains,
+    the loss moves, and the tokens are a JSON file -- which is D1's silent failure arriving by
+    a route D1's dtype assertion cannot see, because there the program does pass the resolved
+    dtype.
+
+    A tokenizer is an input to a corpus, not a corpus. Asserted on the family segment because
+    that is the mechanical form of the distinction and because the standard's own family enum
+    does not contain ``tokenizer`` at all.
+    """
+    for entry in registry("datasets.yaml").get("published", []):
+        assert entry["dataset_id"].split("/", maxsplit=1)[0] == "pretrain", (
+            f"{entry['reference_id']} is not a pretrain corpus; a dataset offered on this "
+            "form is a corpus a training run reads, and every other family published so far "
+            "is an input to one rather than one"
+        )
+
+
+def test_every_offered_dataset_names_the_tokenizer_it_was_built_with() -> None:
+    """Mutation: leave ``tokenizer`` off the two entries, since both are dolma2. One is not.
+
+    ``pretrain/regmix-10b`` depends on ``tokenizer/dolma2-bpe`` and
+    ``pretrain/lean4-mathlib-bytes`` on ``tokenizer/bytes-utf8``, both read live from
+    ``groups[].depends_on[]`` with role ``tokenizer`` on 2026-08-01. The upstream family file
+    turns its own family-wide tokenizer default off and says why: a mismatched tokenizer's ids
+    usually still fall in range, so the failure is a plausible loss curve rather than an
+    exception.
+    """
+    for entry in registry("datasets.yaml").get("published", []):
+        assert entry["tokenizer"].startswith("tokenizer/")
+
+
+def test_the_three_guards_above_have_actually_seen_a_row() -> None:
+    """Mutation: empty the ``published`` list. All three loops above pass over nothing.
+
+    A guard that has never run its body is not a guard, and three of them iterate a list this
+    registry did not have until today. This is the one assertion that fails when that list is
+    empty, so the emptiness is reported once, here, by name -- rather than as three tests
+    quietly going green while the dropdown loses two options and the set-equality test above
+    absorbs it as a matching pair of removals.
+    """
+    assert registry("datasets.yaml").get("published"), (
+        "the three loops above are vacuous without at least one published reference"
+    )
 
 
 def test_the_workload_dropdown_offers_only_workloads_whose_repository_is_registered() -> None:

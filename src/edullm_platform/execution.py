@@ -62,6 +62,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Final
 
+from .contracts.dataset_registry import PublishedDatasetReference
 from .contracts.execution import (
     SANDBOX_RESOURCE_PREFIX,
     ExecutionTarget,
@@ -162,6 +163,13 @@ def batch_submit_request(
     # reason wandb_username is: a run admitted before the field existed has none, and an
     # empty tag value is a cost group named "" that Cost Explorer will happily total up.
     experiment: str | None = None,
+    # The registry's answer for the corpus the manifest names, resolved by the caller for the
+    # same reason wandb_username is: what a run reads is the platform's assertion. The
+    # manifest carries an identifier a submitter picked off a dropdown; this carries the
+    # dataset id, version and tokenizer that identifier resolves to. Passing the reference
+    # rather than the registry keeps this function unable to resolve anything itself, so
+    # there is exactly one place the identifier is turned into facts.
+    dataset_reference: PublishedDatasetReference | None = None,
 ) -> dict[str, Any]:
     """The exact parameter block the state machine sends to ``batch:SubmitJob``.
 
@@ -191,6 +199,12 @@ def batch_submit_request(
     than something read off the manifest: what a run is labelled with is the platform's
     assertion, derived from the submitter admission recorded, and a submitter who could put
     it in their own manifest could put somebody else's name there.
+
+    ``dataset_reference`` is the same shape of argument for the same reason. The manifest's
+    ``dataset_release`` is an identifier a submitter picked; the three variables it produces
+    are what that identifier resolves to in the registry. Resolving here rather than in the
+    container is what keeps the registry out of the image and keeps a submitter from naming a
+    corpus this platform never registered.
     """
     request: dict[str, Any] = {
         # The run id, so the Batch job, the S3 keys and the execution name all carry the
@@ -337,6 +351,35 @@ def batch_submit_request(
         # this is a shared sandbox account, Cost Explorer groups on the whole key, and a bare
         # `experiment` is a key somebody else's stack may also be writing.
         request["Tags"]["edullm:experiment"] = experiment
+    if dataset_reference is not None:
+        # THREE VARIABLES, AND THE THIRD IS THE ONE THAT STOPS A WRONG RUN LOOKING RIGHT.
+        #
+        # The two registered corpora were built with different tokenizers --
+        # tokenizer/dolma2-bpe and tokenizer/bytes-utf8 -- so a program holding a constant is
+        # correct for one of them and silently wrong for the other. The upstream family file
+        # turns its own family-wide tokenizer default off and records why: a mismatched
+        # tokenizer's ids usually still fall in range, so the embedding lookup does not raise
+        # and the only symptom is a loss curve that is merely bad.
+        #
+        # The container cannot get it from the reader either. ResolvedSplit does not expose
+        # the tokenizer, so a container that wanted it would open dataset.json and walk
+        # groups[].depends_on[] itself -- a second implementation of a resolution the registry
+        # has already made, which is the thing this whole argument list exists to avoid.
+        #
+        # EDULLM_DATASET_RELEASE above is not replaced. It is the identifier the decision
+        # record was written about, so a run whose lineage names one thing and whose container
+        # read another would be unresolvable afterwards. These three sit beside it.
+        #
+        # Appended rather than sent empty, for the reason WANDB_USERNAME is: `none` is the
+        # honest and common answer, and an empty tokenizer reads as a resolution that failed
+        # rather than one never attempted.
+        request["ContainerOverrides"]["Environment"].extend(
+            (
+                {"Name": "EDULLM_DATASET_ID", "Value": dataset_reference.dataset_id},
+                {"Name": "EDULLM_DATASET_VERSION", "Value": dataset_reference.version},
+                {"Name": "EDULLM_DATASET_TOKENIZER", "Value": dataset_reference.tokenizer},
+            )
+        )
     if manifest.fanout is not None:
         # Absent for a single container rather than present with size one: Batch rejects an
         # array job of size one, so emitting ArrayProperties unconditionally would fail

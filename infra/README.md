@@ -420,34 +420,48 @@ from the workflow file.
   because this is the section that learned that, not because anything in Phase 4 depends on
   it.
 
-### Stack 3: the dataset validator role, declared and deliberately not deployed
+### Stack 3: the dataset validator role, deployed 2026-08-01
 
-Laptop-applied when it is applied, like every IAM stack in this file. The command is the one
-under *Deploying one IAM stack* above, with `sbsandbox-intern-edullm-dataset-validator-iam`
-as the stack name and `infra/iam/dataset-validator-role.yaml` as the template.
+Laptop-applied, like every IAM stack in this file. The command is the one under *Deploying
+one IAM stack* above, with `sbsandbox-intern-edullm-dataset-validator-iam` as the stack name
+and `infra/iam/dataset-validator-role.yaml` as the template.
 
-**Nothing has run it, and that is the intent rather than an unfinished step.** The role is
-the identity a dataset owner's validator will assume instead of
-`sbsandbox-intern-edullm-batch-workload`, which is the shared CPU workload role every team's
-containers run as. Creating it is half a change: the other half detaches the out-of-band
-`dataset-validator` inline policy from that shared role and moves the `edullm-data`
-bucket-policy exemption onto this one, in a single swap, so that no window exists in which
-neither identity can write. That swap lands on a running pipeline: both EventBridge rules
-that can invoke a Batch job resolve the job definition by unversioned name, so a bad revision
-reaches production on the next event, and the failure mode is a manifest that lands and is
-simply never promoted — which raises nothing. So it waits for a window with that pipeline's
-operator watching, rather than going in beside a template addition.
+The role is the identity a dataset owner's validator assumes instead of
+`sbsandbox-intern-edullm-batch-workload`, the shared CPU workload role every team's
+containers run as. The `edullm-validator` and `edullm-fsck` job definitions name it, the
+exemption in `edullm-data`'s bucket policy names it, and the out-of-band `dataset-validator`
+inline policy is gone from the shared role.
 
-Deploying this stack on its own would be safe and would buy nothing. Until the exemption
-moves, `edullm-data`'s own bucket policy denies this role's writes;
-`infra/iam/dataset-validator-role.yaml` carries that argument beside the grants it is about,
-along with one thing that is **not established** and should be read before the cutover rather
-than during it: whether `edullm-landing` carries a bucket policy of its own.
+**This section previously said the deploy was waiting on a scheduled window with the
+pipeline's operator watching the first event. That turned out to be unnecessary, and why is
+worth keeping.** The reasoning was sound in shape: both EventBridge rules resolve their job
+definition by unversioned name, so a new revision reaches production on the next event with
+no review step, and the failure mode is a manifest that lands and is simply never promoted —
+which raises nothing. What was missing was two live readings. The roles, the job definitions,
+the queue and the rules are all in this account, so nothing needed anyone's permission; and
+`edullm-landing-manifest-created` was **DISABLED**, so there was no first event to watch.
+Waiting for an observer to see something that was not going to happen would have deferred the
+exposure indefinitely.
 
-The role is registered in `role_drift.DATASET_VALIDATOR_ROLE_TEMPLATES`, because registering
-a role is part of shipping it rather than a follow-up — the same rule as Phase 2. No capture
-walks that registry yet, there being no deployed role to read; wiring it into one belongs
-with the deploy above rather than before it.
+What replaced the observer was a step that generates its own verification. Before anything
+was taken away, a Batch job ran under the new role and exercised all six grants plus three
+negative controls, proving the write with a multipart upload it immediately aborted —
+authorizing exactly what a promotion authorizes, and leaving nothing behind in a bucket whose
+policy forbids deletion. Every step was additive and separately reversible; the new role went
+*onto* the bucket-policy exemption list beside the old one, so there was never a window in
+which neither identity could write. `infra/iam/dataset-validator-role.yaml` carries the full
+sequence beside the grants it is about.
+
+The one thing that section used to flag as **not established** — whether `edullm-landing`
+carries a bucket policy of its own — is established: it does not. `GetBucketPolicy` returned
+`NoSuchBucketPolicy` on 2026-07-31 and again on 2026-08-01. Nothing there exempts principals
+by name, so nothing there had to move when the identity changed.
+
+The role is registered in `role_drift.DATASET_VALIDATOR_ROLE_TEMPLATES` and captured by
+`tools/capture_phase3_evidence.py --target dataset-validator`, into
+`fixtures/evidence/dataset-validator/roles/`. Its own directory rather than Phase 3's:
+`read_committed_role_captures` reports a capture the registry does not declare as a finding,
+so a directory belongs to exactly one registry.
 
 ### A hazard that has expired, and the one it does not take with it
 
@@ -473,15 +487,32 @@ surfaces inside a container much later — a call failing on a credential the ro
 has — not as a deploy failure. That is why this paragraph lives beside the stack table rather
 than beside one PR: it outlives whichever PR happens to close the gap it describes today.
 
-That shape is not hypothetical today, either. `sbsandbox-intern-edullm-batch-workload` — the
-CPU workload role, owned by stack 1 of the Phase 3 table above — carries two inline policies:
-`write-team-outputs-only`, which `infra/iam/batch-roles.yaml:132` declares, and
-`dataset-validator`, which no committed template declares. It grants `s3:PutObject`,
-`s3:PutObjectTagging`, `s3:AbortMultipartUpload`, `s3:ListBucket`, `s3:GetBucketLocation`,
-`s3:GetObject` and `s3:GetObjectAttributes`, attached out-of-band so the dataset owner's
-validator jobs could run under this role. Removing it is a separate task and not this one;
-what belongs in this file is only that the account already holds, measured 2026-07-31, a
-policy no template here declares.
+That shape is not hypothetical, and the account has now produced two instances of it in four
+days. Both are closed, and they were closed in opposite directions — which is the useful
+part, because "adopt it" and "remove it" are both correct answers and the choice is about
+whether the grant should exist, never about whether the template should agree with the
+account.
+
+- **Removed.** `sbsandbox-intern-edullm-batch-workload` carried an inline policy
+  `dataset-validator` that no template declared, granting write and read across
+  `edullm-data` and `edullm-landing`, attached out-of-band so a dataset owner's validator
+  jobs could run under this role. It was removed on 2026-08-01 rather than adopted, because
+  this is the role every CPU container on every team runs as: the grant was correct for a
+  validator and wrong for everything else sharing the identity. Stack 3 above is where it
+  went.
+- **Adopted.** `sbsandbox-intern-edullm-batch-execution` carried an ECR repository —
+  `sbsandbox-intern-edullm-data` — that no template declared, attached out-of-band on
+  2026-07-31 so those same validator jobs could pull their image. It was adopted into
+  `infra/iam/batch-roles.yaml` rather than removed, because an execution role that cannot
+  pull the image its job definition names produces a job that never starts. This one was a
+  **live hazard** in the exact sense this section describes: a `cloudformation deploy` of
+  stack 1 from any tree without that line would have silently revoked it, and the symptom
+  would have surfaced as somebody else's dataset promotion failing rather than as a deploy
+  error.
+
+Both were found the same way — by recapturing the deployed roles and comparing, not by
+anybody noticing. `proof/phase-3/deployed-role-drift.md` reports `ok` for all four Phase 3
+roles for the first time since the first of them was attached.
 
 **Not established:** whether an `aws cloudformation deploy` of `…-phase3-batch-iam` from
 `main` today would strip `dataset-validator`. That was not tested, because testing it means

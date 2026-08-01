@@ -17,6 +17,17 @@ dev = [
   "types-PyYAML",
 ]
 
+# The dataset owner's reader, installed only by things that read a corpus. Its own group
+# rather than a runtime dependency because the two Lambda builders resolve wheels for
+# x86_64-manylinux into a size-limited zip, and a git dependency is not a wheel on an index.
+#
+# Pinned by commit, and tests/test_reader_dependency_pin.py is where the reasoning lives
+# rather than here, because the reason is long and is about a leak: `is_trainable` does not
+# exist at v0.2.0, so a tag pin answers a request for training data with held-out shards.
+reader = [
+  "edullm-data @ git+https://github.com/edu-llm/edullm-data@38bf831a6c3f445e394784018441fd59288b876c",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

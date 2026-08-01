@@ -85,6 +85,7 @@ from edullm_platform.phase1_evidence import DeployedRoleEvidence
 
 __all__ = [
     "COMMITTED_ROLE_TEMPLATES",
+    "DATASET_VALIDATOR_CAPTURE_DIR",
     "DATASET_VALIDATOR_ROLE_TEMPLATES",
     "EVIDENCE_ONLY_ROLE_FIELDS",
     "FOREIGN_ACCOUNT_PLACEHOLDER",
@@ -179,6 +180,22 @@ PHASE5_ROLE_TEMPLATES: Final[tuple[tuple[str, str], ...]] = (
 DATASET_VALIDATOR_ROLE_TEMPLATES: Final[tuple[tuple[str, str], ...]] = (
     ("sbsandbox-intern-edullm-dataset-validator", "infra/iam/dataset-validator-role.yaml"),
 )
+
+#: Where captures of the registry above are committed.
+#:
+#: A DIRECTORY OF ITS OWN, and the reason is mechanical rather than tidiness.
+#: ``phase1_capture.read_committed_role_captures`` reports in both directions: a role in the
+#: registry with no capture, *and* a capture in the directory that the registry does not
+#: declare. That second half is the useful one -- it is what stops a capture being quietly
+#: deleted -- and it means a directory is implicitly owned by exactly one registry. Putting
+#: this role's capture in ``fixtures/evidence/phase-3/roles/`` made Phase 3's own reader
+#: return five captures for a four-role registry, which is that check working correctly on
+#: a filing mistake.
+#:
+#: Not under ``fixtures/evidence/phase-N/`` because this role belongs to no phase. It is the
+#: identity a dataset owner's pipeline runs as on our compute, and it arrived with a piece
+#: of remediation rather than with a phase.
+DATASET_VALIDATOR_CAPTURE_DIR: Final = Path("fixtures") / "evidence" / "dataset-validator"
 
 #: What ``DeployedRoleEvidence`` carries that a template projection cannot: the evidence
 #: envelope. Derived rather than restated, so a field added to the evidence record has to

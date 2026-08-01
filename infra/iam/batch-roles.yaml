@@ -54,19 +54,44 @@ Resources:
               - Effect: Allow
                 Action: ecr:GetAuthorizationToken
                 Resource: "*"
-              # The one repository, spelled out, not the sbsandbox-intern-edullm-* prefix
-              # the deployer uses. This role exists to pull the image the job definition
-              # pins; a prefix would let it pull anything this project ever publishes,
-              # including an image no admission decision named. Registering a second
-              # repository means editing this line, which is the direction that fails
+              # Two repositories, spelled out, not the sbsandbox-intern-edullm-* prefix
+              # the deployer uses. This role exists to pull the images the job definitions
+              # pin; a prefix would let it pull anything this project ever publishes,
+              # including an image no admission decision named. Registering a further
+              # repository means editing this list, which is the direction that fails
               # closed.
+              #
+              # THE SECOND ENTRY WAS ADOPTED FROM THE ACCOUNT RATHER THAN DESIGNED HERE,
+              # AND THAT IS WHY IT IS WORTH READING. On 2026-07-31 the dataset owner
+              # attached it to this role directly, outside CloudFormation, so that the
+              # `edullm-validator` and `edullm-fsck` job definitions -- which run on our CPU
+              # queue under this execution role -- could pull their own image. The drift
+              # capture reported it the next day as a role wider than its template, which
+              # is exactly what it was.
+              #
+              # It is adopted rather than removed because the grant is correct: an
+              # execution role that cannot pull the image its job definition names produces
+              # a job that never starts. What was wrong was only that no committed template
+              # said so, which made this a live hazard rather than a live exposure -- a
+              # `cloudformation deploy` of this stack from a tree without this line would
+              # have silently revoked it and broken a pipeline that had been working, and
+              # the symptom would have surfaced on somebody else's dataset promotion rather
+              # than on the deploy. `infra/README.md` describes that class of hazard; this
+              # is the second instance of it and the first one to be closed by adoption.
+              #
+              # Note what this does NOT grant, because the two repositories are not
+              # symmetric in what they mean. Pulling an image is not running as an identity:
+              # the container this pulls runs as whatever `jobRoleArn` the job definition
+              # names, which for both of those definitions is
+              # `sbsandbox-intern-edullm-dataset-validator` and not our workload role.
               - Effect: Allow
                 Action:
                   - ecr:BatchCheckLayerAvailability
                   - ecr:BatchGetImage
                   - ecr:GetDownloadUrlForLayer
                 Resource:
-                  Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-olmo-core
+                  - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-olmo-core
+                  - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-data
               # Deliberately absent: logs:CreateLogGroup. infra/batch-compute.yaml creates
               # the group, so a role that could create it would only ever do so by
               # creating one nobody declared -- under a name a typo chose, with no
@@ -206,9 +231,37 @@ Resources:
               #
               # No s3:GetObject either, so this role cannot read the dataset bucket the
               # dolma fixture's command names. That is correct for the workload Phase 3
-              # runs -- a CPU smoke against a published image that reads nothing -- and it
-              # is the first grant a real tokenizer job will need. It arrives as an edit
-              # here with a reason, not as a prefix somebody widened.
+              # runs -- a CPU smoke against a published image that reads nothing. The GPU
+              # workload role is where a training run's read of that bucket is granted, in
+              # infra/iam/batch-gpu-roles.yaml, because that is the role a training
+              # container actually runs as; this one stays without it.
+              #
+              # AND THIS STATEMENT WAS FALSE FOR FOUR DAYS, WHICH IS THE MORE USEFUL HALF
+              # OF THE RECORD. Between 2026-07-28 and 2026-08-01 this role carried a second
+              # inline policy named `dataset-validator`, attached outside CloudFormation and
+              # declared by no template here, granting s3:PutObject, s3:PutObjectTagging,
+              # s3:AbortMultipartUpload, s3:GetObject, s3:GetObjectAttributes, s3:ListBucket
+              # and s3:GetBucketLocation across edullm-data and edullm-landing. It was
+              # attached so a dataset owner's validator could promote datasets, and it ran
+              # under this role because this role was there -- but this is the role EVERY
+              # CPU container on EVERY team runs as, so for those four days a job submitted
+              # to print a line could write into the sealed dataset library.
+              #
+              # It is gone, and gone by removal rather than by rewording: the validator now
+              # runs as sbsandbox-intern-edullm-dataset-validator
+              # (infra/iam/dataset-validator-role.yaml), the exemption in edullm-data's own
+              # bucket policy names that role instead of this one, and the inline policy was
+              # deleted from this role on 2026-08-01. The recaptured evidence at
+              # fixtures/evidence/phase-3/roles/ and the `ok` verdict for this role in
+              # proof/phase-3/deployed-role-drift.md are what say so.
+              #
+              # Kept as a comment because the detection is the part worth not losing. The
+              # drift report had said `role_drift` on this role since the day the policy was
+              # attached; nothing was broken about the measurement, and what was missing for
+              # four days was somebody acting on it. A future reader deploying this stack
+              # should know that this role's history includes a grant no template ever
+              # declared, and that reading the template is therefore not the same as reading
+              # the account.
 
   # ------------------------------------------------------------------------------------
   # Instance role: what the EC2 container host runs as

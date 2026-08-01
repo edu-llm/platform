@@ -579,33 +579,43 @@ def test_the_bindings_written_before_the_asl_fix_are_recorded_as_permanently_cor
         assert "binding" in run.unresolved_artifacts
 
 
-#: The one deployed role that does not match its template, and why it is named here rather
-#: than quietly excluded. `dataset-validator` was attached to the shared CPU workload role
-#: directly rather than through CloudFormation, so the template does not declare it and the
-#: capture that preceded it recorded a role that matched.
+#: The policy that used to make this file carry an exemption, kept as a name so the tripwire
+#: below can be written against it.
 #:
-#: It is a real widening and not a formatting difference: it grants s3:PutObject on
-#: `edullm-data/*` and `edullm-landing/*`, and that role is what every CPU container's own
-#: command runs as, on every team. Whoever needed a dataset validator on Batch granted it on
-#: the shared role rather than a dedicated one, which works and hands the same reach to every
-#: unrelated run.
+#: `dataset-validator` was attached to the shared CPU workload role directly rather than
+#: through CloudFormation, granting s3:PutObject on `edullm-data/*` and `edullm-landing/*` to
+#: the role every CPU container's own command runs as, on every team. From 2026-07-28 until
+#: 2026-08-01 this module carried a second test asserting that the workload role drifted by
+#: exactly that one policy -- deliberately, so the drift stayed visible and could not grow
+#: while the remediation was somebody's decision to make.
 #:
-#: Recorded rather than fixed because the fix is a decision -- declare it and accept the
-#: reach, or move the validator to its own role and break whatever depends on this -- and it
-#: belongs to the people who added it. Named as a constant so that a *second* undeclared
-#: policy fails the test below rather than joining an exemption nobody re-reads.
-UNDECLARED_WORKLOAD_POLICY: Final = "dataset-validator"
+#: It was removed from the role on 2026-08-01, and that test's own docstring said what to do
+#: when that happened: delete it and fold the role back into the check below, rather than
+#: widen anything. That is what happened. The validator now runs as
+#: `sbsandbox-intern-edullm-dataset-validator`, declared in
+#: `infra/iam/dataset-validator-role.yaml` and compared against its own deployed capture in
+#: `tests/test_dataset_validator_role.py`.
+#:
+#: The name survives its exemption because a grant that was attached once can be attached
+#: again, by the same route, for the same reason -- and the recapture that would notice is
+#: the one below.
+FORMERLY_UNDECLARED_WORKLOAD_POLICY: Final = "dataset-validator"
 
-DRIFT_EXEMPT_ROLE: Final = "sbsandbox-intern-edullm-batch-workload"
+WORKLOAD_ROLE: Final = "sbsandbox-intern-edullm-batch-workload"
 
 
-def test_every_deployed_role_but_one_matches_the_template_that_declares_it() -> None:
+def test_every_deployed_role_matches_the_template_that_declares_it() -> None:
     """The deployed half of criteria 13 and 14, which no template test can supply.
 
     The mutation this exists to catch is a role widened in the console. A template test
     goes on passing forever after that, because the template is what it reads; only a
     capture of the deployed role compared against the template can see it -- which is
-    exactly how the exemption below was found.
+    exactly how the `dataset-validator` widening described above was found, and how the
+    second one described in `infra/iam/batch-roles.yaml` (an ECR repository added to the
+    execution role out of band) was found on the day it was adopted into the template.
+
+    There is no exemption any more. This module carried one for four days and it is gone,
+    which is the outcome an exemption is supposed to have.
     """
     captures = read_committed_role_captures(
         PROJECT_ROOT,
@@ -614,35 +624,42 @@ def test_every_deployed_role_but_one_matches_the_template_that_declares_it() -> 
     )
     assert len(captures) == len(PHASE3_ROLE_TEMPLATES)
     for capture in captures:
-        if capture.role_name == DRIFT_EXEMPT_ROLE:
-            continue
         assert capture.verdict is CaptureVerdict.OK, (capture.role_name, capture.detail)
         assert capture.report is not None
         assert capture.report.matches
 
 
-def test_the_workload_role_drifts_by_exactly_one_policy_nobody_declared() -> None:
-    """THIS TEST PASSING IS NOT THE SAME AS THE ACCOUNT BEING RIGHT.
+def test_the_shared_workload_role_has_not_been_handed_the_dataset_grant_again() -> None:
+    """Mutation: re-attach `dataset-validator` to the shared workload role.
 
-    It pins an open problem to one named policy so that the drift stays visible and cannot
-    grow. When `dataset-validator` is declared in the template or removed from the role,
-    this test fails, and the right response is to delete it and fold the role back into the
-    test above rather than to widen it.
+    The check above would already fail on that, because an undeclared policy is a widening
+    like any other. This one exists anyway, and the redundancy is deliberate: the generic
+    failure reads as "a role drifted" and sends the next reader to a diff, where this one
+    names the specific mistake and the specific reason it is a mistake.
+
+    The reason is worth keeping in front of somebody: this is the role EVERY CPU container
+    on EVERY team runs as, so a grant here is a grant to every unrelated job. The correct
+    home for a dataset validator's permissions is
+    `infra/iam/dataset-validator-role.yaml`, which exists now and did not when this was
+    first attached.
     """
     captures = read_committed_role_captures(
         PROJECT_ROOT,
         capture_dir=CAPTURES / "roles",
         role_templates=PHASE3_ROLE_TEMPLATES,
     )
-    workload = next(
-        capture for capture in captures if capture.role_name == DRIFT_EXEMPT_ROLE
+    workload = next(capture for capture in captures if capture.role_name == WORKLOAD_ROLE)
+
+    assert workload.evidence is not None
+    carried = {policy.policy_name for policy in workload.evidence.inline_policies}
+
+    assert FORMERLY_UNDECLARED_WORKLOAD_POLICY not in carried, (
+        f"{WORKLOAD_ROLE} carries {FORMERLY_UNDECLARED_WORKLOAD_POLICY} again. That policy "
+        "grants write access to the sealed dataset bucket, and this is the role every CPU "
+        "container on every team runs as. It belongs on "
+        "sbsandbox-intern-edullm-dataset-validator, declared in "
+        "infra/iam/dataset-validator-role.yaml"
     )
-    assert workload.report is not None
-    assert not workload.report.matches
-    findings = workload.report.findings
-    assert len(findings) == 1, [str(finding) for finding in findings]
-    assert UNDECLARED_WORKLOAD_POLICY in str(findings[0])
-    assert "wider" in str(findings[0])
 
 
 def test_no_committed_capture_carries_an_account_id() -> None:

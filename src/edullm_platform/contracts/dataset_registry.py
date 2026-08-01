@@ -22,6 +22,11 @@ published into a sealed bucket this account does not own; it carries a URI, a da
 version, a content digest and a tokenizer because those are the facts a later reader needs
 to resolve and pin it, and none of them belong on the thin model — adding them there would
 put a field with no admission-time reader next to the one field admission actually checks.
+
+Two lists, but one admission question. :meth:`DatasetRegistry.is_registered` answers over
+both, because ``unregistered_dataset`` denies a submission outright and a corpus that names
+its own uri and digest is not an unresolvable input. The lists stay separate because they
+carry different facts, not because a submitter is being asked which kind they picked.
 """
 
 from __future__ import annotations
@@ -162,12 +167,39 @@ class DatasetRegistry(ContractModel):
 
     @property
     def release_ids(self) -> frozenset[str]:
+        """Only the releases this platform produces. Not what admission asks -- see below."""
         return frozenset(entry.release_id for entry in self.releases)
 
-    def is_registered(self, release_id: str) -> bool:
-        return release_id in self.release_ids
+    @property
+    def reference_ids(self) -> frozenset[str]:
+        return frozenset(entry.reference_id for entry in self.published)
+
+    def is_registered(self, dataset_id: str) -> bool:
+        """Whether a submission may name this dataset at all. Both lists, deliberately.
+
+        ``phase0_gate`` denies a manifest outright with ``unregistered_dataset`` when this is
+        False, so the question here is "can this platform resolve what was asked for", and a
+        published corpus is more resolvable than a release id, not less: it carries a uri, a
+        content digest and a tokenizer, where a release id carries only itself.
+
+        Answered from ``releases`` alone until the published corpora reached the submission
+        form. Nothing could name one before that, so the narrower answer was untestable in
+        the direction that mattered and read as the tidier split. What it would produce now is
+        a dropdown option denied after a lead has approved it.
+
+        The parameter is ``dataset_id`` rather than ``release_id`` because it stopped being
+        one namespace's identifier, and a name promising otherwise is how the second list gets
+        forgotten again.
+        """
+        return dataset_id in self.release_ids or dataset_id in self.reference_ids
 
     def reference_for(self, reference_id: str) -> PublishedDatasetReference | None:
+        """Resolve a published corpus to the facts a reader needs. Published list only.
+
+        Narrow on purpose, and not the same question as :meth:`is_registered`: there is no uri
+        or digest to hand back for ``dolma-2026-07``, so returning ``None`` for a registered
+        release is the honest answer rather than a gap.
+        """
         for entry in self.published:
             if entry.reference_id == reference_id:
                 return entry

@@ -300,20 +300,43 @@ def test_reference_for_answers_for_exactly_the_listed_published_references() -> 
     assert registry.reference_for("not-registered") is None
 
 
-def test_is_registered_does_not_answer_for_published_references() -> None:
-    """A published reference is checked by reference_for, not is_registered.
+def test_is_registered_answers_for_published_references_too() -> None:
+    """Mutation: answer from ``releases`` alone, which is what this used to do.
 
-    The two lists are separate namespaces even though both use DatasetReleaseId, because
-    admission's unregistered_dataset condition and a submission's published-corpus lookup
-    are different questions asked of different fields.
+    THIS TEST USED TO ASSERT THE OPPOSITE, AND THE REVERSAL IS THE POINT. When published
+    references were added there was nothing that could name one: the submission form offered
+    release ids only, so keeping the two lists as separate namespaces cost nothing and read
+    as the tidier design -- ``is_registered`` for admission's question, ``reference_for`` for
+    resolving a corpus.
+
+    Offering the published corpora on the form is what made it wrong. ``phase0_gate`` denies
+    a manifest outright with ``unregistered_dataset`` when this returns False, so a dropdown
+    option backed only by the ``published`` list is a menu item whose sole outcome is a
+    refusal -- and the refusal lands after the submission has been classified, routed and
+    approved by a lead. That is the precise failure the form-options tests exist to prevent,
+    arriving through the registry instead of through the YAML.
+
+    Widened here rather than at the two call sites, deliberately. ``phase0_gate`` and
+    ``manifest_helpers`` both ask this one question, and a third caller is a matter of time;
+    asking each of them to remember to check a second list makes forgetting the default, and
+    what forgetting produces is a denial after an approval rather than a visible error.
+    ``reference_for`` keeps its narrow meaning -- resolve a corpus to its uri, digest and
+    tokenizer -- because that genuinely is a different question, and nothing about it wants
+    to be answered for ``dolma-2026-07``.
     """
     payload = registry_payload()
     payload["published"] = [published_reference_payload()]
 
     registry = DatasetRegistry.model_validate(payload)
 
-    assert registry.is_registered("olmo-150b-dolma2-v1") is False
+    assert registry.is_registered("olmo-150b-dolma2-v1") is True
     assert registry.reference_for("olmo-150b-dolma2-v1") is not None
+
+    # The widening is a union, not a replacement: the release list still answers, and
+    # reference_for still refuses to resolve something that is only a release id.
+    assert registry.is_registered(SHIPPED_RELEASE_ID) is True
+    assert registry.reference_for(SHIPPED_RELEASE_ID) is None
+    assert registry.is_registered("nothing-registers-this") is False
 
 
 def test_registry_unknown_schema_version_fails_closed() -> None:

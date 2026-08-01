@@ -5,9 +5,16 @@
 # exception. An unknown dataset is not an expensive request somebody may approve; it is a
 # request whose inputs cannot be resolved.
 #
-# Entries carry an identifier and nothing else. Binding each identifier to a full
-# DatasetRelease — checksums, S3 VersionIds, schema, lineage, licence, classification and
-# access policy — is the dataset-breadth phase's work, not admission's.
+# A `releases:` entry carries an identifier and nothing else. Binding each identifier to a
+# full DatasetRelease — checksums, S3 VersionIds, schema, lineage, licence, classification
+# and access policy — is the dataset-breadth phase's work, not admission's.
+#
+# `published:` is the other list, and it is thin for the opposite reason. These are corpora
+# somebody else built and sealed into s3://edullm-data/, which only that pipeline's validator
+# can write to. There is no provenance for this platform to assert about them, so a
+# DatasetRelease is the wrong model — see PublishedDatasetReference for the specific
+# validators that refuse. What each entry does carry is the four facts a reader needs to open
+# the corpus and pin what it opened, plus the tokenizer it was built with.
 #
 # `none` is the honest answer, and it is listed first because it is the common one. The field
 # is required, so until `none` existed every submission had to name a release; every run in
@@ -19,7 +26,59 @@
 # `dolma-2026-07` stays listed. It is named by every historical intent record and by the
 # manifest fixtures, and de-registering it would make those records unresolvable to prove a
 # point already made by the entry above it.
+#
+# WHY TWO CORPORA AND NOT THE NINE THAT EXIST. Seven pretrain corpora and two tokenizers are
+# published upstream. Every entry here is a promise the option works, and that promise is only
+# testable against a corpus a one-attempt, one-hour smoke can actually open. The two smallest
+# are registered; the rest are added once something has read one of these.
+#
+# THE TOKENIZERS ARE NOT REGISTRABLE, AND NOT BECAUSE THEY ARE UNREADABLE. Both are published,
+# sealed and openable. A tokenizer declares no partitions, so the reader hands back every
+# object rather than a trainable split, and its group carries no dtype — which a
+# NumpyFSLDatasetConfig turns into OLMo-core's uint16 default and then memmaps tokenizer.json
+# as if it were tokens. The run trains and the loss moves. A tokenizer is an input to a
+# corpus, named below in each entry's `tokenizer` field, not a corpus a run reads.
+#
+# The two below were confirmed against the account on 2026-08-01, and each digest was read
+# from two places written by two different passes — the group's `manifest_sha256` in
+# dataset.json, and the `manifest_sha256` map in the corpus's own _VALIDATED.json seal. Both
+# declare `mutability: frozen`, which is what makes a content pin meaningful: the standard
+# requires the digest for frozen datasets alone, so a `live` or `append-only` dataset has
+# nothing to pin here and cannot be registered.
+#
+# Their licences differ and one is honestly unknown — lean4-mathlib-bytes declares Apache-2.0,
+# regmix-10b declares `{basis: unknown, id: null}`. Registering the second anyway is correct
+# rather than sloppy: the upstream standard prefers an honest unknown to a false MIT. What it
+# means downstream is that a lineage record will name a corpus whose licence basis nobody has
+# established, which is a fact about the corpus and not a defect in the record.
+#
+# ONE OF THE TWO IS REGISTERED HERE AND NOT OFFERED ON THE FORM, AND THAT IS DELIBERATE.
+# lean4-mathlib-bytes depends on `tokenizer/bytes-utf8`, and OLMo-core has no byte tokenizer:
+# TokenizerConfig offers dolma2, dolma2_sigdig, gpt_neox_olmo_dolma_v1_5, gpt2 and from_hf,
+# and nothing under olmo_core/data/ mentions bytes or utf8 — measured on 2026-08-01 against
+# the checkout the training image builds from. So a run that picked it would reach a container
+# that cannot construct a model for the tokens it just resolved.
+#
+# It stays registered because this file answers "may a submission name this", and the honest
+# answer is yes: it is a real sealed corpus, admission can resolve it, and a workload that is
+# not an OLMo-core training run could read it tomorrow. The dropdown answers the different
+# question of whether it will work. The join between the two lives in
+# tests/test_submission_form_options.py and is computed from tools' TOKENIZERS map, so adding
+# a byte tokenizer config makes the option appear without anybody editing this comment.
 schema_version: 1
 releases:
   - release_id: dolma-2026-07
   - release_id: none
+published:
+  - reference_id: lean4-mathlib-bytes-v3
+    uri: "s3://edullm-data/pretrain/lean4-mathlib-bytes/v3/"
+    dataset_id: pretrain/lean4-mathlib-bytes
+    version: v3
+    manifest_sha256: "2b8bb3786e0920078794c5aaa91c311790f693a47a362aebce64beff0b6f55ad"
+    tokenizer: tokenizer/bytes-utf8
+  - reference_id: regmix-10b-v1
+    uri: "s3://edullm-data/pretrain/regmix-10b/v1/"
+    dataset_id: pretrain/regmix-10b
+    version: v1
+    manifest_sha256: "a24992f53dc4a900bacf8fa571d77e343fd28ffa9054c14b93d54204b0a38cb4"
+    tokenizer: tokenizer/dolma2-bpe
