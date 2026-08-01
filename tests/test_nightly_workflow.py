@@ -1,20 +1,27 @@
-"""The two nightly checks that read the account, and the role that lets them.
+"""The three nightly checks that read the account, and the role that lets them.
 
-**Both exist because the failure they describe is silent.** A training run whose save folder
-was left at OLMo-core's ``/tmp`` default trains, writes nothing anybody can reach, and exits
-zero; a W&B key that W&B refuses costs nothing at run time either, because a training run
-does not fail when its logging is declined. Neither shows up as a red anything, so the check
-is the only thing that reports them, and a check whose finding does not fail the job is the
-same silence with more steps. That is what most of this module is about: the tools are
-invoked, and what they find is treated as a failure.
+**All three exist because the failure they describe is silent.** A training run whose save
+folder was left at OLMo-core's ``/tmp`` default trains, writes nothing anybody can reach, and
+exits zero; a W&B key that W&B refuses costs nothing at run time either, because a training
+run does not fail when its logging is declined; and a Lambda deployed out of band goes on
+admitting submissions and writing lineage with nothing to distinguish it from the reviewed
+code. None shows up as a red anything, so the check is the only thing that reports them, and
+a check whose finding does not fail the job is the same silence with more steps. That is what
+most of this module is about: the tools are invoked, and what they find is treated as a
+failure.
 
 The step bodies are executed rather than pattern-matched. A test that asserted ``exit 1``
 appears somewhere in the script would pass for a script that reaches it only when the report
 is empty, which is the mistake worth catching, so the scripts are run the way the runner runs
 them, with the tool replaced by a stub that exits how the real one would.
 
+The third job is the exception and is deliberately shorter. Its tool already prints a
+machine-readable reason and already separates a disagreement from an unanswered question in
+its own exit code, so the step runs it and nothing else; what is asserted for it is that the
+translation is genuinely absent rather than quietly turned into a pass.
+
 The role is here too rather than in a file of its own, because its shape is the argument for
-the workflow's shape. Two scheduled jobs can assume it, it can read three named things, and
+the workflow's shape. Three scheduled jobs can assume it, everything it reads is named, and
 it holds no write anywhere in the account. The action set is asserted exactly rather than
 checked for the absence of anything alarming, because a trust policy cannot distinguish jobs
 within a workflow: every job in ``nightly.yml`` presents the same claims and any of them can
@@ -31,9 +38,11 @@ from infrastructure_support import (
     ACCOUNT_LITERAL,
     BOUNDARY,
     IAM_ROOT,
+    INFRA_ROOT,
     OIDC_PROVIDER,
     iam_roles,
     load_template,
+    resource_of_type,
     statement_actions,
 )
 from workflow_support import (
@@ -53,13 +62,27 @@ ROLE_PATH = IAM_ROOT / "nightly-reader-role.yaml"
 
 RECONCILE_JOB = "checkpoint-reconciliation"
 WANDB_JOB = "wandb-credential"
+RELEASE_JOB = "deployed-lambda-release"
 
 RECONCILE_TOOL = "tools/find_runs_that_saved_nothing.py"
 WANDB_TOOL = "tools/verify_wandb_credential.py"
+RELEASE_TOOL = "tools/verify_deployed_lambdas.py"
 
 RECONCILE_STEP = "Reconcile what those runs actually wrote"
 WANDB_STEP = "Ask W&B whether it would accept the stored key"
+RELEASE_STEP = "Compare what AWS is running against what was released"
 GUARD_STEP = "Check the nightly reader role is deployed"
+
+#: Every job here that takes a credential. Each one is held to the same guard, the same
+#: role and the same refusal to be informational, so the list is what a fourth such job has
+#: to join rather than a set of tests it has to remember to be added to.
+CREDENTIALED_JOBS = (RECONCILE_JOB, WANDB_JOB, RELEASE_JOB)
+
+#: The two functions the release check reads, and the templates that name them to
+#: CloudFormation. Read from the templates rather than spelled here, because the IAM grant
+#: is written against these names and a rename that missed one of the three places would be
+#: an access denial at 05:00 rather than a failure at review.
+LAMBDA_TEMPLATES = ("admission-state-machine.yaml", "batch-events.yaml")
 
 #: What the repository variable is called, and what the role it names is called. Spelled here
 #: as literals because the workflow reads the variable by name and a rename on one side alone
@@ -358,17 +381,115 @@ def test_a_key_wandb_accepts_passes(workflow: dict[str, Any], tmp_path: Path) ->
     assert finished.returncode == 0, finished.stderr
 
 
+def release_step(workflow: dict[str, Any]) -> str:
+    return step(workflow["jobs"][RELEASE_JOB], RELEASE_STEP)["run"]
+
+
+def test_the_nightly_compares_the_deployed_functions_against_the_records(
+    workflow: dict[str, Any],
+) -> None:
+    """Mutation: keep the job and drop the step, or point it at a builder instead.
+
+    The two release tripwires compare a record against a zip built from the tree and run on
+    every pull request. This job is the only thing anywhere that reads the account, so a job
+    that installs the tooling, takes a credential and runs nothing leaves the chain exactly
+    as open as it was before the job existed.
+    """
+    body = scripts(workflow, RELEASE_JOB)
+
+    assert RELEASE_TOOL in body
+    assert "uv run --frozen python" in body
+
+
+def test_a_deployed_function_that_is_not_the_released_one_fails_the_nightly(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """THE ONE THAT MATTERS. Mutation: report the difference and exit zero.
+
+    The tool exits 1 when the digest AWS reports is not the digest the release record
+    carries, and there is no alerting on this platform, so the red run is the whole signal.
+    """
+    stub = write_stub(tmp_path / "bin", "uv", "exit 1")
+
+    finished = run_step_script(release_step(workflow), cwd=tmp_path, env={}, stub_bin=stub.parent)
+
+    assert finished.returncode != 0
+
+
+def test_a_release_check_that_could_not_look_also_fails_the_nightly(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """Mutation: pass on exit 2, on the ground that it found nothing wrong.
+
+    It found nothing at all. A denied `lambda:GetFunctionConfiguration` is the likeliest way
+    this ever exits 2, and treating that as a clean run would retire the check on the
+    morning the grant lapsed without anybody deciding to.
+    """
+    stub = write_stub(tmp_path / "bin", "uv", "exit 2")
+
+    finished = run_step_script(release_step(workflow), cwd=tmp_path, env={}, stub_bin=stub.parent)
+
+    assert finished.returncode != 0
+
+
+def test_a_deployment_that_matches_its_record_passes(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """The other side, so the step cannot pass this file by failing unconditionally."""
+    stub = write_stub(tmp_path / "bin", "uv", "exit 0")
+
+    finished = run_step_script(release_step(workflow), cwd=tmp_path, env={}, stub_bin=stub.parent)
+
+    assert finished.returncode == 0, finished.stderr
+
+
+def test_the_release_step_restates_nothing_the_tool_already_says(
+    workflow: dict[str, Any],
+) -> None:
+    """Mutation: wrap it in the `status=$?` shape the two jobs above use, to be consistent.
+
+    Those two wrap tools that report a finding without a machine-readable reason, so the
+    step supplies one. This tool prints its own reason, prints a sentence naming what to do,
+    and separates a disagreement from an unanswered question in its exit code. A translation
+    on top would be a second spelling of all three, and the two would drift.
+    """
+    body = release_step(workflow)
+
+    assert body.strip() == f"uv run --frozen python {RELEASE_TOOL}"
+
+
+def test_the_release_check_never_prints_an_account_id(workflow: dict[str, Any]) -> None:
+    """Mutation: print the CLI's stderr when the call is refused.
+
+    An AccessDenied from Lambda names the calling role's ARN and the resource ARN, and both
+    carry the account id. This job writes to a scheduled log and a step summary in a public
+    repository, and every committed capture here masks that number. Asserted beside the job
+    as well as in the tool's own tests, for the same reason the W&B one is: the log this job
+    writes is what makes it matter.
+    """
+    assert RELEASE_TOOL in scripts(workflow, RELEASE_JOB)
+    source = (PROJECT_ROOT / RELEASE_TOOL).read_text(encoding="utf-8")
+
+    assert "carries the account id" in source
+    assert not ACCOUNT_LITERAL.search(source)
+
+
 @pytest.mark.parametrize(
-    ("job_id", "step_name"), [(RECONCILE_JOB, RECONCILE_STEP), (WANDB_JOB, WANDB_STEP)]
+    ("job_id", "step_name"),
+    [
+        (RECONCILE_JOB, RECONCILE_STEP),
+        (WANDB_JOB, WANDB_STEP),
+        (RELEASE_JOB, RELEASE_STEP),
+    ],
 )
-def test_nothing_in_either_job_is_allowed_to_be_informational(
+def test_nothing_in_any_of_these_jobs_is_allowed_to_be_informational(
     workflow: dict[str, Any], job_id: str, step_name: str
 ) -> None:
     """Mutation: `continue-on-error: true` on the job or on the reporting step.
 
     It is the obvious response to a job that goes red on the first morning, and it turns the
     job into one that cannot say anything. The header of the workflow argues the point for
-    the three checks that were already there, and these are the fourth and fifth.
+    the three checks that were already there, and these are the fourth, fifth and sixth.
     """
     job = workflow["jobs"][job_id]
 
@@ -387,7 +508,7 @@ def test_nothing_in_either_job_is_allowed_to_be_informational(
 # ----------------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("job_id", [RECONCILE_JOB, WANDB_JOB])
+@pytest.mark.parametrize("job_id", CREDENTIALED_JOBS)
 def test_a_missing_role_is_named_rather_than_reported_as_no_credentials(
     workflow: dict[str, Any], job_id: str, tmp_path: Path
 ) -> None:
@@ -425,8 +546,8 @@ def test_a_missing_role_is_named_rather_than_reported_as_no_credentials(
     assert allowed.returncode == 0, allowed.stderr
 
 
-@pytest.mark.parametrize("job_id", [RECONCILE_JOB, WANDB_JOB])
-def test_both_jobs_assume_the_reader_role_and_no_other(
+@pytest.mark.parametrize("job_id", CREDENTIALED_JOBS)
+def test_every_job_that_reads_the_account_assumes_the_reader_role_and_no_other(
     workflow: dict[str, Any], job_id: str
 ) -> None:
     """Mutation: point one of them at the deployer or the admission role.
@@ -465,11 +586,23 @@ def test_the_role_can_read_and_cannot_write(role: dict[str, Any]) -> None:
         "s3:ListBucket",
         "s3:GetBucketLocation",
         "secretsmanager:GetSecretValue",
+        "lambda:GetFunctionConfiguration",
     }
     for action in granted:
         assert not any(fragment in action for fragment in MUTATING_ACTION_FRAGMENTS), action
-        assert action.startswith(("s3:", "secretsmanager:")), action
+        assert action.startswith(("s3:", "secretsmanager:", "lambda:")), action
         assert "*" not in action, action
+
+    # The sharpest instance of the rule this test is for. A release check that could deploy
+    # could answer its own finding by making the account match the record, which is the
+    # wrong direction: the record is the reviewed artifact and the deployment is the thing
+    # under suspicion.
+    assert "lambda:UpdateFunctionCode" not in granted
+    # GetFunction answers with a presigned URL to the deployed artifact. A digest is a
+    # description of the code and a link is a copy of it, and only one of those is a read
+    # this job needs.
+    assert "lambda:GetFunction" not in granted
+    assert "lambda:ListFunctions" not in granted
 
     # ListSecrets has no resource type, so a grant of it could not be scoped to one secret
     # and would let a scheduled job enumerate every secret in the account.
@@ -566,6 +699,44 @@ def test_listing_is_confined_to_the_prefixes_each_check_reads(role: dict[str, An
         LINEAGE_BUCKET: ["intent/*", "result/*"],
         OUTPUTS_BUCKET: "teams/*/runs/*",
     }
+
+
+def test_the_lambda_grant_names_the_functions_the_templates_declare(
+    role: dict[str, Any],
+) -> None:
+    """Mutation: widen the resource to `function:*`, or to the project's own name prefix.
+
+    Either still reads as scoped and neither is. This is a shared sandbox account with
+    sixteen other teams in it, and a function's configuration carries its environment
+    variable names, its role and its layers, so an unscoped describe is a nightly
+    reconnaissance of everybody else's infrastructure to answer a question about two
+    functions.
+
+    The expected names are read out of the templates that declare them to CloudFormation
+    rather than written here, because the name lives in three places once this grant exists
+    -- the template, the policy, and whatever the account was left holding -- and a rename
+    that updates the template alone is an access denial at 05:00 rather than a red review.
+    """
+    declared = set()
+    for name in LAMBDA_TEMPLATES:
+        template = load_template(INFRA_ROOT / name)
+        _, function = resource_of_type(template, "AWS::Lambda::Function")
+        declared.add(function["Properties"]["FunctionName"])
+
+    reach = {
+        str(statement["Resource"]["Fn::Sub"]).rsplit(":function:", 1)[1]: set(
+            statement_actions(statement)
+        )
+        for statement in statements(role)
+        if ":lambda:" in str(statement["Resource"]["Fn::Sub"])
+    }
+
+    assert set(reach) == declared
+    assert all(actions == {"lambda:GetFunctionConfiguration"} for actions in reach.values())
+    # Unqualified, with no trailing `:*`. The check asks about $LATEST, which is what the
+    # state machine and the events rule invoke; a version or alias suffix would be a grant
+    # for something nothing here reads.
+    assert all(not qualified.endswith("*") for qualified in reach)
 
 
 def test_the_secret_grant_names_one_secret_rather_than_the_account(

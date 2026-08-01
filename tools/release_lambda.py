@@ -59,6 +59,13 @@ class Function:
     #: The record kept beside the template so the two can be compared. A version id edited
     #: in one and not the other is a template pointing at a zip nobody recorded.
     release_record: Path
+    #: The test module holding this function's record against a zip built from the tree.
+    #: Named on the function rather than looked up by display name, because two callers now
+    #: need it: `verify` below runs it after a release, and tools/verify_deployed_lambdas.py
+    #: cites it when the deployed digest disagrees -- it is what tells a stale record from
+    #: an out-of-band deployment, and a reader who is not pointed at it cannot choose which
+    #: side to change.
+    tripwire: str
 
 
 FUNCTIONS = {
@@ -68,6 +75,7 @@ FUNCTIONS = {
         s3_key="admission-validator/admission-validator.zip",
         template=PROJECT_ROOT / "infra" / "admission-state-machine.yaml",
         release_record=PROJECT_ROOT / "infra" / "admission-validator-release.yaml",
+        tripwire="tests/test_phase2_lambda_package.py",
     ),
     "recorder": Function(
         name="lifecycle recorder",
@@ -75,6 +83,7 @@ FUNCTIONS = {
         s3_key="lifecycle-recorder/lifecycle-recorder.zip",
         template=PROJECT_ROOT / "infra" / "batch-events.yaml",
         release_record=PROJECT_ROOT / "infra" / "lifecycle-recorder-release.yaml",
+        tripwire="tests/test_phase3_lifecycle_package.py",
     ),
 }
 
@@ -174,11 +183,7 @@ def verify(selected: Sequence[Function]) -> None:
     as a subprocess with its exit code checked directly -- not piped anywhere, because a
     pipe is what swallowed the failure last time.
     """
-    targets = []
-    if any(function.name == "admission validator" for function in selected):
-        targets.append("tests/test_phase2_lambda_package.py")
-    if any(function.name == "lifecycle recorder" for function in selected):
-        targets.append("tests/test_phase3_lifecycle_package.py")
+    targets = sorted({function.tripwire for function in selected})
     answer = subprocess.run(
         ["uv", "run", "pytest", "-q", *targets],
         cwd=PROJECT_ROOT,
