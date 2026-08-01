@@ -1011,11 +1011,21 @@ jobs:
       # BatchSubmissionFailed is Batch turning an admitted run away, and anything else is
       # the machine itself failing -- and `cause` says where the reasons were written down.
       #
-      # WHAT THE CAUSE DOES NOT CARRY, SAID HERE SO NOBODY GOES LOOKING. Every Fail state in
-      # infra/admission-state-machine.yaml declares a static Cause naming the lineage prefix
-      # to read; none of them interpolates the decision record. So this reports which
-      # refusal and where to read it, and the reason code itself is in the decision record.
-      # Putting the detail in the Cause is a change to the state machine and a redeploy.
+      # WHAT THE CAUSE CARRIES, AND THE ONE CASE THAT CHANGED. Three of the four Fail states
+      # in infra/admission-state-machine.yaml declare a static Cause naming the lineage
+      # prefix to read, so for those this reports which refusal and where the reason code
+      # was written, and the code itself is in the decision record.
+      #
+      # BatchSubmissionFailed is no longer one of them, and the reason is what a submitter
+      # can actually reach. That refusal happens after the intent and decision records are
+      # written, so the run reads as admitted and the job does not exist -- and the static
+      # Cause answered it by naming a bucket prefix that no researcher has read access to,
+      # which is a message whose only possible next step is asking somebody with
+      # credentials. It cost exactly that on 2026-08-01: a submission was refused with
+      # `Evaluate on exit condition contains restricted characters`, and finding that out
+      # took an operator reading submission-failure/ by hand. The state now interpolates
+      # what Batch said into the Cause, so the sentence a submitter reads is the sentence
+      # the API returned.
       #
       # The cause is masked before it reaches anything, through the helpers every committed
       # capture already goes through. The static causes carry no account id, but an
