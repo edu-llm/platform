@@ -152,6 +152,21 @@ def two_team_inventory() -> OrganizationInventory:
     return OrganizationInventory.model_validate(two_team_inventory_payload())
 
 
+def inventory_with_no_team_bindings() -> OrganizationInventory:
+    """The shipped roster with its team catalog removed, which it no longer ships without.
+
+    ``config/organization.yaml`` declared no teams at all until 2026-08-01, so the shipped
+    roster was itself the empty-catalog case and three tests read it that way. It now
+    declares six, and the empty catalog has to be constructed to stay reachable. It is worth
+    keeping reachable: ``team_scope_requires_team_bindings`` is the reason a team-scoped
+    policy gives when there is nothing to scope against, and a reason no test can produce is
+    one nobody would notice going wrong.
+    """
+    payload: dict[str, object] = load_organization_inventory().model_dump(mode="json")
+    payload["team_bindings"] = {"teams": [], "repositories": []}
+    return OrganizationInventory.model_validate(payload)
+
+
 def inventory_where_the_admin_belongs_to_memory_split() -> OrganizationInventory:
     return OrganizationInventory.model_validate(
         two_team_inventory_payload(
@@ -572,14 +587,12 @@ def test_team_scope_does_not_restrict_exception_approval() -> None:
 
 
 def test_team_scope_with_empty_team_bindings_denies_member_routine_runs_without_raising() -> None:
-    inventory = load_organization_inventory()
-    assert inventory.team_bindings.teams == ()
     decision = decide(
         PLAIN_MEMBER,
         LEAD_WITHOUT_ADMIN,
         routine_facts(),
         policy=approval_policy_with_scope(ApprovalScope.TEAM),
-        inventory=inventory,
+        inventory=inventory_with_no_team_bindings(),
     )
     assert decision.granted is False
     assert decision.reason is AuthorizationReason.TEAM_SCOPE_REQUIRES_TEAM_BINDINGS
@@ -774,14 +787,12 @@ def test_admin_authority_is_never_narrower_for_routine_than_for_exception() -> N
 
 
 def test_team_scope_reports_absent_bindings_distinctly_from_a_team_mismatch() -> None:
-    inventory = load_organization_inventory()
-    assert inventory.team_bindings.teams == ()
     absent = decide(
         PLAIN_MEMBER,
         LEAD_WITHOUT_ADMIN,
         routine_facts(),
         policy=approval_policy_with_scope(ApprovalScope.TEAM),
-        inventory=inventory,
+        inventory=inventory_with_no_team_bindings(),
     )
     mismatch = decide(
         MEMORY_SPLIT_MEMBER,
@@ -797,11 +808,20 @@ def test_team_scope_reports_absent_bindings_distinctly_from_a_team_mismatch() ->
 
 
 @pytest.mark.parametrize("claimed_team", [MEMORY_SPLIT_TEAM, CURRICULUM_TEAM, UNBOUND_TEAM])
-def test_attribution_is_recorded_unverified_while_the_roster_has_no_teams(
+def test_attribution_is_recorded_unverified_while_no_member_is_bound_to_a_team(
     claimed_team: str,
 ) -> None:
+    """Mutation: read membership off the catalog existing rather than off the submitter.
+
+    The shipped roster declares six teams and puts nobody in any of them, because which
+    group a person belongs to is the one fact it has never held. A claim is therefore still
+    unverifiable, including ``not-a-team``, which is not one of the six: refusing that one
+    would be checking the claim against the catalog rather than against the submitter, and
+    would deny a run for naming a group its author is not on record as being off.
+    """
     inventory = load_organization_inventory()
-    assert inventory.team_bindings.teams == ()
+    assert inventory.team_bindings.teams != (), "the shipped roster declares its groups"
+    assert all(team.member_logins == () for team in inventory.team_bindings.teams)
     decision = decide(
         PLAIN_MEMBER,
         LEAD_WITHOUT_ADMIN,
@@ -812,8 +832,8 @@ def test_attribution_is_recorded_unverified_while_the_roster_has_no_teams(
     assert decision.reason is AuthorizationReason.ROUTINE_APPROVED_BY_LEAD_OR_ADMIN
     assert decision.claimed_team == claimed_team
     assert decision.team_verified is False, (
-        "with no team bindings the claimed team cannot be checked; the audit record must say "
-        "so rather than imply the attribution was confirmed"
+        "with no member bound to a team the claimed team cannot be checked; the audit record "
+        "must say so rather than imply the attribution was confirmed"
     )
 
 

@@ -34,9 +34,18 @@ class AttributionTag(ContractModel):
 class TeamBinding(ContractModel):
     team_id: TeamId
     github_team_slug: GitHubTeamSlug
+    #: Who leads this group, where anybody has recorded it. Empty is permitted and means
+    #: exactly that nobody has, which is a different state from a group that has no lead.
+    #: This field required at least one login until 2026-08-01, and the constraint was
+    #: unreachable in one direction and wrong in the other: ``submission._routing_note``
+    #: already carries a branch for a group with no recorded lead and calls it the ordinary
+    #: path, and requiring a name here is what forced that name to be invented before a
+    #: group could be declared at all. Under ``approval_scope: organization`` a lead carries
+    #: no authorization weight, so an empty list withholds nothing; under team scope the
+    #: group routes to an admin, who may always release.
     lead_logins: Annotated[
         tuple[GitHubLogin, ...], BeforeValidator(require_ordered_sequence)
-    ] = Field(min_length=1, strict=False)
+    ] = Field(default=(), strict=False)
     s3_namespace: S3Namespace
     wandb_entity: WandbEntity
     allowed_compute_profiles: Annotated[

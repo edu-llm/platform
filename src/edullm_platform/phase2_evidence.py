@@ -60,10 +60,13 @@ from edullm_platform.evidence import (
 __all__ = [
     "APPROVAL_ENVIRONMENT_NAMES",
     "LEAD_APPROVAL_TEAM_SLUG",
+    "ROLE_TEAM_SLUGS",
     "EnvironmentInventory",
     "EnvironmentReviewer",
     "LeadTeamMembership",
     "ProtectedEnvironment",
+    "ResearchTeamInventory",
+    "ResearchTeamMembership",
     "SecretInventory",
 ]
 
@@ -77,6 +80,12 @@ APPROVAL_ENVIRONMENT_NAMES: tuple[str, ...] = ("run-approval-lead", "run-approva
 #: asked GitHub which team reviews the gate and then captured that team's members could
 #: never disagree with the gate, and disagreeing is the whole job.
 LEAD_APPROVAL_TEAM_SLUG: str = "team-leads"
+
+#: The GitHub teams that are roles rather than research groups. ``team-leads`` reviews the
+#: lead approval gate and ``team-members`` is how write access on this repository is
+#: granted. Neither is a group a run can be attributed to, so both are held out of every
+#: comparison against the groups ``config/organization.yaml`` declares.
+ROLE_TEAM_SLUGS: tuple[str, ...] = (LEAD_APPROVAL_TEAM_SLUG, "team-members")
 
 #: The three roles Phase 2 creates, and the committed templates that declare them. The
 #: Phase 1 list is separate on purpose: these roles belong to a different phase's evidence
@@ -230,6 +239,68 @@ class LeadTeamMembership(FreshEvidenceModel):
     #: this one holds everyone an owner has added to a team, which is precisely where a
     #: login nobody here chose turns up.
     member_logins: OrderedStrings = Field(strict=False)
+
+
+class ResearchTeamMembership(FreshEvidenceModel):
+    """One research group's GitHub team, its repository permission, and who is in it.
+
+    ``config/organization.yaml`` names a ``github_team_slug`` for each group it declares,
+    and that name is a claim about another system. Nothing in this repository could check
+    it: a slug naming a team that was never created, or created and later renamed, reads
+    exactly like a slug naming one that exists, and the failure it produces arrives much
+    later as a person who cannot see the Run button.
+
+    ``repository_permission`` is captured beside the members because the two answer
+    different halves of one question. Membership decides who the team contains;
+    the permission decides whether containing them grants anything, and a team with
+    ``pull`` on this repository leaves every member unable to see the submission workflow
+    at all, since GitHub shows a manual workflow only to people who can write.
+
+    ``member_logins`` may be empty and that is not refused. Every research team is empty
+    today, which is the state the roster records as well, and a capture that treated it as
+    a failure could not record the thing that is actually true.
+    """
+
+    source: Literal["github"]
+    environment: EvidenceEnvironment
+    organization: SecretFreeStr = Field(min_length=1)
+    repository: SecretFreeStr = Field(min_length=1)
+    team_slug: SecretFreeStr = Field(min_length=1)
+    repository_permission: SecretFreeStr = Field(min_length=1)
+
+    #: Plain ``str`` for the reason :class:`LeadTeamMembership` gives at length: a login of
+    #: twelve digits is legal on GitHub and the secret scan reads a bare run of twelve
+    #: digits as an AWS account id, so scanning here would refuse a real member and take
+    #: the record down with him.
+    member_logins: OrderedStrings = Field(strict=False)
+
+
+class ResearchTeamInventory(FreshEvidenceModel):
+    """Every GitHub team in the organization that is not one of the two role teams.
+
+    Captured as the whole set rather than as the teams the roster happens to name, because
+    the interesting failure is in the direction a roster-driven capture cannot see. A team
+    created on GitHub and bound to nothing is a group whose runs nothing can attribute and
+    whose members were granted access nobody wrote down, and a capture that asked only
+    about declared slugs would report a clean result while it sat there.
+
+    ``team-leads`` and ``team-members`` are excluded by name rather than filtered by shape.
+    They are role teams, not research groups: one is the reviewer on the lead approval gate
+    and the other is how everybody gets write access, and folding either into a comparison
+    against the research groups would report both as unbound forever.
+    """
+
+    source: Literal["github"]
+    environment: EvidenceEnvironment
+    organization: SecretFreeStr = Field(min_length=1)
+    repository: SecretFreeStr = Field(min_length=1)
+    teams: Annotated[
+        tuple[ResearchTeamMembership, ...], BeforeValidator(require_ordered_sequence)
+    ] = Field(strict=False)
+
+    @property
+    def slugs(self) -> tuple[str, ...]:
+        return tuple(team.team_slug for team in self.teams)
 
 
 class SecretInventory(FreshEvidenceModel):

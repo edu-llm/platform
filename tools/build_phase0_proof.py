@@ -291,11 +291,15 @@ def known_limitations(repo_root: Path, checks: Sequence[CriterionSpec]) -> tuple
             "classification for all of them and that nothing can run is no longer true of "
             "the whole catalog."
         )
-    if not inventory.team_bindings.teams:
+    if not any(team.member_logins or team.lead_logins for team in inventory.team_bindings.teams):
         limitations.append(
-            "Team bindings are empty. OrganizationInventory.team_bindings.teams is an empty "
-            "tuple, so no submitter or lead is bound to a team. Every team-scoped rule is "
-            "therefore either deferred or unenforceable today."
+            "No member is bound to a team. OrganizationInventory.team_bindings.teams names "
+            f"{len(inventory.team_bindings.teams)} teams and every one of them has an empty "
+            "member_logins and lead_logins, so no submitter or lead is bound to a team. Every "
+            "team-scoped rule is therefore either deferred or unenforceable today. Which group "
+            "a person belongs to is the one fact the roster has never held, and enforcement is "
+            "per submitter, so it becomes live for each person as theirs is written down "
+            "rather than for everybody at once."
         )
     if policy.approval_scope is not ApprovalScope.TEAM:
         limitations.append(
@@ -303,13 +307,14 @@ def known_limitations(repo_root: Path, checks: Sequence[CriterionSpec]) -> tuple
             f"member's routine submission. Check D1 in the negative-case matrix is "
             f"{status_of('D1')} for this reason."
         )
-    if not inventory.team_bindings.teams:
+    if not any(team.member_logins or team.lead_logins for team in inventory.team_bindings.teams):
         limitations.append(
             "Cross-team attribution is implemented but cannot reject anything yet. Every "
             "decision records the claimed team and a team_verified flag, and a submitter "
-            "naming a team they do not belong to is denied as soon as team bindings exist. "
-            "With bindings empty, every shipped decision records team_verified: false, which "
-            "is the audit record's way of saying the attribution was accepted unchecked. "
+            "naming a team they do not belong to is denied as soon as that submitter's own "
+            "membership is recorded. With no member bound, every shipped decision records "
+            "team_verified: false, which is the audit record's way of saying the attribution "
+            "was accepted unchecked. "
             f"Check 9 is {status_of('9')} for this reason: no test can show a shipped "
             "rejection that the shipped configuration cannot produce."
         )

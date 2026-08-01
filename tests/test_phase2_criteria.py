@@ -51,8 +51,8 @@ def test_the_one_deferral_is_the_inherited_one_and_carries_its_trigger() -> None
     assert len(deferred) == 1
     (wrong_team,) = deferred
     assert wrong_team.number == "4"
-    assert "team_bindings" in (wrong_team.deferral_reason or "")
-    assert "team_bindings" in (wrong_team.deferral_trigger or "")
+    assert "member_logins" in (wrong_team.deferral_reason or "")
+    assert "member_logins" in (wrong_team.deferral_trigger or "")
     assert not wrong_team.proving_node_ids
 
 

@@ -1,6 +1,6 @@
 # Phase 2 schema compatibility report
 
-The thirteen contract models defined by the modules this bundle's evidence is built from, so that a reviewer can check a shape without reading the whole inventory. The structural digest is `sha256` over the model's JSON schema with sorted keys, so it changes when a field is added, removed, retyped or reconstrained, and does not change when unrelated code moves.
+The fifteen contract models defined by the modules this bundle's evidence is built from, so that a reviewer can check a shape without reading the whole inventory. The structural digest is `sha256` over the model's JSON schema with sorted keys, so it changes when a field is added, removed, retyped or reconstrained, and does not change when unrelated code moves.
 
 What scopes this table is where code sits today, not a record of what the phase delivered. It was introduced for a long time as the contract models the phase added, which is a question it cannot answer: the only thing it knows about a model is which module the model is in now, so moving one to another file changed the count without any phase having delivered anything different. It is a compatibility view over the complete inventory in `proof/phase-0/schema-compatibility.md`, and `tests/test_schema_compatibility.py` fails when either table stops describing the tree.
 
@@ -17,6 +17,8 @@ What scopes this table is where code sits today, not a record of what the phase 
 | LineageInventory | edullm_platform.phase2_evidence | record | unversioned | no | sha256:44fdfa6f1ce14ce085bf18add6364911b6e4ddb95d2915f865c545319c7526b3 |
 | LineageObject | edullm_platform.phase2_evidence | record | unversioned | no | sha256:e8b3a5a7c45fa505cd8a7a2f3d2a8df3cf482684a693d8b96404488ac9773d06 |
 | ProtectedEnvironment | edullm_platform.phase2_evidence | record | unversioned | no | sha256:3d60181d51ce862aa4b65d8d7cbe3da760a50552e10328d96ef5894bc735f692 |
+| ResearchTeamInventory | edullm_platform.phase2_evidence | record | unversioned | no | sha256:e998bfbe106f60ba57bf3e84004d250f17254e287c3885f2f7b477a1e831e5f8 |
+| ResearchTeamMembership | edullm_platform.phase2_evidence | record | unversioned | no | sha256:05c6073d33ec3aae676d1ebfe47985a5b401e48886f1a35882b2b0a6061ab6f0 |
 | SecretInventory | edullm_platform.phase2_evidence | record | unversioned | no | sha256:ba3cec7c6b95f1761756f3938cfd445b3ba081f34d7cd5fb33e6f3c9754dad39 |
 | Phase2GateReport | edullm_platform.phase2_gate | record | unversioned | no | sha256:237063f6f507f5fc06a78659bb898512bfaf472ad6c8c641d8cf840d049e3dbf |
 

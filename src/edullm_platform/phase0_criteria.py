@@ -113,8 +113,8 @@ GOLDEN_DIGEST_NODE: Final = (
 )
 
 TEAM_BINDINGS_ARE_EMPTY: Final = (
-    "config/organization.yaml leaves team_bindings.teams empty, so no submitter or lead is "
-    "bound to a team"
+    "config/organization.yaml declares six teams and records no member in any of them, so no "
+    "submitter or lead is bound to a team"
 )
 
 
@@ -337,7 +337,7 @@ def phase0_criteria(references: Sequence[FixtureReference]) -> tuple[CriterionSp
                 )
                 + _per_fixture(
                     "tests/test_authorization.py"
-                    "::test_attribution_is_recorded_unverified_while_the_roster_has_no_teams",
+                    "::test_attribution_is_recorded_unverified_while_no_member_is_bound_to_a_team",
                     ("memory-split", "curriculum", "not-a-team"),
                 )
                 + _per_fixture(
@@ -359,11 +359,12 @@ def phase0_criteria(references: Sequence[FixtureReference]) -> tuple[CriterionSp
                 "written down below."
             ),
             deferral_trigger=(
-                "config/organization.yaml populates team_bindings.teams, which happens once "
-                "sub-team assignments exist. Enforcement becomes live at that moment with no "
-                "code change: the supporting tests cited here already drive the denial against "
-                "populated bindings. When that lands, this criterion must be re-recorded as "
-                "COVERED with those citations promoted to proving tests, or argued again."
+                "config/organization.yaml records member_logins on a team, which happens once "
+                "each group's lead confirms who is in theirs. Enforcement is per submitter and "
+                "needs no code change: the supporting tests cited here already drive the denial "
+                "against a bound member. When the first group lands, this criterion must be "
+                "re-recorded as COVERED with those citations promoted to proving tests, or "
+                "argued again."
             ),
             scope_limits=(
                 (
@@ -415,8 +416,8 @@ def phase0_criteria(references: Sequence[FixtureReference]) -> tuple[CriterionSp
                 "recorded decision that defers criterion 9 and D1, not by oversight."
             ),
             deferral_trigger=(
-                "config/organization.yaml populates team_bindings.teams and sub-team assignments "
-                "exist. Self-authorization is deliberately unaffected by approval_scope today, "
+                "config/organization.yaml records member_logins and lead_logins on a team. "
+                "Self-authorization is deliberately unaffected by approval_scope today, "
                 "and the last two supporting tests cited here pin that so the decision stays "
                 "visible. "
                 "Once leads are bound to teams, decide whether self-authorization is confined to "
@@ -515,7 +516,7 @@ def related_deferrals(references: Sequence[FixtureReference]) -> tuple[Criterion
             ),
             deferral_trigger=(
                 "config/policy.yaml sets approval_scope to team and config/organization.yaml "
-                "populates team_bindings.teams. Both are configuration values; flipping them "
+                "records member_logins on a team. Both are configuration values; flipping them "
                 "makes the check live with no code change, and this entry must then be proved "
                 "or reopened."
             ),

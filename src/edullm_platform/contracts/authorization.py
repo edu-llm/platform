@@ -110,7 +110,17 @@ def evaluate_authorization(
     inventory: OrganizationInventory,
 ) -> AuthorizationDecision:
     approval_class = classify_request(request, policy.thresholds)
-    membership_is_knowable = bool(inventory.team_bindings.teams)
+    # ASKED OF THIS SUBMITTER, NOT OF THE FILE. This read ``bool(inventory.team_bindings
+    # .teams)``, so the first group anybody declared switched checking on for the whole
+    # organization at once, and every submitter whose own group was not yet written down was
+    # refused with submitter_not_in_claimed_team. That included platform admins, and it made
+    # declaring one group an all-or-nothing edit: safe only on the day all thirty-five
+    # assignments landed together, which is the day that never comes. Asking whether this
+    # submitter's membership is recorded gives the same answer once everybody is on a group,
+    # and in the meantime lets groups be filled in one at a time. A submitter with no
+    # recorded group is authorized exactly as before and the decision records team_verified
+    # false, which is what that flag has meant since it was added.
+    membership_is_knowable = bool(inventory.teams_for_member(submitter))
     team_verified = membership_is_knowable and belongs_to_claimed_team(
         inventory,
         submitter=submitter,

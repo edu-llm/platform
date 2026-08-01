@@ -478,7 +478,7 @@ def shipped_checks() -> tuple[CriterionSpec, ...]:
     return recorded_checks(discover_fixtures(PROJECT_ROOT))
 
 
-def test_known_limitations_name_the_compute_provisioning_state_and_empty_team_bindings() -> None:
+def test_known_limitations_name_the_compute_provisioning_state_and_unbound_membership() -> None:
     """The provisioning limitation narrowed when Phase 3 promoted one profile; it did not go.
 
     This asserted "No compute profile is provisioned" until Phase 3, and the assertion is
@@ -499,7 +499,7 @@ def test_known_limitations_name_the_compute_provisioning_state_and_empty_team_bi
         assert any(name in item for name in provisioned for item in compute)
     else:
         assert any("No compute profile is provisioned" in item for item in compute)
-    assert any("Team bindings are empty" in item for item in limitations)
+    assert any("No member is bound to a team" in item for item in limitations)
 
 
 @pytest.mark.slow
