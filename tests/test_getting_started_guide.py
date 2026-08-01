@@ -142,17 +142,43 @@ def test_the_guide_names_someone_to_tell_when_a_run_breaks(guide: str) -> None:
     assert "@philote-dev" in guide, "the guide names nobody to tell when a run breaks"
 
 
-def test_the_guide_leads_with_the_save_folder_rather_than_burying_it(guide: str) -> None:
-    """The single most expensive mistake available on this platform, placed accordingly.
+def test_the_guide_leads_with_the_command_a_researcher_copies(guide: str) -> None:
+    """Whatever the one line currently is, it belongs above the explanation of why.
 
-    A twelve-hour run that took OLMo-core's ``/tmp`` default trains for twelve hours,
-    writes checkpoints onto a machine that then disappears, exits zero, and is recorded as
-    a success. A guide that mentioned it in passing at the bottom would be technically
-    complete and practically useless, so this asserts it appears in the first half.
+    THIS ASSERTION MOVED ONCE ALREADY, WHICH IS THE POINT OF WRITING IT THIS WAY. It used to
+    require ``EDULLM_CHECKPOINT_DIR`` in the first half, because the line a researcher
+    copied was ``--save-folder "$EDULLM_CHECKPOINT_DIR"`` and forgetting it cost a whole
+    twelve-hour run. Then the entry point took that over and the variable became something
+    the container handles, so the old assertion still passed -- at 46%, a few paragraphs
+    from going red for a reason that had nothing to do with the guide getting worse.
+
+    So it holds the shape rather than the string: the command comes before the section that
+    explains the traps behind it. A guide that opens with six caveats and buries the thing
+    to paste is complete and unread.
     """
-    position = guide.index("EDULLM_CHECKPOINT_DIR")
+    command = guide.index("bash -lc")
+    caveats = guide.index("## Six things that will bite you")
 
-    assert position < len(guide) // 2, (
-        "the save-folder instruction has drifted into the second half of the guide; it is "
-        "the one line that decides whether a long run produces anything"
+    assert command < caveats, (
+        "the guide explains the traps before it gives the command to run, which is the "
+        "order somebody skimming at two in the morning reads exactly backwards"
+    )
+
+
+def test_the_tmp_trap_is_named_wherever_the_guide_puts_it(guide: str) -> None:
+    """The most expensive mistake available here, and the one nothing reports.
+
+    A run that takes OLMo-core's ``/tmp`` default trains for hours, writes checkpoints onto
+    a machine that then stops existing, exits zero, and is recorded as an unqualified
+    success. ``ResultManifest`` has no field for it and an empty ``checkpoints`` tuple
+    already means something else, so the guide is the only place a researcher is warned.
+
+    Asserted by substance rather than position, because where it belongs has already
+    changed once: it was the headline instruction, and it is now a reason the entry point
+    exists. Both are fine. Its absence is not.
+    """
+    assert "/tmp" in guide
+    assert "recorded as a success" in guide, (
+        "the guide no longer says that a run which saved nothing is recorded as a success, "
+        "which is the half that makes it a trap rather than an inconvenience"
     )
