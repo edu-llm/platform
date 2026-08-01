@@ -524,7 +524,9 @@ jobs:
             exit 0
           fi
           aws batch describe-jobs --jobs "${found}" --output json > "${RUNNER_TEMP}/job.json"
-          stream="$(uv run --frozen python -c "import json,os;print(json.load(open(os.environ['RUNNER_TEMP']+'/job.json'))['jobs'][0].get('container',{}).get('logStreamName') or '')")"
+          # python3, not `uv run`: this workflow never installs uv, and the report imports
+          # nothing outside the standard library.
+          stream="$(python3 -c "import json,os;print(json.load(open(os.environ['RUNNER_TEMP']+'/job.json'))['jobs'][0].get('container',{}).get('logStreamName') or '')")"
           if [[ -n "${stream}" ]]; then
             aws logs get-log-events \
               --log-group-name "/aws/batch/${queue_of}" \
@@ -534,7 +536,7 @@ jobs:
           else
             echo '{"events":[]}' > "${RUNNER_TEMP}/log.json"
           fi
-          uv run --frozen python - <<'PY' | tee -a "${GITHUB_STEP_SUMMARY}"
+          python3 - <<'PY' | tee -a "${GITHUB_STEP_SUMMARY}"
           import json
           import os
           from datetime import datetime, timezone
