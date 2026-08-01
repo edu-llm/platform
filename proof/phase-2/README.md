@@ -2,8 +2,8 @@
 
 Phase: phase-2
 Bundle schema version: 1
-Source commit: 456b33b70cf39897a39b41cff3eb7c7935c3af7f
-Generated: 2026-08-01T12:41:54+00:00
+Source commit: 6a4542174e5909f091214c0595ce86f367a10c10
+Generated: 2026-08-01T12:50:00+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 2 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase2_proof.py` at generation time. It is not done, and the Result table below says by how much.
 

@@ -425,18 +425,24 @@ def _exceeded_bounds(submission: CompiledSubmission, policy: ApprovalPolicy) -> 
 def _routing_note(inventory: OrganizationInventory, *, claimed_team: str) -> str:
     """Who this run would normally go to, and the sentence that stops that being a rule.
 
-    THE ONLY THING POPULATING team_bindings BUYS, AND IT IS ENOUGH. Membership records
-    rather than enforces: the authorization path does not consult the bindings, and any lead
-    may release any run. What the bindings can answer is "whose run is this and who would
-    normally look at it", which is the question a reviewer opening an approval they were not
-    expecting is actually asking.
+    WHAT DECLARING A TEAM BUYS HERE, AND WHAT IT DOES NOT. Any lead may release any run, so
+    naming one is routing rather than authority. What the bindings can answer is "whose run
+    is this and who would normally look at it", which is the question a reviewer opening an
+    approval they were not expecting is actually asking.
+
+    This used to say that the authorization path does not consult the bindings, and that was
+    wrong in a way that mattered: ``evaluate_authorization`` checks the claimed team against
+    the submitter's recorded membership and refuses a mismatch. It reads that membership per
+    submitter, so declaring a team changes nothing for anybody whose own membership is
+    unrecorded, which is what makes declaring one safe. It is not the no-op this paragraph
+    once promised.
 
     The fallback is stated rather than left implicit, because naming an expected lead invites
     the reading that they are the only person who may act. If that were true an absent lead
     would be a stuck run and an unbound team an unusable one, and neither is: the gate admits
     any lead. Saying so here is what makes the routing safe to show at all.
 
-    Every team is unbound today, so the second branch is the ordinary path rather than the
+    No team records a lead today, so the second branch is the ordinary path rather than the
     edge case. It says no lead is recorded instead of leaving a blank, because a blank where
     a name belongs reads as a lookup that broke.
     """
