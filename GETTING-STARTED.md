@@ -172,6 +172,13 @@ run id and press the button: it reports what the run is doing — queued, runnin
 why it is not running if it is not, its exit code, and the name of its CloudWatch log
 stream. Nothing changes unless you tick **stop**.
 
+> **Not live yet.** It assumes an identity of its own, and creating that identity needs an
+> administrative credential rather than the one CI holds, so the stack behind it has not been
+> applied. Press it today and it refuses, naming the missing stack. Until it is applied, ask
+> an admin: they can read any run — status, reason, exit code, the command it was given and
+> the environment it ran with — through **Deploy: Batch execution estate**, which takes a run
+> id in its `describe_run` field.
+
 That is the one to reach for when a run seems stuck. Batch says `RUNNABLE` both for a job
 waiting on a machine and for one asking for more of a machine than exists, and the reason
 beside the status is what tells them apart.
