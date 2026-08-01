@@ -474,6 +474,114 @@ def test_the_newest_step_directory_is_the_one_resumed_from() -> None:
     assert inspected.manifest.step == 1000
 
 
+FULL_SHAPE = ("train/rank0.pt", "model_and_optim/.metadata", ".metadata.json")
+
+
+def _add_step(store: FakeStore, step: int, names: tuple[str, ...] | list[str]) -> None:
+    for name in names:
+        store.put(
+            f"teams/platform/runs/{RUN_ID}/checkpoints/step{step}/{name}",
+            b"tensor bytes",
+            algorithm="CRC32C",
+        )
+
+
+def test_a_torn_newest_directory_does_not_hide_the_complete_one_below_it() -> None:
+    """The state an instance kill leaves, and the state this got wrong.
+
+    A reclaimed attempt dies part-way through writing step 400, so the prefix holds a
+    complete step 200 and a step 400 missing two of its three files. OLMo-core resumes:
+    ``find_checkpoints`` skips a directory failing ``dir_is_checkpoint`` and
+    ``latest_checkpoint`` takes the highest of what is left, so the second attempt
+    continues from step 200. Reading only the highest step answered UNCOMMITTED here,
+    which is this module telling an operator there is nothing to resume from while the
+    trainer beside them resumes.
+    """
+    store = FakeStore()
+    _add_step(store, 200, FULL_SHAPE)
+    _add_step(store, 400, ["train/rank0.pt"])
+
+    inspected = inspect_checkpoint(
+        store, prefix=f"s3://{BUCKET}/teams/platform/runs/{RUN_ID}/checkpoints/"
+    )
+
+    assert inspected.state is CheckpointState.COMMITTED
+    assert inspected.manifest is not None
+    assert inspected.manifest.step == 200
+    assert inspected.manifest.uri.endswith("/step200/")
+    # Sized from step 200 alone. Folding the torn directory's objects in would report a
+    # checkpoint larger than the one a resume actually reads.
+    assert inspected.manifest.size_bytes == len(FULL_SHAPE) * len(b"tensor bytes")
+
+
+def test_the_newer_unfinished_directory_is_named_rather_than_passed_over_silently() -> None:
+    """Mutation: return the older checkpoint and say nothing about the newer one.
+
+    Resuming from step 200 when step 400 exists is right and is also a loss of two
+    hundred steps of GPU time. An operator reading this has to be able to tell that case
+    from a run that simply had not reached step 400, because they look identical in the
+    manifest and only one of them is worth investigating.
+    """
+    store = FakeStore()
+    _add_step(store, 200, FULL_SHAPE)
+    _add_step(store, 400, ["train/rank0.pt"])
+
+    inspected = inspect_checkpoint(
+        store, prefix=f"s3://{BUCKET}/teams/platform/runs/{RUN_ID}/checkpoints/"
+    )
+
+    assert "step200" in inspected.detail
+    assert "step400" in inspected.detail
+    assert "unfinished" in inspected.detail
+
+
+def test_a_prefix_whose_every_step_directory_is_torn_is_still_uncommitted() -> None:
+    """The half the fix must not give away.
+
+    Skipping past an unfinished directory is only correct while something below it is
+    finished. A prefix holding nothing the loader accepts is a run that died before its
+    first whole checkpoint, and resuming from it is the failure the marker protocol was
+    written for.
+    """
+    store = FakeStore()
+    _add_step(store, 200, ["train/rank0.pt"])
+    _add_step(store, 400, [".metadata.json"])
+
+    inspected = inspect_checkpoint(
+        store, prefix=f"s3://{BUCKET}/teams/platform/runs/{RUN_ID}/checkpoints/"
+    )
+
+    assert inspected.state is CheckpointState.UNCOMMITTED
+    assert inspected.manifest is None
+    # Named by the newest, because that is the write that did not finish.
+    assert "step400" in inspected.detail
+
+
+def test_a_listing_that_arrives_in_pages_is_read_to_the_end() -> None:
+    """Mutation: read the first page and stop.
+
+    ListObjectsV2 answers at most a thousand keys and reports the rest through
+    ``IsTruncated``. Thirteen objects per checkpoint puts that boundary at seventy-six of
+    them, which the twelve-hour bound on ``olmo-core-train-1gpu`` reaches at a nine-minute
+    save interval. It is not the oldest checkpoints that go missing either: S3 orders keys
+    lexicographically, so ``step1000/`` sorts before ``step2000/`` sorts before ``step200/``
+    and the cut falls in an arbitrary place in the step sequence. Here the first page holds
+    step 1000, so a reader that stopped there answers with a real checkpoint at a plausible
+    step and is wrong by a thousand steps rather than visibly empty.
+    """
+    store = FakeStore()
+    for step in (200, 1000, 2000):
+        _add_step(store, step, FULL_SHAPE)
+    store.page_size = len(FULL_SHAPE)
+
+    inspected = inspect_checkpoint(
+        store, prefix=f"s3://{BUCKET}/teams/platform/runs/{RUN_ID}/checkpoints/"
+    )
+
+    assert inspected.manifest is not None
+    assert inspected.manifest.step == 2000
+
+
 def test_a_marker_whose_byte_count_disagrees_with_the_store_is_refused() -> None:
     """Mutation: drop the length comparison because the digest already covers it.
 
