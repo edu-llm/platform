@@ -60,9 +60,11 @@ ROLE_NAME = "sbsandbox-intern-edullm-nightly-reader"
 LINEAGE_BUCKET = "sbsandbox-intern-edullm-lineage"
 WORKFLOW_REF = "edu-llm/platform/.github/workflows/nightly.yml@refs/heads/main"
 
-#: A plausible ARN for the guard to accept. Not a real one, and no account digits in it,
-#: because a twelve-digit literal committed to this repository is its own finding.
-SOME_ROLE_ARN = "arn:aws:iam::000000000000:role/sbsandbox-intern-edullm-nightly-reader"
+#: A plausible ARN for the guard to accept, on the documentation account id every other
+#: test here uses. A run of twelve digits that is not that one reads as a real account to
+#: `tests/test_evidence.py`, which scans the tracked tree and does not care that this file
+#: is a test.
+SOME_ROLE_ARN = "arn:aws:iam::123456789012:role/sbsandbox-intern-edullm-nightly-reader"
 
 #: Every verb that changes something, matched against the action set as a substring. The
 #: exact-set assertion below is the primary check; this is the one that keeps reading true
