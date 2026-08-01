@@ -64,6 +64,10 @@ from edullm_platform.contracts.repository_registry import RepositoryRegistry
 from edullm_platform.contracts.workload import CostInputs, WorkloadCatalog, WorkloadProfile
 from edullm_platform.errors import SubmissionRefusedError
 from edullm_platform.image_resolution import PublishedImage, ResolvedImage, resolve_image
+from edullm_platform.launchers import (
+    require_a_process_for_every_device,
+    waived_launch_check_note,
+)
 from edullm_platform.manifest_helpers import (
     build_request_facts,
     compute_manifest_cost_inputs,
@@ -355,6 +359,22 @@ def compile_submission(
         fanout=fanout,
     )
 
+    # AFTER THE MANIFEST RATHER THAN BEFORE IT, BECAUSE THE PROFILE THE COMMAND IS CHECKED
+    # AGAINST HAS TO BE THE ONE THE RUN LANDS ON. `compute_profile` is an override on the
+    # form, so the workload's own profile is not always it, and there is exactly one line
+    # above that resolves the two -- reading the resolved value back off the manifest keeps
+    # that line the only place the override is applied.
+    #
+    # Inside compile_submission rather than beside it, which is the opposite of where
+    # require_submitter_on_the_roster sits and for the reason recorded there: that check is
+    # about who dispatched the workflow, and this function is deliberately given no identity.
+    # This one is entirely about what was filled in, so it belongs where the form is turned
+    # into a manifest.
+    require_a_process_for_every_device(
+        command=manifest.command,
+        compute_profile=manifest.compute_profile,
+    )
+
     try:
         cost = compute_manifest_cost_inputs(manifest, catalog)
     except ValueError as exc:
@@ -513,6 +533,23 @@ def _routing_note(inventory: OrganizationInventory, *, claimed_team: str) -> str
     )
 
 
+def _waiver_lines(manifest: RunManifest) -> tuple[str, ...]:
+    """The device-count waiver, said where the person releasing the run will see it.
+
+    Empty for almost every submission, which is the point of it being a function rather than
+    a row in the table below. The command is not on this page -- it is long, it is often the
+    least readable thing about a submission, and a reviewer is being asked about cost and
+    attribution rather than about argv -- so a waiver written into it would otherwise reach
+    nobody. A row that said "not waived" on every run is the version of this that gets
+    skipped.
+    """
+    note = waived_launch_check_note(
+        command=manifest.command,
+        compute_profile=manifest.compute_profile,
+    )
+    return () if note is None else (note, "")
+
+
 def render_approver_context(
     submission: CompiledSubmission,
     *,
@@ -541,6 +578,7 @@ def render_approver_context(
         "",
         _routing_note(inventory, claimed_team=manifest.team),
         "",
+        *_waiver_lines(manifest),
         "| | |",
         "| --- | --- |",
         f"| Submitter | `{submitter}` |",

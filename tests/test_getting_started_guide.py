@@ -379,6 +379,49 @@ def test_the_guide_sends_a_reader_who_wants_to_stop_a_run_to_the_button(
         )
 
 
+def test_the_guide_names_every_machine_that_needs_a_launcher(guide: str) -> None:
+    """Mutation: promote a tenth shape and leave the guide listing the seven it knew.
+
+    A multi-GPU shape the guide does not name is one a researcher meets for the first time
+    in a refusal, and the refusal is the wrong place to learn that a whole class of machine
+    exists. Read out of ``CONTAINER_SHAPES`` rather than from a list here, because that
+    table is what the registered job definition asks Batch for and therefore what is billed.
+
+    Only the multi-GPU direction is asserted. Naming a single-GPU shape in the guide is
+    harmless, and requiring the two lists to be equal would fail on the sentence that
+    contrasts them.
+    """
+    from edullm_platform.execution import CONTAINER_SHAPES
+
+    section = guide.split("### More than one GPU", 1)
+    assert len(section) == 2, "the guide no longer has a section about multi-GPU machines"
+    body = section[1].split("\n### ", 1)[0]
+
+    needs_a_launcher = {name for name, shape in CONTAINER_SHAPES.items() if shape.gpus > 1}
+    unnamed = {name for name in needs_a_launcher if f"`{name}`" not in body}
+
+    assert unnamed == set(), (
+        f"the guide's multi-GPU section does not name {sorted(unnamed)}, so somebody who "
+        "picks one of them finds out what it needs from a refusal"
+    )
+
+
+def test_the_guide_prints_the_way_through_the_launcher_check_verbatim(guide: str) -> None:
+    """Mutation: change the waiver token and leave the guide printing the old one.
+
+    The waiver is matched exactly and case-sensitively, so a guide that is one character out
+    documents a way through that does not work -- and the person following it concludes the
+    escape is theoretical and picks a smaller machine instead, which is the outcome the
+    escape exists to prevent.
+    """
+    from edullm_platform.launchers import LAUNCH_CHECK_WAIVER
+
+    assert LAUNCH_CHECK_WAIVER in guide, (
+        "the guide no longer prints the token that lets a deliberate single-process run "
+        "onto a multi-GPU machine"
+    )
+
+
 def test_the_guide_does_not_promise_a_size_that_costs_a_download(guide: str) -> None:
     """The largest corpus is 630 GB on a machine with far less disk.
 

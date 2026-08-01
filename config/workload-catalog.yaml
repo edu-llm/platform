@@ -250,18 +250,26 @@ workloads:
   # resume meaningless; leaving it false with two would declare that the second attempt is
   # allowed to repeat the first at full price.
   #
-      # FOUR GPUS NEED FOUR RANKS, WHICH IS THE SUBMITTED COMMAND AND NOT THIS ENTRY.
-      # .edullm/train_on_corpus.py already handles being one rank of several: it initialises the
-      # process group, shards the model with FSDP and writes one checkpoint shard per rank. What
-      # it does not do is start the other three processes. Nothing on this side does either, since
-      # the command arrives with the submission and is exec'd as typed, so a four-GPU run needs
-      #
-      #   python -m torch.distributed.run --nproc-per-node=4 --standalone \
-      #     .edullm/train_on_corpus.py <run_id> --steps <n>
-      #
-      # and a run that omits it trains on one device, bills for four, and succeeds. Proven on
-      # 2026-08-01: twenty steps on gpu-4xa10g, four ranks reported by the process group, a
-      # step-20 checkpoint written with shards __0_* through __3_*, loss 11.62 to 7.48.
+  # FOUR GPUS NEED FOUR RANKS, WHICH IS THE SUBMITTED COMMAND AND NOT THIS ENTRY.
+  # .edullm/train_on_corpus.py already handles being one rank of several: it initialises the
+  # process group, shards the model with FSDP and writes one checkpoint shard per rank. What
+  # it does not do is start the other three processes. Nothing on this side does either, since
+  # the command arrives with the submission and is exec'd as typed, so a four-GPU run needs
+  #
+  #   python -m torch.distributed.run --nproc-per-node=4 --standalone \
+  #     .edullm/train_on_corpus.py <run_id> --steps <n>
+  #
+  # Proven on 2026-08-01: twenty steps on gpu-4xa10g, four ranks reported by the process
+  # group, a step-20 checkpoint written with shards __0_* through __3_*, loss 11.62 to 7.48.
+  #
+  # A run that omitted it used to train on one device, bill for four, and succeed. That is
+  # now refused while the submission compiles, by
+  # edullm_platform.launchers.require_a_process_for_every_device, which reads the device
+  # count out of CONTAINER_SHAPES rather than out of the profile's name -- so this entry
+  # needs no field for it and a profile named for something other than its device count is
+  # still covered. Nothing here is what enforces the rule, and this paragraph is here
+  # because the rule is about a command rather than about a catalog entry, which is not
+  # where a reader of this file would think to look for it.
   - name: olmo-core-train-4gpu
     repository: OLMo-core
     compute_profile: gpu-4xa10g
