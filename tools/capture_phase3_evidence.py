@@ -93,6 +93,7 @@ from edullm_platform.phase3_evidence import (
 )
 from edullm_platform.publisher_denials import assumed_role_identity
 from edullm_platform.role_drift import (
+    DATASET_VALIDATOR_ROLE_TEMPLATES,
     PHASE3_ROLE_TEMPLATES,
     PolicyNotComparableError,
     compare_role_to_template,
@@ -533,18 +534,33 @@ def capture_role(role_name: str, *, profile: str, region: str, account_id: str,
     )
 
 
-def capture_roles(*, profile: str, region: str, observed_at: datetime) -> list[tuple[str, Any]]:
-    """Each Phase 3 role, followed by how it compares to the template that declares it.
+def capture_roles(
+    *,
+    profile: str,
+    region: str,
+    observed_at: datetime,
+    role_templates: Sequence[tuple[str, str]] = PHASE3_ROLE_TEMPLATES,
+) -> list[tuple[str, Any]]:
+    """Each role in one registry, followed by how it compares to the template that
+    declares it.
 
     Mirrors ``tools/capture_phase1_evidence.py``'s roles target, including its output
     layout, because the two produce the same kind of record and a reader comparing a
     Phase 1 role to a Phase 3 one should not have to learn a second shape. What differs is
     only which registry is walked: ``PHASE3_ROLE_TEMPLATES`` rather than
     ``COMMITTED_ROLE_TEMPLATES``, so a Phase 3 role drifting cannot fail a Phase 1 capture.
+
+    THE REGISTRY IS A PARAMETER AND NOT A CONSTANT, so that the one rule this repository
+    already follows -- one registry per unit of work, one drift comparison per registry --
+    costs a caller an argument rather than a second copy of this function. The second
+    caller is ``--target dataset-validator``, which walks
+    ``DATASET_VALIDATOR_ROLE_TEMPLATES``. Defaulted rather than made required, because
+    every existing caller means Phase 3's four and a signature change is not a reason to
+    touch them.
     """
     account_id, partition = account_and_partition(profile=profile, region=region)
     records: list[tuple[str, Any]] = []
-    for role_name, relative_path in PHASE3_ROLE_TEMPLATES:
+    for role_name, relative_path in role_templates:
         evidence = capture_role(
             role_name,
             profile=profile,
@@ -1375,7 +1391,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--aws-profile", required=True)
     parser.add_argument(
         "--target",
-        choices=["account", "roles", "run", "compute-environment"],
+        choices=sorted(CAPTURE_TARGETS),
         required=True,
     )
     parser.add_argument(
@@ -1409,8 +1425,13 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def capture_roles_target(arguments: argparse.Namespace) -> int:
-    """The roles half of the CLI, which reports drift the way the Phase 1 tool does.
+def capture_one_registry(
+    arguments: argparse.Namespace,
+    *,
+    target_name: str,
+    role_templates: Sequence[tuple[str, str]],
+) -> int:
+    """One registry's roles, captured and compared, reporting drift the way Phase 1 does.
 
     Exit 0 when every role matches its template, 1 when one does not. A drifting role is a
     finding rather than a broken capture, so the records are written either way -- what
@@ -1421,6 +1442,7 @@ def capture_roles_target(arguments: argparse.Namespace) -> int:
         profile=arguments.aws_profile,
         region=arguments.home_region,
         observed_at=observed_at,
+        role_templates=role_templates,
     )
     written: list[str] = []
     for relative_name, record in records:
@@ -1431,7 +1453,7 @@ def capture_roles_target(arguments: argparse.Namespace) -> int:
     findings = sum(len(one.findings) for one in drift_reports)
     report(
         {
-            "targets": ["roles"],
+            "targets": [target_name],
             "written": sorted(written),
             "roles_compared": len(drift_reports),
             "drift_findings": findings,
@@ -1446,6 +1468,35 @@ def capture_roles_target(arguments: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
     return 1 if findings else 0
+
+
+def capture_roles_target(arguments: argparse.Namespace) -> int:
+    """The four roles Phase 3 creates."""
+    return capture_one_registry(
+        arguments, target_name="roles", role_templates=PHASE3_ROLE_TEMPLATES
+    )
+
+
+def capture_dataset_validator_target(arguments: argparse.Namespace) -> int:
+    """The identity a dataset owner's own validator runs as, once it exists to be read.
+
+    A TARGET OF ITS OWN RATHER THAN A FIFTH ENTRY IN ``PHASE3_ROLE_TEMPLATES``, for the
+    reason written above that tuple: one registry per unit of work, so a role belonging to
+    somebody else's pipeline drifting cannot fail a capture of the four roles this phase
+    creates, and so the Phase 3 bundle's count of "roles compared" keeps meaning the thing
+    its prose says it means.
+
+    This target did not exist while the role did not, and ``infra/README.md`` said so:
+    registering a role is part of shipping it, but a capture that walks a registry naming
+    a role the account does not hold fails on ``iam get-role`` rather than reporting
+    anything. The role was deployed on 2026-08-01, so the capture is wired in now, in the
+    same change.
+    """
+    return capture_one_registry(
+        arguments,
+        target_name="dataset-validator",
+        role_templates=DATASET_VALIDATOR_ROLE_TEMPLATES,
+    )
 
 
 def capture_compute_environment_target(arguments: argparse.Namespace) -> int:
@@ -1602,6 +1653,7 @@ def capture_account_target(arguments: argparse.Namespace) -> int:
 CAPTURE_TARGETS: Final[dict[str, Callable[[argparse.Namespace], int]]] = {
     "account": capture_account_target,
     "compute-environment": capture_compute_environment_target,
+    "dataset-validator": capture_dataset_validator_target,
     "roles": capture_roles_target,
     "run": capture_run_target,
 }

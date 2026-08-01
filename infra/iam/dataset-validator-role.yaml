@@ -1,19 +1,41 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: The identity a dataset owner's own validator assumes to promote a dataset out of edullm-landing into edullm-data, separate from anything this repository runs a workload under.
 
-# Declared without being wired in. The validator that promotes datasets into the sealed
-# edullm-data bucket currently runs under sbsandbox-intern-edullm-batch-workload -- our
+# Deployed and in use since 2026-08-01. The validator that promotes datasets into the
+# sealed edullm-data bucket used to run under sbsandbox-intern-edullm-batch-workload -- our
 # shared CPU workload role -- through an inline policy attached outside CloudFormation
-# (`dataset-validator`, recorded as drift in tests/test_phase3_run_evidence.py). That role
-# is what every CPU container on every team runs as, so a job that only prints a line
-# currently inherits write access to a dataset bucket it has no reason to touch.
+# (`dataset-validator`). That role is what every CPU container on every team runs as, so a
+# job submitted to print a line inherited write access to a dataset bucket it had no reason
+# to touch. This role is where that policy moved, and the shared role no longer carries it.
 #
-# This role is where that policy moves. Moving it is a separate, later change and is not
-# done here: both EventBridge rules that can invoke a Batch job resolve the job definition
-# by unversioned name, so a bad revision reaches production on the next event, and that
-# cutover belongs in a window somebody is watching rather than beside a template addition.
-# Until that happens this role can exist in the account and grant nothing effective --
-# see the bucket-policy note below the inline policy.
+# HOW THE CUTOVER WAS SEQUENCED, because the order is the only reason it was safe and a
+# later reader repeating it should not have to rediscover that. Both EventBridge rules that
+# can invoke these job definitions resolve them by *unversioned* name, so Batch takes the
+# latest ACTIVE revision at event time and a new revision reaches production with no review
+# step. The failure mode is therefore silence -- a manifest that lands and is simply never
+# promoted -- rather than anything that raises. So every step was made additive and
+# separately reversible:
+#
+#   1. deploy this role, which grants nothing anyone was relying on;
+#   2. ADD it to the exemption list in edullm-data's bucket policy, leaving the shared role
+#      on the list, so both identities could write and there was no window where neither
+#      could;
+#   3. prove the new identity works -- a Batch job under this role exercising all six
+#      grants plus three negative controls, with the write proved by a multipart upload
+#      immediately aborted, which authorizes exactly what a promotion authorizes and leaves
+#      nothing behind in a bucket whose policy forbids deletion;
+#   4. register one new revision of edullm-validator and edullm-fsck changing only
+#      containerProperties.jobRoleArn;
+#   5. only then remove the shared role from the exemption list and delete the inline
+#      policy from it.
+#
+# THIS NEEDED NOBODY ELSE, WHICH WAS NOT THE ORIGINAL PLAN AND IS WORTH RECORDING. The work
+# was carried for several days as blocked on a scheduled window with the pipeline's
+# operator watching the first event. Two live readings retired that: the roles, the job
+# definitions, the queue and the rules are all in this account, and
+# `edullm-landing-manifest-created` was DISABLED, so there was no event to watch. A step
+# that generates its own verification -- step 3 -- is worth more than an observer waiting
+# for one that may not arrive.
 #
 # Deliberately its own identity rather than an amendment to batch-roles.yaml. The point of
 # declaring it at all is that the validator's reach and our own workloads' reach stop being
@@ -154,12 +176,24 @@ Resources:
               # block -- the same reasoning that keeps delete off both Batch workload roles
               # in infra/iam/batch-roles.yaml and infra/iam/batch-gpu-roles.yaml.
               #
+              # That denial got stronger while this template sat unmerged, and the change is
+              # worth naming because it removes a control this file used to point at. The
+              # policy was `edullm-data-airlock-v1` when these grants were written, with
+              # delete inside the same conditioned Deny as the writes -- so the two exempted
+              # roles could in fact delete. It is `edullm-data-airlock-v2` as of 2026-08-01,
+              # and delete now sits in a statement of its own, `NobodyDeletesPublishedData`,
+              # conditioned only on the caller not being an AWS service. No principal in this
+              # account can delete a published object any more, exempt or not. Measured, not
+              # read off a changelog: the probe in step 3 of the cutover above attempted a
+              # DeleteObject under this very role and was refused.
+              #
               # Neither delete on edullm-landing, where the argument above does not apply
-              # because no bucket policy there has been read. The reason here is a different
-              # one: the policy this copies holds no delete on either bucket, and none of the
-              # six things the validator does needs one. A delete would buy tidying a
-              # candidate away after a refusal, and would cost a validator able to remove the
-              # thing it refused along with the sentinel that says so.
+              # because that bucket carries no policy at all (GetBucketPolicy returned
+              # NoSuchBucketPolicy on 2026-07-31 and again on 2026-08-01). The reason here is
+              # a different one: the policy this copies holds no delete on either bucket, and
+              # none of the six things the validator does needs one. A delete would buy
+              # tidying a candidate away after a refusal, and would cost a validator able to
+              # remove the thing it refused along with the sentinel that says so.
               #
               # Any action on an sbsandbox-intern-edullm-* bucket: this role's entire reason
               # to exist is that the validator's reach and our own workloads' reach stop
@@ -171,24 +205,38 @@ Resources:
               # would let this identity write into the record of what it printed, which is
               # a different thing from printing it.
               #
-              # NOT YET EFFECTIVE. edullm-data's own bucket policy denies these write
-              # actions to every principal except sbsandbox-intern-edullm-batch-workload and
-              # sbsandbox-intern-edullm-infra-deployer (the latter a documented break-glass
-              # path for removing a published dataset, and out of scope here). This role is
-              # not added to that exemption today, so it can be created and its writes stay
-              # denied until the exemption is moved from the shared role to this one in the
-              # same later change that removes dataset-validator from
-              # sbsandbox-intern-edullm-batch-workload -- one swap rather than a window with
-              # neither identity able to write.
+              # THESE GRANTS ARE ONLY HALF OF WHAT MAKES THE WRITES WORK, and the other half
+              # is in a policy this repository does not own. edullm-data's own bucket policy
+              # denies s3:PutObject, s3:PutObjectTagging and s3:AbortMultipartUpload to every
+              # principal except the ones named in a condition on its `OnlyValidatorWrites`
+              # statement. That list read `sbsandbox-intern-edullm-batch-workload` and
+              # `sbsandbox-intern-edullm-infra-deployer`; as of 2026-08-01 it reads this role
+              # and `sbsandbox-intern-edullm-infra-deployer`.
               #
-              # THE LANDING SIDE HAS NO SUCH SWAP, measured rather than assumed.
+              # So a reader checking whether this role can write must read two documents, and
+              # this one alone will mislead them. If these statements are ever correct and
+              # promotions are still failing with AccessDenied, the exemption list is the
+              # first place to look -- it is somebody else's object and nothing here would
+              # notice it changing.
+              #
+              # infra-deployer stays on the list, and no longer means what the dataset
+              # standard says it means. The standard names it the break-glass path for
+              # withdrawing a published dataset; the v2 policy's separate delete Deny (see
+              # the DELIBERATELY ABSENT block above) now refuses deletion to it as well, so
+              # what it retains is the ability to write, not to withdraw. Left exactly as
+              # found: removing a principal from someone else's bucket policy on the way past
+              # is not a tidy-up, and the break-glass question is the dataset owner's to
+              # answer.
+              #
+              # THE LANDING SIDE HAS NO SUCH SECOND DOCUMENT, measured rather than assumed.
               # edullm-landing carries no bucket policy at all: GetBucketPolicy on it
-              # returned NoSuchBucketPolicy on 2026-07-31. So nothing there exempts
-              # principals by name the way edullm-data's policy does, and nothing there has
-              # to move when the identity changes. This was worth reading before the cutover
-              # rather than during it: had a policy existed and named the shared role, the
-              # rejection sentinel would have stopped being writable at the same moment the
-              # identity changed, and the swap above would have had a second half.
+              # returned NoSuchBucketPolicy on 2026-07-31 and again on 2026-08-01. So nothing
+              # there exempts principals by name the way edullm-data's policy does, and
+              # nothing there had to move when the identity changed. Worth having read before
+              # the cutover rather than during it: had a policy existed and named the shared
+              # role, the rejection sentinel would have stopped being writable at the same
+              # moment the identity changed, and the sequencing above would have needed a
+              # step it does not have.
               #
               # Recorded because a later reader will otherwise have to ask the same question,
               # and because the answer is the kind that changes without announcing itself --

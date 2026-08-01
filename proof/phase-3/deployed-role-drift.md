@@ -6,7 +6,7 @@ The four roles this phase creates, captured from the account and compared to the
 | --- | --- | --- |
 | `sbsandbox-intern-edullm-batch-execution` | `infra/iam/batch-roles.yaml` | ok |
 | `sbsandbox-intern-edullm-batch-instance` | `infra/iam/batch-roles.yaml` | ok |
-| `sbsandbox-intern-edullm-batch-workload` | `infra/iam/batch-roles.yaml` | role_drift |
+| `sbsandbox-intern-edullm-batch-workload` | `infra/iam/batch-roles.yaml` | ok |
 | `sbsandbox-intern-edullm-lifecycle-lambda` | `infra/iam/lifecycle-lambda-role.yaml` | ok |
 
 ## What this does not cover

@@ -1,12 +1,17 @@
 """The identity a dataset owner's own validator assumes instead of our shared workload role.
 
-``sbsandbox-intern-edullm-batch-workload`` carries an inline policy, ``dataset-validator``,
-attached outside CloudFormation, that grants write access to the sealed ``edullm-data``
-bucket. That role is what every CPU container on every team runs as, so a job that only
-prints a line currently inherits the ability to write a dataset. This module tests the
-template that declares somewhere else for that policy to live -- ``dataset-validator-role``
--- without touching the shared role at all: nothing here detaches anything, and nothing here
-is deployed.
+``sbsandbox-intern-edullm-batch-workload`` used to carry an inline policy,
+``dataset-validator``, attached outside CloudFormation, that granted write access to the
+sealed ``edullm-data`` bucket. That role is what every CPU container on every team runs as,
+so a job submitted to print a line inherited the ability to write a dataset. This module
+tests the template that gave that policy somewhere else to live.
+
+**The cutover happened on 2026-08-01 and this module changed shape with it.** Until then
+the anchor to reality here was a comparison against the committed capture of the *shared*
+role -- the only way to check the template against the account while the policy still lived
+somewhere else. The role is deployed now, so the comparison is against a capture of *this*
+role instead, which is a stronger claim: it says the thing this repository declares is the
+thing the account holds, rather than that it faithfully copied a policy off a third party.
 
 **That policy reaches two buckets and not one**, which is worth knowing before reading the
 tests below. ``edullm-landing`` is where a candidate dataset and its manifests arrive and
@@ -22,7 +27,9 @@ from pathlib import Path
 
 from edullm_platform.admission_denials import LINEAGE_BUCKET
 from edullm_platform.contracts.execution import SANDBOX_RESOURCE_PREFIX
+from edullm_platform.phase1_capture import CaptureVerdict, read_committed_role_captures
 from edullm_platform.role_drift import (
+    DATASET_VALIDATOR_CAPTURE_DIR,
     DATASET_VALIDATOR_ROLE_TEMPLATES,
     TemplateRole,
     load_template_roles,
@@ -69,21 +76,22 @@ EXPECTED_ACTIONS = frozenset(
     }
 )
 
-#: The committed capture of the shared workload role, read from the account at
-#: 2026-07-31T02:54:00Z, carrying the out-of-band inline policy this template is a home for.
-#: The copy a later reader can check without an AWS session.
-SHARED_ROLE_CAPTURE = (
+#: The committed capture of this role as the account actually holds it, taken after the
+#: 2026-08-01 cutover deployed it. The copy a later reader can check without an AWS session.
+#:
+#: Taken with ``tools/capture_phase3_evidence.py --target dataset-validator``, which walks
+#: ``DATASET_VALIDATOR_ROLE_TEMPLATES`` rather than Phase 3's four roles -- one registry per
+#: unit of work, so this role drifting cannot fail a capture of theirs and vice versa.
+DEPLOYED_ROLE_CAPTURE = (
     PROJECT_ROOT
-    / "fixtures"
-    / "evidence"
-    / "phase-3"
+    / DATASET_VALIDATOR_CAPTURE_DIR
     / "roles"
-    / "sbsandbox-intern-edullm-batch-workload.sanitized.json"
+    / f"{VALIDATOR_ROLE_NAME}.sanitized.json"
 )
-OUT_OF_BAND_POLICY_NAME = "dataset-validator"
 
 #: One statement, as (Sid, actions, resources): the whole of what a grant says, once the two
-#: sides of the comparison are spelled the same way.
+#: sides of the comparison are spelled the same way. Used by the reach and action tests
+#: below, which read the template alone.
 Grant = tuple[str | None, tuple[str, ...], tuple[str, ...]]
 
 
@@ -152,24 +160,24 @@ def grants_of(role: TemplateRole) -> set[Grant]:
     }
 
 
-def grants_in_the_out_of_band_policy() -> set[Grant]:
-    """The same shape, read from the committed capture of the shared workload role.
+def grants_on_the_deployed_role() -> set[Grant]:
+    """The same shape, read from the committed capture of this role as deployed.
 
     Read as JSON rather than through ``DeployedRoleEvidence`` deliberately: this asks what
     the account held on the day it was captured, and a freshness window that refused to load
     an old capture would turn a question about a policy into a question about the clock.
-    """
-    captured = json.loads(SHARED_ROLE_CAPTURE.read_text(encoding="utf-8"))
-    policies = [
-        policy
-        for policy in captured["inline_policies"]
-        if policy["policy_name"] == OUT_OF_BAND_POLICY_NAME
-    ]
 
-    assert len(policies) == 1, (
-        f"{SHARED_ROLE_CAPTURE.name} carries {len(policies)} policies named "
-        f"{OUT_OF_BAND_POLICY_NAME}. A capture taken after the cutover detaches it carries "
-        "none, and the comparison this feeds retires with the policy it is against"
+    Every inline policy is folded together rather than one being named. The role carries
+    exactly one today, and naming it would make this helper agree with a rename; a second
+    policy appearing is a widening the caller should see, not a key lookup that misses it.
+    """
+    captured = json.loads(DEPLOYED_ROLE_CAPTURE.read_text(encoding="utf-8"))
+    policies = captured["inline_policies"]
+
+    assert policies, (
+        f"{DEPLOYED_ROLE_CAPTURE.name} records a role with no inline policy at all, so the "
+        "comparison below would hold vacuously. Recapture with "
+        "tools/capture_phase3_evidence.py --target dataset-validator"
     )
     return {
         (
@@ -177,8 +185,36 @@ def grants_in_the_out_of_band_policy() -> set[Grant]:
             tuple(statement["action_match"]["actions"]),
             tuple(statement["resource_match"]["resources"]),
         )
-        for statement in policies[0]["statements"]
+        for policy in policies
+        for statement in policy["statements"]
     }
+
+
+def test_the_account_holds_the_role_this_template_declares_and_nothing_wider() -> None:
+    """Mutation: widen the deployed role in the console. Mutation: delete the capture.
+
+    The whole-record comparison, which is what the equivalent Phase 3 check does and what
+    this module lacked while the role was undeployed. It covers what the grants comparison
+    below cannot see: the permissions boundary, the trust policy, any attached managed
+    policy, and the session duration. A role that kept its seven S3 actions but grew an
+    ``AWS`` principal in its trust policy would pass a grants check and fail here.
+
+    Reported in both directions by the reader, which is why the capture lives in a
+    directory of its own: a capture present for a role the registry does not declare is a
+    finding too, and a directory shared with another registry would make one registry's
+    filing look like the other's drift.
+    """
+    captures = read_committed_role_captures(
+        PROJECT_ROOT,
+        capture_dir=PROJECT_ROOT / DATASET_VALIDATOR_CAPTURE_DIR / "roles",
+        role_templates=DATASET_VALIDATOR_ROLE_TEMPLATES,
+    )
+
+    assert len(captures) == len(DATASET_VALIDATOR_ROLE_TEMPLATES)
+    for capture in captures:
+        assert capture.verdict is CaptureVerdict.OK, (capture.role_name, capture.detail)
+        assert capture.report is not None
+        assert capture.report.matches
 
 
 def test_the_validator_role_is_declared_with_the_boundary_that_lets_it_be_created() -> None:
@@ -267,25 +303,30 @@ def test_the_validator_role_grants_the_actions_the_airlock_needs_and_no_delete()
     assert granted == EXPECTED_ACTIONS
 
 
-def test_the_validator_role_carries_the_same_grants_the_shared_role_holds_out_of_band() -> None:
-    """Mutation: drop a statement, or narrow one, while moving the policy across.
+def test_the_deployed_validator_role_is_the_one_this_template_declares() -> None:
+    """Mutation: widen the deployed role in the console and leave the template alone.
+    Mutation: drop or narrow a statement in the template after the role is deployed.
 
     This is the check whose absence let this template ship without the landing bucket in it
     at all. Every other test in this module reads the template against a claim written
     beside it, so a template and its tests can agree with each other and disagree with the
     account; this one reads the account, in the shape the committed capture holds it.
 
-    Parity is the intent rather than a coincidence. The cutover this identity exists for is
-    a change of *identity*, not a change of *reach*: narrowing on the same day would leave
-    any failure ambiguous between the new role and the smaller grant, on a pipeline that is
-    running and whose failure mode is a manifest that lands and is never promoted.
+    It replaces a comparison against the *shared* role's capture, which was the only anchor
+    available while this role did not exist. That one asked "was the policy copied across
+    faithfully"; this one asks "is the account what we say it is", which is the question
+    that keeps mattering after the copying is done. The predecessor was written to retire
+    exactly here, and did.
 
-    This comparison retires with the policy it is against. Once the cutover detaches
-    ``dataset-validator`` from the shared role and the capture is retaken, no policy of that
-    name is there to compare against, and ``grants_in_the_out_of_band_policy`` fails saying
-    so rather than quietly comparing against nothing.
+    Parity with the policy it replaced is still the intent rather than a coincidence, and
+    is now a historical claim rather than a live comparison: the cutover was a change of
+    *identity*, not of *reach*, because narrowing on the same day would have left any
+    failure ambiguous between the new role and the smaller grant. The seven actions in
+    ``EXPECTED_ACTIONS`` are that policy's seven. Narrowing them is a later change with its
+    own reason, and it is now available -- the identity is known to work, which was the
+    condition.
     """
-    assert grants_of(one_role_in(VALIDATOR_TEMPLATE_PATH)) == grants_in_the_out_of_band_policy()
+    assert grants_of(one_role_in(VALIDATOR_TEMPLATE_PATH)) == grants_on_the_deployed_role()
 
 
 def test_the_validator_role_is_not_a_workload_role_and_its_name_is_why() -> None:
