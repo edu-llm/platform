@@ -100,14 +100,20 @@ def test_a_submitter_is_told_that_cancelling_does_not_stop_the_job() -> None:
     about it. A person who cancels a workflow and believes the spend stopped has no reason
     to check, so this is not discovered by observation -- it is discovered on the bill.
 
-    ``batch:TerminateJob`` is held by no identity in this account, so the sentence is
-    accurate rather than cautious, and it names the action a submitter can actually take.
+    **The fact and the remedy are asserted together, because only one of them moves.**
+    Cancelling the submission workflow has never stopped a Batch job and still does not.
+    What stopping one takes has changed: it is a workflow the submitter dispatches rather
+    than a favour asked of somebody holding a credential, and a warning naming the older
+    remedy would cost them the wait and teach them the button is not theirs.
     """
     script = summary_step_script()
 
     assert "Cancelling the workflow does not stop your job" in script
-    assert "batch:TerminateJob" in script
-    assert "Ask an admin" in script
+    assert "Look at a run, or stop it" in script
+    assert "Ask an admin" not in script, (
+        "stopping a run is self-service, so routing the submitter to somebody else is now "
+        "a longer path to the same place"
+    )
 
 
 def test_a_submitter_is_told_which_checkpoints_leave_the_optimizer_behind() -> None:

@@ -23,9 +23,8 @@ request](../../issues/new?template=access-request.yml) template.
 
 [Look at a run, or stop it](../../actions/workflows/cancel-run.yml) answers what a run is
 doing once it has been submitted: queued, running, finished, why it is not running if it is
-not, and its exit code. Nothing changes unless you ask it to stop the run. It is not live
-yet, because the identity it assumes needs a stack that has to be applied by hand; it
-refuses today and names that stack, and GETTING-STARTED.md says who to ask in the meantime.
+not, and its exit code. Nothing changes unless you ask it to stop the run. You can stop your
+own runs and admins can stop anyone's; looking is restricted to nobody.
 
 ## When a run goes wrong
 
@@ -235,13 +234,14 @@ position in it and no build item in front of it, and a gate that reports it prin
 reason and the trigger where a reviewer reads the verdict. A gap here has none of that, and
 relabelling one would be the move rather than an instance of it.
 
-One capability is missing rather than unobserved, and no gate measures it: **nothing here
-can stop a job once it has started.** Cancelling the submission workflow in GitHub does not
-cancel the Batch job — the workflow says so where an operator will see it, and the job runs
-on. What bounds the cost is the mandatory per-attempt timeout, which every submission
-carries and which has been observed stopping a real job. Building cancellation belongs to a
-later phase, so Phase 3's criteria no longer carry it and its numbering skips 5, 6 and 7
-where those checks used to be.
+One capability sits outside every gate, and no phase measures it: **stopping a job once it
+has started.** [Look at a run, or stop it](../../actions/workflows/cancel-run.yml) does it,
+on a role whose whole reach is describing jobs and stopping the ones this platform
+submitted. Cancelling the submission workflow is a different thing and stops nothing in AWS,
+which that workflow says where an operator will see it; what bounds a run nobody stops is
+the mandatory per-attempt timeout, which every submission carries and which has been
+observed stopping a real job. Phase 3's criteria do not carry cancellation, so its numbering
+skips 5, 6 and 7 where those checks used to be.
 
 ### Proof bundle
 
