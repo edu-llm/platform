@@ -41,7 +41,21 @@
 # handler changed. Uploading one under the other's key deploys the wrong code under the
 # right name, which is the failure `tools/build_lifecycle_lambda.py` exists as a second
 # command to prevent.
+#
+# THIS RELEASE WAS CAUSED BY A CHANGE THIS FUNCTION DOES NOT USE, WHICH IS THE INTERESTING
+# CASE. `DatasetRegistry.is_registered` was widened to answer over published corpora as well
+# as releases, so that two newly registered datasets could be offered on the submission form
+# without admission denying them after a lead approved. That is entirely admission's concern.
+# But the recorder imports `contracts/dataset_registry.py` -- it is one of the fifteen -- so
+# the method body changing moved these bytes too.
+#
+# `infra/README.md` already warns that one edit to `config/` is two releases, because both
+# builders copy `config/*.yaml`. This is the same shape arriving through a different door: a
+# shared module rather than a shared config directory. The general rule the two cases point
+# at is that the packaged unit is the `src/edullm_platform` tree, so "did this reach the other
+# function" is a question about every module either entry point imports, and the honest way to
+# answer it is to run both builders and compare both digests rather than to reason about it.
 schema_version: 1
 s3_key: lifecycle-recorder/lifecycle-recorder.zip
-s3_object_version: ojT6swXAFIhkBjSzoLZLOFS.K6gbj.Yq
-sha256: fee330c2b3df1b67d8732de94de5c53d34e87d19aff0fd791cdd6131df57d9f4
+s3_object_version: sLjVU.Yfvi8bnb9ZGIU_.dwoAGJWNr00
+sha256: 8a3bdd670864135ab3d658109de99752a5d3251bbbdb4914017f16de884fd00f

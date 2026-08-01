@@ -147,14 +147,23 @@ def test_the_repository_dropdown_offers_the_registered_repositories_that_have_a_
     )
 
 
-def test_the_dataset_dropdown_offers_exactly_the_registered_releases() -> None:
-    """Mutation: add a release to the form that admission does not know.
+def test_the_dataset_dropdown_offers_exactly_the_registered_releases_and_references() -> None:
+    """Mutation: offer the release ids and forget the published references.
 
     ``unregistered_dataset`` is a denied-outright condition, so an option that is not in the
     registry is a menu item whose only outcome is a refusal -- and the refusal arrives after
     the approval gate, having spent somebody's attention.
+
+    Two lists on one registry means two ways to be incomplete, which is why this reads both.
+    ``releases`` are identifiers this platform will itself produce; ``published`` are corpora
+    somebody else built and sealed. They are separate keys because they are separate claims --
+    see ``PublishedDatasetReference`` for why a published corpus cannot be a ``DatasetRelease``
+    -- but they are one dropdown, because a submitter picking a dataset is not being asked
+    which of those two things it is.
     """
-    registered = [entry["release_id"] for entry in registry("datasets.yaml")["releases"]]
+    document = registry("datasets.yaml")
+    registered = [entry["release_id"] for entry in document["releases"]]
+    registered += [entry["reference_id"] for entry in document.get("published", [])]
     offered = options_for("dataset_release")
 
     # Set equality rather than sorted order. What this test is for is that no option can be
@@ -163,6 +172,80 @@ def test_the_dataset_dropdown_offers_exactly_the_registered_releases() -> None:
     # nothing -- is the option a first-time submitter reaches first.
     assert set(offered) == set(registered)
     assert len(offered) == len(registered), f"an option is listed twice: {offered!r}"
+
+
+def test_every_offered_dataset_resolves_to_something_a_reader_could_open() -> None:
+    """Mutation: register a reference whose version nobody published.
+
+    A ``reference_id`` in the registry is a promise the corpus can be read. ``dataset_id`` and
+    ``version`` are what the reader is called with, so an entry whose version is wrong is a
+    submission that compiles, classifies, routes to a lead, is approved, reaches the container
+    and fails there -- the most expensive place in the path to learn it.
+
+    Checked as agreement between the URI and the two reader arguments rather than by asking
+    S3, deliberately. What can go wrong offline is that the three fields stop being one
+    statement: ``PublishedDatasetReference`` stores ``dataset_id`` and ``version`` apart from
+    the URI precisely so nothing has to re-split the string, and the cost of storing them
+    apart is that they can disagree. A unit test cannot know the corpus is still there --
+    that is D3's job, in a container, against the account -- but it can know that whoever
+    reads the URI and whoever reads the pair are asking for the same thing.
+    """
+    for entry in registry("datasets.yaml").get("published", []):
+        assert entry["uri"] == f"s3://edullm-data/{entry['dataset_id']}/{entry['version']}/", (
+            f"{entry['reference_id']}'s uri, dataset_id and version disagree; the reader is "
+            "called with the pair and a human reads the uri, so these must be one statement"
+        )
+
+
+def test_no_offered_dataset_is_one_a_training_run_cannot_use_as_a_corpus() -> None:
+    """Mutation: offer tokenizer/dolma2-bpe, which is published, sealed and readable.
+
+    IT IS ALL THREE AND IT IS STILL NOT A CORPUS. It declares no partitions, so the reader
+    returns every object and no trainable split; its group's container types itself, so the
+    resolved dtype is ``None``; and a ``NumpyFSLDatasetConfig`` handed ``None`` takes
+    OLMo-core's ``uint16`` default and memmaps ``tokenizer.json`` as tokens. The run trains,
+    the loss moves, and the tokens are a JSON file -- which is D1's silent failure arriving by
+    a route D1's dtype assertion cannot see, because there the program does pass the resolved
+    dtype.
+
+    A tokenizer is an input to a corpus, not a corpus. Asserted on the family segment because
+    that is the mechanical form of the distinction and because the standard's own family enum
+    does not contain ``tokenizer`` at all.
+    """
+    for entry in registry("datasets.yaml").get("published", []):
+        assert entry["dataset_id"].split("/", maxsplit=1)[0] == "pretrain", (
+            f"{entry['reference_id']} is not a pretrain corpus; a dataset offered on this "
+            "form is a corpus a training run reads, and every other family published so far "
+            "is an input to one rather than one"
+        )
+
+
+def test_every_offered_dataset_names_the_tokenizer_it_was_built_with() -> None:
+    """Mutation: leave ``tokenizer`` off the two entries, since both are dolma2. One is not.
+
+    ``pretrain/regmix-10b`` depends on ``tokenizer/dolma2-bpe`` and
+    ``pretrain/lean4-mathlib-bytes`` on ``tokenizer/bytes-utf8``, both read live from
+    ``groups[].depends_on[]`` with role ``tokenizer`` on 2026-08-01. The upstream family file
+    turns its own family-wide tokenizer default off and says why: a mismatched tokenizer's ids
+    usually still fall in range, so the failure is a plausible loss curve rather than an
+    exception.
+    """
+    for entry in registry("datasets.yaml").get("published", []):
+        assert entry["tokenizer"].startswith("tokenizer/")
+
+
+def test_the_three_guards_above_have_actually_seen_a_row() -> None:
+    """Mutation: empty the ``published`` list. All three loops above pass over nothing.
+
+    A guard that has never run its body is not a guard, and three of them iterate a list this
+    registry did not have until today. This is the one assertion that fails when that list is
+    empty, so the emptiness is reported once, here, by name -- rather than as three tests
+    quietly going green while the dropdown loses two options and the set-equality test above
+    absorbs it as a matching pair of removals.
+    """
+    assert registry("datasets.yaml").get("published"), (
+        "the three loops above are vacuous without at least one published reference"
+    )
 
 
 def test_the_workload_dropdown_offers_only_workloads_whose_repository_is_registered() -> None:
