@@ -203,15 +203,39 @@ Resources:
           Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-execution
         JobRoleArn:
           Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-workload
-        # 32 vCPU and 60 GiB against a c7i.8xlarge's 32 vCPU and 64 GiB. The gap is not
-        # rounding: the ECS agent and the host's own processes need memory, and a container
-        # asking for all 65536 MiB never fits on the instance it was sized for -- which
-        # Batch expresses as a job that stays in RUNNABLE rather than as an error.
+        # An eighth of a c7i.8xlarge on both axes. This reserved the whole machine until
+        # 2026-08-01 -- 32 vCPU and 60 GiB, against the instance's 32 and 64, the gap being
+        # the ECS agent and the host rather than rounding. The workload that runs against
+        # this definition is olmo-core-check-cpu, the run GETTING-STARTED.md tells a new
+        # researcher to submit first, and it is a Python one-liner that prints an
+        # interpreter version. The four completed check jobs in this queue ran for between
+        # 216 and 841 milliseconds. Reserving a machine for that capped the queue at
+        # MaxvCpus / 32, which is four at a time, so a group onboarding on one morning
+        # waited up to an hour each for a job that takes under a second.
+        #
+        # BOTH NUMBERS HAD TO MOVE, AND MEMORY WAS THE BINDING ONE. Batch packs on vCPU and
+        # memory together, so 4 vCPU beside 61440 MiB would still have placed one job per
+        # instance: vCPU would have allowed thirty-two concurrent and memory four. 61440 / 8
+        # is 7680, which holds the container to the host's own ratio of 1920 MiB of
+        # allocatable memory per vCPU, so eight containers fill an instance on both axes and
+        # neither dimension strands the other. 128 / 4 and 4 instances x 8 both give 32.
+        #
+        # 7680 MiB is not a measurement of the check, which peaks near 15 MiB. It is the
+        # largest reservation that still fits eight to a machine, and the headroom is
+        # deliberate: a reservation is a hard cap and a check that grows into importing
+        # torch would otherwise be OOM-killed rather than slow.
+        #
+        # The profile keeps the name cpu-32vcpu. That name is a catalog identity written
+        # into stored lineage records, which are hashed and cannot be rewritten, so it names
+        # the instance type rather than this container. dolma-tokenize binds to the same
+        # profile and has neither a registration nor an image, so nothing runnable shrinks
+        # here; making it runnable means giving it its own profile rather than restoring
+        # this one to 32.
         ResourceRequirements:
           - Type: VCPU
-            Value: "32"
+            Value: "4"
           - Type: MEMORY
-            Value: "61440"
+            Value: "7680"
         # THE SECRET IS RESOLVED BY ECS, NOT BY THE CONTAINER, and this block is here
         # because a pilot run found it missing. ValueFrom takes the secret's ARN and ECS
         # reads it under the execution role while starting the task, then places the
