@@ -142,6 +142,20 @@ the command is a value the record will disagree with.
 | `EDULLM_DATASET_RELEASE` | The dataset you named |
 | `WANDB_PROJECT`, `WANDB_ENTITY` | Read by the W&B client directly |
 
+## Stopping a run
+
+If a run is doing the wrong thing, [Cancel a run](../../actions/workflows/cancel-run.yml)
+stops it. Give it the run id and a reason. You can stop your own runs; admins can stop
+anyone's.
+
+The reason is recorded on the termination, so the run's history says it was cancelled
+rather than that it failed. Anything already written to the output prefix stays, including
+checkpoints — so stopping a run to fix its command and resubmitting does not throw away the
+hours it already did.
+
+A run that has already finished cannot be stopped, and the workflow says so rather than
+reporting a failure.
+
 ## When it goes wrong
 
 Open an issue. There are templates for [a run that went

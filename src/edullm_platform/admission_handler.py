@@ -368,6 +368,11 @@ def handler(event: Mapping[str, Any], context: object = None) -> dict[str, Any]:
                 dataset_reference=dataset_registry.reference_for(
                     outcome.intent.manifest.dataset_release
                 ),
+                # The same source as wandb_username above and for the same reason: the
+                # submitter admission recorded and decided about, rather than the one the
+                # caller sent, so the tag the cancel path authorises against and the
+                # lineage record cannot name different people.
+                submitter=outcome.intent.submitter,
             ),
         }
     return answer
