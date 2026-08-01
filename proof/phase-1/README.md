@@ -2,8 +2,8 @@
 
 Phase: phase-1
 Bundle schema version: 1
-Source commit: fdc5b5b934ab7380c48b4bac7077122b99976009
-Generated: 2026-08-01T02:53:51+00:00
+Source commit: 1b036a3e46a7cff1a8c588e5f9560d70725e6893
+Generated: 2026-08-01T03:26:21+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 1 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase1_proof.py` at generation time. Every criterion is covered and the gate is green, which is the state in which a bundle is most worth reading carefully: the Known limitations below say what each criterion does not cover, and `open-decisions.md` says what this phase surfaced and did not settle.
 
@@ -22,9 +22,9 @@ This bundle exists so that a reviewer can decide whether Phase 1 is done without
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3836 |
-| suite tests executed | 3655 |
-| suite passed | 3655 |
+| suite tests collected | 3858 |
+| suite tests executed | 3677 |
+| suite passed | 3677 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
