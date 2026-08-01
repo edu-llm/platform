@@ -69,7 +69,15 @@ def parser_for(tool: str) -> argparse.ArgumentParser | None:
     still fails, on the second test rather than the first.
     """
     path = PROJECT_ROOT / tool
-    spec = importlib.util.spec_from_file_location(path.stem, path)
+    # Under a name no import statement can produce, which is what keeps the registration
+    # below from being destructive. `tests/test_find_runs_that_saved_nothing.py` imports its
+    # tool by its own name and then monkeypatches an attribute on it; registering a second
+    # module object under that same name replaced the one the test had already bound its
+    # entry point from, so the patch landed on an object nothing called and the real object
+    # store ran. In CI that reached AWS with no credentials and the tool exited 2. It only
+    # happened when this loader ran first on the same xdist worker, so it presented as five
+    # unrelated tests failing at random and passing on a rerun.
+    spec = importlib.util.spec_from_file_location(f"_workflow_tool_{path.stem}", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     # Registered before execution, for the reason `tests/gate_support.py` gives at its own
@@ -170,4 +178,38 @@ def test_a_workflow_passes_no_argument_its_tool_does_not_accept(
 
     assert not unknown, (
         f"{workflow} passes {sorted(unknown)} to {tool}, which its parser does not accept"
+    )
+
+
+def test_reading_a_tools_parser_leaves_an_already_imported_tool_alone() -> None:
+    """Mutation: load the module under ``path.stem`` again, and this fails.
+
+    Reading a parser has to be free of consequences, because this module reads every tool any
+    workflow runs and it has no idea which of them another test is in the middle of using.
+    Registering the freshly built module under the tool's own name was not free: it replaced
+    the object a test that imports the tool normally had already bound its entry point from,
+    so a ``monkeypatch.setattr`` on that name afterwards patched an object nothing called.
+    What ran instead was the real object store, which in CI reached AWS with no credentials
+    and exited 2. Five tests in one unrelated file failed and passed on a rerun, because it
+    turned on whether this loader happened to run first on the same xdist worker.
+
+    ``find_runs_that_saved_nothing`` is the tool that was actually damaged, so it is the one
+    checked here rather than a convenient stand-in.
+    """
+    tool = "tools/find_runs_that_saved_nothing.py"
+    assert any(found[1] == tool for found in invocations()), (
+        f"{tool} is no longer run by any workflow, so this test is guarding nothing; "
+        "point it at another tool a test imports by name"
+    )
+
+    # The same insert the test that owns this tool does, so this holds whether or not that
+    # file has been collected: the damage did not depend on it either.
+    sys.path.insert(0, str(PROJECT_ROOT / "tools"))
+    imported = importlib.import_module("find_runs_that_saved_nothing")
+
+    parser_for(tool)
+
+    assert sys.modules["find_runs_that_saved_nothing"] is imported, (
+        "reading a parser replaced the already-imported module, so an attribute patched on "
+        "that name by another test will not be seen by the code under test"
     )
