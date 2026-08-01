@@ -2,8 +2,8 @@
 
 Phase: phase-0
 Bundle schema version: 1
-Source commit: dd5c6eb50c0f07f9ff7c616fe91d99b3e0f5ef40
-Generated: 2026-08-01T07:27:49+00:00
+Source commit: 6a4542174e5909f091214c0595ce86f367a10c10
+Generated: 2026-08-01T12:48:25+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 0 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase0_proof.py` at generation time.
 
@@ -18,10 +18,10 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3923 |
-| suite tests executed | 3730 |
-| suite passed | 3726 |
-| suite failed | 4 |
+| suite tests collected | 3982 |
+| suite tests executed | 3789 |
+| suite passed | 3787 |
+| suite failed | 2 |
 | suite errored | 0 |
 | suite skipped | 0 |
 | matrix node ids executed | 254 |
@@ -33,7 +33,7 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 | criteria GAP (each one fails the gate) | 0 |
 | related recorded deferrals | 1 (D1) |
 | fixtures with recorded digests | 9 |
-| contract models inventoried | 141 |
+| contract models inventoried | 143 |
 | JSON Schema files exported | 16 |
 
 ## Contract versions
@@ -86,7 +86,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 
 | file | digest |
 | --- | --- |
-| config/organization.yaml | sha256:cea2d2123d2fb5794614e6a4b8a362c8aaa33626f20ae28a13cb673fadf4ac78 |
+| config/organization.yaml | sha256:b78c80269ffbf2fffeb034b4967dbbe232879614b1b51ea0f6cc5874cdb32131 |
 | config/policy.yaml | sha256:8efa2f00527f9ad1677ed27452a2b6093a6a8c9e8190cf3e0a583b0f68787b39 |
 | config/workload-catalog.yaml | sha256:caccfdc8ecf5877119c2c39277f1a6b1bfe05e55b3f0c2a963d63e97d8479531 |
 | fixtures/authorization/admin-exception.yaml | sha256:4ad48b8ecd405d11428cf446f74d0a8aeabf904365f3fee7b599b6a7ed0b6fa0 |
@@ -106,7 +106,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | schemas/intent-record.schema.json | sha256:39b40c1375c470efe47179c52e898562a7623c1a79f429de8f078f46cf3ddc8d |
 | schemas/lifecycle-event.schema.json | sha256:f747e330743b4f471021b38e161d26e24ecda8fb47ab02b08939ee298a1921ab |
 | schemas/logical-run.schema.json | sha256:898f1d6b338ea810a75c0614035a49e0812147aef7816037c97447a602d37688 |
-| schemas/organization.schema.json | sha256:a66e0170cc0aafce3765b5e7b8b4062baf28c421792d6a2f9f5bb93272289d6f |
+| schemas/organization.schema.json | sha256:37c30582f008b541fe11a1403f5311026ae908d98e8821b4ed6842c3d4365e66 |
 | schemas/policy.schema.json | sha256:e57443df3ebf18a1b1858a441f99aec2d41121a3f2110d05be30b530ff2b7f67 |
 | schemas/repositories.schema.json | sha256:ee5ef9172b9ab89aa0965cefda9d86fda855c4cd3f0eeda41ab50551327ff68e |
 | schemas/result-manifest.schema.json | sha256:7e7b6a5891444d9d13256202319f5be6e70addb81f0b0c077e5294c63529503b |
@@ -118,9 +118,9 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 ## Known limitations
 
 - 2 of 12 compute profiles are provisioned: cpu-32vcpu, gpu-1xa10g. Every other profile is priced and dated but carries provisioned: false, so resolve_compute_profile_for_execution refuses it. Phase 0 proves pricing and classification for all of them and that nothing can run is no longer true of the whole catalog.
-- Team bindings are empty. OrganizationInventory.team_bindings.teams is an empty tuple, so no submitter or lead is bound to a team. Every team-scoped rule is therefore either deferred or unenforceable today.
+- No member is bound to a team. OrganizationInventory.team_bindings.teams names 6 teams and every one of them has an empty member_logins and lead_logins, so no submitter or lead is bound to a team. Every team-scoped rule is therefore either deferred or unenforceable today. Which group a person belongs to is the one fact the roster has never held, and enforcement is per submitter, so it becomes live for each person as theirs is written down rather than for everybody at once.
 - Approval scope is organization. Any team lead may approve any member's routine submission. Check D1 in the negative-case matrix is deferred for this reason.
-- Cross-team attribution is implemented but cannot reject anything yet. Every decision records the claimed team and a team_verified flag, and a submitter naming a team they do not belong to is denied as soon as team bindings exist. With bindings empty, every shipped decision records team_verified: false, which is the audit record's way of saying the attribution was accepted unchecked. Check 9 is deferred for this reason: no test can show a shipped rejection that the shipped configuration cannot produce.
+- Cross-team attribution is implemented but cannot reject anything yet. Every decision records the claimed team and a team_verified flag, and a submitter naming a team they do not belong to is denied as soon as that submitter's own membership is recorded. With no member bound, every shipped decision records team_verified: false, which is the audit record's way of saying the attribution was accepted unchecked. Check 9 is deferred for this reason: no test can show a shipped rejection that the shipped configuration cannot produce.
 - The secret scan applied to this bundle masks its own content digests before scanning. A 64-character hexadecimal sha256 digest and a 40-character hexadecimal commit SHA both match the generic long-credential patterns in evidence.py, so the two exact token shapes this bundle emits are replaced with placeholders and everything else is scanned unchanged. No other exemption is applied.
 - The nested verification run excludes every test module that builds a proof bundle (tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py, tests/test_phase5_proof.py), because those tests invoke a generator and would recurse. They run in the reviewer's own `uv run pytest -q`, which is the command this bundle asks the reviewer to run.
 - This bundle describes the working tree at generation time, which may differ from the commit named above. The input digests recorded in the bundle index identify exactly what was measured.

@@ -36,6 +36,80 @@ team_leads:
 pilot_repositories:
   - OLMo-core
   - dolma
+# WHICH RESEARCH GROUPS EXIST, WHICH GITHUB TEAM EACH ONE IS, AND WHY NOBODY IS LISTED IN
+# ONE OF THEM.
+#
+# Until this block existed the platform had no notion of a team that anything could check.
+# The `team` box on the submission form is free text, its own help text says a typo delays
+# nothing, and the two GitHub teams in this organization are `team-leads` and
+# `team-members`, neither of which is a research group. So a run's team was a label, the
+# cost view grouped by whatever people had typed, and nothing could say whether a claimed
+# group was a real one.
+#
+# Every team_id below is a name this platform's own records already use, not a name chosen
+# here. `platform` is on every Phase 3 and Phase 4 run, `memory-split` is on the Phase 2
+# lineage records, `tokenizer` is on the three Phase 5 admitted runs, and `modeling`,
+# `curriculum` and `data-prep` are on the committed manifest fixtures. The GitHub team of
+# the same name was created to match, and github_team_slug is the join between the two.
+#
+# MEMBER_LOGINS IS EMPTY EVERYWHERE AND THAT IS THE HONEST ANSWER RATHER THAN AN UNFINISHED
+# ONE. Nothing in this repository, in the organization, or in any run record says which
+# group a person belongs to. It is the one fact this file has never held. Guessing it would
+# be worse than leaving it out for the reason the wandb_username comment above gives at
+# length: a person filed under the wrong group is indistinguishable from one filed
+# correctly, and the reader placed to notice is the person whose work was attributed
+# elsewhere. Recording it is a decision for each group's lead, one line per person, and
+# tools/report_onboarding_readiness.py reports whose is missing.
+#
+# WHAT AN EMPTY MEMBER LIST DOES AND DOES NOT COST. evaluate_authorization checks a claimed
+# team only against a submitter whose own membership is recorded. Somebody with no recorded
+# group is authorized exactly as before and their decision record carries team_verified
+# false, which is what that flag has always meant. So groups can be filled in one at a time
+# as their leads confirm them, and each person's claim starts being checked the moment
+# theirs is written down. Before this, populating any team at all refused every submitter
+# who was not in it, including admins, which made this an all-or-nothing edit that nobody
+# could safely make.
+#
+# LEAD_LOGINS CARRIES ONLY WHAT IS EVIDENCED. Two are: the comment at the top of this file
+# records that VS-code-cloud leads the Memory group, and every run ever submitted under
+# `platform` is Frank's. The other four groups have no lead recorded anywhere, and the
+# temptation to read one off the approver of their runs has to be resisted, because
+# approval_scope is organization and any lead may release any group's run. pianomaster99
+# released all three `tokenizer` runs and that is evidence about the gate, not about who
+# leads tokenizer. A group with no lead recorded routes to nobody in particular, which the
+# approver context already states in those words, and no run is delayed by it.
+team_bindings:
+  teams:
+    - team_id: platform
+      github_team_slug: platform
+      lead_logins: []
+      s3_namespace: sbsandbox-intern-edullm-outputs/teams/platform
+      wandb_entity: eduLLM
+    - team_id: memory-split
+      github_team_slug: memory-split
+      lead_logins: []
+      s3_namespace: sbsandbox-intern-edullm-outputs/teams/memory-split
+      wandb_entity: eduLLM
+    - team_id: tokenizer
+      github_team_slug: tokenizer
+      lead_logins: []
+      s3_namespace: sbsandbox-intern-edullm-outputs/teams/tokenizer
+      wandb_entity: eduLLM
+    - team_id: modeling
+      github_team_slug: modeling
+      lead_logins: []
+      s3_namespace: sbsandbox-intern-edullm-outputs/teams/modeling
+      wandb_entity: eduLLM
+    - team_id: curriculum
+      github_team_slug: curriculum
+      lead_logins: []
+      s3_namespace: sbsandbox-intern-edullm-outputs/teams/curriculum
+      wandb_entity: eduLLM
+    - team_id: data-prep
+      github_team_slug: data-prep
+      lead_logins: []
+      s3_namespace: sbsandbox-intern-edullm-outputs/teams/data-prep
+      wandb_entity: eduLLM
 # WHOSE NAME GOES ON A RUN IN WEIGHTS AND BIASES, AND WHY MOST OF THESE ARE BLANK.
 #
 # The platform logs with a team service account rather than with any person's key, so every

@@ -35,21 +35,21 @@ These wait on sub-team assignments. They are recorded here rather than omitted, 
 
 ### Check 9 (DEFERRED) — Cross-team attribution fails; a submission naming a team the submitter does not belong to is rejected. Approver scope is a separate question and follows `approval_scope`.
 
-The rule is implemented and exercised, but it rejects nothing in the shipped configuration. config/organization.yaml leaves team_bindings.teams empty, so no submitter or lead is bound to a team and membership cannot be checked at all. Enforcing the rule literally today would deny every submission, including all six run-manifest fixtures, so evaluate_authorization treats empty bindings as unverifiable rather than as failure and records team_verified: false on every shipped decision. No test can therefore show the shipped rejection this criterion asks for, which is why it is not COVERED. It is a deferral rather than a gap because the thing that is missing is data, the decision to withhold that data is recorded here and on D1, and the condition that reverses it is written down below.
+The rule is implemented and exercised, but it rejects nothing in the shipped configuration. config/organization.yaml declares six teams and records no member in any of them, so no submitter or lead is bound to a team and membership cannot be checked at all. Enforcing the rule literally today would deny every submission, including all six run-manifest fixtures, so evaluate_authorization treats empty bindings as unverifiable rather than as failure and records team_verified: false on every shipped decision. No test can therefore show the shipped rejection this criterion asks for, which is why it is not COVERED. It is a deferral rather than a gap because the thing that is missing is data, the decision to withhold that data is recorded here and on D1, and the condition that reverses it is written down below.
 
-Live again when: config/organization.yaml populates team_bindings.teams, which happens once sub-team assignments exist. Enforcement becomes live at that moment with no code change: the supporting tests cited here already drive the denial against populated bindings. When that lands, this criterion must be re-recorded as COVERED with those citations promoted to proving tests, or argued again.
+Live again when: config/organization.yaml records member_logins on a team, which happens once each group's lead confirms who is in theirs. Enforcement is per submitter and needs no code change: the supporting tests cited here already drive the denial against a bound member. When the first group lands, this criterion must be re-recorded as COVERED with those citations promoted to proving tests, or argued again.
 
 ### Check 10 (DEFERRED) — Lead self-authorization succeeds only within the lead's bound team and policy.
 
-The criterion has two halves and only one of them is proved, which under three statuses is not COVERED. Proved today: a team lead may self-authorize a routine submission, a plain member may not, and a lead may not self-authorize an exception, which needs a platform admin. Not proved: that the submission falls inside a team the lead is bound to. config/policy.yaml sets approval_scope to organization and config/organization.yaml leaves team_bindings.teams empty, so no submitter or lead is bound to a team. There is therefore no bound team for self-authorization to be confined to. The unproved half is withheld by the same recorded decision that defers criterion 9 and D1, not by oversight.
+The criterion has two halves and only one of them is proved, which under three statuses is not COVERED. Proved today: a team lead may self-authorize a routine submission, a plain member may not, and a lead may not self-authorize an exception, which needs a platform admin. Not proved: that the submission falls inside a team the lead is bound to. config/policy.yaml sets approval_scope to organization and config/organization.yaml declares six teams and records no member in any of them, so no submitter or lead is bound to a team. There is therefore no bound team for self-authorization to be confined to. The unproved half is withheld by the same recorded decision that defers criterion 9 and D1, not by oversight.
 
-Live again when: config/organization.yaml populates team_bindings.teams and sub-team assignments exist. Self-authorization is deliberately unaffected by approval_scope today, and the last two supporting tests cited here pin that so the decision stays visible. Once leads are bound to teams, decide whether self-authorization is confined to the lead's own team and re-record this criterion against that answer.
+Live again when: config/organization.yaml records member_logins and lead_logins on a team. Self-authorization is deliberately unaffected by approval_scope today, and the last two supporting tests cited here pin that so the decision stays visible. Once leads are bound to teams, decide whether self-authorization is confined to the lead's own team and re-record this criterion against that answer.
 
 ### Check D1 (DEFERRED) — Wrong-team lead approver is rejected.
 
 By explicit decision, until sub-team assignments exist. This is Phase 2's check, and criterion 9 hands it off by name. approval_scope is currently organization, so any team lead may approve any member's routine submission and a wrong-team lead approver is therefore granted, not rejected. The supporting tests cited here prove the code path against a synthetic team-scoped policy with populated bindings; they do not prove the shipped behaviour.
 
-Live again when: config/policy.yaml sets approval_scope to team and config/organization.yaml populates team_bindings.teams. Both are configuration values; flipping them makes the check live with no code change, and this entry must then be proved or reopened.
+Live again when: config/policy.yaml sets approval_scope to team and config/organization.yaml records member_logins on a team. Both are configuration values; flipping them makes the check live with no code change, and this entry must then be proved or reopened.
 
 ## Checks
 
@@ -255,11 +255,11 @@ Proving tests (13), all executed and passing:
 
 Deferred because:
 
-The rule is implemented and exercised, but it rejects nothing in the shipped configuration. config/organization.yaml leaves team_bindings.teams empty, so no submitter or lead is bound to a team and membership cannot be checked at all. Enforcing the rule literally today would deny every submission, including all six run-manifest fixtures, so evaluate_authorization treats empty bindings as unverifiable rather than as failure and records team_verified: false on every shipped decision. No test can therefore show the shipped rejection this criterion asks for, which is why it is not COVERED. It is a deferral rather than a gap because the thing that is missing is data, the decision to withhold that data is recorded here and on D1, and the condition that reverses it is written down below.
+The rule is implemented and exercised, but it rejects nothing in the shipped configuration. config/organization.yaml declares six teams and records no member in any of them, so no submitter or lead is bound to a team and membership cannot be checked at all. Enforcing the rule literally today would deny every submission, including all six run-manifest fixtures, so evaluate_authorization treats empty bindings as unverifiable rather than as failure and records team_verified: false on every shipped decision. No test can therefore show the shipped rejection this criterion asks for, which is why it is not COVERED. It is a deferral rather than a gap because the thing that is missing is data, the decision to withhold that data is recorded here and on D1, and the condition that reverses it is written down below.
 
 Live again when:
 
-config/organization.yaml populates team_bindings.teams, which happens once sub-team assignments exist. Enforcement becomes live at that moment with no code change: the supporting tests cited here already drive the denial against populated bindings. When that lands, this criterion must be re-recorded as COVERED with those citations promoted to proving tests, or argued again.
+config/organization.yaml records member_logins on a team, which happens once each group's lead confirms who is in theirs. Enforcement is per submitter and needs no code change: the supporting tests cited here already drive the denial against a bound member. When the first group lands, this criterion must be re-recorded as COVERED with those citations promoted to proving tests, or argued again.
 
 Scope:
 
@@ -276,9 +276,9 @@ Supporting tests (15), all executed and passing, cited as evidence rather than a
 - `tests/test_authorization.py::test_a_lead_self_authorizing_cannot_attribute_the_run_to_a_foreign_team`
 - `tests/test_authorization.py::test_an_admin_may_not_attribute_their_run_to_another_teams_budget`
 - `tests/test_policy.py::test_request_facts_require_an_explicit_claimed_team`
-- `tests/test_authorization.py::test_attribution_is_recorded_unverified_while_the_roster_has_no_teams[memory-split]`
-- `tests/test_authorization.py::test_attribution_is_recorded_unverified_while_the_roster_has_no_teams[curriculum]`
-- `tests/test_authorization.py::test_attribution_is_recorded_unverified_while_the_roster_has_no_teams[not-a-team]`
+- `tests/test_authorization.py::test_attribution_is_recorded_unverified_while_no_member_is_bound_to_a_team[memory-split]`
+- `tests/test_authorization.py::test_attribution_is_recorded_unverified_while_no_member_is_bound_to_a_team[curriculum]`
+- `tests/test_authorization.py::test_attribution_is_recorded_unverified_while_no_member_is_bound_to_a_team[not-a-team]`
 - `tests/test_authorization.py::test_attribution_changes_no_classification_outcome[cpu-routine.yaml]`
 - `tests/test_authorization.py::test_attribution_changes_no_classification_outcome[gpu-exception.yaml]`
 - `tests/test_authorization.py::test_attribution_changes_no_classification_outcome[gpu-routine.yaml]`
@@ -292,11 +292,11 @@ Supporting tests (15), all executed and passing, cited as evidence rather than a
 
 Deferred because:
 
-The criterion has two halves and only one of them is proved, which under three statuses is not COVERED. Proved today: a team lead may self-authorize a routine submission, a plain member may not, and a lead may not self-authorize an exception, which needs a platform admin. Not proved: that the submission falls inside a team the lead is bound to. config/policy.yaml sets approval_scope to organization and config/organization.yaml leaves team_bindings.teams empty, so no submitter or lead is bound to a team. There is therefore no bound team for self-authorization to be confined to. The unproved half is withheld by the same recorded decision that defers criterion 9 and D1, not by oversight.
+The criterion has two halves and only one of them is proved, which under three statuses is not COVERED. Proved today: a team lead may self-authorize a routine submission, a plain member may not, and a lead may not self-authorize an exception, which needs a platform admin. Not proved: that the submission falls inside a team the lead is bound to. config/policy.yaml sets approval_scope to organization and config/organization.yaml declares six teams and records no member in any of them, so no submitter or lead is bound to a team. There is therefore no bound team for self-authorization to be confined to. The unproved half is withheld by the same recorded decision that defers criterion 9 and D1, not by oversight.
 
 Live again when:
 
-config/organization.yaml populates team_bindings.teams and sub-team assignments exist. Self-authorization is deliberately unaffected by approval_scope today, and the last two supporting tests cited here pin that so the decision stays visible. Once leads are bound to teams, decide whether self-authorization is confined to the lead's own team and re-record this criterion against that answer.
+config/organization.yaml records member_logins and lead_logins on a team. Self-authorization is deliberately unaffected by approval_scope today, and the last two supporting tests cited here pin that so the decision stays visible. Once leads are bound to teams, decide whether self-authorization is confined to the lead's own team and re-record this criterion against that answer.
 
 No test proves this check.
 
@@ -367,7 +367,7 @@ By explicit decision, until sub-team assignments exist. This is Phase 2's check,
 
 Live again when:
 
-config/policy.yaml sets approval_scope to team and config/organization.yaml populates team_bindings.teams. Both are configuration values; flipping them makes the check live with no code change, and this entry must then be proved or reopened.
+config/policy.yaml sets approval_scope to team and config/organization.yaml records member_logins on a team. Both are configuration values; flipping them makes the check live with no code change, and this entry must then be proved or reopened.
 
 No test proves this check.
 

@@ -30,7 +30,7 @@ declares and stays supporting until a capture has been compared against it, whic
 three Phase 2 roles has not happened yet.
 
 **One criterion is deferred and it is inherited.** Wrong-team lead approval is
-intentionally not enforced while ``team_bindings.teams`` is empty, exactly as in Phase 0.
+intentionally not enforced while no member is bound to a team, exactly as in Phase 0.
 Its trigger is a configuration change rather than a code change, which is the point of
 having recorded it.
 
@@ -260,15 +260,15 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 ),
             ),
             deferral_reason=(
-                "team_bindings.teams in config/organization.yaml is empty, so membership "
-                "is unverifiable and enforcing this literally would reject every "
-                "submission, including the ones that should succeed. Every decision "
-                "records team_verified false in consequence, which is what makes the "
-                "unverified attribution visible in the audit trail rather than silent. "
-                "Carried forward from Phase 0's deferral of the same question."
+                "No team in config/organization.yaml records a member_logins entry, so no "
+                "submitter's membership is knowable and the rule has nobody to reject. Every "
+                "decision records team_verified false in consequence, which is what makes the "
+                "unverified attribution visible in the audit trail rather than silent. The "
+                "teams themselves are declared; it is who is in them that nothing has ever "
+                "recorded. Carried forward from Phase 0's deferral of the same question."
             ),
             deferral_trigger=(
-                "Populating team_bindings.teams in config/organization.yaml once sub-team "
+                "Recording member_logins in config/organization.yaml once each group's "
                 "assignments exist. Enforcement goes live with no code change, "
                 "team_verified starts reporting true, and this must be re-recorded as "
                 "covered or argued again."

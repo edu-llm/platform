@@ -370,7 +370,7 @@ def test_organization_yaml_validates_against_inventory_contract() -> None:
     assert inventory.pilot_repositories
     assert {normalize_github_login(login) for login in inventory.admins} <= member_logins
     assert {normalize_github_login(login) for login in inventory.team_leads} <= member_logins
-    assert inventory.team_bindings.teams == ()
+    assert inventory.team_bindings.teams != ()
     assert inventory.teams_led_by(inventory.team_leads[0]) == ()
 
 

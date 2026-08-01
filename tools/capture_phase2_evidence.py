@@ -62,6 +62,7 @@ from edullm_platform.canonical import canonical_json_bytes
 from edullm_platform.capture_tooling import CaptureFailedError, write_sanitized_text
 from edullm_platform.phase2_evidence import (
     LEAD_APPROVAL_TEAM_SLUG,
+    ROLE_TEAM_SLUGS,
     AdmissionExecution,
     AdmissionExecutionInventory,
     EnvironmentInventory,
@@ -70,6 +71,8 @@ from edullm_platform.phase2_evidence import (
     LineageInventory,
     LineageObject,
     ProtectedEnvironment,
+    ResearchTeamInventory,
+    ResearchTeamMembership,
     SecretInventory,
 )
 
@@ -82,7 +85,14 @@ STATE_MACHINE_NAME: Final = "sbsandbox-intern-edullm-admission"
 #: What ``--target`` accepts and what it does with no flag at all. One tuple rather than
 #: two lists, because the two have to agree and a target added to only the second is a
 #: capture nobody can ask for by name.
-CAPTURE_TARGETS: Final = ("environments", "secrets", "lead-team", "lineage", "executions")
+CAPTURE_TARGETS: Final = (
+    "environments",
+    "secrets",
+    "lead-team",
+    "research-teams",
+    "lineage",
+    "executions",
+)
 
 __all__ = [
     "ALLOWED_OUTPUT_SUFFIX",
@@ -92,6 +102,7 @@ __all__ = [
     "capture_executions",
     "capture_lead_team",
     "capture_lineage",
+    "capture_research_teams",
     "capture_secrets",
     "main",
 ]
@@ -298,6 +309,76 @@ def capture_lead_team(organization: str, repository: str) -> LeadTeamMembership:
     )
 
 
+def capture_research_teams(organization: str, repository: str) -> ResearchTeamInventory:
+    """Every GitHub team that is not a role team, with its permission on this repository.
+
+    ``config/organization.yaml`` declares a ``github_team_slug`` for each research group,
+    and that name is a claim about a system no test in this repository can reach. This is
+    what makes it checkable, and the comparison it feeds runs in both directions because
+    the two are different incidents. A declared slug with no team behind it is a group
+    whose members can never be added to anything; a team with no binding is access somebody
+    granted that no run can be attributed against.
+
+    The whole organization is listed rather than the slugs the roster names, for the reason
+    the lead-team capture paginates: the failure worth catching is the one the roster
+    cannot describe. Asking only about declared slugs would confirm what the file already
+    says and stay silent about the team nobody wrote down.
+
+    The permission is read from this repository's own team list rather than from the team's
+    ``permission`` field, which reports the default applied to repositories the team is
+    newly given and not what it holds on this one. It is also not read from
+    ``orgs/{org}/teams/{slug}/repos/{owner}/{repo}``, which is the endpoint the question
+    seems to name: that one answers 204 with an empty body unless it is asked with a
+    preview media type, so a capture built on it records every team as reaching nothing
+    while they all hold write.
+    """
+    observed_at = _observed_at()
+    pages = _gh("--paginate", "--slurp", f"orgs/{organization}/teams?per_page=100")
+    slugs = sorted(
+        str(team["slug"])
+        for page in pages or []
+        for team in page or []
+        if str(team["slug"]) not in ROLE_TEAM_SLUGS
+    )
+    granted = {
+        str(team["slug"]): str(team["permission"])
+        for page in _gh("--paginate", "--slurp", f"repos/{organization}/{repository}/teams") or []
+        for team in page or []
+    }
+    teams: list[ResearchTeamMembership] = []
+    for slug in slugs:
+        member_pages = _gh(
+            "--paginate", "--slurp", f"orgs/{organization}/teams/{slug}/members?per_page=100"
+        )
+        teams.append(
+            ResearchTeamMembership(
+                observed_at=observed_at,
+                source="github",
+                environment="sandbox",
+                organization=organization,
+                repository=repository,
+                team_slug=slug,
+                # A team with no grant on this repository is absent from the list above, and
+                # that is a real state rather than a capture that failed: the team exists
+                # and reaches nothing. Written as the word so it reads as an answer.
+                repository_permission=granted.get(slug, "none"),
+                member_logins=tuple(
+                    sorted(
+                        str(member["login"]) for page in member_pages or [] for member in page or []
+                    )
+                ),
+            )
+        )
+    return ResearchTeamInventory(
+        observed_at=observed_at,
+        source="github",
+        environment="sandbox",
+        organization=organization,
+        repository=repository,
+        teams=tuple(teams),
+    )
+
+
 def capture_secrets(organization: str, repository: str) -> SecretInventory:
     """Secret and variable names at every level a workflow can read from.
 
@@ -487,6 +568,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 record = capture_secrets(arguments.organization, arguments.repository)
             elif target == "lead-team":
                 record = capture_lead_team(arguments.organization, arguments.repository)
+            elif target == "research-teams":
+                record = capture_research_teams(arguments.organization, arguments.repository)
             elif target == "lineage":
                 record, bodies = capture_lineage(arguments.aws_profile, arguments.aws_region)
                 # The records themselves, beside the inventory. The inventory says what S3

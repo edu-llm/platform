@@ -206,11 +206,26 @@ def test_team_binding_rejects_s3_namespaces_outside_the_sandbox(s3_namespace: st
     assert SANDBOX_BUCKET_PREFIX == "sbsandbox-intern-"
 
 
-def test_team_binding_requires_at_least_one_lead() -> None:
-    payload = {**memory_split_payload(), "lead_logins": []}
-    with pytest.raises(ValidationError) as exc_info:
-        TeamBinding.model_validate(payload)
-    assert_validation_error(exc_info.value, error_type="too_short")
+def test_a_team_may_record_no_lead_because_nobody_has_recorded_one() -> None:
+    """THIS TEST USED TO ASSERT THE OPPOSITE. Mutation: require a lead again.
+
+    Requiring one login here read as a safety rule and worked as a forcing function: a group
+    could not be declared at all until somebody put a name against it, so the four groups
+    whose lead is written down nowhere could only be declared by inventing one. An invented
+    lead is worse than none, because ``_routing_note`` prints it to the reviewer as the
+    person this run would normally go to.
+
+    Nothing was protecting anything. ``config/policy.yaml`` sets ``approval_scope`` to
+    organization, so a lead recorded here carries no authorization weight at all, and under
+    team scope a group with no lead routes to an admin, who may always release. The branch
+    for a group with no recorded lead already existed in ``submission._routing_note`` and
+    called itself the ordinary path; this constraint was what made it unreachable.
+    """
+    binding = TeamBinding.model_validate({**memory_split_payload(), "lead_logins": []})
+
+    assert binding.lead_logins == ()
+    assert binding.is_led_by("ericrcwu001") is False
+    assert binding.includes("ericrcwu001") is False
 
 
 def test_repository_binding_requires_at_least_one_permitted_team() -> None:
