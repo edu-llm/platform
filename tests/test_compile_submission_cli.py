@@ -87,6 +87,7 @@ def compile_form(
     payload: dict[str, object] | None = None,
     document: object = None,
     published_images: Path | None = None,
+    submitter: str = SUBMITTER,
 ) -> tuple[int, dict[str, Any]]:
     inputs = tmp_path / "submission-form.json"
     inputs.write_text(json.dumps(payload if payload is not None else form()), encoding="utf-8")
@@ -105,7 +106,7 @@ def compile_form(
             "--published-images",
             str(published_images),
             "--submitter",
-            SUBMITTER,
+            submitter,
             "--repository-url",
             REPOSITORY_URL,
             "--output",
@@ -117,6 +118,67 @@ def compile_form(
     compiled = json.loads(output.read_text(encoding="utf-8")) if output.exists() else {}
     assert isinstance(compiled, dict)
     return exit_code, compiled
+
+
+# ---------------------------------------------------------------------------------------
+# Who is submitting
+# ---------------------------------------------------------------------------------------
+
+
+def test_a_submitter_the_roster_does_not_name_is_refused_and_nothing_is_written(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Mutation: read the roster only for the W&B attribution line.
+
+    The compile job loads ``config/organization.yaml`` already and holds the dispatching
+    login already, so the answer is in hand before the approval gate. Admission answers the
+    same question afterwards, and afterwards is what costs the approver.
+
+    ``EXIT_REFUSED`` rather than ``EXIT_UNUSABLE`` because this is a verdict on the
+    submission. The workflow prints a different sentence for each, and the one for a
+    refusal is the one that says no reviewer was asked.
+    """
+    exit_code, compiled = compile_form(tmp_path, submitter="not-a-member")
+
+    assert exit_code == EXIT_REFUSED
+    assert compiled == {}
+    assert "config/organization.yaml" in capsys.readouterr().err
+
+
+def test_the_roster_refusal_leaves_no_approver_context_for_a_reviewer_to_read(
+    tmp_path: Path,
+) -> None:
+    """A refused submission asks nobody, so the page a reviewer would read is not written."""
+    summary = tmp_path / "approver-context.md"
+    inputs = tmp_path / "submission-form.json"
+    inputs.write_text(json.dumps(form()), encoding="utf-8")
+    published = tmp_path / "published-image.json"
+    published.write_text(json.dumps(resolved()), encoding="utf-8")
+
+    exit_code = main(
+        [
+            "--inputs",
+            str(inputs),
+            "--config-dir",
+            str(CONFIG_DIR),
+            "--published-images",
+            str(published),
+            "--submitter",
+            "not-a-member",
+            "--repository-url",
+            REPOSITORY_URL,
+            "--output",
+            str(tmp_path / "compiled-submission.json"),
+            "--summary",
+            str(summary),
+            "--run-id",
+            RUN_ID,
+        ]
+    )
+
+    assert exit_code == EXIT_REFUSED
+    assert not summary.exists()
 
 
 # ---------------------------------------------------------------------------------------

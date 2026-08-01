@@ -44,6 +44,7 @@ from edullm_platform.submission import (
     SubmissionInputs,
     compile_submission,
     render_approver_context,
+    require_submitter_on_the_roster,
 )
 
 EXIT_OK = 0
@@ -169,11 +170,12 @@ def main(argv: list[str] | None = None) -> int:
         image_scan_registry = load_yaml(
             args.config_dir / "image-exceptions.yaml", ImageScanExceptionRegistry
         )
-        # Read for one thing only: whether this submitter's runs can be attributed in W&B,
-        # so the approver context can say before the gate what W&B will not say after it.
-        # Admission resolves the same mapping independently from its own copy, because what
-        # a run is labelled with must not depend on a file the compile job could be pointed
-        # at; this one is for the sentence the reviewer reads.
+        # Read for two things, and admission resolves both independently from its own copy,
+        # because what a run is labelled with must not depend on a file the compile job
+        # could be pointed at. Whether this submitter is on the roster at all, which
+        # admission answers only after a lead has released the gate. And whether their runs
+        # can be attributed in W&B, so the approver context can say before the gate what
+        # W&B will not say after it.
         inventory = load_yaml(args.config_dir / "organization.yaml", OrganizationInventory)
     except (OSError, ValidationError, TypeError) as exc:
         print(f"reviewed configuration is unreadable: {exc}", file=sys.stderr)
@@ -199,6 +201,10 @@ def main(argv: list[str] | None = None) -> int:
     # buys a submitter a gate they still cannot pass. The gate chosen here is the floor and
     # never the ceiling. infra/iam/image-resolver-role.yaml carries the argument in full.
     try:
+        # Before compiling rather than after, so that somebody the roster does not name is
+        # told that and nothing else. A refusal naming a workload profile would send them
+        # to correct a field that was never what stood in the way.
+        require_submitter_on_the_roster(args.submitter, inventory=inventory)
         submission = compile_submission(
             inputs,
             run_id=args.run_id or new_run_id(),
