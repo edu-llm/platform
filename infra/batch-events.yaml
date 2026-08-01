@@ -224,7 +224,7 @@ Resources:
       Code:
         S3Bucket: sbsandbox-intern-edullm-artifacts
         S3Key: lifecycle-recorder/lifecycle-recorder.zip
-        S3ObjectVersion: rAzYU3UI5HktR.SRsm6E2gohemQu_1Ov
+        S3ObjectVersion: .R9b08klWqJ3BBwcjIUsvP9evS7uiZHW
       # Sixty seconds against a function that makes up to three conditional writes and no
       # other AWS call. The queue's visibility timeout above is six times this and has to
       # be changed with it.
