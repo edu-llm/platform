@@ -412,10 +412,54 @@ def test_a_retry_fires_on_a_lost_host_and_on_nothing_else(attempts: int) -> None
     request = request_for(maximum_attempts=attempts, checkpoint=checkpoint)
 
     assert request["RetryStrategy"]["EvaluateOnExit"] == [
-        {"onStatusReason": "Host EC2*", "action": "RETRY"},
-        {"onReason": "*OutOfMemoryError*", "action": "EXIT"},
-        {"onExitCode": "*", "action": "EXIT"},
+        {"OnStatusReason": "Host EC2*", "Action": "RETRY"},
+        {"OnReason": "*OutOfMemoryError*", "Action": "EXIT"},
+        {"OnExitCode": "*", "Action": "EXIT"},
     ]
+
+
+def test_every_key_this_request_sends_is_one_step_functions_will_accept() -> None:
+    """THE MISTAKE THIS EXISTS FOR, WHICH BROKE EVERY SUBMISSION FOR TWENTY MINUTES.
+
+    ``EvaluateOnExit`` first shipped with the Batch API's documented spelling --
+    ``onStatusReason``, ``onReason``, ``onExitCode``, ``action`` -- which is what anyone
+    checking the AWS reference will write. Nothing here makes that request. Step Functions
+    does, through its ``aws-sdk:batch:submitJob`` integration, and it requires PascalCase
+    and refuses the documented spelling: ``The field "onStatusReason" is not supported by
+    Step Functions.``
+
+    The cost is what makes this worth a test rather than a comment. It fails at
+    ``SubmitToBatch``, which runs *after* WriteIntent and WriteDecision, so the lineage
+    records say the run was admitted and no job ever reaches a queue -- an accepted run
+    that does not exist. Every submission, not only retryable ones, because the block is
+    sent unconditionally.
+
+    Checked structurally rather than against a fixed list, so a key added later is covered
+    by the rule instead of needing to be remembered.
+    """
+    request = request_for(maximum_attempts=1, checkpoint=None)
+
+    def camel_cased(node: object, path: str = "") -> list[str]:
+        offenders: list[str] = []
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if isinstance(key, str) and key[:1].islower():
+                    offenders.append(f"{path}.{key}" if path else key)
+                offenders.extend(camel_cased(value, f"{path}.{key}" if path else key))
+        elif isinstance(node, list):
+            for index, value in enumerate(node):
+                offenders.extend(camel_cased(value, f"{path}[{index}]"))
+        return offenders
+
+    # Tags are the one exception and are the caller's own vocabulary rather than an API's:
+    # `edullm:run-id` and its siblings are values Batch stores verbatim and never parses.
+    inspected = {key: value for key, value in request.items() if key != "Tags"}
+
+    assert camel_cased(inspected) == [], (
+        "Step Functions' aws-sdk integration requires PascalCase for every field it sends "
+        "to Batch, and refuses a lower-case key with a States.Runtime error after the "
+        "lineage records have already been written"
+    )
 
 
 def test_a_single_container_submits_no_array_properties() -> None:

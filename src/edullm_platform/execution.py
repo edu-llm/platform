@@ -388,19 +388,31 @@ class ContainerOverridesTooLargeError(ValueError):
 #: machine it landed on*. A host going away is the only one a retry genuinely fixes, and it
 #: is the one that matters most here: a reclaimed instance eleven hours into a twelve-hour
 #: run is exactly the case the checkpoint contract exists for.
+#: PASCAL CASE, AND THE LOWER-CASE SPELLING BREAKS EVERY SUBMISSION. The Batch API
+#: documents these keys as ``onStatusReason``, ``onReason``, ``onExitCode`` and ``action``,
+#: and that is what a reader checking the AWS reference will write. This request is not made
+#: by the Batch SDK -- Step Functions makes it, through its ``aws-sdk:batch:submitJob``
+#: integration, which requires the PascalCase spelling of every field and refuses the
+#: documented one outright: ``The field "onStatusReason" is not supported by Step Functions.``
+#:
+#: The cost is what makes the distinction worth writing down. It fails at ``SubmitToBatch``,
+#: which runs *after* WriteIntent and WriteDecision, so the lineage records say the run was
+#: admitted and no job ever reaches a queue -- an accepted run that does not exist. It
+#: applies to every submission and not only retryable ones, because this block is sent
+#: unconditionally. Found by a submission failing exactly that way.
 RETRY_ONLY_WHAT_A_RETRY_FIXES: Final = (
     # The host went away underneath a running attempt: hardware failure today, a Spot
     # reclaim once the A100 tier is promoted. The attempt died with work behind it and the
     # next one resumes from the last checkpoint, which is the whole argument for two
     # attempts.
-    {"onStatusReason": "Host EC2*", "action": "RETRY"},
+    {"OnStatusReason": "Host EC2*", "Action": "RETRY"},
     # A container that did not fit will not fit on the identical instance type. Retrying
     # buys a second identical OOM and a second hour of the approved ceiling.
-    {"onReason": "*OutOfMemoryError*", "action": "EXIT"},
+    {"OnReason": "*OutOfMemoryError*", "Action": "EXIT"},
     # Everything else, which is every exit code including 1 -- what a Python traceback
     # produces, and what a bad config override produces. Last, because Batch stops at the
     # first match and this one matches everything.
-    {"onExitCode": "*", "action": "EXIT"},
+    {"OnExitCode": "*", "Action": "EXIT"},
 )
 
 
