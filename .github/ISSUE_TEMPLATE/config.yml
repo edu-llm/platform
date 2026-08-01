@@ -3,6 +3,9 @@ contact_links:
   - name: Submit a run
     url: https://github.com/edu-llm/platform/actions/workflows/submit-run.yml
     about: Not an issue. This is the form that runs a job.
-  - name: Getting started
-    url: https://github.com/edu-llm/platform/blob/main/GETTING-STARTED.md
-    about: How to submit your first run, and the six things that bite on a real training job.
+  - name: Using the platform
+    url: https://github.com/edu-llm/platform/blob/main/guides/the-platform.md
+    about: How to submit your first run, get access, and look at or stop a run.
+  - name: Training a model
+    url: https://github.com/edu-llm/platform/blob/main/guides/olmo-core.md
+    about: OLMo-core — the training command, multiple GPUs, and the traps on a real run.

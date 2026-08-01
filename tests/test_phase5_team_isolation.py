@@ -316,7 +316,7 @@ def test_nothing_may_delete_the_object_that_makes_a_checkpoint_finished() -> Non
     is 3, and its prune removes ``.metadata.json`` first, on purpose, to invalidate the
     checkpoint before clearing the rest. So the prune still fails on its first call and the
     run still stops rather than losing a checkpoint, which is the behaviour
-    ``GETTING-STARTED.md`` documents and which the Allow alone would have removed.
+    ``guides/olmo-core.md`` documents and which the Allow alone would have removed.
     """
     denying = [
         statement

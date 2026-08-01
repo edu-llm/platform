@@ -1,8 +1,9 @@
 # Proof bundles
 
 **This directory is not documentation and you should not read it to learn how anything
-works.** If you want to run a job, [GETTING-STARTED.md](../GETTING-STARTED.md) is the file
-you want. If you want to know how the platform is built, the [README](../README.md) is.
+works.** If you want to run a job, [the guides](../guides/the-platform.md) are what you
+want. If you want to know how the platform is built,
+[MAINTAINING.md](../MAINTAINING.md) is.
 
 Each `phase-N/` directory is a generated record of what was true about this repository at
 the moment it was built: which acceptance criteria were covered, which were deferred and

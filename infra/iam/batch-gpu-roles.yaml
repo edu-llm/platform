@@ -285,7 +285,7 @@ Resources:
               # clearing the rest, and it catches only FileNotFoundError; a denial becomes
               # OLMoNetworkError and reaches Trainer.fit. So max_checkpoints left at its
               # default of 3 still stops the run on the fourth save rather than quietly
-              # deleting the first, which is the behaviour GETTING-STARTED.md documents and
+              # deleting the first, which is the behaviour guides/olmo-core.md documents and
               # which the delete above would otherwise have removed.
               #
               # An explicit Deny rather than a narrower Allow because IAM resource matching

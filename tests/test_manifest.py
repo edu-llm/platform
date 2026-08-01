@@ -464,7 +464,7 @@ def test_the_refusal_prints_the_command_the_submitter_meant_to_send() -> None:
 
 def test_the_quoted_form_the_guide_prints_is_accepted() -> None:
     payload = manifest_payload()
-    # One word after -lc, which is the whole point. This is the line GETTING-STARTED.md
+    # One word after -lc, which is the whole point. This is the line guides/olmo-core.md
     # prints, and a rule that refused it would be worse than the bug.
     payload["command"] = ["bash", "-lc", 'python .edullm/train_on_corpus.py "$EDULLM_RUN_ID"']
     manifest = RunManifest.model_validate(payload)
