@@ -10,6 +10,11 @@ copy should do. ``--bucket`` syncs the bucket into a temporary directory first, 
 AWS CLI, because ``boto3`` is deliberately not a dependency of this project -- it is
 present in the Lambda runtime and nowhere else.
 
+The per-team section is reconciled against the team bindings in ``config/organization.yaml``
+rather than grouped by the string in the manifest, because that string is a free-text form
+field nothing validates. A bound team that ran nothing is reported at zero, and spend
+claiming a team the catalog does not bind is reported under the name it claimed.
+
 Exit codes follow the repository's convention: 0 reported, 2 the inputs could not be read.
 There is no 1, because this tool judges nothing and so has nothing to refuse.
 """
@@ -32,9 +37,19 @@ if str(PROJECT_ROOT / "src") not in sys.path:
 from edullm_platform.capture_tooling import CaptureFailedError, aws
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.admission import IntentRecord
+from edullm_platform.contracts.bindings import TeamBindingCatalog
+from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.lifecycle import SchedulerAttempt
 from edullm_platform.contracts.workload import WorkloadCatalog
-from edullm_platform.run_costs import RunCost, aggregate, run_costs, total_priced
+from edullm_platform.run_costs import (
+    RunCost,
+    TeamSpend,
+    UnboundTeamSpend,
+    aggregate,
+    attribute_to_teams,
+    run_costs,
+    total_priced,
+)
 
 EXIT_OK = 0
 EXIT_UNUSABLE = 2
@@ -104,7 +119,67 @@ def _plain(value: Decimal) -> str:
     return f"{value:.2f}"
 
 
-def render(costs: Sequence[RunCost], *, unparsed: int) -> str:
+def _runs(runs: int, unpriced: int = 0) -> str:
+    """How many runs a line covers, saying out loud where part of it carries no figure."""
+    counted = f"{runs} run{'' if runs == 1 else 's'}"
+    return f"{counted}, {unpriced} with no figure" if unpriced else counted
+
+
+def _bound_line(spend: TeamSpend) -> str:
+    line = (
+        f"- {spend.team_id} (@{spend.github_team_slug}, led by "
+        f"{', '.join(spend.lead_logins)}): ${_plain(spend.cost_usd)} across "
+        f"{_runs(spend.runs, spend.unpriced_runs)}"
+    )
+    tags = ", ".join(f"{tag.key}={tag.value}" for tag in spend.attribution_tags)
+    return f"{line} [{tags}]" if tags else line
+
+
+def _unbound_line(spend: UnboundTeamSpend) -> str:
+    return (
+        f"- `{spend.claimed_team}`: ${_plain(spend.cost_usd)} across "
+        f"{_runs(spend.runs, spend.unpriced_runs)}"
+    )
+
+
+def by_team(costs: Sequence[RunCost], teams: TeamBindingCatalog) -> list[str]:
+    attribution = attribute_to_teams(costs, catalog=teams)
+    lines = ["## By team", ""]
+    lines.append(
+        "Rolled up against the team bindings in `config/organization.yaml`, so a team here "
+        "is one this platform has been told about rather than whatever was typed into the "
+        "submission form. A bound team that ran nothing appears at zero, because a group "
+        "having gone quiet is worth reading."
+    )
+    lines.append("")
+    if attribution.bound:
+        lines += [_bound_line(spend) for spend in attribution.bound]
+    else:
+        lines.append(
+            "`config/organization.yaml` binds no teams, so there is nothing to roll up "
+            "against and every run's spend is below under the name it claimed."
+        )
+    lines.append("")
+
+    if attribution.unbound:
+        lines.append("### Claimed against a team nothing binds")
+        lines.append("")
+        lines.append(
+            "Nothing in the binding catalog carries these names, so the "
+            f"${_plain(attribution.unbound_cost_usd)} across "
+            f"{_runs(attribution.unbound_runs)} beneath them cannot be routed to a lead or "
+            "to a cost centre. Each name is either a group the roster has not been told "
+            "about or a misspelling in the submission form's free-text team box. It is "
+            "listed here rather than folded into a bound team, because reading one group's "
+            "spend as another's would be worse than reading it as nobody's."
+        )
+        lines.append("")
+        lines += [_unbound_line(spend) for spend in attribution.unbound]
+        lines.append("")
+    return lines
+
+
+def render(costs: Sequence[RunCost], *, teams: TeamBindingCatalog, unparsed: int) -> str:
     lines = ["# What runs have cost", ""]
     lines.append(
         "Compute at the catalog's published rate, measured from the attempt records this "
@@ -113,11 +188,7 @@ def render(costs: Sequence[RunCost], *, unparsed: int) -> str:
     )
     lines.append("")
 
-    lines.append("## By team")
-    lines.append("")
-    for team, spend in sorted(aggregate(costs, key="team").items(), key=lambda kv: -kv[1]):
-        lines.append(f"- {team}: ${_plain(spend)}")
-    lines.append("")
+    lines += by_team(costs, teams)
 
     lines.append("## By submitter")
     lines.append("")
@@ -190,6 +261,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 root = arguments.lineage_root
             intents, attempts, unparsed = read_records(root)
             catalog = load_yaml(arguments.config_dir / "workload-catalog.yaml", WorkloadCatalog)
+            organization = load_yaml(
+                arguments.config_dir / "organization.yaml", OrganizationInventory
+            )
         except (ReportInputError, CaptureFailedError, OSError, ValueError) as error:
             print(str(error), file=sys.stderr)
             return EXIT_UNUSABLE
@@ -197,7 +271,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     costs = run_costs(
         intents=intents, attempts=attempts, compute_profiles=catalog.compute_profiles
     )
-    report = render(costs, unparsed=unparsed)
+    report = render(costs, teams=organization.team_bindings, unparsed=unparsed)
 
     if arguments.output:
         arguments.output.write_text(report, encoding="utf-8")

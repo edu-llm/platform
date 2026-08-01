@@ -1,0 +1,360 @@
+"""The cost report as a reader meets it, against records on disk.
+
+Two things here are about the report being honest rather than about it being correct.
+
+The per-team section is reconciled against ``TeamBindingCatalog``, so spend claiming a team
+nothing binds has to reach the reader under the name it claimed. Every run recorded so far
+is in that position, because ``config/organization.yaml`` carries no ``team_bindings`` yet,
+and a section that rendered that as blank would look like a platform nobody had spent
+anything on.
+
+The other is the count of records that would not parse. One stored intent record, for
+``run_019fb4ce``, holds a command that was valid when it was sealed and is refused by the
+rule this tree carries now. The record is immutable and it is not wrong, so it cannot appear
+in the arithmetic. What it must do is appear in the count, because a report describing only
+the readable subset hides a recorder that has started writing documents nothing can read.
+
+The bindings are built here rather than read out of ``config/organization.yaml``, because
+what that file binds is a roster decision that will change and none of this is about the
+roster.
+"""
+
+from __future__ import annotations
+
+import json
+import shutil
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from edullm_platform.contracts.bindings import TeamBinding, TeamBindingCatalog
+from edullm_platform.contracts.workload import ComputeProfile
+from edullm_platform.run_costs import run_costs
+from tools.report_run_costs import EXIT_OK, EXIT_UNUSABLE, main, read_records, render
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+CONFIG_DIR = PROJECT_ROOT / "config"
+
+INTENT_FIXTURE = (
+    PROJECT_ROOT
+    / "fixtures"
+    / "evidence"
+    / "phase-3"
+    / "runs"
+    / "run_019fa73d-be37-7066-984b-a4bacf194f49"
+    / "records"
+    / "intent"
+    / "run_019fa73d-be37-7066-984b-a4bacf194f49.json"
+)
+
+#: The command as it reached AWS Batch in run_019fb4ce, where a pilot user's shell quoting
+#: survived into the form field and ``shlex.split`` returned the whole line as one token.
+#: ``require_a_shell_command_that_kept_its_quotes`` refuses it now. It did not then.
+UNSPLIT_COMMAND = ['python -c "print(\\"hello from a second person\\")"']
+
+RUN_A = "run_019fa73d-be37-7066-984b-a4bacf194f49"
+RUN_B = "run_019fa9a6-4460-7095-a358-a1552e250f1b"
+UNREADABLE_RUN = "run_019fb4ce-cf24-7028-8eed-a32a28ec2493"
+
+ON_DEMAND = "gpu-1xa10g"
+SPOT = "gpu-1xa10g-spot"
+
+
+def compute_profile(name: str) -> ComputeProfile:
+    return ComputeProfile.model_validate(
+        {
+            "name": name,
+            "instance_type": "g5.xlarge",
+            "accelerator": "gpu",
+            "nodes": 1,
+            "hourly_rate_usd": "3.0000",
+            "pricing_source": "test",
+            "pricing_observed_at": "2026-07-31",
+            "provisioned": True,
+        }
+    )
+
+
+def intent(
+    run_id: str,
+    *,
+    team: str,
+    compute: str = ON_DEMAND,
+    command: list[str] | None = None,
+) -> dict[str, Any]:
+    """A stored intent record with its team, its profile and its command swapped out.
+
+    Built from a record the platform actually wrote rather than from a literal, so that a
+    contract tightened around any other field fails here rather than being fixtured past.
+    """
+    loaded: Any = json.loads(INTENT_FIXTURE.read_text(encoding="utf-8"))
+    loaded["run_id"] = run_id
+    loaded["manifest"]["team"] = team
+    loaded["manifest"]["compute_profile"] = compute
+    if command is not None:
+        loaded["manifest"]["command"] = command
+    return dict(loaded)
+
+
+def attempt(run_id: str, *, hours: int = 1) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "attempt_id": f"att_{run_id.removeprefix('run_')}",
+        "run_id": run_id,
+        "attempt_ordinal": 1,
+        "scheduler_job_id": "fde2fa08-a611-48dc-a0ef-1c6797147543",
+        "started_at": "2026-07-28T14:00:00.000000Z",
+        "ended_at": f"2026-07-28T{14 + hours:02d}:00:00.000000Z",
+        "terminal_state": "succeeded",
+    }
+
+
+def lineage(
+    tmp_path: Path, *, intents: list[dict[str, Any]], attempts: list[dict[str, Any]]
+) -> Path:
+    root = tmp_path / "lineage"
+    for prefix, documents, key in (
+        ("intent", intents, "run_id"),
+        ("attempt", attempts, "attempt_id"),
+    ):
+        directory = root / prefix
+        directory.mkdir(parents=True)
+        for document in documents:
+            (directory / f"{document[key]}.json").write_text(
+                json.dumps(document), encoding="utf-8"
+            )
+    return root
+
+
+def binding(team_id: str, *, lead: str = "ericrcwu001") -> TeamBinding:
+    return TeamBinding.model_validate(
+        {
+            "team_id": team_id,
+            "github_team_slug": team_id,
+            "lead_logins": [lead],
+            "s3_namespace": f"sbsandbox-intern-{team_id}",
+            "wandb_entity": f"edu-llm-{team_id}",
+        }
+    )
+
+
+def report_for(
+    tmp_path: Path,
+    *,
+    teams: TeamBindingCatalog,
+    intents: list[dict[str, Any]],
+    attempts: list[dict[str, Any]],
+) -> str:
+    root = lineage(tmp_path, intents=intents, attempts=attempts)
+    parsed_intents, parsed_attempts, unparsed = read_records(root)
+    costs = run_costs(
+        intents=parsed_intents,
+        attempts=parsed_attempts,
+        compute_profiles=[compute_profile(ON_DEMAND), compute_profile(SPOT)],
+    )
+    return render(costs, teams=teams, unparsed=unparsed)
+
+
+# ---------------------------------------------------------------------------------------
+# What the per-team section says once it is reconciled against the roster
+# ---------------------------------------------------------------------------------------
+
+
+def test_the_per_team_section_names_the_lead_of_each_bound_team(tmp_path: Path) -> None:
+    report = report_for(
+        tmp_path,
+        teams=TeamBindingCatalog(teams=(binding("memory-split", lead="ericrcwu001"),)),
+        intents=[intent(RUN_A, team="memory-split")],
+        attempts=[attempt(RUN_A)],
+    )
+
+    assert "- memory-split (@memory-split, led by ericrcwu001): $3.00 across 1 run" in report
+
+
+def test_a_bound_team_with_no_runs_is_rendered_at_zero(tmp_path: Path) -> None:
+    """Mutation: render only the teams the records mention.
+
+    A team that spent nothing is a different fact from a team nobody has heard of, and only
+    one of the two is worth somebody asking a question about.
+    """
+    report = report_for(
+        tmp_path,
+        teams=TeamBindingCatalog(teams=(binding("memory-split"), binding("learning-science"))),
+        intents=[intent(RUN_A, team="memory-split")],
+        attempts=[attempt(RUN_A)],
+    )
+
+    assert "- learning-science (@learning-science, led by ericrcwu001): $0.00 across 0 runs" in (
+        report
+    )
+
+
+def test_spend_claiming_a_team_nothing_binds_is_reported_under_that_name(
+    tmp_path: Path,
+) -> None:
+    """Mutation: leave the unbound claims out, or add them to a bound team.
+
+    Left out, the report's team lines stop adding up to its total and nobody can say why.
+    Added in, somebody else's spend appears on a lead's line and reads exactly like spend
+    that lead's group incurred.
+    """
+    report = report_for(
+        tmp_path,
+        teams=TeamBindingCatalog(teams=(binding("memory-split"),)),
+        intents=[intent(RUN_A, team="memory-split"), intent(RUN_B, team="tokenizer")],
+        attempts=[attempt(RUN_A), attempt(RUN_B)],
+    )
+
+    assert "Claimed against a team nothing binds" in report
+    assert "- `tokenizer`: $3.00 across 1 run" in report
+    assert "routed to a lead or to a cost centre" in report
+
+
+def test_an_empty_binding_catalog_says_so_rather_than_printing_an_empty_rollup(
+    tmp_path: Path,
+) -> None:
+    """The state ``config/organization.yaml`` is in today, which is not an empty report.
+
+    With no ``team_bindings`` in the roster there is nothing to roll up against, and every
+    run lands under the name it claimed. A section that rendered as blank would look like a
+    platform on which nobody had spent anything.
+    """
+    report = report_for(
+        tmp_path,
+        teams=TeamBindingCatalog(),
+        intents=[intent(RUN_A, team="memory-split")],
+        attempts=[attempt(RUN_A)],
+    )
+
+    assert "binds no teams" in report
+    assert "Claimed against a team nothing binds" in report
+    assert "- `memory-split`: $3.00 across 1 run" in report
+
+
+def test_a_teams_unpriced_runs_are_counted_beside_its_figure(tmp_path: Path) -> None:
+    """Mutation: count only the runs that carry a figure.
+
+    A team whose work is all spot would then read as a team that did nothing, which is the
+    reading the unpriced runs exist to prevent everywhere else in this report.
+    """
+    report = report_for(
+        tmp_path,
+        teams=TeamBindingCatalog(teams=(binding("memory-split"),)),
+        intents=[
+            intent(RUN_A, team="memory-split"),
+            intent(RUN_B, team="memory-split", compute=SPOT),
+        ],
+        attempts=[attempt(RUN_A), attempt(RUN_B)],
+    )
+
+    assert "$3.00 across 2 runs, 1 with no figure" in report
+    assert "Runs with no figure, and why" in report
+
+
+# ---------------------------------------------------------------------------------------
+# A record this tree can no longer read is counted rather than dropped
+# ---------------------------------------------------------------------------------------
+
+
+def test_a_stored_record_the_current_contract_refuses_is_counted_and_said_out_loud(
+    tmp_path: Path,
+) -> None:
+    """Mutation: skip what will not parse and report the rest.
+
+    ``run_019fb4ce`` carries a command whose quoting survived the form field, valid when the
+    record was sealed and refused by this tree. It cannot appear in the arithmetic. It must
+    appear in the count, because a store producing documents this tree cannot read is a
+    defect in the recorder and a report describing the readable subset hides exactly that.
+    """
+    root = lineage(
+        tmp_path,
+        intents=[
+            intent(RUN_A, team="memory-split"),
+            intent(UNREADABLE_RUN, team="tokenizer", command=UNSPLIT_COMMAND),
+        ],
+        attempts=[attempt(RUN_A)],
+    )
+
+    intents, _attempts, unparsed = read_records(root)
+
+    assert [record.run_id for record in intents] == [RUN_A]
+    assert unparsed == 1
+
+    report = render((), teams=TeamBindingCatalog(), unparsed=unparsed)
+    assert "1 record did not parse" in report
+    assert "valid when it was sealed" in report
+
+
+def test_the_count_of_refused_records_is_absent_when_every_record_parsed() -> None:
+    """The sentence is a finding, so printing it at zero would make it noise."""
+    assert "did not parse" not in render((), teams=TeamBindingCatalog(), unparsed=0)
+
+
+# ---------------------------------------------------------------------------------------
+# Exit codes: 0 reported, 2 the inputs could not be read, and no 1
+# ---------------------------------------------------------------------------------------
+
+
+def test_a_report_written_to_a_file_exits_zero(tmp_path: Path) -> None:
+    root = lineage(
+        tmp_path,
+        intents=[intent(RUN_A, team="memory-split", compute="cpu-32vcpu")],
+        attempts=[attempt(RUN_A)],
+    )
+    output = tmp_path / "run-costs.md"
+
+    exit_code = main(
+        [
+            "--lineage-root",
+            str(root),
+            "--config-dir",
+            str(CONFIG_DIR),
+            "--output",
+            str(output),
+        ]
+    )
+
+    written = output.read_text(encoding="utf-8")
+    assert exit_code == EXIT_OK
+    assert "# What runs have cost" in written
+    assert "## By team" in written
+    assert "## By submitter" in written
+
+
+def test_a_lineage_root_holding_no_records_is_unusable_rather_than_an_empty_report(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    exit_code = main(
+        ["--lineage-root", str(tmp_path / "absent"), "--config-dir", str(CONFIG_DIR)]
+    )
+
+    assert exit_code == EXIT_UNUSABLE
+    assert "no intent/ directory" in capsys.readouterr().err
+
+
+def test_a_config_directory_without_the_roster_is_unusable_rather_than_an_unbound_rollup(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Mutation: treat an unreadable organization.yaml as an empty binding catalog.
+
+    An empty catalog is a real state of the roster with a report of its own, so a failure to
+    read the file must not be spelled the same way. It would render as every team being
+    unbound, which is the correct answer today and would stay on the page long after it
+    stopped being one.
+    """
+    root = lineage(
+        tmp_path,
+        intents=[intent(RUN_A, team="memory-split")],
+        attempts=[attempt(RUN_A)],
+    )
+    config = tmp_path / "config"
+    config.mkdir()
+    shutil.copy(CONFIG_DIR / "workload-catalog.yaml", config / "workload-catalog.yaml")
+
+    exit_code = main(["--lineage-root", str(root), "--config-dir", str(config)])
+
+    assert exit_code == EXIT_UNUSABLE
+    assert capsys.readouterr().err.strip() != ""
