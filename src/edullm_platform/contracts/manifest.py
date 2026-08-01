@@ -21,6 +21,19 @@ IMAGE_DIGEST_PATTERN = SHA256_DIGEST_PATTERN
 
 class FanOut(ContractModel):
     size: int = Field(ge=2)
+    #: DECLARED AND NOT ENFORCED, AND BATCH IS THE REASON RATHER THAN AN OVERSIGHT HERE.
+    #:
+    #: ``SubmitJob``'s ``arrayProperties`` accepts ``size`` and nothing else, confirmed
+    #: against the API reference on 2026-08-01. There is no cap on how many children of an
+    #: array job run at once, so this value has nowhere to go and ``batch_submit_request``
+    #: correctly does not send it. What actually bounds concurrency is the compute
+    #: environment's ``MaxvCpus`` divided by what one child reserves.
+    #:
+    #: Kept rather than removed, because it is the submitter's stated intent and an
+    #: approver reading a fan-out of two hundred should see what the submitter believed
+    #: would run at once. Removing it would also change the canonical form of every
+    #: manifest carrying a fan-out, and those records are immutable. What was wrong was
+    #: presenting it as a control, which the form and the approver summary now do not.
     max_parallel: int = Field(ge=1)
     index_parameter: str = Field(min_length=1)
 
