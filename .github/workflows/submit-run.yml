@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       repository:
-        description: Research repository this run comes from.
+        description: "Which repository this run's code comes from."
         required: true
         type: choice
         options:
@@ -27,16 +27,16 @@ on:
           - OLMo-core
           - olmo-eval-full
       commit_sha:
-        description: "Your branch name works here, and so does a tag or a full commit. Whichever you give, the record names the exact commit it resolved to."
+        description: "Branch, tag or commit. Use main for a first run."
         required: true
         type: string
       image_digest:
-        description: "Advanced — leave blank. The image is resolved from the commit above. Fill this in only to pin one particular rebuild of a commit that was built more than once, written as sha256 followed by sixty-four hex characters."
+        description: "Leave blank. The image comes from the commit above."
         required: false
         type: string
         default: ""
       workload_profile:
-        description: "What kind of run this is. For a first test pick olmo-core-check-cpu. Your choice fixes the machine, the time limit and the retry limit, so you do not have to."
+        description: "What kind of run this is. Start with olmo-core-check-cpu."
         required: true
         type: choice
         options:
@@ -65,7 +65,7 @@ on:
           # the reason.
           - olmo-eval-check-cpu
       dataset_release:
-        description: "Which prepared dataset this run reads. Pick none unless you are reading one — a quick check reads nothing, and saying none is what makes the record true. All five corpora are published and read-only, from 5.5B tokens up to 157B."
+        description: "Which corpus this run reads. Pick none if it reads nothing."
         required: true
         type: choice
         options:
@@ -87,7 +87,7 @@ on:
       # There is no `other`: eight is the whole list, and an escape hatch here would be the
       # free-text field back under a different name.
       team:
-        description: "Your group. It records whose work this is, points the request at a lead, and is both the S3 prefix the run writes under and the cost centre it is booked to. Any lead may approve any run, so naming a group you are not on mis-routes the request rather than refusing it. Pick scratch for work you do not intend to keep."
+        description: "Your group. Pick scratch for anything you will not keep."
         required: true
         type: choice
         options:
@@ -100,15 +100,15 @@ on:
           - eval-inference
           - scratch
       experiment:
-        description: "Groups related runs together inside that project — a sweep, an ablation, one week of work. Also names the group on the cost view. Lower-case words joined by hyphens, such as onboarding. Make one up; it needs no registering."
+        description: "Groups related runs. Lower-case with hyphens, like onboarding."
         required: true
         type: string
       wandb_project:
-        description: Weights and Biases project the run reports into.
+        description: "Weights and Biases project the run reports into."
         required: true
         type: string
       command:
-        description: "What the container should run, as one command line. The default below runs a one-line check that needs no code of your own; overwrite it with your own script path for real work. On a multi-GPU profile the command must start one process per device — python -m torch.distributed.run --nproc-per-node=N --standalone, where N is the profile's GPU count — and a command that does not is refused when this compiles, before a lead is asked."
+        description: "What the container runs. Leave the default for a first run."
         required: true
         type: string
         # PRE-FILLED RATHER THAN DESCRIBED, WHICH IS THE DIFFERENCE BETWEEN AN EXAMPLE AND
@@ -123,7 +123,7 @@ on:
         # whole command line. A default that could not compile would be worse than none.
         default: "python -c 'import sys; print(\"edullm ready\", sys.version)'"
       compute_profile:
-        description: "Advanced, leave as inherit. Runs on a different machine than the workload above normally uses. The two eight-GPU P shapes, gpu-8xa100 and gpu-8xh100, cost over $20 an hour and need an admin rather than a lead."
+        description: "Leave as inherit."
         required: false
         type: choice
         default: inherit
@@ -145,17 +145,17 @@ on:
           - gpu-8xa10g
           - gpu-8xh100
       maximum_runtime_hours:
-        description: Override the runtime bound, in hours, written in base ten. Leave empty to take the registered default.
+        description: "Override the runtime bound, in hours."
         required: false
         type: string
         default: ""
       maximum_attempts:
-        description: Override the attempt bound. Only a workload that checkpoints may be retried. Leave empty to take the registered default.
+        description: "Override the attempt bound."
         required: false
         type: string
         default: ""
       fanout_size:
-        description: Number of cells in a fan-out. Declare all three fan-out fields or none of them.
+        description: "Cells in a fan-out. Declare all three fan-out fields or none."
         required: false
         type: string
         default: ""
@@ -164,12 +164,12 @@ on:
       # how many cells run at once is the compute environment's vCPU ceiling divided by
       # what one cell reserves.
       fanout_parallelism:
-        description: How many cells you expect to run at once. Recorded on the run, not enforced by Batch, which caps concurrency by available capacity instead. Declare all three fan-out fields or none of them.
+        description: "Cells you expect to run at once. Recorded, not enforced — Batch caps by available capacity."
         required: false
         type: string
         default: ""
       fanout_index_parameter:
-        description: What the fan-out index varies, such as seed or shard. Declare all three fan-out fields or none of them.
+        description: "What the index varies, such as seed or shard."
         required: false
         type: string
         default: ""

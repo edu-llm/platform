@@ -916,19 +916,25 @@ def test_the_digest_field_is_offered_as_an_override_and_says_what_leaving_it_bla
     That description asked for the hardest field on the form and gave no hint that it had
     stopped being required, so a submitter who read it would go and transcribe
     seventy-one characters the workflow was about to derive for them.
+
+    **THE WORD "ADVANCED" WAS PINNED HERE AND IS NOT ANY MORE, AND THE PROPERTY IT STOOD FOR
+    IS.** It was one way of saying the field is not for ordinary use, and it was carrying that
+    alone. Then the form was rewritten to one clause a field, every description read as a
+    plain sentence, and "Advanced — leave blank" was the ugliest line on the page: a marker
+    word, a dash, and then the instruction that already said the same thing. What a reader
+    needs is that they can skip it and where the image comes from instead, so those two are
+    what is asserted. A description satisfying both cannot leave somebody transcribing a
+    digest, which is the defect this test was written for.
     """
     declared = _load()["on"]["workflow_dispatch"]["inputs"]["image_digest"]
 
     assert declared["required"] is False
     assert declared["default"] == ""
     described = declared["description"].lower()
-    # The description has to say the field is skippable and say what filling it in is for.
-    # "Override" said only the second, and said it in a word that reads as an instruction to
-    # somebody who does not already know the field is optional.
+    # Skippable, and what fills it if you skip it. Both, because either alone leaves the
+    # reader either transcribing a digest or wondering what runs instead.
     assert "leave blank" in described
-    assert "advanced" in described
-    assert "blank" in declared["description"].lower()
-    assert "commit" in declared["description"].lower()
+    assert "commit" in described
 
 
 # --------------------------------------------------------------------------------------
