@@ -2,8 +2,8 @@
 
 Phase: phase-0
 Bundle schema version: 1
-Source commit: 5744b5dbce09cbe3d3a1397b42afe7525bcdeda9
-Generated: 2026-08-01T04:03:21+00:00
+Source commit: 8ea980e925db9d474bf0aaaed7a3af669b395c92
+Generated: 2026-08-01T05:27:05+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 0 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase0_proof.py` at generation time.
 
@@ -18,10 +18,10 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3879 |
-| suite tests executed | 3686 |
-| suite passed | 3684 |
-| suite failed | 2 |
+| suite tests collected | 3884 |
+| suite tests executed | 3691 |
+| suite passed | 3691 |
+| suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
 | matrix node ids executed | 254 |
@@ -88,7 +88,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | --- | --- |
 | config/organization.yaml | sha256:cea2d2123d2fb5794614e6a4b8a362c8aaa33626f20ae28a13cb673fadf4ac78 |
 | config/policy.yaml | sha256:8efa2f00527f9ad1677ed27452a2b6093a6a8c9e8190cf3e0a583b0f68787b39 |
-| config/workload-catalog.yaml | sha256:9d5d346254b61527cfab6babc3c5d8af637854b24c8efd50a351fb689b85eb15 |
+| config/workload-catalog.yaml | sha256:caccfdc8ecf5877119c2c39277f1a6b1bfe05e55b3f0c2a963d63e97d8479531 |
 | fixtures/authorization/admin-exception.yaml | sha256:4ad48b8ecd405d11428cf446f74d0a8aeabf904365f3fee7b599b6a7ed0b6fa0 |
 | fixtures/authorization/lead-self-authorization.yaml | sha256:0e65da633a3880b11e5f14d380d54497a2be7124da1121f34ec3d21d4b4e83d0 |
 | fixtures/authorization/member-approval.yaml | sha256:a39cbdcbec68bf2fd8067f624ee1cf08aac008757e9fdaf69d812b76ea44e2de |

@@ -445,7 +445,7 @@ def test_the_submitted_target_is_the_resolved_one_and_not_anything_from_the_mani
     assert request["JobDefinition"] == resolved.job_definition_arn
 
 
-def test_the_container_environment_is_exactly_these_seven_variables() -> None:
+def test_the_container_environment_is_exactly_these_eight_variables() -> None:
     """Mutation: add, drop or rename a variable the container reads.
 
     Nothing else in the repository pins this list, which was measured rather than assumed:
@@ -473,6 +473,11 @@ def test_the_container_environment_is_exactly_these_seven_variables() -> None:
         "EDULLM_DATASET_RELEASE",
         "EDULLM_COMMIT_SHA",
         "EDULLM_OUTPUT_PREFIX",
+        # The suffix is not a secret, and this is still worth its own variable: OLMo-core's
+        # example defaults its save folder to /tmp, so a long run that took the default
+        # trains for hours, writes checkpoints onto an instance that is about to disappear,
+        # and exits zero. This is the one line a submitter copies to avoid that.
+        "EDULLM_CHECKPOINT_DIR",
         "EDULLM_WANDB_PROJECT",
         # W&B's own names rather than EDULLM_ ones, because the wandb client reads these
         # itself and a prefixed copy would need the workload to forward it. WANDB_USERNAME
