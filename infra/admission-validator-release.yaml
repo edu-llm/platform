@@ -79,14 +79,24 @@
 # nothing on the handler's path reads the new list -- so the validator this release deploys
 # makes byte-for-byte the same admission decisions as the one before it. What was stale was
 # the record, never the behaviour.
+#
+# THIS RELEASE WAS CAUSED BY A COMMENT, AND THAT IS WORTH KNOWING RATHER THAN SURPRISING.
+# Retiring the forward phase numbering reworded one comment in
+# src/edullm_platform/admission_handler.py, which explains why `ecr_repository` is required
+# rather than defaulted. No statement changed and no behaviour did. The comment is in a
+# module the package carries, so the bytes moved and the tripwire went red, which is the
+# control working as specified: it compares packaged bytes and does not try to judge which
+# byte changes matter. The consequence is that a docstring or comment edit to any of the
+# twenty-eight modules is a release, and the cheap reading of a moved digest stays correct.
+# The deployed validator makes the same decisions before and after.
 schema_version: 1
 
 #: The object the template's Code block names. Kept here as well so the two can be
 #: compared: a version id edited in one place and not the other is a template pointing at
 #: a zip nobody recorded, or a record describing a zip nobody deployed.
 s3_key: admission-validator/admission-validator.zip
-s3_object_version: 0oO95M_Zit383Evb2H3jEJNk_DdT5rq5
+s3_object_version: uN7Qdz4D6y_SevQ.IoIWXH6R8dGKJ8nM
 
 #: sha256 of the uploaded zip, as tools/build_admission_lambda.py reports it. This is the
 #: field that ties the release to a tree rather than to a moment.
-sha256: 5b8a529dfeda9ab93168d954050d3cb9d97eb271a559cbf87a72aba6a4cfc89e
+sha256: 5173c5e0d61619ee340a08e79214e263900428ccbddfd2257b25d39015368847
