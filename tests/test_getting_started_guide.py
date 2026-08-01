@@ -257,3 +257,28 @@ def test_the_tmp_trap_is_named_wherever_the_guide_puts_it(guide: str) -> None:
         "the guide no longer says that a run which saved nothing is recorded as a success, "
         "which is the half that makes it a trap rather than an inconvenience"
     )
+
+
+def test_every_corpus_the_guide_tabulates_is_one_the_form_offers(
+    guide: str, workflow: dict[str, Any]
+) -> None:
+    """The table is a promise in the same way the dropdown is.
+
+    Read against the form rather than the registry, because the registry may hold a corpus no
+    workload can construct a tokenizer for — the guide should name what a person can pick.
+    """
+    tabulated = set(re.findall(r"^\| `([a-z0-9][a-z0-9.-]*)` \| [\d.]+B \|", guide, re.MULTILINE))
+    offered = set(form_inputs(workflow)["dataset_release"]["options"]) - {"none"}
+
+    assert tabulated, "the guide names no corpus, so either the table or this pattern moved"
+    assert tabulated == offered
+
+
+def test_the_guide_does_not_promise_a_size_that_costs_a_download(guide: str) -> None:
+    """The largest corpus is 630 GB on a machine with far less disk.
+
+    What makes it usable is that shards are memory-mapped as the loader reaches them, so the
+    guide has to say so -- otherwise the sensible reading of the table is that picking the
+    157B corpus means waiting for 157B tokens to arrive.
+    """
+    assert "memory-mapped" in guide
