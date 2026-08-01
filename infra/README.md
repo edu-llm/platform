@@ -539,6 +539,42 @@ need editing.
 Uploading an object is not applying a stack, so this one S3 write is a laptop step
 without contradicting the rule above.
 
+**The laptop is not the only place the upload can happen, and on 2026-08-01 it stopped
+being a place it could happen at all.** `main` went red on the release tripwire — the zip
+the tree built no longer matched the recorded one — and the credential broker rejected its
+refresh token server-side. The only repair for a red `main` was behind a browser login, and
+the deployer role had been sitting on `s3:PutObject` for the artifacts bucket the whole
+time, granted in `infra/iam/infra-deployer-role.yaml` and never used for this.
+
+So `deploy-phase2-admission.yml` takes a `release_lambdas` dispatch input. It builds both
+zips, uploads them, and writes the version id and digest into the run summary:
+
+```bash
+gh workflow run deploy-phase2-admission.yml --ref main -f release_lambdas=true
+```
+
+**It uploads and prints; it does not edit or commit.** The two values still get pasted into
+the template and the release record by hand in a reviewed pull request, so the property the
+rule above protects — the deploy sits on the far side of a diff somebody read — is
+unchanged. What moved is only which machine holds the credential.
+
+Both functions are released together, because one config edit is two releases:
+`build_package` copies `config/*.yaml` into whatever zip it builds and
+`tools/build_lifecycle_lambda.py` calls the same function, so editing a catalog moves the
+lifecycle recorder's digest even though nothing the recorder does reads a catalog.
+
+The step lives inside an existing deploy workflow rather than in a `release-lambda.yml` of
+its own, and that is the trust policy talking rather than a preference. The deployer role
+pins `job_workflow_ref` to exactly three workflow files at `refs/heads/main`, so a new file
+cannot assume the role until the policy names it — and amending the policy needs the AWS
+access the step exists to replace. A new file is a door that only opens from inside.
+
+One consequence to know before relying on it: the workflow can only run from `main`, so a
+pull request that changes packaged bytes cannot be released before it merges. Such a branch
+lands red on the tripwire, the release is dispatched from `main`, and a second small pull
+request carries the two values. That is a worse sequence than releasing from the branch and
+is the right trade only while the laptop path is unavailable.
+
 **The configuration is inside the zip, so editing `config/` is a release.**
 `tools/build_admission_lambda.py` copies `config/*.yaml` to `edullm_platform/config/`,
 because the validator has to read the catalog it was reviewed against rather than whatever

@@ -5,6 +5,11 @@ name: "Deploy: admission control plane"
 # Renaming or moving this file silently revokes every deployment. Do not rename it.
 on:
   workflow_dispatch:
+    inputs:
+      release_lambdas:
+        description: "Build both Lambda zips and upload them to the artifacts bucket, printing the version id and digest to paste into the release records. Deploys nothing new by itself."
+        type: boolean
+        default: false
   push:
     branches:
       - main
@@ -81,6 +86,86 @@ jobs:
           # machine ARN out of a stack output, and masking keeps that ARN from turning a
           # public log into a free lookup of the sandbox account number.
           mask-aws-account-id: true
+
+      # THE UPLOAD HALF OF A RELEASE, MOVED OFF THE LAPTOP THAT COULD NOT MAKE IT.
+      #
+      # `infra/README.md` describes a release as three steps run by a person: build the zip,
+      # `put-object` it, paste the returned version id and digest into the template and the
+      # release record. It argued the upload belongs on a laptop because an S3 write is not
+      # applying a stack, and that was a reasonable line until the night it was not.
+      #
+      # On 2026-08-01 `main` went red on the release tripwire -- the built zip no longer
+      # matched the recorded one -- and every credential that could fix it had been revoked
+      # server-side. The repair for a red `main` was reachable only through a browser login
+      # nobody was awake to complete. The deployer role, meanwhile, was sitting right here
+      # holding `s3:PutObject` on the artifacts bucket, granted in
+      # `infra/iam/infra-deployer-role.yaml` and unused for this.
+      #
+      # SO THE STEP LIVES IN THIS FILE RATHER THAN A NEW ONE, AND THAT IS THE TRUST POLICY
+      # TALKING. The role's condition pins `job_workflow_ref` to exactly three workflow files
+      # at `refs/heads/main`. A `release-lambda.yml` could not assume the role until the
+      # policy named it, and amending the policy needs the AWS access this step exists to
+      # replace -- so a new file is a door that can only be opened from inside the room.
+      # Adding steps to a named file needs nobody's permission.
+      #
+      # It uploads and prints; it does not edit or commit. The values are pasted into the two
+      # files by hand in a reviewed pull request, which keeps the deploy on the far side of a
+      # review -- the property `infra/README.md` was protecting, preserved.
+      #
+      # BOTH FUNCTIONS, BECAUSE ONE CONFIG EDIT IS TWO RELEASES. `build_package` copies
+      # `config/*.yaml` into whatever zip it builds and the lifecycle recorder's builder calls
+      # that same function, so editing a catalog moves the recorder's digest even though
+      # nothing the recorder does reads a catalog. Releasing one and not the other is how the
+      # tripwire ends up red on the function nobody was thinking about.
+      - name: Install uv
+        if: github.event_name == 'workflow_dispatch' && inputs.release_lambdas
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Build and upload both Lambda zips
+        if: github.event_name == 'workflow_dispatch' && inputs.release_lambdas
+        run: |
+          set -euo pipefail
+          uv sync --locked
+
+          # --output is the builder's own contract and it prints a JSON record carrying the
+          # digest. The digest is taken from that record rather than hashed again here: the
+          # tripwire compares against what the builder reports, and a second hasher is a
+          # second chance to disagree with it.
+          release() {
+            local builder="$1" key="$2" zip="$3"
+            local digest version
+            digest="$(uv run python "${builder}" --output "${zip}" | python -c 'import json,sys; print(json.load(sys.stdin)["sha256"])')"
+            version="$(aws s3api put-object \
+              --bucket sbsandbox-intern-edullm-artifacts \
+              --key "${key}" \
+              --body "${zip}" \
+              --content-type application/zip \
+              --query VersionId --output text)"
+            if [[ -z "${version}" || "${version}" == "None" ]]; then
+              echo "the upload returned no VersionId, so the artifacts bucket may not be versioned" >&2
+              exit 1
+            fi
+            {
+              echo "### ${key}"
+              echo ""
+              echo '```yaml'
+              echo "s3_object_version: ${version}"
+              echo "sha256: ${digest}"
+              echo '```'
+            } >> "${GITHUB_STEP_SUMMARY}"
+          }
+
+          release tools/build_admission_lambda.py \
+            admission-validator/admission-validator.zip \
+            "${RUNNER_TEMP}/admission-validator.zip"
+          release tools/build_lifecycle_lambda.py \
+            lifecycle-recorder/lifecycle-recorder.zip \
+            "${RUNNER_TEMP}/lifecycle-recorder.zip"
+
+          echo "RELEASE_UPLOADED"
 
       - name: Validate CloudFormation templates
         run: |
