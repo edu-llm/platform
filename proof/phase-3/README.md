@@ -2,8 +2,8 @@
 
 Phase: phase-3
 Bundle schema version: 1
-Source commit: fdc5b5b934ab7380c48b4bac7077122b99976009
-Generated: 2026-08-01T02:57:21+00:00
+Source commit: 1b036a3e46a7cff1a8c588e5f9560d70725e6893
+Generated: 2026-08-01T03:31:35+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 3 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase3_proof.py` at generation time. It is not done, and the Result table below says by how much.
 
@@ -29,9 +29,9 @@ What is not done is captures rather than mechanism, which is a change in this bu
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3836 |
-| suite tests executed | 3655 |
-| suite passed | 3655 |
+| suite tests collected | 3858 |
+| suite tests executed | 3677 |
+| suite passed | 3677 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
@@ -77,7 +77,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | config/image-exceptions.yaml | sha256:0828f4203385bbc3adbd8521f62768e7f4eb46f56382bc6223d37b89aae7a49c |
 | config/workload-catalog.yaml | sha256:dbd10c9d4655be66f829b8c43e150544ba17ca778988f86d14d22e51600feec6 |
 | fixtures/evidence/phase-3/account-measurements.sanitized.json | sha256:02a7cafae966f04037c13f4e2a57b958a7b5e2c435c46a0eba4a6839d4a4c127 |
-| infra/admission-state-machine.yaml | sha256:3f25aa3edd571d000011a4f71dfccd0c43d18463478fe232f2c176a23d86dace |
+| infra/admission-state-machine.yaml | sha256:f8523bd26ad70dd250e0ac37545e09156b05520babf1a80492d640c9ba87cf74 |
 | infra/batch-compute.yaml | sha256:39a44a2d045f2434b3d5f259e7aa78447155859634a16c4e44a172d2d5621af9 |
 | infra/batch-events.yaml | sha256:bbed061a2199cf8aa7f40968513e6253dd11a17983f450435dc912868e3159d5 |
 | infra/batch-network.yaml | sha256:699a82646fa0d9d2a3446471c5451a2847d4c5d1d8978ebe7a2525fa98d2154d |
