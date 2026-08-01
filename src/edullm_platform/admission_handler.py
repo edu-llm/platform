@@ -89,7 +89,7 @@ _REQUIRED_EVENT_FIELDS = (
     # Required rather than defaulted, for the reason the ASL gives about `approver`: an
     # execution reaching this handler without it is a hand-started execution, and the useful
     # thing to do with one is stop. Defaulting it to OLMo-core's repository would restore the
-    # exact constant Phase 6 removed, and restore it somewhere no test was looking.
+    # exact constant the registry lookup replaced, and restore it somewhere no test was looking.
     "ecr_repository",
 )
 

@@ -31,6 +31,7 @@ from edullm_platform.contracts.workload import WorkloadCatalog
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 GUIDE_PATH = PROJECT_ROOT / "GETTING-STARTED.md"
 WORKFLOW_PATH = PROJECT_ROOT / ".github" / "workflows" / "submit-run.yml"
+CANCEL_WORKFLOW_PATH = PROJECT_ROOT / ".github" / "workflows" / "cancel-run.yml"
 GPU_ROLES_PATH = PROJECT_ROOT / "infra" / "iam" / "batch-gpu-roles.yaml"
 
 
@@ -44,6 +45,12 @@ def workflow() -> dict[str, Any]:
     # `on:` is parsed by PyYAML as the boolean True, which is the same trap the other
     # workflow tests document; reading the mapping back by identity avoids arguing with it.
     parsed: dict[str, Any] = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
+    return parsed
+
+
+@pytest.fixture(scope="module")
+def cancel_workflow() -> dict[str, Any]:
+    parsed: dict[str, Any] = yaml.safe_load(CANCEL_WORKFLOW_PATH.read_text(encoding="utf-8"))
     return parsed
 
 
@@ -183,9 +190,23 @@ def workload_role_actions() -> set[str]:
 def test_the_prune_trap_is_named_and_the_grant_it_assumes_is_still_absent(guide: str) -> None:
     """Mutation: grant the workload role a delete, and leave the guide saying it has none.
 
-    OLMo-core keeps the last three checkpoints and deletes the rest, so the fourth write
-    is the one that calls ``s3:DeleteObject``. The role does not hold it, which turns a
-    default nobody chose into a failure eleven hours into a twelve-hour run.
+    ``CheckpointerCallback.max_checkpoints`` defaults to 3 and counts permanent checkpoints
+    only, which means the one written at step 0 plus those at ``save_interval`` and
+    ``fixed_steps``. The fourth of those schedules the oldest for removal, and the removal
+    runs at the top of the following ``post_train_batch``. It deletes the step directory's
+    ``.metadata.json`` first, through ``remove_file``, which is a single ``s3:DeleteObject``
+    and is the call the role does not hold.
+
+    THE REFUSAL IS NOT SWALLOWED, WHICH IS WHY THIS IS A TRAP RATHER THAN AN UNTIDY BUCKET.
+    ``_s3_remove_file`` re-raises anything that is not a 404, ``@retriable`` treats every
+    botocore ``ClientError`` as retriable and so turns it into ``OLMoNetworkError`` after
+    three attempts, and ``_remove_checkpoint`` catches only ``FileNotFoundError``. So it
+    reaches ``Trainer.fit``, which records it and re-raises. The directory clear that would
+    have run next does swallow the same refusal, so the order of the two is what decides
+    whether the run dies or merely leaks objects.
+
+    It fires early, not late. At ``--save-interval 200`` the fourth permanent checkpoint is
+    step 600, which on one A10G is a bit over an hour in.
 
     The guide's advice is to keep every checkpoint, and the reason it gives is that the
     role has no delete. Both halves are asserted, because the advice outliving its reason
@@ -208,14 +229,64 @@ def test_the_prune_trap_is_named_and_the_grant_it_assumes_is_still_absent(guide:
     )
 
 
+def test_the_save_interval_is_named_against_the_contract_the_workload_declares(
+    guide: str,
+) -> None:
+    """Mutation: move the checkpoint contract to 60 minutes, leave the guide saying 30.
+
+    ``--save-interval`` is the flag that decides what a lost machine costs, and the resume
+    section is the only place a reader is told so. The figure it tells them to come in under
+    is the workload's own ``interval_minutes``, so it is read out of the catalog rather than
+    copied here, and it is asserted inside the paragraph that names the flag rather than
+    anywhere in the document. A guide that cites 30 while the contract says 60 is telling
+    people to checkpoint twice as often as they have to, and one that cites 60 against a
+    contract of 30 is worse.
+
+    The measured figures beside it, 3.2 GB and 40 seconds and 23 minutes, are observations
+    of one model on one machine. Nothing in this repository can check them and this test
+    does not pretend to.
+    """
+    catalog = load_yaml(PROJECT_ROOT / "config" / "workload-catalog.yaml", WorkloadCatalog)
+    contracts = {
+        workload.name: workload.checkpoint
+        for workload in catalog.workloads
+        if workload.checkpoint is not None
+    }
+    declared = contracts["olmo-core-train-1gpu"].interval_minutes
+
+    paragraphs = [block for block in guide.split("\n\n") if "--save-interval" in block]
+
+    assert paragraphs, (
+        "the guide no longer names --save-interval, so nothing tells a reader which flag "
+        "decides how much work a lost machine throws away"
+    )
+    assert any(str(declared) in block for block in paragraphs), (
+        f"olmo-core-train-1gpu declares a checkpoint every {declared} minutes and no "
+        "paragraph naming --save-interval cites that number, so the advice and the "
+        "contract it rests on can drift apart without anything saying so"
+    )
+
+
 def test_the_evaluator_trap_names_both_callbacks(guide: str) -> None:
     """Mutation: name one evaluator and leave the other on.
 
-    The example's ``lm_evaluator`` fetches a ``.csv.gz`` metadata file that is not served
-    over HTTP, and it fails while the trainer is still being built rather than at the first
-    eval interval. ``downstream_evaluator`` fails the same way for the same reason, so a
-    guide that disables one of the two sends the reader back to an identical crash with the
-    obvious fix already applied, which is the worst place to leave somebody.
+    TWO CALLBACKS, TWO UNRELATED CAUSES, AND THE GUIDE USED TO GIVE ONE CAUSE FOR BOTH.
+    ``lm_evaluator`` builds a ``NumpyPaddedFSLDataset`` over a C4 validation shard on
+    ``olmo-data.org``, which needs the ``.csv.gz`` of document offsets sitting beside the
+    ``.npy``. That file 404s, while ``c4-train.00000-00099.csv.gz`` in the same directory
+    returns 200, so the shape of the failure is a file nobody published rather than a
+    protocol or a container that cannot reach the internet. The observed error is
+    ``RuntimeError: Source metadata file 'c4-validation.00000-00008.csv.gz' is required to
+    calculate document indices``.
+
+    ``downstream_evaluator`` fails on ``from olmo_eval import HFTokenizer``.
+    ``ai2-olmo-eval`` is OLMo-core's ``eval`` extra and the training image installs
+    ``.[wandb]`` and ``boto3``, so it is not there. Nothing has ever logged it, because
+    ``lm_evaluator`` is built first and ends the process.
+
+    What survives that correction is the reason both are named: they fail during trainer
+    construction rather than at the first eval interval, so a guide that disables one sends
+    the reader back to a crash seconds later with the obvious fix already applied.
 
     The worked command is asserted separately from the prose. A trap explained in a
     paragraph and missing from the line people paste is a trap that is still set.
@@ -272,6 +343,40 @@ def test_every_corpus_the_guide_tabulates_is_one_the_form_offers(
 
     assert tabulated, "the guide names no corpus, so either the table or this pattern moved"
     assert tabulated == offered
+
+
+def test_the_guide_sends_a_reader_who_wants_to_stop_a_run_to_the_button(
+    guide: str,
+    cancel_workflow: dict[str, Any],
+) -> None:
+    """Mutation: put back a caveat routing the reader to somebody with a credential.
+
+    Stopping your own run is self-service, and the section that says so is the only place a
+    researcher learns it. A caveat here is obeyed long after it stops being true, because
+    the person reading it has no way to find out otherwise -- they ask, wait, and conclude
+    the button is not theirs.
+
+    Held against the form rather than against prose. The section tells people to tick
+    **stop**, so the workflow it names has to offer that input; a rename on either side
+    leaves the guide describing a control that is not on the page.
+    """
+    heading = "## Looking at a run, and stopping one"
+    assert heading in guide, "the guide no longer tells anybody how to look at a run"
+    section = guide.split(heading, 1)[1].split("\n## ", 1)[0]
+
+    assert "cancel-run.yml" in section, "the section names no workflow to reach for"
+    assert "**stop**" in section
+
+    assert "stop" in form_inputs(cancel_workflow), (
+        "the guide tells people to tick stop and the workflow it points at has no such "
+        "input, so the instruction names a control that is not there"
+    )
+
+    for routed_away in ("Not live yet", "ask an admin", "Ask an admin"):
+        assert routed_away not in section, (
+            f"the section carries {routed_away!r}, which sends a researcher to somebody "
+            "else for a run they can stop themselves"
+        )
 
 
 def test_the_guide_does_not_promise_a_size_that_costs_a_download(guide: str) -> None:

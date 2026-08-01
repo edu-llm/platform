@@ -49,10 +49,30 @@ on:
           - olmo-original-30b-v1
           - olmo-127b-v1
           - olmo-150b-dolma2-v1
+      # A DROPDOWN BECAUSE THE COST OF A TYPO WAS PAID SOMEWHERE THE TYPIST NEVER LOOKS.
+      # This was free text and nothing refused an unrecognised value, so `pre-traning`
+      # compiled, classified, was approved, ran, wrote its outputs under
+      # teams/pre-traning/runs/ and booked its spend to a group that does not exist. The
+      # cost report groups by whatever people typed, so the run simply is not in its
+      # group's total and no refusal ever names the reason.
+      #
+      # The options are the eight team_ids in config/organization.yaml, in the order that
+      # file declares them, and tests/test_submission_form_options.py holds them to it.
+      # There is no `other`: eight is the whole list, and an escape hatch here would be the
+      # free-text field back under a different name.
       team:
-        description: "Your group, lower-case with hyphens, such as memory-split. It records whose work this is and points the request at a lead. Any lead may approve any run, so a typo here delays nothing."
+        description: "Your group. It records whose work this is, points the request at a lead, and is both the S3 prefix the run writes under and the cost centre it is booked to. Any lead may approve any run, so naming a group you are not on mis-routes the request rather than refusing it. Pick scratch for work you do not intend to keep."
         required: true
-        type: string
+        type: choice
+        options:
+          - platform
+          - memory-split
+          - input-core
+          - pre-training
+          - post-training
+          - data-prep
+          - eval-inference
+          - scratch
       experiment:
         description: "Groups related runs together inside that project — a sweep, an ablation, one week of work. Also names the group on the cost view. Lower-case words joined by hyphens, such as onboarding. Make one up; it needs no registering."
         required: true
@@ -1254,10 +1274,11 @@ jobs:
               "### What this does not do yet",
               "",
               (
-                  "**Cancelling the workflow does not stop your job.** Nothing in this "
-                  "account holds `batch:TerminateJob`, so a cancelled workflow leaves the "
-                  "container running and spending. Ask an admin to stop it. The runtime "
-                  "bound above is what limits it otherwise."
+                  "**Cancelling the workflow does not stop your job.** The two are in "
+                  "different places, so the container goes on running and spending. Stop it "
+                  "yourself from the `Look at a run, or stop it` workflow, which takes the "
+                  "run id above and reports on it unless you tick stop. The runtime bound "
+                  "above is what limits it otherwise."
               ),
               "",
               (
@@ -1336,13 +1357,13 @@ jobs:
       # never reach this step at all. So this is best-effort by construction, and a design
       # that depended on it running would be a design with a hole in it.
       #
-      # Second, and more important: this step stops nothing today, and says so rather than
-      # implying otherwise. Stopping a running Batch job needs `batch:TerminateJob`, which
-      # the admission role deliberately does not hold -- infra/iam/admission-role.yaml
-      # grants one `states:StartExecution` and two read-only execution actions, and the plan
-      # routes cancellation through a separate state machine that has not been built. The
+      # Second: this step stops nothing itself, and says so rather than implying otherwise.
+      # Stopping a running Batch job needs `batch:TerminateJob`, which the admission role
+      # deliberately does not hold -- infra/iam/admission-role.yaml grants one
+      # `states:StartExecution` and two read-only execution actions. Cancellation lives in
+      # cancel-run.yml instead, on a role of its own that this job cannot obtain. So the
       # honest thing a cancelled workflow can do is leave a record naming what is still
-      # running, so an operator has the run id rather than a job nobody knows about.
+      # running, beside the button that stops it.
       #
       # Third: a cancelled workflow is not a cancelled run. The admission execution may
       # already have accepted the submission and written its intent and decision records,
@@ -1361,11 +1382,10 @@ jobs:
           # into the prose. The run id is echoed separately, which is why it is the only
           # value this step interpolates.
           #
-          # The commands an operator needs are named by reference rather than printed here.
-          # infra/README.md is where every laptop procedure in this repository lives, so a
-          # copy in this file would be a second copy going stale -- and a literal `aws` line
-          # in a run body is indistinguishable, to anything reading this workflow, from a
-          # call this job makes.
+          # The way to stop a job is named by reference rather than spelled out here. A
+          # literal `aws` line in a run body is indistinguishable, to anything reading this
+          # workflow, from a call this job makes -- and this job holds no credential that
+          # could make one.
           {
             echo "## This workflow run was cancelled"
             echo
@@ -1377,11 +1397,10 @@ jobs:
           then a Batch job carrying the run id above as its job name may still be running,
           and it will run to its own attempt timeout unless somebody stops it.
 
-          To check whether one is running and stop it if it is, follow the section of
-          infra/README.md headed:
-          Stopping a job a cancelled workflow left running
-          It needs an SSO session. No identity this workflow can obtain is permitted to do
-          it, which is the point rather than an oversight.
+          To check whether one is running and stop it if it is, dispatch the workflow
+          `Look at a run, or stop it` with the run id above. Left alone it only reports what
+          the job is doing; tick stop and give a reason to end it. It assumes a role of its
+          own, which is why no identity this job holds can do the same thing from here.
 
           Any intent and decision records admission already wrote are immutable and stay
           where they are. This cancellation removes no approval and unwrites nothing.

@@ -1,4 +1,4 @@
-"""The seam Phase 6 opens: a scan read that follows the submission instead of a constant.
+"""A scan read that follows the submission instead of a constant.
 
 Phase 3 built the admission state machine around one repository because one repository was
 all there was, and it wrote that repository's name into ``ReadImageScan`` as a literal. The
@@ -13,7 +13,7 @@ So the repository name has to travel with the submission. It cannot be computed 
 state machine: ``ReadImageScan`` is the first state and runs before the validator, and the
 ECR repository is not a pure function of the GitHub one -- ``edullm-data`` publishes to
 ``sbsandbox-intern-edullm-data``, so ``States.Format`` cannot build it and a ``Choice`` state
-would be the hand-maintained mapping this phase exists to delete.
+would be the hand-maintained mapping this arrangement exists to delete.
 
 That leaves the submitting workflow, which already reads the registry, putting the name into
 the admission request. **Which makes it a field the caller supplies**, and this module's last
@@ -112,7 +112,7 @@ def test_every_registered_repository_can_have_its_scan_read_because_the_name_is_
         "the admission state machine names "
         f"{', '.join(pinned)} literally. A registered repository written into this "
         "definition is a mapping that has to be edited every time the registry grows, "
-        "which is the failure this phase exists to remove."
+        "which is the failure reading the name from the request exists to remove."
     )
 
 

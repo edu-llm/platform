@@ -130,7 +130,7 @@ def test_a_caller_cannot_tell_a_report_which_phase_it_is_about(subject: PhaseUnd
     # The phase is a class variable rather than a field for this reason: a supplied one is
     # one that can name a phase the criteria in the same document are not from.
     with pytest.raises(ValidationError) as refused:
-        report_for(subject, phase="Phase 9")
+        report_for(subject, phase="a phase this report is not about")
 
     assert [error["type"] for error in refused.value.errors()] == ["extra_forbidden"]
 

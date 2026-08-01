@@ -1,0 +1,22 @@
+{
+  "config_uri": "s3://sbsandbox-intern-edullm-outputs/teams/platform/runs/run_019fbddb-5125-7045-95aa-1951e5ca3f31/checkpoints/step150/config.json",
+  "dataset_id": "pretrain/regmix-10b",
+  "dataset_version": "v1",
+  "environment": "sandbox",
+  "observed_at": "2026-08-01T15:30:31Z",
+  "run_id": "run_019fbddb-5125-7045-95aa-1951e5ca3f31",
+  "sequence_length": 2048,
+  "shard_count": 41,
+  "shard_prefixes": [
+    "s3://edullm-data/pretrain/regmix-10b/v1/tokens/algebraic-stack/",
+    "s3://edullm-data/pretrain/regmix-10b/v1/tokens/arxiv/",
+    "s3://edullm-data/pretrain/regmix-10b/v1/tokens/dclm/",
+    "s3://edullm-data/pretrain/regmix-10b/v1/tokens/open-web-math/",
+    "s3://edullm-data/pretrain/regmix-10b/v1/tokens/pes2o/",
+    "s3://edullm-data/pretrain/regmix-10b/v1/tokens/starcoder/",
+    "s3://edullm-data/pretrain/regmix-10b/v1/tokens/wiki/"
+  ],
+  "source": "aws",
+  "token_dtype": "uint32",
+  "tokens_per_step": 262144
+}

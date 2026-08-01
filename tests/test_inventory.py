@@ -324,13 +324,16 @@ def test_the_shipped_roster_attributes_the_people_who_have_run_something() -> No
     `run_019fb4f6` was submitted by `aryanjverma`, released by `pianomaster99`, and logged
     nothing to W&B; the run after it logged as the platform's own account, because a
     personal API key was in the container and nothing told W&B who had asked for the work.
-    Frank and Tom are recorded here. Aryan is deliberately absent and
-    `test_the_roster_records_who_cannot_be_attributed_yet` says why.
+    All three are recorded now. Aryan was the one this file called unattributable, and the
+    claim had stopped being true rather than never having been: the `eduLLM` entity holds
+    `aryan-jaden-verma` under the display name `Aryan Verma`, an exact match, so the gap was
+    in the roster and not in the W&B team.
     """
     project_root = Path(__file__).resolve().parents[1]
     inventory = load_yaml(project_root / "config" / "organization.yaml", OrganizationInventory)
     assert inventory.wandb_username_for("philote-dev") == "philote"
     assert inventory.wandb_username_for("pianomaster99") == "liumaizi"
+    assert inventory.wandb_username_for("aryanjverma") == "aryan-jaden-verma"
 
 
 def test_the_roster_records_who_cannot_be_attributed_yet() -> None:
@@ -341,14 +344,30 @@ def test_the_roster_records_who_cannot_be_attributed_yet() -> None:
     as the service account, which is indistinguishable from having sent no attribution.
 
     So a login is recorded here only when its owner was read out of the `eduLLM` team's own
-    roster. Aryan submitted both of the runs this phase rests on and has no W&B account in
-    that team, so recording a guess for him would produce exactly the silent failure this
-    contract exists to avoid.
+    member list. Six people are not in that list under any spelling, and a blank is the only
+    true answer for them: a plausible guess produces exactly the silent failure this contract
+    exists to avoid, and it is harder to notice than the blank because the run looks
+    attributed.
+
+    Named rather than counted, so that recording one is an edit here as well. Adding somebody
+    to the W&B team is an owner action in W&B and nothing in this repository can do it.
     """
     project_root = Path(__file__).resolve().parents[1]
     inventory = load_yaml(project_root / "config" / "organization.yaml", OrganizationInventory)
-    assert inventory.wandb_username_for("aryanjverma") is None
-    assert inventory.wandb_username_for("Elitelord") is None
+    unattributable = {
+        member.github_login
+        for member in inventory.members
+        if member.wandb_username is None
+    }
+
+    assert unattributable == {
+        "BritishAmericqn",
+        "arteexu",
+        "caiiris",
+        "yuen-kai",
+        "Adarsh-Rajesh-gitHub",
+        "NotAnAlgorithm",
+    }
 
 
 def test_every_recorded_wandb_account_belongs_to_somebody_on_the_roster() -> None:

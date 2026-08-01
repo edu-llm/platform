@@ -182,7 +182,7 @@ def test_the_team_the_submitter_claimed_is_recorded_as_a_claim_and_not_as_a_fact
 
     ``team`` routes approval and grants nothing, and the record says so in a field rather
     than in a comment. Asserting the opposite would be asserting a binding that has not been
-    built -- ``team_bindings`` is Phase 6 item 6.5 -- and the pilot limitations page tells a
+    built, because ``team_bindings`` is unpopulated, and the pilot limitations page tells a
     user the same thing this field tells a reader.
     """
     for run in admitted_runs():
@@ -333,7 +333,7 @@ def test_the_result_manifest_still_names_no_weights_and_biases_run() -> None:
     one artifact a researcher actually wants is the one the platform does not link -- and
     that is true even of the pilot run whose command logged to W&B throughout. Recording it
     as a passing check would claim a link that is not written; recording nothing would lose
-    the finding. Phase 7 item 7.4 is where it closes.
+    the finding. It closes when lineage records the W&B run.
     """
     for run in admitted_runs():
         assert run.record.wandb_run is None, (

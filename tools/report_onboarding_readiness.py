@@ -329,9 +329,9 @@ def _roster_step(github_login: str, *, on_the_roster: bool) -> Step:
             f"Add `{github_login}` to `members` in `config/organization.yaml` and open a "
             "pull request against this repository. It is the only step here that is "
             "entirely a pull request; every other one needs somebody holding an owner's "
-            "access first. Until it merges they can fill in the whole submission form and "
-            "have a lead release it, and admission refuses the run with "
-            "`submitter_not_in_roster` afterwards."
+            "access first. Until it merges every submission they dispatch is refused at "
+            "the compile step, naming the roster, before anything is compiled and before "
+            "a reviewer is asked."
         ),
     )
 
@@ -359,13 +359,21 @@ def _team_steps(
 ) -> list[Step]:
     """The research team, from the roster first and from GitHub second.
 
-    ``team_bindings`` is absent from ``config/organization.yaml`` today, so the catalog is
-    empty and ``teams_for_member`` answers nothing for everybody. That is reported as
-    missing and not as blocking, because ``evaluate_authorization`` reads
-    ``membership_is_knowable`` off the same empty catalog and skips the check: nobody is
-    refused for a team nothing can verify. When the catalog is populated the same step
-    becomes a gate, and this says so from the catalog rather than from a constant, so the
-    change to the roster is the only change needed.
+    WHETHER THIS STEP BLOCKS IS ASKED OF THE PERSON, NOT OF THE CATALOG. This read the
+    catalog: empty meant nothing was enforced, non-empty meant everybody without a team was
+    refused. That was true of ``evaluate_authorization`` when this was written and stopped
+    being true in the same change that declared the six teams. It now reads
+    ``membership_is_knowable`` per submitter, so declaring a team switches enforcement on
+    for the people recorded in one and changes nothing for anybody else. Reading the
+    catalog here inverted the answer for all thirty-five the moment the teams landed: every
+    one of them was reported blocked, from a run that would in fact have been admitted.
+
+    So a person with no recorded membership is not blocked, whether that is because no team
+    exists or because none of them lists this person. What it costs is attribution: the
+    decision records ``team_verified: false``, meaning the claim on the form was taken at
+    face value. What makes it a gate is the person's own membership being recorded, which
+    is why the two branches below differ in what somebody should do and agree that no run
+    is waiting on it.
     """
     if not inventory.team_bindings.teams:
         return [
@@ -374,14 +382,13 @@ def _team_steps(
                 done=False,
                 blocking=False,
                 action=(
-                    "No team is recorded for anybody. `team_bindings` is absent from "
-                    "`config/organization.yaml`, so the catalog is empty and every "
-                    "membership lookup answers nothing. Declaring the teams is a pull "
-                    "request against this repository; putting people into the matching "
-                    "GitHub teams is an owner action in the organization settings. No "
-                    "submission is refused over this while the catalog is empty, because "
-                    "admission checks a claimed team only when there is a catalog to check "
-                    "it against."
+                    "No team is declared at all. `team_bindings` in "
+                    "`config/organization.yaml` holds no team, so every membership lookup "
+                    "answers nothing and no claimed team can be checked against anything. "
+                    "Declaring the teams is a pull request against this repository; "
+                    "creating the matching GitHub teams is an owner action in the "
+                    "organization settings. No submission is refused over this, and every "
+                    "decision records `team_verified: false`."
                 ),
             )
         ]
@@ -392,12 +399,16 @@ def _team_steps(
             Step(
                 name=STEP_TEAM,
                 done=False,
-                blocking=True,
+                blocking=False,
                 action=(
-                    f"Add `{github_login}` to a team's `member_logins` in "
-                    "`config/organization.yaml` in a pull request against this repository. "
-                    "The catalog is populated now, so admission refuses a submission from "
-                    "somebody it holds no team for with `submitter_not_in_claimed_team`."
+                    f"No declared team lists `{github_login}`. Add them to a team's "
+                    "`member_logins` in `config/organization.yaml` in a pull request "
+                    "against this repository; the team's lead is who knows which one. No "
+                    "submission is refused over this, because admission checks a claimed "
+                    "team only against a submitter whose own membership is recorded. What "
+                    "it costs is that their runs record `team_verified: false` and are "
+                    "attributed to whatever the form said, and their claim starts being "
+                    "checked the moment this line exists."
                 ),
             )
         ]

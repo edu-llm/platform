@@ -5,16 +5,17 @@ training run through it: a model on an A10G, metrics in W&B, and a checkpoint in
 this platform will resume from. This module records the eleven checks the phase must
 satisfy, against the contract in :mod:`edullm_platform.criteria`.
 
-**The capability is deployed and has run.** Three jobs have gone through the GPU queue: a
-capability probe that reported the device nodes it was given, a training run that put
-olmo2_190M through twenty optimizer steps and wrote a 762MB checkpoint with a success
-marker, and one that failed. What all three left behind is captured, sanitized and
-committed under ``fixtures/evidence/phase-4/``.
+**The capability is deployed and has run.** Jobs have gone through the GPU queue: a
+capability probe that reported the device nodes it was given, two training runs that put
+olmo2_190M through twenty optimizer steps on tokens they generated and wrote a 762MB
+checkpoint with a success marker, one that failed, and one submitted through the form that
+trained for a hundred and fifty steps on a published corpus. What each left behind is
+captured, sanitized and committed under ``fixtures/evidence/phase-4/``.
 
 **Ten of the eleven come from the master plan; criterion 12 was added by this phase.** The
 plan lists eleven checks and marks nine as pilot-blocking, which is the highest proportion
 of any capability phase -- the reason is the hardware, because a GPU instance bills whether
-or not the container is using it. One of the marked nine has since left for Phase 8, so
+or not the container is using it. One of the marked nine has since left this phase, so
 eight of the plan's marked checks remain here and criterion 12 is the ninth marked. That
 criterion is the prefix-agreement check, added when Phase 4 inherited a three-way
 disagreement about where a run writes its output.
@@ -24,11 +25,11 @@ capacity failure: that a job which cannot be placed is surfaced without losing t
 intent. Half of it is already true and half of it could not be closed by running anything.
 AWS Batch does not fail a job it cannot place -- it leaves it ``RUNNABLE`` indefinitely --
 so "surfaced" has no mechanism behind it until the queue-wait detector of criterion 10
-exists, and criterion 10 is deferred with that detector scheduled into Phase 8. A criterion
-blocked on another phase's mechanism holds this phase's gate red for work this phase does
-not own, which is exactly the state Phase 3's three cancellation criteria were in, and it
-went the same way: the check moved to the phase building the mechanism, with its sentence
-and its number unchanged.
+exists, and criterion 10 is deferred until that detector is built. A criterion blocked on a
+mechanism nothing here builds holds this phase's gate red for work this phase does not own,
+which is exactly the state Phase 3's three cancellation criteria were in, and it went the
+same way: the check is owned beside the mechanism instead, with its sentence and its number
+unchanged.
 
 What that costs is real and worth stating. This phase's gate no longer asks whether a
 capacity failure gets noticed, and nothing in this module will notice if the answer stays
@@ -285,22 +286,35 @@ def phase4_criteria() -> tuple[CriterionSpec, ...]:
             ),
             supporting_node_ids=(
                 *_ids(RUN_EVIDENCE, "test_the_process_itself_found_a_cuda_device_rather_than_being_offered_one"),
+                *_ids(RUN_EVIDENCE, "test_the_run_built_its_dataset_from_the_release_its_submission_named"),
+                *_ids(RUN_EVIDENCE, "test_every_shard_the_run_opened_came_from_the_release_it_named"),
+                *_ids(RUN_EVIDENCE, "test_the_release_the_run_opened_is_the_one_the_registry_publishes"),
+                *_ids(RUN_EVIDENCE, "test_the_run_drew_corpus_bytes_in_a_quantity_no_metadata_read_could_produce"),
                 *_ids(SUBMISSION, "test_the_step_count_reaches_the_checkpoint_prefix_and_the_loop_together", "1", "20", "500"),
             ),
             scope_limits=(
                 (
-                    "Twenty steps of olmo2_190M on synthetic tokens, and the loss is not "
-                    "asserted to have fallen. Twenty steps on random tokens is not a claim about "
-                    "learning and dressing it as one would be evidence this repository exists to "
-                    "remove. What the movement establishes is that the backward pass did "
-                    "something: a loss identical at step one and step twenty is an optimizer that "
-                    "never applied a gradient."
+                    "A hundred and fifty steps of olmo2_190M, and the loss is asserted to have "
+                    "fallen rather than to have reached anything. The direction establishes that "
+                    "the optimizer applied gradients -- a loss identical at the first step and "
+                    "the last is a backward pass that did nothing -- and the magnitude over a "
+                    "hundred and fifty steps is not a claim about learning."
                 ),
                 (
-                    "Synthetic tokens rather than a corpus, deliberately. The claim is that this "
-                    "platform can run a real model through a real optimizer on real device "
-                    "memory; which corpus it read is a research question, and downloading one "
-                    "would spend GPU minutes on bandwidth."
+                    "A published corpus, and which one is measured rather than declared. This "
+                    "used to record synthetic tokens as a deliberate limit, on the ground that "
+                    "the corpus a run reads is a research question. It is a platform question "
+                    "as well: the upstream example hard-codes a path, so a run that ignored the "
+                    "release on its submission would report a loss curve, write a checkpoint and "
+                    "leave a lineage record naming a corpus nothing opened. What is now asserted "
+                    "is the resolved shard list the training program saved beside its weights, "
+                    "against the release the container was told to read and the address the "
+                    "registry publishes it at."
+                ),
+                (
+                    "A read of 150MiB is not a training run. What the corpus evidence closes is "
+                    "the path from a form field to memmapped bytes; whether a model trained this "
+                    "way is any good is a research question and no part of this."
                 ),
             ),
         ),
@@ -548,8 +562,8 @@ def phase4_criteria() -> tuple[CriterionSpec, ...]:
                 CONFIGURATION_CAPTURES_EXPIRE,
             ),
         ),
-        # There is no criterion 9. Capacity failure moved to Phase 8, which is where the
-        # queue-wait detector it cannot be closed without is built, and the number is a
+        # There is no criterion 9. Capacity failure is owned beside the queue-wait detector
+        # it cannot be closed without, which is unbuilt, and the number is a
         # deliberate hole so that every citation written against this list goes on naming
         # what it named. The module docstring says why, and what the check protected is
         # printed on the summary every accepted submission ends on, held there by

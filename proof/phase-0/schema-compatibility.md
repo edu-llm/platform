@@ -1,6 +1,6 @@
 # Phase 0 schema compatibility report
 
-143 contract models. The structural digest is `sha256` over the model's JSON schema with sorted keys, so it changes when a field is added, removed, retyped, or reconstrained, and does not change when unrelated code moves. Comparing this table between phases answers whether a schema changed.
+144 contract models. The structural digest is `sha256` over the model's JSON schema with sorted keys, so it changes when a field is added, removed, retyped, or reconstrained, and does not change when unrelated code moves. Comparing this table between phases answers whether a schema changed.
 
 This is the complete inventory: every contract model in the repository is below, whichever phase wrote it and whichever module it has since moved to. The three phase bundles carry a scoped view of the same digests and none of them carries a digest that is not here. `tests/test_schema_compatibility.py` recomputes every row of every one of those tables against the tree and fails when one stops describing it.
 
@@ -52,7 +52,7 @@ The kind column separates a `record`, which some payload is validated against, f
 
 ## Runtime records
 
-106 models are not exported to `schemas/`. These are produced while work runs or while a decision is made: lineage, results, datasets, authorization outcomes, operational evidence, and gate results. They carry a `schema_version` field where they are persisted, and they are deliberately not published as repository configuration, because no human authors them by hand.
+107 models are not exported to `schemas/`. These are produced while work runs or while a decision is made: lineage, results, datasets, authorization outcomes, operational evidence, and gate results. They carry a `schema_version` field where they are persisted, and they are deliberately not published as repository configuration, because no human authors them by hand.
 
 | model | module | kind | schema_version | structural digest |
 | --- | --- | --- | --- | --- |
@@ -135,6 +135,7 @@ The kind column separates a `record`, which some payload is validated against, f
 | Phase3GateReport | edullm_platform.phase3_gate | record | unversioned | sha256:9cb9a4ce3e638eb11b415a6e006b229adff35b919100caa6caf0eb565d336648 |
 | CheckpointObservation | edullm_platform.phase4_evidence | record | unversioned | sha256:75a9326923285e8e5fdb3fc78a3e6cdf4b82503fee8c1219f7ad71e5cc131736 |
 | ContainerVariable | edullm_platform.phase4_evidence | record | unversioned | sha256:a14df17755c20204d9ddbf482b1fe1e34edc795699b5aa6e15a722bf420eb851 |
+| CorpusReadEvidence | edullm_platform.phase4_evidence | record | unversioned | sha256:8eb1efd6fc0db2a1f3c4581132c2b57eda590251300815fa4fc8c74676871828 |
 | GpuCapabilityEvidence | edullm_platform.phase4_evidence | record | unversioned | sha256:3045fb93c5f1197a81095cf1da65d1d67cd4e666ff7097c2428cd2dfde3d6966 |
 | GpuComputeEnvironmentEvidence | edullm_platform.phase4_evidence | record | unversioned | sha256:a4839a5d4d881dd67e137a64821ddaced0b340466179ba05fd1eb4dd15b6a200 |
 | GpuJobEvidence | edullm_platform.phase4_evidence | record | unversioned | sha256:33d7f935aaa4e55c72cfbbe55862d481ccead69818aa621d1a06f5e8c37a8bbe |

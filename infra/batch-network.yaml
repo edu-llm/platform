@@ -59,8 +59,8 @@ Resources:
   # would be paying for a feeling.
   #
   # The alternative worth naming: VPC endpoints for ECR, S3 and Logs would remove the
-  # internet path entirely and cost about as much as the NAT. That is a Phase 7 hardening
-  # decision, not a Phase 3 one, and it is recorded here so the next reader knows the
+  # internet path entirely and cost about as much as the NAT. That is a hardening decision
+  # this phase did not make, and it is recorded here so the next reader knows the
   # option was seen rather than missed.
   #
   # Five subnets and not six. c7i.8xlarge is offered in us-east-1a, 1b, 1c, 1d and 1f, and

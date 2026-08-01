@@ -40,17 +40,63 @@ pilot_repositories:
 # ONE OF THEM.
 #
 # Until this block existed the platform had no notion of a team that anything could check.
-# The `team` box on the submission form is free text, its own help text says a typo delays
-# nothing, and the two GitHub teams in this organization are `team-leads` and
+# The `team` box on the submission form was free text, its own help text said a typo delays
+# nothing, and the two GitHub teams in this organization were `team-leads` and
 # `team-members`, neither of which is a research group. So a run's team was a label, the
 # cost view grouped by whatever people had typed, and nothing could say whether a claimed
-# group was a real one.
+# group was a real one. The list below is now closed and the form is a dropdown over it, so
+# a name that is not here can no longer be submitted at all.
 #
-# Every team_id below is a name this platform's own records already use, not a name chosen
-# here. `platform` is on every Phase 3 and Phase 4 run, `memory-split` is on the Phase 2
-# lineage records, `tokenizer` is on the three Phase 5 admitted runs, and `modeling`,
-# `curriculum` and `data-prep` are on the committed manifest fixtures. The GitHub team of
+# Three team_ids below are names this platform's own records already use, and they are the
+# three this file does not touch. `platform` is on 36 lineage records, `memory-split` on 22
+# and `data-prep` on 1, counted in the store on 2026-08-01, and those are also the only
+# three prefixes that exist under sbsandbox-intern-edullm-outputs/teams/. The GitHub team of
 # the same name was created to match, and github_team_slug is the join between the two.
+#
+# THREE WERE RENAMED, AND RECORDS WRITTEN BEFORE THE RENAME STILL CARRY THE OLD NAMES.
+#
+#   tokenizer   -> input-core
+#   modeling    -> pre-training
+#   curriculum  -> post-training
+#
+# The stored records were deliberately not rewritten, which is the same decision
+# config/workload-catalog.yaml's own rename table records for the four workload profiles it
+# renamed, and it is made here for the same reason. A lineage record states what a run was
+# submitted as, it carries a manifest_sha256 over its own bytes, and editing the team inside
+# one would both falsify the record and break its digest. So an audit of anything submitted
+# before this rename finds a team that is not in this file, and this table is the answer to
+# why. RunManifest.team is a plain string with no lookup against these bindings, which is
+# what makes those records still parse.
+#
+# WHAT THAT COSTS, IN FULL. Three Phase 5 records declare `tokenizer` and stay readable
+# under that name. All three wrote no output, so `teams/tokenizer/` is a prefix nothing owns
+# and there is nothing in S3 to move. `modeling` and `curriculum` are on no record in the
+# store at all; they are on four committed manifest fixtures and two authorization fixtures,
+# which keep the old names for the same reason the records do. Those six files' canonical
+# bytes are digest-pinned by proof/phase-0/serialization-goldens.json, so editing one breaks
+# a recorded digest and the fix is a proof-bundle regeneration rather than a fixture edit.
+# tests/test_research_teams.py names the three retired ids and holds that list to exactly
+# three.
+#
+# Nothing new can arrive under any of the three old names: the form's team field is a
+# dropdown over the ids below, and tests/test_submission_form_options.py holds it to them.
+#
+# The other three were left alone deliberately, and leaving them is what makes the paragraph
+# above a table rather than a migration. Renaming `platform` or `memory-split` would strand
+# 58 records and two live S3 prefixes for no gain a reader of a cost report would notice.
+#
+# TWO GROUPS ARE DECLARED BEFORE ANY RUN NAMES THEM, which is the opposite direction from
+# every other entry here. `eval-inference` is the six people on the AdaptiveEvals branch of
+# olmo-eval-full. `scratch` is for work nobody intends to keep and that should not be costed
+# against a research group; it is `scratch` rather than `sandbox` because the AWS account is
+# `sbsandbox` and every resource in it is `sbsandbox-intern-edullm-*`, so the second word
+# would mean two things in one sentence.
+#
+# `evaluation` IS A THIRD OLD NAME AND IS NOT IN THE TABLE ABOVE, because nothing was
+# renamed. Two lineage records declare it, it was never a declared group, and it is not
+# `eval-inference` under an earlier spelling -- the group below is being written down ahead
+# of its first submission rather than after it. An audit finds `evaluation` on those two
+# records and finds no group by that name, and this paragraph is the whole of the answer.
 #
 # MEMBER_LOGINS IS EMPTY EVERYWHERE AND THAT IS THE HONEST ANSWER RATHER THAN AN UNFINISHED
 # ONE. Nothing in this repository, in the organization, or in any run record says which
@@ -72,12 +118,13 @@ pilot_repositories:
 #
 # LEAD_LOGINS CARRIES ONLY WHAT IS EVIDENCED. Two are: the comment at the top of this file
 # records that VS-code-cloud leads the Memory group, and every run ever submitted under
-# `platform` is Frank's. The other four groups have no lead recorded anywhere, and the
+# `platform` is Frank's. The other six groups have no lead recorded anywhere, and the
 # temptation to read one off the approver of their runs has to be resisted, because
 # approval_scope is organization and any lead may release any group's run. pianomaster99
-# released all three `tokenizer` runs and that is evidence about the gate, not about who
-# leads tokenizer. A group with no lead recorded routes to nobody in particular, which the
-# approver context already states in those words, and no run is delayed by it.
+# released all three of the runs that claimed `tokenizer` and that is evidence about the
+# gate, not about who leads input-core. A group with no lead recorded routes to nobody in
+# particular, which the approver context already states in those words, and no run is
+# delayed by it.
 team_bindings:
   teams:
     - team_id: platform
@@ -90,27 +137,37 @@ team_bindings:
       lead_logins: []
       s3_namespace: sbsandbox-intern-edullm-outputs/teams/memory-split
       wandb_entity: eduLLM
-    - team_id: tokenizer
-      github_team_slug: tokenizer
+    - team_id: input-core
+      github_team_slug: input-core
       lead_logins: []
-      s3_namespace: sbsandbox-intern-edullm-outputs/teams/tokenizer
+      s3_namespace: sbsandbox-intern-edullm-outputs/teams/input-core
       wandb_entity: eduLLM
-    - team_id: modeling
-      github_team_slug: modeling
+    - team_id: pre-training
+      github_team_slug: pre-training
       lead_logins: []
-      s3_namespace: sbsandbox-intern-edullm-outputs/teams/modeling
+      s3_namespace: sbsandbox-intern-edullm-outputs/teams/pre-training
       wandb_entity: eduLLM
-    - team_id: curriculum
-      github_team_slug: curriculum
+    - team_id: post-training
+      github_team_slug: post-training
       lead_logins: []
-      s3_namespace: sbsandbox-intern-edullm-outputs/teams/curriculum
+      s3_namespace: sbsandbox-intern-edullm-outputs/teams/post-training
       wandb_entity: eduLLM
     - team_id: data-prep
       github_team_slug: data-prep
       lead_logins: []
       s3_namespace: sbsandbox-intern-edullm-outputs/teams/data-prep
       wandb_entity: eduLLM
-# WHOSE NAME GOES ON A RUN IN WEIGHTS AND BIASES, AND WHY MOST OF THESE ARE BLANK.
+    - team_id: eval-inference
+      github_team_slug: eval-inference
+      lead_logins: []
+      s3_namespace: sbsandbox-intern-edullm-outputs/teams/eval-inference
+      wandb_entity: eduLLM
+    - team_id: scratch
+      github_team_slug: scratch
+      lead_logins: []
+      s3_namespace: sbsandbox-intern-edullm-outputs/teams/scratch
+      wandb_entity: eduLLM
+# WHOSE NAME GOES ON A RUN IN WEIGHTS AND BIASES, AND WHY SIX OF THESE ARE BLANK.
 #
 # The platform logs with a team service account rather than with any person's key, so every
 # run would otherwise appear authored by the platform itself. W&B's remedy is WANDB_USERNAME,
@@ -129,11 +186,26 @@ team_bindings:
 # job says so in the approver context before a lead is asked to release it, so the gap is
 # something a person sees rather than something they find afterwards in W&B.
 #
-# THE ONE THAT MATTERS AND IS BLANK. aryanjverma submitted both of the runs Phase 5 rests on
-# and has no account in the eduLLM team, so nothing here can attribute him. Adding him to the
-# W&B team is an owner action in W&B and does not follow this file.
+# THE ONE THAT MATTERED IS NO LONGER BLANK. aryanjverma submitted both of the runs Phase 5
+# rests on and this file recorded that he had no account in the eduLLM team, which had stopped
+# being true: the entity holds `aryan-jaden-verma` under `Aryan Verma`, an exact match on the
+# display name, and it is recorded below. Nothing was done in W&B to make that so, which is
+# the point worth keeping: the gap was in this file rather than in the team.
 #
-# Re-derived by matching display_name against the team roster:
+# SIX PEOPLE HAVE NO W&B ACCOUNT AT ALL, and a blank is the only true answer for them. The
+# entity holds 29 members, one of which is the platform's own service account, so 28 human
+# accounts against 34 roster entries. Benjamin Royston, Arthur Xu, Iris Cai, Yuen Kai Chow,
+# Adarsh Rajesh and Eve Feng are the six the member list does not contain under any spelling.
+# Adding somebody to the W&B team is an owner action in W&B and does not follow this file, so
+# their runs log as the service account until that happens. Every one of the other 28 accounts
+# is now claimed by exactly one roster entry.
+#
+# NOTHING HERE IS READ OFF WHO RAN WHAT, and the member list is the only source. A run through
+# the shared cluster carries whichever key was on the node, so `eric-gpu-access-smoke` was
+# requested by ericrcwu001 and is logged under `amy-lin-alpha-ai`. Reading an attribution back
+# out of a run would therefore record the node's key as the author.
+#
+# Re-derived by matching display_name against the team roster, on 2026-08-01:
 #
 #   {entity(name:"eduLLM"){members{username name accountType}}}
 members:
@@ -150,7 +222,7 @@ members:
   - {github_login: cd1313, display_name: Cathy Du, wandb_username: cathy-du}
   - {github_login: IsabellaChen70, display_name: Isabella Chen, wandb_username: isabella-chen}
   - {github_login: gorpyshortlegs, display_name: Arhant Choudhary, wandb_username: flaming-fuelers}
-  - {github_login: Elitelord, display_name: Sameer Agarwal}
+  - {github_login: Elitelord, display_name: Sameer Agarwal, wandb_username: sameer-agarwal}
   - {github_login: anshulmago1, display_name: Anshul Mago, wandb_username: magoanshul}
   - {github_login: arteexu, display_name: Arthur Xu}
   - {github_login: sidvenkatayogi, display_name: Siddhartha Venkatayogi, wandb_username: sidvenkatayogi}
@@ -158,7 +230,7 @@ members:
   - {github_login: claire-mao, display_name: Claire Mao, wandb_username: claire-mao}
   - {github_login: VS-code-cloud, display_name: Vishnu Sharma, wandb_username: vishnu-sharma}
   - {github_login: Avaneesh-Ramesh-07, display_name: Avaneesh Ramesh, wandb_username: avaneesh-ramesh}
-  - {github_login: aryanjverma, display_name: Aryan Verma}
+  - {github_login: aryanjverma, display_name: Aryan Verma, wandb_username: aryan-jaden-verma}
   - {github_login: William-2357, display_name: William Wang, wandb_username: william-wang}
   - {github_login: TejasviTyagi14, display_name: Tejasvi Tyagi, wandb_username: tejasvi-tyagi}
   - {github_login: caiiris, display_name: Iris Cai}
@@ -175,10 +247,11 @@ members:
   - {github_login: hiyasvyas, display_name: Hiya Vyas, wandb_username: hiyasvyas}
   # Renamed from mathishard17, which now 404s. A dead login here is not inert: it is the key
   # every other roster lookup joins on, so it silently excludes her from anything derived
-  # from this file. The W&B side is deliberately still blank -- the eduLLM entity holds
-  # `zsophia` under the display name `Sophia Z`, which is not the exact roster match this
-  # file requires, and the comment above says why a near-match is worse than a blank.
-  - {github_login: zsophiaaa, display_name: Sophia Zhang}
+  # from this file. The W&B side was left blank because `zsophia` sits under the display name
+  # `Sophia Z` rather than `Sophia Zhang`, so the match was a prefix rather than an equality.
+  # Confirmed by the owner instead, which is the only thing that resolves a near-match, and
+  # the same treatment meric233 and ericrcwu001 above already have.
+  - {github_login: zsophiaaa, display_name: Sophia Zhang, wandb_username: zsophia}
   - {github_login: LawrenceDong71, display_name: Lawrence Dong, wandb_username: lawrence-dong}
   - {github_login: katiehehe, display_name: Katie He, wandb_username: katiehe}
   - {github_login: alphaxia2100, display_name: Andrew Xia, wandb_username: alphaai-andrew}

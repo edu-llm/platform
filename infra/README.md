@@ -359,12 +359,17 @@ re-measures this without creating anything; run it before believing otherwise.
 
 ### Stopping a job a cancelled workflow left running
 
-Cancelling a `submit-run.yml` run stops the workflow and nothing in AWS. Its `if: cancelled()`
-step says so and sends the reader here, because this is the only place a laptop procedure
-belongs and because no identity that workflow can obtain is permitted to terminate a job:
-the admission role holds one `states:StartExecution` and two read-only execution actions,
-and `batch:TerminateJob` is deliberately absent from it, from the deployer, and from the
-lifecycle recorder.
+**Reach for `.github/workflows/cancel-run.yml` first.** It takes a run id, reports what the
+job is doing, and stops it when asked, on `sbsandbox-intern-edullm-run-canceller` rather than
+on anybody's SSO session — a submitter may stop their own run and an admin may stop anyone's.
+So the ordinary case needs nothing from this section, and what follows is the fallback for
+when the workflow is itself the thing that is broken.
+
+Cancelling a `submit-run.yml` run stops the workflow and nothing in AWS, and no identity
+*that* workflow can obtain is permitted to terminate a job: the admission role holds one
+`states:StartExecution` and two read-only execution actions, and `batch:TerminateJob` is
+deliberately absent from it, from the deployer, and from the lifecycle recorder. Its
+`if: cancelled()` step names the cancellation workflow for that reason.
 
 That leaves a real window. GitHub cancels a job in seconds; a submitted Batch job runs until
 its `attemptDurationSeconds` unless somebody stops it. The job name is the run id, which is
@@ -411,12 +416,13 @@ name the stack instead, but the guard is a better message rather than a substitu
 
 **Its authorisation is in the workflow rather than in the policy, and that is forced rather
 than chosen.** A trust policy cannot see who dispatched a workflow — every dispatch of a
-file presents the same `sub` — and Batch has no condition key for a job's tags on
-`TerminateJob`. So the role can stop any job on either queue, and the check that it is the
-caller's own run is a step in `cancel-run.yml`. What bounds that is the role's shape: it
-describes jobs and stops them and reaches nothing else in the account, so the worst a
-bypass achieves is stopping runs. The role's trust names that one workflow file, so a job
-that could skip the check has to be added beside the check.
+file presents the same `sub`. The job's `edullm:submitter` tag is readable through
+`aws:ResourceTag`, and there is nothing to compare it against, because the identity in hand
+is the workflow rather than the person who ran it. So the role can stop any run this
+platform submitted, and the check that it is the caller's own is a step in `cancel-run.yml`.
+What bounds that is the role's shape: it describes jobs and stops them and reaches nothing
+else in the account, so the worst a bypass achieves is stopping runs. The role's trust names
+that one workflow file, so a job that could skip the check has to be added beside the check.
 
 Same rule as Phases 2 and 3: **every laptop stack goes before every CI stack**. Here it is
 not enforced by CloudFormation at all — the comment immediately above the *Deploy Phase 4 GPU
@@ -480,6 +486,41 @@ The role is registered in `role_drift.DATASET_VALIDATOR_ROLE_TEMPLATES` and capt
 `fixtures/evidence/dataset-validator/roles/`. Its own directory rather than Phase 3's:
 `read_committed_role_captures` reports a capture the registry does not declare as a finding,
 so a directory belongs to exactly one registry.
+
+### Stack 4: the run canceller role, deployed 2026-08-01
+
+Laptop-applied, like every IAM stack in this file. The command is the one under *Deploying
+one IAM stack* above, with `sbsandbox-intern-edullm-run-canceller-iam` as the stack name and
+`infra/iam/run-canceller-role.yaml` as the template. `AWS_RUN_CANCELLER_ROLE_ARN` was set in
+the same sitting: a deploy without the variable leaves `cancel-run.yml` refusing at its own
+guard, which reads as a broken workflow rather than as half a step.
+
+**Verified by stopping a real job, and nothing weaker would have done.** The template
+reviewed fine, the deploy reported `CREATE_COMPLETE`, the role read back byte-identical to
+what was committed, every test in the repository was green — and `batch:TerminateJob` was
+refused, because its `ArnEquals` on `batch:JobQueue` could never be satisfied. `TerminateJob`
+takes a job id and a reason and nothing else, so the queue is never in the request context.
+The role described and listed and could not stop anything.
+
+**Two things hid it, and both are worth carrying to the next role.** The denial reads
+`no identity-based policy allows the batch:TerminateJob action`, which names a missing grant
+rather than a condition that cannot match — so the message points at the statement that is
+present and correct. And `iam simulate-principal-policy` does not separate the two either:
+it accepts no `arn` context key type, so an `ArnEquals` is unsatisfiable in the simulator as
+well, and it answers `implicitDeny` for grants that do work. A simulator run alone is
+therefore evidence about the actions and not about their conditions.
+
+The grant is now conditioned on `aws:ResourceTag/edullm:run-id` matching `run_*`, which is
+the condition key Batch does offer on a job, and which selects the jobs this platform
+submitted rather than the queues it created. `infra/iam/run-canceller-role.yaml` carries the
+argument beside the statement.
+
+The simulator was still used, for the half it does settle: `batch:DescribeJobs` and
+`batch:ListJobs` allowed, and `batch:SubmitJob`, `batch:RegisterJobDefinition`,
+`states:StartExecution` and `s3:GetObject` all implicit denies. The rest was measured by
+submitting a CPU run for the purpose, dispatching `cancel-run.yml` against it in both modes,
+and reading the termination back off the job — `statusReason` naming the actor and the
+reason, which is what `lifecycle_projection` reads to tell a cancellation from a failure.
 
 ### Stack 5: the nightly reader role, deployed 2026-08-01
 

@@ -57,18 +57,30 @@ Resources:
             Version: "2012-10-17"
             Statement:
               # The intent records, which are how the reconciliation learns which runs were
-              # submitted under a profile carrying a checkpoint contract. Object-level and
-              # confined to one prefix: the same bucket holds decision, binding, attempt and
-              # result records, and this check reads none of them.
+              # submitted under a profile carrying a checkpoint contract, and the result
+              # records, which say how each of them ended. Object-level and confined to two
+              # prefixes: the same bucket holds decision, binding and attempt records, and
+              # this check reads none of them.
+              #
+              # The result grant decides whether a run's prefix is held against the build,
+              # not what the prefix says. A run recorded as failed has already reported its
+              # failure and an empty prefix under it is the expected shape; a run recorded as
+              # a success that saved nothing is the case this check exists for, and it is
+              # still read from the bucket rather than believed from the record.
               - Sid: ReadIntentRecords
                 Effect: Allow
                 Action: s3:GetObject
                 Resource:
                   Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-lineage/intent/*
+              - Sid: ReadResultRecords
+                Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-lineage/result/*
               # Listing is a bucket-level action, so it cannot be scoped by an object ARN and
               # the prefix condition is the narrowing. Granted because the check has to
-              # enumerate the intent tree; it is handed no list of run ids.
-              - Sid: ListIntentRecords
+              # enumerate both trees; it is handed no list of run ids.
+              - Sid: ListLineageRecords
                 Effect: Allow
                 Action:
                   - s3:ListBucket
@@ -77,7 +89,9 @@ Resources:
                   Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-lineage
                 Condition:
                   StringLike:
-                    s3:prefix: intent/*
+                    s3:prefix:
+                      - intent/*
+                      - result/*
               # What a run wrote. GetObject rather than a listing alone because deciding
               # whether a checkpoint would load means reading it: HeadObject is authorized as
               # s3:GetObject, and a `_SUCCESS` marker has to be fetched to be compared

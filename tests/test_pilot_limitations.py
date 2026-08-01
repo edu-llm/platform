@@ -20,8 +20,8 @@ left, and these replace them against the surface that now carries the facts.
 
 **Two phases have bought something with this file, and they bought it on different days.**
 Phase 5 criterion 11 is the three facts above arriving together, and Phase 5 criterion 6's
-deferral is the conditional GPU-checkpoint warning. Phase 4's criterion 9 transferred to
-Phase 8 in exchange for the queue paragraph, which was written against the README section
+deferral is the conditional GPU-checkpoint warning. Phase 4's criterion 9 transferred out of
+that phase in exchange for the queue paragraph, which was written against the README section
 hours before that section left; it is here instead, which is where the transfer's condition
 should have pointed in the first place.
 
@@ -100,14 +100,20 @@ def test_a_submitter_is_told_that_cancelling_does_not_stop_the_job() -> None:
     about it. A person who cancels a workflow and believes the spend stopped has no reason
     to check, so this is not discovered by observation -- it is discovered on the bill.
 
-    ``batch:TerminateJob`` is held by no identity in this account, so the sentence is
-    accurate rather than cautious, and it names the action a submitter can actually take.
+    **The fact and the remedy are asserted together, because only one of them moves.**
+    Cancelling the submission workflow has never stopped a Batch job and still does not.
+    What stopping one takes has changed: it is a workflow the submitter dispatches rather
+    than a favour asked of somebody holding a credential, and a warning naming the older
+    remedy would cost them the wait and teach them the button is not theirs.
     """
     script = summary_step_script()
 
     assert "Cancelling the workflow does not stop your job" in script
-    assert "batch:TerminateJob" in script
-    assert "Ask an admin" in script
+    assert "Look at a run, or stop it" in script
+    assert "Ask an admin" not in script, (
+        "stopping a run is self-service, so routing the submitter to somebody else is now "
+        "a longer path to the same place"
+    )
 
 
 def test_a_submitter_is_told_which_checkpoints_leave_the_optimizer_behind() -> None:
@@ -152,12 +158,12 @@ def test_a_submitter_is_told_that_team_routes_approval_rather_than_granting_acce
 def test_a_submitter_is_told_a_queued_run_is_waiting_rather_than_lost() -> None:
     """Mutation: drop it, or say only that nobody is watching the queue.
 
-    **This is what Phase 4 criterion 9's transfer to Phase 8 is granted in exchange for.**
-    That criterion asked for a capacity failure to be surfaced without losing the run intent,
-    and "surfaced" has no mechanism behind it until Phase 8 builds the queue-wait detector.
-    A criterion blocked on another phase's mechanism holds this phase's gate red for work it
-    does not own, so it moved -- on the condition that what it protected is written where a
-    reader can act on it.
+    **This is what Phase 4 criterion 9's transfer out of that phase is granted in exchange
+    for.** That criterion asked for a capacity failure to be surfaced without losing the run
+    intent, and "surfaced" has no mechanism behind it until the queue-wait detector exists.
+    A criterion blocked on a mechanism its phase does not build holds that phase's gate red
+    for work it does not own, so it moved, on the condition that what it protected is written
+    where a reader can act on it.
 
     **The half already true is the half worth writing down, and the first attempt wrote it in
     the wrong place.** It went on the pilot limitations page, and that page left the README

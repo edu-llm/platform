@@ -22,6 +22,7 @@ from __future__ import annotations
 import copy
 import json
 import sys
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -54,7 +55,9 @@ from report_onboarding_readiness import (
 )
 
 from edullm_platform.config import load_yaml
+from edullm_platform.contracts.authorization import evaluate_authorization
 from edullm_platform.contracts.inventory import OrganizationInventory
+from edullm_platform.contracts.policy import ApprovalPolicy, RequestFacts
 
 #: Three people rather than thirty-five, and each one carries a different case. Frank has
 #: done everything and leads a group. Hiya leads a group too, so the two lead directions can
@@ -156,11 +159,10 @@ def test_a_person_who_has_done_every_step_is_reported_as_missing_nothing() -> No
 def test_a_person_absent_from_the_roster_is_reported_as_needing_a_pull_request() -> None:
     """Mutation: build the report from the roster, so the organization's extra people vanish.
 
-    Somebody the GitHub organization holds and `config/organization.yaml` does not is the
-    quietest failure on this platform: they can see the Run button, fill in the whole form
-    and spend a lead's attention having it released, and admission refuses the run inside
-    AWS with `submitter_not_in_roster` afterwards. A report built from the roster alone
-    cannot see that person at all, which is the one reader who most needs to.
+    Somebody the GitHub organization holds and `config/organization.yaml` does not can see
+    the Run button and fill in the whole form, and every submission they dispatch is
+    refused. A report built from the roster alone cannot see that person at all, which is
+    the one reader who most needs to.
     """
     people = readiness(inventory(), access(organization_members=[*EVERYBODY, "mccorkel"]))
 
@@ -171,7 +173,7 @@ def test_a_person_absent_from_the_roster_is_reported_as_needing_a_pull_request()
 
     step = next(item for item in stranger.missing if item.name == STEP_ROSTER)
     assert "pull request" in step.action
-    assert "submitter_not_in_roster" in step.action
+    assert "before a reviewer is asked" in step.action
 
 
 def test_a_person_on_the_roster_and_not_in_the_organization_is_sent_to_an_owner() -> None:
@@ -401,12 +403,13 @@ def test_the_empty_team_catalog_blocks_nobody_and_is_reported_once(
 ) -> None:
     """Mutation: report the absent team catalog as a gate, or repeat it under every name.
 
-    `team_bindings` is absent from `config/organization.yaml`, so the catalog is empty and
-    `evaluate_authorization` reads the same emptiness and skips the membership check
-    entirely: nobody is refused for a team nothing can verify. It is still worth reporting,
-    and it is true of everybody equally, which makes it a fact about the platform rather than
-    about any of them. Repeated under thirty-five headings it is how a report stops being
-    read.
+    A roster declaring no team at all, which the shipped one no longer is: it declares six.
+    The case is kept because it is the degenerate end of the same rule and the one where the
+    right thing to say differs, being about the file rather than about any person.
+
+    Nobody is refused for a team nothing can verify, so it is missing rather than blocking.
+    It is also true of everybody equally, which makes it a fact about the platform, and
+    repeated under thirty-five headings it is how a report stops being read.
     """
     people = readiness(inventory(), access())
 
@@ -416,27 +419,67 @@ def test_the_empty_team_catalog_blocks_nobody_and_is_reported_once(
 
     report = render(people, access())
     assert "Missing for everybody" in report
-    assert report.count("`team_bindings` is absent") == 1
+    assert report.count("No team is declared at all") == 1
     assert capsys.readouterr().err == ""
 
 
-def test_a_populated_team_catalog_turns_the_team_into_a_gate() -> None:
-    """Mutation: keep treating the team as optional after the roster starts declaring teams.
+def test_a_declared_team_does_not_block_somebody_no_team_lists() -> None:
+    """Mutation: read whether the team blocks off the catalog instead of off the person.
 
-    `evaluate_authorization` refuses a submission with `submitter_not_in_claimed_team` as
-    soon as there is a catalog to check against, so the day `team_bindings` is populated the
-    same absence stops being harmless. This is read off the catalog rather than off a
-    constant, so the roster change is the only change that has to be made.
+    This asserted the opposite until the six teams were declared, and it was right about the
+    `evaluate_authorization` of the time: any catalog at all switched the membership check
+    on for everybody, so one populated team refused all thirty-five people. That is the
+    reason the check became per submitter, and this report has to follow it there. Reading
+    the catalog would have reported every person on the roster as blocked, out of a run that
+    is in fact admitted, on the day the teams landed.
+
+    So the catalog is populated here and `aryanjverma` is in none of it. The step is still
+    missing, because a team is still not recorded for them, and it is not a gate.
     """
     people = readiness(inventory(team_bindings=TEAM_BINDINGS), access())
 
     aryan = person(people, "aryanjverma")
     assert STEP_TEAM in missing_names(aryan)
-    assert aryan.blocked is True
+    assert aryan.blocked is False
 
     step = next(item for item in aryan.missing if item.name == STEP_TEAM)
-    assert "submitter_not_in_claimed_team" in step.action
+    assert "No submission is refused over this" in step.action
+    assert "team_verified: false" in step.action
     assert "pull request" in step.action
+
+
+def test_the_step_is_not_a_gate_because_admission_admits_the_person_it_describes() -> None:
+    """The claim in the action text, put to the function that would have to refuse them.
+
+    The test above pins what the report says. This pins that it is true, by asking
+    `evaluate_authorization` directly rather than restating the rule: a submitter no team
+    lists, under a populated catalog, claiming a team they are not recorded in. If that ever
+    starts being refused, the report is telling thirty-five people a run will go through
+    that will not, and this fails rather than the wording drifting quietly out of date.
+    """
+    roster = inventory(team_bindings=TEAM_BINDINGS)
+    decision = evaluate_authorization(
+        "aryanjverma",
+        "philote-dev",
+        RequestFacts(
+            claimed_team="memory-split",
+            repository_registered=True,
+            dataset_registered=True,
+            compute_profile_registered=True,
+            immutable_revision=True,
+            immutable_image=True,
+            image_scan_reviewed=True,
+            estimated_cost_usd=Decimal(10),
+            maximum_runtime_hours=Decimal(1),
+            maximum_attempts=1,
+        ),
+        load_yaml(PROJECT_ROOT / "config" / "policy.yaml", ApprovalPolicy),
+        roster,
+    )
+
+    assert roster.teams_for_member("aryanjverma") == ()
+    assert decision.granted is True
+    assert decision.team_verified is False
 
 
 def test_a_team_the_roster_declares_and_github_does_not_hold_is_reported_without_blocking() -> None:
@@ -551,14 +594,20 @@ def test_the_report_says_nobody_is_here_rather_than_printing_an_empty_document()
     assert "nobody here to be ready" in render([], access())
 
 
-def test_the_shipped_roster_reports_the_person_nothing_can_attribute() -> None:
-    """`aryanjverma` submitted both runs Phase 5 rests on and has no W&B account here.
+def test_the_shipped_roster_reports_the_people_nothing_can_attribute() -> None:
+    """Six people have no W&B account, and the report is where that is said out loud.
 
-    The roster records that deliberately, because a guessed login produces a run that logs as
-    the service account and looks exactly like a correctly attributed one. What was missing
-    is anywhere that says out loud whose runs are affected, and this is it. The GitHub half
-    is synthesized as everything being right, so the only thing this can find is the gap the
+    The roster leaves them blank deliberately, because a guessed login produces a run that
+    logs as the service account and looks exactly like a correctly attributed one. What was
+    missing is anywhere that names whose runs are affected, and this is it. The GitHub half is
+    synthesized as everything being right, so the only thing this can find is the gap the
     roster itself records.
+
+    `aryanjverma` used to be the example here and is now the counter-example. He submitted
+    both of the runs Phase 5 rests on, the roster called him unattributable, and the `eduLLM`
+    entity had held `aryan-jaden-verma` under an exact display-name match all along. Asserted
+    from the roster rather than against a name written twice, so that recording one of the six
+    moves this test without editing it.
     """
     shipped = load_yaml(PROJECT_ROOT / "config" / "organization.yaml", OrganizationInventory)
     logins = [member.github_login for member in shipped.members]
@@ -570,10 +619,20 @@ def test_the_shipped_roster_reports_the_person_nothing_can_attribute() -> None:
             team_members={"team-leads": list(shipped.team_leads)},
         ),
     )
+    unattributable = [
+        member.github_login for member in shipped.members if member.wandb_username is None
+    ]
 
-    aryan = person(people, "aryanjverma")
-    assert missing_names(aryan) == {STEP_WANDB, STEP_TEAM}
-    assert aryan.blocked is False
+    assert len(unattributable) == 6
+    for login in unattributable:
+        entry = person(people, login)
+        # A superset rather than equality: BritishAmericqn is an admin, and the synthesized
+        # access above grants nobody admin approval authority on GitHub, so he carries a
+        # third step that has nothing to do with attribution.
+        assert {STEP_WANDB, STEP_TEAM} <= missing_names(entry)
+        # Unattributed is a whole run that works, so none of this blocks anybody.
+        assert entry.blocked is False
+    assert missing_names(person(people, "aryanjverma")) == {STEP_TEAM}
 
 
 def test_gathered_facts_missing_a_key_are_refused_rather_than_read_as_an_empty_list() -> None:

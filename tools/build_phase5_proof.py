@@ -298,8 +298,9 @@ def render_second_person(repo_root: Path, checks: Sequence[CriterionSpec]) -> st
                 (
                     "**`team verified` is `no` on every row, and that is correct rather than a "
                     "defect.** The team a submitter claims is recorded and not enforced: "
-                    "nothing binds a team to a person yet, which is Phase 6 item 6.5. A record "
-                    "reading `yes` here would be evidence for a control that does not exist. "
+                    "nothing binds a team to a person yet and the bindings that would are "
+                    "unbuilt. A record reading `yes` here would be evidence for a control "
+                    "that does not exist. "
                     "A submitter is told the same thing in the same words -- `team` routes "
                     "approval rather than granting permission -- on the summary every "
                     "accepted submission ends on. That sentence was on the pilot limitations "
@@ -846,7 +847,7 @@ def known_limitations(
             "runs went to the CPU profile carrying a print statement and two W&B calls, so no "
             "pilot run has trained anything, written a checkpoint, or touched a GPU -- and "
             "that is the largest thing this bundle does not establish. The deferral moved the "
-            "observation to Phase 6's closeout, where it still closes this phase's gate; it "
+            "observation to the closeout campaign, where it still closes this phase's gate; it "
             "did not make the observation less necessary, and a reader who takes the green "
             "verdict for a research workload having run is reading it wrong."
         ),
@@ -861,9 +862,9 @@ def known_limitations(
         ),
         (
             "The result manifest names no W&B run for any of these, because "
-            "`lifecycle_projection` hardcodes `wandb_run=None` on every one it writes. That is "
-            "Phase 7 item 7.4 and it is asserted rather than worked around, so the day it "
-            "changes a test fails and this sentence gets reread."
+            "`lifecycle_projection` hardcodes `wandb_run=None` on every one it writes. Recording "
+            "the run in lineage is unbuilt, and the current behaviour is asserted rather than "
+            "worked around, so the day it changes a test fails and this sentence gets reread."
         ),
         (
             f"Check 7 is {status_of('7')} against the workflow rather than against a refusal "
@@ -978,9 +979,9 @@ def render_index(
                     "one wants a GPU run claiming a team other than `platform` and writing a "
                     "checkpoint, and each of those three works and has been exercised "
                     "separately -- so it closes on one submission rather than on any work. Its "
-                    "observation moved to Phase 6's closeout on 2026-07-31 and still closes "
-                    "this phase's gate rather than that one's, which is why the verdict below "
-                    "is green while the phase is not finished. The Result table says which "
+                    "observation moved to the closeout campaign on 2026-07-31 and still closes "
+                    "this phase's gate rather than the campaign's own, which is why the verdict "
+                    "below is green while the phase is not finished. The Result table says which "
                     "check, and `negative-case-matrix.md` carries the reason and the trigger."
                 ),
                 "",

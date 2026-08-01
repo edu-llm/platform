@@ -618,12 +618,14 @@ class ContainerShape:
 
 
 CONTAINER_SHAPES: Final[Mapping[str, ContainerShape]] = {
-    # 32 vCPU and 60 GiB against a c7i.8xlarge's 32 and 64. The gap is not rounding: the
-    # ECS agent and the host's own processes need memory, and a container asking for all
-    # 65536 MiB never fits on the instance it was sized for.
+    # An eighth of a c7i.8xlarge on both axes, which is what makes 32 first runs concurrent
+    # instead of 4. This is the pair that reaches a submitted job -- the state machine
+    # registers a per-run definition from this table and submits against it, so the template
+    # below is deployed and this is what runs. infra/batch-compute.yaml carries the argument
+    # for the two numbers, including why memory was the binding constraint rather than vCPU.
     "cpu-32vcpu": ContainerShape(
-        vcpus=32,
-        memory_mib=61440,
+        vcpus=4,
+        memory_mib=7680,
         gpus=0,
         shared_memory_mib=None,
         # THE SAME KEY THE GPU SHAPE CARRIES, AND A PILOT RUN PAID FOR THE ASYMMETRY. This
