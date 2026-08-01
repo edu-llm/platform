@@ -39,12 +39,11 @@ on:
           - olmo-core-check-gpu
           - olmo-core-train-1gpu
       dataset_release:
-        description: "Which prepared dataset this run reads. Pick none unless you are reading one — a quick check reads nothing, and saying none is what makes the record true. lean4-mathlib-bytes-v3 is 0.3 GB and regmix-10b-v1 is 40 GB; both are published corpora you can read but cannot write."
+        description: "Which prepared dataset this run reads. Pick none unless you are reading one — a quick check reads nothing, and saying none is what makes the record true. regmix-10b-v1 is a published 40 GB corpus you can read but cannot write."
         required: true
         type: choice
         options:
           - none
-          - lean4-mathlib-bytes-v3
           - regmix-10b-v1
           - dolma-2026-07
       team:

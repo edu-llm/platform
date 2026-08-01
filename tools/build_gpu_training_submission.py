@@ -67,6 +67,35 @@ LINEAGE_BUCKET: Final = "sbsandbox-intern-edullm-lineage"
 #: optimizer and real device memory, which is what the phase is about.
 TRAINING_STEPS: Final = 20
 
+#: The published tokenizers this platform can build an OLMo-core model for, keyed by the
+#: dataset id a corpus names in its own ``groups[].depends_on[]`` entry with role
+#: ``tokenizer``, and valued by the expression the training program evaluates.
+#:
+#: NOT A DEFAULT AND NOT A FALLBACK. A constant here would be right for one corpus and
+#: silently wrong for another: a byte corpus read with a dolma2 vocab puts every id inside an
+#: embedding sized 100,352, so nothing raises and the loss curve is merely bad. The upstream
+#: family file turns its own family-wide tokenizer default off for exactly this reason, in
+#: writing. So the corpus states its tokenizer, the registry carries it, `batch_submit_request`
+#: sends it, and this map turns it into a config.
+#:
+#: ONE ENTRY, NOT TWO, AND THE MISSING ONE IS A MEASUREMENT RATHER THAN AN OVERSIGHT.
+#: ``tokenizer/bytes-utf8`` is published and sealed and `pretrain/lean4-mathlib-bytes` depends
+#: on it, but OLMo-core has no byte tokenizer: `TokenizerConfig` offers dolma2, dolma2_sigdig,
+#: gpt_neox_olmo_dolma_v1_5, gpt2 and from_hf, and nothing under `olmo_core/data/` mentions
+#: bytes or utf8 at all -- read from the checkout at OLMO_CORE_CHECKOUT on 2026-08-01 and
+#: confirmed against that repository's main branch.
+#:
+#: `TokenizerConfig` is a plain dataclass, so `TokenizerConfig(vocab_size=..., eos_token_id=...,
+#: pad_token_id=...)` would construct one. That is not done here, because the three numbers
+#: are facts about a published tokenizer and only two of them are guessable: a 256-entry
+#: vocabulary of raw bytes has no room for an end-of-sentence id, so whatever
+#: `tokenizer/bytes-utf8` does about that is something to read out of its own tokenizer.json
+#: rather than to infer. An invented eos id is the quiet kind of wrong this whole map exists
+#: to refuse.
+TOKENIZERS: Final[dict[str, str]] = {
+    "tokenizer/dolma2-bpe": "TokenizerConfig.dolma2()",
+}
+
 #: A prefix belonging to a team that does not exist, which is the point. The workload role
 #: is scoped to ``teams/platform/runs/*``, so a read here must come back AccessDenied rather
 #: than NoSuchKey -- and the difference between those two answers is the whole check.

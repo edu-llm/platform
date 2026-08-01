@@ -51,6 +51,20 @@
 # rather than sloppy: the upstream standard prefers an honest unknown to a false MIT. What it
 # means downstream is that a lineage record will name a corpus whose licence basis nobody has
 # established, which is a fact about the corpus and not a defect in the record.
+#
+# ONE OF THE TWO IS REGISTERED HERE AND NOT OFFERED ON THE FORM, AND THAT IS DELIBERATE.
+# lean4-mathlib-bytes depends on `tokenizer/bytes-utf8`, and OLMo-core has no byte tokenizer:
+# TokenizerConfig offers dolma2, dolma2_sigdig, gpt_neox_olmo_dolma_v1_5, gpt2 and from_hf,
+# and nothing under olmo_core/data/ mentions bytes or utf8 — measured on 2026-08-01 against
+# the checkout the training image builds from. So a run that picked it would reach a container
+# that cannot construct a model for the tokens it just resolved.
+#
+# It stays registered because this file answers "may a submission name this", and the honest
+# answer is yes: it is a real sealed corpus, admission can resolve it, and a workload that is
+# not an OLMo-core training run could read it tomorrow. The dropdown answers the different
+# question of whether it will work. The join between the two lives in
+# tests/test_submission_form_options.py and is computed from tools' TOKENIZERS map, so adding
+# a byte tokenizer config makes the option appear without anybody editing this comment.
 schema_version: 1
 releases:
   - release_id: dolma-2026-07

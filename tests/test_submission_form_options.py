@@ -40,6 +40,7 @@ from edullm_platform.contracts.execution import (
 from edullm_platform.contracts.manifest import RunManifest
 from edullm_platform.contracts.workload import ComputeProfileResolutionError, WorkloadCatalog
 from edullm_platform.execution import resolve_execution_target
+from tools.build_gpu_training_submission import TOKENIZERS
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "submit-run.yml"
@@ -147,6 +148,20 @@ def test_the_repository_dropdown_offers_the_registered_repositories_that_have_a_
     )
 
 
+def corpora_a_run_could_actually_train_on() -> set[str]:
+    """Registered published corpora whose declared tokenizer this platform can build.
+
+    The join that makes the dropdown a promise rather than a list. A corpus is offerable when
+    it is registered AND something can turn its tokenizer into a model, and the second half is
+    a fact about OLMo-core rather than about the registry.
+    """
+    return {
+        entry["reference_id"]
+        for entry in registry("datasets.yaml").get("published", [])
+        if entry["tokenizer"] in TOKENIZERS
+    }
+
+
 def test_the_dataset_dropdown_offers_exactly_the_registered_releases_and_references() -> None:
     """Mutation: offer the release ids and forget the published references.
 
@@ -160,10 +175,14 @@ def test_the_dataset_dropdown_offers_exactly_the_registered_releases_and_referen
     see ``PublishedDatasetReference`` for why a published corpus cannot be a ``DatasetRelease``
     -- but they are one dropdown, because a submitter picking a dataset is not being asked
     which of those two things it is.
+
+    REGISTERED IS NOT THE SAME AS OFFERABLE, which is the same distinction the repository
+    dropdown above draws and it arrived here the same way: by measuring rather than by
+    reasoning. See the test below for the corpus this excludes and why.
     """
     document = registry("datasets.yaml")
     registered = [entry["release_id"] for entry in document["releases"]]
-    registered += [entry["reference_id"] for entry in document.get("published", [])]
+    registered += sorted(corpora_a_run_could_actually_train_on())
     offered = options_for("dataset_release")
 
     # Set equality rather than sorted order. What this test is for is that no option can be
@@ -172,6 +191,45 @@ def test_the_dataset_dropdown_offers_exactly_the_registered_releases_and_referen
     # nothing -- is the option a first-time submitter reaches first.
     assert set(offered) == set(registered)
     assert len(offered) == len(registered), f"an option is listed twice: {offered!r}"
+
+
+def test_a_corpus_whose_tokenizer_nothing_can_build_stays_registered_and_unoffered() -> None:
+    """Mutation: offer every registered corpus, since all of them are real and readable.
+
+    ``lean4-mathlib-bytes-v3`` is published, sealed, frozen and 326 MB -- the cheapest thing
+    any run here could read. It is still not offerable, and the reason is not about the corpus
+    at all. It depends on ``tokenizer/bytes-utf8``, and OLMo-core has no byte tokenizer:
+    ``TokenizerConfig`` offers dolma2, dolma2_sigdig, gpt_neox_olmo_dolma_v1_5, gpt2 and
+    from_hf, and nothing under ``olmo_core/data/`` mentions bytes or utf8 at all. Measured
+    against the checkout the training image builds from, on 2026-08-01.
+
+    So a submitter picking it would fill in eight fields, wait for a lead, and reach a
+    container that cannot construct a model for the tokens it just resolved. That is the
+    ``unregistered_repository`` shape this module was written about, arriving through a field
+    nobody had connected to the tokenizer before.
+
+    IT STAYS IN THE REGISTRY, and the split is the point. The registry answers "may a
+    submission name this", and the honest answer is yes -- it is a real corpus, admission can
+    resolve it, and a workload that is not an OLMo-core training run could read it tomorrow.
+    The dropdown answers "will this work", which today it will not.
+
+    Self-retiring, in both directions, which is why the exclusion is computed rather than
+    listed. Add ``tokenizer/bytes-utf8`` to ``TOKENIZERS`` and the test above starts demanding
+    the option; publish a corpus on a tokenizer nothing can build and it starts demanding its
+    absence. Neither needs anybody to remember this test exists.
+    """
+    registered = {
+        entry["reference_id"] for entry in registry("datasets.yaml").get("published", [])
+    }
+    offerable = corpora_a_run_could_actually_train_on()
+
+    assert "lean4-mathlib-bytes-v3" in registered
+    assert "lean4-mathlib-bytes-v3" not in offerable
+    assert "lean4-mathlib-bytes-v3" not in options_for("dataset_release")
+    assert "regmix-10b-v1" in offerable, (
+        "at least one registered corpus must be trainable, or the dropdown offers no real "
+        "data at all and the exclusion above has quietly become the rule"
+    )
 
 
 def test_every_offered_dataset_resolves_to_something_a_reader_could_open() -> None:
