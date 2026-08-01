@@ -50,8 +50,14 @@ on:
           # command has to be written differently from every other one. Nothing on this
           # platform wraps the command; whatever is typed below is what the container
           # execs. So a four-GPU run needs torch.distributed.run in the text or it is one
-          # rank on one of four devices at four devices' price, which reports success. The
-          # command field's own description carries the line.
+          # rank on one of four devices at four devices' price.
+          #
+          # That used to report success, which is what made it worth a comment here rather
+          # than a rule somewhere. It is now refused by
+          # edullm_platform.launchers.require_a_process_for_every_device while compiling,
+          # so the sentence a submitter needs reaches them in the refusal rather than in a
+          # dropdown comment nobody reads. This stays because a reader deciding whether to
+          # offer a tenth workload needs to know the rule exists.
           - olmo-core-train-4gpu
           # The evaluation harness against its `mock` provider. A check of the path rather
           # than an eval: the published image leaves torch and vllm out, so there is no GPU
@@ -102,7 +108,7 @@ on:
         required: true
         type: string
       command:
-        description: "What the container should run, as one command line. The default below runs a one-line check that needs no code of your own; overwrite it with your own script path for real work. On a multi-GPU workload start with python -m torch.distributed.run --nproc-per-node=N --standalone, where N is the profile's GPU count, or only one device trains."
+        description: "What the container should run, as one command line. The default below runs a one-line check that needs no code of your own; overwrite it with your own script path for real work. On a multi-GPU profile the command must start one process per device — python -m torch.distributed.run --nproc-per-node=N --standalone, where N is the profile's GPU count — and a command that does not is refused when this compiles, before a lead is asked."
         required: true
         type: string
         # PRE-FILLED RATHER THAN DESCRIBED, WHICH IS THE DIFFERENCE BETWEEN AN EXAMPLE AND

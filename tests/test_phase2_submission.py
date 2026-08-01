@@ -216,13 +216,32 @@ def cpu_payload(**overrides: object) -> dict[str, object]:
 
 
 def olmo_payload(**overrides: object) -> dict[str, object]:
+    """A submission on the four-GPU workload, which is the one with a command rule attached.
+
+    THE LAUNCHER IN THE COMMAND IS LOAD-BEARING AND WAS ADDED RATHER THAN CHOSEN.
+    ``olmo-core-train-4gpu`` inherits ``gpu-4xa10g``, and ``python -m olmo_core.train`` on
+    four devices is now refused at compile: it would train on one of them and bill for four.
+    Every test below that needs a submission which compiles needs one that starts four
+    processes, so the helper produces one.
+
+    ``-m`` after ``--standalone`` is torchrun's own flag rather than a second interpreter
+    ``-m``: it says the training script is a module name.
+    """
     return cpu_payload(
         **{
             "repository": "OLMo-core",
             "workload_profile": OLMO_WORKLOAD,
             "team": "modeling",
             "wandb_project": "olmo-core-extended",
-            "command": ["python", "-m", "olmo_core.train"],
+            "command": [
+                "python",
+                "-m",
+                "torch.distributed.run",
+                "--nproc-per-node=4",
+                "--standalone",
+                "-m",
+                "olmo_core.train",
+            ],
             **overrides,
         }
     )
@@ -529,7 +548,11 @@ def test_the_workload_profile_supplies_what_the_form_did_not_ask_for(
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("compute_profile", "gpu-1xt4"),
+        # A four-GPU shape rather than the one-GPU one this used to name. The override still
+        # differs from the workload's own profile, which is all the case needs, and the
+        # payload's command starts four processes -- so a single-GPU shape here would be
+        # refused for oversubscribing one device and the row would stop being about overrides.
+        ("compute_profile", "gpu-4xt4"),
         ("maximum_runtime_hours", Decimal(3)),
         # One, not two. The workload's default was one attempt and became two when the
         # four-GPU entry's bounds were raised to the single-GPU entry's, so two would now

@@ -32,12 +32,14 @@ every step says what it did and, if it refuses, why.
 ## What the fields actually decide
 
 **`workload_profile` is the one that matters.** It fixes the machine, the time limit and
-the retry limit together, so you do not have to know any of them. There are three:
+the retry limit together, so you do not have to know any of them. There are four:
 
 - `olmo-core-check-cpu` — a CPU box, one hour. Start here.
 - `olmo-core-check-gpu` — one A10G, one hour. Use it to check your code sees a GPU.
 - `olmo-core-train-1gpu` — one A10G, twelve hours, two attempts, checkpointing required.
   This is the one for real training.
+- `olmo-core-train-4gpu` — four A10Gs, same bounds. Read **More than one GPU** before you
+  pick it; the command is written differently and a run that gets that wrong is refused.
 
 **`team` routes the approval and books the cost.** It records whose work a run is, decides
 which lead is asked, and is the S3 prefix your outputs land under. Any lead may approve any
@@ -96,6 +98,50 @@ bash -lc 'python .edullm/train_on_corpus.py "$EDULLM_RUN_ID" --steps 4000 --mode
 
 `--dry-run` resolves the corpus, prints the whole config, and trains nothing. It is the
 cheapest way to find out that a flag you passed does not exist.
+
+### More than one GPU
+
+Seven of the machines on the `compute_profile` dropdown have more than one device:
+`gpu-4xt4`, `gpu-4xa10g`, `gpu-4xl4`, `gpu-4xl40s` and `gpu-8xa10g`, `gpu-8xa100`,
+`gpu-8xh100`. `olmo-core-train-4gpu` runs on `gpu-4xa10g`, which is four A10Gs on one
+machine at $5.672/hour.
+
+**On any of them your command has to start one process per device.** Nothing on this
+platform wraps what you type — the container execs it exactly as written — so the launcher
+has to be in the command:
+
+```
+bash -lc 'python -m torch.distributed.run --nproc-per-node=4 --standalone .edullm/train_on_corpus.py "$EDULLM_RUN_ID" --steps 4000'
+```
+
+`--nproc-per-node` is the device count of the machine you picked: 4 on the four-GPU shapes,
+8 on the eight-GPU ones. `torchrun`, `accelerate launch`, `deepspeed`, `mpirun` and `srun`
+work too, and so does the deprecated `torch.distributed.launch`.
+
+`.edullm/train_on_corpus.py` handles the rest. It joins the process group, shards the model
+across the devices with FSDP, and writes one checkpoint shard per rank. What it cannot do is
+start the other processes, which is the whole reason the launcher is your problem and not
+its.
+
+**Leaving the launcher out used to be free and silent.** The run trained on one device,
+billed for four, and exited zero — $68 for a quarter of the work on `gpu-4xa10g` over twelve
+hours, and far worse on an eight-GPU shape. Nothing failed and nothing said anything was
+wrong. The submission is now refused when it compiles, before a lead is asked to approve it,
+and the refusal prints the corrected command. The same refusal catches
+`--nproc-per-node=2` on a four-GPU machine, and `torchrun` with no `--nproc-per-node` at all,
+which defaults to one process.
+
+**If one process on a multi-GPU machine is what you actually want** — a benchmark, a memory
+profile, an inference sweep that places its own devices — put `EDULLM_LAUNCH_CHECK=waived`
+in the command and it goes through:
+
+```
+bash -lc 'EDULLM_LAUNCH_CHECK=waived python benchmarks/memory.py --batch 64'
+```
+
+That is on the record rather than a way round the check: it is in the run's manifest, and
+the lead approving the run is told the run waived the check. Picking a smaller machine to
+avoid typing it wastes exactly as much and explains nothing.
 
 ### Why not the OLMo-core example
 
