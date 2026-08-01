@@ -663,13 +663,14 @@ def phase5_criteria() -> tuple[CriterionSpec, ...]:
             number="11",
             statement=(
                 "Every accepted submission tells the submitter, on the summary it ends on, "
-                "that cancelling does not stop the job, that a checkpoint omits optimizer "
-                "state, and that team routes approval rather than granting permission."
+                "that cancelling does not stop the job, that the example training program "
+                "saves no optimizer state while OLMo-core's Trainer does, and that team "
+                "routes approval rather than granting permission."
             ),
             status=CriterionStatus.COVERED,
             proving_node_ids=(
                 *_ids(LIMITATIONS, "test_a_submitter_is_told_that_cancelling_does_not_stop_the_job"),
-                *_ids(LIMITATIONS, "test_a_submitter_is_told_the_checkpoint_leaves_the_optimizer_behind"),
+                *_ids(LIMITATIONS, "test_a_submitter_is_told_which_checkpoints_leave_the_optimizer_behind"),
                 *_ids(
                     LIMITATIONS,
                     "test_a_submitter_is_told_that_team_routes_approval_rather_than_granting_access",

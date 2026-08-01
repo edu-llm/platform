@@ -1022,6 +1022,13 @@ def test_the_validator_payload_is_built_field_by_field_and_never_forwarded() -> 
         "approving_environment",
         "approved_manifest_sha256",
         "manifest",
+        # Beside the manifest rather than inside it, because the manifest is hashed and the
+        # digest is what the approver released. This set is an equality assertion and it
+        # still passed when `experiment` was added to the form, the request and the handler
+        # but not to the payload -- pinning the set says nothing about whether the set is
+        # the right one. test_phase2_admission_handler.py compares it to the fields the
+        # handler actually reads, which is the half that catches an omission.
+        "experiment",
         "workflow_run",
         # Forwarded so the validator can disagree with it. ReadImageScan reads the scan from
         # the repository this names, and the validator re-derives the same name from

@@ -1,4 +1,4 @@
-"""``project``: the discovery key, and the one field on the form nobody has to register.
+"""``experiment``: the discovery key, and the one field on the form nobody has to register.
 
 Every other grouping this platform records is a closed set. ``team`` is a roster entry,
 ``workload_profile`` a catalog entry, ``dataset_release`` a registration, ``repository`` a
@@ -9,7 +9,7 @@ whether that is a cost centre, a compute profile or a place images may be pushed
 Grouping runs carries no consequence. Two people comparing four ablations want a label they
 can agree on over lunch, and making them file a pull request to say "these six runs are the
 context-length sweep" is a governance cost with nothing on the other side of it. So
-``project`` is free text, validated for shape and registered nowhere.
+``experiment`` is free text, validated for shape and registered nowhere.
 
 **Free text is also the only thing that works.** ``workflow_dispatch`` ``choice`` options are
 static text read from the default branch, so a dropdown could not be extended by anybody
@@ -23,7 +23,7 @@ retired the argument. ``RunManifest`` is hashed whole and the digest is what an 
 releases, so a field added to it changes the digest of *every manifest ever written*: the
 recomputed form carries a key the stored bytes never had. Against a real stored record,
 ``run_019fa446-8a4e-7094-9e29-d44fffbd2491``, the manifest rehashes to ``819aaf8a`` as
-stored and to ``0439d570`` with ``project: null`` present, and
+stored and to ``0439d570`` with the field added as null, and
 ``test_the_manifest_in_every_intent_still_hashes_to_its_recorded_value`` stops agreeing with
 records nobody touched.
 
@@ -33,8 +33,8 @@ way. This is schema evolution against content addressing and it is general: **an
 added to ``RunManifest`` does this, so the seam this module defends is worth more than the
 one field that found it.
 
-Nothing is lost. A project groups runs; it does not say what ran. Its consumers -- the W&B
-run group, the ``edullm:project`` Batch tag and the cost view -- are all set when the job is
+Nothing is lost. An experiment groups runs; it does not say what ran. Its consumers -- the W&B
+run group, the ``edullm:experiment`` Batch tag and the cost view -- are all set when the job is
 launched, and none of them reads the sealed document.
 """
 
@@ -66,30 +66,30 @@ def environment_of(request: dict[str, Any]) -> dict[str, str]:
     }
 
 
-def submit_request(project: str | None) -> dict[str, Any]:
+def submit_request(experiment: str | None) -> dict[str, Any]:
     manifest = cpu_manifest()
     return batch_submit_request(
         manifest=manifest,
         target=seam_target(manifest),
         run_id=RUN_ID,
         job_definition=JOB_DEFINITION,
-        project=project,
+        experiment=experiment,
     )
 
 
 def test_a_project_that_is_not_kebab_case_is_refused_with_a_message_naming_project() -> None:
-    """Mutation: take ``project`` as any non-empty string.
+    """Mutation: take ``experiment`` as any non-empty string.
 
     The same shape ``team`` is held to, and for a weaker reason honestly stated: nothing
-    downstream breaks on a project called ``Context Length Sweep``. What breaks is the
+    downstream breaks on an experiment called ``Context Length Sweep``. What breaks is the
     grouping, quietly -- it becomes a Batch tag value and a W&B run group, and two people
     typing the same words with different capitals get two groups that look like one.
     """
     with pytest.raises(SubmissionRefusedError) as exc_info:
-        compile_payload(cpu_payload(project="Context Length Sweep"))
+        compile_payload(cpu_payload(experiment="Context Length Sweep"))
 
     message = str(exc_info.value)
-    assert "project" in message
+    assert "experiment" in message
     assert "Context Length Sweep" in message
     assert "lower-case" in message
 
@@ -107,16 +107,16 @@ def test_the_project_on_the_form_is_carried_beside_the_manifest_rather_than_insi
     ``resolved_image`` is the precedent rather than the exception: ``CompiledSubmission``
     already carries a fact beside the manifest that the manifest has no business holding.
     """
-    compiled = compile_payload(cpu_payload(project="context-length-sweep"))
+    compiled = compile_payload(cpu_payload(experiment="context-length-sweep"))
 
-    assert compiled.project == "context-length-sweep"
-    assert not hasattr(compiled.manifest, "project")
+    assert compiled.experiment == "context-length-sweep"
+    assert not hasattr(compiled.manifest, "experiment")
 
 
 def test_the_manifest_carries_no_field_the_records_already_written_do_not_have() -> None:
     """Mutation: any future field added directly to ``RunManifest``.
 
-    The general guard, and phrased about the model rather than about ``project`` because what
+    The general guard, and phrased about the model rather than about ``experiment`` because what
     broke was not this feature -- it was the assumption that a hashed record can grow a
     field. The next one fails here too, and fails naming itself.
 
@@ -148,15 +148,15 @@ def test_the_manifest_carries_no_field_the_records_already_written_do_not_have()
 def test_the_project_reaches_the_batch_tags_under_a_key_a_cost_query_can_group_on() -> (
     None
 ):
-    """Mutation: emit it as ``project`` without the prefix, or leave it out of ``Tags``.
+    """Mutation: emit it as ``experiment`` without the prefix, or leave it out of ``Tags``.
 
     The prefix is the point. ``edullm:`` is what tells this platform's tags apart from every
     other tag in a shared sandbox account, and Cost Explorer groups on the whole key -- so an
-    unprefixed ``project`` is a key somebody else's stack may also be writing.
+    unprefixed ``experiment`` is a key somebody else's stack may also be writing.
     """
     request = submit_request("context-length-sweep")
 
-    assert request["Tags"]["edullm:project"] == "context-length-sweep"
+    assert request["Tags"]["edullm:experiment"] == "context-length-sweep"
     assert request["PropagateTags"] is True
 
 
@@ -196,12 +196,12 @@ def test_two_submissions_sharing_a_project_produce_the_same_run_group_and_the_sa
             target=seam_target(manifest),
             run_id=run_id,
             job_definition=JOB_DEFINITION,
-            project=shared,
+            experiment=shared,
         )
         for run_id in (RUN_ID, "run_019fa43a-1111-7000-8000-9ce33bc71f21")
     )
 
-    assert first["Tags"]["edullm:project"] == second["Tags"]["edullm:project"] == shared
+    assert first["Tags"]["edullm:experiment"] == second["Tags"]["edullm:experiment"] == shared
     assert environment_of(first)["WANDB_RUN_GROUP"] == shared
     assert environment_of(second)["WANDB_RUN_GROUP"] == shared
     assert first["Tags"]["edullm:run-id"] != second["Tags"]["edullm:run-id"]
@@ -213,19 +213,19 @@ def test_a_project_is_not_a_dropdown_so_a_new_one_needs_no_pull_request() -> Non
     A shape assertion rather than a behaviour one, and it exists because the suggestion to
     close this set is a reasonable one that will be made. The mechanical answer is that
     ``workflow_dispatch`` ``choice`` options are static text read only from the default
-    branch: a dropdown could not be extended from a branch, so starting a new project would
+    branch: a dropdown could not be extended from a branch, so starting a new experiment would
     mean a pull request against this repository merged to main before the first run.
 
     The other groupings are dropdowns and should be. Each of them registers something with a
-    consequence -- a cost centre, a compute profile, a place images may be pushed. A project
+    consequence -- a cost centre, a compute profile, a place images may be pushed. An experiment
     registers nothing, so there is nothing for a reviewer to check.
     """
     inputs = load_workflow(SUBMIT_WORKFLOW_PATH)["on"]["workflow_dispatch"]["inputs"]
 
-    assert inputs["project"]["type"] == "string"
-    assert inputs["project"]["required"] is True
-    assert "options" not in inputs["project"]
-    # The closed sets, so this fails if project is made to look like them or if one of them
+    assert inputs["experiment"]["type"] == "string"
+    assert inputs["experiment"]["required"] is True
+    assert "options" not in inputs["experiment"]
+    # The closed sets, so this fails if experiment is made to look like them or if one of them
     # is quietly opened up.
     assert {
         inputs[name]["type"]
@@ -234,16 +234,16 @@ def test_a_project_is_not_a_dropdown_so_a_new_one_needs_no_pull_request() -> Non
 
 
 def test_a_submission_cannot_be_compiled_without_a_project() -> None:
-    """Mutation: give ``SubmissionInputs.project`` a default.
+    """Mutation: give ``SubmissionInputs.experiment`` a default.
 
-    A default would be a project every run without an opinion joins, which is a group whose
+    A default would be an experiment every run without an opinion joins, which is a group whose
     membership means "nobody said" -- and a cost query cannot tell that apart from a real
     grouping. The field is required at the only place a new run can enter, which is the form,
     and that is where the strictness belongs now that the manifest cannot carry it.
     """
     payload = cpu_payload()
-    del payload["project"]
-    with pytest.raises(ValueError, match="project"):
+    del payload["experiment"]
+    with pytest.raises(ValueError, match="experiment"):
         compile_payload(payload)
 
 
@@ -251,8 +251,8 @@ def test_a_run_admitted_before_the_field_existed_is_left_out_of_the_grouping() -
     """Mutation: send ``WANDB_RUN_GROUP`` and the tag unconditionally.
 
     Reached by an execution that crossed the approval gate before this shipped, whose event
-    carries no project. An empty tag value is not an absence -- Cost Explorer groups on it
-    and totals up a project named "". W&B reads an empty run group the same way.
+    carries none. An empty tag value is not an absence -- Cost Explorer groups on it
+    and totals up an experiment named "". W&B reads an empty run group the same way.
 
     Both together or neither, because they are one fact told to two systems. A run present in
     the W&B grouping and missing from the cost grouping reads as a billing discrepancy rather
@@ -261,4 +261,4 @@ def test_a_run_admitted_before_the_field_existed_is_left_out_of_the_grouping() -
     request = submit_request(None)
 
     assert "WANDB_RUN_GROUP" not in environment_of(request)
-    assert "edullm:project" not in request["Tags"]
+    assert "edullm:experiment" not in request["Tags"]

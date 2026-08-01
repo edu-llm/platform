@@ -25,6 +25,7 @@ appear.
 
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +37,7 @@ from edullm_platform.contracts.execution import (
     ExecutionTargetCatalog,
     UnbackedComputeProfileError,
 )
+from edullm_platform.contracts.manifest import RunManifest
 from edullm_platform.contracts.workload import ComputeProfileResolutionError, WorkloadCatalog
 from edullm_platform.execution import resolve_execution_target
 
@@ -326,3 +328,38 @@ def test_the_form_stays_within_what_github_will_accept() -> None:
     refusing to parse, which takes the submission path down entirely rather than degrading.
     """
     assert len(form_inputs()) <= 25
+
+
+def test_the_command_the_form_arrives_pre_filled_with_is_one_the_contract_accepts() -> None:
+    """Mutation: put a command line in the default that cannot be split into arguments.
+
+    The whole value of a pre-filled command is that a first submission needs no typing, and
+    that value inverts if the thing it arrives with is refused. ``RunManifest.command``
+    requires a first element naming a program rather than a whole command line, which is
+    exactly the mistake a hand-written default makes -- the same mistake a stored intent
+    from 2026-07-30 now trips over.
+
+    Asserted through ``shlex`` and the contract rather than against the literal string, so
+    that changing the example stays free and breaking it does not.
+    """
+    default = form_inputs()["command"].get("default")
+
+    assert default, "the command field arrives empty, so a first run has to type one"
+    arguments = shlex.split(str(default))
+    assert arguments, "the default splits to nothing"
+    RunManifest(
+        schema_version=1,
+        repository="OLMo-core",
+        commit_sha="1" * 40,
+        image_digest="sha256:" + "a" * 64,
+        dataset_release="none",
+        command=arguments,
+        team="platform",
+        wandb_project="onboarding",
+        workload_profile="olmo-core-cpu-smoke",
+        compute_profile="cpu-32vcpu",
+        maximum_runtime_hours="1",
+        maximum_attempts=1,
+        checkpoint=None,
+        fanout=None,
+    )

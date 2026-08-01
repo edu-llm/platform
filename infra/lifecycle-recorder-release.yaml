@@ -1,0 +1,47 @@
+# What is actually deployed as the lifecycle recorder, recorded beside the template that
+# names it.
+#
+# THIS FILE EXISTS BECAUSE THE FUNCTION WAS FOUND RUNNING BYTES NOBODY COULD ACCOUNT FOR.
+# On 2026-07-31 the deployed function's CodeSha256 was compared against a zip built from
+# this tree and against one built from the tree as it stood before that day's work. It
+# matched neither. Something in the recorder's package had moved at some point since its
+# last release and nothing had noticed, because unlike the admission validator this
+# function had no release record and no digest comparison -- the two halves of the control
+# that Phase 4 paid a live run to learn it needed.
+#
+# WHY THE VALIDATOR'S LESSON APPLIES HERE TOO, AND WHY IT IS QUIETER. Both functions are
+# entry points into the same `edullm_platform` package and both are packaged by the same
+# builder, so a change to a shared contract moves both digests. The validator's failure
+# mode is loud: a submission is refused with a reason that is correct for the deployed
+# bytes and wrong about the account. The recorder's is silent. It writes the lineage --
+# `binding/`, `events/`, `attempt/` and `result/` -- so a recorder running code this tree
+# does not describe produces records that look exactly like correct ones, and the first
+# reader to notice is somebody reading a projection months later that does not join.
+#
+# That silence is the argument for the tripwire rather than against it. The lineage is
+# immutable by design, so a record written wrong cannot be corrected afterwards; the only
+# place to catch it is before the bytes are deployed.
+#
+# WHAT NOW DEPENDS ON THIS BEING RIGHT. Two things read what this function writes and
+# neither existed when it was last released. `tools/report_run_costs.py` derives per-run,
+# per-team and per-submitter spend from the `started_at` and `ended_at` on `attempt/`
+# records, which is the platform's whole answer to cost attribution now that activating
+# AWS cost allocation tags has turned out to be impossible from a linked account. And the
+# queue-wait detector reads the same event stream to notice a job that is not starting.
+# Both rest on a function whose deployed code was, until this file was written,
+# unaccounted for.
+#
+# The build is deterministic, so a rebuild that changed nothing produces the same digest
+# and needs no edit here. Releasing means running the procedure in infra/README.md and
+# updating both fields below in the same commit as the change that caused them to move.
+#
+# The two zips are built separately and are not interchangeable. Each function's package
+# carries only the modules its own entry point reaches, so the recorder's fifteen modules
+# are a subset of the validator's twenty-eight and the digests differ even when neither
+# handler changed. Uploading one under the other's key deploys the wrong code under the
+# right name, which is the failure `tools/build_lifecycle_lambda.py` exists as a second
+# command to prevent.
+schema_version: 1
+s3_key: lifecycle-recorder/lifecycle-recorder.zip
+s3_object_version: fhN28H3R0SOcjz8RWva1EkaIU_48INrn
+sha256: 3a8a9b44b8f6032d8aa320a90211cd0ac668f2bfee668e4e5f0582a0ba4e79b5

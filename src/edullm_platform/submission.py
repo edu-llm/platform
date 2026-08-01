@@ -110,10 +110,15 @@ class SubmissionInputs(ContractModel):
     workload_profile: str = Field(min_length=1)
     dataset_release: str = Field(min_length=1)
     team: str = Field(min_length=1)
-    # Free text on the form and shaped in the manifest. Held as a plain string here, so the
-    # refusal a submitter meets is the one compile_submission writes rather than a pydantic
+    # Free text on the form and shaped by compile_submission. Held as a plain string here,
+    # so the refusal a submitter meets is the one that function writes rather than a pydantic
     # dump about a form field -- the same split as `team`, for the same reason.
-    project: str = Field(min_length=1)
+    #
+    # Named `experiment` rather than `project` because `wandb_project` sits beside it on the
+    # form and the two are different things: that one picks which Weights and Biases project
+    # the charts appear in, this one groups related runs inside it. Two adjacent fields both
+    # called some kind of project is a question every submitter would have asked once.
+    experiment: str = Field(min_length=1)
     wandb_project: str = Field(min_length=1)
     command: Annotated[tuple[str, ...], BeforeValidator(require_ordered_sequence)] = Field(
         min_length=1, strict=False
@@ -161,17 +166,18 @@ class CompiledSubmission:
     # recomputed form carries a key the stored bytes never had, and
     # test_the_manifest_in_every_intent_still_hashes_to_its_recorded_value stops agreeing
     # with records nobody touched. Measured on a real record rather than reasoned about:
-    # as stored it rehashes to 819aaf8a, with `project: null` to 0439d570.
+    # as stored it rehashes to 819aaf8a, with the field added as null to 0439d570.
     #
     # No serialization setting rescues it. Dropping nulls instead gives e75c8f8a, because
     # the stored manifests already carry `fanout: null` and excluding it moves the digest
     # the other way. This is schema evolution against content addressing, and it is general:
     # any field added to RunManifest does this.
     #
-    # Nothing is lost by keeping it out. A project groups runs; it does not say what ran.
-    # Its three consumers -- the W&B run group, the `edullm:project` Batch tag and the cost
-    # view -- are all set when the job is launched, and none reads the sealed document.
-    project: str
+    # Nothing is lost by keeping it out. An experiment groups runs; it does not say what
+    # ran. Its three consumers -- the W&B run group, the `edullm:experiment` Batch tag and
+    # the cost view -- are all set when the job is launched, and none reads the sealed
+    # document.
+    experiment: str
 
 
 def _resolve_workload(catalog: WorkloadCatalog, name: str) -> WorkloadProfile:
@@ -271,15 +277,16 @@ def compile_submission(
     #
     # Checked here rather than on SubmissionInputs, so that what a submitter meets is a
     # sentence rather than a pydantic dump. Same split as `team`, and checked before the
-    # manifest is built rather than after, because the project is no longer part of it --
-    # see CompiledSubmission.project for why a grouping key cannot live in a hashed record.
-    if not fullmatch(SLUG_PATTERN, inputs.project):
+    # manifest is built rather than after, because the experiment is no longer part of it
+    # -- see CompiledSubmission.experiment for why a grouping key cannot live in a hashed
+    # record.
+    if not fullmatch(SLUG_PATTERN, inputs.experiment):
         raise SubmissionRefusedError(
-            f"the project {inputs.project!r} is not a project name this platform can group "
-            "on. A project is written in lower-case letters and digits, with single hyphens "
+            f"the experiment {inputs.experiment!r} is not a name this platform can group on. "
+            "An experiment is written in lower-case letters and digits, with single hyphens "
             "between words and none at either end -- context-length-sweep, tokenizer-ablation. "
             "It registers nothing and needs no pull request; only the shape is fixed, so that "
-            "two people naming the same project get one group rather than two."
+            "two people naming the same experiment get one group rather than two."
         )
 
     manifest = RunManifest(
@@ -373,7 +380,7 @@ def compile_submission(
         approving_environment=ApprovalEnvironment.for_approval_class(approval_class),
         cost=cost,
         resolved_image=resolved_image,
-        project=inputs.project,
+        experiment=inputs.experiment,
     )
 
 

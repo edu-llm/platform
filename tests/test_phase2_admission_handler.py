@@ -30,6 +30,7 @@ import pytest
 import yaml
 
 from edullm_platform.admission_handler import (
+    _REQUIRED_EVENT_FIELDS,
     AdmissionEventError,
     handler,
 )
@@ -347,6 +348,38 @@ def test_every_payload_path_the_definition_reads_is_a_key_the_handler_returns(
 
     assert read, "the definition reads nothing out of the Lambda payload"
     assert read <= returned, f"definition reads keys the handler does not return: {read - returned}"
+
+
+def test_every_event_field_the_handler_reads_is_a_field_this_payload_sends(
+    definition: dict[str, Any],
+) -> None:
+    # The inbound half of the seam, and the half that was missing. The two tests around
+    # this one both read the handler's *answer* against the paths the definition follows.
+    # Nothing read the definition's *question* against the fields the handler consumes,
+    # so a field the workflow assembled and the handler read with `.get` could be absent
+    # from this payload block and default to None on every live run. `experiment` did
+    # exactly that: the form collected it, the request carried it, the handler read it,
+    # and the state machine never forwarded it -- and the handler tests could not see it,
+    # because they build their own event and put the field in themselves.
+    #
+    # Read off the source rather than by calling, because absence is the defect: an event
+    # missing a field the handler treats as optional is indistinguishable at runtime from
+    # one that genuinely has nothing to say.
+    source = (PROJECT_ROOT / "src" / "edullm_platform" / "admission_handler.py").read_text(
+        encoding="utf-8"
+    )
+    consumed = set(re.findall(r'event\.get\(\s*"([A-Za-z_][A-Za-z0-9_]*)"', source))
+    consumed |= set(re.findall(r'_require\(\s*event,\s*"([A-Za-z_][A-Za-z0-9_]*)"', source))
+    consumed |= set(_REQUIRED_EVENT_FIELDS)
+
+    payload = definition["States"]["ValidateAndDecide"]["Parameters"]["Payload"]
+    sent = {key.removesuffix(".$") for key in payload}
+
+    assert consumed, "no event field reads were found in the handler source"
+    assert consumed <= sent, (
+        "the handler reads event fields this payload never sends, so they arrive absent "
+        f"on every live execution: {sorted(consumed - sent)}"
+    )
 
 
 def test_every_admission_path_the_definition_reads_is_one_the_result_selector_makes(

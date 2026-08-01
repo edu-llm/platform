@@ -19,7 +19,7 @@
   "capacity_verdict": "verified",
   "capacity_verdict_note": "Sandbox applied quotas satisfy representative cpu-32vcpu and gpu-1xa10g and gpu-4xa10g profiles; does not attest production capacity.",
   "environment": "sandbox",
-  "observed_at": "2026-07-28T20:31:45Z",
+  "observed_at": "2026-07-31T22:12:42Z",
   "quotas": [
     {
       "applied_value": 1152.0,
