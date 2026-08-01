@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import string
+from collections.abc import Iterator
 from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
@@ -2112,3 +2113,61 @@ def test_the_outputs_bucket_is_private_versioned_and_not_the_lineage_store() -> 
     # worse than claiming none.
     assert "ObjectLockEnabled" not in properties
     assert LINEAGE_BUCKET not in list(walk_strings(template))
+
+
+def test_every_log_group_a_job_writes_to_is_created_by_some_template() -> None:
+    """No stack may send logs to a group only another stack happens to create.
+
+    The awslogs driver takes the group as a plain string, so CloudFormation sees no
+    dependency between the stack that names a group and the stack that creates it. Nine GPU
+    job definitions in batch-compute-gpu-shapes.yaml log to a group created in
+    batch-compute-gpu.yaml, and deleting the older stack would leave all nine writing
+    nowhere. Nothing about that failure is visible at deploy time: jobs keep running, and the
+    logs simply stop, which is the worst moment to discover it because the reason a run failed
+    is exactly what the group was holding.
+
+    The coupling is allowed and was chosen deliberately, since these shapes run the same image
+    under the same approvals and a group per shape would mean nine more grants on a role that
+    already exists. What is not allowed is the coupling being invisible, so this reads both
+    sides out of the templates rather than trusting the comment that records it.
+    """
+    templates = {
+        path.relative_to(PROJECT_ROOT): load_template(path)
+        for path in sorted(INFRA_ROOT.glob("*.yaml")) + sorted(IAM_ROOT.glob("*.yaml"))
+    }
+
+    created: dict[str, Path] = {}
+    for source, template in templates.items():
+        for resource in template.get("Resources", {}).values():
+            if not isinstance(resource, dict) or resource.get("Type") != "AWS::Logs::LogGroup":
+                continue
+            name = resource.get("Properties", {}).get("LogGroupName")
+            # A computed name cannot be compared against a driver string, and treating it as
+            # covering everything would turn this check into a rubber stamp.
+            assert isinstance(name, str), f"{source} creates a log group with a computed name"
+            created[name] = source
+
+    def referenced(value: object) -> Iterator[tuple[str, object]]:
+        if isinstance(value, dict):
+            for key, nested in value.items():
+                if key == "awslogs-group":
+                    yield "awslogs-group", nested
+                yield from referenced(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                yield from referenced(nested)
+
+    seen = 0
+    for source, template in templates.items():
+        for _driver_key, group in referenced(template):
+            assert isinstance(group, str), f"{source} names a log group this cannot read"
+            seen += 1
+            assert group in created, (
+                f"{source} sends job logs to {group}, which no template under infra/ creates. "
+                "Either create it beside the stack that writes to it, or the first thing "
+                "anyone learns about the missing group is a failed run with no logs."
+            )
+
+    # The count is asserted so that a refactor which stops finding awslogs-group at all fails
+    # here rather than passing on an empty loop, which is the way a check like this dies quietly.
+    assert seen >= 9, f"expected the GPU shapes and the CPU stack to be found, saw {seen}"
