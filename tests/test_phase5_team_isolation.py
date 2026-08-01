@@ -14,6 +14,7 @@ dealing with it.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Final
 
 import pytest
 
@@ -128,8 +129,7 @@ def test_both_workload_roles_reach_every_team_by_decision() -> None:
     reason about evidence rather than about risk, and a grant shaped to satisfy a check is
     the anomaly once the check turns out to encode no requirement. Asked directly, nobody
     could name a harm: one lab building one model, where another person reading your outputs
-    is collaboration, and collision is already prevented by the per-run prefix segment and
-    by the absence of ``s3:DeleteObject``.
+    is collaboration, and collision is already prevented by the per-run prefix segment.
 
     The trigger for reopening it is in the module docstring and is not the arrival of a
     second team. It is an external collaborator, a second lab, or a dataset that must not be
@@ -155,11 +155,15 @@ def test_the_wildcard_is_a_decision_and_the_narrow_role_is_the_one_that_needs_a_
 
     Asked directly, nobody could name a harm. This is one lab building one model, where
     another person reading your outputs is collaboration rather than a threat, and
-    collision is already prevented by the per-run prefix segment and the absence of
-    ``s3:DeleteObject``. So the wildcard is correct and the *narrow* role is the one that
-    needs justifying -- the GPU trio was scoped to one team so that Phase 4's cross-team
-    criterion had something to assert, which is a reason about evidence rather than about
-    risk.
+    collision is already prevented by the per-run prefix segment. So the wildcard is correct
+    and the *narrow* role is the one that needs justifying -- the GPU trio was scoped to one
+    team so that Phase 4's cross-team criterion had something to assert, which is a reason
+    about evidence rather than about risk.
+
+    This used to cite the absence of ``s3:DeleteObject`` as a second reason and no longer
+    can: the role holds one, scoped to ``checkpoints/*``, so that a retry can rewrite a step
+    directory its own lost attempt tore. The prefix segment is what the argument rested on
+    anyway, and the delete's own bounds are asserted below rather than folded in here.
 
     What this asserts now is that **no** workload role names a team. The asymmetry this test
     was originally written to defend is gone: the GPU trio was the last narrow grant and it
@@ -227,10 +231,141 @@ def test_read_and_write_are_recorded_separately_because_they_fail_differently() 
 
     assert len(reaches) == 1
     assert reaches[0].actions >= {"s3:PutObject", "s3:GetObject", "s3:ListBucket"}
-    assert "s3:DeleteObject" not in reaches[0].actions, (
-        "delete is deliberately absent: every run writes under its own run id, so a role "
-        "that needed delete would be a signal that two runs share a prefix"
+
+
+#: The delete's exact scope, spelled once so the two tests below compare against the same
+#: string rather than against each other's idea of it. Anything wider is a different grant.
+CHECKPOINT_DELETE_SCOPE: Final = (
+    f"arn:${{AWS::Partition}}:s3:::{OUTPUTS_BUCKET}/teams/*/runs/*/checkpoints/*"
+)
+
+#: The one key under a step directory the delete may not reach. ``.metadata.json`` is written
+#: last and ``Checkpointer.dir_is_checkpoint`` requires it, so it is what makes a directory a
+#: checkpoint rather than the remains of a write.
+FINISHED_CHECKPOINT_MARKER: Final = f"{CHECKPOINT_DELETE_SCOPE}/.metadata.json"
+
+
+def statements_of(role_name: str) -> list[object]:
+    role = role_named(role_name)
+    return [
+        statement
+        for policy in role.inline_policies  # type: ignore[attr-defined]
+        for statement in policy.statements
+    ]
+
+
+def test_the_delete_reaches_checkpoints_and_the_exact_arn_is_the_assertion() -> None:
+    """Mutation: widen the delete to ``teams/*/runs/*``, or to the whole outputs bucket.
+
+    THIS FILE FORBADE THE DELETE OUTRIGHT AND THE REASONING WAS HALF RIGHT. It read: every
+    run writes under its own run id, so no previous run's object is ever in the way, and a
+    role that needed delete would be a signal that two runs share a prefix, which is the
+    condition to fail on rather than to permit. Every clause of that is about *two* runs.
+
+    The case it does not cover is one run twice. A run's own retry is in its own way. On
+    ``run_019fbe1f-b84f-703a-8eb8-2b4504232948`` the host was lost immediately after
+    ``checkpoints/step100/train/rank0.pt`` was written, leaving that one object and no shard.
+    Attempt 2 resumed from ``step50`` correctly, trained back to step 100, and died in
+    ``Checkpointer._prepare_dir`` with ``FileExistsError`` on a directory that is not empty.
+    Same run id, same prefix, no second run anywhere, and deterministic: every further
+    attempt reaches the same step and dies at it.
+
+    So the assertion is the scope rather than the absence, and it is written as an equality
+    on the resource tuple. A widening is what this is for. ``teams/*/runs/*`` would let a
+    training container delete a run's saved config, its logs and anything else the platform
+    ever writes under a run; the whole bucket would let it delete another team's results.
+    Neither is needed to rewrite a step directory, so neither should pass a test.
+    """
+    granting = [
+        statement
+        for statement in statements_of(GPU_WORKLOAD)
+        if statement.effect == "Allow"  # type: ignore[attr-defined]
+        and any(
+            action.startswith("s3:Delete")
+            for action in statement.action_match.actions  # type: ignore[attr-defined]
+        )
+    ]
+
+    assert len(granting) == 1, (
+        f"expected one Allow granting a delete on {GPU_WORKLOAD}; found {len(granting)}, "
+        "and a second one is how a scope gets widened without the first one changing"
     )
+    assert granting[0].action_match.actions == ("s3:DeleteObject",), (  # type: ignore[attr-defined]
+        "s3:DeleteObject alone. s3:DeleteObjectVersion is what would turn a delete marker "
+        "on a versioned bucket into the removal of bytes, and this role must not hold it"
+    )
+    assert granting[0].resource_match.resources == (CHECKPOINT_DELETE_SCOPE,), (  # type: ignore[attr-defined]
+        "the delete must name the checkpoints prefix exactly. It is narrower than the "
+        "s3:PutObject grant on teams/*/runs/* deliberately: clearing an unfinished step "
+        "directory is the only thing this role deletes for"
+    )
+
+
+def test_nothing_may_delete_the_object_that_makes_a_checkpoint_finished() -> None:
+    """Mutation: drop the Deny, on the ground that the Allow above is already narrow.
+
+    The Allow reaches every key under a step directory, which includes the step directories
+    of finished checkpoints. What keeps a finished one safe is that ``.metadata.json`` is
+    written last and ``dir_is_checkpoint`` requires it, so a directory holding one is
+    complete and a torn directory never holds one. Denying that single key by name means the
+    repair path -- which only ever clears directories the loader refuses -- is unaffected,
+    while the routine deletion of a finished checkpoint is refused at the policy rather than
+    by a caller remembering not to.
+
+    That routine deletion has a name and a default. ``CheckpointerCallback.max_checkpoints``
+    is 3, and its prune removes ``.metadata.json`` first, on purpose, to invalidate the
+    checkpoint before clearing the rest. So the prune still fails on its first call and the
+    run still stops rather than losing a checkpoint, which is the behaviour
+    ``GETTING-STARTED.md`` documents and which the Allow alone would have removed.
+    """
+    denying = [
+        statement
+        for statement in statements_of(GPU_WORKLOAD)
+        if statement.effect == "Deny"  # type: ignore[attr-defined]
+    ]
+
+    assert len(denying) == 1
+    assert denying[0].action_match.actions == ("s3:DeleteObject",)  # type: ignore[attr-defined]
+    assert denying[0].resource_match.resources == (FINISHED_CHECKPOINT_MARKER,), (  # type: ignore[attr-defined]
+        "the deny must name .metadata.json under a step directory. Any other spelling "
+        "either misses the key the prune removes first or reaches keys the repair needs"
+    )
+    assert denying[0].conditions == (), (  # type: ignore[attr-defined]
+        "unconditional. A condition would make the refusal depend on how the call was "
+        "made, and the point is that this key is not deletable by this role at all"
+    )
+
+
+def test_neither_workload_role_may_remove_a_version() -> None:
+    """Mutation: add ``s3:DeleteObjectVersion`` beside the delete.
+
+    The outputs bucket has versioning enabled, so every delete either role can make writes
+    a delete marker and leaves the versions under it in place. That is the whole reason the
+    grant above is defensible: it cannot destroy bytes, only hide them, and a checkpoint
+    deleted by mistake is recoverable by removing the marker.
+
+    ``s3:DeleteObjectVersion`` is what removes the version itself, and
+    ``s3:PutBucketVersioning`` is what would let a container turn versioning off and make
+    every later delete permanent. Neither is granted, and this is the assertion that keeps
+    the sentence above true rather than true as of today.
+    """
+    for role in workload_roles(PROJECT_ROOT):
+        granted = {
+            action
+            for policy in role.inline_policies
+            for statement in policy.statements
+            if statement.effect == "Allow"
+            for action in statement.action_match.actions
+        }
+
+        assert "s3:DeleteObjectVersion" not in granted, (
+            f"{role.role_name} could remove a version, so a mistaken delete would stop "
+            "being recoverable and the delete grant would stop being reversible"
+        )
+        assert "s3:PutBucketVersioning" not in granted, (
+            f"{role.role_name} could turn versioning off, after which every delete it "
+            "makes is permanent"
+        )
 
 
 def test_the_list_grant_on_the_outputs_bucket_is_scoped_by_prefix() -> None:

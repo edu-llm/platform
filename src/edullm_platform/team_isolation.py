@@ -23,8 +23,15 @@ policy rather than from asking what the wildcard would prevent.
 Asked directly, nobody could name a harm. This is one lab building one model: another
 person reading your outputs is collaboration, not a threat, and there is no adversary in the
 model at all. Collision -- the one concrete failure available -- is already prevented by the
-``runs/{run_id}`` segment and the absence of ``s3:DeleteObject``, neither of which involves
-the team segment.
+``runs/{run_id}`` segment, which does not involve the team segment.
+
+This paragraph also cited the absence of ``s3:DeleteObject`` and no longer can. The GPU
+workload role holds one, scoped to ``teams/*/runs/*/checkpoints/*``, because a lost attempt
+leaves an unfinished step directory that its own retry has to rewrite. What bounds it is in
+``infra/iam/batch-gpu-roles.yaml`` and asserted in ``tests/test_phase5_team_isolation.py``:
+the bucket is versioned and the role cannot remove a version, and a Deny on
+``.metadata.json`` keeps the one object that makes a directory a finished checkpoint
+undeletable.
 
 So the wildcard is correct, and it is the *narrow* role that needs a reason. The GPU trio
 was scoped to one team so that Phase 4's cross-team criterion had something to assert, which

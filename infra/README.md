@@ -444,6 +444,52 @@ from the workflow file.
   because this is the section that learned that, not because anything in Phase 4 depends on
   it.
 
+### Stack 1: the delete a retry needs, re-applied 2026-08-01
+
+Laptop-applied, with `sbsandbox-intern-edullm-phase4-gpu-iam` as the stack name and
+`infra/iam/batch-gpu-roles.yaml` as the template. Two statements changed on
+`…-batch-gpu-workload`: an Allow of `s3:DeleteObject` on
+`teams/*/runs/*/checkpoints/*`, and a Deny of the same action on
+`teams/*/runs/*/checkpoints/*/.metadata.json`.
+
+The reason is a run rather than a preference. `run_019fbe1f-b84f-703a-8eb8-2b4504232948`
+lost its host at step 100 immediately after `checkpoints/step100/train/rank0.pt` was
+written, leaving that one object. Attempt 2 resumed from `step50` correctly, trained back
+to step 100, and died in `Checkpointer._prepare_dir` with `FileExistsError` on a directory
+that is not empty. That is deterministic, so with two attempts a mid-write kill ends the
+run.
+
+The template's own comments carry the argument. Two facts about the account decide that
+the grant is bounded rather than merely narrow, and both were read live on 2026-08-01: the
+outputs bucket has versioning **Enabled**, and the role holds neither
+`s3:DeleteObjectVersion` nor `s3:PutBucketVersioning`, so every delete it can make is a
+delete marker over versions that stay. The `InternSandboxBoundary` permits it — the
+boundary's only S3 statement is `Allow "*"` on `"*"`, and nothing in it denies an S3
+action.
+
+**Not re-captured.** `fixtures/evidence/phase-4/workload-role-scope.sanitized.json` still
+records the role as observed on 2026-07-30, with `grants_delete: false`, and that is still
+a true statement about that date. `tests/test_phase4_run_evidence.py` pins the capture's
+date deliberately, so regenerating it is a separate change with its own reading.
+
+**Applied twice, because it was reverted in between, and that is a property of this file
+rather than an accident.** This template holds three roles, separate changes touch different
+parts of it, and every one of them is applied from a laptop rather than from CI. The grant
+went on at 17:11 UTC. At 17:53 UTC the same stack was updated from another worktree, on a
+branch cut before the grant existed, and the workload role lost it. Nothing warned: the
+change set only shows what that template says, and what it said about the delete was nothing
+at all. The re-apply at 18:07 UTC restored it as the union of both changes, the two
+statements above plus the three-repository ECR lists on the execution and instance roles that
+the 17:53 update introduced. Those lists came from pull request 154, which has since merged,
+so this file now carries both and the deployed template matches it byte for byte. Had 154
+still been open, applying this file would have taken those lists back off and locked two
+repositories out of the GPU queue.
+
+The general point outlives this instance. A change set on this stack shows what the template
+being applied says, not what it omits relative to what is live, so a stale template reverts a
+grant silently. Two people applying this file from two worktrees will keep doing that until
+the stack is applied from `main` rather than from a branch.
+
 ### Stack 3: the dataset validator role, deployed 2026-08-01
 
 Laptop-applied, like every IAM stack in this file. The command is the one under *Deploying

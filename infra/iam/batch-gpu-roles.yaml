@@ -235,15 +235,71 @@ Resources:
                 Action: s3:ListBucket
                 Resource:
                   Fn::Sub: arn:${AWS::Partition}:s3:::edullm-data
-              # DELIBERATELY ABSENT: s3:DeleteObject, and the reason is a property rather
-              # than a preference.
+              # s3:DeleteObject UNDER checkpoints/, WHICH THIS FILE REFUSED UNTIL A RUN
+              # PROVED THE REFUSAL COSTS THE RUN. THE OLD ARGUMENT IS BELOW IN FULL BECAUSE
+              # IT IS HALF RIGHT AND THE HALF THAT IS WRONG IS NARROW.
               #
-              # A trainer configured to overwrite its save folder is the usual reason to
-              # want it. Every run writes under its own run id, so there is never a previous
-              # run's object in the way -- the per-run segment of the prefix is what makes
-              # delete unnecessary, which is one of the things D5 bought. A role that needed
-              # delete would be a signal that two runs are sharing a prefix, and that is the
-              # condition to fail on rather than to permit.
+              # It read: a trainer configured to overwrite its save folder is the usual
+              # reason to want it; every run writes under its own run id, so there is never
+              # a previous run's object in the way; the per-run segment of the prefix is
+              # what makes delete unnecessary; a role that needed delete would be a signal
+              # that two runs are sharing a prefix, and that is the condition to fail on
+              # rather than to permit.
+              #
+              # Every clause of that is about two runs, and the case it does not cover is
+              # one run twice. A run's own retry is in its own way. On
+              # run_019fbe1f-b84f-703a-8eb8-2b4504232948 the host was lost at step 100
+              # immediately after checkpoints/step100/train/rank0.pt was written, leaving
+              # that one object, 15,317 bytes, and no shard. Attempt 2 resumed from step50
+              # correctly -- find_checkpoints skips a directory the loader would refuse --
+              # trained back to step 100, and died in Checkpointer._prepare_dir with
+              # FileExistsError on a directory that is not empty. Same run id, same prefix,
+              # no second run anywhere. With maximum_attempts 2 that is the end of the run,
+              # and it is deterministic: every attempt reaches the same step and dies there.
+              #
+              # WHAT THIS IS AND IS NOT A NEW REACH OVER. The role already holds s3:PutObject
+              # on teams/*/runs/*, so it can already replace another team's checkpoint object
+              # by writing the same key. This bucket is also versioned and this role is not
+              # granted s3:DeleteObjectVersion, so a delete here writes a delete marker and
+              # leaves every version in place. Neither of these two grants can destroy bytes,
+              # and the delete is the narrower of the two: teams/*/runs/*/checkpoints/*
+              # rather than teams/*/runs/*.
+              #
+              # WHAT STOPS IT BEING A PRUNE, WHICH IS THE ROUTINE DELETE OF A FINISHED
+              # CHECKPOINT AND IS STILL REFUSED. See the Deny below.
+              - Effect: Allow
+                Action: s3:DeleteObject
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-outputs/teams/*/runs/*/checkpoints/*
+              # THE ONE KEY THE DELETE ABOVE MAY NOT TOUCH, AND IT IS THE ONE THAT DECIDES
+              # WHETHER A DIRECTORY IS A CHECKPOINT.
+              #
+              # .metadata.json is written last, by the done callback after every shard has
+              # landed, and Checkpointer.dir_is_checkpoint requires it. So a torn directory
+              # never holds one -- its presence is what makes the write finished -- and a
+              # repair that clears only directories the loader refuses never needs to
+              # delete it.
+              #
+              # A prune does. CheckpointerCallback._remove_checkpoint removes
+              # .metadata.json first, deliberately, to invalidate the checkpoint before
+              # clearing the rest, and it catches only FileNotFoundError; a denial becomes
+              # OLMoNetworkError and reaches Trainer.fit. So max_checkpoints left at its
+              # default of 3 still stops the run on the fourth save rather than quietly
+              # deleting the first, which is the behaviour GETTING-STARTED.md documents and
+              # which the delete above would otherwise have removed.
+              #
+              # An explicit Deny rather than a narrower Allow because IAM resource matching
+              # has no negation: there is no Allow that covers every key under a step
+              # directory except one of them.
+              - Effect: Deny
+                Action: s3:DeleteObject
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-outputs/teams/*/runs/*/checkpoints/*/.metadata.json
+              # DELIBERATELY ABSENT: s3:DeleteObjectVersion and s3:PutBucketVersioning. The
+              # outputs bucket has versioning enabled, so every delete this role can make is
+              # a delete marker over versions that stay. Those two actions are what would
+              # turn that into the removal of bytes, and withholding both is what makes the
+              # sentence above true rather than merely true today.
               #
               # Deliberately absent: any reach into sbsandbox-intern-edullm-lineage. That
               # store is write-once by bucket policy and only the admission state machine

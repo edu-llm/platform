@@ -194,11 +194,18 @@ want ephemeral checkpoints.
 **Turn off checkpoint pruning.** OLMo-core keeps the last three permanent checkpoints and
 deletes the rest, and the one written at step 0 counts toward the three, so at
 `save_interval=200` the fourth is step 600 and the prune fires early in the run rather than
-late. It deletes with `s3:DeleteObject`, one call per object. The workload role does not
-hold that action, because every run writes under its own id and nothing ever needs
-removing, and the refusal is not caught: the run stops with `OLMoNetworkError` on the step
-after that fourth save. Pass `trainer.callbacks.checkpointer.max_checkpoints=null` and keep
-them all.
+late. It starts by deleting the step directory's `.metadata.json`, to invalidate the
+checkpoint before clearing the rest of it, and the workload role is denied that one key by
+name. The refusal is not caught: the run stops with `OLMoNetworkError` on the step after
+that fourth save. Pass `trainer.callbacks.checkpointer.max_checkpoints=null` and keep them
+all.
+
+The role does hold `s3:DeleteObject` under `checkpoints/`, and it is there for one thing: a
+retry whose earlier attempt died part-way through a checkpoint write has to rewrite that
+step directory, and `Checkpointer._prepare_dir` refuses to write into a directory that is
+not empty. `.edullm/train_on_corpus.py` clears those before it loads, and only those. A
+directory OLMo-core's own loader accepts is never a candidate, and its `.metadata.json` is
+not deletable by this role in any case, which is what keeps the paragraph above true.
 
 **`torch.compile` needs a C compiler, and the image now has one.** It did not, and a run
 died on the first compiled region with `Failed to find C compiler` — after the GPU had been
