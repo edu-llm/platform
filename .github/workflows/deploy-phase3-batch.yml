@@ -14,14 +14,34 @@ on:
       # can press, and it is not deployed: creating it needs iam:CreateRole, the deployer
       # role deliberately has none, and the credential that does is a laptop one.
       #
-      # This deployer role already holds batch:DescribeJobs, batch:ListJobs and
-      # logs:GetLogEvents, and this dispatch is already limited to two admins by the step
-      # below. So the operator view costs no new grant and no new role: it is a report at
-      # the end of a deploy that has already run.
+      # This deployer role already holds batch:DescribeJobs and batch:ListJobs, and this
+      # dispatch is already limited to two admins by the step below. So the operator view
+      # costs no new role: it is a report at the end of a deploy that has already run.
       #
-      # It reads the log, which cancel-run.yml cannot -- that one names the stream and stops,
-      # because widening a two-verb role to read logs would spend the argument for its shape.
-      # Here the grant is already spent.
+      # IT DOES NOT HOLD logs:GetLogEvents, THOUGH THIS COMMENT ONCE CLAIMED IT DID. That
+      # claim was the justification for reading the log here, and the fallback branch of the report
+      # branch said the opposite in as many words. infra/iam/infra-deployer-role.yaml settles
+      # it: GetLogEvents and FilterLogEvents are absent from this role deliberately, so a
+      # deploy credential can never become a way to read the logs of anyone in this shared
+      # account. The header was wrong; the policy is what it is.
+      #
+      # WHAT THAT COSTS, SO THE NEXT PERSON DOES NOT REDISCOVER IT. This report exists to
+      # explain a container that dies in seconds, and the only evidence such a container
+      # leaves is its log. Four training runs on 2026-08-01 died between five and forty
+      # seconds with exit 1 and "Essential container in task exited" -- which is what a bad
+      # hyperparameter, a lost quote, a missing entry point and a broken credential all look
+      # like from outside. Each was diagnosed by guessing and resubmitting.
+      #
+      # The fix is a scoped grant: logs:GetLogEvents on the two /aws/batch/ log groups this
+      # platform creates and nowhere else. The existing argument in the role template is
+      # about the other tenants in this account, whose Lambda and application logs are none of this
+      # business of this platform; it is not an argument about output written by containers this
+      # operator of this role launched. That grant is not made here because applying it needs the
+      # laptop credential the role template is deployed with, and making the template say
+      # something the deployed role does not is the drift every capture test exists to catch.
+      #
+      # cancel-run.yml stays as it is either way: it names the stream and stops, because
+      # widening a two-verb role to read logs would spend the argument for its shape.
       #
       # A dispatch carrying a run id still deploys first. That is deliberate rather than
       # sloppy: gating eight deploy steps on an input is eight chances to gate one wrongly,
@@ -607,9 +627,22 @@ jobs:
                   print(event.get("message", ""))
               print("```")
           else:
-              # Not a caveat about this run: this role holds no logs:GetLogEvents, by a
-              # decision recorded in infra/iam/infra-deployer-role.yaml, so that a deploy
-              # credential can never become a way to read the logs of anyone. Saying so here
-              # keeps an empty log from reading as a container that printed nothing.
-              print("No log content. This role cannot read logs, deliberately.")
+              # This branch was right while the header above was wrong, and it is reached on
+              # every single run: the role holds no logs:GetLogEvents, by the decision
+              # recorded in infra/iam/infra-deployer-role.yaml.
+              #
+              # The old wording said there was no log content and that this role cannot read
+              # logs deliberately, which reads like a limit somebody chose for this report --
+              # and that is how the contradiction survived. It is a limit on the credential.
+              # The consequence is that the one question this report exists to answer is the
+              # one it cannot. Saying so plainly is the difference between a reader believing
+              # the container printed nothing and a reader knowing nobody looked.
+              print(
+                  "**The log was not read.** This deploy credential holds no "
+                  "logs:GetLogEvents, so this says nothing about whether the container "
+                  "printed anything. For a job that died in seconds the log is usually the "
+                  "only evidence there is, and reading it needs a credential that can: "
+                  "aws logs get-log-events, against the Batch log group and the stream "
+                  "named above."
+              )
           PY
