@@ -472,6 +472,20 @@ records the role as observed on 2026-07-30, with `grants_delete: false`, and tha
 a true statement about that date. `tests/test_phase4_run_evidence.py` pins the capture's
 date deliberately, so regenerating it is a separate change with its own reading.
 
+**Applied twice, because it was reverted in between, and that is a property of this file
+rather than an accident.** This template holds three roles, separate changes touch different
+parts of it, and every one of them is applied from a laptop rather than from CI. The grant
+went on at 17:11 UTC. At 17:53 UTC the same stack was updated from another worktree, on a
+branch cut before the grant existed, and the workload role lost it. Nothing warned: the
+change set only shows what that template says, and what it said about the delete was nothing
+at all. The re-apply at 18:07 UTC restored it as the union of both changes, the two
+statements above plus the three-repository ECR lists on the execution and instance roles that
+the 17:53 update introduced. Those lists belong to pull request 154 and are not in this
+branch, so the deployed template matches neither branch on its own until both have merged.
+Applying this file from `main` once 154 lands reconciles the two. Applying it from `main`
+before 154 lands takes those ECR lists back off and locks two repositories out of the GPU
+queue again.
+
 ### Stack 3: the dataset validator role, deployed 2026-08-01
 
 Laptop-applied, like every IAM stack in this file. The command is the one under *Deploying
