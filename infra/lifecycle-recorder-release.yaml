@@ -55,7 +55,17 @@
 # at is that the packaged unit is the `src/edullm_platform` tree, so "did this reach the other
 # function" is a question about every module either entry point imports, and the honest way to
 # answer it is to run both builders and compare both digests rather than to reason about it.
+#
+# THIS RELEASE IS THE SHARED-CONFIG CASE AGAIN AND CHANGES NOTHING THIS FUNCTION DOES. Three
+# research groups were renamed and two added in config/organization.yaml, which both builders
+# copy, so these bytes moved. The recorder reads no roster: it projects Batch events into
+# lineage and never looks a team up. So the release is owed for the packaged bytes rather than
+# for any behaviour, which is exactly the position the paragraph above describes and the reason
+# the tripwire compares bytes instead of trying to judge which ones matter.
+#
+# Cut from main together with the validator's, from 2baf0ea, because one config edit is two
+# releases and the workflow that can upload only runs on main.
 schema_version: 1
 s3_key: lifecycle-recorder/lifecycle-recorder.zip
-s3_object_version: 2zH2Qn47wwC21NbL_aEgTm17PIy5eaRK
-sha256: 46ffcc773796068c049c5627d63558441cd237c79562ef31aa2116e901822cad
+s3_object_version: hmMT41hYRK0KbMprTN2CUT9THj_UE_hS
+sha256: 19bb3377a03b8c42db297625fc30d2136cec3c8cf92607f853ed08481a70aec3

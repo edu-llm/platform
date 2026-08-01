@@ -89,14 +89,28 @@
 # byte changes matter. The consequence is that a docstring or comment edit to any of the
 # twenty-eight modules is a release, and the cheap reading of a moved digest stays correct.
 # The deployed validator makes the same decisions before and after.
+#
+# THIS RELEASE CARRIES A CONFIG CHANGE, WHICH IS THE CASE THE WHOLE FILE IS ABOUT. Three
+# research groups were renamed and two were added in config/organization.yaml, and that file
+# is packaged, so the deployed validator was reading the six old group names until this
+# release. The consequence is smaller than it looks and is worth stating rather than leaving
+# to inference: nothing on the handler's path looks a team up against team_bindings, so the
+# stale zip refused nothing it should have admitted. What it did mean is that the roster the
+# validator answers submitter and approver questions from was two names out of date, which is
+# the same class of skew as the compute profile that cost the first GPU run and is invisible
+# for the same reason.
+#
+# Released from main rather than from the branch, because deploy-phase2-admission.yml only
+# runs there. The zip was built from 2baf0ea and the digest below is what a local rebuild of
+# that tree produces, checked rather than copied.
 schema_version: 1
 
 #: The object the template's Code block names. Kept here as well so the two can be
 #: compared: a version id edited in one place and not the other is a template pointing at
 #: a zip nobody recorded, or a record describing a zip nobody deployed.
 s3_key: admission-validator/admission-validator.zip
-s3_object_version: uN7Qdz4D6y_SevQ.IoIWXH6R8dGKJ8nM
+s3_object_version: AyDA2eY0bRhQnk8CRhKC6HWm7DLf3Jok
 
 #: sha256 of the uploaded zip, as tools/build_admission_lambda.py reports it. This is the
 #: field that ties the release to a tree rather than to a moment.
-sha256: 5173c5e0d61619ee340a08e79214e263900428ccbddfd2257b25d39015368847
+sha256: b78d6eff970ede86da6e9a9622a360f6bdb71dcf48a12daedec37930e29b4bd2
