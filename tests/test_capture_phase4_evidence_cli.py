@@ -19,8 +19,15 @@ from typing import Any
 import pytest
 from workflow_support import write_stub
 
+from edullm_platform.capture_tooling import CaptureFailedError, write_record
 from edullm_platform.contracts.results import OUTPUTS_BUCKET
-from tools.capture_phase4_evidence import GPU_WORKLOAD_ROLE, capture_role_scope
+from edullm_platform.evidence import scan_object_key
+from tools.capture_phase4_evidence import (
+    GPU_WORKLOAD_ROLE,
+    _log_lines,
+    _summary_object,
+    capture_role_scope,
+)
 
 PROFILE = "sbsandbox"
 REGION = "us-east-1"
@@ -227,3 +234,132 @@ def test_the_outputs_bucket_prefixes_are_read_from_object_reads_and_writes_and_n
     assert scope.readable_prefixes == ("teams/platform/runs/*",)
     assert scope.writable_prefixes == ("teams/platform/runs/*",)
     assert scope.grants_outside_the_outputs_bucket == ()
+
+
+#: The one twelve-digit literal this tree allows, because it is AWS's documentation example.
+#: Everything below is built from it rather than typed, since the tracked-tree scan refuses
+#: any other run of twelve digits -- including one inside a float.
+EXAMPLE_ACCOUNT_ID = "123456789012"
+
+
+def test_the_summary_is_found_at_the_end_of_a_log_and_not_in_the_middle() -> None:
+    """A config dump and a W&B teardown both put a bare brace on a line of their own.
+
+    Reading forward from the first one finds a fragment of whichever came first, so what is
+    read is the last balanced object rather than the first.
+    """
+    lines = [
+        "building config",
+        "{",
+        '  "dataset": "not the summary",',
+        "}",
+        "[step=1/20] train/CE loss=9.1",
+        "Training complete",
+        "{",
+        '  "run_id": "run_1",',
+        '  "checkpoint_uri": "s3://bucket/prefix/",',
+        '  "steps": 20',
+        "}",
+    ]
+
+    assert _summary_object(lines) == {
+        "run_id": "run_1",
+        "checkpoint_uri": "s3://bucket/prefix/",
+        "steps": 20,
+    }
+
+
+def test_an_unbalanced_object_at_the_end_does_not_hide_the_summary_before_it() -> None:
+    """A truncated log window can cut an object in half, and the summary is still there."""
+    lines = [
+        "{",
+        '  "run_id": "run_1",',
+        '  "checkpoint_uri": "s3://bucket/prefix/"',
+        "}",
+        "{",
+        '  "half": "an object the window cut",',
+    ]
+
+    summary = _summary_object(lines)
+
+    assert summary is not None
+    assert summary["run_id"] == "run_1"
+
+
+def test_a_log_with_no_object_in_it_is_a_run_that_printed_no_summary() -> None:
+    assert _summary_object(["starting", "[step=1/20]", "Training complete"]) is None
+
+
+def test_the_log_window_is_taken_from_the_end_rather_than_the_beginning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The summary is printed last, after thousands of lines of config, model and metrics.
+
+    Pinned because ``--start-from-head`` reads the other end, and the failure it produces is
+    a capture that reports every real run as having printed nothing.
+    """
+    stub_bin = tmp_path / "bin"
+    recorded = tmp_path / "arguments.json"
+    write_stub(stub_bin, "aws", f'printf "%s\\n" "$@" > {recorded}\necho "[]"\n')
+    monkeypatch.setenv("PATH", f"{stub_bin}{os.pathsep}{os.environ['PATH']}")
+
+    _log_lines("a-stream", profile="p", region="r")
+
+    arguments = recorded.read_text().split("\n")
+    assert "--start-from-head" not in arguments
+    assert "get-log-events" in arguments
+
+
+def test_a_number_that_looks_like_an_account_id_is_not_read_as_one(tmp_path: Path) -> None:
+    """A float64 loss printed in full carries twelve consecutive digits often enough.
+
+    Nothing a credential can be is a JSON number, so the backstop reads the strings of a
+    record rather than its serialized form. Without this a real training run cannot record
+    the loss it reached, nor a parameter count in the hundreds of billions.
+    """
+    destination = tmp_path / "record.json"
+    loss = float(f"8.{EXAMPLE_ACCOUNT_ID}")
+
+    write_record(destination, {"last_loss": loss, "parameters": int(EXAMPLE_ACCOUNT_ID)})
+
+    written = json.loads(destination.read_text())
+    assert written["last_loss"] == loss
+    assert written["parameters"] == int(EXAMPLE_ACCOUNT_ID)
+
+
+def test_a_credential_in_a_string_is_still_refused(tmp_path: Path) -> None:
+    with pytest.raises(CaptureFailedError, match="record_holds_a_credential"):
+        write_record(tmp_path / "record.json", {"note": f"account {EXAMPLE_ACCOUNT_ID} denied it"})
+
+    assert not (tmp_path / "record.json").exists()
+
+
+def test_a_credential_hiding_in_a_key_or_a_nested_list_is_still_refused(tmp_path: Path) -> None:
+    """Keys and list items are as committed as a value, so both are read."""
+    with pytest.raises(CaptureFailedError, match="record_holds_a_credential"):
+        write_record(tmp_path / "by-key.json", {f"account {EXAMPLE_ACCOUNT_ID}": "denied"})
+
+    with pytest.raises(CaptureFailedError, match="record_holds_a_credential"):
+        write_record(
+            tmp_path / "nested.json", {"messages": [{"text": f"id {EXAMPLE_ACCOUNT_ID}"}]}
+        )
+
+
+def test_an_ordinary_checkpoint_key_is_not_read_as_a_secret_access_key() -> None:
+    """The base64 alphabet contains a slash, so a long enough key matches that pattern.
+
+    Every checkpoint key is long enough: a run id, then a step, then a file name. Without
+    reading a segment at a time the capture refuses the evidence for being ordinary.
+    """
+    key = "teams/platform/runs/run_019fbd3f-8b72-70e9-8ffb/checkpoints/step1000/config.json"
+
+    assert scan_object_key(key) == key
+
+
+def test_a_credential_inside_one_segment_of_a_key_is_still_refused() -> None:
+    """A key smuggled into a name sits inside a segment, which is where this still looks."""
+    with pytest.raises(ValueError, match="must not contain credentials"):
+        scan_object_key(f"teams/platform/{'A' * 20}{'b' * 20}/model.pt")
+
+    with pytest.raises(ValueError, match="must not contain credentials"):
+        scan_object_key(f"teams/{EXAMPLE_ACCOUNT_ID}/model.pt")

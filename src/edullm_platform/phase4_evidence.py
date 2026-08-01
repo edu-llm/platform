@@ -31,6 +31,7 @@ from edullm_platform.evidence import (
     DigestBearingStr,
     EvidenceEnvironment,
     FreshEvidenceModel,
+    ObjectKeyStr,
     RecordedEventModel,
     SecretFreeStr,
 )
@@ -356,10 +357,10 @@ class CheckpointObservation(RecordedEventModel):
 
 
 class OutputObject(ContractModel):
-    #: Typed as a digest rather than as scanned text, because ``scan_for_secrets`` reads
-    #: sixty-four hexadecimal characters as a credential -- correctly, for free text, and
-    #: not for the one field whose entire content is a digest. The pattern is the check.
-    key: SecretFreeStr = Field(min_length=1)
+    #: Read a path segment at a time. The base64 alphabet contains ``/``, so the plain scan
+    #: reads any key past forty characters as a secret access key -- which every checkpoint
+    #: key is. See ``scan_object_key`` for what that trade gives up.
+    key: ObjectKeyStr = Field(min_length=1)
     size_bytes: int = Field(ge=0)
     checksum_sha256: Sha256Digest | None
 

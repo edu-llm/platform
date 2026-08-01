@@ -229,6 +229,27 @@ def scan_allowing_content_digests(value: str) -> str:
 DigestBearingStr = Annotated[str, AfterValidator(scan_allowing_content_digests)]
 
 
+def scan_object_key(value: str) -> str:
+    """Refuse a credential in an object key, reading it a path segment at a time.
+
+    ``AWS_SECRET_ACCESS_KEY_PATTERN`` takes forty characters of the base64 alphabet, and
+    that alphabet contains ``/``, so it reads a long enough S3 key as a secret access key.
+    Real keys reach forty characters routinely -- a run id, then ``checkpoints``, then a
+    step, then a file name -- so the strict read refuses the evidence for being ordinary.
+
+    What this gives up is a secret access key written into a key with its slashes at segment
+    boundaries. What it keeps is every other pattern, and a forty-character run inside any
+    one segment, which is the shape a key smuggled into a name actually has.
+    """
+    for segment in value.split("/"):
+        scan_for_secrets(segment)
+    return value
+
+
+#: For a field holding an S3 object key. Never use it for free text, which has no segments.
+ObjectKeyStr = Annotated[str, AfterValidator(scan_object_key)]
+
+
 def validate_observed_at(value: datetime) -> datetime:
     if value.tzinfo is None:
         raise ValueError("observation timestamps must be timezone-aware")
