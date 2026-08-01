@@ -79,14 +79,15 @@ jobs:
       # This workflow assumes sbsandbox-intern-edullm-run-canceller, and that role is created
       # by infra/iam/run-canceller-role.yaml, which is applied from a laptop -- the deployer
       # role holds no iam:CreateRole, deliberately, so no stack under infra/iam/ can be
-      # applied from CI. Until somebody with an administrative credential applies it and sets
-      # AWS_RUN_CANCELLER_ROLE_ARN, every dispatch here fails.
+      # applied from CI. The stack is applied and AWS_RUN_CANCELLER_ROLE_ARN is set, so this
+      # guard is quiet -- it stays because those are two separate acts and either can be
+      # undone without the other noticing.
       #
-      # It failed unhelpfully. configure-aws-credentials with an empty role-to-assume reports
-      # "Credentials could not be loaded, please check your action inputs: Could not load
-      # credentials from any providers", which reads as a broken secret or an expired
-      # federation and sends the reader to the OIDC configuration -- which is fine. The cause
-      # is one stack that was never applied, and this says so.
+      # Quiet matters because the alternative is silent. configure-aws-credentials with an
+      # empty role-to-assume reports "Credentials could not be loaded, please check your
+      # action inputs: Could not load credentials from any providers", which reads as a
+      # broken secret or an expired federation and sends the reader to the OIDC
+      # configuration. The cause would be one stack and one variable, and this says so.
       - name: Say if the canceller role was never deployed
         env:
           ROLE_ARN: ${{ vars.AWS_RUN_CANCELLER_ROLE_ARN }}

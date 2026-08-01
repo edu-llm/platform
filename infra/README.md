@@ -359,12 +359,17 @@ re-measures this without creating anything; run it before believing otherwise.
 
 ### Stopping a job a cancelled workflow left running
 
-Cancelling a `submit-run.yml` run stops the workflow and nothing in AWS. Its `if: cancelled()`
-step says so and sends the reader here, because this is the only place a laptop procedure
-belongs and because no identity that workflow can obtain is permitted to terminate a job:
-the admission role holds one `states:StartExecution` and two read-only execution actions,
-and `batch:TerminateJob` is deliberately absent from it, from the deployer, and from the
-lifecycle recorder.
+**Reach for `.github/workflows/cancel-run.yml` first.** It takes a run id, reports what the
+job is doing, and stops it when asked, on `sbsandbox-intern-edullm-run-canceller` rather than
+on anybody's SSO session — a submitter may stop their own run and an admin may stop anyone's.
+So the ordinary case needs nothing from this section, and what follows is the fallback for
+when the workflow is itself the thing that is broken.
+
+Cancelling a `submit-run.yml` run stops the workflow and nothing in AWS, and no identity
+*that* workflow can obtain is permitted to terminate a job: the admission role holds one
+`states:StartExecution` and two read-only execution actions, and `batch:TerminateJob` is
+deliberately absent from it, from the deployer, and from the lifecycle recorder. Its
+`if: cancelled()` step names the cancellation workflow for that reason.
 
 That leaves a real window. GitHub cancels a job in seconds; a submitted Batch job runs until
 its `attemptDurationSeconds` unless somebody stops it. The job name is the run id, which is
@@ -480,6 +485,28 @@ The role is registered in `role_drift.DATASET_VALIDATOR_ROLE_TEMPLATES` and capt
 `fixtures/evidence/dataset-validator/roles/`. Its own directory rather than Phase 3's:
 `read_committed_role_captures` reports a capture the registry does not declare as a finding,
 so a directory belongs to exactly one registry.
+
+### Stack 4: the run canceller role, deployed 2026-08-01
+
+Laptop-applied, like every IAM stack in this file. The command is the one under *Deploying
+one IAM stack* above, with `sbsandbox-intern-edullm-run-canceller-iam` as the stack name and
+`infra/iam/run-canceller-role.yaml` as the template. `AWS_RUN_CANCELLER_ROLE_ARN` was set in
+the same sitting: a deploy without the variable leaves `cancel-run.yml` refusing at its own
+guard, which reads as a broken workflow rather than as half a step.
+
+**The queue condition was verified by stopping a job, not by reading the template back, and
+the reason is a limit of the simulator worth knowing before the next role.**
+`iam simulate-principal-policy` accepts no `arn` context key type, and an `ArnEquals`
+condition does not match a value supplied as a `string` — so it answers `implicitDeny` for
+`batch:TerminateJob` on either queue, for a grant that works. Read alone that is a false
+report of a broken role.
+
+What the simulator does settle is the rest of the shape, and it was used for that:
+`batch:DescribeJobs` and `batch:ListJobs` allowed, and `batch:SubmitJob`,
+`batch:RegisterJobDefinition`, `states:StartExecution` and `s3:GetObject` all implicit
+denies. The condition itself was then measured the only way left — a CPU run submitted for
+the purpose, `cancel-run.yml` dispatched against it in both modes, and the termination read
+back off the job.
 
 ### Stack 5: the nightly reader role, deployed 2026-08-01
 

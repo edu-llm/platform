@@ -31,6 +31,7 @@ from edullm_platform.contracts.workload import WorkloadCatalog
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 GUIDE_PATH = PROJECT_ROOT / "GETTING-STARTED.md"
 WORKFLOW_PATH = PROJECT_ROOT / ".github" / "workflows" / "submit-run.yml"
+CANCEL_WORKFLOW_PATH = PROJECT_ROOT / ".github" / "workflows" / "cancel-run.yml"
 GPU_ROLES_PATH = PROJECT_ROOT / "infra" / "iam" / "batch-gpu-roles.yaml"
 
 
@@ -44,6 +45,12 @@ def workflow() -> dict[str, Any]:
     # `on:` is parsed by PyYAML as the boolean True, which is the same trap the other
     # workflow tests document; reading the mapping back by identity avoids arguing with it.
     parsed: dict[str, Any] = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
+    return parsed
+
+
+@pytest.fixture(scope="module")
+def cancel_workflow() -> dict[str, Any]:
+    parsed: dict[str, Any] = yaml.safe_load(CANCEL_WORKFLOW_PATH.read_text(encoding="utf-8"))
     return parsed
 
 
@@ -310,6 +317,40 @@ def test_every_corpus_the_guide_tabulates_is_one_the_form_offers(
 
     assert tabulated, "the guide names no corpus, so either the table or this pattern moved"
     assert tabulated == offered
+
+
+def test_the_guide_sends_a_reader_who_wants_to_stop_a_run_to_the_button(
+    guide: str,
+    cancel_workflow: dict[str, Any],
+) -> None:
+    """Mutation: put back a caveat routing the reader to somebody with a credential.
+
+    Stopping your own run is self-service, and the section that says so is the only place a
+    researcher learns it. A caveat here is obeyed long after it stops being true, because
+    the person reading it has no way to find out otherwise -- they ask, wait, and conclude
+    the button is not theirs.
+
+    Held against the form rather than against prose. The section tells people to tick
+    **stop**, so the workflow it names has to offer that input; a rename on either side
+    leaves the guide describing a control that is not on the page.
+    """
+    heading = "## Looking at a run, and stopping one"
+    assert heading in guide, "the guide no longer tells anybody how to look at a run"
+    section = guide.split(heading, 1)[1].split("\n## ", 1)[0]
+
+    assert "cancel-run.yml" in section, "the section names no workflow to reach for"
+    assert "**stop**" in section
+
+    assert "stop" in form_inputs(cancel_workflow), (
+        "the guide tells people to tick stop and the workflow it points at has no such "
+        "input, so the instruction names a control that is not there"
+    )
+
+    for routed_away in ("Not live yet", "ask an admin", "Ask an admin"):
+        assert routed_away not in section, (
+            f"the section carries {routed_away!r}, which sends a researcher to somebody "
+            "else for a run they can stop themselves"
+        )
 
 
 def test_the_guide_does_not_promise_a_size_that_costs_a_download(guide: str) -> None:

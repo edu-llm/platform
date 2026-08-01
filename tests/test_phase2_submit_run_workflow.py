@@ -1050,8 +1050,12 @@ def test_the_cancellation_step_neither_claims_to_stop_a_job_nor_can() -> None:
     The honest content of this step depends on a fact about the deployed role, so it is
     read rather than restated: the admission role holds no Batch action at all, which is
     why a cancelled workflow can record what is still running and cannot stop it. The day
-    somebody grants ``batch:TerminateJob`` -- to build the cancellation path the plan
-    describes -- this fails, and the prose has to be rewritten in the same change.
+    somebody grants ``batch:TerminateJob`` here this fails, and the prose has to be
+    rewritten in the same change.
+
+    The cancellation path exists and is somewhere else -- ``cancel-run.yml``, on a role of
+    its own that this job cannot obtain -- which is exactly why the notice has to name it.
+    A step that says only what it cannot do leaves the reader with nowhere to go.
     """
     cancelled = step(_job("submit"), CANCELLED_STEP)
     trust = yaml.safe_load(TRUST_POLICY_PATH.read_text(encoding="utf-8"))
@@ -1071,7 +1075,7 @@ def test_the_cancellation_step_neither_claims_to_stop_a_job_nor_can() -> None:
     assert [action for action in granted if action.startswith("batch:")] == []
     assert "batch:TerminateJob" in cancelled["run"]
     assert "does not stop AWS compute" in cancelled["run"]
-    assert "infra/README.md" in cancelled["run"]
+    assert "Look at a run, or stop it" in cancelled["run"]
     # And nothing about this step can fail the job. A cancelled job is already cancelled.
     assert "exit 1" not in cancelled["run"]
 
@@ -1116,25 +1120,37 @@ def test_the_cancellation_notice_is_written_where_a_person_will_find_it(
     assert result.returncode == 0, result.stderr
     assert RUN_ID in written
     assert "does not stop AWS compute" in written
-    assert "Stopping a job a cancelled workflow left running" in written
+    assert "Look at a run, or stop it" in written
     # The prose is prose. A shell that expanded something here would have swallowed the
     # backticks around the action name, which is how it would first be noticed.
     assert "`batch:TerminateJob`" in written
 
 
-def test_the_runbook_documents_the_procedure_the_cancellation_step_points_at() -> None:
-    """Reads BOTH files. Mutation: rename the section, or delete it.
+def test_the_cancellation_step_points_at_a_workflow_that_exists_and_a_runbook_that_does() -> None:
+    """Reads THREE files. Mutation: rename the workflow, or the runbook section.
 
-    A notice that sends an operator to a heading nobody wrote is worse than no notice: it
-    reads as though the procedure exists. The commands live there rather than in the
-    workflow because every laptop procedure in this repository lives there, and because a
-    literal ``aws`` line in a run body is indistinguishable from a call the job makes.
+    A notice that sends somebody to a workflow nobody wrote, or a heading nobody wrote, is
+    worse than no notice: it reads as though the way out exists. Neither pointer is a string
+    anything else checks, and both are the kind that rots silently.
+
+    The first pointer is what a submitter uses, so it is held against the file it names and
+    against the tick it tells them to use. The second is the fallback for when that workflow
+    is itself broken; its commands live in the runbook because every laptop procedure here
+    does, and because a literal ``aws`` line in a run body is indistinguishable from a call
+    the job makes.
     """
+    notice = step(_job("submit"), CANCELLED_STEP)["run"]
+    cancel_workflow = load_workflow(WORKFLOWS_ROOT / "cancel-run.yml")
+
+    assert cancel_workflow["name"] in notice, (
+        "the notice names no way to stop the job it says may still be running"
+    )
+    assert "stop" in cancel_workflow["on"]["workflow_dispatch"]["inputs"]
+
     heading = "Stopping a job a cancelled workflow left running"
     runbook = (PROJECT_ROOT / "infra" / "README.md").read_text(encoding="utf-8")
 
     assert f"### {heading}" in runbook
-    assert heading in step(_job("submit"), CANCELLED_STEP)["run"]
     procedure = runbook.split(f"### {heading}", 1)[1].split("\n## ", 1)[0]
     assert "aws batch terminate-job" in procedure
     assert "aws batch list-jobs" in procedure
