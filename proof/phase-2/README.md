@@ -2,16 +2,16 @@
 
 Phase: phase-2
 Bundle schema version: 1
-Source commit: 63fa00d9e2f224c3d7462f3b159c612ac0093db0
-Generated: 2026-07-31T22:47:39+00:00
+Source commit: dc4b6cebd3be115b895399a624487100d1b8ecb9
+Generated: 2026-08-01T03:16:17+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 2 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase2_proof.py` at generation time. It is not done, and the Result table below says by how much.
 
 ## Read this first
 
-`tools/validate_phase2.py` exits 1 against this tree. Phase 2 is not accepted: criteria 2, 3, 6, 7, 9, 11, 12, 14, 19 are GAPs. That is the honest state of the phase, not a broken gate. Read the Gaps section of `negative-case-matrix.md` for what closes it.
+`tools/validate_phase2.py` exits 1 against this tree. Phase 2 is not accepted: criteria 2, 3, 6, 7, 11, 12, 14, 19 are GAPs. That is the honest state of the phase, not a broken gate. Read the Gaps section of `negative-case-matrix.md` for what closes it.
 
-This run evaluated 22 acceptance criteria: twelve criteria are covered, one criterion is deferred, and nine criteria are gaps.
+This run evaluated 22 acceptance criteria: thirteen criteria are covered, one criterion is deferred, and eight criteria are gaps.
 
 | # | check that is not satisfied |
 | --- | --- |
@@ -19,7 +19,6 @@ This run evaluated 22 acceptance criteria: twelve criteria are covered, one crit
 | 3 | Any team lead approval succeeds while approval_scope is organization. |
 | 6 | Wrong repository, ref, audience, or manifest hash cannot assume or use the role. |
 | 7 | A job that omits the approval environment cannot assume the admission role, even from main. |
-| 9 | A member cannot approve their own submission. |
 | 11 | The approver sees submitter, team, repository, branch, short SHA, image digest, dataset release, compute profile and rate, the worst-case cost arithmetic, the classification, and the exceeded bound before the gate opens. |
 | 12 | Duplicate execution names do not create duplicate intent records. |
 | 14 | Admission failure does not create compute or partial accepted state. |
@@ -45,19 +44,19 @@ This run evaluated 22 acceptance criteria: twelve criteria are covered, one crit
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3819 |
-| suite tests executed | 3638 |
-| suite passed | 3638 |
+| suite tests collected | 3841 |
+| suite tests executed | 3648 |
+| suite passed | 3648 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
-| matrix node ids executed | 612 |
-| matrix node ids passed | 612 |
+| matrix node ids executed | 618 |
+| matrix node ids passed | 618 |
 | matrix node ids failed | 0 |
 | phase criteria | 22 |
-| criteria COVERED | 12 (1, 5, 8, 10, 13, 15, 16, 17, 18, 20, 21, 22) |
+| criteria COVERED | 13 (1, 5, 8, 9, 10, 13, 15, 16, 17, 18, 20, 21, 22) |
 | criteria DEFERRED | 1 (4) |
-| criteria GAP (each one fails the gate) | 9 (2, 3, 6, 7, 9, 11, 12, 14, 19) |
+| criteria GAP (each one fails the gate) | 8 (2, 3, 6, 7, 11, 12, 14, 19) |
 | role templates with recorded digests | 3 |
 | roles compared to a capture | 0 |
 | admission executions captured | 7 |
@@ -67,7 +66,7 @@ This run evaluated 22 acceptance criteria: twelve criteria are covered, one crit
 | CloudTrail records captured | 0 |
 | captures expire | 2026-08-26 |
 | open decisions recorded | 0 |
-| contract models in schema-compatibility.md | 12 |
+| contract models in schema-compatibility.md | 13 |
 
 ## Verification commands
 
@@ -89,7 +88,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | file | digest |
 | --- | --- |
 | .github/workflows/deploy-phase2-admission.yml | sha256:e82f87cb4bad4186d96d5e55514d863e4557b1519c2acbc08098b7d1b3756dc5 |
-| .github/workflows/submit-run.yml | sha256:5e7155731f019a6a24a00c4d50150d2b53aed9bf3c1a20de47e00e0d2769d571 |
+| .github/workflows/submit-run.yml | sha256:5e84834edd9a56757099660eb9d4976658fc5d7280b3aa8e15fbedfee70d7ff0 |
 | config/organization.yaml | sha256:cea2d2123d2fb5794614e6a4b8a362c8aaa33626f20ae28a13cb673fadf4ac78 |
 | config/policy.yaml | sha256:8efa2f00527f9ad1677ed27452a2b6093a6a8c9e8190cf3e0a583b0f68787b39 |
 | fixtures/authorization/admin-exception.yaml | sha256:4ad48b8ecd405d11428cf446f74d0a8aeabf904365f3fee7b599b6a7ed0b6fa0 |
@@ -97,6 +96,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | fixtures/authorization/member-approval.yaml | sha256:a39cbdcbec68bf2fd8067f624ee1cf08aac008757e9fdaf69d812b76ea44e2de |
 | fixtures/evidence/phase-2/executions.sanitized.json | sha256:d4ca6d9a4038e99a3c820cc4f743f7cb197ecaaf9874454d2d8a7599ad508a85 |
 | fixtures/evidence/phase-2/github/environments.sanitized.json | sha256:90daedee358e2abb9d3b8d00d5855a0daf3fceae4a3d5b1125a35c38ad842f13 |
+| fixtures/evidence/phase-2/github/lead-team.sanitized.json | sha256:2ab12ab28a4758ea366fe53dcdcb26a57f17b3bde518a6d084358ddc4892856b |
 | fixtures/evidence/phase-2/github/secrets.sanitized.json | sha256:0ce26f6c0234a910099c4c869d5aa789cf36ba939a9ad3b4ad12c00b624ee9d4 |
 | fixtures/evidence/phase-2/lineage.sanitized.json | sha256:fa56d78a4ec30a6e7f8cf66ed1ca52c795f9061f5af4eb105b9ddeb190553b5f |
 | fixtures/evidence/phase-2/lineage/records/decision/run_019fa446-8a4e-7094-9e29-d44fffbd2491.json | sha256:0800beff17f8017340a0cd0840ef7a515ca6fdbeaa2983ddf88b6fd5d7b5bcbd |
@@ -109,7 +109,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | fixtures/evidence/phase-2/lineage/records/intent/run_019fa46a-5478-70ea-aab6-28de23c41f7f.json | sha256:89ad215366a6c1e6177e24a04de4db99f0687529175d9bccae39ef3dfadd4ba1 |
 | fixtures/evidence/phase-2/lineage/records/intent/run_019fa471-0173-7050-a41b-22ca01969b52.json | sha256:e1e6f323427445671f554e4af5d23ea7a2020b578d926d6e934d3144604be0ba |
 | fixtures/evidence/phase-2/lineage/records/intent/run_019fa4c0-390d-7081-b539-08d9ff6b58be.json | sha256:be35e6f2797c899e1a5b44544ed64d053b125f6d17cb47fb0cc6932f2fd976a5 |
-| infra/admission-state-machine.yaml | sha256:793a51c95af824e753552d17a2f77cfa42f090bf84028528d8b987cb726ed34d |
+| infra/admission-state-machine.yaml | sha256:3f25aa3edd571d000011a4f71dfccd0c43d18463478fe232f2c176a23d86dace |
 | infra/iam/admission-role.yaml | sha256:e5e5b2db0ae9b7d1cdf8d46ab3568f35279a33344fe1ec337cf69e82b9c9e841 |
 | infra/iam/admission-service-roles.yaml | sha256:fd826897cc8ff59b345a648cf6063dd470942ec0680751f8a550d9ccca3793d2 |
 | infra/iam/infra-deployer-role.yaml | sha256:596abb25126c0f10d734cbecd01bec08495cac63b19a81ab46870318504774ac |
@@ -117,12 +117,12 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 
 ## Known limitations
 
-- The path ran and the runs were not captured. This is the limitation the nine open checks are consequences of: on 2026-07-27 a lead released a routine run, an exception routed to the admin gate, a duplicate execution name was refused, a tampered hash was refused, and a six-probe denial matrix came back refused on every entry. What is committed is the state those runs left behind rather than the runs, and a criterion that can only be established by evidence nobody committed is open however convincing the run was to whoever watched it.
+- The path ran and the runs were not captured. This is the limitation the eight open checks are consequences of: on 2026-07-27 a lead released a routine run, an exception routed to the admin gate, a duplicate execution name was refused, a tampered hash was refused, and a six-probe denial matrix came back refused on every entry. What is committed is the state those runs left behind rather than the runs, and a criterion that can only be established by evidence nobody committed is open however convincing the run was to whoever watched it.
 - Check 7 -- that a job omitting the approval environment cannot assume the admission role -- is a gap, and it is the strongest thing this phase produced. The `deny-unapproved` job succeeded on every live run, meaning STS refused the ref-based subject, and none of it is in this repository.
 - Check 6 is a gap and check 19 is a gap, on the same missing artifact. Both rest on committed CloudFormation templates, which are what the repository asks the account for rather than what the account holds. The three Phase 2 roles were deployed from a laptop and no capture has been compared against any of them, so the comparison that catches a role widened in the console does not run for them.
 - Check 11 is a gap and cannot be closed by capturing harder. It asks for the branch, and `RunManifest` has no branch field: every source revision is a full commit SHA, because a branch is mutable and a commit is not. Closing it means either carrying the branch as advisory metadata that nothing authorizes on, or amending the check with that reason written down.
 - Check 21 states what a decision record carries and is covered on that reading alone. It does not claim AWS verified the actor. The approver reaches AWS because the submitting job read it from the GitHub approvals API and passed it along; no OIDC claim names who approved, so a compromised runner could misreport it. The gate itself cannot be skipped.
-- Every committed Phase 2 capture is a statement about one moment. They stop loading on 2026-08-26, this generator refuses to build from that date, and every check resting on them is open again. Nothing about GitHub or the lineage store will have changed; what will have lapsed is anybody's knowledge of them. Re-capturing is a read of the account rather than another run.
+- Every committed Phase 2 capture is a statement about one moment, and they were not all taken at the same one. The earliest of them stops loading on 2026-08-26, this generator refuses to build from that date, and every check resting on any of them is open again. Nothing about GitHub or the lineage store will have changed; what will have lapsed is anybody's knowledge of them. Re-capturing is a read of the account rather than another run.
 - The three recorded role digests describe committed templates and say nothing about the account. They catch a template widened between now and the next capture, which is the only thing standing in for a drift comparison that cannot run yet.
 - The authorization matrix is an evaluation rather than an observation. Every row in it is `evaluate_authorization` run against the shipped policy and roster at generation time, which says what the platform decides and nothing about who GitHub let through.
 - **There is no rollback result here, and the master plan asks every bundle for one.** The rollback is written down -- remove the reviewers from both environments, redeploy the admission role granting nothing, disable the submission workflow, leave the lineage bucket and the state machine alone -- and it has been described rather than rehearsed. Section 6 of the Phase 2 plan does not list a document for it and nothing in `src/edullm_platform/phase2_criteria.py` covers it, so this bundle would have passed over the omission silently. Recording it here is the alternative to that. What a rehearsal has to establish is that a submission dispatched after step 1 does not reach AWS, and that a record written before step 1 is still readable afterwards.
