@@ -22,6 +22,7 @@ from __future__ import annotations
 import copy
 import json
 import sys
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -54,7 +55,9 @@ from report_onboarding_readiness import (
 )
 
 from edullm_platform.config import load_yaml
+from edullm_platform.contracts.authorization import evaluate_authorization
 from edullm_platform.contracts.inventory import OrganizationInventory
+from edullm_platform.contracts.policy import ApprovalPolicy, RequestFacts
 
 #: Three people rather than thirty-five, and each one carries a different case. Frank has
 #: done everything and leads a group. Hiya leads a group too, so the two lead directions can
@@ -401,12 +404,13 @@ def test_the_empty_team_catalog_blocks_nobody_and_is_reported_once(
 ) -> None:
     """Mutation: report the absent team catalog as a gate, or repeat it under every name.
 
-    `team_bindings` is absent from `config/organization.yaml`, so the catalog is empty and
-    `evaluate_authorization` reads the same emptiness and skips the membership check
-    entirely: nobody is refused for a team nothing can verify. It is still worth reporting,
-    and it is true of everybody equally, which makes it a fact about the platform rather than
-    about any of them. Repeated under thirty-five headings it is how a report stops being
-    read.
+    A roster declaring no team at all, which the shipped one no longer is: it declares six.
+    The case is kept because it is the degenerate end of the same rule and the one where the
+    right thing to say differs, being about the file rather than about any person.
+
+    Nobody is refused for a team nothing can verify, so it is missing rather than blocking.
+    It is also true of everybody equally, which makes it a fact about the platform, and
+    repeated under thirty-five headings it is how a report stops being read.
     """
     people = readiness(inventory(), access())
 
@@ -416,27 +420,67 @@ def test_the_empty_team_catalog_blocks_nobody_and_is_reported_once(
 
     report = render(people, access())
     assert "Missing for everybody" in report
-    assert report.count("`team_bindings` is absent") == 1
+    assert report.count("No team is declared at all") == 1
     assert capsys.readouterr().err == ""
 
 
-def test_a_populated_team_catalog_turns_the_team_into_a_gate() -> None:
-    """Mutation: keep treating the team as optional after the roster starts declaring teams.
+def test_a_declared_team_does_not_block_somebody_no_team_lists() -> None:
+    """Mutation: read whether the team blocks off the catalog instead of off the person.
 
-    `evaluate_authorization` refuses a submission with `submitter_not_in_claimed_team` as
-    soon as there is a catalog to check against, so the day `team_bindings` is populated the
-    same absence stops being harmless. This is read off the catalog rather than off a
-    constant, so the roster change is the only change that has to be made.
+    This asserted the opposite until the six teams were declared, and it was right about the
+    `evaluate_authorization` of the time: any catalog at all switched the membership check
+    on for everybody, so one populated team refused all thirty-five people. That is the
+    reason the check became per submitter, and this report has to follow it there. Reading
+    the catalog would have reported every person on the roster as blocked, out of a run that
+    is in fact admitted, on the day the teams landed.
+
+    So the catalog is populated here and `aryanjverma` is in none of it. The step is still
+    missing, because a team is still not recorded for them, and it is not a gate.
     """
     people = readiness(inventory(team_bindings=TEAM_BINDINGS), access())
 
     aryan = person(people, "aryanjverma")
     assert STEP_TEAM in missing_names(aryan)
-    assert aryan.blocked is True
+    assert aryan.blocked is False
 
     step = next(item for item in aryan.missing if item.name == STEP_TEAM)
-    assert "submitter_not_in_claimed_team" in step.action
+    assert "No submission is refused over this" in step.action
+    assert "team_verified: false" in step.action
     assert "pull request" in step.action
+
+
+def test_the_step_is_not_a_gate_because_admission_admits_the_person_it_describes() -> None:
+    """The claim in the action text, put to the function that would have to refuse them.
+
+    The test above pins what the report says. This pins that it is true, by asking
+    `evaluate_authorization` directly rather than restating the rule: a submitter no team
+    lists, under a populated catalog, claiming a team they are not recorded in. If that ever
+    starts being refused, the report is telling thirty-five people a run will go through
+    that will not, and this fails rather than the wording drifting quietly out of date.
+    """
+    roster = inventory(team_bindings=TEAM_BINDINGS)
+    decision = evaluate_authorization(
+        "aryanjverma",
+        "philote-dev",
+        RequestFacts(
+            claimed_team="memory-split",
+            repository_registered=True,
+            dataset_registered=True,
+            compute_profile_registered=True,
+            immutable_revision=True,
+            immutable_image=True,
+            image_scan_reviewed=True,
+            estimated_cost_usd=Decimal(10),
+            maximum_runtime_hours=Decimal(1),
+            maximum_attempts=1,
+        ),
+        load_yaml(PROJECT_ROOT / "config" / "policy.yaml", ApprovalPolicy),
+        roster,
+    )
+
+    assert roster.teams_for_member("aryanjverma") == ()
+    assert decision.granted is True
+    assert decision.team_verified is False
 
 
 def test_a_team_the_roster_declares_and_github_does_not_hold_is_reported_without_blocking() -> None:
