@@ -400,11 +400,14 @@ lineage record of a cancelled run is complete in the same way a successful one i
 | 2 | `sbsandbox-intern-edullm-phase4-gpu` | `infra/batch-compute-gpu.yaml` | compute environment, queue, job definition, log group | CI |
 | 3 | `sbsandbox-intern-edullm-dataset-validator-iam` | `infra/iam/dataset-validator-role.yaml` | `…-dataset-validator` | laptop, not applied yet |
 | 4 | `sbsandbox-intern-edullm-run-canceller-iam` | `infra/iam/run-canceller-role.yaml` | `…-run-canceller` | laptop |
+| 5 | `sbsandbox-intern-edullm-nightly-reader-iam` | `infra/iam/nightly-reader-role.yaml` | `…-nightly-reader` | laptop |
 
-Stack 4 needs a repository variable as well as a deploy: `AWS_RUN_CANCELLER_ROLE_ARN`, set
-to the role's ARN, which `.github/workflows/cancel-run.yml` reads. Without it the workflow
-fails at the credential step with an empty role, which is a confusing way to say the stack
-was never applied.
+Stacks 4 and 5 each need a repository variable as well as a deploy:
+`AWS_RUN_CANCELLER_ROLE_ARN` for stack 4, which `.github/workflows/cancel-run.yml` reads,
+and `AWS_NIGHTLY_READER_ROLE_ARN` for stack 5, which `.github/workflows/nightly.yml` reads.
+Without it the workflow fails at the credential step with an empty role, which is a
+confusing way to say the stack was never applied. Both workflows guard on the variable and
+name the stack instead, but the guard is a better message rather than a substitute.
 
 **Its authorisation is in the workflow rather than in the policy, and that is forced rather
 than chosen.** A trust policy cannot see who dispatched a workflow — every dispatch of a
@@ -477,6 +480,33 @@ The role is registered in `role_drift.DATASET_VALIDATOR_ROLE_TEMPLATES` and capt
 `fixtures/evidence/dataset-validator/roles/`. Its own directory rather than Phase 3's:
 `read_committed_role_captures` reports a capture the registry does not declare as a finding,
 so a directory belongs to exactly one registry.
+
+### Stack 5: the nightly reader role, deployed 2026-08-01
+
+Laptop-applied, like every IAM stack in this file. The command is the one under *Deploying
+one IAM stack* above, with `sbsandbox-intern-edullm-nightly-reader-iam` as the stack name and
+`infra/iam/nightly-reader-role.yaml` as the template.
+
+**It exists because pinning a workflow file works.** Every OIDC role here fixes
+`job_workflow_ref` with `StringEquals` to one file, which is what makes each role's reach
+readable off the workflow that can assume it. The consequence is that a token minted for
+`nightly.yml` matches none of them, so the two nightly checks that read the account had no
+identity at all. Widening an existing role's condition to a list was the smaller diff and the
+worse change: the admission role can start an execution and the canceller can stop any job on
+either queue, and either would then sit behind a scheduled workflow nobody watches dispatch.
+
+The role reads three things and writes nothing: the `intent/` prefix of the lineage store,
+the runs' own output under `teams/*/runs/*`, and the one W&B secret. Both listings carry a
+prefix condition, because `s3:ListBucket` cannot be scoped by an object ARN and without one it
+enumerates the whole bucket. `tests/test_nightly_workflow.py` asserts the granted action set
+exactly, so an action added later is argued for in a test rather than merely not forbidden.
+
+Verified after the deploy by `iam simulate-principal-policy` rather than by reading the
+template back: `s3:ListBucket` on the lineage bucket is allowed with `s3:prefix` of `intent/`
+and denied without one, `s3:GetObject` is allowed under `intent/` and denied under `result/`,
+and `s3:PutObject`, `s3:DeleteObject`, `secretsmanager:PutSecretValue` and
+`batch:TerminateJob` are all implicit denies. Simulating is what catches a prefix condition
+that is subtly wrong, which reading the template cannot.
 
 ### A hazard that has expired, and the one it does not take with it
 
