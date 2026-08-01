@@ -136,7 +136,15 @@ class FakeObjectStore:
 
     def list_objects_v2(self, **arguments: Any) -> Any:
         prefix = arguments["Prefix"]
-        return {"Contents": [{"Key": key} for key in sorted(self.objects) if key.startswith(prefix)]}
+        # Size is included because S3 includes it, and a reader that sums the listing to
+        # size a checkpoint would otherwise see zero here and something real in the account.
+        return {
+            "Contents": [
+                {"Key": key, "Size": self.objects[key]["ContentLength"]}
+                for key in sorted(self.objects)
+                if key.startswith(prefix)
+            ]
+        }
 
     @property
     def written_keys(self) -> list[str]:

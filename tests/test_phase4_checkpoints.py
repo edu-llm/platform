@@ -375,6 +375,105 @@ def test_the_manifest_records_a_sha256_even_though_the_store_attested_a_crc32c()
     assert manifest.checksum == f"sha256:{hashlib.sha256(PAYLOAD).hexdigest()}"
 
 
+def _library_checkpoint(step: int, names: list[str]) -> FakeStore:
+    """A prefix holding a step directory the way OLMo-core's checkpointer writes one.
+
+    No ``_SUCCESS`` anywhere, because the library writes none and will not be made to.
+    """
+    store = FakeStore()
+    for name in names:
+        store.put(
+            f"teams/platform/runs/{RUN_ID}/checkpoints/step{step}/{name}",
+            b"tensor bytes",
+            algorithm="CRC32C",
+        )
+    return store
+
+
+def test_a_directory_olmo_core_would_load_is_committed_and_says_which_shape() -> None:
+    """THE SHAPE A REAL TRAINING RUN WRITES. Mutation: keep requiring one payload object.
+
+    ``_sole_payload`` resolves a prefix holding exactly one non-marker object and refuses
+    otherwise, so a directory-shaped checkpoint was CORRUPT by construction -- and a
+    directory is what OLMo-core writes. The rules here are the library's own
+    ``dir_is_checkpoint``, read out of its source rather than invented, so a checkpoint this
+    accepts is one its loader accepts.
+    """
+    store = _library_checkpoint(200, ["train/rank0.pt", "model_and_optim/.metadata", ".metadata.json"])
+
+    inspected = inspect_checkpoint(
+        store, prefix=f"s3://{BUCKET}/teams/platform/runs/{RUN_ID}/checkpoints/"
+    )
+
+    assert inspected.state is CheckpointState.COMMITTED
+    assert "step200" in inspected.detail
+    assert "model, optimizer and trainer state" in inspected.detail
+    assert inspected.manifest is not None
+    assert inspected.manifest.step == 200
+    # No marker of ours exists, and pointing at one would name a file the library neither
+    # writes nor reads.
+    assert inspected.manifest.success_marker_uri is None
+
+
+def test_a_weights_only_directory_is_committed_and_says_the_trainer_starts_cold() -> None:
+    """Mutation: report both shapes as plain COMMITTED.
+
+    ``.metadata`` alone restores weights and starts the trainer cold; the three-file shape
+    continues the run. A verifier that did not distinguish them would let a twelve-hour
+    run's second attempt believe it was continuing when it was starting over with warm
+    weights -- correct-looking, expensive, and invisible.
+    """
+    store = _library_checkpoint(400, [".metadata"])
+
+    inspected = inspect_checkpoint(
+        store, prefix=f"s3://{BUCKET}/teams/platform/runs/{RUN_ID}/checkpoints/"
+    )
+
+    assert inspected.state is CheckpointState.COMMITTED
+    assert "no trainer state" in inspected.detail
+
+
+def test_a_half_written_directory_is_uncommitted_rather_than_committed() -> None:
+    """The case the marker protocol existed for, now covered by the library's own rules.
+
+    An attempt reclaimed mid-write leaves a directory missing one of the three files. It
+    fails ``dir_is_checkpoint`` for exactly the reason it would fail the loader, so
+    resuming from it is refused here rather than at the point a trainer tries to read it.
+    """
+    store = _library_checkpoint(600, ["train/rank0.pt", ".metadata.json"])
+
+    inspected = inspect_checkpoint(
+        store, prefix=f"s3://{BUCKET}/teams/platform/runs/{RUN_ID}/checkpoints/"
+    )
+
+    assert inspected.state is CheckpointState.UNCOMMITTED
+    assert inspected.manifest is None
+
+
+def test_the_newest_step_directory_is_the_one_resumed_from() -> None:
+    """Mutation: take the first, or the lowest, or all of them.
+
+    This platform requires keeping every checkpoint -- the workload role holds no
+    s3:DeleteObject, so a trainer configured to prune is denied -- which means a long run
+    accumulates complete directories that are all irrelevant except the last. Sorted as
+    integers rather than as strings, because step1000 sorts before step200 as text.
+    """
+    store = _library_checkpoint(200, ["train/rank0.pt", "model_and_optim/.metadata", ".metadata.json"])
+    for name in ("train/rank0.pt", "model_and_optim/.metadata", ".metadata.json"):
+        store.put(
+            f"teams/platform/runs/{RUN_ID}/checkpoints/step1000/{name}",
+            b"later tensor bytes",
+            algorithm="CRC32C",
+        )
+
+    inspected = inspect_checkpoint(
+        store, prefix=f"s3://{BUCKET}/teams/platform/runs/{RUN_ID}/checkpoints/"
+    )
+
+    assert inspected.manifest is not None
+    assert inspected.manifest.step == 1000
+
+
 def test_a_marker_whose_byte_count_disagrees_with_the_store_is_refused() -> None:
     """Mutation: drop the length comparison because the digest already covers it.
 

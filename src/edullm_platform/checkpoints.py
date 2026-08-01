@@ -46,7 +46,8 @@ import base64
 import binascii
 import hashlib
 import json
-from collections.abc import Mapping, Sequence
+import re
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -62,6 +63,9 @@ __all__ = [
     "MARKER_OBJECT",
     "MARKER_SCHEMA_VERSION",
     "MISSING_OBJECT_CODES",
+    "OLMO_CORE_FULL_CHECKPOINT",
+    "OLMO_CORE_STEP_DIRECTORY",
+    "OLMO_CORE_WEIGHTS_ONLY",
     "CheckpointInspection",
     "CheckpointState",
     "CheckpointStore",
@@ -70,6 +74,7 @@ __all__ = [
     "crc32c",
     "described_checksum",
     "inspect_checkpoint",
+    "olmo_core_checkpoint_shape",
     "resumable_checkpoint",
     "success_marker_bytes",
 ]
@@ -462,6 +467,57 @@ def _read_marker(store: CheckpointStore, *, bucket: str, key: str) -> Mapping[st
     return parsed
 
 
+#: What OLMo-core's own ``Checkpointer.dir_is_checkpoint`` accepts, read out of
+#: ``src/olmo_core/train/checkpoint.py`` rather than inferred. Two shapes, and the
+#: difference between them is not cosmetic.
+#:
+#: ``.metadata`` alone is model state and possibly optimizer state, with no trainer state --
+#: a resume from it restores weights and starts the trainer cold. All three of the second
+#: group is a full checkpoint the trainer continues from. A verifier that answered only
+#: "committed" would let a twelve-hour run's second attempt believe it was continuing when
+#: it was starting over with warm weights, which is the same class of wrongness as telling
+#: everybody their checkpoints lose the optimizer when only the demo's do.
+OLMO_CORE_WEIGHTS_ONLY: Final = (".metadata",)
+OLMO_CORE_FULL_CHECKPOINT: Final = (
+    "train/rank0.pt",
+    "model_and_optim/.metadata",
+    ".metadata.json",
+)
+
+#: Checkpoint directories are named ``step{N}``; OLMo-core reads the step off the name, and
+#: so does this, because a directory carries no marker of ours to read one from.
+OLMO_CORE_STEP_DIRECTORY: Final = re.compile(r"^step(\d+)$")
+
+
+def olmo_core_checkpoint_shape(names: Iterable[str]) -> str | None:
+    """Which of OLMo-core's two accepted shapes these object names form, if either.
+
+    ``names`` are the keys under one ``step{N}`` directory, relative to it.
+
+    THE GUARANTEE THIS GIVES IS WEAKER THAN THE MARKER PROTOCOL'S AND THAT IS THE TRADE.
+    A ``_SUCCESS`` marker says "these are the exact bytes that were committed". This says
+    "the library will accept this as a checkpoint". The alternative was to have OLMo-core
+    write our marker, which needs a callback after every checkpoint write -- code in a form
+    field on every submission, which is the precise thing this module exists to stop -- and
+    would produce a marker certifying a directory the library goes on writing and pruning
+    without consulting it.
+
+    The weaker guarantee is the one the question actually needs. A resuming attempt is not
+    asking whether the bytes are unchanged since some earlier instant; nothing rewrites
+    them, S3 validates each part's checksum on upload, and no attempt of the same run
+    writes another attempt's step directory. It is asking whether ``Trainer.fit()`` will
+    load this. A half-written directory from a reclaimed attempt fails ``dir_is_checkpoint``
+    for the same reason it fails the loader, which is the failure the marker protocol was
+    written for and the one case this still covers.
+    """
+    present = set(names)
+    if all(required in present for required in OLMO_CORE_FULL_CHECKPOINT):
+        return "model, optimizer and trainer state"
+    if all(required in present for required in OLMO_CORE_WEIGHTS_ONLY):
+        return "model state and possibly optimizer state, but no trainer state"
+    return None
+
+
 def _sole_payload(store: CheckpointStore, *, bucket: str, key: str) -> str | None:
     """The one object at this prefix that is not the marker, when the marker does not say.
 
@@ -485,6 +541,115 @@ def _sole_payload(store: CheckpointStore, *, bucket: str, key: str) -> str | Non
     return candidates[0]
 
 
+def _olmo_core_checkpoint(
+    store: CheckpointStore,
+    *,
+    bucket: str,
+    key: str,
+) -> CheckpointInspection | None:
+    """The newest ``step{N}`` directory under this prefix, judged by the library's rules.
+
+    None when there is no step directory at all, which is how the caller tells "this is not
+    a library-written checkpoint" from "it is one and it is unfinished". Those two need
+    different answers: the first falls through to the marker protocol's own reading of the
+    prefix, and the second is a run that died mid-write and must not be resumed from.
+
+    The newest directory rather than all of them, because that is the one a resume loads
+    and the earlier ones are history. A run that keeps every checkpoint -- which this
+    platform requires, since the workload role holds no ``s3:DeleteObject`` -- accumulates
+    directories that are all complete and all irrelevant to the question being asked.
+    """
+    prefix_uri = f"s3://{bucket}/{key}"
+    answer = store.list_objects_v2(Bucket=bucket, Prefix=key)
+    contents = answer.get("Contents") or []
+
+    under: dict[int, dict[str, int]] = {}
+    for entry in contents:
+        if not isinstance(entry, Mapping):
+            continue
+        relative = str(entry.get("Key", "")).removeprefix(key)
+        directory, separator, remainder = relative.partition("/")
+        if not separator or not remainder:
+            continue
+        matched = OLMO_CORE_STEP_DIRECTORY.match(directory)
+        if matched is None:
+            continue
+        size = entry.get("Size")
+        under.setdefault(int(matched.group(1)), {})[remainder] = (
+            size if isinstance(size, int) else 0
+        )
+
+    if not under:
+        return None
+
+    step = max(under)
+    members = under[step]
+    shape = olmo_core_checkpoint_shape(members)
+    if shape is None:
+        return CheckpointInspection(
+            prefix=prefix_uri,
+            state=CheckpointState.UNCOMMITTED,
+            detail=(
+                f"step{step} holds {len(members)} object(s) and is not a shape OLMo-core's "
+                "own loader accepts, so the write that produced it did not finish"
+            ),
+        )
+
+    return CheckpointInspection(
+        prefix=prefix_uri,
+        state=CheckpointState.COMMITTED,
+        detail=(
+            f"step{step} is a checkpoint OLMo-core's own loader accepts, carrying {shape}"
+        ),
+        manifest=CheckpointManifest(
+            schema_version=1,
+            uri=f"{prefix_uri}step{step}/",
+            step=step,
+            epoch=None,
+            # The store's own timestamps, because a library-written directory carries no
+            # marker recording when its writer thought it finished. The newest object in it
+            # is when the directory became complete, which is the more defensible answer.
+            created_at=_newest_write(store, bucket=bucket, key=f"{key}step{step}/", members=members),
+            size_bytes=sum(members.values()),
+            # No marker means no payload digest to record, so this is a SHA-256 over what
+            # was found -- which is what described_checksum is for, and it changes when any
+            # object under the directory changes.
+            checksum=described_checksum(
+                [(name, size, "listing") for name, size in members.items()]
+            ),
+            # There is none, and saying so is the honest answer rather than pointing at a
+            # marker this platform did not write and the library will never read.
+            success_marker_uri=None,
+        ),
+    )
+
+
+def _newest_write(
+    store: CheckpointStore,
+    *,
+    bucket: str,
+    key: str,
+    members: Mapping[str, int],
+) -> datetime:
+    newest: datetime | None = None
+    for name in members:
+        try:
+            head = store.head_object(Bucket=bucket, Key=key + name)
+        except Exception as error:
+            if _is_missing(error):
+                continue
+            raise
+        written = head.get("LastModified")
+        if isinstance(written, datetime) and (newest is None or written > newest):
+            newest = written
+    if newest is None:
+        raise UnreadableCheckpointError(
+            f"the store reports no LastModified for anything under s3://{bucket}/{key}, so "
+            "there is no time at which this checkpoint can be said to have been written"
+        )
+    return newest
+
+
 def inspect_checkpoint(store: CheckpointStore, *, prefix: str) -> CheckpointInspection:
     """What is at this prefix, and a manifest only if it is safe to resume from.
 
@@ -496,6 +661,12 @@ def inspect_checkpoint(store: CheckpointStore, *, prefix: str) -> CheckpointInsp
     marker = _read_marker(store, bucket=bucket, key=key)
 
     if marker is None:
+        # A library-written checkpoint before a hand-written one, because the library is
+        # what a real training run uses and it writes no marker of ours. Only reached when
+        # there is no marker, so nothing this module wrote can be shadowed by it.
+        library = _olmo_core_checkpoint(store, bucket=bucket, key=key)
+        if library is not None:
+            return library
         payload_name = _sole_payload(store, bucket=bucket, key=key)
         if payload_name is None:
             return CheckpointInspection(
