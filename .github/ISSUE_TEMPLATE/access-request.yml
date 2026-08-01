@@ -16,8 +16,9 @@ body:
           the piece you are missing, the symptom is that the page other people are describing
           to you does not exist.
         - **A place on the roster** in `config/organization.yaml` is what admission checks. If
-          you can submit but are not on it, the run is refused with `submitter_not_in_roster`
-          after you have filled the form. Adding you is a pull request against this repository.
+          you can submit but are not on it, the submission is refused as soon as you dispatch
+          it, with a message naming this file. Nothing is compiled and no reviewer is asked.
+          Adding you is a pull request against this repository.
         - **A Weights and Biases account in the eduLLM team** is what puts your name on your
           own run. This one is optional and it fails silently: without it the run still works,
           it just logs under the platform's service account instead of you, and nothing warns

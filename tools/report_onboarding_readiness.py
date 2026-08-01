@@ -329,9 +329,9 @@ def _roster_step(github_login: str, *, on_the_roster: bool) -> Step:
             f"Add `{github_login}` to `members` in `config/organization.yaml` and open a "
             "pull request against this repository. It is the only step here that is "
             "entirely a pull request; every other one needs somebody holding an owner's "
-            "access first. Until it merges they can fill in the whole submission form and "
-            "have a lead release it, and admission refuses the run with "
-            "`submitter_not_in_roster` afterwards."
+            "access first. Until it merges every submission they dispatch is refused at "
+            "the compile step, naming the roster, before anything is compiled and before "
+            "a reviewer is asked."
         ),
     )
 

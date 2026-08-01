@@ -159,11 +159,10 @@ def test_a_person_who_has_done_every_step_is_reported_as_missing_nothing() -> No
 def test_a_person_absent_from_the_roster_is_reported_as_needing_a_pull_request() -> None:
     """Mutation: build the report from the roster, so the organization's extra people vanish.
 
-    Somebody the GitHub organization holds and `config/organization.yaml` does not is the
-    quietest failure on this platform: they can see the Run button, fill in the whole form
-    and spend a lead's attention having it released, and admission refuses the run inside
-    AWS with `submitter_not_in_roster` afterwards. A report built from the roster alone
-    cannot see that person at all, which is the one reader who most needs to.
+    Somebody the GitHub organization holds and `config/organization.yaml` does not can see
+    the Run button and fill in the whole form, and every submission they dispatch is
+    refused. A report built from the roster alone cannot see that person at all, which is
+    the one reader who most needs to.
     """
     people = readiness(inventory(), access(organization_members=[*EVERYBODY, "mccorkel"]))
 
@@ -174,7 +173,7 @@ def test_a_person_absent_from_the_roster_is_reported_as_needing_a_pull_request()
 
     step = next(item for item in stranger.missing if item.name == STEP_ROSTER)
     assert "pull request" in step.action
-    assert "submitter_not_in_roster" in step.action
+    assert "before a reviewer is asked" in step.action
 
 
 def test_a_person_on_the_roster_and_not_in_the_organization_is_sent_to_an_owner() -> None:

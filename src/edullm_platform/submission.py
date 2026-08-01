@@ -33,6 +33,7 @@ from pydantic import BeforeValidator, Field, ValidationError, model_validator
 
 from edullm_platform.canonical import sha256_digest
 from edullm_platform.contracts.admission import ApprovalEnvironment
+from edullm_platform.contracts.authorization import is_organization_member
 from edullm_platform.contracts.base import (
     ContractModel,
     PositiveStrictDecimal,
@@ -73,6 +74,7 @@ __all__ = [
     "SubmissionInputs",
     "compile_submission",
     "render_approver_context",
+    "require_submitter_on_the_roster",
 ]
 
 
@@ -187,6 +189,49 @@ def _resolve_workload(catalog: WorkloadCatalog, name: str) -> WorkloadProfile:
     registered = ", ".join(sorted(profile.name for profile in catalog.workloads))
     raise SubmissionRefusedError(
         f"unregistered workload profile {name!r}; the catalog registers: {registered}"
+    )
+
+
+def require_submitter_on_the_roster(submitter: str, *, inventory: OrganizationInventory) -> None:
+    """Refuse a submitter admission is going to refuse, while a refusal is still cheap.
+
+    ADMISSION ALREADY CHECKS THIS AND STAYS THE AUTHORITY ON IT. It reads the roster out of
+    the validator's own zip rather than out of a file the compile job could be pointed at,
+    which is why this does not replace it. What that check cannot do is happen early: it
+    runs on the far side of the approval gate, so an off-roster submitter fills in the whole
+    form, a lead reads the approver context and releases it, and ``submitter_not_in_roster``
+    arrives from inside AWS with the approval already spent. The person who then has to act
+    is neither of the two who were involved.
+
+    Answering it needs nothing from the account, so the compile step answers it too. It is
+    kept out of :func:`compile_submission` deliberately: that function turns a form into a
+    manifest and takes no identity, and
+    ``test_compiling_is_given_nothing_that_would_let_it_ask_a_reviewer`` is what holds it to
+    that. This is a fact about who dispatched the workflow rather than about what they
+    filled in, so it is asked beside compiling rather than inside it, and first, because no
+    edit to the form makes an off-roster submitter admissible.
+
+    Raises :class:`SubmissionRefusedError` so the caller needs no second branch: the
+    workflow already separates a refusal on the merits from a form it could not read, and
+    this is the first of those.
+
+    ``is_organization_member`` is imported rather than reimplemented, and it is imported
+    despite not being in that module's ``__all__``. Adding it there would rewrite a file
+    the admission validator's zip carries, which starts a Lambda release for a line of
+    punctuation. A second membership test written here would be the thing worth avoiding:
+    the roster is compared login by login with normalization, and two spellings of that
+    comparison would disagree the first time only one of them was corrected.
+    """
+    if is_organization_member(inventory, submitter):
+        return
+    raise SubmissionRefusedError(
+        f"{submitter!r} is not on the roster in config/organization.yaml, so admission "
+        "would refuse this run with submitter_not_in_roster whoever released it. Write "
+        "access to this repository and a place on the roster are granted separately, "
+        "which is why the submission form is there for somebody the roster does not name. "
+        "Add them to `members` in that file in a pull request against this repository. "
+        "That is the whole of the fix and it needs a reviewer and a merge, not an owner's "
+        "access to anything."
     )
 
 

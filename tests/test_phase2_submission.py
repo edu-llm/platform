@@ -29,6 +29,7 @@ from edullm_platform.submission import (
     SubmissionInputs,
     compile_submission,
     render_approver_context,
+    require_submitter_on_the_roster,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -626,6 +627,81 @@ def test_a_submission_naming_a_repository_nothing_registers_is_refused_before_a_
         compile_payload(cpu_payload(repository="dolma", workload_profile=DOLMA_WORKLOAD))
 
     assert "unregistered_repository" in str(exc_info.value)
+
+
+def test_a_submitter_the_roster_does_not_name_is_refused_before_a_reviewer_is_asked() -> None:
+    """Mutation: leave the roster check to admission, where it already exists.
+
+    Admission does refuse this, and it refuses it on the far side of the approval gate. So
+    without a check in the compile step the sequence is that somebody who can see the
+    submission form fills it in, a lead reads the approver context and releases the gate,
+    and admission answers ``submitter_not_in_roster`` from inside AWS. The approval is
+    spent and the person who has to act on the refusal is neither of the two involved.
+    """
+    with pytest.raises(SubmissionRefusedError) as exc_info:
+        require_submitter_on_the_roster("not-a-member", inventory=load_organization_inventory())
+
+    assert "not-a-member" in str(exc_info.value)
+
+
+def test_the_off_roster_refusal_names_the_roster_and_who_puts_somebody_on_it() -> None:
+    """Mutation: refuse with the reason code alone.
+
+    ``submitter_not_in_roster`` is what admission records and it reads as a permissions
+    fault, which sends the submitter to ask for access they already have. The two facts
+    that make it actionable are that the roster is a file in this repository and that
+    adding a line to it is an ordinary pull request rather than an owner's action.
+    """
+    with pytest.raises(SubmissionRefusedError) as exc_info:
+        require_submitter_on_the_roster("not-a-member", inventory=load_organization_inventory())
+
+    message = str(exc_info.value)
+    assert "config/organization.yaml" in message
+    assert "members" in message
+    assert "pull request" in message
+
+
+def test_the_off_roster_refusal_says_admission_would_refuse_it_whoever_approved() -> None:
+    """Mutation: describe this as a rule the compile step invented.
+
+    The submitter is about to ask somebody to release a run, and the useful thing to know
+    is that asking cannot help. A refusal that read as a local check invites a second
+    attempt through a different approver.
+    """
+    with pytest.raises(SubmissionRefusedError) as exc_info:
+        require_submitter_on_the_roster("not-a-member", inventory=load_organization_inventory())
+
+    assert "submitter_not_in_roster" in str(exc_info.value)
+
+
+def test_a_submitter_the_roster_names_is_let_through() -> None:
+    """The check refuses one person and admits everybody the roster carries."""
+    for member in load_organization_inventory().members:
+        require_submitter_on_the_roster(
+            member.github_login, inventory=load_organization_inventory()
+        )
+
+
+def test_the_roster_check_reads_a_login_the_way_every_other_lookup_does() -> None:
+    """Mutation: compare the dispatching login to the roster case-sensitively.
+
+    GitHub treats a login case-insensitively and ``config/organization.yaml`` is written by
+    people spelling their own names, so ``github.actor`` can differ from the roster only in
+    case. Refusing over that would report a rostered researcher as off the roster and send
+    them to open a pull request adding a line that is already there.
+    """
+    require_submitter_on_the_roster(SUBMITTER.upper(), inventory=load_organization_inventory())
+
+
+def test_compiling_still_takes_no_view_on_who_is_submitting() -> None:
+    """The roster check is beside :func:`compile_submission` rather than inside it.
+
+    Folding it in would give that function an identity argument, which
+    ``test_compiling_is_given_nothing_that_would_let_it_ask_a_reviewer`` refuses for a
+    reason that has not changed: what a form compiles to must not depend on who filled it
+    in, or two people submitting the same form get two manifests.
+    """
+    assert "inventory" not in inspect.signature(compile_submission).parameters
 
 
 def test_a_team_that_is_not_kebab_case_is_refused_with_a_message_naming_team() -> None:
