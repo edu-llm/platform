@@ -8,7 +8,11 @@ from .base import (
     PositiveStrictDecimal,
     require_ordered_sequence,
 )
-from .validation import require_checkpoint_for_retries, require_startable_program
+from .validation import (
+    require_a_shell_command_that_kept_its_quotes,
+    require_checkpoint_for_retries,
+    require_startable_program,
+)
 from .workload import CheckpointContract
 
 COMMIT_SHA_PATTERN = r"^[0-9a-f]{40}$"
@@ -37,6 +41,11 @@ class RunManifest(ContractModel):
         tuple[str, ...],
         BeforeValidator(require_ordered_sequence),
         AfterValidator(require_startable_program),
+        # The two quoting mistakes are opposites and both reach an instance without a rule
+        # here: quoting that survived the form field arrives as one token holding the whole
+        # line, and quoting that was lost leaves a shell with a one-word command and the
+        # program's arguments trailing behind it.
+        AfterValidator(require_a_shell_command_that_kept_its_quotes),
     ] = Field(min_length=1, strict=False)
     team: str = Field(min_length=1)
     wandb_project: str = Field(min_length=1)
