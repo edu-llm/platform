@@ -417,6 +417,83 @@ def test_an_argument_may_hold_the_whitespace_and_quotes_a_program_name_may_not()
     assert manifest.command == ("python", "-c", "print('hello from a second person')")
 
 
+#: The submission of 2026-08-01, split the way the runner split it. The guide prints single
+#: quotes around the program and this one lost them, which is the opposite of the mistake
+#: UNSPLIT_COMMAND_LINE records and reaches an instance just as easily.
+COMMAND_THAT_LOST_ITS_QUOTES = [
+    "bash",
+    "-lc",
+    "python",
+    ".edullm/train_on_corpus.py",
+    "$EDULLM_RUN_ID",
+    "--steps",
+    "20",
+]
+
+
+def test_a_shell_handed_more_than_one_word_after_dash_c_is_refused() -> None:
+    payload = manifest_payload()
+    payload["command"] = COMMAND_THAT_LOST_ITS_QUOTES
+    with pytest.raises(ValidationError) as exc_info:
+        RunManifest.model_validate(payload)
+    assert_validation_error(
+        exc_info.value,
+        error_type="value_error",
+        loc=("command",),
+        message_fragment="reads exactly one word as the command",
+    )
+
+
+def test_the_refusal_prints_the_command_the_submitter_meant_to_send() -> None:
+    """Mutation: state the rule instead of quoting the fix.
+
+    What reached a GPU was a working command with its quotes dropped, so the correction is
+    mechanical and the submitter should be able to copy it rather than derive it. The version
+    that ran instead started a Python with nothing to interpret, exited 1 in under five
+    seconds, and left its only explanation in a log stream the deploy credential is
+    deliberately not allowed to read.
+    """
+    payload = manifest_payload()
+    payload["command"] = COMMAND_THAT_LOST_ITS_QUOTES
+    with pytest.raises(ValidationError) as exc_info:
+        RunManifest.model_validate(payload)
+    message = str(exc_info.value)
+
+    assert "bash -lc 'python .edullm/train_on_corpus.py $EDULLM_RUN_ID --steps 20'" in message
+
+
+def test_the_quoted_form_the_guide_prints_is_accepted() -> None:
+    payload = manifest_payload()
+    # One word after -lc, which is the whole point. This is the line GETTING-STARTED.md
+    # prints, and a rule that refused it would be worse than the bug.
+    payload["command"] = ["bash", "-lc", 'python .edullm/train_on_corpus.py "$EDULLM_RUN_ID"']
+    manifest = RunManifest.model_validate(payload)
+    assert manifest.command[2].startswith("python .edullm")
+
+
+def test_a_shell_may_still_be_given_positional_arguments_after_a_real_command_line() -> None:
+    """Mutation: refuse every case of more than one word after ``-c``.
+
+    A shell reads the words after the command string as ``$0`` onward, and that is a real
+    thing to do. The discriminator is not how many words follow but whether the first of them
+    holds a command line: quoting that was lost leaves a bare program name there.
+    """
+    payload = manifest_payload()
+    payload["command"] = ["bash", "-c", 'echo "$0 $1"', "first", "second"]
+    manifest = RunManifest.model_validate(payload)
+    assert manifest.command[-2:] == ("first", "second")
+
+
+def test_a_program_that_is_not_a_shell_keeps_every_argument_it_was_given() -> None:
+    # `python -c` takes one word too, but it takes it correctly here and the trailing words
+    # are argv. The rule is about shells because a shell is what the platform tells people to
+    # wrap their command in.
+    payload = manifest_payload()
+    payload["command"] = ["python", "-c", "import sys; print(sys.argv)", "one", "two"]
+    manifest = RunManifest.model_validate(payload)
+    assert manifest.command[-2:] == ("one", "two")
+
+
 def test_a_program_named_by_absolute_path_is_still_a_program() -> None:
     payload = manifest_payload()
     payload["command"] = ["/usr/local/bin/python", "-m", "train"]
