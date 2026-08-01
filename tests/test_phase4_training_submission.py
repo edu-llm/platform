@@ -34,6 +34,10 @@ from edullm_platform.checkpoints import (
     success_marker_bytes,
 )
 from edullm_platform.config import load_yaml
+from edullm_platform.contracts.dataset_registry import (
+    DatasetRegistry,
+    PublishedDatasetReference,
+)
 from edullm_platform.contracts.manifest import RunManifest
 from edullm_platform.execution import (
     MAXIMUM_CONTAINER_OVERRIDES_BYTES,
@@ -311,6 +315,200 @@ def test_the_submitted_program_fits_inside_what_batch_will_accept() -> None:
         f"the override is {serialized} bytes and Batch accepts "
         f"{MAXIMUM_CONTAINER_OVERRIDES_BYTES}"
     )
+
+
+def published_reference(reference_id: str) -> PublishedDatasetReference:
+    """The registry entry for one of the two corpora C2 registered, read from config/.
+
+    Read rather than constructed, because what these tests are about is the platform
+    resolving an identifier the submitter chose into facts the submitter did not, and a
+    fixture built here would be this test agreeing with itself about the resolution.
+    """
+    registry = load_yaml(
+        Path(__file__).resolve().parents[1] / "config" / "datasets.yaml", DatasetRegistry
+    )
+    resolved = registry.reference_for(reference_id)
+
+    assert resolved is not None, f"{reference_id} is not a published reference in config/"
+    return resolved
+
+
+def submission_environment(request: dict[str, Any]) -> dict[str, str]:
+    return {
+        entry["Name"]: entry["Value"] for entry in request["ContainerOverrides"]["Environment"]
+    }
+
+
+def test_the_container_is_told_the_corpus_the_registry_resolved_and_not_the_form_field() -> None:
+    """Mutation: forward the reference_id and let the container resolve it.
+
+    That needs the registry inside the image and lets a submitter name a dataset id the
+    registry does not carry. The approved manifest names an identifier; the resolution from
+    identifier to (dataset_id, version, tokenizer) is the platform's, made once, on this side
+    -- the same rule that has the state machine read the image scan itself rather than accept
+    findings from a caller, and that has ``wandb_project`` come off the manifest rather than
+    out of the command.
+
+    ``EDULLM_DATASET_RELEASE`` still carries the identifier and is not replaced. It is what
+    the decision record was written about, so a run whose lineage says one thing and whose
+    container read another would be unresolvable after the fact; these three are the
+    resolution, beside it rather than instead of it.
+    """
+    reference = published_reference("regmix-10b-v1")
+    manifest = load_yaml(
+        Path(__file__).resolve().parents[1] / "fixtures" / "manifests" / "gpu-routine.yaml",
+        RunManifest,
+    )
+    target = measuring_target()
+
+    request = batch_submit_request(
+        manifest=manifest.model_copy(update={"dataset_release": reference.reference_id}),
+        target=target,
+        run_id=RUN_ID,
+        job_definition=target.job_definition_arn,
+        dataset_reference=reference,
+    )
+    environment = submission_environment(request)
+
+    assert environment["EDULLM_DATASET_ID"] == "pretrain/regmix-10b"
+    assert environment["EDULLM_DATASET_VERSION"] == "v1"
+    assert environment["EDULLM_DATASET_RELEASE"] == "regmix-10b-v1"
+
+
+def test_the_container_is_told_which_tokenizer_and_never_left_to_assume_one() -> None:
+    """Mutation: send two variables and let the program hold TokenizerConfig.dolma2().
+
+    THE TWO REGISTERED CORPORA DO NOT SHARE A TOKENIZER. ``pretrain/regmix-10b`` depends on
+    ``tokenizer/dolma2-bpe`` and ``pretrain/lean4-mathlib-bytes`` on ``tokenizer/bytes-utf8``,
+    both read from ``groups[].depends_on[]`` with role ``tokenizer`` on 2026-08-01.
+
+    The upstream family file refuses this exact default on its own side and records the
+    reason: a mismatched tokenizer's ids usually still fall in range, so the embedding lookup
+    does not raise and the loss curve is merely bad. A constant here is right for whichever
+    corpus somebody tested against and silent for the other, which is why this test reads both
+    rather than one.
+
+    The tokenizer cannot come from the reader either. ``ResolvedSplit`` does not expose it, so
+    a container that wanted it would have to open ``dataset.json`` and walk ``depends_on`` --
+    a second implementation of a resolution the platform has already done.
+    """
+    manifest = load_yaml(
+        Path(__file__).resolve().parents[1] / "fixtures" / "manifests" / "gpu-routine.yaml",
+        RunManifest,
+    )
+    target = measuring_target()
+
+    told = {}
+    for reference_id in ("regmix-10b-v1", "lean4-mathlib-bytes-v3"):
+        reference = published_reference(reference_id)
+        request = batch_submit_request(
+            manifest=manifest.model_copy(update={"dataset_release": reference_id}),
+            target=target,
+            run_id=RUN_ID,
+            job_definition=target.job_definition_arn,
+            dataset_reference=reference,
+        )
+        told[reference_id] = submission_environment(request)["EDULLM_DATASET_TOKENIZER"]
+
+    assert told == {
+        "regmix-10b-v1": "tokenizer/dolma2-bpe",
+        "lean4-mathlib-bytes-v3": "tokenizer/bytes-utf8",
+    }
+    assert len(set(told.values())) == 2, (
+        "the two registered corpora were chosen partly because they disagree here; if they "
+        "ever agree, this test stops being able to catch a hard-coded tokenizer"
+    )
+
+
+def test_a_run_that_reads_nothing_is_told_nothing_about_a_corpus() -> None:
+    """Mutation: emit the three variables unconditionally, empty when there is no corpus.
+
+    ``none`` is the honest answer and the common one -- a quick check reads nothing -- and an
+    empty ``EDULLM_DATASET_TOKENIZER`` is worse than an absent one in the same way an empty
+    ``WANDB_USERNAME`` is: it reads as a resolution that failed rather than one that was never
+    attempted, and a program testing ``if os.environ.get(...)`` would take the empty branch
+    while a program reading the variable directly would resolve a tokenizer named "".
+
+    Absent also keeps the budget honest. These three cost nothing on the runs that do not read
+    a corpus, which is every run the platform has admitted so far.
+    """
+    manifest = load_yaml(
+        Path(__file__).resolve().parents[1] / "fixtures" / "manifests" / "gpu-routine.yaml",
+        RunManifest,
+    )
+    target = measuring_target()
+
+    request = batch_submit_request(
+        manifest=manifest,
+        target=target,
+        run_id=RUN_ID,
+        job_definition=target.job_definition_arn,
+    )
+    environment = submission_environment(request)
+
+    assert "EDULLM_DATASET_ID" not in environment
+    assert "EDULLM_DATASET_VERSION" not in environment
+    assert "EDULLM_DATASET_TOKENIZER" not in environment
+    assert environment["EDULLM_DATASET_RELEASE"] == manifest.dataset_release
+
+
+def test_the_three_dataset_variables_fit_beside_a_resume_block() -> None:
+    """THE BUDGET TEST, AND THE NUMBERS ARE MEASURED RATHER THAN ASSUMED.
+
+    Batch accepts 8,192 bytes of serialized ``containerOverrides``. The measurement is taken
+    through ``batch_submit_request`` rather than over the variables' characters, because the
+    JSON punctuation and the key names are inside the same limit -- which is the distinction
+    that cost a run, an approval and a submission before ``ContainerOverridesTooLargeError``
+    existed.
+
+    Measured 2026-08-01 on this tree, against the largest of the registered corpora by name
+    length, carrying the full training command: the override is reported by the assertion
+    below when it fails, and the three variables' own cost is asserted rather than described
+    so that a rename which lengthens them lands here.
+
+    The figure this plan inherited -- 599 bytes of post-resume headroom, of which two
+    variables cost 112 -- was measured against a different tree and is not reused. What is
+    asserted instead is the property that matters and survives both tracks landing: the
+    override with all three present is inside the limit, and the three cost less than the
+    headroom the run without them has.
+
+    If three ever stop fitting, the answer is the master plan's reserved section -- the
+    program moves into the image as a named config -- and not a shorter variable name.
+    ``EDULLM_DATASET_TOKENIZER`` is long because it says what it is.
+    """
+    reference = published_reference("lean4-mathlib-bytes-v3")
+    manifest = load_yaml(
+        Path(__file__).resolve().parents[1] / "fixtures" / "manifests" / "gpu-routine.yaml",
+        RunManifest,
+    )
+    command = workflow_inputs(dispatch_form(commit_sha=COMMIT))["command"]
+    assert isinstance(command, list)
+    carrying_the_command = manifest.model_copy(
+        update={"command": tuple(command), "dataset_release": reference.reference_id}
+    )
+    target = measuring_target()
+
+    def override_bytes(**extra: Any) -> int:
+        request = batch_submit_request(
+            manifest=carrying_the_command,
+            target=target,
+            run_id=RUN_ID,
+            job_definition=target.job_definition_arn,
+            **extra,
+        )
+        return len(
+            json.dumps(request["ContainerOverrides"], separators=(",", ":")).encode("utf-8")
+        )
+
+    without = override_bytes()
+    with_corpus = override_bytes(dataset_reference=reference)
+
+    assert with_corpus <= MAXIMUM_CONTAINER_OVERRIDES_BYTES, (
+        f"the override carrying the three dataset variables is {with_corpus} bytes and Batch "
+        f"accepts {MAXIMUM_CONTAINER_OVERRIDES_BYTES}; the headroom without them was "
+        f"{MAXIMUM_CONTAINER_OVERRIDES_BYTES - without}"
+    )
+    assert with_corpus - without < MAXIMUM_CONTAINER_OVERRIDES_BYTES - without
 
 
 def test_the_wire_form_removes_comments_and_changes_nothing_else() -> None:

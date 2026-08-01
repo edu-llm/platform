@@ -355,6 +355,19 @@ def handler(event: Mapping[str, Any], context: object = None) -> dict[str, Any]:
                 # before the deploy. Refusing those would fail runs a lead had released for
                 # a reason that has nothing to do with them.
                 experiment=event.get("experiment"),
+                # WHICH CORPUS, RESOLVED HERE BECAUSE THIS IS WHERE THE REGISTRY IS.
+                #
+                # `reference_for` returns None for `none` and for `dolma-2026-07`, which are
+                # registered releases rather than published corpora, and that None is the
+                # right answer rather than a lookup that missed: a run reading nothing is
+                # told nothing about a corpus.
+                #
+                # A manifest naming something in neither list cannot reach this line --
+                # `is_registered` covers both and denies outright with
+                # `unregistered_dataset` well before an execution block is built.
+                dataset_reference=dataset_registry.reference_for(
+                    outcome.intent.manifest.dataset_release
+                ),
             ),
         }
     return answer
