@@ -133,6 +133,23 @@ Resources:
       JobQueueName: sbsandbox-intern-edullm-cpu
       State: ENABLED
       Priority: 1
+      # The same three actions as the GPU queue, and that file carries the argument in full,
+      # including why `Reason` is an enum of Batch `statusReason` values rather than the free
+      # text the CloudFormation reference makes it look like. One entry per remediable cause,
+      # because a job stuck for a reason not listed is not covered by the others.
+      JobStateTimeLimitActions:
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: CAPACITY:INSUFFICIENT_INSTANCE_CAPACITY
+          State: RUNNABLE
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: MISCONFIGURATION:COMPUTE_ENVIRONMENT_MAX_RESOURCE
+          State: RUNNABLE
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT
+          State: RUNNABLE
       ComputeEnvironmentOrder:
         - Order: 1
           ComputeEnvironment:

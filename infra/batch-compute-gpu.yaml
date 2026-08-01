@@ -161,6 +161,47 @@ Resources:
       JobQueueName: sbsandbox-intern-edullm-gpu
       State: ENABLED
       Priority: 1
+      # A JOB THAT CANNOT BE PLACED IS CANCELLED RATHER THAN LEFT IN THE QUEUE FOREVER.
+      #
+      # Batch leaves a RUNNABLE job queued indefinitely when nothing can run it, with no
+      # notification and no terminal state. From the submitter's side that is identical to a
+      # job waiting its turn, which is the ordinary and correct condition -- so there is no
+      # observation they can make that separates "queued behind others" from "will never
+      # start". A run asking for more vCPU than the environment's ceiling, or a GPU count no
+      # registered instance type has, is unplaceable from the moment it is submitted.
+      #
+      # REASON IS AN ENUM, NOT A SENTENCE, AND THAT COST A BROKEN DEPLOY. The first attempt
+      # put an explanatory sentence here on 2026-08-01 and CloudFormation refused the CPU
+      # stack update, taking every downstream step with it -- the GPU stack, the events
+      # stack and the state machine. The CloudFormation reference calls this field "the
+      # reason to log for the action being taken", Type String, no allowed values, which
+      # reads exactly like free text. It is not: Batch matches it against the `statusReason`
+      # the job is actually stuck with, and only three of those support remediation at all.
+      #
+      # So this is one entry per remediable cause rather than one catch-all, because a job
+      # stuck for a reason not listed here is not covered by the others. The three Batch
+      # documents as remediable are all present; the ones it excludes --
+      # MISCONFIGURATION:SERVICE_ROLE_PERMISSIONS, ACTION_REQUIRED and UNDETERMINED -- need a
+      # person, which is why Batch refuses to automate them and why they are absent here
+      # rather than forgotten.
+      #
+      # Thirty minutes is chosen against the wait it must not interrupt: this environment
+      # scales from zero and took two to three minutes to bring up a g5 on 2026-08-01, so the
+      # limit is an order of magnitude above the normal case. CANCEL because the job never
+      # started, so there is nothing running to terminate.
+      JobStateTimeLimitActions:
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: CAPACITY:INSUFFICIENT_INSTANCE_CAPACITY
+          State: RUNNABLE
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: MISCONFIGURATION:COMPUTE_ENVIRONMENT_MAX_RESOURCE
+          State: RUNNABLE
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT
+          State: RUNNABLE
       # One compute environment, and deliberately not the CPU environment as a second entry.
       # A queue spanning both with BEST_FIT_PROGRESSIVE would let a CPU job land on a GPU
       # instance whenever the GPU environment had spare capacity, which is the most expensive

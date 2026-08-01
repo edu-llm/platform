@@ -729,35 +729,56 @@ def test_a_batch_refusal_tells_the_submitter_what_batch_said() -> None:
     assert "$.submission_failure.Cause" in failed["CausePath"]
 
 
-def test_neither_queue_carries_a_state_time_limit_until_one_is_known_to_deploy() -> None:
-    """WITHDRAWN AFTER IT BROKE THE DEPLOY, AND RECORDED HERE RATHER THAN FORGOTTEN.
+#: The three `statusReason` values Batch will act on automatically. The three it refuses --
+#: MISCONFIGURATION:SERVICE_ROLE_PERMISSIONS, ACTION_REQUIRED and UNDETERMINED -- need a
+#: person, which is why they are absent from the templates rather than forgotten.
+REMEDIABLE_STUCK_REASONS = {
+    "CAPACITY:INSUFFICIENT_INSTANCE_CAPACITY",
+    "MISCONFIGURATION:COMPUTE_ENVIRONMENT_MAX_RESOURCE",
+    "MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT",
+}
+
+
+def test_both_queues_cancel_a_job_stuck_for_every_reason_batch_will_act_on() -> None:
+    """Reads BOTH files. Mutation: write a sentence in Reason, which is what broke the deploy.
 
     A RUNNABLE job Batch cannot place stays queued forever with no notification and no
     terminal state, and from the submitter's side that is identical to waiting its turn.
-    `JobStateTimeLimitActions` is the answer and the problem is worth solving.
 
-    Thirty minutes on both queues was added on 2026-08-01 and CloudFormation refused the
-    CPU stack update. The template is schema-valid -- `cfn-lint` passed in the same run, and
-    the reference permits exactly what was written: Action CANCEL, State RUNNABLE,
-    MaxTimeSeconds 1800 inside the documented 600 to 86,400 -- so the rejection is
-    service-side and its reason is in the stack events. Those could not be read: the
-    credential broker was rejecting its refresh token, and the failure skipped every
-    downstream step including the GPU stack, the events stack and the state machine.
+    THE FIRST ATTEMPT PUT AN EXPLANATORY SENTENCE IN `Reason` AND COST A BROKEN DEPLOY CHAIN
+    ON 2026-08-01 -- CloudFormation refused the CPU stack update and skipped the GPU stack,
+    the events stack and the state machine behind it. The reference invites that mistake: it
+    calls the field "the reason to log for the action being taken", Type String, with no
+    allowed values listed. Batch instead matches it against the `statusReason` the job is
+    actually stuck with, and only three of those support remediation.
 
-    It was reverted rather than guessed at. A broken deploy chain on main is worse than a
-    missing timeout, and diagnosing a service rejection by editing a template and watching
-    CI is a slow way to be wrong. This test holds the revert in place so the next attempt
-    starts from the stack events rather than from a fresh guess.
+    So this asserts the set rather than the presence. One entry per remediable cause is not
+    stylistic: a job stuck for a reason not listed here is not covered by the others, so a
+    missing entry is a class of stuck job that still waits forever.
+
+    The thirty minutes is asserted as a floor, because what it must not do is interrupt a
+    legitimate wait -- a cold environment took two to three minutes to bring up a g5 -- and
+    what it must do is terminate eventually.
     """
     for path in COMPUTE_PATHS:
         queue = properties_of(path, "AWS::Batch::JobQueue")
+        actions = queue.get("JobStateTimeLimitActions")
 
-        assert "JobStateTimeLimitActions" not in queue, (
-            f"{path.name} carries a state time limit again. Before re-landing it, read the "
-            "stack events from the 2026-08-01 failure -- describe-stack-events on "
-            "sbsandbox-intern-edullm-phase3-batch -- because the template was already "
-            "schema-valid the first time and the reason is service-side."
+        assert actions, f"{path.name} leaves an unplaceable job queued forever"
+        assert {action["Reason"] for action in actions} == REMEDIABLE_STUCK_REASONS, (
+            f"{path.name} does not cover every reason Batch will act on. Reason is an enum "
+            "of statusReason values, not free text -- a sentence here is refused at deploy "
+            "time, and a missing value is a stuck job nothing cancels."
         )
+        for action in actions:
+            # CANCEL rather than TERMINATE: the job never started, so there is nothing
+            # running to terminate, and the two produce different lifecycle records.
+            assert action["Action"] == "CANCEL"
+            assert action["State"] == "RUNNABLE"
+            assert action["MaxTimeSeconds"] >= 600, (
+                "a limit under ten minutes would cancel runs that were legitimately "
+                "waiting for a cold compute environment to scale up"
+            )
 
 
 def test_the_event_rule_matches_the_job_queue_the_compute_stack_creates() -> None:
