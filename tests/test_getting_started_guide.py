@@ -208,6 +208,44 @@ def test_the_prune_trap_is_named_and_the_grant_it_assumes_is_still_absent(guide:
     )
 
 
+def test_the_save_interval_is_named_against_the_contract_the_workload_declares(
+    guide: str,
+) -> None:
+    """Mutation: move the checkpoint contract to 60 minutes, leave the guide saying 30.
+
+    ``--save-interval`` is the flag that decides what a lost machine costs, and the resume
+    section is the only place a reader is told so. The figure it tells them to come in under
+    is the workload's own ``interval_minutes``, so it is read out of the catalog rather than
+    copied here, and it is asserted inside the paragraph that names the flag rather than
+    anywhere in the document. A guide that cites 30 while the contract says 60 is telling
+    people to checkpoint twice as often as they have to, and one that cites 60 against a
+    contract of 30 is worse.
+
+    The measured figures beside it, 3.2 GB and 40 seconds and 23 minutes, are observations
+    of one model on one machine. Nothing in this repository can check them and this test
+    does not pretend to.
+    """
+    catalog = load_yaml(PROJECT_ROOT / "config" / "workload-catalog.yaml", WorkloadCatalog)
+    contracts = {
+        workload.name: workload.checkpoint
+        for workload in catalog.workloads
+        if workload.checkpoint is not None
+    }
+    declared = contracts["olmo-core-train-1gpu"].interval_minutes
+
+    paragraphs = [block for block in guide.split("\n\n") if "--save-interval" in block]
+
+    assert paragraphs, (
+        "the guide no longer names --save-interval, so nothing tells a reader which flag "
+        "decides how much work a lost machine throws away"
+    )
+    assert any(str(declared) in block for block in paragraphs), (
+        f"olmo-core-train-1gpu declares a checkpoint every {declared} minutes and no "
+        "paragraph naming --save-interval cites that number, so the advice and the "
+        "contract it rests on can drift apart without anything saying so"
+    )
+
+
 def test_the_evaluator_trap_names_both_callbacks(guide: str) -> None:
     """Mutation: name one evaluator and leave the other on.
 
