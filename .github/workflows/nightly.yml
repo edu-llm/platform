@@ -194,13 +194,19 @@ jobs:
             rm -rf lineage/result
           fi
 
-      # THIS JOB IS RED TODAY AND THAT IS THE FINDING, NOT A FAULT IN IT. Fourteen of the
-      # fifteen runs carrying a checkpoint contract have nothing a resume could load: six
+      # THIS JOB WAS RED FOR MONTHS AND THAT WAS THE FINDING, NOT A FAULT IN IT. Fourteen of
+      # the fifteen runs carrying a checkpoint contract had nothing a resume could load: six
       # wrote nothing at all, and eight wrote a step0 holding only train/rank0.pt, which is
       # rank 0's trainer state with no weights and no optimizer beside it. The second group
       # is the reason this check exists -- they wrote, so every count-based reading of the
       # bucket called them healthy. Thirteen of the fourteen are recorded as failures and
       # stop being held against this job once the role can read result/.
+      #
+      # The fifteenth cannot be repaired, so it is named in
+      # config/reports/checkpoint-acknowledgements.yaml with the reason beside it. That is
+      # per run rather than a date cutoff: a run nobody has written down is judged as before,
+      # so a new offender turns this red the next morning, which is the only reason letting
+      # the job go green is not the same as switching it off.
       - name: Reconcile what those runs actually wrote
         run: |
           set -uo pipefail

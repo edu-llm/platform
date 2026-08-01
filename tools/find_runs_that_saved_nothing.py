@@ -54,6 +54,31 @@ whole point, since a success that saved nothing is the failure nothing else repo
 lineage bucket and the nightly reader role does not hold it yet, so when no ``result/`` tree
 is present every contracted run is judged, as before. Nothing is silently let through by a
 sync that did not happen.
+
+**ONE RUN IN THE ACCOUNT CANNOT BE REPAIRED, AND A PERMANENTLY RED JOB REPORTS NOTHING.**
+``run_019fbce3-ce4b-7067-b8c7-c2cf25e6b667`` is finished, its prefix is empty, and no
+action available to anybody changes either. Left alone it holds the nightly red for ever,
+which is worse than it sounds: the next real finding in this job arrives at a job that was
+already red, and nobody looks.
+
+So an acknowledgement list, read from
+``config/reports/checkpoint-acknowledgements.yaml``, names runs that have been read and
+adjudicated. Three properties are what make it a record rather than a way of going blind.
+It is *per run*: a run id is written down one at a time, and a run nobody has written down
+is judged exactly as before, so the job still goes red the first morning after a new
+offender. It carries a *reason with a length floor*, because "known issue" is not an
+adjudication and the value of the entry is that a later reader can tell whether the prefix
+was understood or waved through. And an acknowledged run stays *in the report*, in its own
+section with its reason beside it, because a run that disappears is a run nobody reads --
+which is the failure this whole tool exists to answer.
+
+**A date cutoff was the obvious alternative and is the wrong shape.** "Ignore runs before
+2026-08-02" is one line and covers this run, and it also covers every other run submitted
+before that date, including ones nobody has looked at -- and it keeps covering them as the
+reasons for each are forgotten. The list is longer to write and says something true.
+
+An entry that no longer covers a finding is reported rather than left in place, because a
+list that only ever grows stops describing anything.
 """
 
 from __future__ import annotations
@@ -69,8 +94,10 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any, Literal, Self
 from urllib.parse import urlparse
+
+from pydantic import BeforeValidator, Field, model_validator
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
@@ -82,11 +109,21 @@ from edullm_platform.checkpoints import (
 )
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.admission import IntentRecord
+from edullm_platform.contracts.base import ContractModel, UtcTimestamp, require_ordered_sequence
+from edullm_platform.contracts.bindings import GitHubLogin
+from edullm_platform.contracts.identity import RunId
 from edullm_platform.contracts.lifecycle import AttemptTerminalState
 from edullm_platform.contracts.results import ResultManifest, output_prefix
 from edullm_platform.contracts.workload import WorkloadCatalog
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+#: Where the adjudications live. Under ``config/reports/`` rather than in ``config/`` itself,
+#: and the subdirectory is the whole reason: ``tools/build_admission_lambda.py`` globs
+#: ``config/*.yaml`` into both Lambda zips, so a file there costs a rebuild, an upload and
+#: two release records every time it is edited. Neither function reads this and neither ever
+#: should -- it scopes a report -- so acknowledging a run must not be a Lambda release.
+ACKNOWLEDGEMENTS_PATH = PROJECT_ROOT / "config" / "reports" / "checkpoint-acknowledgements.yaml"
 
 EXIT_FOUND_SILENT_FAILURES = 1
 EXIT_UNUSABLE = 2
@@ -109,6 +146,52 @@ class ObjectMissing(Exception):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.response = {"Error": {"Code": code}}
+
+
+class CheckpointAcknowledgement(ContractModel):
+    """One run whose prefix somebody read and adjudicated, with their name against it.
+
+    ``reason`` carries the length floor ``ImageScanException`` carries, and for the reason
+    recorded there: "known issue" is not an adjudication, and the whole value of the entry is
+    that a later reader can tell whether the prefix was understood or waved through. It is
+    also the only thing standing between this list and a date cutoff written one run at a
+    time.
+
+    A run rather than a date, a profile or a team. Every wider unit acknowledges runs nobody
+    has looked at, including ones submitted after it was written.
+    """
+
+    run_id: RunId
+    reason: str = Field(min_length=40)
+    recorded_by: GitHubLogin
+    recorded_at: UtcTimestamp
+
+
+class CheckpointAcknowledgements(ContractModel):
+    """The adjudicated runs, as a file this repository reviews like any other change.
+
+    A contract here in the tool rather than under ``contracts/``, because nothing on the
+    platform's decision path reads it. Admission does not consult it, no lineage record
+    carries it, and a run's outcome is the same whether or not it is named -- it scopes what
+    this report holds against the build and nothing else. Putting it beside the other
+    contracts would export a schema and enter both Lambdas' package closure for a file
+    neither will ever open.
+    """
+
+    schema_version: Literal[1]
+    acknowledgements: Annotated[
+        tuple[CheckpointAcknowledgement, ...], BeforeValidator(require_ordered_sequence)
+    ] = Field(default=(), strict=False)
+
+    @model_validator(mode="after")
+    def validate_one_acknowledgement_per_run(self) -> Self:
+        named = [entry.run_id for entry in self.acknowledgements]
+        if len(set(named)) != len(named):
+            raise ValueError("a run must not carry more than one acknowledgement")
+        return self
+
+    def reasons(self) -> dict[str, str]:
+        return {entry.run_id: entry.reason for entry in self.acknowledgements}
 
 
 class CommandLineObjectStore:
@@ -246,6 +329,11 @@ class RunCheckpointState:
     #: which is not the same as a run having no result record, and the two must not be
     #: collapsed: one is an absent permission and the other is a run that has not finished.
     outcome_known: bool = False
+    #: Why this run's prefix has been adjudicated, or ``None`` for the ordinary case of a run
+    #: nobody has written down. The reason rather than a flag, because it is printed beside
+    #: the run: an acknowledgement whose justification is not in the report is one nobody can
+    #: check, and this list is only defensible while every entry can be read.
+    acknowledged: str | None = None
 
     @property
     def judged(self) -> bool:
@@ -258,6 +346,18 @@ class RunCheckpointState:
         if not self.outcome_known:
             return True
         return self.outcome is AttemptTerminalState.SUCCEEDED
+
+    @property
+    def held_against_the_build(self) -> bool:
+        """Whether this run's prefix is allowed to fail the nightly.
+
+        Two separate reasons not to, kept separate. ``judged`` is about whether the question
+        applies at all -- a run that failed has already reported its own failure. This is
+        about a run the question applies to, whose answer somebody has read and written down.
+        Collapsing them would let an acknowledgement quietly change what the report *asks*
+        rather than only what it holds against the build.
+        """
+        return self.judged and self.acknowledged is None
 
     @property
     def saved_nothing(self) -> bool:
@@ -341,6 +441,23 @@ def _load_outcomes(directory: Path) -> dict[str, AttemptTerminalState] | None:
     return outcomes
 
 
+def _load_acknowledgements(path: Path) -> CheckpointAcknowledgements:
+    """The adjudicated runs, or none of them when the file is not there.
+
+    An absent file is an empty list rather than an error, because that is the state this
+    repository should be in and the state a fresh checkout of it may legitimately be in. An
+    unreadable one stops the report: a file that exists and does not parse is somebody having
+    written an entry wrongly, and treating that as "no acknowledgements" would turn a typo
+    into a red job whose cause is a YAML error nobody is shown.
+    """
+    if not path.is_file():
+        return CheckpointAcknowledgements(schema_version=1)
+    try:
+        return load_yaml(path, CheckpointAcknowledgements)
+    except (OSError, TypeError, ValueError) as error:
+        raise ReportInputError(f"{path} is not a readable acknowledgement list: {error}") from error
+
+
 def _objects_under(store: CheckpointStore, prefix: str) -> int:
     location = urlparse(prefix)
     answer = store.list_objects_v2(Bucket=location.netloc, Prefix=location.path.lstrip("/"))
@@ -355,6 +472,7 @@ def checkpoint_states(
     profile: str | None = None,
     region: str | None = None,
     outcomes: Mapping[str, AttemptTerminalState] | None = None,
+    acknowledgements: Mapping[str, str] | None = None,
 ) -> list[RunCheckpointState]:
     """One entry per run whose profile promised checkpoints, newest last.
 
@@ -364,6 +482,11 @@ def checkpoint_states(
 
     ``outcomes`` scopes which of them are judged rather than which appear. Every contracted
     run is still inspected and still listed, so nothing leaves the report by ending badly.
+
+    ``acknowledgements`` scopes narrower still: an adjudicated run is inspected, listed and
+    read out of the bucket exactly as before, and only the exit code treats it differently.
+    Nothing here decides whether a prefix is a finding; the list decides whether the finding
+    is news.
     """
     reader = store if store is not None else CommandLineObjectStore(profile=profile, region=region)
     known = {workload.name for workload in catalog.workloads}
@@ -396,6 +519,9 @@ def checkpoint_states(
                 detail=inspected.detail,
                 outcome=None if outcomes is None else outcomes.get(record.run_id),
                 outcome_known=outcomes is not None,
+                acknowledged=None if acknowledgements is None else acknowledgements.get(
+                    record.run_id
+                ),
             )
         )
     if retired:
@@ -408,14 +534,19 @@ def checkpoint_states(
     return states
 
 
-def render(states: Sequence[RunCheckpointState]) -> str:
+def render(
+    states: Sequence[RunCheckpointState],
+    *,
+    acknowledgements_covering_nothing: Sequence[str] = (),
+) -> str:
     if not states:
         return (
             "No run has been submitted under a workload profile that promises checkpoints, "
             "so there is nothing here to be wrong.\n"
         )
 
-    judged = [state for state in states if state.judged]
+    judged = [state for state in states if state.held_against_the_build]
+    adjudicated = [state for state in states if state.judged and state.acknowledged is not None]
     unjudged = [state for state in states if not state.judged]
     silent = [state for state in judged if state.saved_nothing]
     unloadable = [state for state in judged if state.wrote_something_unloadable]
@@ -426,6 +557,12 @@ def render(states: Sequence[RunCheckpointState]) -> str:
         f"{len(silent)} wrote nothing, {len(unloadable)} wrote something no loader will "
         f"accept, and {len(loadable)} can be resumed from."
     )
+    if adjudicated:
+        headline += (
+            f" A further {len(adjudicated)} finished successfully and have been read and "
+            "adjudicated; they are listed with their reasons and are not held against this "
+            "report."
+        )
     if unjudged:
         headline += (
             f" The other {len(unjudged)} did not finish successfully and are listed at the "
@@ -438,7 +575,9 @@ def render(states: Sequence[RunCheckpointState]) -> str:
             "Each of these declared a checkpoint contract and left its prefix empty. The "
             "usual cause is a training command that did not pass "
             '`--save-folder "$EDULLM_CHECKPOINT_DIR"`, in which case the checkpoints were '
-            "written to local disk on a machine that no longer exists."
+            "written to local disk on a machine that no longer exists. Submission now "
+            "refuses that command, so a run appearing here was either submitted before that "
+            "guard or carries `EDULLM_CHECKPOINT_CHECK=waived`, and the manifest says which."
         )
         lines += [
             "## Wrote nothing",
@@ -488,6 +627,43 @@ def render(states: Sequence[RunCheckpointState]) -> str:
         ]
         lines.append("")
 
+    if adjudicated:
+        explanation = (
+            "Each of these has nothing a resume could load, has been read, and cannot be "
+            "repaired -- the run is over and its prefix is what it is. They are named one "
+            "run at a time in `config/reports/checkpoint-acknowledgements.yaml`, with the "
+            "reason beside each, so that a permanently red job does not end up hiding the "
+            "next finding. A run that is not named there is judged exactly as before."
+        )
+        lines += [
+            "## Read and adjudicated",
+            "",
+            explanation,
+            "",
+            "| Run | Team | What is there | Why it is not held against this report |",
+            "| --- | --- | --- | --- |",
+        ]
+        lines += [
+            f"| `{state.run_id}` | {state.team} | {state.detail} | {state.acknowledged} |"
+            for state in adjudicated
+        ]
+        lines.append("")
+
+    if acknowledgements_covering_nothing:
+        named = ", ".join(f"`{run_id}`" for run_id in acknowledgements_covering_nothing)
+        lines += [
+            "## Acknowledgements that cover nothing",
+            "",
+            (
+                f"{named} is acknowledged and is not a finding: either the run has a "
+                "checkpoint that loads, it is not recorded as a success, or no intent record "
+                "here names it. The entry is doing nothing and should be removed, because a "
+                "list that only grows stops describing anything. This is a note rather than "
+                "a failure -- a stale entry hides no run."
+            ),
+            "",
+        ]
+
     if unjudged:
         explanation = (
             "These never reached the state this report is about. A run the platform recorded "
@@ -523,6 +699,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="a directory holding an intent/ tree, synced from the lineage bucket",
     )
     parser.add_argument("--config-dir", type=Path, default=PROJECT_ROOT / "config")
+    parser.add_argument(
+        "--acknowledgements",
+        type=Path,
+        default=ACKNOWLEDGEMENTS_PATH,
+        help="runs that have been read and adjudicated, which are reported but not held "
+        "against the exit code",
+    )
     parser.add_argument("--output", type=Path, help="write the report here rather than to stdout")
     parser.add_argument("--profile")
     parser.add_argument("--region")
@@ -535,18 +718,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         records = _load_intents(options.lineage_root)
         outcomes = _load_outcomes(options.lineage_root)
         catalog = load_yaml(options.config_dir / "workload-catalog.yaml", WorkloadCatalog)
+        acknowledged = _load_acknowledgements(options.acknowledgements).reasons()
         states = checkpoint_states(
             records,
             catalog,
             profile=options.profile,
             region=options.region,
             outcomes=outcomes,
+            acknowledgements=acknowledged,
         )
     except ReportInputError as error:
         print(f"error: {error}", file=sys.stderr)
         return EXIT_UNUSABLE
 
-    report = render(states)
+    # An entry earns its place by covering a finding. One that covers a run which now loads,
+    # or which this lineage root does not contain, is reported so it can be removed; it is
+    # not a failure, because a stale entry conceals nothing.
+    covering_something = {
+        state.run_id for state in states if state.judged and not state.is_loadable
+    }
+    report = render(
+        states,
+        acknowledgements_covering_nothing=sorted(set(acknowledged) - covering_something),
+    )
     if options.output:
         options.output.write_text(report, encoding="utf-8")
     else:
@@ -556,10 +750,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     # in the tool; it is the tool having found what it looks for. Both failing states count:
     # a run that wrote a fragment is no more resumable than one that wrote nothing, and the
     # fragment is the one nothing else on the platform reports. Only judged runs count, since
-    # a run that is recorded as having failed is one the platform already reported.
+    # a run that is recorded as having failed is one the platform already reported, and only
+    # unacknowledged ones, since a run somebody has already read and written down is not what
+    # this job is asking about the next morning.
     return (
         EXIT_FOUND_SILENT_FAILURES
-        if any(not state.is_loadable for state in states if state.judged)
+        if any(not state.is_loadable for state in states if state.held_against_the_build)
         else 0
     )
 

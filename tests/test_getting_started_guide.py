@@ -19,6 +19,7 @@ in front of somebody still exists.
 from __future__ import annotations
 
 import re
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -452,6 +453,66 @@ def test_the_guide_prints_the_way_through_the_launcher_check_verbatim(guide: str
     assert LAUNCH_CHECK_WAIVER in guide, (
         "the guide no longer prints the token that lets a deliberate single-process run "
         "onto a multi-GPU machine"
+    )
+
+
+def test_the_guide_prints_the_way_through_the_checkpoint_check_verbatim(guide: str) -> None:
+    """Mutation: change the waiver token and leave the guide printing the old one.
+
+    The same failure as the launcher waiver above, with a worse ending: a person who
+    concludes the escape is theoretical cannot pick a smaller machine to avoid this one. They
+    either stop using a training profile for a throwaway or they invent a save folder nobody
+    reads, and both are worse than the run they were trying to submit.
+    """
+    from edullm_platform.checkpoint_commands import (
+        CHECKPOINT_CHECK_WAIVER,
+        CHECKPOINT_DIRECTORY_VARIABLE,
+    )
+
+    assert CHECKPOINT_CHECK_WAIVER in guide, (
+        "the guide no longer prints the token that lets a run under a checkpoint contract "
+        "through without one"
+    )
+    assert f"${CHECKPOINT_DIRECTORY_VARIABLE}" in guide
+
+
+def test_every_command_the_guide_gives_would_be_accepted_at_submission(guide: str) -> None:
+    """THE ONE THAT MATTERS. Mutation: add the guard and leave the guide's commands alone.
+
+    The headline command was one a researcher copied and ran, and it did not name the save
+    folder -- ``.edullm/train_on_corpus.py`` defaults ``--save-folder`` to the variable, so it
+    saved correctly and no reader could tell from the outside. The guard cannot see inside a
+    program, so the day it landed every command printed here became a refusal, and the guide
+    would have been teaching people the thing the platform now rejects.
+
+    Read out of the fenced blocks rather than from a list here, so a command added later is
+    covered without anybody remembering to add it. Every profile the guide is about carries a
+    checkpoint contract, which is what makes checking all of them the right scope.
+    """
+    from edullm_platform.checkpoint_commands import (
+        CHECKPOINT_CHECK_WAIVER,
+        expands_the_checkpoint_directory,
+    )
+    from edullm_platform.launchers import carries_the_token
+
+    commands = [
+        shlex.split(line)
+        for line in guide.splitlines()
+        if line.startswith("bash -lc ")
+    ]
+
+    assert commands, "the guide prints no command, so either it or this pattern moved"
+
+    refused = [
+        shlex.join(command)
+        for command in commands
+        if not expands_the_checkpoint_directory(command)
+        and not carries_the_token(command, CHECKPOINT_CHECK_WAIVER)
+    ]
+
+    assert refused == [], (
+        "the guide prints commands that submission refuses under a checkpoint contract, so "
+        f"somebody copying one meets a refusal the guide did not warn them about: {refused}"
     )
 
 
