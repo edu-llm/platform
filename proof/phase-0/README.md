@@ -2,8 +2,8 @@
 
 Phase: phase-0
 Bundle schema version: 1
-Source commit: 8e13202fd58d060a5ddb30b0433c8879ee1b6ab5
-Generated: 2026-08-01T03:39:32+00:00
+Source commit: 5707d1480a6e5b778e51fe820d521583a33a4d2f
+Generated: 2026-08-01T03:51:54+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 0 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase0_proof.py` at generation time.
 
@@ -18,9 +18,9 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3857 |
-| suite tests executed | 3664 |
-| suite passed | 3664 |
+| suite tests collected | 3879 |
+| suite tests executed | 3686 |
+| suite passed | 3686 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
@@ -33,7 +33,7 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 | criteria GAP (each one fails the gate) | 0 |
 | related recorded deferrals | 1 (D1) |
 | fixtures with recorded digests | 9 |
-| contract models inventoried | 140 |
+| contract models inventoried | 141 |
 | JSON Schema files exported | 16 |
 
 ## Contract versions
@@ -100,7 +100,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | fixtures/manifests/sagemaker-routine.yaml | sha256:3a7277b614e990f9e1a827f272ff917603b8059f831abae1d4342d15be12956a |
 | schemas/batch-job-binding.schema.json | sha256:41a20845192e959dd91b32f87d57da0cf3b04e5a2177e0200f27aec2cece901c |
 | schemas/checkpoint-manifest.schema.json | sha256:f51cc8c500c81cd1d286dc86c59ff5f24b09a640127034f1527494251d76a07e |
-| schemas/datasets.schema.json | sha256:3f175ffd729d92eaba728bc459ca455a538bb5b5131840c11986f1548579ef9b |
+| schemas/datasets.schema.json | sha256:6d5b79e4153e2241489115eaff52cf659b1f4823fedc41c15cc62d0d131c54c3 |
 | schemas/decision-record.schema.json | sha256:852ee127b92bc2a592f5da86972e32ed50e949548951bd66fed94b237b6ce821 |
 | schemas/image-exceptions.schema.json | sha256:e57e7388a87f331a31c9f1e871065306421772bf1da3a043b46f121bde1ffb17 |
 | schemas/intent-record.schema.json | sha256:39b40c1375c470efe47179c52e898562a7623c1a79f429de8f078f46cf3ddc8d |
