@@ -100,8 +100,20 @@
 # the same class of skew as the compute profile that cost the first GPU run and is invisible
 # for the same reason.
 #
+# THIS RELEASE IS OWED FOR A COMMENT IN A PACKAGED CONFIG FILE, AND NOTHING THIS FUNCTION
+# READS HAS MOVED. The multi-GPU launcher guard added in #159 refuses a command that starts
+# one process on a machine with several devices, and it does that while the submission
+# compiles: src/edullm_platform/launchers.py and src/edullm_platform/submission.py are not
+# among the twenty-eight modules this zip carries, because the validator is never given a
+# command it could apply the check to. What did move is config/workload-catalog.yaml, where
+# the paragraph on olmo-core-train-4gpu was rewritten to say the omission is refused rather
+# than only warned about. That file is packaged, so the bytes moved and the tripwire went
+# red -- the control comparing bytes and declining to decide which ones matter, which is the
+# same property that makes it worth having. The validator this release deploys makes
+# byte-for-byte the same admission decisions as the one before it.
+#
 # Released from main rather than from the branch, because deploy-phase2-admission.yml only
-# runs there. The zip was built from 2baf0ea and the digest below is what a local rebuild of
+# runs there. The zip was built from c9a785d and the digest below is what a local rebuild of
 # that tree produces, checked rather than copied.
 schema_version: 1
 
@@ -109,8 +121,8 @@ schema_version: 1
 #: compared: a version id edited in one place and not the other is a template pointing at
 #: a zip nobody recorded, or a record describing a zip nobody deployed.
 s3_key: admission-validator/admission-validator.zip
-s3_object_version: tub5rH2W9dpCLooOvqBZuy.tHGWslzTe
+s3_object_version: mHdAd50L6OURGy255fkPeLxWO32X6Xzp
 
 #: sha256 of the uploaded zip, as tools/build_admission_lambda.py reports it. This is the
 #: field that ties the release to a tree rather than to a moment.
-sha256: 53b6c5e05cc2d2448ed4d71d3227abc6cf41a6261f979a2a30a6f39390c75d38
+sha256: e0e420a5cdba8a028c950db9ac2420e28dd453ba211d42c526c784760587eb09
