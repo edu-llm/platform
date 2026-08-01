@@ -279,7 +279,7 @@ Resources:
         # admission, which is why this line and TRAINING_IMAGE_DIGEST in
         # tools/build_gpu_training_submission.py have to move together.
         Image:
-          Fn::Sub: ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/sbsandbox-intern-edullm-olmo-core@sha256:6e0dd3532a60651acf6e94798425f3bc0cfcf74471d8451f2a7f4a65d84388e7
+          Fn::Sub: ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/sbsandbox-intern-edullm-olmo-core@sha256:50e2488ab3c77e859a8fe3e6d4a06d7d54f5c852bc7c5dd201fb9db53bff455b
         ExecutionRoleArn:
           Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-execution
         JobRoleArn:
