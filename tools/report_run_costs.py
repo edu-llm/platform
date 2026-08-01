@@ -64,18 +64,38 @@ class ReportInputError(Exception):
     """The records could not be read, which is never the same as there being none."""
 
 
-def _load(directory: Path, prefix: str) -> list[dict[str, object]]:
+def _load(directory: Path, prefix: str) -> list[object]:
+    """Every stored document under one prefix, unwrapped but not yet judged.
+
+    A record is sometimes stored as a JSON string holding JSON, because the state machine
+    writes the handler's canonical bytes rather than re-encoding them, and both spellings
+    are in the committed fixtures for the same prefix. Unwrapping happens here so that the
+    caller sees one shape.
+
+    Anything that is still not an object after unwrapping is returned rather than dropped.
+    This used to keep only ``dict`` and discard the rest in silence, so a string-wrapped
+    record was not priced, not reported unpriced and not counted as unparsed: it left the
+    report entirely, and the count that exists to make that impossible never moved. One of
+    the five committed Phase 2 intent records is stored that way.
+    """
     root = directory / prefix
     if not root.is_dir():
         raise ReportInputError(f"no {prefix}/ directory under {directory}")
-    documents: list[dict[str, object]] = []
+    documents: list[object] = []
     for path in sorted(root.rglob("*.json")):
         try:
             loaded = json.loads(path.read_text(encoding="utf-8"))
         except ValueError as error:
             raise ReportInputError(f"{path} is not readable JSON: {error}") from error
-        if isinstance(loaded, dict):
-            documents.append(loaded)
+        if isinstance(loaded, str):
+            try:
+                loaded = json.loads(loaded)
+            except ValueError:
+                # Left as the string it is. The caller counts it as unparsed, which is
+                # true of it, where raising here would fail the whole report over one
+                # record and lose the ninety-nine that are readable.
+                pass
+        documents.append(loaded)
     return documents
 
 
@@ -85,6 +105,11 @@ def read_records(directory: Path) -> tuple[list[IntentRecord], list[SchedulerAtt
     Refused records are counted rather than dropped silently. A lineage store that starts
     producing documents this tree cannot read is a defect in the recorder, and a report
     that quietly described the readable subset would hide exactly that.
+
+    ``model_validate`` is handed whatever the store held, including something that is not
+    an object at all. Pydantic refuses that with a ``ValidationError``, which is a
+    ``ValueError``, so it lands in the count rather than needing a shape check here that
+    would have to decide on its own what to do with it.
     """
     intents: list[IntentRecord] = []
     attempts: list[SchedulerAttempt] = []

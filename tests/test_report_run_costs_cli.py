@@ -291,6 +291,52 @@ def test_the_count_of_refused_records_is_absent_when_every_record_parsed() -> No
     assert "did not parse" not in render((), teams=TeamBindingCatalog(), unparsed=0)
 
 
+def test_a_record_stored_as_a_string_holding_json_is_read_rather_than_dropped(
+    tmp_path: Path,
+) -> None:
+    """Mutation: keep only the documents that deserialise straight to an object.
+
+    Some records are stored as a JSON string holding JSON, because the state machine writes
+    the handler's canonical bytes rather than re-encoding them. Both spellings sit in the
+    committed Phase 2 fixtures under one prefix, so this is how the store is rather than a
+    corruption.
+
+    The loader used to keep ``dict`` and discard everything else without a word, which put
+    such a record in none of the three places a run can be: not priced, not reported
+    unpriced, and not in the count that exists so that a missing record is impossible to
+    miss. It simply left, and the total it left out of looked complete.
+    """
+    root = lineage(tmp_path, intents=[intent(RUN_A, team="memory-split")], attempts=[])
+    wrapped = intent(RUN_B, team="tokenizer")
+    (root / "intent" / f"{RUN_B}.json").write_text(
+        json.dumps(json.dumps(wrapped)), encoding="utf-8"
+    )
+
+    intents, _attempts, unparsed = read_records(root)
+
+    assert [record.run_id for record in intents] == sorted([RUN_A, RUN_B])
+    assert unparsed == 0
+
+
+def test_a_document_that_is_not_a_record_at_all_is_counted_rather_than_discarded(
+    tmp_path: Path,
+) -> None:
+    """Mutation: silently skip anything that is not an object after unwrapping.
+
+    A stored document that is a bare string, a number or a list is not a record this tree
+    can read, which is the same standing as one the contract refuses and belongs in the
+    same count. Dropping it instead is the failure the test above describes, reached by a
+    different route.
+    """
+    root = lineage(tmp_path, intents=[intent(RUN_A, team="memory-split")], attempts=[])
+    (root / "intent" / "not-a-record.json").write_text(json.dumps("plain text"), encoding="utf-8")
+
+    intents, _attempts, unparsed = read_records(root)
+
+    assert [record.run_id for record in intents] == [RUN_A]
+    assert unparsed == 1
+
+
 # ---------------------------------------------------------------------------------------
 # Exit codes: 0 reported, 2 the inputs could not be read, and no 1
 # ---------------------------------------------------------------------------------------
