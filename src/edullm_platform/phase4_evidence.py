@@ -27,6 +27,7 @@ from typing import Final, Literal, Self
 from pydantic import Field, model_validator
 
 from edullm_platform.contracts.base import ContractModel, Sha256Digest, UtcTimestamp
+from edullm_platform.contracts.dataset import PUBLISHED_DATASET_BUCKET
 from edullm_platform.evidence import (
     DigestBearingStr,
     EvidenceEnvironment,
@@ -39,9 +40,11 @@ from edullm_platform.evidence import (
 __all__ = [
     "ACCESS_DENIED",
     "GPU_RESOURCE_TYPE",
+    "TOKEN_BYTES",
     "WANDB_SECRET_VARIABLE",
     "CheckpointObservation",
     "ContainerVariable",
+    "CorpusReadEvidence",
     "GpuComputeEnvironmentEvidence",
     "GpuJobEvidence",
     "InstanceTypeOffering",
@@ -182,6 +185,93 @@ class TrainingSummaryEvidence(RecordedEventModel):
         prices.
         """
         return bool(self.cuda_version) and self.peak_memory_gib > 0
+
+
+#: How many bytes one token occupies at each width a corpus may declare. A mapping and not a
+#: parse of the name, for the reason the entry point passes the manifest's dtype explicitly
+#: rather than letting OLMo-core infer it: an inferred width reads a uint32 corpus two bytes
+#: at a time, decodes every token to a different in-range id, and raises nothing.
+TOKEN_BYTES: Final = {"uint8": 1, "uint16": 2, "uint32": 4, "uint64": 8}
+
+
+class CorpusReadEvidence(RecordedEventModel):
+    """Which objects a run's dataset was built over, read out of the config it saved.
+
+    THE DIFFERENCE BETWEEN A RUN THAT NAMED A CORPUS AND A RUN THAT OPENED ONE. Every other
+    record of a submission says which release was *requested*: the form field, the decision
+    record, the container's ``EDULLM_DATASET_ID``. All three would say the same thing about a
+    run whose training program ignored them and streamed a sample over the public internet,
+    which is the failure the entry point exists to prevent and is invisible from every one of
+    them -- the loss curve looks the same and nothing fails.
+
+    So this reads ``config.json``, which OLMo-core's config saver writes into the checkpoint
+    directory beside the weights, and which holds the resolved paths the dataset was actually
+    constructed from. It is the run's own answer, taken from the store rather than from its
+    log, and it is the only place the two questions come apart.
+
+    ``shard_prefixes`` rather than every path. The claim is about where the shards came from
+    and a corpus has a few directories and up to thousands of objects; the same shape as
+    ``OutputPrefixEvidence.stray_keys`` -- the record carries what was found and the verdict
+    is derived here, so a test asserting the verdict is not reading a recorder's opinion.
+    """
+
+    source: Literal["aws"]
+    environment: EvidenceEnvironment
+    run_id: SecretFreeStr = Field(min_length=1)
+    #: Where the paths below were read from, so the record says which object it is about.
+    config_uri: SecretFreeStr = Field(min_length=1)
+    dataset_id: SecretFreeStr = Field(min_length=1)
+    dataset_version: SecretFreeStr = Field(min_length=1)
+    shard_count: int = Field(gt=0)
+    shard_prefixes: tuple[ObjectKeyStr, ...] = Field(strict=False)
+    token_dtype: SecretFreeStr = Field(min_length=1)
+    tokens_per_step: int = Field(gt=0)
+    sequence_length: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def _the_width_must_be_one_this_platform_can_count_in(self) -> Self:
+        if self.token_dtype not in TOKEN_BYTES:
+            raise ValueError(
+                f"{self.token_dtype} is not a width this platform knows, so the byte count "
+                "below would be a guess"
+            )
+        return self
+
+    @property
+    def release_prefix(self) -> str:
+        """Where a shard of this release has to sit, derived rather than recorded.
+
+        Recording it would make the check below compare the recorder against itself. The
+        three parts are each a fact from somewhere else -- the bucket from the dataset
+        contract, the id and version from the config the run saved -- and the paths are what
+        is measured against them.
+
+        Assembled the same way ``PublishedDatasetReference`` assembles the URI it validates
+        its own entries against, and out of the same constant, so a run's shards and the
+        registry entry for the release it named cannot be checked against two different
+        spellings of where that release lives.
+        """
+        return f"s3://{PUBLISHED_DATASET_BUCKET}/{self.dataset_id}/{self.dataset_version}/"
+
+    @property
+    def prefixes_outside_the_release(self) -> tuple[str, ...]:
+        return tuple(
+            prefix for prefix in self.shard_prefixes if not prefix.startswith(self.release_prefix)
+        )
+
+    @property
+    def read_only_the_release_it_named(self) -> bool:
+        return bool(self.shard_prefixes) and not self.prefixes_outside_the_release
+
+    def bytes_read_over(self, steps: int) -> int:
+        """How many corpus bytes ``steps`` steps consumed, from two measured numbers.
+
+        The data loader draws ``global_batch_size`` tokens per step from the memmapped
+        shards, so the product is the read rather than an estimate of it. Both factors come
+        from records -- the batch size from the saved config, the step count from what the
+        run reported finishing -- and the width from the corpus's own declared dtype.
+        """
+        return steps * self.tokens_per_step * TOKEN_BYTES[self.token_dtype]
 
 
 class GpuCapabilityEvidence(RecordedEventModel):
