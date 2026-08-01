@@ -174,21 +174,31 @@ jobs:
 
       # The whole intent tree, because the report is handed no list of run ids and an
       # intent record is what says a run was submitted under a profile promising
-      # checkpoints. Nothing else in the lineage store is fetched, and the role can reach
-      # nothing else in it.
+      # checkpoints. The result tree beside it says how each run ended, which is what
+      # decides whether its prefix is held against anything.
       - name: Fetch the intent records
         env:
           LINEAGE_BUCKET: sbsandbox-intern-edullm-lineage
         run: |
           set -euo pipefail
           aws s3 sync "s3://${LINEAGE_BUCKET}/intent/" lineage/intent/ --only-show-errors
+          # All of them or none. A half-synced result tree reads as runs that never
+          # finished, which would quietly stop asking about the runs that did, so a refusal
+          # here removes the directory and the report judges every run as it did before.
+          # The nightly reader role does not hold result/ until the stack in infra/README.md
+          # is applied from a laptop, so a denial is the expected answer for now.
+          if ! aws s3 sync "s3://${LINEAGE_BUCKET}/result/" lineage/result/ --only-show-errors; then
+            echo "note: could not read result/, so every contracted run will be judged"
+            rm -rf lineage/result
+          fi
 
       # THIS JOB IS RED TODAY AND THAT IS THE FINDING, NOT A FAULT IN IT. Fourteen of the
       # fifteen runs carrying a checkpoint contract have nothing a resume could load: six
       # wrote nothing at all, and eight wrote a step0 holding only train/rank0.pt, which is
       # rank 0's trainer state with no weights and no optimizer beside it. The second group
       # is the reason this check exists -- they wrote, so every count-based reading of the
-      # bucket called them healthy.
+      # bucket called them healthy. Thirteen of the fourteen are recorded as failures and
+      # stop being held against this job once the role can read result/.
       - name: Reconcile what those runs actually wrote
         run: |
           set -uo pipefail
