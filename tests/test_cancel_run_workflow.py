@@ -84,12 +84,27 @@ def test_the_canceller_can_stop_a_job_and_do_nothing_else(role: dict[str, Any]) 
     assert granted == {"batch:DescribeJobs", "batch:ListJobs", "batch:TerminateJob"}
 
 
-def test_stopping_a_job_is_confined_to_this_platforms_two_queues(role: dict[str, Any]) -> None:
-    """Mutation: drop the queue condition, leaving TerminateJob on job/*.
+def test_stopping_a_job_is_confined_to_the_runs_this_platform_submitted(
+    role: dict[str, Any],
+) -> None:
+    """Mutation: drop the condition, leaving TerminateJob on job/*.
 
-    This is a shared sandbox account with other people's Batch estates in it. Without the
-    condition this role could stop anything anybody in the account is running, and the
-    workflow check above it only ever asks about runs this platform submitted.
+    This is a shared sandbox account with other people's Batch estates in it. Unconditioned,
+    this role could stop anything anybody in the account is running, and the workflow check
+    above it only ever asks about runs this platform submitted.
+
+    **The condition has to be one TerminateJob can actually satisfy, and the obvious one is
+    not.** Scoping by queue is the natural way to write "our jobs" and it cannot work here:
+    ``TerminateJob`` takes a job id and a reason, so ``batch:JobQueue`` is never in the
+    request context and an ``ArnEquals`` on it matches nothing. A role written that way is
+    refused with *no identity-based policy allows the batch:TerminateJob action* -- a message
+    that names the missing grant rather than the unsatisfiable condition -- and reads clean
+    in every template test, including this one as it used to be written.
+
+    So the shape is asserted rather than the queue names: exactly one statement, conditioned
+    on a resource tag, keyed on the one tag ``batch_submit_request`` sets unconditionally.
+    The value pattern is asserted too, because a bare presence check would accept a tag
+    somebody else writes under the same key.
     """
     terminate = [
         statement
@@ -101,12 +116,63 @@ def test_stopping_a_job_is_confined_to_this_platforms_two_queues(role: dict[str,
     ]
 
     assert len(terminate) == 1
-    queues = terminate[0]["Condition"]["ArnEquals"]["batch:JobQueue"]
-    rendered = [queue["Fn::Sub"] for queue in queues]
+    condition = terminate[0]["Condition"]
 
-    assert any("sbsandbox-intern-edullm-cpu" in queue for queue in rendered)
-    assert any("sbsandbox-intern-edullm-gpu" in queue for queue in rendered)
-    assert len(rendered) == 2
+    assert "ArnEquals" not in condition, (
+        "an ArnEquals here is almost certainly on batch:JobQueue, which TerminateJob never "
+        "supplies -- the role would describe and list and stop nothing"
+    )
+    assert condition == {"StringLike": {"aws:ResourceTag/edullm:run-id": "run_*"}}
+
+
+def test_the_tag_the_grant_keys_on_is_the_one_every_submission_sets(
+    role: dict[str, Any],
+) -> None:
+    """Reads BOTH the role and a submission. Mutation: rename the tag on either side.
+
+    Nothing else links the policy to the code that writes the tag it keys on. Rename it in
+    ``batch_submit_request`` and this role goes on deploying, reads back byte-identical to
+    its committed template, passes every other test in this file, and refuses every
+    termination -- reporting a missing grant rather than a tag that moved.
+
+    ``edullm:run-id`` rather than ``edullm:submitter`` or ``edullm:experiment``, and the
+    request below is built without either of those on purpose. Both are appended only when
+    there is a value, so a grant keyed on one of them would be unsatisfiable for exactly the
+    runs that record no submitter -- which are the runs nobody can be shown to own, and the
+    worst set to be unable to stop.
+    """
+    from fnmatch import fnmatchcase
+
+    from edullm_platform.execution import batch_submit_request
+    from tests.test_phase3_execution import RUN_ID, manifest, target
+
+    terminate = next(
+        statement
+        for policy in role["Policies"]
+        for statement in policy["PolicyDocument"]["Statement"]
+        if "batch:TerminateJob" in (
+            statement["Action"] if isinstance(statement["Action"], list) else [statement["Action"]]
+        )
+    )
+    ((key, pattern),) = terminate["Condition"]["StringLike"].items()
+    tag = key.removeprefix("aws:ResourceTag/")
+    assert tag != key, f"the grant is conditioned on {key}, which is not a resource tag"
+
+    tags = batch_submit_request(
+        manifest=manifest(),
+        target=target(),
+        run_id=RUN_ID,
+        job_definition=target().job_definition_arn,
+    )["Tags"]
+
+    assert tag in tags, (
+        f"the grant is conditioned on {tag!r} and a submission does not put that tag on the "
+        f"job, so no termination can ever be authorised. A submission tags {sorted(tags)}"
+    )
+    assert fnmatchcase(tags[tag], pattern), (
+        f"a submission tags the job {tag}={tags[tag]!r} and the grant accepts {pattern!r}, "
+        "so the condition cannot match"
+    )
 
 
 def test_the_role_trusts_only_the_file_that_carries_the_check(role: dict[str, Any]) -> None:
@@ -301,16 +367,18 @@ def test_the_run_id_is_checked_before_any_credential_is_taken(workflow: dict[str
 def test_a_missing_canceller_role_is_named_rather_than_reported_as_no_credentials(
     workflow: dict[str, Any],
 ) -> None:
-    """Mutation: drop the guard and let configure-aws-credentials fail on an empty role.
+    """Mutation: drop the guard now that the role is deployed and the variable is set.
 
-    That is what happened. The role comes from infra/iam/run-canceller-role.yaml, which is
-    applied from a laptop because the deployer role holds no iam:CreateRole, and it has not
-    been applied -- so AWS_RUN_CANCELLER_ROLE_ARN is unset and every dispatch fails.
+    Both of those are true and neither is held by anything here. The role comes from
+    infra/iam/run-canceller-role.yaml, applied from a laptop because the deployer role holds
+    no iam:CreateRole, and AWS_RUN_CANCELLER_ROLE_ARN is a repository setting -- so a stack
+    deleted, a variable renamed, or a fork with neither puts this workflow straight back in
+    the state the guard exists for, with no diff to review.
 
-    It failed unhelpfully. An empty role-to-assume produces "Credentials could not be loaded,
-    please check your action inputs", which reads as a broken secret or an expired federation
-    and sends the reader to the OIDC configuration, which is fine. The cause is one stack that
-    was never applied, and a researcher cannot tell that from the message.
+    Unguarded it fails unhelpfully. An empty role-to-assume produces "Credentials could not
+    be loaded, please check your action inputs", which reads as a broken secret or an expired
+    federation and sends the reader to the OIDC configuration. The cause would be one stack
+    and one variable, and a researcher cannot tell that from the message.
     """
     steps = workflow["jobs"]["cancel"]["steps"]
     names = [step.get("name", "") for step in steps]
