@@ -17,6 +17,7 @@ from edullm_platform.contracts.dataset_registry import (
 from edullm_platform.contracts.policy import classify_request
 from edullm_platform.manifest_helpers import (
     REPRESENTATIVE_MANIFEST_COSTS,
+    compute_manifest_cost_inputs,
     compute_manifest_maximum_cost,
     load_manifest,
 )
@@ -632,13 +633,18 @@ def test_representative_manifest_classifications_match_policy_expectations() -> 
     policy = inputs.policy
     catalog = inputs.catalog
     for filename, manifest in inputs.manifests:
-        estimated_cost = compute_manifest_maximum_cost(manifest, catalog)
-        assert estimated_cost == REPRESENTATIVE_MANIFEST_COSTS[filename]
+        cost = compute_manifest_cost_inputs(manifest, catalog)
+        assert cost.maximum_compute_cost_usd == REPRESENTATIVE_MANIFEST_COSTS[filename]
         facts = request_facts_from_manifest(
             manifest,
             repositories=inputs.repositories,
             catalog=catalog,
             dataset_registry=inputs.dataset_registry,
-            estimated_cost_usd=estimated_cost,
+            estimated_cost_usd=cost.maximum_compute_cost_usd,
         )
-        assert classify_request(facts, policy.thresholds) == expected_manifest_classification(filename)
+        # The rate out of the same cost inputs, which is what the gate reads. Passing a
+        # constant would let a fixture naming a profile above the ceiling keep classifying as
+        # routine here while admission called it an exception.
+        assert classify_request(
+            facts, policy.thresholds, hourly_rate_usd=cost.hourly_rate_usd
+        ) == expected_manifest_classification(filename)

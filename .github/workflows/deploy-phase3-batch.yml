@@ -72,6 +72,7 @@ on:
       - infra/batch-network.yaml
       - infra/batch-compute.yaml
       - infra/batch-compute-gpu.yaml
+      - infra/batch-compute-gpu-shapes.yaml
       - infra/batch-events.yaml
       - infra/admission-state-machine.yaml
 
@@ -177,6 +178,7 @@ jobs:
           aws cloudformation validate-template --template-body file://infra/batch-network.yaml
           aws cloudformation validate-template --template-body file://infra/batch-compute.yaml
           aws cloudformation validate-template --template-body file://infra/batch-compute-gpu.yaml
+          aws cloudformation validate-template --template-body file://infra/batch-compute-gpu-shapes.yaml
           aws cloudformation validate-template --template-body file://infra/batch-events.yaml
           aws cloudformation validate-template --template-body file://infra/admission-state-machine.yaml
 
@@ -244,7 +246,27 @@ jobs:
             --template-file infra/batch-compute-gpu.yaml \
             --no-fail-on-empty-changeset
 
-      # After both compute stacks, because the EventBridge rule's pattern names the job queue
+      # THE OTHER NINE GPU SHAPES, IN A SECOND STACK RATHER THAN IN THE ONE ABOVE. That
+      # stack had running training jobs when these were added, and an update to it replaces
+      # nothing by itself but does put a live compute environment through a change nobody
+      # needed. A separate stack also means the nine can be rolled back without touching
+      # the shape researchers are already using.
+      #
+      # After the stack above rather than beside it, because this template creates no log
+      # group. It names /aws/batch/sbsandbox-intern-edullm-gpu, which that one creates, and
+      # the awslogs driver takes a string so CloudFormation enforces nothing. Deployed first
+      # into an account without that stack, these nine definitions would register cleanly
+      # and log nowhere.
+      - name: Deploy the remaining GPU shapes stack
+        if: inputs.describe_run == ''
+        run: |
+          set -euo pipefail
+          aws cloudformation deploy \
+            --stack-name sbsandbox-intern-edullm-phase4-gpu-shapes \
+            --template-file infra/batch-compute-gpu-shapes.yaml \
+            --no-fail-on-empty-changeset
+
+      # After every compute stack, because the EventBridge rule's pattern names the job queue
       # ARNs. Nothing makes CloudFormation check that: the pattern is a string, and a rule
       # scoped to a queue that does not exist deploys perfectly and matches nothing forever.
       - name: Deploy Phase 3 batch events stack
@@ -524,6 +546,115 @@ jobs:
               raise SystemExit("batch verification failed:\n" + "\n".join(failures))
 
           print("PHASE3_BATCH_VERIFICATION_PASSED")
+          PY
+
+      # THE NINE SHAPES, IN A STEP OF THEIR OWN AND NOT ADDED TO THE ONE ABOVE. That step
+      # names one environment, one queue and one definition per axis and compares each
+      # against a written-out expectation; nine more of each would be twenty-seven more
+      # files and twenty-seven more literals, and the interesting property is the same for
+      # all of them. So this loops and the expectation is the loop body.
+      #
+      # imageType is the check worth having here, for the reason the step above records at
+      # length: an environment left on the default AMI carries no NVIDIA driver, so an
+      # instance launches, takes the job and runs it on the CPU at GPU prices with nothing
+      # erroring anywhere. Nine environments is nine chances to get that wrong.
+      #
+      # requestsAGpu and gpuCount together, because the count is what a shape is. A
+      # g5.48xlarge definition asking for one GPU deploys, runs, bills for eight devices and
+      # uses one, and every other line of this check passes.
+      #
+      # No apostrophe in this body. tests/test_phase3_batch_deployment_workflow.py parses
+      # these scripts with shlex, and one unbalanced quote makes the whole script
+      # unparseable.
+      - name: Verify the remaining GPU shapes
+        if: inputs.describe_run == ''
+        run: |
+          set -euo pipefail
+          shapes_json="${RUNNER_TEMP}/phase4-gpu-shapes.json"
+          : > "${shapes_json}"
+          for shape in gpu-1xt4:4:1 gpu-4xt4:48:4 gpu-4xa10g:48:4 gpu-8xa10g:192:8 gpu-1xl4:4:1 gpu-4xl4:48:4 gpu-4xl40s:48:4 gpu-8xa100:96:8 gpu-8xh100:192:8; do
+            profile="${shape%%:*}"
+            rest="${shape#*:}"
+            vcpus="${rest%%:*}"
+            gpus="${rest##*:}"
+            name="sbsandbox-intern-edullm-${profile}"
+            aws batch describe-compute-environments \
+              --compute-environments "${name}" \
+              --query "computeEnvironments[0].{name:computeEnvironmentName,type:type,status:status,state:state,minvCpus:computeResources.minvCpus,imageType:computeResources.ec2Configuration[0].imageType}" \
+              --output json >> "${shapes_json}"
+            aws batch describe-job-queues \
+              --job-queues "${name}" \
+              --query "jobQueues[0].{name:jobQueueName,status:status,state:state}" \
+              --output json >> "${shapes_json}"
+            aws batch describe-job-definitions \
+              --job-definition-name "${name}-run" \
+              --status ACTIVE \
+              --query "reverse(sort_by(jobDefinitions,&revision))[0].{name:jobDefinitionName,type:type,status:status,digestPinned:contains(containerProperties.image,'@sha256:'),requestsAGpu:contains(containerProperties.resourceRequirements[].type,'GPU'),gpuCount:containerProperties.resourceRequirements[?type=='GPU']|[0].value,vcpuCount:containerProperties.resourceRequirements[?type=='VCPU']|[0].value}" \
+              --output json >> "${shapes_json}"
+            printf '%s %s %s\n' "${profile}" "${vcpus}" "${gpus}" >> "${RUNNER_TEMP}/phase4-gpu-shapes-expected.txt"
+          done
+
+          python - "${shapes_json}" "${RUNNER_TEMP}/phase4-gpu-shapes-expected.txt" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          # Three JSON documents were appended per shape, in order, so the reader takes them
+          # three at a time against the same list the loop above walked.
+          decoder = json.JSONDecoder()
+          text = Path(sys.argv[1]).read_text(encoding="utf-8")
+          documents = []
+          index = 0
+          while index < len(text):
+              if text[index].isspace():
+                  index += 1
+                  continue
+              document, index = decoder.raw_decode(text, index)
+              documents.append(document)
+
+          expected_shapes = [
+              line.split() for line in Path(sys.argv[2]).read_text(encoding="utf-8").split("\n") if line
+          ]
+          if len(documents) != 3 * len(expected_shapes):
+              raise SystemExit(
+                  f"expected three answers per shape, got {len(documents)} for "
+                  f"{len(expected_shapes)} shapes"
+              )
+
+          failures = []
+          for position, (profile, vcpus, gpus) in enumerate(expected_shapes):
+              name = f"sbsandbox-intern-edullm-{profile}"
+              environment, queue, definition = documents[3 * position : 3 * position + 3]
+              expected_environment = {
+                  "name": name,
+                  "type": "MANAGED",
+                  "status": "VALID",
+                  "state": "ENABLED",
+                  "minvCpus": 0,
+                  "imageType": "ECS_AL2023_NVIDIA",
+              }
+              expected_queue = {"name": name, "status": "VALID", "state": "ENABLED"}
+              expected_definition = {
+                  "name": f"{name}-run",
+                  "type": "container",
+                  "status": "ACTIVE",
+                  "digestPinned": True,
+                  "requestsAGpu": True,
+                  "gpuCount": gpus,
+                  "vcpuCount": vcpus,
+              }
+              for label, expected, observed in (
+                  ("compute environment", expected_environment, environment),
+                  ("job queue", expected_queue, queue),
+                  ("job definition", expected_definition, definition),
+              ):
+                  if observed != expected:
+                      failures.append(f"{profile} {label}: expected {expected}, observed {observed}")
+
+          if failures:
+              raise SystemExit("gpu shape verification failed:\n" + "\n".join(failures))
+
+          print("PHASE4_GPU_SHAPE_VERIFICATION_PASSED")
           PY
 
       # WHAT ONE RUN IS DOING, INCLUDING WHAT IT PRINTED.

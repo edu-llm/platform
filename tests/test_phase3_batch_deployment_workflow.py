@@ -43,6 +43,7 @@ OUTPUTS_TEMPLATE = "infra/outputs-bucket.yaml"
 NETWORK_TEMPLATE = "infra/batch-network.yaml"
 COMPUTE_TEMPLATE = "infra/batch-compute.yaml"
 GPU_COMPUTE_TEMPLATE = "infra/batch-compute-gpu.yaml"
+GPU_SHAPES_TEMPLATE = "infra/batch-compute-gpu-shapes.yaml"
 EVENTS_TEMPLATE = "infra/batch-events.yaml"
 ADMISSION_TEMPLATE = "infra/admission-state-machine.yaml"
 
@@ -65,10 +66,19 @@ DEPLOYMENT_ORDER = (
     ("Deploy Phase 3 network stack", "sbsandbox-intern-edullm-phase3-network", NETWORK_TEMPLATE),
     ("Deploy Phase 3 batch compute stack", "sbsandbox-intern-edullm-phase3-batch", COMPUTE_TEMPLATE),
     ("Deploy Phase 4 GPU batch compute stack", "sbsandbox-intern-edullm-phase4-gpu", GPU_COMPUTE_TEMPLATE),
+    # After the stack above and not beside it, because this template creates no log group.
+    # It names the one that stack creates, and the awslogs driver takes a string, so
+    # CloudFormation enforces nothing about the order.
+    (
+        "Deploy the remaining GPU shapes stack",
+        "sbsandbox-intern-edullm-phase4-gpu-shapes",
+        GPU_SHAPES_TEMPLATE,
+    ),
     ("Deploy Phase 3 batch events stack", "sbsandbox-intern-edullm-phase3-events", EVENTS_TEMPLATE),
     ("Deploy the amended admission state machine", ADMISSION_STACK, ADMISSION_TEMPLATE),
 )
 VERIFY_STEP = "Verify CPU and GPU batch execution"
+SHAPES_VERIFY_STEP = "Verify the remaining GPU shapes"
 
 #: The same group the Phase 2 workflow declares. The two deploy one stack in common, so a
 #: distinct group would let them race into a mid-update stack.
@@ -424,9 +434,11 @@ def test_every_run_body_is_strict_about_failures_and_unset_variables() -> None:
     # makes strictness matter more rather than less -- a diagnostic that swallowed its own
     # error would report nothing and still let the job finish reporting the deploy failure,
     # which is indistinguishable from the diagnostic having found nothing to say.
-    # Six deploys, plus: the dispatch gate, validate, the failure diagnostic, verify, the
-    # queue view, and the per-run report.
-    assert len(scripts) == len(DEPLOYMENT_ORDER) + 6
+        # Seven deploys, plus: the dispatch gate, validate, the failure diagnostic, the two
+        # verifications, the queue view, and the per-run report. The second verification
+        # arrived with the nine GPU shapes and is its own step rather than nine more
+        # expectations bolted onto the first.
+    assert len(scripts) == len(DEPLOYMENT_ORDER) + 7
     assert all(script.startswith("set -euo pipefail\n") for script in scripts)
 
 
@@ -721,6 +733,114 @@ def test_a_verification_call_the_stub_does_not_recognize_would_be_noticed(
 
     assert result.returncode != 0
     assert "unexpected aws call" in result.stderr
+
+
+# --------------------------------------------------------------------------------------
+# The nine-shape verification, executed against stubbed answers
+# --------------------------------------------------------------------------------------
+
+#: One environment, one queue and one definition per shape, answered from the arguments
+#: rather than from a variable per shape. The step appends nine of each in a loop, so a stub
+#: keyed by name would be twenty-seven variables saying the same thing; this composes the
+#: expected answer from the profile name in the call and lets a test drift one field of it.
+#:
+#: The vCPU and GPU counts come out of the shape name, which is why the names carry them.
+#: gpu-8xa10g is 192 and 8, gpu-4xt4 is 48 and 4, and so on, matching CONTAINER_SHAPES.
+SHAPES_STUB = """
+profile="$(printf '%s\\n' "$@" | sed -n 's/^sbsandbox-intern-edullm-\\(gpu-[a-z0-9]*\\)\\(-run\\)*$/\\1/p' | head -n 1)"
+case "${profile}" in
+  gpu-1xt4|gpu-1xl4) vcpus=4 ; gpus=1 ;;
+  gpu-4xt4|gpu-4xa10g|gpu-4xl4|gpu-4xl40s) vcpus=48 ; gpus=4 ;;
+  gpu-8xa100) vcpus=96 ; gpus=8 ;;
+  gpu-8xa10g|gpu-8xh100) vcpus=192 ; gpus=8 ;;
+  *) echo "unexpected aws call: $*" >&2 ; exit 64 ;;
+esac
+name="sbsandbox-intern-edullm-${profile}"
+case "$1 $2" in
+  "batch describe-compute-environments")
+    printf '{"name":"%s","type":"MANAGED","status":"VALID","state":"ENABLED","minvCpus":0,"imageType":"%s"}' \
+      "${name}" "${IMAGE_TYPE}" ;;
+  "batch describe-job-queues")
+    printf '{"name":"%s","status":"VALID","state":"ENABLED"}' "${name}" ;;
+  "batch describe-job-definitions")
+    if [ "${profile}" = "${DRIFTED_PROFILE}" ]; then
+      gpus="${DRIFTED_GPU_COUNT}"
+    fi
+    printf '{"name":"%s-run","type":"container","status":"ACTIVE","digestPinned":true,"requestsAGpu":true,"gpuCount":"%s","vcpuCount":"%s"}' \
+      "${name}" "${gpus}" "${vcpus}" ;;
+  *) echo "unexpected aws call: $*" >&2 ; exit 64 ;;
+esac
+"""
+
+
+def run_shapes_verification(
+    tmp_path: Path,
+    *,
+    image_type: str = "ECS_AL2023_NVIDIA",
+    drifted_profile: str = "",
+    drifted_gpu_count: str = "",
+) -> subprocess.CompletedProcess[str]:
+    stub_bin = tmp_path / "bin"
+    write_stub(stub_bin, "aws", SHAPES_STUB)
+    write_stub(stub_bin, "python", f'exec "{sys.executable}" "$@"')
+
+    return run_step_script(
+        step(only_job(workflow()), SHAPES_VERIFY_STEP)["run"],
+        cwd=tmp_path,
+        env={
+            "RUNNER_TEMP": str(tmp_path),
+            "IMAGE_TYPE": image_type,
+            "DRIFTED_PROFILE": drifted_profile,
+            "DRIFTED_GPU_COUNT": drifted_gpu_count,
+        },
+        stub_bin=stub_bin,
+    )
+
+
+def test_the_nine_shape_verification_passes_against_the_estate_the_template_describes(
+    tmp_path: Path,
+) -> None:
+    """The anchor for the two drift cases below.
+
+    It also establishes that the step asks about all nine: the stub refuses any name outside
+    the list, so a loop that had lost a shape would still pass here, but a loop that had
+    gained a tenth or misspelt one exits 64.
+    """
+    result = run_shapes_verification(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert "PHASE4_GPU_SHAPE_VERIFICATION_PASSED" in result.stdout
+
+
+def test_a_shape_left_on_the_cpu_ami_fails_the_run(tmp_path: Path) -> None:
+    """The drift with no other symptom, now reachable nine more ways than before.
+
+    An environment on the default AMI carries no NVIDIA driver, so an instance launches,
+    joins the cluster, takes the job and trains on the CPU at GPU prices. Nothing errors and
+    every other field in the check is satisfied.
+    """
+    result = run_shapes_verification(tmp_path, image_type="ECS_AL2023")
+
+    assert result.returncode != 0
+    assert "gpu shape verification failed" in result.stderr
+    assert "compute environment" in result.stderr
+
+
+def test_a_definition_asking_for_the_wrong_number_of_devices_fails_the_run(
+    tmp_path: Path,
+) -> None:
+    """Mutation: check that a GPU is requested and not how many.
+
+    One device on a g5.48xlarge deploys, runs, bills for eight and uses one. ``requestsAGpu``
+    is true throughout, which is why the count is asserted separately from its presence.
+    """
+    result = run_shapes_verification(
+        tmp_path, drifted_profile="gpu-8xa10g", drifted_gpu_count="1"
+    )
+
+    assert result.returncode != 0
+    assert "gpu shape verification failed" in result.stderr
+    assert "gpu-8xa10g job definition" in result.stderr
 
 
 def test_asking_about_a_run_deploys_nothing() -> None:

@@ -37,6 +37,7 @@ from edullm_platform.evidence import (
 from edullm_platform.manifest_helpers import (
     REPRESENTATIVE_MANIFEST_COSTS,
     build_request_facts,
+    compute_manifest_cost_inputs,
     compute_manifest_maximum_cost,
     is_compute_profile_registered,
     is_workload_profile_registered,
@@ -584,16 +585,16 @@ def check_representative_manifests(
                     f"{manifest.dataset_release!r}."
                 ),
             )
-        estimated_cost = compute_manifest_maximum_cost(manifest, catalog)
+        cost = compute_manifest_cost_inputs(manifest, catalog)
         facts = request_facts_from_manifest(
             manifest,
             repositories=repositories,
             catalog=catalog,
             dataset_registry=dataset_registry,
-            estimated_cost_usd=estimated_cost,
+            estimated_cost_usd=cost.maximum_compute_cost_usd,
         )
         expected = expected_manifest_classification(filename)
-        actual = classify_request(facts, policy.thresholds)
+        actual = classify_request(facts, policy.thresholds, hourly_rate_usd=cost.hourly_rate_usd)
         if actual != expected:
             return fail_check(
                 "inventory_representative_manifests",

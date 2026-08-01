@@ -46,6 +46,7 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Final
 
@@ -1091,6 +1092,15 @@ def render_lineage_evidence(
 
 UNKNOWN_LOGIN: Final = "not-a-member"
 
+#: The hourly rate every row below is evaluated at, and gpu-1xa10g's rate is the value.
+#:
+#: Classification now also asks whether the profile a request names is expensive enough to
+#: need an admin, and a scenario states RequestFacts without naming a profile, so the rate
+#: has to come from here. Every row in this matrix varies who submits and who approves; none
+#: of them is about price, and a rate above the ceiling would turn each routine row into an
+#: exception and change what this document reports about the roster.
+SCENARIO_HOURLY_RATE_USD: Final = Decimal("1.006")
+
 
 @dataclass(frozen=True)
 class MatrixRow:
@@ -1174,7 +1184,7 @@ def matrix_rows(
             label=scenario.scenario,
             submitter=scenario.submitter.github_login,
             approver=None if scenario.approver is None else scenario.approver.github_login,
-            decision=scenario.decide(policy, inventory),
+            decision=scenario.decide(policy, inventory, hourly_rate_usd=SCENARIO_HOURLY_RATE_USD),
         )
         for scenario in scenarios
     )
@@ -1190,7 +1200,14 @@ def matrix_rows(
             label=label,
             submitter=submitter,
             approver=approver,
-            decision=evaluate_authorization(submitter, approver, request, policy, inventory),
+            decision=evaluate_authorization(
+                submitter,
+                approver,
+                request,
+                policy,
+                inventory,
+                hourly_rate_usd=SCENARIO_HOURLY_RATE_USD,
+            ),
         )
 
     derived = (

@@ -66,6 +66,7 @@ from edullm_platform.lifecycle_projection import project_batch_event
 NETWORK_PATH = INFRA_ROOT / "batch-network.yaml"
 COMPUTE_PATH = INFRA_ROOT / "batch-compute.yaml"
 GPU_COMPUTE_PATH = INFRA_ROOT / "batch-compute-gpu.yaml"
+GPU_SHAPES_PATH = INFRA_ROOT / "batch-compute-gpu-shapes.yaml"
 EVENTS_PATH = INFRA_ROOT / "batch-events.yaml"
 OUTPUTS_PATH = INFRA_ROOT / "outputs-bucket.yaml"
 STATE_MACHINE_PATH = INFRA_ROOT / "admission-state-machine.yaml"
@@ -101,10 +102,28 @@ BATCH_LOG_GROUP = "/aws/batch/sbsandbox-intern-edullm-cpu"
 #: COMPUTE_PATH goes green while the GPU half of the same seam is broken, which is the
 #: failure this tuple exists to make impossible: adding a third compute template is the one
 #: edit needed to bring every seam below along with it.
-COMPUTE_PATHS = (COMPUTE_PATH, GPU_COMPUTE_PATH)
+COMPUTE_PATHS = (COMPUTE_PATH, GPU_COMPUTE_PATH, GPU_SHAPES_PATH)
 GPU_COMPUTE_ENVIRONMENT_NAME = "sbsandbox-intern-edullm-gpu"
 GPU_JOB_QUEUE_NAME = "sbsandbox-intern-edullm-gpu"
 GPU_JOB_DEFINITION_NAME = "sbsandbox-intern-edullm-gpu-run"
+
+#: The nine profiles infra/batch-compute-gpu-shapes.yaml backs, in the order the template
+#: declares them. Every seam below that used to compare against a pair of names now compares
+#: against the CPU name, the original GPU name and these, so promoting a shape is one edit
+#: here rather than a number to increment in each test.
+GPU_SHAPE_PROFILES = (
+    "gpu-1xt4",
+    "gpu-4xt4",
+    "gpu-4xa10g",
+    "gpu-8xa10g",
+    "gpu-1xl4",
+    "gpu-4xl4",
+    "gpu-4xl40s",
+    "gpu-8xa100",
+    "gpu-8xh100",
+)
+GPU_SHAPE_QUEUE_NAMES = tuple(f"sbsandbox-intern-edullm-{name}" for name in GPU_SHAPE_PROFILES)
+GPU_SHAPE_JOB_DEFINITION_NAMES = tuple(f"{name}-run" for name in GPU_SHAPE_QUEUE_NAMES)
 
 #: The definition an accepted run registers for itself, as the states role's grants name it.
 #: No template creates it -- it is minted at admission from the run id, which is why it is a
@@ -324,8 +343,18 @@ def execution_target_bindings() -> dict[str, dict[str, Any]]:
 
 
 def names_across_compute_templates(resource_type: str, key: str) -> set[str]:
-    """One named property from ``resource_type``, gathered across every compute template."""
-    return {properties_of(path, resource_type)[key] for path in COMPUTE_PATHS}
+    """One named property from ``resource_type``, gathered across every compute template.
+
+    Every resource of the type in each template rather than the one, which was the same thing
+    until infra/batch-compute-gpu-shapes.yaml declared nine of each. Reading only the first
+    would leave eight queues out of every comparison below, and the comparisons are what stop
+    a queue existing with no event rule matching it and no role permitted to submit to it.
+    """
+    return {
+        resource["Properties"][key]
+        for path in COMPUTE_PATHS
+        for resource in resources_of_type(path, resource_type).values()
+    }
 
 
 def seam_target(manifest: RunManifest) -> ExecutionTarget:
@@ -739,8 +768,8 @@ REMEDIABLE_STUCK_REASONS = {
 }
 
 
-def test_both_queues_cancel_a_job_stuck_for_every_reason_batch_will_act_on() -> None:
-    """Reads BOTH files. Mutation: write a sentence in Reason, which is what broke the deploy.
+def test_every_queue_cancels_a_job_stuck_for_every_reason_batch_will_act_on() -> None:
+    """Reads EVERY compute file. Mutation: write a sentence in Reason, which broke the deploy.
 
     A RUNNABLE job Batch cannot place stays queued forever with no notification and no
     terminal state, and from the submitter's side that is identical to waiting its turn.
@@ -760,15 +789,24 @@ def test_both_queues_cancel_a_job_stuck_for_every_reason_batch_will_act_on() -> 
     legitimate wait -- a cold environment took two to three minutes to bring up a g5 -- and
     what it must do is terminate eventually.
     """
-    for path in COMPUTE_PATHS:
-        queue = properties_of(path, "AWS::Batch::JobQueue")
+    queues = [
+        (path, resource["Properties"])
+        for path in COMPUTE_PATHS
+        for resource in resources_of_type(path, "AWS::Batch::JobQueue").values()
+    ]
+    assert len(queues) == len(GPU_SHAPE_QUEUE_NAMES) + 2, (
+        "every queue needs its own time limit actions, so a queue this loop does not see is "
+        "a queue where an unplaceable job waits forever"
+    )
+    for path, queue in queues:
+        name = queue["JobQueueName"]
         actions = queue.get("JobStateTimeLimitActions")
 
-        assert actions, f"{path.name} leaves an unplaceable job queued forever"
+        assert actions, f"{path.name}: {name} leaves an unplaceable job queued forever"
         assert {action["Reason"] for action in actions} == REMEDIABLE_STUCK_REASONS, (
-            f"{path.name} does not cover every reason Batch will act on. Reason is an enum "
-            "of statusReason values, not free text -- a sentence here is refused at deploy "
-            "time, and a missing value is a stuck job nothing cancels."
+            f"{path.name}: {name} does not cover every reason Batch will act on. Reason is "
+            "an enum of statusReason values, not free text -- a sentence here is refused at "
+            "deploy time, and a missing value is a stuck job nothing cancels."
         )
         for action in actions:
             # CANCEL rather than TERMINATE: the job never started, so there is nothing
@@ -792,9 +830,9 @@ def test_the_event_rule_matches_the_job_queue_the_compute_stack_creates() -> Non
     created = names_across_compute_templates("AWS::Batch::JobQueue", "JobQueueName")
     matched = {named_after(arn, "job-queue") for arn in rule_queue_arns()}
 
-    assert created == {JOB_QUEUE_NAME, GPU_JOB_QUEUE_NAME}
-    # Set equality in both directions, which is the whole test now that one rule serves two
-    # queues. A queue created and not matched is the silent half above. A queue matched and
+    assert created == {JOB_QUEUE_NAME, GPU_JOB_QUEUE_NAME, *GPU_SHAPE_QUEUE_NAMES}
+    # Set equality in both directions, which is the whole test now that one rule serves every
+    # queue. A queue created and not matched is the silent half above. A queue matched and
     # not created is the other direction and is not harmless either: it is how a rule keeps
     # a pattern for a queue somebody deleted, so nothing fails and the next queue to take
     # that name inherits a delivery path nobody meant to grant it.
@@ -852,7 +890,11 @@ def test_the_job_definition_the_states_role_may_submit_is_the_one_that_is_regist
     }
     revisions = [arn for arn in states_role_submit_arns() if arn.endswith(":*")]
 
-    assert registered == {JOB_DEFINITION_NAME, GPU_JOB_DEFINITION_NAME}
+    assert registered == {
+        JOB_DEFINITION_NAME,
+        GPU_JOB_DEFINITION_NAME,
+        *GPU_SHAPE_JOB_DEFINITION_NAMES,
+    }
     assert from_the_role == registered | {PER_RUN_JOB_DEFINITION_NAME}
     assert len(revisions) == len(from_the_role), (
         "a grant on the bare definition name authorizes nothing once a second revision "
@@ -886,6 +928,15 @@ def test_execution_targets_config_names_exactly_what_the_templates_create() -> N
             GPU_EXECUTION_ROLE_NAME,
             GPU_WORKLOAD_ROLE_NAME,
         ),
+        **{
+            profile: (
+                GPU_SHAPES_PATH,
+                GPU_BATCH_ROLES_PATH,
+                GPU_EXECUTION_ROLE_NAME,
+                GPU_WORKLOAD_ROLE_NAME,
+            )
+            for profile in GPU_SHAPE_PROFILES
+        },
     }
 
     assert set(bindings) == set(backing), (
@@ -897,26 +948,58 @@ def test_execution_targets_config_names_exactly_what_the_templates_create() -> N
         binding = bindings[profile]
         execution_role = role_named(roles, execution_name)
         workload_role = role_named(roles, workload_name)
+        # Named rather than positional, because one template now carries nine queues and nine
+        # definitions and the profile is what picks the pair out of it. Reading the first of
+        # each would compare every shape against gpu-1xt4's names and pass for one of them.
+        queues = {
+            resource["Properties"]["JobQueueName"]
+            for resource in resources_of_type(compute, "AWS::Batch::JobQueue").values()
+        }
+        definitions = {
+            resource["Properties"]["JobDefinitionName"]
+            for resource in resources_of_type(compute, "AWS::Batch::JobDefinition").values()
+        }
 
         assert binding["region"] == "us-east-1", profile
-        assert binding["job_queue"] == properties_of(compute, "AWS::Batch::JobQueue")[
-            "JobQueueName"
-        ], profile
-        assert binding["job_definition"] == properties_of(compute, "AWS::Batch::JobDefinition")[
-            "JobDefinitionName"
-        ], profile
+        assert binding["job_queue"] in queues, profile
+        assert binding["job_definition"] in definitions, profile
         assert binding["execution_role"] == execution_role["RoleName"], profile
         assert binding["workload_role"] == workload_role["RoleName"], profile
-        assert binding["log_group"] == properties_of(compute, "AWS::Logs::LogGroup")[
-            "LogGroupName"
-        ], profile
+        # Read off the job definition rather than off a AWS::Logs::LogGroup resource, because
+        # infra/batch-compute-gpu-shapes.yaml creates no group. It names the one
+        # infra/batch-compute-gpu.yaml creates, and the test below is what holds every name
+        # used by any container to a group some template declares.
+        driver = next(
+            resource["Properties"]["ContainerProperties"]["LogConfiguration"]
+            for resource in resources_of_type(compute, "AWS::Batch::JobDefinition").values()
+            if resource["Properties"]["JobDefinitionName"] == binding["job_definition"]
+        )
+        assert binding["log_group"] == driver["Options"]["awslogs-group"], profile
 
-    # The two targets share no identity at all. A GPU job definition that named a CPU role
-    # would validate against every assertion above taken one at a time, and would hand the
-    # training container the wrong log group and the wrong output scope.
-    for field in ("job_queue", "job_definition", "execution_role", "workload_role", "log_group"):
+    # A queue and a definition apiece, which is what keeps one profile's submissions off
+    # another's capacity. The roles and the log group are deliberately shared and are checked
+    # for sharing rather than for uniqueness below.
+    for field in ("job_queue", "job_definition"):
         values = [binding[field] for binding in bindings.values()]
         assert len(set(values)) == len(values), field
+
+    # THE CPU AND GPU HALVES SHARE NO IDENTITY, WHICH IS THE SEPARATION THAT MATTERS. Their
+    # execution roles read different secrets, their workload roles reach different objects,
+    # and each execution role is scoped to one log group, so a GPU definition naming a CPU
+    # role would hand the training container the wrong output scope and let either principal
+    # write into the record of the other's jobs.
+    #
+    # The ten GPU targets share that trio with each other, and that is a decision recorded in
+    # config/execution-targets.yaml: they run the same image, resume from the same output
+    # prefix and read the same W&B secret, so a role per shape would be ten copies of one
+    # policy and ten log groups would need ten grants added to the role that already exists.
+    for field in ("execution_role", "workload_role", "log_group"):
+        cpu_side = bindings["cpu-32vcpu"][field]
+        gpu_side = {
+            binding[field] for profile, binding in bindings.items() if profile != "cpu-32vcpu"
+        }
+        assert cpu_side not in gpu_side, field
+        assert len(gpu_side) == 1, field
 
 
 def test_the_log_group_the_config_names_is_the_one_the_container_writes_to() -> None:
@@ -927,23 +1010,29 @@ def test_the_log_group_the_config_names_is_the_one_the_container_writes_to() -> 
     logs nowhere -- and a binding record pointing at a group that holds nothing.
     """
     bindings = execution_target_bindings()
-    seen = set()
+    declared = {
+        resource["Properties"]["LogGroupName"]
+        for path in COMPUTE_PATHS
+        for resource in resources_of_type(path, "AWS::Logs::LogGroup").values()
+    }
+    driven = set()
     for path in COMPUTE_PATHS:
-        declared = properties_of(path, "AWS::Logs::LogGroup")["LogGroupName"]
-        container = properties_of(path, "AWS::Batch::JobDefinition")["ContainerProperties"]
-        driven = container["LogConfiguration"]["Options"]["awslogs-group"]
+        for resource in resources_of_type(path, "AWS::Batch::JobDefinition").values():
+            container = resource["Properties"]["ContainerProperties"]
+            name = resource["Properties"]["JobDefinitionName"]
 
-        assert driven == declared, path.name
-        assert container["LogConfiguration"]["LogDriver"] == "awslogs", path.name
-        seen.add(declared)
+            assert container["LogConfiguration"]["LogDriver"] == "awslogs", name
+            driven.add(container["LogConfiguration"]["Options"]["awslogs-group"])
 
-    assert seen == {BATCH_LOG_GROUP, GPU_BATCH_LOG_GROUP}
-    # One group per target and no sharing, which is not tidiness. Each execution role is
-    # scoped to a single group, so two targets naming one group would mean either principal
-    # could write into the record of the other's jobs -- and a GPU run's stdout is the
-    # evidence that it saw a device.
-    assert {binding["log_group"] for binding in bindings.values()} == seen
-    assert len({binding["log_group"] for binding in bindings.values()}) == len(bindings)
+    assert declared == {BATCH_LOG_GROUP, GPU_BATCH_LOG_GROUP}
+    # EVERY GROUP A CONTAINER WRITES TO IS ONE SOME TEMPLATE DECLARES, WHICH IS NO LONGER THE
+    # SAME FILE. infra/batch-compute-gpu-shapes.yaml creates no group and names the one
+    # infra/batch-compute-gpu.yaml creates, and CloudFormation knows nothing about that
+    # dependency because the awslogs driver takes a string. So this is the assertion that
+    # would fail if the group were renamed on one side, and the cross-stack reference is the
+    # reason the two stacks cannot be deleted in either order.
+    assert driven == declared
+    assert {binding["log_group"] for binding in bindings.values()} == declared
 
 
 # --------------------------------------------------------------------------------------

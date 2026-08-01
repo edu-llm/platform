@@ -1,5 +1,6 @@
+from decimal import Decimal
 from enum import StrEnum
-from typing import Annotated, Literal, Self
+from typing import Annotated, Final, Literal, Self
 
 from pydantic import BeforeValidator, Field, model_validator
 
@@ -98,9 +99,50 @@ class ApprovalPolicy(ContractModel):
         return self
 
 
+#: The hourly rate above which a compute profile needs an admin rather than a team lead,
+#: whatever the run's total cost and runtime are.
+#:
+#: WHY A RATE AND NOT THE FOUR BOUNDS ABOVE. Those bounds are all about the size of one
+#: request, and every one of them is satisfiable by a short run on the largest machine in the
+#: account. A one-hour p5.48xlarge is $55.04 against a $500 routine ceiling, one attempt
+#: against two, one hour against twelve: routine on every axis, and a team lead releasing it
+#: has authorised the most expensive instance type this platform can start. Making the
+#: threshold total cost instead would have to be set near $55 to catch it, which would then
+#: make an ordinary twelve-hour single-A10G run an exception as well.
+#:
+#: WHY A RATE AND NOT A LIST OF THE TWO PROFILE NAMES. A list is correct until somebody
+#: promotes a tenth shape, and the way it fails is that the new shape is routine by default --
+#: which is the wrong default for the only property that matters here. A rate gates the next
+#: expensive profile before anybody remembers this file exists.
+#:
+#: WHY TWENTY. It sits between the most expensive routine shape and the cheapest gated one,
+#: with both measured rather than guessed: g5.48xlarge, eight A10G, is $16.288/hour and stays
+#: routine, and p4d.24xlarge, eight A100, is $21.958/hour and does not. p5.48xlarge at $55.04
+#: is far above it. The gap is narrow, so a profile priced between $16.29 and $21.95 would
+#: land on the routine side of a line drawn for a different reason, and adding one is the
+#: moment to revisit this number.
+#:
+#: WHY IT IS HERE AND NOT IN config/policy.yaml BESIDE THE OTHER FOUR, WHICH IS WHERE IT
+#: BELONGS. ``PolicyThresholds`` is a contract model, and
+#: ``proof_bundle.discover_contract_models`` records every contract model's structural digest
+#: in four committed proof bundles, with tests/test_schema_compatibility.py recomputing them.
+#: A fifth field changes that digest, which is a proof-bundle regeneration rather than a
+#: policy edit. config/policy.yaml carries a comment pointing here so that a reader of the
+#: policy does not conclude there are only four bounds.
+EXCEPTION_RATE_CEILING_USD_PER_HOUR: Final = Decimal(20)
+
+
 def classify_request(
     facts: RequestFacts,
     thresholds: PolicyThresholds,
+    *,
+    # The rate of the profile the request names, which RequestFacts does not carry and cannot
+    # be given for the reason recorded above the ceiling. Keyword-only and required, so that
+    # a caller who has not decided what to pass gets a TypeError rather than a routine
+    # classification: the failure this argument exists to prevent is a submission on the
+    # largest instance in the account released by a team lead, and a default of zero would
+    # reintroduce it at every call site that was not updated.
+    hourly_rate_usd: Decimal,
 ) -> ApprovalClass:
     if (
         facts.repository_registered
@@ -114,6 +156,7 @@ def classify_request(
         and facts.maximum_attempts <= thresholds.routine_maximum_attempts
         and facts.fanout_size <= thresholds.routine_maximum_fanout_size
         and facts.fanout_parallelism <= thresholds.routine_maximum_parallelism
+        and hourly_rate_usd <= EXCEPTION_RATE_CEILING_USD_PER_HOUR
     ):
         return ApprovalClass.ROUTINE
     return ApprovalClass.EXCEPTION

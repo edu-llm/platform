@@ -137,15 +137,41 @@ class InstanceEvidence(TypedDict):
 #: either of those sets without adding its instance type here fails the capture outright,
 #: which is the direction to fail in: the alternative is a quota record whose required_vcpus
 #: somebody guessed.
+#: required_vcpus IS ONE JOB'S SHAPE AND NOT THE ENVIRONMENT'S CEILING. The check this feeds
+#: asks whether the account's quota admits a single run on the profile, so the value is the
+#: whole instance -- a GPU container takes the machine, see CONTAINER_SHAPES. How many can run
+#: at once is MaxvCpus in infra/batch-compute-gpu-shapes.yaml, which that template sums
+#: against the same two quotas.
+#:
+#: Two quota codes and not three. L-DB2E81BA is "Running On-Demand G and VT instances" and
+#: covers g4dn, g5, g6 and g6e; L-417A185B is "Running On-Demand P instances" and covers p4d
+#: and p5. Both read as 768 vCPU on 2026-08-01. They are separate pools, which is why the two
+#: eight-GPU shapes below do not compete with the seven above them.
 INSTANCE_EVIDENCE: dict[str, InstanceEvidence] = {
+    "g4dn.xlarge": {"required_vcpus": 4, "quota_code": "L-DB2E81BA"},
+    "g4dn.12xlarge": {"required_vcpus": 48, "quota_code": "L-DB2E81BA"},
     "g5.xlarge": {"required_vcpus": 4, "quota_code": "L-DB2E81BA"},
     "g5.12xlarge": {"required_vcpus": 48, "quota_code": "L-DB2E81BA"},
+    "g5.48xlarge": {"required_vcpus": 192, "quota_code": "L-DB2E81BA"},
+    "g6.xlarge": {"required_vcpus": 4, "quota_code": "L-DB2E81BA"},
+    "g6.12xlarge": {"required_vcpus": 48, "quota_code": "L-DB2E81BA"},
+    "g6e.12xlarge": {"required_vcpus": 48, "quota_code": "L-DB2E81BA"},
+    "p4d.24xlarge": {"required_vcpus": 96, "quota_code": "L-417A185B"},
+    "p5.48xlarge": {"required_vcpus": 192, "quota_code": "L-417A185B"},
     "c7i.8xlarge": {"required_vcpus": 32, "quota_code": "L-1216C47A"},
 }
 
 WORKLOAD_PROFILE_REQUIRED_VCPUS: Final = {
+    "gpu-1xt4": INSTANCE_EVIDENCE["g4dn.xlarge"]["required_vcpus"],
+    "gpu-4xt4": INSTANCE_EVIDENCE["g4dn.12xlarge"]["required_vcpus"],
     "gpu-1xa10g": INSTANCE_EVIDENCE["g5.xlarge"]["required_vcpus"],
     "gpu-4xa10g": INSTANCE_EVIDENCE["g5.12xlarge"]["required_vcpus"],
+    "gpu-8xa10g": INSTANCE_EVIDENCE["g5.48xlarge"]["required_vcpus"],
+    "gpu-1xl4": INSTANCE_EVIDENCE["g6.xlarge"]["required_vcpus"],
+    "gpu-4xl4": INSTANCE_EVIDENCE["g6.12xlarge"]["required_vcpus"],
+    "gpu-4xl40s": INSTANCE_EVIDENCE["g6e.12xlarge"]["required_vcpus"],
+    "gpu-8xa100": INSTANCE_EVIDENCE["p4d.24xlarge"]["required_vcpus"],
+    "gpu-8xh100": INSTANCE_EVIDENCE["p5.48xlarge"]["required_vcpus"],
     "cpu-32vcpu": INSTANCE_EVIDENCE["c7i.8xlarge"]["required_vcpus"],
 }
 

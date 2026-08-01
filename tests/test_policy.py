@@ -9,6 +9,7 @@ from edullm_platform.contracts.dataset_registry import DatasetRegistry
 from edullm_platform.contracts.image_scan import ImageScanSeverity
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.policy import (
+    EXCEPTION_RATE_CEILING_USD_PER_HOUR,
     ApprovalClass,
     ApprovalPolicy,
     PolicyThresholds,
@@ -16,10 +17,12 @@ from edullm_platform.contracts.policy import (
     classify_request,
 )
 from edullm_platform.contracts.repository_registry import RepositoryRegistry
+from edullm_platform.manifest_helpers import compute_manifest_cost_inputs
 from edullm_platform.phase0_gate import (
     expected_manifest_classification,
     request_facts_from_manifest,
 )
+from tests.policy_support import GATED_RATE, ROUTINE_RATE
 from tests.test_manifest import (
     PROJECT_ROOT,
     REPRESENTATIVE_MANIFEST_FILENAMES,
@@ -149,7 +152,9 @@ def policy_payload() -> dict[str, object]:
 
 
 def test_registered_request_within_all_bounds_is_routine() -> None:
-    assert classify_request(routine_facts(), thresholds()) is ApprovalClass.ROUTINE
+    assert classify_request(routine_facts(), thresholds(), hourly_rate_usd=ROUTINE_RATE) is (
+        ApprovalClass.ROUTINE
+    )
 
 
 def test_any_policy_violation_is_exception() -> None:
@@ -165,7 +170,9 @@ def test_any_policy_violation_is_exception() -> None:
         maximum_runtime_hours=Decimal(1),
         maximum_attempts=1,
     )
-    assert classify_request(facts, thresholds()) is ApprovalClass.EXCEPTION
+    assert classify_request(facts, thresholds(), hourly_rate_usd=ROUTINE_RATE) is (
+        ApprovalClass.EXCEPTION
+    )
 
 
 @pytest.mark.parametrize(
@@ -183,7 +190,9 @@ def test_unregistered_or_mutable_facts_classify_as_exception(
     value: bool,
 ) -> None:
     facts = routine_facts(**{field: value})
-    assert classify_request(facts, thresholds()) is ApprovalClass.EXCEPTION
+    assert classify_request(facts, thresholds(), hourly_rate_usd=ROUTINE_RATE) is (
+        ApprovalClass.EXCEPTION
+    )
 
 
 @pytest.mark.parametrize(
@@ -201,7 +210,9 @@ def test_numeric_bound_violations_classify_as_exception(
     value: object,
 ) -> None:
     facts = routine_facts(**{field: value})
-    assert classify_request(facts, thresholds()) is ApprovalClass.EXCEPTION
+    assert classify_request(facts, thresholds(), hourly_rate_usd=ROUTINE_RATE) is (
+        ApprovalClass.EXCEPTION
+    )
 
 
 @pytest.mark.parametrize(
@@ -219,7 +230,66 @@ def test_numeric_values_at_threshold_remain_routine(
     value: object,
 ) -> None:
     facts = routine_facts(**{field: value})
-    assert classify_request(facts, thresholds()) is ApprovalClass.ROUTINE
+    assert classify_request(facts, thresholds(), hourly_rate_usd=ROUTINE_RATE) is (
+        ApprovalClass.ROUTINE
+    )
+
+
+# --------------------------------------------------------------------------------------
+# The rate ceiling, which is the fifth bound and the only one not in config/policy.yaml
+# --------------------------------------------------------------------------------------
+
+
+def test_a_rate_above_the_ceiling_is_an_exception_with_every_other_bound_satisfied() -> None:
+    """The case the four request bounds cannot express, and the reason the ceiling exists.
+
+    Mutation: drop the rate comparison from ``classify_request``. These facts are routine on
+    every axis policy states -- a cheap, short, single-attempt run -- so without the ceiling
+    this classifies as routine and a team lead may release a p4d.24xlarge.
+    """
+    facts = routine_facts(estimated_cost_usd="21.96", maximum_runtime_hours="1", maximum_attempts=1)
+
+    assert numeric_bound_violations(facts, thresholds()) == frozenset()
+    assert classify_request(facts, thresholds(), hourly_rate_usd=GATED_RATE) is (
+        ApprovalClass.EXCEPTION
+    )
+
+
+def test_a_rate_at_the_ceiling_is_still_routine() -> None:
+    """The boundary, which is inclusive like the four bounds beside it.
+
+    Mutation: change ``<=`` to ``<``. A profile priced at exactly the ceiling would become an
+    exception, and the ceiling would then mean something different from the other bounds in
+    the same expression.
+    """
+    assert classify_request(
+        routine_facts(),
+        thresholds(),
+        hourly_rate_usd=EXCEPTION_RATE_CEILING_USD_PER_HOUR,
+    ) is ApprovalClass.ROUTINE
+
+
+def test_the_ceiling_sits_between_the_dearest_routine_shape_and_the_cheapest_gated_one() -> None:
+    """What the number is for, read out of the catalog rather than restated here.
+
+    The ceiling is only correct relative to the prices it was drawn between, and those live
+    in config/workload-catalog.yaml where a repricing will move them. A profile that drifts
+    across the line changes who may approve it with nothing else in the tree changing, so the
+    two shapes either side are asserted by name.
+    """
+    rates = {profile.name: profile.hourly_rate_usd for profile in load_workload_catalog().compute_profiles}
+
+    assert rates["gpu-8xa10g"] < EXCEPTION_RATE_CEILING_USD_PER_HOUR
+    assert rates["gpu-8xa100"] > EXCEPTION_RATE_CEILING_USD_PER_HOUR
+    assert rates["gpu-8xh100"] > EXCEPTION_RATE_CEILING_USD_PER_HOUR
+    # No other provisioned profile is above it, so the gate catches exactly the two shapes it
+    # was added for and every routine GPU shape stays with a team lead.
+    above = {
+        profile.name
+        for profile in load_workload_catalog().compute_profiles
+        if profile.provisioned and profile.hourly_rate_usd > EXCEPTION_RATE_CEILING_USD_PER_HOUR
+    }
+    assert above == {"gpu-8xa100", "gpu-8xh100"}
 
 
 def test_request_facts_describe_a_single_cell_when_no_fanout_is_declared() -> None:
@@ -453,17 +523,20 @@ def test_representative_manifest_classifies_as_expected(filename: str) -> None:
     manifest = load_representative_manifest(filename)
     catalog = load_workload_catalog()
     policy = load_approval_policy()
-    estimated_cost_usd = compute_manifest_maximum_cost(manifest, catalog)
+    cost = compute_manifest_cost_inputs(manifest, catalog)
     facts = request_facts_from_manifest(
         manifest,
         repositories=load_repository_registry(),
         catalog=catalog,
         dataset_registry=load_dataset_registry(),
-        estimated_cost_usd=estimated_cost_usd,
+        estimated_cost_usd=cost.maximum_compute_cost_usd,
     )
     expected = expected_classification(filename)
+    # The fixture's own profile rate rather than a constant, because that is what admission
+    # passes and the fixtures are the shapes a real submission takes.
     assert (
-        classify_request(facts, policy.thresholds) == expected
+        classify_request(facts, policy.thresholds, hourly_rate_usd=cost.hourly_rate_usd)
+        == expected
     ), f"{filename} classification mismatch for {facts=}"
 
 
@@ -530,4 +603,6 @@ def test_request_facts_from_manifest_rejects_unregistered_repository() -> None:
         estimated_cost_usd=Decimal(1),
     )
     assert facts.repository_registered is False
-    assert classify_request(facts, thresholds()) is ApprovalClass.EXCEPTION
+    assert classify_request(facts, thresholds(), hourly_rate_usd=ROUTINE_RATE) is (
+        ApprovalClass.EXCEPTION
+    )

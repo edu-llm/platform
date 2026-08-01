@@ -80,6 +80,7 @@ MANIFEST_FIXTURES_DIR = PROJECT_ROOT / "fixtures" / "manifests"
 COMPUTE_TEMPLATE_PATHS = (
     INFRA_ROOT / "batch-compute.yaml",
     INFRA_ROOT / "batch-compute-gpu.yaml",
+    INFRA_ROOT / "batch-compute-gpu-shapes.yaml",
 )
 STATE_MACHINE_TEMPLATE_PATH = INFRA_ROOT / "admission-state-machine.yaml"
 
@@ -94,8 +95,25 @@ PROMOTED_PROFILE = "cpu-32vcpu"
 #: Every profile the catalog marks provisioned, in the order it promotes them. The seam
 #: test below compares this against both config files; the constant exists so that adding
 #: a profile is one visible edit rather than a number somebody increments.
-PROMOTED_PROFILES = (PROMOTED_PROFILE, "gpu-1xa10g")
-UNPROVISIONED_PROFILE = "gpu-4xa10g"
+PROMOTED_PROFILES = (
+    PROMOTED_PROFILE,
+    "gpu-1xt4",
+    "gpu-4xt4",
+    "gpu-1xa10g",
+    "gpu-4xa10g",
+    "gpu-8xa10g",
+    "gpu-1xl4",
+    "gpu-4xl4",
+    "gpu-4xl40s",
+    "gpu-8xa100",
+    "gpu-8xh100",
+)
+#: The profile the refusal tests below ask for, and it moved from gpu-4xa10g when that shape
+#: was promoted. It has to be a profile the catalog prices and does not provision, and the
+#: only two left are this and gpu-1xa10g-sagemaker. This one, because the SageMaker profile
+#: is unprovisioned for a second reason -- a different service with no Batch queue to give
+#: it -- and a test about a missing execution target should not lean on that.
+UNPROVISIONED_PROFILE = "gpu-1xl40s"
 UNREGISTERED_PROFILE = "cpu-1024vcpu"
 
 MEMBER = "caiiris"

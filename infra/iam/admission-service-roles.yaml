@@ -81,12 +81,22 @@ Resources:
               # all. infra/README.md explains it and tests/test_phase3_infrastructure.py
               # compares all three against each other.
               #
-              # THE GPU PAIR IS LISTED, NOT MATCHED BY A PREFIX. sbsandbox-intern-edullm-*
+              # EVERY QUEUE IS LISTED, NOT MATCHED BY A PREFIX. sbsandbox-intern-edullm-*
               # across both resource types would have covered Phase 4 and every phase after
               # it in one edit, and that is the reason not to: this is the only principal in
               # the account that may put work on a queue, and a prefix would extend that to
-              # any queue a later phase happens to name. Two profiles are provisioned, so
-              # six ARNs are listed. A third is a visible edit here.
+              # any queue a later phase happens to name.
+              #
+              # THE NINE GPU SHAPES ADDED TWENTY-SEVEN LINES HERE AND A PREFIX WOULD HAVE
+              # ADDED THREE, WHICH IS THE STRONGEST ARGUMENT AGAINST ENUMERATION AND STILL
+              # LOSES. sbsandbox-intern-edullm-gpu-* is narrower than the project prefix and
+              # is still a standing grant on a name nobody has created yet. What the length
+              # buys is that promoting a shape is one visible edit in each of five files, and
+              # tests/test_phase3_infrastructure.py compares this list against the queues the
+              # templates create in both directions, so a promotion that reaches
+              # config/execution-targets.yaml and not this file fails in CI rather than at the
+              # first submission. Eleven profiles are provisioned, so thirty-three ARNs are
+              # listed. A twelfth is a visible edit here.
               - Effect: Allow
                 Action: batch:SubmitJob
                 Resource:
@@ -96,6 +106,33 @@ Resources:
                   - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu
                   - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-run
                   - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-run:*
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu-1xt4
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-1xt4-run
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-1xt4-run:*
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu-4xt4
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-4xt4-run
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-4xt4-run:*
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu-4xa10g
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-4xa10g-run
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-4xa10g-run:*
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu-8xa10g
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-8xa10g-run
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-8xa10g-run:*
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu-1xl4
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-1xl4-run
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-1xl4-run:*
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu-4xl4
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-4xl4-run
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-4xl4-run:*
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu-4xl40s
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-4xl40s-run
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-4xl40s-run:*
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu-8xa100
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-8xa100-run
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-8xa100-run:*
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu-8xh100
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-8xh100-run
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-8xh100-run:*
                   # THE PER-RUN DEFINITION, WITHOUT WHICH THIS ROLE CAN REGISTER A JOB
                   # DEFINITION AND NOT SUBMIT TO IT. SubmitJob authorizes against the
                   # definition as well as the queue, so a submission naming the revision
@@ -140,6 +177,33 @@ Resources:
                   - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu
                   - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-run
                   - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-run:*
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu-1xt4
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-1xt4-run
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-1xt4-run:*
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu-4xt4
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-4xt4-run
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-4xt4-run:*
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu-4xa10g
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-4xa10g-run
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-4xa10g-run:*
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu-8xa10g
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-8xa10g-run
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-8xa10g-run:*
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu-1xl4
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-1xl4-run
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-1xl4-run:*
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu-4xl4
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-4xl4-run
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-4xl4-run:*
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu-4xl40s
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-4xl40s-run
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-4xl40s-run:*
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu-8xa100
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-8xa100-run
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-8xa100-run:*
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu-8xh100
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-8xh100-run
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-gpu-8xh100-run:*
                   # Mirrors SubmitJob's list exactly, for the reason the comment above gives:
                   # it is the same call against the same resources, billed to a second action
                   # name, and a list widened on one and not the other produces a role that

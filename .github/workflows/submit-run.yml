@@ -38,6 +38,13 @@ on:
           - olmo-core-check-cpu
           - olmo-core-check-gpu
           - olmo-core-train-1gpu
+          # Offerable now that gpu-4xa10g is provisioned, and the only entry here whose
+          # command has to be written differently from every other one. Nothing on this
+          # platform wraps the command; whatever is typed below is what the container
+          # execs. So a four-GPU run needs torch.distributed.run in the text or it is one
+          # rank on one of four devices at four devices' price, which reports success. The
+          # command field's own description carries the line.
+          - olmo-core-train-4gpu
       dataset_release:
         description: "Which prepared dataset this run reads. Pick none unless you are reading one — a quick check reads nothing, and saying none is what makes the record true. All five corpora are published and read-only, from 5.5B tokens up to 157B."
         required: true
@@ -82,7 +89,7 @@ on:
         required: true
         type: string
       command:
-        description: "What the container should run, as one command line. The default below runs a one-line check that needs no code of your own; overwrite it with your own script path for real work."
+        description: "What the container should run, as one command line. The default below runs a one-line check that needs no code of your own; overwrite it with your own script path for real work. On a multi-GPU workload start with python -m torch.distributed.run --nproc-per-node=N --standalone, where N is the profile's GPU count, or only one device trains."
         required: true
         type: string
         # PRE-FILLED RATHER THAN DESCRIBED, WHICH IS THE DIFFERENCE BETWEEN AN EXAMPLE AND
@@ -97,14 +104,27 @@ on:
         # whole command line. A default that could not compile would be worse than none.
         default: "python -c 'import sys; print(\"edullm ready\", sys.version)'"
       compute_profile:
-        description: "Advanced — leave as inherit. Runs on a different machine than the workload above normally uses."
+        description: "Advanced, leave as inherit. Runs on a different machine than the workload above normally uses. The two eight-GPU P shapes, gpu-8xa100 and gpu-8xh100, cost over $20 an hour and need an admin rather than a lead."
         required: false
         type: choice
         default: inherit
+        # Sorted, because tests/test_submission_form_options.py compares this list against
+        # the provisioned profiles in config/workload-catalog.yaml sorted. Every one of them
+        # has a queue and a job definition; picking one costs the wait for a machine and not
+        # a refusal after approval.
         options:
           - inherit
           - cpu-32vcpu
           - gpu-1xa10g
+          - gpu-1xl4
+          - gpu-1xt4
+          - gpu-4xa10g
+          - gpu-4xl4
+          - gpu-4xl40s
+          - gpu-4xt4
+          - gpu-8xa100
+          - gpu-8xa10g
+          - gpu-8xh100
       maximum_runtime_hours:
         description: Override the runtime bound, in hours, written in base ten. Leave empty to take the registered default.
         required: false

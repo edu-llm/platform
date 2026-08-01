@@ -1,0 +1,1132 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Nine GPU compute environments, their job queues and their digest-pinned job definitions, beside the single-A10G stack.
+
+# The nine GPU shapes this account can run, added alongside infra/batch-compute-gpu.yaml
+# rather than into it. That file's single environment had jobs running when these were
+# written, and a template edit can interrupt a running job, so the one shape researchers were
+# already using keeps its own stack and its own rollback.
+#
+# Everything argued in infra/batch-compute-gpu.yaml holds here and is not repeated: why
+# ECS_AL2023_NVIDIA is the line the whole thing turns on, why each environment lists exactly
+# one instance type, why a GPU entry in ResourceRequirements is what makes ECS attach a
+# device at all, why Privileged is false, why the image is pinned by digest, why /dev/shm has
+# to be set, and why a queue names one compute environment. Read that file first.
+#
+# THIS STACK CREATES NO LOG GROUP. All nine definitions write to
+# /aws/batch/sbsandbox-intern-edullm-gpu, which infra/batch-compute-gpu.yaml creates and which
+# the GPU execution role is scoped to. config/execution-targets.yaml records why one group and
+# one role trio serve every GPU shape. The awslogs driver takes a group as a string, so
+# CloudFormation sees no dependency between the two stacks: deleting the other one leaves
+# these definitions logging nowhere, with nothing failing to say so.
+#
+# THE MaxvCpus SPLIT, WHICH IS THE NUMBER TO CHECK BEFORE ADDING A TENTH SHAPE.
+#
+# Every environment has its own ceiling and Batch enforces none of them against each other,
+# so the sum is the account's exposure and the account quota is the only thing above it. Both
+# quotas were read on 2026-08-01 with service-quotas get-service-quota: L-DB2E81BA, "Running
+# On-Demand G and VT instances", 768 vCPU, covering g4dn, g5, g6 and g6e; and L-417A185B,
+# "Running On-Demand P instances", 768 vCPU, covering p4d and p5. They are separate pools, so
+# the P shapes below cannot starve the G shapes however busy they are.
+#
+# The rule the numbers follow: eight concurrent jobs on a single-GPU shape, two on a four-GPU
+# shape, one on an eight-GPU shape. Concurrency is worth most where a job is cheap and a
+# researcher is iterating, and worth least where one job already occupies a whole large host.
+#
+#   G and VT pool                                          vCPU     concurrent jobs
+#     gpu-1xa10g   g5.xlarge      other stack, unchanged     128          32
+#     gpu-1xt4     g4dn.xlarge                                32           8
+#     gpu-1xl4     g6.xlarge                                  32           8
+#     gpu-4xt4     g4dn.12xlarge                              96           2
+#     gpu-4xa10g   g5.12xlarge                                96           2
+#     gpu-4xl4     g6.12xlarge                                96           2
+#     gpu-4xl40s   g6e.12xlarge                               48           1
+#     gpu-8xa10g   g5.48xlarge                               192           1
+#                                                           ----
+#                                                            720  of 768, 48 spare
+#
+#   P pool
+#     gpu-8xa100   p4d.24xlarge                               96           1
+#     gpu-8xh100   p5.48xlarge                               192           1
+#                                                           ----
+#                                                            288  of 768, 480 spare
+#
+# gpu-4xl40s is the one deviation from the rule and the reason is price: g6e.12xlarge is
+# $10.493/hour, twice any other four-GPU G shape, so a second concurrent job would be the
+# most expensive thing in this pool. gpu-1xa10g's 128 is inherited rather than chosen here.
+#
+# WHY 48 SPARE IN THE G POOL AND NOT NONE. A quota is regional and account-wide, not this
+# stack's to spend: anything else launched in this account that is a G or VT instance draws on
+# the same 768, and a saturated pool refuses new instances rather than queueing them. It is
+# also the margin that lets the next shape be added without first taking capacity away from
+# one of these. 48 is one g6e.12xlarge or twelve g5.xlarge.
+#
+# WHY THE P POOL IS LEFT 480 SPARE, WHICH IS MOST OF IT. Concurrency there is not the
+# constraint worth relaxing. Saturating the P pool would be eight p5.48xlarge at $440/hour,
+# against an account that spent $3,965 in the whole of July. One p4d and one p5 at a time is
+# $77/hour, which is already the largest sustained rate this platform can reach, and both
+# shapes need an admin per submission because their hourly rate is above
+# EXCEPTION_RATE_CEILING_USD_PER_HOUR in src/edullm_platform/contracts/policy.py.
+#
+# WHAT A CEILING DOES NOT DO. It caps everybody together and nobody individually, so one
+# person submitting eight jobs on a single-GPU shape still starves the others; it just takes
+# longer. Batch fair-share queues are the control for that and are a separate decision.
+#
+# SUBNETS ARE MEASURED PER INSTANCE TYPE AND ARE NOT A PROPERTY OF THE FAMILY.
+# describe-instance-type-offerings on 2026-08-01 reports g4dn.xlarge, g4dn.12xlarge,
+# g5.12xlarge, g5.48xlarge, g6.xlarge, g6.12xlarge and p5.48xlarge in us-east-1a, 1b, 1c, 1d
+# and 1f, and g6e.12xlarge and p4d.24xlarge in 1a, 1b, 1c and 1d only. So seven environments
+# list five subnets and two list four. p5.48xlarge is also offered in us-east-1e, where the
+# network stack has no subnet.
+#
+# A --dry-run is not evidence for this and must never be used as one. In this account it
+# returns DryRunOperation for g6e.12xlarge in us-east-1f, a zone that does not offer it,
+# because it answers "is this principal permitted" and not "can this succeed". A subnet Batch
+# cannot place into produces a job that waits in RUNNABLE forever with no error anywhere.
+#
+# JobExecutionTimeoutMinutes IS 360 HERE AND 60 IN THE OTHER STACK, AND 360 IS BATCH'S
+# MAXIMUM. The bound has to exceed the longest job a template edit could interrupt.
+# config/policy.yaml caps a routine run at twelve hours and olmo-core-train-4gpu now asks for
+# twelve, so even the maximum is half of what would be needed. A deploy during the second half
+# of a training run still stops waiting and kills it. Disabling the queue and waiting is the
+# procedure for a template edit while a long run is in flight; this field cannot substitute
+# for it.
+#
+# EVERY QUEUE NAME BELOW APPEARS IN THREE OTHER PLACES WITH NOTHING CONNECTING THEM:
+# config/execution-targets.yaml, the event pattern in infra/batch-events.yaml, and the
+# batch:SubmitJob scope of the admission states role in
+# infra/iam/admission-service-roles.yaml. Rename one here alone and submissions keep
+# succeeding while the rule matches nothing, so jobs run to completion and no lifecycle event,
+# attempt or result record is ever written. tests/test_phase3_infrastructure.py compares all
+# four files across every queue.
+
+Resources:
+  # -------------------------------------------------------------------------------------
+  # gpu-1xt4, one T4 on g4dn.xlarge, $0.526/hour
+  # -------------------------------------------------------------------------------------
+  Gpu1xT4ComputeEnvironment:
+    Type: AWS::Batch::ComputeEnvironment
+    Properties:
+      ComputeEnvironmentName: sbsandbox-intern-edullm-gpu-1xt4
+      Type: MANAGED
+      State: ENABLED
+      ReplaceComputeEnvironment: false
+      UpdatePolicy:
+        TerminateJobsOnUpdate: false
+        JobExecutionTimeoutMinutes: 360
+      ComputeResources:
+        Type: EC2
+        AllocationStrategy: BEST_FIT_PROGRESSIVE
+        MinvCpus: 0
+        MaxvCpus: 32
+        InstanceTypes:
+          - g4dn.xlarge
+        InstanceRole:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:instance-profile/sbsandbox-intern-edullm-batch-gpu-instance
+        Subnets:
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1a
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1b
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1c
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1d
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1f
+        SecurityGroupIds:
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-security-group-id
+        Ec2Configuration:
+          - ImageType: ECS_AL2023_NVIDIA
+        UpdateToLatestImageVersion: true
+        Tags:
+          Name: sbsandbox-intern-edullm-batch-gpu-1xt4
+          Project: edullm
+
+  Gpu1xT4JobQueue:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      JobQueueName: sbsandbox-intern-edullm-gpu-1xt4
+      State: ENABLED
+      Priority: 1
+      JobStateTimeLimitActions:
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: CAPACITY:INSUFFICIENT_INSTANCE_CAPACITY
+          State: RUNNABLE
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: MISCONFIGURATION:COMPUTE_ENVIRONMENT_MAX_RESOURCE
+          State: RUNNABLE
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT
+          State: RUNNABLE
+      ComputeEnvironmentOrder:
+        - Order: 1
+          ComputeEnvironment:
+            Ref: Gpu1xT4ComputeEnvironment
+
+  Gpu1xT4JobDefinition:
+    Type: AWS::Batch::JobDefinition
+    Properties:
+      JobDefinitionName: sbsandbox-intern-edullm-gpu-1xt4-run
+      Type: container
+      PlatformCapabilities:
+        - EC2
+      PropagateTags: true
+      RetryStrategy:
+        Attempts: 1
+      Timeout:
+        AttemptDurationSeconds: 3600
+      ContainerProperties:
+        Image:
+          Fn::Sub: ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/sbsandbox-intern-edullm-olmo-core@sha256:50e2488ab3c77e859a8fe3e6d4a06d7d54f5c852bc7c5dd201fb9db53bff455b
+        ExecutionRoleArn:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-execution
+        JobRoleArn:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-workload
+        ResourceRequirements:
+          - Type: VCPU
+            Value: "4"
+          - Type: MEMORY
+            Value: "15360"
+          - Type: GPU
+            Value: "1"
+        Secrets:
+          - Name: WANDB_API_KEY
+            ValueFrom:
+              Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sbsandbox-intern-edullm-wandb-api-key-fnwEVp
+        Command:
+          - python
+          - -c
+          - 'print("sbsandbox-intern-edullm-gpu-1xt4-run: no command override was supplied")'
+        Environment:
+          - Name: EDULLM_OUTPUT_BUCKET
+            Value: sbsandbox-intern-edullm-outputs
+          - Name: EDULLM_OUTPUT_PREFIX
+            Value: s3://sbsandbox-intern-edullm-outputs/no-submission-supplied-a-prefix/
+        LinuxParameters:
+          SharedMemorySize: 4096
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group: /aws/batch/sbsandbox-intern-edullm-gpu
+            awslogs-stream-prefix: gpu-1xt4-run
+            awslogs-region:
+              Ref: AWS::Region
+        Privileged: false
+
+  # -------------------------------------------------------------------------------------
+  # gpu-4xt4, four T4 on g4dn.12xlarge, $3.912/hour
+  # -------------------------------------------------------------------------------------
+  Gpu4xT4ComputeEnvironment:
+    Type: AWS::Batch::ComputeEnvironment
+    Properties:
+      ComputeEnvironmentName: sbsandbox-intern-edullm-gpu-4xt4
+      Type: MANAGED
+      State: ENABLED
+      ReplaceComputeEnvironment: false
+      UpdatePolicy:
+        TerminateJobsOnUpdate: false
+        JobExecutionTimeoutMinutes: 360
+      ComputeResources:
+        Type: EC2
+        AllocationStrategy: BEST_FIT_PROGRESSIVE
+        MinvCpus: 0
+        MaxvCpus: 96
+        InstanceTypes:
+          - g4dn.12xlarge
+        InstanceRole:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:instance-profile/sbsandbox-intern-edullm-batch-gpu-instance
+        Subnets:
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1a
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1b
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1c
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1d
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1f
+        SecurityGroupIds:
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-security-group-id
+        Ec2Configuration:
+          - ImageType: ECS_AL2023_NVIDIA
+        UpdateToLatestImageVersion: true
+        Tags:
+          Name: sbsandbox-intern-edullm-batch-gpu-4xt4
+          Project: edullm
+
+  Gpu4xT4JobQueue:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      JobQueueName: sbsandbox-intern-edullm-gpu-4xt4
+      State: ENABLED
+      Priority: 1
+      JobStateTimeLimitActions:
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: CAPACITY:INSUFFICIENT_INSTANCE_CAPACITY
+          State: RUNNABLE
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: MISCONFIGURATION:COMPUTE_ENVIRONMENT_MAX_RESOURCE
+          State: RUNNABLE
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT
+          State: RUNNABLE
+      ComputeEnvironmentOrder:
+        - Order: 1
+          ComputeEnvironment:
+            Ref: Gpu4xT4ComputeEnvironment
+
+  Gpu4xT4JobDefinition:
+    Type: AWS::Batch::JobDefinition
+    Properties:
+      JobDefinitionName: sbsandbox-intern-edullm-gpu-4xt4-run
+      Type: container
+      PlatformCapabilities:
+        - EC2
+      PropagateTags: true
+      RetryStrategy:
+        Attempts: 1
+      Timeout:
+        AttemptDurationSeconds: 3600
+      ContainerProperties:
+        Image:
+          Fn::Sub: ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/sbsandbox-intern-edullm-olmo-core@sha256:50e2488ab3c77e859a8fe3e6d4a06d7d54f5c852bc7c5dd201fb9db53bff455b
+        ExecutionRoleArn:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-execution
+        JobRoleArn:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-workload
+        ResourceRequirements:
+          - Type: VCPU
+            Value: "48"
+          - Type: MEMORY
+            Value: "184320"
+          - Type: GPU
+            Value: "4"
+        Secrets:
+          - Name: WANDB_API_KEY
+            ValueFrom:
+              Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sbsandbox-intern-edullm-wandb-api-key-fnwEVp
+        Command:
+          - python
+          - -c
+          - 'print("sbsandbox-intern-edullm-gpu-4xt4-run: no command override was supplied")'
+        Environment:
+          - Name: EDULLM_OUTPUT_BUCKET
+            Value: sbsandbox-intern-edullm-outputs
+          - Name: EDULLM_OUTPUT_PREFIX
+            Value: s3://sbsandbox-intern-edullm-outputs/no-submission-supplied-a-prefix/
+        LinuxParameters:
+          SharedMemorySize: 49152
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group: /aws/batch/sbsandbox-intern-edullm-gpu
+            awslogs-stream-prefix: gpu-4xt4-run
+            awslogs-region:
+              Ref: AWS::Region
+        Privileged: false
+
+  # -------------------------------------------------------------------------------------
+  # gpu-4xa10g, four A10G on g5.12xlarge, $5.672/hour
+  # -------------------------------------------------------------------------------------
+  Gpu4xA10gComputeEnvironment:
+    Type: AWS::Batch::ComputeEnvironment
+    Properties:
+      ComputeEnvironmentName: sbsandbox-intern-edullm-gpu-4xa10g
+      Type: MANAGED
+      State: ENABLED
+      ReplaceComputeEnvironment: false
+      UpdatePolicy:
+        TerminateJobsOnUpdate: false
+        JobExecutionTimeoutMinutes: 360
+      ComputeResources:
+        Type: EC2
+        AllocationStrategy: BEST_FIT_PROGRESSIVE
+        MinvCpus: 0
+        MaxvCpus: 96
+        InstanceTypes:
+          - g5.12xlarge
+        InstanceRole:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:instance-profile/sbsandbox-intern-edullm-batch-gpu-instance
+        Subnets:
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1a
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1b
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1c
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1d
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1f
+        SecurityGroupIds:
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-security-group-id
+        Ec2Configuration:
+          - ImageType: ECS_AL2023_NVIDIA
+        UpdateToLatestImageVersion: true
+        Tags:
+          Name: sbsandbox-intern-edullm-batch-gpu-4xa10g
+          Project: edullm
+
+  Gpu4xA10gJobQueue:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      JobQueueName: sbsandbox-intern-edullm-gpu-4xa10g
+      State: ENABLED
+      Priority: 1
+      JobStateTimeLimitActions:
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: CAPACITY:INSUFFICIENT_INSTANCE_CAPACITY
+          State: RUNNABLE
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: MISCONFIGURATION:COMPUTE_ENVIRONMENT_MAX_RESOURCE
+          State: RUNNABLE
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT
+          State: RUNNABLE
+      ComputeEnvironmentOrder:
+        - Order: 1
+          ComputeEnvironment:
+            Ref: Gpu4xA10gComputeEnvironment
+
+  Gpu4xA10gJobDefinition:
+    Type: AWS::Batch::JobDefinition
+    Properties:
+      JobDefinitionName: sbsandbox-intern-edullm-gpu-4xa10g-run
+      Type: container
+      PlatformCapabilities:
+        - EC2
+      PropagateTags: true
+      RetryStrategy:
+        Attempts: 1
+      Timeout:
+        AttemptDurationSeconds: 3600
+      ContainerProperties:
+        Image:
+          Fn::Sub: ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/sbsandbox-intern-edullm-olmo-core@sha256:50e2488ab3c77e859a8fe3e6d4a06d7d54f5c852bc7c5dd201fb9db53bff455b
+        ExecutionRoleArn:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-execution
+        JobRoleArn:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-workload
+        ResourceRequirements:
+          - Type: VCPU
+            Value: "48"
+          - Type: MEMORY
+            Value: "184320"
+          - Type: GPU
+            Value: "4"
+        Secrets:
+          - Name: WANDB_API_KEY
+            ValueFrom:
+              Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sbsandbox-intern-edullm-wandb-api-key-fnwEVp
+        Command:
+          - python
+          - -c
+          - 'print("sbsandbox-intern-edullm-gpu-4xa10g-run: no command override was supplied")'
+        Environment:
+          - Name: EDULLM_OUTPUT_BUCKET
+            Value: sbsandbox-intern-edullm-outputs
+          - Name: EDULLM_OUTPUT_PREFIX
+            Value: s3://sbsandbox-intern-edullm-outputs/no-submission-supplied-a-prefix/
+        LinuxParameters:
+          SharedMemorySize: 49152
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group: /aws/batch/sbsandbox-intern-edullm-gpu
+            awslogs-stream-prefix: gpu-4xa10g-run
+            awslogs-region:
+              Ref: AWS::Region
+        Privileged: false
+
+  # -------------------------------------------------------------------------------------
+  # gpu-8xa10g, eight A10G on g5.48xlarge, $16.288/hour. The eight-GPU shape that draws on
+  # the G pool rather than the P pool, and the whole of this environment's ceiling.
+  # -------------------------------------------------------------------------------------
+  Gpu8xA10gComputeEnvironment:
+    Type: AWS::Batch::ComputeEnvironment
+    Properties:
+      ComputeEnvironmentName: sbsandbox-intern-edullm-gpu-8xa10g
+      Type: MANAGED
+      State: ENABLED
+      ReplaceComputeEnvironment: false
+      UpdatePolicy:
+        TerminateJobsOnUpdate: false
+        JobExecutionTimeoutMinutes: 360
+      ComputeResources:
+        Type: EC2
+        AllocationStrategy: BEST_FIT_PROGRESSIVE
+        MinvCpus: 0
+        MaxvCpus: 192
+        InstanceTypes:
+          - g5.48xlarge
+        InstanceRole:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:instance-profile/sbsandbox-intern-edullm-batch-gpu-instance
+        Subnets:
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1a
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1b
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1c
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1d
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1f
+        SecurityGroupIds:
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-security-group-id
+        Ec2Configuration:
+          - ImageType: ECS_AL2023_NVIDIA
+        UpdateToLatestImageVersion: true
+        Tags:
+          Name: sbsandbox-intern-edullm-batch-gpu-8xa10g
+          Project: edullm
+
+  Gpu8xA10gJobQueue:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      JobQueueName: sbsandbox-intern-edullm-gpu-8xa10g
+      State: ENABLED
+      Priority: 1
+      JobStateTimeLimitActions:
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: CAPACITY:INSUFFICIENT_INSTANCE_CAPACITY
+          State: RUNNABLE
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: MISCONFIGURATION:COMPUTE_ENVIRONMENT_MAX_RESOURCE
+          State: RUNNABLE
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT
+          State: RUNNABLE
+      ComputeEnvironmentOrder:
+        - Order: 1
+          ComputeEnvironment:
+            Ref: Gpu8xA10gComputeEnvironment
+
+  Gpu8xA10gJobDefinition:
+    Type: AWS::Batch::JobDefinition
+    Properties:
+      JobDefinitionName: sbsandbox-intern-edullm-gpu-8xa10g-run
+      Type: container
+      PlatformCapabilities:
+        - EC2
+      PropagateTags: true
+      RetryStrategy:
+        Attempts: 1
+      Timeout:
+        AttemptDurationSeconds: 3600
+      ContainerProperties:
+        Image:
+          Fn::Sub: ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/sbsandbox-intern-edullm-olmo-core@sha256:50e2488ab3c77e859a8fe3e6d4a06d7d54f5c852bc7c5dd201fb9db53bff455b
+        ExecutionRoleArn:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-execution
+        JobRoleArn:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-workload
+        ResourceRequirements:
+          - Type: VCPU
+            Value: "192"
+          - Type: MEMORY
+            Value: "737280"
+          - Type: GPU
+            Value: "8"
+        Secrets:
+          - Name: WANDB_API_KEY
+            ValueFrom:
+              Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sbsandbox-intern-edullm-wandb-api-key-fnwEVp
+        Command:
+          - python
+          - -c
+          - 'print("sbsandbox-intern-edullm-gpu-8xa10g-run: no command override was supplied")'
+        Environment:
+          - Name: EDULLM_OUTPUT_BUCKET
+            Value: sbsandbox-intern-edullm-outputs
+          - Name: EDULLM_OUTPUT_PREFIX
+            Value: s3://sbsandbox-intern-edullm-outputs/no-submission-supplied-a-prefix/
+        LinuxParameters:
+          SharedMemorySize: 196608
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group: /aws/batch/sbsandbox-intern-edullm-gpu
+            awslogs-stream-prefix: gpu-8xa10g-run
+            awslogs-region:
+              Ref: AWS::Region
+        Privileged: false
+
+  # -------------------------------------------------------------------------------------
+  # gpu-1xl4, one L4 on g6.xlarge, $0.805/hour
+  # -------------------------------------------------------------------------------------
+  Gpu1xL4ComputeEnvironment:
+    Type: AWS::Batch::ComputeEnvironment
+    Properties:
+      ComputeEnvironmentName: sbsandbox-intern-edullm-gpu-1xl4
+      Type: MANAGED
+      State: ENABLED
+      ReplaceComputeEnvironment: false
+      UpdatePolicy:
+        TerminateJobsOnUpdate: false
+        JobExecutionTimeoutMinutes: 360
+      ComputeResources:
+        Type: EC2
+        AllocationStrategy: BEST_FIT_PROGRESSIVE
+        MinvCpus: 0
+        MaxvCpus: 32
+        InstanceTypes:
+          - g6.xlarge
+        InstanceRole:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:instance-profile/sbsandbox-intern-edullm-batch-gpu-instance
+        Subnets:
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1a
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1b
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1c
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1d
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1f
+        SecurityGroupIds:
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-security-group-id
+        Ec2Configuration:
+          - ImageType: ECS_AL2023_NVIDIA
+        UpdateToLatestImageVersion: true
+        Tags:
+          Name: sbsandbox-intern-edullm-batch-gpu-1xl4
+          Project: edullm
+
+  Gpu1xL4JobQueue:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      JobQueueName: sbsandbox-intern-edullm-gpu-1xl4
+      State: ENABLED
+      Priority: 1
+      JobStateTimeLimitActions:
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: CAPACITY:INSUFFICIENT_INSTANCE_CAPACITY
+          State: RUNNABLE
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: MISCONFIGURATION:COMPUTE_ENVIRONMENT_MAX_RESOURCE
+          State: RUNNABLE
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT
+          State: RUNNABLE
+      ComputeEnvironmentOrder:
+        - Order: 1
+          ComputeEnvironment:
+            Ref: Gpu1xL4ComputeEnvironment
+
+  Gpu1xL4JobDefinition:
+    Type: AWS::Batch::JobDefinition
+    Properties:
+      JobDefinitionName: sbsandbox-intern-edullm-gpu-1xl4-run
+      Type: container
+      PlatformCapabilities:
+        - EC2
+      PropagateTags: true
+      RetryStrategy:
+        Attempts: 1
+      Timeout:
+        AttemptDurationSeconds: 3600
+      ContainerProperties:
+        Image:
+          Fn::Sub: ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/sbsandbox-intern-edullm-olmo-core@sha256:50e2488ab3c77e859a8fe3e6d4a06d7d54f5c852bc7c5dd201fb9db53bff455b
+        ExecutionRoleArn:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-execution
+        JobRoleArn:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-workload
+        ResourceRequirements:
+          - Type: VCPU
+            Value: "4"
+          - Type: MEMORY
+            Value: "15360"
+          - Type: GPU
+            Value: "1"
+        Secrets:
+          - Name: WANDB_API_KEY
+            ValueFrom:
+              Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sbsandbox-intern-edullm-wandb-api-key-fnwEVp
+        Command:
+          - python
+          - -c
+          - 'print("sbsandbox-intern-edullm-gpu-1xl4-run: no command override was supplied")'
+        Environment:
+          - Name: EDULLM_OUTPUT_BUCKET
+            Value: sbsandbox-intern-edullm-outputs
+          - Name: EDULLM_OUTPUT_PREFIX
+            Value: s3://sbsandbox-intern-edullm-outputs/no-submission-supplied-a-prefix/
+        LinuxParameters:
+          SharedMemorySize: 4096
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group: /aws/batch/sbsandbox-intern-edullm-gpu
+            awslogs-stream-prefix: gpu-1xl4-run
+            awslogs-region:
+              Ref: AWS::Region
+        Privileged: false
+
+  # -------------------------------------------------------------------------------------
+  # gpu-4xl4, four L4 on g6.12xlarge, $4.602/hour
+  # -------------------------------------------------------------------------------------
+  Gpu4xL4ComputeEnvironment:
+    Type: AWS::Batch::ComputeEnvironment
+    Properties:
+      ComputeEnvironmentName: sbsandbox-intern-edullm-gpu-4xl4
+      Type: MANAGED
+      State: ENABLED
+      ReplaceComputeEnvironment: false
+      UpdatePolicy:
+        TerminateJobsOnUpdate: false
+        JobExecutionTimeoutMinutes: 360
+      ComputeResources:
+        Type: EC2
+        AllocationStrategy: BEST_FIT_PROGRESSIVE
+        MinvCpus: 0
+        MaxvCpus: 96
+        InstanceTypes:
+          - g6.12xlarge
+        InstanceRole:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:instance-profile/sbsandbox-intern-edullm-batch-gpu-instance
+        Subnets:
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1a
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1b
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1c
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1d
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1f
+        SecurityGroupIds:
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-security-group-id
+        Ec2Configuration:
+          - ImageType: ECS_AL2023_NVIDIA
+        UpdateToLatestImageVersion: true
+        Tags:
+          Name: sbsandbox-intern-edullm-batch-gpu-4xl4
+          Project: edullm
+
+  Gpu4xL4JobQueue:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      JobQueueName: sbsandbox-intern-edullm-gpu-4xl4
+      State: ENABLED
+      Priority: 1
+      JobStateTimeLimitActions:
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: CAPACITY:INSUFFICIENT_INSTANCE_CAPACITY
+          State: RUNNABLE
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: MISCONFIGURATION:COMPUTE_ENVIRONMENT_MAX_RESOURCE
+          State: RUNNABLE
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT
+          State: RUNNABLE
+      ComputeEnvironmentOrder:
+        - Order: 1
+          ComputeEnvironment:
+            Ref: Gpu4xL4ComputeEnvironment
+
+  Gpu4xL4JobDefinition:
+    Type: AWS::Batch::JobDefinition
+    Properties:
+      JobDefinitionName: sbsandbox-intern-edullm-gpu-4xl4-run
+      Type: container
+      PlatformCapabilities:
+        - EC2
+      PropagateTags: true
+      RetryStrategy:
+        Attempts: 1
+      Timeout:
+        AttemptDurationSeconds: 3600
+      ContainerProperties:
+        Image:
+          Fn::Sub: ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/sbsandbox-intern-edullm-olmo-core@sha256:50e2488ab3c77e859a8fe3e6d4a06d7d54f5c852bc7c5dd201fb9db53bff455b
+        ExecutionRoleArn:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-execution
+        JobRoleArn:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-workload
+        ResourceRequirements:
+          - Type: VCPU
+            Value: "48"
+          - Type: MEMORY
+            Value: "184320"
+          - Type: GPU
+            Value: "4"
+        Secrets:
+          - Name: WANDB_API_KEY
+            ValueFrom:
+              Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sbsandbox-intern-edullm-wandb-api-key-fnwEVp
+        Command:
+          - python
+          - -c
+          - 'print("sbsandbox-intern-edullm-gpu-4xl4-run: no command override was supplied")'
+        Environment:
+          - Name: EDULLM_OUTPUT_BUCKET
+            Value: sbsandbox-intern-edullm-outputs
+          - Name: EDULLM_OUTPUT_PREFIX
+            Value: s3://sbsandbox-intern-edullm-outputs/no-submission-supplied-a-prefix/
+        LinuxParameters:
+          SharedMemorySize: 49152
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group: /aws/batch/sbsandbox-intern-edullm-gpu
+            awslogs-stream-prefix: gpu-4xl4-run
+            awslogs-region:
+              Ref: AWS::Region
+        Privileged: false
+
+  # -------------------------------------------------------------------------------------
+  # gpu-4xl40s, four L40S on g6e.12xlarge, $10.493/hour. FOUR SUBNETS: g6e.12xlarge is not
+  # offered in us-east-1f.
+  # -------------------------------------------------------------------------------------
+  Gpu4xL40sComputeEnvironment:
+    Type: AWS::Batch::ComputeEnvironment
+    Properties:
+      ComputeEnvironmentName: sbsandbox-intern-edullm-gpu-4xl40s
+      Type: MANAGED
+      State: ENABLED
+      ReplaceComputeEnvironment: false
+      UpdatePolicy:
+        TerminateJobsOnUpdate: false
+        JobExecutionTimeoutMinutes: 360
+      ComputeResources:
+        Type: EC2
+        AllocationStrategy: BEST_FIT_PROGRESSIVE
+        MinvCpus: 0
+        MaxvCpus: 48
+        InstanceTypes:
+          - g6e.12xlarge
+        InstanceRole:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:instance-profile/sbsandbox-intern-edullm-batch-gpu-instance
+        Subnets:
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1a
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1b
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1c
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1d
+        SecurityGroupIds:
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-security-group-id
+        Ec2Configuration:
+          - ImageType: ECS_AL2023_NVIDIA
+        UpdateToLatestImageVersion: true
+        Tags:
+          Name: sbsandbox-intern-edullm-batch-gpu-4xl40s
+          Project: edullm
+
+  Gpu4xL40sJobQueue:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      JobQueueName: sbsandbox-intern-edullm-gpu-4xl40s
+      State: ENABLED
+      Priority: 1
+      JobStateTimeLimitActions:
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: CAPACITY:INSUFFICIENT_INSTANCE_CAPACITY
+          State: RUNNABLE
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: MISCONFIGURATION:COMPUTE_ENVIRONMENT_MAX_RESOURCE
+          State: RUNNABLE
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT
+          State: RUNNABLE
+      ComputeEnvironmentOrder:
+        - Order: 1
+          ComputeEnvironment:
+            Ref: Gpu4xL40sComputeEnvironment
+
+  Gpu4xL40sJobDefinition:
+    Type: AWS::Batch::JobDefinition
+    Properties:
+      JobDefinitionName: sbsandbox-intern-edullm-gpu-4xl40s-run
+      Type: container
+      PlatformCapabilities:
+        - EC2
+      PropagateTags: true
+      RetryStrategy:
+        Attempts: 1
+      Timeout:
+        AttemptDurationSeconds: 3600
+      ContainerProperties:
+        Image:
+          Fn::Sub: ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/sbsandbox-intern-edullm-olmo-core@sha256:50e2488ab3c77e859a8fe3e6d4a06d7d54f5c852bc7c5dd201fb9db53bff455b
+        ExecutionRoleArn:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-execution
+        JobRoleArn:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-workload
+        ResourceRequirements:
+          - Type: VCPU
+            Value: "48"
+          - Type: MEMORY
+            Value: "380928"
+          - Type: GPU
+            Value: "4"
+        Secrets:
+          - Name: WANDB_API_KEY
+            ValueFrom:
+              Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sbsandbox-intern-edullm-wandb-api-key-fnwEVp
+        Command:
+          - python
+          - -c
+          - 'print("sbsandbox-intern-edullm-gpu-4xl40s-run: no command override was supplied")'
+        Environment:
+          - Name: EDULLM_OUTPUT_BUCKET
+            Value: sbsandbox-intern-edullm-outputs
+          - Name: EDULLM_OUTPUT_PREFIX
+            Value: s3://sbsandbox-intern-edullm-outputs/no-submission-supplied-a-prefix/
+        LinuxParameters:
+          SharedMemorySize: 95232
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group: /aws/batch/sbsandbox-intern-edullm-gpu
+            awslogs-stream-prefix: gpu-4xl40s-run
+            awslogs-region:
+              Ref: AWS::Region
+        Privileged: false
+
+  # -------------------------------------------------------------------------------------
+  # gpu-8xa100, eight A100 on p4d.24xlarge, $21.958/hour. Draws on the P quota, and needs an
+  # admin per submission because that rate is above policy's exception ceiling. FOUR SUBNETS:
+  # p4d.24xlarge is not offered in us-east-1f.
+  # -------------------------------------------------------------------------------------
+  Gpu8xA100ComputeEnvironment:
+    Type: AWS::Batch::ComputeEnvironment
+    Properties:
+      ComputeEnvironmentName: sbsandbox-intern-edullm-gpu-8xa100
+      Type: MANAGED
+      State: ENABLED
+      ReplaceComputeEnvironment: false
+      UpdatePolicy:
+        TerminateJobsOnUpdate: false
+        JobExecutionTimeoutMinutes: 360
+      ComputeResources:
+        Type: EC2
+        AllocationStrategy: BEST_FIT_PROGRESSIVE
+        MinvCpus: 0
+        MaxvCpus: 96
+        InstanceTypes:
+          - p4d.24xlarge
+        InstanceRole:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:instance-profile/sbsandbox-intern-edullm-batch-gpu-instance
+        Subnets:
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1a
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1b
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1c
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1d
+        SecurityGroupIds:
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-security-group-id
+        Ec2Configuration:
+          - ImageType: ECS_AL2023_NVIDIA
+        UpdateToLatestImageVersion: true
+        Tags:
+          Name: sbsandbox-intern-edullm-batch-gpu-8xa100
+          Project: edullm
+
+  Gpu8xA100JobQueue:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      JobQueueName: sbsandbox-intern-edullm-gpu-8xa100
+      State: ENABLED
+      Priority: 1
+      JobStateTimeLimitActions:
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: CAPACITY:INSUFFICIENT_INSTANCE_CAPACITY
+          State: RUNNABLE
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: MISCONFIGURATION:COMPUTE_ENVIRONMENT_MAX_RESOURCE
+          State: RUNNABLE
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT
+          State: RUNNABLE
+      ComputeEnvironmentOrder:
+        - Order: 1
+          ComputeEnvironment:
+            Ref: Gpu8xA100ComputeEnvironment
+
+  Gpu8xA100JobDefinition:
+    Type: AWS::Batch::JobDefinition
+    Properties:
+      JobDefinitionName: sbsandbox-intern-edullm-gpu-8xa100-run
+      Type: container
+      PlatformCapabilities:
+        - EC2
+      PropagateTags: true
+      RetryStrategy:
+        Attempts: 1
+      Timeout:
+        AttemptDurationSeconds: 3600
+      ContainerProperties:
+        Image:
+          Fn::Sub: ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/sbsandbox-intern-edullm-olmo-core@sha256:50e2488ab3c77e859a8fe3e6d4a06d7d54f5c852bc7c5dd201fb9db53bff455b
+        ExecutionRoleArn:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-execution
+        JobRoleArn:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-workload
+        ResourceRequirements:
+          - Type: VCPU
+            Value: "96"
+          - Type: MEMORY
+            Value: "1155072"
+          - Type: GPU
+            Value: "8"
+        Secrets:
+          - Name: WANDB_API_KEY
+            ValueFrom:
+              Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sbsandbox-intern-edullm-wandb-api-key-fnwEVp
+        Command:
+          - python
+          - -c
+          - 'print("sbsandbox-intern-edullm-gpu-8xa100-run: no command override was supplied")'
+        Environment:
+          - Name: EDULLM_OUTPUT_BUCKET
+            Value: sbsandbox-intern-edullm-outputs
+          - Name: EDULLM_OUTPUT_PREFIX
+            Value: s3://sbsandbox-intern-edullm-outputs/no-submission-supplied-a-prefix/
+        LinuxParameters:
+          SharedMemorySize: 288768
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group: /aws/batch/sbsandbox-intern-edullm-gpu
+            awslogs-stream-prefix: gpu-8xa100-run
+            awslogs-region:
+              Ref: AWS::Region
+        Privileged: false
+
+  # -------------------------------------------------------------------------------------
+  # gpu-8xh100, eight H100 on p5.48xlarge, $55.04/hour. The most expensive thing this
+  # account can start, and one eight-hour run is $440. Needs an admin per submission.
+  # -------------------------------------------------------------------------------------
+  Gpu8xH100ComputeEnvironment:
+    Type: AWS::Batch::ComputeEnvironment
+    Properties:
+      ComputeEnvironmentName: sbsandbox-intern-edullm-gpu-8xh100
+      Type: MANAGED
+      State: ENABLED
+      ReplaceComputeEnvironment: false
+      UpdatePolicy:
+        TerminateJobsOnUpdate: false
+        JobExecutionTimeoutMinutes: 360
+      ComputeResources:
+        Type: EC2
+        AllocationStrategy: BEST_FIT_PROGRESSIVE
+        MinvCpus: 0
+        MaxvCpus: 192
+        InstanceTypes:
+          - p5.48xlarge
+        InstanceRole:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:instance-profile/sbsandbox-intern-edullm-batch-gpu-instance
+        Subnets:
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1a
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1b
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1c
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1d
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1f
+        SecurityGroupIds:
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-security-group-id
+        Ec2Configuration:
+          - ImageType: ECS_AL2023_NVIDIA
+        UpdateToLatestImageVersion: true
+        Tags:
+          Name: sbsandbox-intern-edullm-batch-gpu-8xh100
+          Project: edullm
+
+  Gpu8xH100JobQueue:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      JobQueueName: sbsandbox-intern-edullm-gpu-8xh100
+      State: ENABLED
+      Priority: 1
+      JobStateTimeLimitActions:
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: CAPACITY:INSUFFICIENT_INSTANCE_CAPACITY
+          State: RUNNABLE
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: MISCONFIGURATION:COMPUTE_ENVIRONMENT_MAX_RESOURCE
+          State: RUNNABLE
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT
+          State: RUNNABLE
+      ComputeEnvironmentOrder:
+        - Order: 1
+          ComputeEnvironment:
+            Ref: Gpu8xH100ComputeEnvironment
+
+  Gpu8xH100JobDefinition:
+    Type: AWS::Batch::JobDefinition
+    Properties:
+      JobDefinitionName: sbsandbox-intern-edullm-gpu-8xh100-run
+      Type: container
+      PlatformCapabilities:
+        - EC2
+      PropagateTags: true
+      RetryStrategy:
+        Attempts: 1
+      Timeout:
+        AttemptDurationSeconds: 3600
+      ContainerProperties:
+        Image:
+          Fn::Sub: ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/sbsandbox-intern-edullm-olmo-core@sha256:50e2488ab3c77e859a8fe3e6d4a06d7d54f5c852bc7c5dd201fb9db53bff455b
+        ExecutionRoleArn:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-execution
+        JobRoleArn:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-workload
+        ResourceRequirements:
+          - Type: VCPU
+            Value: "192"
+          - Type: MEMORY
+            Value: "2048000"
+          - Type: GPU
+            Value: "8"
+        Secrets:
+          - Name: WANDB_API_KEY
+            ValueFrom:
+              Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sbsandbox-intern-edullm-wandb-api-key-fnwEVp
+        Command:
+          - python
+          - -c
+          - 'print("sbsandbox-intern-edullm-gpu-8xh100-run: no command override was supplied")'
+        Environment:
+          - Name: EDULLM_OUTPUT_BUCKET
+            Value: sbsandbox-intern-edullm-outputs
+          - Name: EDULLM_OUTPUT_PREFIX
+            Value: s3://sbsandbox-intern-edullm-outputs/no-submission-supplied-a-prefix/
+        LinuxParameters:
+          SharedMemorySize: 512000
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group: /aws/batch/sbsandbox-intern-edullm-gpu
+            awslogs-stream-prefix: gpu-8xh100-run
+            awslogs-region:
+              Ref: AWS::Region
+        Privileged: false
+
+Outputs:
+  Gpu1xT4JobQueueArn:
+    Value:
+      Ref: Gpu1xT4JobQueue
+  Gpu4xT4JobQueueArn:
+    Value:
+      Ref: Gpu4xT4JobQueue
+  Gpu4xA10gJobQueueArn:
+    Value:
+      Ref: Gpu4xA10gJobQueue
+  Gpu8xA10gJobQueueArn:
+    Value:
+      Ref: Gpu8xA10gJobQueue
+  Gpu1xL4JobQueueArn:
+    Value:
+      Ref: Gpu1xL4JobQueue
+  Gpu4xL4JobQueueArn:
+    Value:
+      Ref: Gpu4xL4JobQueue
+  Gpu4xL40sJobQueueArn:
+    Value:
+      Ref: Gpu4xL40sJobQueue
+  Gpu8xA100JobQueueArn:
+    Value:
+      Ref: Gpu8xA100JobQueue
+  Gpu8xH100JobQueueArn:
+    Value:
+      Ref: Gpu8xH100JobQueue
