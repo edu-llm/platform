@@ -480,11 +480,15 @@ branch cut before the grant existed, and the workload role lost it. Nothing warn
 change set only shows what that template says, and what it said about the delete was nothing
 at all. The re-apply at 18:07 UTC restored it as the union of both changes, the two
 statements above plus the three-repository ECR lists on the execution and instance roles that
-the 17:53 update introduced. Those lists belong to pull request 154 and are not in this
-branch, so the deployed template matches neither branch on its own until both have merged.
-Applying this file from `main` once 154 lands reconciles the two. Applying it from `main`
-before 154 lands takes those ECR lists back off and locks two repositories out of the GPU
-queue again.
+the 17:53 update introduced. Those lists came from pull request 154, which has since merged,
+so this file now carries both and the deployed template matches it byte for byte. Had 154
+still been open, applying this file would have taken those lists back off and locked two
+repositories out of the GPU queue.
+
+The general point outlives this instance. A change set on this stack shows what the template
+being applied says, not what it omits relative to what is live, so a stale template reverts a
+grant silently. Two people applying this file from two worktrees will keep doing that until
+the stack is applied from `main` rather than from a branch.
 
 ### Stack 3: the dataset validator role, deployed 2026-08-01
 
