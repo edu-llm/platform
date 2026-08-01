@@ -66,6 +66,7 @@ own script over editing anything under src/olmo_core/.
 
 - [ ] Your branch is named `edullm/…` — this is the one people miss, see below
 - [ ] The build workflow has gone green on your commit
+- [ ] The image has finished its security scan — a few minutes *after* the build goes green
 - [ ] You have the full commit SHA (`git rev-parse HEAD`)
 - [ ] You have a Weights and Biases project to report into
 
@@ -92,10 +93,15 @@ A branch outside those names fails later, at submission, with `commit <sha> has 
 
 | | |
 | --- | --- |
+| Before you can submit | The registry scans every published image, which finishes a few minutes after the push. See below |
 | What the build checks | `ruff check .` over your checkout — not your tests |
 | Tag | First twelve characters of the commit. ECR refuses to overwrite a tag, so one commit is one image |
 | Digest | Printed in the build's step summary. Leave `image_digest` blank and it is resolved from your commit |
 | Re-running a build | Resumes onto the existing image rather than failing |
+
+**A green build is not the last step, and this one has already cost an afternoon.** The registry scans every image it accepts, and a submission naming an image whose scan has not finished is refused. On a recent build the scan completed about seven minutes after the push. Watch for it under **Vulnerabilities** on the package in the registry, or simply give it ten minutes.
+
+If you submit inside that window the refusal reads `image_scan_findings_unreviewed`, which says your image carries vulnerabilities nobody has signed off. That is usually not what happened — the scan had not finished, and the platform reported the wrong reason. Wait a few minutes and resubmit the same commit; nothing else about the submission needs changing.
 
 ## Workload profiles
 
