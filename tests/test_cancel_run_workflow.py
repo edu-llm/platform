@@ -296,3 +296,34 @@ def test_the_run_id_is_checked_before_any_credential_is_taken(workflow: dict[str
     credentialed = next(index for index, name in enumerate(names) if "AWS credentials" in name)
 
     assert validated < credentialed
+
+
+def test_a_missing_canceller_role_is_named_rather_than_reported_as_no_credentials(
+    workflow: dict[str, Any],
+) -> None:
+    """Mutation: drop the guard and let configure-aws-credentials fail on an empty role.
+
+    That is what happened. The role comes from infra/iam/run-canceller-role.yaml, which is
+    applied from a laptop because the deployer role holds no iam:CreateRole, and it has not
+    been applied -- so AWS_RUN_CANCELLER_ROLE_ARN is unset and every dispatch fails.
+
+    It failed unhelpfully. An empty role-to-assume produces "Credentials could not be loaded,
+    please check your action inputs", which reads as a broken secret or an expired federation
+    and sends the reader to the OIDC configuration, which is fine. The cause is one stack that
+    was never applied, and a researcher cannot tell that from the message.
+    """
+    steps = workflow["jobs"]["cancel"]["steps"]
+    names = [step.get("name", "") for step in steps]
+    guard = next(index for index, name in enumerate(names) if "canceller role" in name)
+    credentialed = next(index for index, name in enumerate(names) if "AWS credentials" in name)
+
+    assert guard < credentialed, "a guard after the credential step guards nothing"
+
+    body = steps[guard]["run"]
+    assert "run_canceller_role_not_deployed" in body
+    # The reader needs somewhere to go, not only a diagnosis.
+    assert "infra/README.md" in body
+    assert "Batch execution" in body, (
+        "the guard should name the workflow an admin can read a run through, since that is "
+        "the thing the person dispatching this actually wanted"
+    )

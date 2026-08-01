@@ -74,6 +74,35 @@ jobs:
             exit 1
           fi
 
+      # SAY WHICH STACK IS MISSING, RATHER THAN LETTING THE CREDENTIAL STEP SAY NOTHING.
+      #
+      # This workflow assumes sbsandbox-intern-edullm-run-canceller, and that role is created
+      # by infra/iam/run-canceller-role.yaml, which is applied from a laptop -- the deployer
+      # role holds no iam:CreateRole, deliberately, so no stack under infra/iam/ can be
+      # applied from CI. Until somebody with an administrative credential applies it and sets
+      # AWS_RUN_CANCELLER_ROLE_ARN, every dispatch here fails.
+      #
+      # It failed unhelpfully. configure-aws-credentials with an empty role-to-assume reports
+      # "Credentials could not be loaded, please check your action inputs: Could not load
+      # credentials from any providers", which reads as a broken secret or an expired
+      # federation and sends the reader to the OIDC configuration -- which is fine. The cause
+      # is one stack that was never applied, and this says so.
+      - name: Say if the canceller role was never deployed
+        env:
+          ROLE_ARN: ${{ vars.AWS_RUN_CANCELLER_ROLE_ARN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${ROLE_ARN}" ]]; then
+            echo "run_canceller_role_not_deployed" >&2
+            echo "AWS_RUN_CANCELLER_ROLE_ARN is unset, so this workflow has no identity to assume." >&2
+            echo "The role comes from infra/iam/run-canceller-role.yaml, which is applied from a laptop" >&2
+            echo "because the deployer role holds no iam:CreateRole. See 'The Phase 4 stacks' in" >&2
+            echo "infra/README.md for the stack and the variable it needs." >&2
+            echo "Until then, ask an admin: they can read a run through the Deploy: Batch execution" >&2
+            echo "estate workflow, which takes a run id and reports on it." >&2
+            exit 1
+          fi
+
       # The roster the authorisation check reads has to be the reviewed one on main, not a
       # copy pasted into this file, so the repository is checked out for it.
       - name: Check out the platform
