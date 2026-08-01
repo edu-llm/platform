@@ -37,6 +37,7 @@ from find_runs_that_saved_nothing import (
     CommandLineObjectStore,
     ReportInputError,
     RunCheckpointState,
+    _load_outcomes,
     checkpoint_states,
     main,
     render,
@@ -45,6 +46,7 @@ from find_runs_that_saved_nothing import (
 from edullm_platform.checkpoints import CheckpointState
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.admission import IntentRecord
+from edullm_platform.contracts.lifecycle import AttemptTerminalState
 from edullm_platform.contracts.results import output_prefix
 from edullm_platform.contracts.workload import WorkloadCatalog
 from tests.fake_object_store import FakeObjectStore
@@ -357,7 +359,14 @@ def test_the_report_says_nothing_is_wrong_rather_than_printing_an_empty_table() 
     assert "nothing here to be wrong" in render([])
 
 
-def described(run_id: str, state: CheckpointState, objects: int) -> RunCheckpointState:
+def described(
+    run_id: str,
+    state: CheckpointState,
+    objects: int,
+    *,
+    outcome: AttemptTerminalState | None = None,
+    outcome_known: bool = False,
+) -> RunCheckpointState:
     return RunCheckpointState(
         run_id=run_id,
         team=TEAM,
@@ -366,6 +375,8 @@ def described(run_id: str, state: CheckpointState, objects: int) -> RunCheckpoin
         objects=objects,
         state=state,
         detail="what the reader found",
+        outcome=outcome,
+        outcome_known=outcome_known,
     )
 
 
@@ -440,3 +451,173 @@ def test_a_fragment_exits_non_zero_so_the_nightly_can_gate_on_it(
     )
 
     assert main(["--lineage-root", str(tmp_path)]) == 0
+
+
+# ----------------------------------------------------------------------------------------
+# Which runs the report is entitled to hold a prefix against
+# ----------------------------------------------------------------------------------------
+
+
+def write_result(root: Path, run_id: str, outcome: str) -> None:
+    """One result record, in the shape the lifecycle recorder writes."""
+    results = root / "result"
+    results.mkdir(exist_ok=True)
+    (results / f"{run_id}.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "run_id": run_id,
+                "attempt_id": "att_019fa910-13ef-7af8-ad90-81b03811c034",
+                "outcome": outcome,
+                "output_prefixes": [output_prefix(team=TEAM, run_id=run_id)],
+                "checkpoints": [],
+                "wandb_run": None,
+                "retention_class": "standard",
+                "completed_at": "2026-08-01T10:37:04.700000Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_a_run_the_platform_recorded_as_failed_is_listed_and_not_held_against_anything() -> None:
+    """THE ONE THAT MATTERS. Mutation: judge every contracted run, whatever it ended as.
+
+    That is what this did, and it is why the nightly was red on fourteen runs that had
+    nothing to do with checkpointing. They died at ``wandb.init()`` on a credential that was
+    wrong until it was rotated, inside the checkpointer's own teardown, and on an evaluator
+    fetching a file that is not served over HTTP. All three are recorded as failures with an
+    exit code, so repeating them here said nothing new and buried the one run that mattered.
+
+    Listed, not dropped. A run that leaves the report entirely is a run nobody looks at, and
+    this tool exists because of a run nobody looked at.
+    """
+    states = [
+        described(
+            "run_failed",
+            CheckpointState.UNCOMMITTED,
+            1,
+            outcome=AttemptTerminalState.FAILED,
+            outcome_known=True,
+        ),
+    ]
+
+    assert not states[0].judged
+
+    report = render(states)
+
+    assert "## Not asked about" in report
+    assert "run_failed" in report, "a run that vanishes from the report is one nobody reads"
+    assert "## Wrote something that will not load" not in report
+
+
+def test_a_run_recorded_as_a_success_is_still_read_out_of_the_bucket() -> None:
+    """Mutation: believe the result record, since it says the run succeeded.
+
+    The outcome decides whether to ask, and the prefix decides the answer. Collapsing the two
+    would delete the entire point: a run that trains for twelve hours into ``/tmp``, exits
+    zero and is recorded as an unqualified success is the failure nothing else reports.
+    """
+    states = [
+        described(
+            "run_ok",
+            CheckpointState.ABSENT,
+            0,
+            outcome=AttemptTerminalState.SUCCEEDED,
+            outcome_known=True,
+        ),
+    ]
+
+    assert states[0].judged
+
+    report = render(states)
+
+    assert "## Wrote nothing" in report
+    assert "## Not asked about" not in report
+
+
+def test_a_run_with_no_result_record_has_not_finished_and_is_not_judged() -> None:
+    """A run still going has not written its first checkpoint yet, which is not a failure.
+
+    This was the other half of what the report could not tell apart, and it would have called
+    the live twelve-hour run a silent failure for its first two hundred steps.
+    """
+    states = [described("run_going", CheckpointState.ABSENT, 0, outcome=None, outcome_known=True)]
+
+    assert not states[0].judged
+    assert "no result record" in render(states)
+
+
+def test_with_no_result_records_at_all_every_run_is_judged_as_before() -> None:
+    """Mutation: treat "no result tree" as "no run succeeded", which passes every night.
+
+    The nightly reader role cannot read ``result/`` until the stack is applied from a laptop,
+    so this is the state the check runs in today. A report that answered a missing permission
+    by knowing less and going green would be the silent failure it exists to find, turned on
+    itself. ``outcome_known`` is what keeps the two apart.
+    """
+    states = [described("run_unknown", CheckpointState.UNCOMMITTED, 1)]
+
+    assert not states[0].outcome_known
+    assert states[0].judged
+    assert "## Wrote something that will not load" in render(states)
+
+
+def test_the_absence_of_a_result_tree_is_not_the_same_as_an_empty_one(tmp_path: Path) -> None:
+    """``None`` and ``{}`` mean opposite things and the loader keeps them apart.
+
+    An empty mapping is "these runs finished and none of them succeeded". ``None`` is "nobody
+    looked". A loader returning ``{}`` for both would let a missing sync scope the report down
+    to nothing and report success.
+    """
+    assert _load_outcomes(tmp_path) is None
+
+    (tmp_path / "result").mkdir()
+
+    assert _load_outcomes(tmp_path) == {}
+
+    write_result(tmp_path, RUN_ID, "succeeded")
+
+    assert _load_outcomes(tmp_path) == {RUN_ID: AttemptTerminalState.SUCCEEDED}
+
+
+def test_a_failed_run_does_not_fail_the_nightly_but_a_succeeded_one_does(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The exit code is the whole of the signal, so the scope has to reach it.
+
+    Same stub prefix in both halves. What changes is what the platform recorded, and that is
+    what decides whether this is a finding or a run that already reported its own failure.
+    """
+    records = tmp_path / "intent"
+    records.mkdir()
+    source = (
+        PROJECT_ROOT
+        / "fixtures"
+        / "evidence"
+        / "phase-2"
+        / "lineage"
+        / "records"
+        / "intent"
+        / f"{RUN_ID}.json"
+    )
+    loaded = json.loads(source.read_text(encoding="utf-8"))
+    if isinstance(loaded, str):
+        loaded = json.loads(loaded)
+    loaded["manifest"]["workload_profile"] = "olmo-core-train-1gpu"
+    loaded["manifest"]["compute_profile"] = "gpu-1xa10g"
+    (records / f"{RUN_ID}.json").write_text(json.dumps(loaded), encoding="utf-8")
+
+    monkeypatch.setattr(
+        "find_runs_that_saved_nothing.CommandLineObjectStore",
+        lambda **_: store_holding((0, STUB)),
+    )
+
+    write_result(tmp_path, RUN_ID, "failed")
+
+    assert main(["--lineage-root", str(tmp_path)]) == 0
+
+    write_result(tmp_path, RUN_ID, "succeeded")
+
+    assert main(["--lineage-root", str(tmp_path)]) == 1
