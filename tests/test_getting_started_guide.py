@@ -183,9 +183,23 @@ def workload_role_actions() -> set[str]:
 def test_the_prune_trap_is_named_and_the_grant_it_assumes_is_still_absent(guide: str) -> None:
     """Mutation: grant the workload role a delete, and leave the guide saying it has none.
 
-    OLMo-core keeps the last three checkpoints and deletes the rest, so the fourth write
-    is the one that calls ``s3:DeleteObject``. The role does not hold it, which turns a
-    default nobody chose into a failure eleven hours into a twelve-hour run.
+    ``CheckpointerCallback.max_checkpoints`` defaults to 3 and counts permanent checkpoints
+    only, which means the one written at step 0 plus those at ``save_interval`` and
+    ``fixed_steps``. The fourth of those schedules the oldest for removal, and the removal
+    runs at the top of the following ``post_train_batch``. It deletes the step directory's
+    ``.metadata.json`` first, through ``remove_file``, which is a single ``s3:DeleteObject``
+    and is the call the role does not hold.
+
+    THE REFUSAL IS NOT SWALLOWED, WHICH IS WHY THIS IS A TRAP RATHER THAN AN UNTIDY BUCKET.
+    ``_s3_remove_file`` re-raises anything that is not a 404, ``@retriable`` treats every
+    botocore ``ClientError`` as retriable and so turns it into ``OLMoNetworkError`` after
+    three attempts, and ``_remove_checkpoint`` catches only ``FileNotFoundError``. So it
+    reaches ``Trainer.fit``, which records it and re-raises. The directory clear that would
+    have run next does swallow the same refusal, so the order of the two is what decides
+    whether the run dies or merely leaks objects.
+
+    It fires early, not late. At ``--save-interval 200`` the fourth permanent checkpoint is
+    step 600, which on one A10G is a bit over an hour in.
 
     The guide's advice is to keep every checkpoint, and the reason it gives is that the
     role has no delete. Both halves are asserted, because the advice outliving its reason
@@ -249,11 +263,23 @@ def test_the_save_interval_is_named_against_the_contract_the_workload_declares(
 def test_the_evaluator_trap_names_both_callbacks(guide: str) -> None:
     """Mutation: name one evaluator and leave the other on.
 
-    The example's ``lm_evaluator`` fetches a ``.csv.gz`` metadata file that is not served
-    over HTTP, and it fails while the trainer is still being built rather than at the first
-    eval interval. ``downstream_evaluator`` fails the same way for the same reason, so a
-    guide that disables one of the two sends the reader back to an identical crash with the
-    obvious fix already applied, which is the worst place to leave somebody.
+    TWO CALLBACKS, TWO UNRELATED CAUSES, AND THE GUIDE USED TO GIVE ONE CAUSE FOR BOTH.
+    ``lm_evaluator`` builds a ``NumpyPaddedFSLDataset`` over a C4 validation shard on
+    ``olmo-data.org``, which needs the ``.csv.gz`` of document offsets sitting beside the
+    ``.npy``. That file 404s, while ``c4-train.00000-00099.csv.gz`` in the same directory
+    returns 200, so the shape of the failure is a file nobody published rather than a
+    protocol or a container that cannot reach the internet. The observed error is
+    ``RuntimeError: Source metadata file 'c4-validation.00000-00008.csv.gz' is required to
+    calculate document indices``.
+
+    ``downstream_evaluator`` fails on ``from olmo_eval import HFTokenizer``.
+    ``ai2-olmo-eval`` is OLMo-core's ``eval`` extra and the training image installs
+    ``.[wandb]`` and ``boto3``, so it is not there. Nothing has ever logged it, because
+    ``lm_evaluator`` is built first and ends the process.
+
+    What survives that correction is the reason both are named: they fail during trainer
+    construction rather than at the first eval interval, so a guide that disables one sends
+    the reader back to a crash seconds later with the obvious fix already applied.
 
     The worked command is asserted separately from the prose. A trap explained in a
     paragraph and missing from the line people paste is a trap that is still set.
