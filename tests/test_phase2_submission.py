@@ -107,7 +107,9 @@ EXCEEDED_CEILINGS: tuple[tuple[str, dict[str, object], str], ...] = (
             "fanout_parallelism": 5,
             "fanout_index_parameter": "seed",
         },
-        "worst-case cost $680.64 exceeds the routine ceiling of",
+        # Doubled from $680.64 without the form changing, because the workload's attempt
+        # bound went from one to two and worst-case cost is per attempt.
+        "worst-case cost $1361.28 exceeds the routine ceiling of",
     ),
     (
         "runtime",
@@ -121,7 +123,15 @@ EXCEEDED_CEILINGS: tuple[tuple[str, dict[str, object], str], ...] = (
     ),
     (
         "fan-out size",
-        {"fanout_size": 65, "fanout_parallelism": 8, "fanout_index_parameter": "shard"},
+        # The half hour is what keeps this row about fan-out size. Sixty-five cells at the
+        # workload's own twelve hours and two attempts is $8,848, so the summary would name
+        # the cost ceiling as well and the row would stop isolating the one it is for.
+        {
+            "maximum_runtime_hours": "0.5",
+            "fanout_size": 65,
+            "fanout_parallelism": 8,
+            "fanout_index_parameter": "shard",
+        },
         "fan-out size of 65 exceeds the routine ceiling of 64",
     ),
     (
@@ -520,7 +530,12 @@ def test_the_workload_profile_supplies_what_the_form_did_not_ask_for(
     [
         ("compute_profile", "gpu-1xt4"),
         ("maximum_runtime_hours", Decimal(3)),
-        ("maximum_attempts", 2),
+        # One, not two. The workload's default was one attempt and became two when the
+        # four-GPU entry's bounds were raised to the single-GPU entry's, so two would now
+        # match the default and prove nothing about which one was used. Downward is the only
+        # direction left: routine_maximum_attempts is two, so three would make the submission
+        # an exception and change what this test is measuring.
+        ("maximum_attempts", 1),
     ],
 )
 def test_an_explicit_override_wins_over_the_profile_default(
@@ -543,7 +558,9 @@ def test_an_overridden_runtime_is_what_the_submission_is_priced_on() -> None:
 
     assert default.cost.maximum_runtime_hours == workload_profile(OLMO_WORKLOAD).maximum_runtime_hours
     assert longer.cost.maximum_runtime_hours == Decimal(3)
-    assert longer.cost.maximum_compute_cost_usd == Decimal("17.02")
+    # Was 17.02, which was three hours at $5.672 across one attempt. The workload now allows
+    # two, and worst-case cost is per attempt.
+    assert longer.cost.maximum_compute_cost_usd == Decimal("34.03")
     assert longer.facts.estimated_cost_usd == longer.cost.maximum_compute_cost_usd
 
 

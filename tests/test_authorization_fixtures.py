@@ -11,6 +11,7 @@ from edullm_platform.contracts.decision_matrix import AuthorizationScenario
 from edullm_platform.contracts.policy import ApprovalClass, ApprovalScope
 from edullm_platform.manifest_helpers import compute_manifest_maximum_cost
 from edullm_platform.phase0_gate import request_facts_from_manifest
+from tests.policy_support import ROUTINE_RATE
 from tests.test_lifecycle import reverse_mapping_order
 from tests.test_manifest import (
     PROJECT_ROOT,
@@ -81,7 +82,14 @@ def test_authorization_fixture_validates_against_the_scenario_contract(filename:
 @pytest.mark.parametrize("filename", SCENARIO_IDS, ids=SCENARIO_IDS)
 def test_authorization_fixture_produces_exactly_its_expected_reason(filename: str) -> None:
     scenario = load_scenario(filename)
-    decision = scenario.decide(load_approval_policy(), load_organization_inventory())
+    # Under the rate ceiling, so each fixture's expected approval class is still reached by
+    # the request bounds the fixture states. A fixture is about who may release a run; the
+    # ceiling is about which machine, and this suite does not vary that.
+    decision = scenario.decide(
+        load_approval_policy(),
+        load_organization_inventory(),
+        hourly_rate_usd=ROUTINE_RATE,
+    )
     assert decision.reason is REVIEWED_SCENARIO_REASONS[filename]
     assert decision.reason is scenario.expected.reason
     assert decision.granted is scenario.expected.granted

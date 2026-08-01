@@ -10,17 +10,18 @@ promise is what these tests keep. A ``choice`` input's options are static text i
 workflow YAML with nothing behind them, so a registry entry added and not offered is
 invisible, and an option offered and not registered is a refusal wearing a menu item.
 
-**The workload list is the sharp one, and it has two ways of being wrong.**
-``dolma-tokenize`` is a registered workload naming a repository that nothing
-registers -- there is no ECR repository for dolma and no image can be published for it.
-``olmo-core-train-4gpu`` is the other shape: its repository is registered, but the compute
-profile it inherits is ``gpu-4xa10g``, which the catalog prices, does not call provisioned,
-and no execution target backs. Both compile, classify as routine, route to a lead, and are
-refused at admission *after* the approval -- the first with ``unregistered_repository``, the
-second with ``no_execution_target``. Both are deliberately absent from the dropdown, and the
-two tests below are what make each absence a decision rather than an oversight: the moment
-dolma is registered, or ``gpu-4xa10g`` is provisioned and given a target, the option has to
-appear.
+**The workload list is the sharp one, and it has two ways of being wrong.** A workload can
+name a repository nothing registers, or inherit a compute profile nothing backs. Either one
+compiles, classifies as routine, routes to a lead, and is refused at admission *after* the
+approval, the first with ``unregistered_repository`` and the second with
+``no_execution_target``. The cost of that is a person's attention spent on a decision that
+could never have gone the other way.
+
+``dolma-tokenize`` is the live instance of the first: there is no ECR repository for dolma
+and no image can be published for it, so it is deliberately absent from the dropdown.
+``olmo-core-train-4gpu`` was the live instance of the second and is not any more, because
+``gpu-4xa10g`` is provisioned now and the four-rank launch it needs has been run. The rule
+outlived the instance, and the tests below still hold every offered workload to both halves.
 
 **``team`` is the fourth key and was the last one still open.** It is different from the
 other three in what a wrong value costs. An unregistered dataset or workload is refused at
@@ -450,12 +451,14 @@ def test_every_offered_workload_inherits_a_compute_profile_with_somewhere_to_run
     refused, which is the shape ``dolma-tokenize`` and an unprovisioned override
     already had.
 
-    ``olmo-core-train-4gpu`` was the live instance. Its repository is registered and its
-    image is published, and it inherits ``gpu-4xa10g``: priced in the catalog, not marked
-    provisioned, and named by no execution target. A submission on it compiles, classifies
-    as routine at $5.67, routes to a lead, waits for a person, is approved, and is then
-    refused at admission with ``no_execution_target``. The whole cost of that is a human's
-    attention, spent on a decision that could never have gone the other way.
+    ``olmo-core-train-4gpu`` was the live instance and is no longer one. It inherits
+    ``gpu-4xa10g``, which was priced and not provisioned; that profile now has a compute
+    environment, a queue and a definition, so the workload is on the menu and the
+    assertions that kept it off have been deleted. What stays is the rule, and
+    ``gpu-1xl40s`` is what still demonstrates it: a single L40S the catalog prices and
+    nothing backs. No offered workload inherits it, and the day one does this test is what
+    says so before a lead spends attention approving a submission that ends in
+    ``no_execution_target``.
 
     Asserted through ``resolve_execution_target`` rather than by reading ``provisioned``
     out of the catalog, so this fails for the reason the submitter would meet: the resolver
@@ -471,19 +474,15 @@ def test_every_offered_workload_inherits_a_compute_profile_with_somewhere_to_run
             "nowhere to run, so every submission that picks it is refused after approval"
         )
 
-    # And the profile that put this test here is still the one that cannot run. Written as
-    # its own assertion because the loop above passes vacuously if the dropdown is emptied.
-    assert resolution_failure("gpu-4xa10g") == "unprovisioned_compute_profile"
-    assert "olmo-core-train-4gpu" not in options_for("workload_profile"), (
-        "gpu-4xa10g is priced and not provisioned, so this workload has nowhere to run; "
-        "when a compute environment backs it this assertion is what has to be deleted"
+    # A profile that still cannot run, so the loop above has something to be right about.
+    # Written as its own assertion because the loop passes vacuously on an empty dropdown.
+    assert resolution_failure("gpu-1xl40s") == "unprovisioned_compute_profile"
+    assert not any(
+        workload.compute_profile == "gpu-1xl40s" for workload in workload_catalog().workloads
     )
-    # The catalog keeps it, deliberately: the entry is the shape a four-GPU training run
-    # takes and its pricing row is what the catalog is for. Removing the menu item is not
-    # the same as removing the workload.
-    assert "olmo-core-train-4gpu" in {
-        workload.name for workload in workload_catalog().workloads
-    }
+    # And the workload this test was written for is now offered rather than withheld.
+    assert "olmo-core-train-4gpu" in options_for("workload_profile")
+    assert resolution_failure("gpu-4xa10g") is None
 
 
 def test_a_workload_that_reads_a_corpus_is_offered_and_has_somewhere_to_run() -> None:
@@ -493,15 +492,15 @@ def test_a_workload_that_reads_a_corpus_is_offered_and_has_somewhere_to_run() ->
     on an empty dropdown -- offering nothing offers nothing unbacked. What none of them
     says is that the one workload a researcher actually came here for is on the menu.
 
-    That workload is ``olmo-core-train-1gpu``. It is the only entry that is for training
-    rather than for proving the platform works: twelve hours against the policy ceiling,
-    two attempts, and a checkpoint contract so the second attempt resumes instead of
-    repeating the first at full price. The sibling ``olmo-core-train-4gpu`` has the same
-    shape on ``gpu-4xa10g``, which is priced and not provisioned -- so picking the
-    plausible one costs a lead's approval and then a ``no_execution_target``.
+    Two workloads are for training rather than for proving the platform works, and both
+    have to be on the menu. ``olmo-core-train-1gpu`` and ``olmo-core-train-4gpu`` carry the
+    same bounds, twelve hours against the policy ceiling and two attempts, and both declare
+    a checkpoint contract so the second attempt resumes instead of repeating the first at
+    full price.
     """
     offered = options_for("workload_profile")
     assert "olmo-core-train-1gpu" in offered
+    assert "olmo-core-train-4gpu" in offered
 
     workload = next(
         candidate
@@ -529,7 +528,19 @@ def test_resolving_a_compute_profile_is_the_same_question_the_provisioned_flag_a
     }
 
     assert provisioned == execution_targets().backed_profiles
-    assert provisioned == {"cpu-32vcpu", "gpu-1xa10g"}
+    assert provisioned == {
+        "cpu-32vcpu",
+        "gpu-1xt4",
+        "gpu-4xt4",
+        "gpu-1xa10g",
+        "gpu-4xa10g",
+        "gpu-8xa10g",
+        "gpu-1xl4",
+        "gpu-4xl4",
+        "gpu-4xl40s",
+        "gpu-8xa100",
+        "gpu-8xh100",
+    }
     for name in provisioned:
         assert resolution_failure(name) is None
 
@@ -537,9 +548,9 @@ def test_resolving_a_compute_profile_is_the_same_question_the_provisioned_flag_a
 def test_the_compute_override_offers_inherit_and_the_provisioned_profiles() -> None:
     """Mutation: offer a profile the catalog prices but nothing backs.
 
-    The catalog prices twelve profiles and two are provisioned. Offering an unprovisioned
-    one is the same failure as the dolma workload: a selectable option whose only outcome is
-    a refusal, this time ``unprovisioned_compute_profile``.
+    The catalog prices thirteen profiles and eleven are provisioned. Offering an
+    unprovisioned one is the same failure as the dolma workload: a selectable option whose
+    only outcome is a refusal, this time ``unprovisioned_compute_profile``.
     """
     catalog = registry("workload-catalog.yaml")["compute_profiles"]
     provisioned = sorted(

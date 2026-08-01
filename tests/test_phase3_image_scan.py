@@ -46,6 +46,7 @@ from edullm_platform.contracts.policy import (
     RequestFacts,
     classify_request,
 )
+from tests.policy_support import ROUTINE_RATE
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -535,10 +536,20 @@ def test_an_unreviewed_image_classifies_as_something_other_than_routine() -> Non
         "maximum_attempts": 1,
     }
     thresholds = load_yaml(PROJECT_ROOT / "config" / "policy.yaml", ApprovalPolicy).thresholds
-    assert classify_request(RequestFacts.model_validate(payload), thresholds) is ApprovalClass.ROUTINE
+    # A rate under the ceiling on both calls, so the scan review is the only thing that
+    # differs between them. This test is about the fact, not about the machine.
+    assert (
+        classify_request(
+            RequestFacts.model_validate(payload), thresholds, hourly_rate_usd=ROUTINE_RATE
+        )
+        is ApprovalClass.ROUTINE
+    )
 
     unreviewed = RequestFacts.model_validate({**payload, "image_scan_reviewed": False})
-    assert classify_request(unreviewed, thresholds) is ApprovalClass.EXCEPTION
+    assert (
+        classify_request(unreviewed, thresholds, hourly_rate_usd=ROUTINE_RATE)
+        is ApprovalClass.EXCEPTION
+    )
 
 
 # ---------------------------------------------------------------------------------------

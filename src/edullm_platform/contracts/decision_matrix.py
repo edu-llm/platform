@@ -1,3 +1,4 @@
+from decimal import Decimal
 from typing import Literal, Self
 
 from pydantic import Field, model_validator
@@ -66,6 +67,16 @@ class AuthorizationScenario(ContractModel):
         self,
         policy: ApprovalPolicy,
         inventory: OrganizationInventory,
+        *,
+        # A scenario states RequestFacts and no compute profile, so the rate classification
+        # now also turns on has to be supplied by whoever evaluates the row. It is a
+        # parameter rather than a field on this model because a field would change the
+        # model's structural digest, which four committed proof bundles record.
+        #
+        # Every shipped scenario is about the roster and the approver, not about price, so
+        # callers pass a rate below the ceiling and the rows keep classifying on the four
+        # request bounds as they always did.
+        hourly_rate_usd: Decimal,
     ) -> AuthorizationDecision:
         return evaluate_authorization(
             self.submitter.github_login,
@@ -73,4 +84,5 @@ class AuthorizationScenario(ContractModel):
             self.request,
             policy,
             inventory,
+            hourly_rate_usd=hourly_rate_usd,
         )

@@ -14,6 +14,7 @@ from edullm_platform.contracts.policy import (
 )
 from edullm_platform.manifest_helpers import (
     REPRESENTATIVE_MANIFEST_COSTS,
+    compute_manifest_cost_inputs,
     compute_manifest_maximum_cost,
 )
 from edullm_platform.phase0_gate import (
@@ -94,6 +95,18 @@ def facts_for(manifest: RunManifest) -> RequestFacts:
         dataset_registry=load_dataset_registry(),
         estimated_cost_usd=compute_manifest_maximum_cost(manifest, catalog),
     )
+
+
+def rate_for(manifest: RunManifest) -> Decimal:
+    """The hourly rate classification is handed beside the facts, out of the catalog.
+
+    Every sweep below is on cpu-32vcpu at $1.428, well under the rate ceiling, so the fifth
+    bound is satisfied throughout and each assertion is still about the fan-out bound it
+    names. Read from the catalog rather than written as a constant, so a repricing that put a
+    profile over the ceiling would show up here as a classification these tests do not expect
+    rather than as a number nobody updated.
+    """
+    return compute_manifest_cost_inputs(manifest, load_workload_catalog()).hourly_rate_usd
 
 
 def assert_validation_error(
@@ -301,14 +314,21 @@ def test_the_multiseed_fixture_stays_within_the_routine_ceilings() -> None:
     assert facts.fanout_size <= thresholds.routine_maximum_fanout_size
     assert facts.fanout_parallelism <= thresholds.routine_maximum_parallelism
     assert numeric_bound_violations(facts, thresholds) == frozenset()
-    assert classify_request(facts, thresholds) is ApprovalClass.ROUTINE
+    assert classify_request(
+        facts, thresholds, hourly_rate_usd=rate_for(manifest)
+    ) is ApprovalClass.ROUTINE
 
 
 @pytest.mark.parametrize("filename", REPRESENTATIVE_MANIFEST_FILENAMES)
 def test_shipped_fixture_manifests_keep_their_classification(filename: str) -> None:
     manifest = load_representative_manifest(filename)
     expected = expected_manifest_classification(filename)
-    assert classify_request(facts_for(manifest), shipped_thresholds()) is expected
+    assert (
+        classify_request(
+            facts_for(manifest), shipped_thresholds(), hourly_rate_usd=rate_for(manifest)
+        )
+        is expected
+    )
 
 
 def test_a_request_without_a_fanout_classifies_exactly_as_before() -> None:
@@ -317,7 +337,9 @@ def test_a_request_without_a_fanout_classifies_exactly_as_before() -> None:
     assert facts.fanout_size == 1
     assert facts.fanout_parallelism == 1
     assert numeric_bound_violations(facts, shipped_thresholds()) == frozenset()
-    assert classify_request(facts, shipped_thresholds()) is ApprovalClass.ROUTINE
+    assert classify_request(
+        facts, shipped_thresholds(), hourly_rate_usd=rate_for(manifest)
+    ) is ApprovalClass.ROUTINE
 
 
 def test_request_facts_carry_the_fanout_shape_declared_by_the_manifest() -> None:
@@ -349,7 +371,9 @@ def test_a_sweep_is_priced_as_one_submission_so_it_cannot_hide_behind_cheap_cell
     )
     for index, cell in enumerate(hand_split_manifests):
         assert manifest_cost(cell) == cell_cost
-        assert classify_request(facts_for(cell), thresholds) is ApprovalClass.ROUTINE, (
+        assert classify_request(
+            facts_for(cell), thresholds, hourly_rate_usd=rate_for(cell)
+        ) is ApprovalClass.ROUTINE, (
             f"hand-split run {index} is individually routine at {cell_cost} USD, which is "
             "exactly why the sweep must not be priced one cell at a time"
         )
@@ -365,7 +389,9 @@ def test_a_sweep_is_priced_as_one_submission_so_it_cannot_hide_behind_cheap_cell
     assert sweep_cost == cell_cost * cells == Decimal("571.20")
     assert sweep_cost > thresholds.routine_maximum_cost_usd
     assert numeric_bound_violations(sweep_facts, thresholds) == frozenset({"cost"})
-    assert classify_request(sweep_facts, thresholds) is ApprovalClass.EXCEPTION, (
+    assert classify_request(
+        sweep_facts, thresholds, hourly_rate_usd=rate_for(sweep)
+    ) is ApprovalClass.EXCEPTION, (
         "forty individually routine runs bundled into one submission cost more than the "
         "routine ceiling and have to be reviewed once, as one thing"
     )
@@ -382,7 +408,9 @@ def test_a_hundred_trivial_cells_is_an_exception_on_count_alone() -> None:
     assert facts.estimated_cost_usd == Decimal("7.14")
     assert facts.estimated_cost_usd < thresholds.routine_maximum_cost_usd
     assert numeric_bound_violations(facts, thresholds) == frozenset({"fanout_size"})
-    assert classify_request(facts, thresholds) is ApprovalClass.EXCEPTION, (
+    assert classify_request(
+        facts, thresholds, hourly_rate_usd=rate_for(sweep)
+    ) is ApprovalClass.EXCEPTION, (
         "a hundred one-minute jobs are cheap and still an operational event; the count "
         "ceiling bounds what the cost ceiling cannot"
     )
@@ -399,7 +427,9 @@ def test_parallelism_above_the_bound_is_an_exception_on_its_own() -> None:
     assert facts.fanout_size <= thresholds.routine_maximum_fanout_size
     assert facts.estimated_cost_usd < thresholds.routine_maximum_cost_usd
     assert numeric_bound_violations(facts, thresholds) == frozenset({"parallelism"})
-    assert classify_request(facts, thresholds) is ApprovalClass.EXCEPTION
+    assert classify_request(
+        facts, thresholds, hourly_rate_usd=rate_for(sweep)
+    ) is ApprovalClass.EXCEPTION
 
 
 def test_a_fanout_at_both_count_ceilings_stays_routine() -> None:
@@ -416,7 +446,9 @@ def test_a_fanout_at_both_count_ceilings_stays_routine() -> None:
     assert facts.fanout_size == 64
     assert facts.fanout_parallelism == 8
     assert numeric_bound_violations(facts, thresholds) == frozenset()
-    assert classify_request(facts, thresholds) is ApprovalClass.ROUTINE
+    assert classify_request(
+        facts, thresholds, hourly_rate_usd=rate_for(sweep)
+    ) is ApprovalClass.ROUTINE
 
 
 def test_fanout_manifest_round_trips_through_canonical_json() -> None:

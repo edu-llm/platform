@@ -11,6 +11,28 @@ compute_profiles:
     # a second without deploying an environment for it is a contradiction between two files
     # rather than a flag, and a test refuses it.
     provisioned: true
+  # THE NINE PROFILES BELOW THAT NOW SAY provisioned: true WERE PROMOTED TOGETHER, AND THE
+  # PROMOTION IS FOUR EDITS PER PROFILE RATHER THAN THIS FLAG.
+  #
+  # A compute environment, a queue and a job definition in
+  # infra/batch-compute-gpu-shapes.yaml; a row in config/execution-targets.yaml; an entry in
+  # CONTAINER_SHAPES in src/edullm_platform/execution.py; and this flag. The third is the one
+  # that is easy to miss and the one that decides what a submitted job actually reserves: the
+  # template registers the shared definition, and the state machine registers a per-run
+  # definition from that map, so a profile promoted here and in execution-targets.yaml but
+  # absent from the map raises UnshapedComputeProfileError at admission.
+  #
+  # WHICH ZONES EACH SHAPE IS OFFERED IN, MEASURED WITH describe-instance-type-offerings ON
+  # 2026-08-01 AND NOT INFERRED FROM THE FAMILY. Every type below is offered in us-east-1a,
+  # 1b, 1c and 1d. g4dn, g5, g6 and p5 add 1f; g6e.12xlarge and p4d.24xlarge do not, so their
+  # compute environments list four subnets and the rest list five. A subnet Batch cannot place
+  # into produces a job that waits in RUNNABLE forever with no error anywhere, which is why
+  # the two four-subnet environments are a measurement rather than a copy of their neighbours.
+  #
+  # gpu-1xl40s and gpu-1xa10g-sagemaker stay unprovisioned. The first is a single L40S nobody
+  # asked for -- the four-GPU g6e is the shape that makes an L40S worth having -- and the
+  # second is a SageMaker training instance, which is a different service with a different
+  # submission path and no Batch queue to give it.
   - name: gpu-1xt4
     instance_type: g4dn.xlarge
     accelerator: gpu
@@ -18,7 +40,7 @@ compute_profiles:
     hourly_rate_usd: "0.5260"
     pricing_source: "AWS Price List API get-products AmazonEC2 g4dn.xlarge us-east-1 Linux/Shared/NA/Used"
     pricing_observed_at: "2026-07-25"
-    provisioned: false
+    provisioned: true
   - name: gpu-4xt4
     instance_type: g4dn.12xlarge
     accelerator: gpu
@@ -26,7 +48,7 @@ compute_profiles:
     hourly_rate_usd: "3.9120"
     pricing_source: "AWS Price List API get-products AmazonEC2 g4dn.12xlarge us-east-1 Linux/Shared/NA/Used"
     pricing_observed_at: "2026-07-25"
-    provisioned: false
+    provisioned: true
   - name: gpu-1xa10g
     instance_type: g5.xlarge
     accelerator: gpu
@@ -34,20 +56,9 @@ compute_profiles:
     hourly_rate_usd: "1.0060"
     pricing_source: "AWS Price List API get-products AmazonEC2 g5.xlarge us-east-1 Linux/Shared/NA/Used"
     pricing_observed_at: "2026-07-25"
-    # The second profile promoted, and Phase 4 promotes exactly one the way Phase 3 did.
-    # Backed by the compute environment infra/batch-compute-gpu.yaml creates and named in
-    # config/execution-targets.yaml; the same seam test that refused a second promotion
-    # without a target now reads a set of two rather than a set of one.
-    #
-    # Chosen over gpu-1xt4 because 24 GB of A10G lets a small model train without the
-    # gradient-checkpointing gymnastics a T4's 16 GB would force, and those gymnastics would
-    # be an artifact of the test rig rather than of the research. Chosen over gpu-4xa10g
-    # because four GPUs is a distribution problem wearing a single-node costume.
-    #
-    # g5.xlarge is offered in every availability zone the network stack has a subnet in,
-    # measured with describe-instance-type-offerings on 2026-07-28. That is not general: g6e
-    # and p4d are absent from us-east-1f, so promoting an L40S or an A100 later means
-    # narrowing the subnet list in the compute template.
+    # The first GPU profile promoted, and the only one whose environment, queue and definition
+    # live in infra/batch-compute-gpu.yaml rather than in infra/batch-compute-gpu-shapes.yaml.
+    # It was kept in its own stack because it had running jobs when the other nine were added.
     provisioned: true
   - name: gpu-1xa10g-sagemaker
     instance_type: g5.2xlarge
@@ -64,7 +75,19 @@ compute_profiles:
     hourly_rate_usd: "5.672"
     pricing_source: "AWS Price List API get-products AmazonEC2 g5.12xlarge us-east-1 Linux/Shared/NA/Used"
     pricing_observed_at: "2026-07-24"
-    provisioned: false
+    provisioned: true
+  - name: gpu-8xa10g
+    instance_type: g5.48xlarge
+    accelerator: gpu
+    nodes: 1
+    hourly_rate_usd: "16.2880"
+    pricing_source: "AWS Price List API get-products AmazonEC2 g5.48xlarge us-east-1 Linux/Shared/NA/Used"
+    pricing_observed_at: "2026-08-01"
+    # The eight-GPU shape that does not draw on the P quota, which is what makes it worth
+    # having next to gpu-8xa100 at $21.9576. Eight A10G is 192 GB of device memory against the
+    # A100's 320 GB, and it is the whole of one G-pool environment's ceiling, so a single
+    # running job here is the family's largest.
+    provisioned: true
   - name: gpu-1xl4
     instance_type: g6.xlarge
     accelerator: gpu
@@ -72,7 +95,7 @@ compute_profiles:
     hourly_rate_usd: "0.8048"
     pricing_source: "AWS Price List API get-products AmazonEC2 g6.xlarge us-east-1 Linux/Shared/NA/Used"
     pricing_observed_at: "2026-07-25"
-    provisioned: false
+    provisioned: true
   - name: gpu-4xl4
     instance_type: g6.12xlarge
     accelerator: gpu
@@ -80,7 +103,7 @@ compute_profiles:
     hourly_rate_usd: "4.6016"
     pricing_source: "AWS Price List API get-products AmazonEC2 g6.12xlarge us-east-1 Linux/Shared/NA/Used"
     pricing_observed_at: "2026-07-25"
-    provisioned: false
+    provisioned: true
   - name: gpu-1xl40s
     instance_type: g6e.xlarge
     accelerator: gpu
@@ -96,7 +119,16 @@ compute_profiles:
     hourly_rate_usd: "10.4926"
     pricing_source: "AWS Price List API get-products AmazonEC2 g6e.12xlarge us-east-1 Linux/Shared/NA/Used"
     pricing_observed_at: "2026-07-25"
-    provisioned: false
+    provisioned: true
+  # THE TWO BELOW ARE PROVISIONED AND STILL NEED AN ADMIN. The hourly_rate_usd on each is
+  # above EXCEPTION_RATE_CEILING_USD_PER_HOUR in
+  # src/edullm_platform/contracts/policy.py, so classify_request returns EXCEPTION for any
+  # request naming them whatever its total cost and runtime are. That file records why the
+  # gate is a rate rather than a list of these two names, and config/policy.yaml points at it.
+  #
+  # So hourly_rate_usd here is no longer only a cost estimate. It is read by the gate, and
+  # editing one of these numbers downward past $20 would move a shape from admin approval to
+  # team-lead approval with nothing else changing.
   - name: gpu-8xa100
     instance_type: p4d.24xlarge
     accelerator: gpu
@@ -104,7 +136,7 @@ compute_profiles:
     hourly_rate_usd: "21.9576"
     pricing_source: "AWS Price List API get-products AmazonEC2 p4d.24xlarge us-east-1 Linux/Shared/NA/Used"
     pricing_observed_at: "2026-07-25"
-    provisioned: false
+    provisioned: true
   - name: gpu-8xh100
     instance_type: p5.48xlarge
     accelerator: gpu
@@ -112,7 +144,7 @@ compute_profiles:
     hourly_rate_usd: "55.0400"
     pricing_source: "AWS Price List API get-products AmazonEC2 p5.48xlarge us-east-1 Linux/Shared/NA/Used"
     pricing_observed_at: "2026-07-25"
-    provisioned: false
+    provisioned: true
 workloads:
   # THESE FOUR WERE RENAMED, AND RECORDS WRITTEN BEFORE THE RENAME STILL CARRY THE OLD
   # NAMES. Every one of them ended in "-smoke", which is jargon a researcher reading the
@@ -151,8 +183,7 @@ workloads:
     maximum_attempts: 1
     checkpoint: null
   # The GPU workload Phase 4 actually runs, and a sibling of olmo-core-train-4gpu rather
-  # than a repointing of it. The four-GPU shape below is a real future target and deleting
-  # it would lose its pricing entry, which is what this catalog is for.
+  # than a repointing of it.
   #
   # One entry serves both of the phase's live runs, because a workload profile fixes the
   # compute profile, the bounds and the checkpoint contract while the command arrives with
@@ -206,11 +237,36 @@ workloads:
       # the four-GPU entry below, and for the same reason recorded there.
       destination_prefix: "s3://sbsandbox-intern-edullm-outputs/teams/"
       resume_required: true
+  # RAISED FROM ONE HOUR AND ONE ATTEMPT, WHICH WERE THE BOUNDS OF A SHAPE NOBODY COULD
+  # SUBMIT. An hour trains nothing and one attempt means a lost machine loses the run, so both
+  # now match olmo-core-train-1gpu: twelve hours because that is
+  # routine_maximum_runtime_hours in config/policy.yaml and a thirteenth would make every
+  # submission an exception, and two attempts because Batch re-runs a retry with the same
+  # EDULLM_RUN_ID and therefore the same EDULLM_CHECKPOINT_DIR, which is what OLMo-core's
+  # Trainer.fit() auto-resumes from. At $5.672/hour that is $68.06 an attempt and $136.13
+  # across both, against a routine cost ceiling of $500.
+  #
+  # resume_required went true with the second attempt. It was false while one attempt made
+  # resume meaningless; leaving it false with two would declare that the second attempt is
+  # allowed to repeat the first at full price.
+  #
+      # FOUR GPUS NEED FOUR RANKS, WHICH IS THE SUBMITTED COMMAND AND NOT THIS ENTRY.
+      # .edullm/train_on_corpus.py already handles being one rank of several: it initialises the
+      # process group, shards the model with FSDP and writes one checkpoint shard per rank. What
+      # it does not do is start the other three processes. Nothing on this side does either, since
+      # the command arrives with the submission and is exec'd as typed, so a four-GPU run needs
+      #
+      #   python -m torch.distributed.run --nproc-per-node=4 --standalone \
+      #     .edullm/train_on_corpus.py <run_id> --steps <n>
+      #
+      # and a run that omits it trains on one device, bills for four, and succeeds. Proven on
+      # 2026-08-01: twenty steps on gpu-4xa10g, four ranks reported by the process group, a
+      # step-20 checkpoint written with shards __0_* through __3_*, loss 11.62 to 7.48.
   - name: olmo-core-train-4gpu
     repository: OLMo-core
     compute_profile: gpu-4xa10g
-    maximum_runtime_hours: "1"
-    maximum_attempts: 1
+    maximum_runtime_hours: "12"
+    maximum_attempts: 2
     checkpoint:
       interval_minutes: 30
       # Repointed from s3://sbsandbox-intern-edullm-checkpoints/runs/, which named a bucket
@@ -222,4 +278,4 @@ workloads:
       # This value is the root the derived per-run prefix hangs under, not the path anything
       # writes to. The path is output_prefix(team, run_id) + "checkpoints/".
       destination_prefix: "s3://sbsandbox-intern-edullm-outputs/teams/"
-      resume_required: false
+      resume_required: true

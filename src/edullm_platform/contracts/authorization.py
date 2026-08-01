@@ -1,3 +1,4 @@
+from decimal import Decimal
 from enum import StrEnum
 from typing import Annotated, Self
 
@@ -108,8 +109,16 @@ def evaluate_authorization(
     request: RequestFacts,
     policy: ApprovalPolicy,
     inventory: OrganizationInventory,
+    *,
+    # The hourly rate of the profile the request names, passed through to classification
+    # because RequestFacts cannot carry it. Keyword-only and required for the reason
+    # classify_request states: which approver is sufficient turns on this value, so a
+    # default would be a default answer to "may a team lead release a p5.48xlarge".
+    hourly_rate_usd: Decimal,
 ) -> AuthorizationDecision:
-    approval_class = classify_request(request, policy.thresholds)
+    approval_class = classify_request(
+        request, policy.thresholds, hourly_rate_usd=hourly_rate_usd
+    )
     # ASKED OF THIS SUBMITTER, NOT OF THE FILE. This read ``bool(inventory.team_bindings
     # .teams)``, so the first group anybody declared switched checking on for the whole
     # organization at once, and every submitter whose own group was not yet written down was

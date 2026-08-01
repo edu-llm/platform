@@ -292,7 +292,9 @@ def test_workload_catalog_yaml_validates_against_contract() -> None:
     project_root = Path(__file__).resolve().parents[1]
     config_path = project_root / "config" / "workload-catalog.yaml"
     catalog = load_yaml(config_path, WorkloadCatalog)
-    assert len(catalog.compute_profiles) == 12
+    # Thirteen since gpu-8xa10g, the g5.48xlarge the catalog had never priced. Same tripwire
+    # role as the workload count below: a profile arriving without a deliberate edit.
+    assert len(catalog.compute_profiles) == 13
     # Five since olmo-core-train-1gpu, the first entry here that exists to run training
     # rather than to prove the platform works. The count is the tripwire for a workload
     # appearing without a deliberate edit, so it moves with the edit and not before.
@@ -327,7 +329,9 @@ def test_workload_catalog_yaml_validates_against_contract() -> None:
         maximum_attempts=gpu_workload.maximum_attempts,
     )
     assert cpu_cost.maximum_compute_cost_usd == Decimal("2.86")
-    assert gpu_cost.maximum_compute_cost_usd == Decimal("5.67")
+    # Was 5.67, which was one hour and one attempt on four A10G. Both bounds were raised to
+    # olmo-core-train-1gpu's, so this is twelve hours across two attempts at $5.672.
+    assert gpu_cost.maximum_compute_cost_usd == Decimal("136.13")
 
 
 def test_catalog_rejects_duplicate_profile_name_when_every_other_field_differs() -> None:

@@ -415,7 +415,14 @@ def compile_submission(
             f"{', '.join(tripped)}"
         )
 
-    approval_class = classify_request(facts, policy.thresholds)
+    # The rate beside the facts, for the reason recorded above
+    # EXCEPTION_RATE_CEILING_USD_PER_HOUR: policy gates an expensive instance type whatever
+    # the run's total cost is, and RequestFacts cannot carry the rate. cost is not optional
+    # here -- an unregistered profile was refused above -- so unlike admission there is no
+    # placeholder.
+    approval_class = classify_request(
+        facts, policy.thresholds, hourly_rate_usd=cost.hourly_rate_usd
+    )
     return CompiledSubmission(
         run_id=run_id,
         manifest=manifest,

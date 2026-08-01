@@ -4,6 +4,18 @@
 # uninterpretable -- a later reader could not tell a v1 approval, taken when no scan was
 # consulted, from a v2 one taken when the findings had been read.
 policy_version: v2
+# THERE IS A FIFTH BOUND AND IT IS NOT IN THIS FILE.
+# classify_request also refuses to call a request routine when the compute profile it names
+# costs more than EXCEPTION_RATE_CEILING_USD_PER_HOUR, which is $20/hour and lives in
+# src/edullm_platform/contracts/policy.py beside the function. That is what puts gpu-8xa100
+# and gpu-8xh100 behind an admin: every bound below is about the size of one request, and a
+# one-hour single-attempt run on a p5.48xlarge satisfies all five of them while authorising
+# the most expensive instance this account can start.
+#
+# It belongs here beside the others. It is not here because PolicyThresholds is a contract
+# model whose structural digest is recorded in four committed proof bundles, so a fifth field
+# is a proof-bundle regeneration rather than a policy edit. The comment above
+# EXCEPTION_RATE_CEILING_USD_PER_HOUR carries the reasoning for the number itself.
 thresholds:
   routine_maximum_cost_usd: "500"
   routine_maximum_runtime_hours: "12"

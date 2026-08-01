@@ -617,6 +617,35 @@ class ContainerShape:
     default_environment: tuple[tuple[str, str], ...]
 
 
+#: What every GPU profile's container carries besides its two numbers and its device count.
+#:
+#: A function rather than nine copies of the same eight lines. The seam test in
+#: tests/test_phase3_execution.py compares what this produces against each deployed template
+#: field by field, so the templates remain the authority and this is only how the identical
+#: parts are spelled once. The parts that differ per shape are the arguments, and they are
+#: the parts a reader needs to check against the instance.
+#:
+#: The output prefix default is the GPU template's rather than the CPU one's, and the
+#: difference is deliberate: it names a location outside the only prefix the GPU workload role
+#: permits, so a job that reaches the default is denied on its first write instead of filling
+#: a location no lineage record names.
+def _gpu_shape(*, vcpus: int, memory_mib: int, gpus: int, shared_memory_mib: int) -> ContainerShape:
+    return ContainerShape(
+        vcpus=vcpus,
+        memory_mib=memory_mib,
+        gpus=gpus,
+        shared_memory_mib=shared_memory_mib,
+        secrets=(("WANDB_API_KEY", f"{SANDBOX_RESOURCE_PREFIX}wandb-api-key-fnwEVp"),),
+        default_environment=(
+            ("EDULLM_OUTPUT_BUCKET", f"{SANDBOX_RESOURCE_PREFIX}outputs"),
+            (
+                "EDULLM_OUTPUT_PREFIX",
+                f"s3://{SANDBOX_RESOURCE_PREFIX}outputs/no-submission-supplied-a-prefix/",
+            ),
+        ),
+    )
+
+
 CONTAINER_SHAPES: Final[Mapping[str, ContainerShape]] = {
     # An eighth of a c7i.8xlarge on both axes, which is what makes 32 first runs concurrent
     # instead of 4. This is the pair that reaches a submitted job -- the state machine
@@ -656,6 +685,49 @@ CONTAINER_SHAPES: Final[Mapping[str, ContainerShape]] = {
             ),
         ),
     ),
+    # THE NINE SHAPES BELOW, AND WHERE EVERY NUMBER IN THEM COMES FROM.
+    #
+    # vcpus and gpus are the whole instance. A GPU instance is not shared between jobs here:
+    # the device is the scarce thing, an eight-GPU host running a one-GPU job has seven idle
+    # devices billing anyway, and a container asking for a fraction of the vCPU would let
+    # Batch pack a second job onto the same host and hand it the leftover devices. So the
+    # container takes the machine, and concurrency is the compute environment's MaxvCpus.
+    #
+    # memory_mib is the instance's memory less 1 GiB per 4 vCPU, which is the ratio
+    # infra/batch-compute.yaml settled on for the ECS agent and the host. Batch places on
+    # vCPU and memory together and reports neither when it cannot: a container asking for
+    # more memory than the instance registers is a job that waits in RUNNABLE with no error
+    # anywhere, and the only observation that separates it from a job waiting its turn is
+    # DesiredvCpus never rising. The overhead is proportionally generous on the large hosts
+    # and that is the safe direction, because the kernel's own reserve grows far slower than
+    # linearly while this allowance does.
+    #
+    #   g4dn.xlarge      16 GiB      16384 -   1024 =   15360      4 vCPU
+    #   g4dn.12xlarge   192 GiB     196608 -  12288 =  184320     48 vCPU
+    #   g5.12xlarge     192 GiB     196608 -  12288 =  184320     48 vCPU
+    #   g5.48xlarge     768 GiB     786432 -  49152 =  737280    192 vCPU
+    #   g6.xlarge        16 GiB      16384 -   1024 =   15360      4 vCPU
+    #   g6.12xlarge     192 GiB     196608 -  12288 =  184320     48 vCPU
+    #   g6e.12xlarge    384 GiB     393216 -  12288 =  380928     48 vCPU
+    #   p4d.24xlarge   1152 GiB    1179648 -  24576 = 1155072     96 vCPU
+    #   p5.48xlarge    2048 GiB    2097152 -  49152 = 2048000    192 vCPU
+    #
+    # shared_memory_mib is a quarter of the container's memory, extending the g5.xlarge's
+    # 4 GiB of 16. It is a tmpfs and costs nothing until a DataLoader uses it, and the
+    # default it replaces is 64 MiB -- enough for the first few batches of a multi-worker
+    # DataLoader and not for a real one, so the failure arrives partway into training as a
+    # bus error naming neither shared memory nor the setting that fixes it. Multi-rank
+    # training makes that worse rather than better: torchrun puts one process per device on
+    # one host and every one of them has its own workers moving batches through this tmpfs.
+    "gpu-1xt4": _gpu_shape(vcpus=4, memory_mib=15360, gpus=1, shared_memory_mib=4096),
+    "gpu-4xt4": _gpu_shape(vcpus=48, memory_mib=184320, gpus=4, shared_memory_mib=49152),
+    "gpu-4xa10g": _gpu_shape(vcpus=48, memory_mib=184320, gpus=4, shared_memory_mib=49152),
+    "gpu-8xa10g": _gpu_shape(vcpus=192, memory_mib=737280, gpus=8, shared_memory_mib=196608),
+    "gpu-1xl4": _gpu_shape(vcpus=4, memory_mib=15360, gpus=1, shared_memory_mib=4096),
+    "gpu-4xl4": _gpu_shape(vcpus=48, memory_mib=184320, gpus=4, shared_memory_mib=49152),
+    "gpu-4xl40s": _gpu_shape(vcpus=48, memory_mib=380928, gpus=4, shared_memory_mib=95232),
+    "gpu-8xa100": _gpu_shape(vcpus=96, memory_mib=1155072, gpus=8, shared_memory_mib=288768),
+    "gpu-8xh100": _gpu_shape(vcpus=192, memory_mib=2048000, gpus=8, shared_memory_mib=512000),
 }
 
 

@@ -20,6 +20,7 @@ from edullm_platform.contracts.workload import (
     resolve_compute_profile_for_execution,
 )
 from edullm_platform.evidence import (
+    INSTANCE_EVIDENCE,
     QuotaRecord,
     ec2_quota_coverage_issues,
     profiles_requiring_capacity_evidence,
@@ -51,6 +52,7 @@ EXPECTED_PROFILE_RATES = {
     "gpu-1xa10g": ("g5.xlarge", Decimal("1.0060")),
     "gpu-1xa10g-sagemaker": ("g5.2xlarge", Decimal("1.5150")),
     "gpu-4xa10g": ("g5.12xlarge", Decimal("5.672")),
+    "gpu-8xa10g": ("g5.48xlarge", Decimal("16.2880")),
     "gpu-1xl4": ("g6.xlarge", Decimal("0.8048")),
     "gpu-4xl4": ("g6.12xlarge", Decimal("4.6016")),
     "gpu-1xl40s": ("g6e.xlarge", Decimal("1.8610")),
@@ -150,14 +152,14 @@ def test_shipped_catalog_instance_types_are_unique() -> None:
 
 
 def test_only_the_deliberately_promoted_profiles_are_provisioned() -> None:
-    """Two are promoted, on purpose, and the list is the assertion.
+    """Eleven are promoted, on purpose, and the list is the assertion.
 
-    This test said no profile was provisioned, then one, and now names two. Each change was
-    a deliberate edit made after the infrastructure existed, which is the whole point of
-    writing the names out: it is the tripwire for flipping a flag before deploying anything
-    to back it. The catalog would then claim capacity that does not exist, and every
-    submission naming that profile would reach Batch and sit in RUNNABLE forever rather than
-    being refused at admission.
+    This test said no profile was provisioned, then one, then two, and now names eleven.
+    Each change was a deliberate edit made after the infrastructure existed, which is the
+    whole point of writing the names out: it is the tripwire for flipping a flag before
+    deploying anything to back it. The catalog would then claim capacity that does not
+    exist, and every submission naming that profile would reach Batch and sit in RUNNABLE
+    forever rather than being refused at admission.
 
     Whether a promoted profile is actually backed is a separate question, asserted against
     config/execution-targets.yaml in tests/test_phase3_execution.py. This one is only about
@@ -165,24 +167,69 @@ def test_only_the_deliberately_promoted_profiles_are_provisioned() -> None:
     """
     assert [profile.name for profile in SHIPPED_PROFILES if profile.provisioned] == [
         "cpu-32vcpu",
+        "gpu-1xt4",
+        "gpu-4xt4",
         "gpu-1xa10g",
+        "gpu-4xa10g",
+        "gpu-8xa10g",
+        "gpu-1xl4",
+        "gpu-4xl4",
+        "gpu-4xl40s",
+        "gpu-8xa100",
+        "gpu-8xh100",
     ]
 
 
-def test_unprovisioned_profile_classifies_as_routine_within_policy_thresholds() -> None:
-    profile = next(profile for profile in SHIPPED_PROFILES if profile.name == "gpu-8xh100")
-    assert profile.provisioned is False
+def test_the_dearest_routine_shape_classifies_as_routine_within_policy_thresholds() -> None:
+    """g5.48xlarge, which is eight GPUs for a team lead's signature.
+
+    This asked the same question of gpu-8xh100 while that profile was unprovisioned, and the
+    answer it recorded is now the wrong one: a rate above
+    EXCEPTION_RATE_CEILING_USD_PER_HOUR is an exception whatever the four request bounds say,
+    which is what the promotion put behind an admin. So the routine case moved to the most
+    expensive shape that is still routine, and gpu-8xh100's is the test below.
+    """
+    profile = next(profile for profile in SHIPPED_PROFILES if profile.name == "gpu-8xa10g")
     facts = facts_for_profile(profile, maximum_runtime_hours=Decimal(4), maximum_attempts=1)
-    assert facts.estimated_cost_usd == Decimal("220.16")
-    assert classify_request(facts, shipped_policy().thresholds) == ApprovalClass.ROUTINE
+    assert facts.estimated_cost_usd == Decimal("65.15")
+    assert (
+        classify_request(
+            facts, shipped_policy().thresholds, hourly_rate_usd=profile.hourly_rate_usd
+        )
+        == ApprovalClass.ROUTINE
+    )
 
 
-def test_unprovisioned_profile_classifies_as_exception_above_policy_thresholds() -> None:
-    profile = next(profile for profile in SHIPPED_PROFILES if profile.name == "gpu-8xh100")
-    assert profile.provisioned is False
-    facts = facts_for_profile(profile, maximum_runtime_hours=Decimal(12), maximum_attempts=1)
-    assert facts.estimated_cost_usd == Decimal("660.48")
-    assert classify_request(facts, shipped_policy().thresholds) == ApprovalClass.EXCEPTION
+def test_the_dearest_routine_shape_classifies_as_exception_above_policy_thresholds() -> None:
+    profile = next(profile for profile in SHIPPED_PROFILES if profile.name == "gpu-8xa10g")
+    facts = facts_for_profile(profile, maximum_runtime_hours=Decimal(12), maximum_attempts=3)
+    assert facts.estimated_cost_usd == Decimal("586.37")
+    assert (
+        classify_request(
+            facts, shipped_policy().thresholds, hourly_rate_usd=profile.hourly_rate_usd
+        )
+        == ApprovalClass.EXCEPTION
+    )
+
+
+@pytest.mark.parametrize("name", ["gpu-8xa100", "gpu-8xh100"])
+def test_an_eight_gpu_p_shape_is_an_exception_at_its_smallest_run(name: str) -> None:
+    """The promotion's actual gate, asked at the size that used to slip through.
+
+    One hour, one attempt: routine on cost, on runtime, on attempts, on fanout. The profile
+    is what makes it an exception, and before the rate reached classification a team lead
+    could have released a p5.48xlarge this way.
+    """
+    profile = next(profile for profile in SHIPPED_PROFILES if profile.name == name)
+    assert profile.provisioned
+    facts = facts_for_profile(profile, maximum_runtime_hours=Decimal(1), maximum_attempts=1)
+    assert facts.estimated_cost_usd <= shipped_policy().thresholds.routine_maximum_cost_usd
+    assert (
+        classify_request(
+            facts, shipped_policy().thresholds, hourly_rate_usd=profile.hourly_rate_usd
+        )
+        == ApprovalClass.EXCEPTION
+    )
 
 
 @pytest.mark.parametrize(
@@ -193,12 +240,12 @@ def test_unprovisioned_profile_classifies_as_exception_above_policy_thresholds()
 def test_an_unprovisioned_profile_is_refused_at_execution(
     profile: ComputeProfile,
 ) -> None:
-    """Eleven of the twelve, and the list is derived rather than written down.
+    """Two of the thirteen, and the list is derived rather than written down.
 
     Deriving it means promoting a profile moves it out of this parametrisation
-    automatically, which is what stops the promotion from failing here for the wrong
-    reason. What catches an unbacked promotion is the count above and the target check in
-    tests/test_phase3_execution.py, not this.
+    automatically, which is what stopped the promotion of nine from failing here for the
+    wrong reason. What catches an unbacked promotion is the list above and the target check
+    in tests/test_phase3_execution.py, not this.
     """
     with pytest.raises(UnprovisionedComputeProfileError) as exc_info:
         resolve_compute_profile_for_execution(shipped_catalog(), profile.name)
@@ -217,13 +264,24 @@ def test_unpriced_profile_is_refused_as_unregistered() -> None:
         resolve_compute_profile_for_execution(shipped_catalog(), "gpu-1024xh200")
 
 
-def catalog_with_provisioned_h100() -> WorkloadCatalog:
+#: The profile the pair of coverage tests below moves, and the last single-GPU shape left
+#: unprovisioned. It has to be a profile the shipped catalog does not require evidence for,
+#: because what these tests separate is "required and covered" from "required and not", and
+#: the records are derived from the shipped catalog rather than written out.
+UNPROVISIONED_LEVER = "gpu-1xl40s"
+
+#: The two pools' applied values, read on 2026-08-01 and matching
+#: fixtures/evidence/service-quotas.sanitized.json.
+APPLIED_VCPUS = {"L-1216C47A": 1152.0, "L-DB2E81BA": 768.0, "L-417A185B": 768.0}
+
+
+def catalog_with_provisioned_lever() -> WorkloadCatalog:
     catalog = shipped_catalog()
     return catalog.model_copy(
         update={
             "compute_profiles": tuple(
                 profile.model_copy(update={"provisioned": True})
-                if profile.name == "gpu-8xh100"
+                if profile.name == UNPROVISIONED_LEVER
                 else profile
                 for profile in catalog.compute_profiles
             )
@@ -232,47 +290,34 @@ def catalog_with_provisioned_h100() -> WorkloadCatalog:
 
 
 def representative_quota_records() -> tuple[QuotaRecord, ...]:
-    return (
+    """One record per profile the shipped catalog requires evidence for, derived not written.
+
+    This was three records written out by hand while three profiles needed them. Eleven do
+    now, and copying the shipped list into a literal would make the pair of tests below agree
+    with each other by construction rather than say anything.
+
+    Derived from the shipped catalog, which means the coverage test passes because the two
+    functions read the same catalog, and the tripwire is the second test: it provisions a
+    profile these records were not derived from and requires that the absence is reported.
+    A record per profile and not per quota code, because required_vcpus is the profile's and
+    several profiles share a code.
+    """
+    return tuple(
         QuotaRecord.model_validate(
             {
                 "service_code": "ec2",
-                "quota_code": "L-1216C47A",
-                "quota_name": "Running On-Demand Standard instances",
-                "applied_value": 1152.0,
+                "quota_code": INSTANCE_EVIDENCE[profile.instance_type]["quota_code"],
+                "quota_name": "Running On-Demand instances",
+                "applied_value": APPLIED_VCPUS[
+                    INSTANCE_EVIDENCE[profile.instance_type]["quota_code"]
+                ],
                 "unit": "vCPU",
                 "quota_applied_at_level": "ACCOUNT",
-                "workload_profile": "cpu-32vcpu",
-                "required_vcpus": 32,
+                "workload_profile": profile.name,
+                "required_vcpus": INSTANCE_EVIDENCE[profile.instance_type]["required_vcpus"],
             }
-        ),
-        QuotaRecord.model_validate(
-            {
-                "service_code": "ec2",
-                "quota_code": "L-DB2E81BA",
-                "quota_name": "Running On-Demand G and VT instances",
-                "applied_value": 768.0,
-                "unit": "vCPU",
-                "quota_applied_at_level": "ACCOUNT",
-                "workload_profile": "gpu-4xa10g",
-                "required_vcpus": 48,
-            }
-        ),
-        # The same quota code as the entry above, and a second record rather than a wider
-        # one, because these records are per profile and not per quota. Both G-family
-        # profiles draw on L-DB2E81BA; what differs is how much each needs, and it is
-        # required_vcpus that the sufficiency check reads.
-        QuotaRecord.model_validate(
-            {
-                "service_code": "ec2",
-                "quota_code": "L-DB2E81BA",
-                "quota_name": "Running On-Demand G and VT instances",
-                "applied_value": 768.0,
-                "unit": "vCPU",
-                "quota_applied_at_level": "ACCOUNT",
-                "workload_profile": "gpu-1xa10g",
-                "required_vcpus": 4,
-            }
-        ),
+        )
+        for profile in profiles_requiring_capacity_evidence(shipped_catalog())
     )
 
 
@@ -280,7 +325,11 @@ def test_priced_but_unreferenced_profiles_do_not_demand_capacity_evidence() -> N
     required = {
         profile.name for profile in profiles_requiring_capacity_evidence(shipped_catalog())
     }
-    assert required == {"cpu-32vcpu", "gpu-1xa10g", "gpu-4xa10g"}
+    assert UNPROVISIONED_LEVER not in required
+    assert "gpu-1xa10g-sagemaker" not in required
+    assert required == {
+        profile.name for profile in SHIPPED_PROFILES if profile.provisioned
+    }
     reason_code, detail = ec2_quota_coverage_issues(
         catalog=shipped_catalog(),
         quotas=representative_quota_records(),
@@ -290,16 +339,16 @@ def test_priced_but_unreferenced_profiles_do_not_demand_capacity_evidence() -> N
 
 
 def test_provisioning_a_profile_demands_capacity_evidence_for_it() -> None:
-    catalog = catalog_with_provisioned_h100()
+    catalog = catalog_with_provisioned_lever()
     required = {profile.name for profile in profiles_requiring_capacity_evidence(catalog)}
-    assert required == {"cpu-32vcpu", "gpu-1xa10g", "gpu-4xa10g", "gpu-8xh100"}
+    assert UNPROVISIONED_LEVER in required
     reason_code, detail = ec2_quota_coverage_issues(
         catalog=catalog,
         quotas=representative_quota_records(),
     )
     assert reason_code == "capacity_blocked"
     assert detail is not None
-    assert "gpu-8xh100" in detail
+    assert UNPROVISIONED_LEVER in detail
 
 
 def test_representative_manifest_costs_are_unchanged() -> None:

@@ -1,5 +1,6 @@
 import hashlib
 import json
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -23,11 +24,12 @@ from edullm_platform.contracts.policy import (
     classify_request,
 )
 from edullm_platform.contracts.repository_registry import RepositoryRegistry
-from edullm_platform.manifest_helpers import compute_manifest_maximum_cost
+from edullm_platform.manifest_helpers import compute_manifest_cost_inputs
 from edullm_platform.phase0_gate import (
     expected_manifest_classification,
     request_facts_from_manifest,
 )
+from tests.policy_support import ROUTINE_RATE
 from tests.test_manifest import (
     REPRESENTATIVE_MANIFEST_FILENAMES,
     load_representative_manifest,
@@ -182,6 +184,11 @@ def decide(
     *,
     policy: ApprovalPolicy | None = None,
     inventory: OrganizationInventory | None = None,
+    # Under the ceiling, and defaulted rather than passed at every call below. This module is
+    # about who may release a run: every case varies the submitter, the approver or the
+    # roster, and none of them varies the profile. A rate above the ceiling would turn every
+    # routine row into an exception and the module would be measuring something else.
+    hourly_rate_usd: Decimal = ROUTINE_RATE,
 ) -> AuthorizationDecision:
     return evaluate_authorization(
         submitter,
@@ -189,6 +196,7 @@ def decide(
         request,
         policy if policy is not None else load_approval_policy(),
         inventory if inventory is not None else load_organization_inventory(),
+        hourly_rate_usd=hourly_rate_usd,
     )
 
 
@@ -207,8 +215,12 @@ def test_real_roster_supplies_the_actor_matrix_this_module_assumes() -> None:
 
 def test_fixture_requests_classify_as_routine_and_exception() -> None:
     thresholds = load_approval_policy().thresholds
-    assert classify_request(routine_facts(), thresholds) is ApprovalClass.ROUTINE
-    assert classify_request(exception_facts(), thresholds) is ApprovalClass.EXCEPTION
+    assert classify_request(
+        routine_facts(), thresholds, hourly_rate_usd=ROUTINE_RATE
+    ) is ApprovalClass.ROUTINE
+    assert classify_request(
+        exception_facts(), thresholds, hourly_rate_usd=ROUTINE_RATE
+    ) is ApprovalClass.EXCEPTION
 
 
 @pytest.mark.parametrize(
@@ -518,6 +530,7 @@ def test_flipping_approval_scope_alone_turns_a_grant_into_a_denial() -> None:
         request,
         ApprovalPolicy.model_validate(organization_payload),
         inventory,
+        hourly_rate_usd=ROUTINE_RATE,
     )
     under_team_scope = evaluate_authorization(
         MEMORY_SPLIT_MEMBER,
@@ -525,6 +538,7 @@ def test_flipping_approval_scope_alone_turns_a_grant_into_a_denial() -> None:
         request,
         ApprovalPolicy.model_validate(team_payload),
         inventory,
+        hourly_rate_usd=ROUTINE_RATE,
     )
 
     assert under_organization_scope.granted is True
@@ -940,19 +954,21 @@ def test_attribution_changes_no_classification_outcome(filename: str) -> None:
     manifest = load_representative_manifest(filename)
     catalog = load_workload_catalog()
     thresholds = load_approval_policy().thresholds
+    cost = compute_manifest_cost_inputs(manifest, catalog)
     facts = request_facts_from_manifest(
         manifest,
         repositories=load_repository_registry(),
         catalog=catalog,
         dataset_registry=load_dataset_registry(),
-        estimated_cost_usd=compute_manifest_maximum_cost(manifest, catalog),
+        estimated_cost_usd=cost.maximum_compute_cost_usd,
     )
+    rate = cost.hourly_rate_usd
     expected = expected_manifest_classification(filename)
     assert facts.claimed_team == manifest.team
-    assert classify_request(facts, thresholds) is expected
+    assert classify_request(facts, thresholds, hourly_rate_usd=rate) is expected
     for claimed_team in (MEMORY_SPLIT_TEAM, CURRICULUM_TEAM, UNBOUND_TEAM):
         reattributed = facts.model_copy(update={"claimed_team": claimed_team})
-        assert classify_request(reattributed, thresholds) is expected, (
+        assert classify_request(reattributed, thresholds, hourly_rate_usd=rate) is expected, (
             f"{filename} classified differently once attributed to {claimed_team!r}; "
             "attribution is not a cost input"
         )

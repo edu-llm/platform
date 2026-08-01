@@ -41,6 +41,7 @@ from edullm_platform.phase2_evidence import (
     LeadTeamMembership,
     ProtectedEnvironment,
 )
+from tests.policy_support import ROUTINE_RATE
 from tests.test_authorization import (
     load_approval_policy,
     load_organization_inventory,
@@ -167,7 +168,9 @@ def test_a_researcher_cannot_release_their_own_run(
             facts_for(inventory, login),
             facts_for(inventory, login, estimated_cost_usd="5000"),
         ):
-            decision = evaluate_authorization(login, login, facts, policy, inventory)
+            decision = evaluate_authorization(
+                login, login, facts, policy, inventory, hourly_rate_usd=ROUTINE_RATE
+            )
 
             assert decision.granted is False, login
             assert (
@@ -193,7 +196,12 @@ def test_a_lead_can_release_their_own_run(
     for lead in inventory.team_leads:
         assert lead.lower() in on_the_team, lead
         decision = evaluate_authorization(
-            lead, lead, facts_for(inventory, lead), policy, inventory
+            lead,
+            lead,
+            facts_for(inventory, lead),
+            policy,
+            inventory,
+            hourly_rate_usd=ROUTINE_RATE,
         )
 
         assert decision.granted is True, lead
@@ -221,6 +229,10 @@ def test_an_administrator_can_release_their_own_exception(
             facts_for(inventory, admin, estimated_cost_usd="5000"),
             policy,
             inventory,
+            # Under the ceiling, so the exception is earned by the $5,000 above and not by the
+            # profile. A gated rate would reach the same reason for a different cause, which
+            # is the one thing a test about self-approval must not let happen.
+            hourly_rate_usd=ROUTINE_RATE,
         )
 
         assert decision.granted is True, admin
