@@ -57,5 +57,5 @@
 # answer it is to run both builders and compare both digests rather than to reason about it.
 schema_version: 1
 s3_key: lifecycle-recorder/lifecycle-recorder.zip
-s3_object_version: YtKMbvDEePXEx2R9e2nL8y0BV.gqLDdR
-sha256: ccfaa2bd9a2f0fcc2df1cad6a0237d3947f3a4c39900cf0f332a561010f2da63
+s3_object_version: I3MBVgQdJTy0LAQwecfg3T72jYktjGT1
+sha256: 1019df23121506cc3111fd821a14685bb51ec78ad9a4ebeefdeba8b3f3990702
