@@ -1,0 +1,206 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: The identity a dataset owner's own validator assumes to promote a dataset out of edullm-landing into edullm-data, separate from anything this repository runs a workload under.
+
+# Declared without being wired in. The validator that promotes datasets into the sealed
+# edullm-data bucket currently runs under sbsandbox-intern-edullm-batch-workload -- our
+# shared CPU workload role -- through an inline policy attached outside CloudFormation
+# (`dataset-validator`, recorded as drift in tests/test_phase3_run_evidence.py). That role
+# is what every CPU container on every team runs as, so a job that only prints a line
+# currently inherits write access to a dataset bucket it has no reason to touch.
+#
+# This role is where that policy moves. Moving it is a separate, later change and is not
+# done here: both EventBridge rules that can invoke a Batch job resolve the job definition
+# by unversioned name, so a bad revision reaches production on the next event, and that
+# cutover belongs in a window somebody is watching rather than beside a template addition.
+# Until that happens this role can exist in the account and grant nothing effective --
+# see the bucket-policy note below the inline policy.
+#
+# Deliberately its own identity rather than an amendment to batch-roles.yaml. The point of
+# declaring it at all is that the validator's reach and our own workloads' reach stop being
+# the same set; folding it into the shared role would be the exposure this closes, restated
+# under a different name.
+#
+# TWO BUCKETS AND NOT ONE, which the paragraphs above do not prepare a reader for. The
+# validator works across an airlock. A candidate dataset and its manifests arrive in
+# edullm-landing; what passes is promoted into edullm-data; what fails gets a rejection
+# sentinel written back to edullm-landing. A role holding only the published bucket could
+# promote but could not read what it was promoting, and could not say that it had refused --
+# so the grants below name both buckets. Neither is ours: both belong to the dataset owner,
+# and this role is deliberately unable to touch any bucket of this repository's.
+
+Resources:
+  DatasetValidatorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sbsandbox-intern-edullm-dataset-validator
+      PermissionsBoundary:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/InternSandboxBoundary
+      MaxSessionDuration: 3600
+      # ecs-tasks.amazonaws.com and nothing else. No human and no other service can assume
+      # this identity, so a Batch container running under it is the only caller that can
+      # ever act as the validator -- that is the property this design leans on, not the
+      # bucket policy the inline grant below is written against. In particular, not
+      # events.amazonaws.com: an EventBridge rule that cannot invoke this role directly is
+      # solved by routing the invocation through a role built for that (the way this
+      # account's own admission pipeline already does), and widening the trust policy to
+      # fix an invocation problem would be trading the one property that matters here for
+      # convenience.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      # Inline rather than a customer-managed policy, for the same reason as every other
+      # role in this account: InternSandboxBoundary denies iam:CreatePolicyVersion on every
+      # policy, so a managed policy could be created once and never amended, and the first
+      # permission change would fail the stack update. Inline policies go through
+      # iam:PutRolePolicy, which the boundary permits on this name.
+      Policies:
+        - PolicyName: validate-the-published-dataset
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # THE SIX STATEMENTS THE OUT-OF-BAND POLICY HOLDS, UNDER ITS OWN SIDS.
+              #
+              # Where these came from and when. The dataset-validator inline policy on
+              # sbsandbox-intern-edullm-batch-workload was read live on 2026-07-31 and
+              # agreed exactly with the committed capture at
+              # fixtures/evidence/phase-3/roles/sbsandbox-intern-edullm-batch-workload.sanitized.json,
+              # observed at 2026-07-31T02:54:00Z. The capture is what this cites rather than
+              # the live read, because it is the copy a later reader can check without an AWS
+              # session, and tests/test_dataset_validator_role.py compares these six
+              # statements against it rather than against a list somebody retyped.
+              #
+              # The Sids are the dataset owner's own names for the six things his validator
+              # does, kept rather than reworded. They are better documentation of that
+              # validator than anything invented here, and keeping them makes the cutover a
+              # diff against the policy it replaces instead of two documents that have to be
+              # read side by side.
+              #
+              # THE SAME SET AND NOT A NARROWER ONE, DELIBERATELY. The cutover is a change of
+              # identity, not a change of reach. Narrowing on the same day would make any
+              # failure afterwards ambiguous between the new role and the smaller grant, on a
+              # pipeline whose failure mode is a manifest that lands and is simply never
+              # promoted -- which raises nothing. A narrowing is a later change with its own
+              # reason, made once this identity is known to work.
+              - Sid: PromoteIntoPublishedBucket
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:PutObjectTagging
+                  - s3:AbortMultipartUpload
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::edullm-data/*
+              # Bucket-level, so it cannot be scoped by the object ARN above. Unconditioned
+              # rather than prefixed: the validator's job is to promote datasets across the
+              # whole bucket, not one team's slice of it, so there is no teams/ segment here
+              # the way there is on our own workload roles.
+              - Sid: ReadPublishedBucketForIdempotencyAndCatalog
+                Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::edullm-data
+              # Reading what is already published, which is not the same as reading the
+              # candidate. A manifest that declares a dependency on another dataset can only
+              # be checked against the published copy of it.
+              - Sid: ReadPublishedObjectsForDependsOnResolution
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectAttributes
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::edullm-data/*
+              # The candidate side of the airlock: the payload and the manifests that
+              # describe it, as they arrived. This is the statement whose absence would make
+              # the role able to promote without being able to read what it promoted.
+              - Sid: ReadLandingPayloadAndManifests
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectAttributes
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::edullm-landing/*
+              # Bucket-level for the same reason as the published list above. The owner's Sid
+              # says what the listing is for -- a manifest is checked against what is
+              # actually in the landing zone, which needs the whole zone rather than the keys
+              # the manifest already names.
+              - Sid: ListLandingForExhaustivenessCheck
+                Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::edullm-landing
+              # The refusal path, and the reason a read-only grant on the landing zone would
+              # not do. A validator that cannot write back cannot report that it refused, and
+              # a refusal nobody can see is indistinguishable from a validator that never
+              # ran. One action, not the three the published bucket gets: this writes a
+              # sentinel, it does not promote anything here.
+              - Sid: WriteRejectionSentinelToLanding
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::edullm-landing/*
+              # DELIBERATELY ABSENT, each for its own reason.
+              #
+              # s3:DeleteObject and s3:DeleteObjectVersion: edullm-data's bucket policy
+              # denies both to every principal that touches it, this role included, so
+              # granting them here would only be a capability something else exists to
+              # block -- the same reasoning that keeps delete off both Batch workload roles
+              # in infra/iam/batch-roles.yaml and infra/iam/batch-gpu-roles.yaml.
+              #
+              # Neither delete on edullm-landing, where the argument above does not apply
+              # because no bucket policy there has been read. The reason here is a different
+              # one: the policy this copies holds no delete on either bucket, and none of the
+              # six things the validator does needs one. A delete would buy tidying a
+              # candidate away after a refusal, and would cost a validator able to remove the
+              # thing it refused along with the sentinel that says so.
+              #
+              # Any action on an sbsandbox-intern-edullm-* bucket: this role's entire reason
+              # to exist is that the validator's reach and our own workloads' reach stop
+              # being the same set. A grant on any bucket of ours would be the shared role
+              # again with a new name on it.
+              #
+              # Any logs: action. A Batch execution role writes a container's stdout under
+              # its own identity before the container's process starts; a logs grant here
+              # would let this identity write into the record of what it printed, which is
+              # a different thing from printing it.
+              #
+              # NOT YET EFFECTIVE. edullm-data's own bucket policy denies these write
+              # actions to every principal except sbsandbox-intern-edullm-batch-workload and
+              # sbsandbox-intern-edullm-infra-deployer (the latter a documented break-glass
+              # path for removing a published dataset, and out of scope here). This role is
+              # not added to that exemption today, so it can be created and its writes stay
+              # denied until the exemption is moved from the shared role to this one in the
+              # same later change that removes dataset-validator from
+              # sbsandbox-intern-edullm-batch-workload -- one swap rather than a window with
+              # neither identity able to write.
+              #
+              # THE LANDING SIDE HAS NO SUCH SWAP, measured rather than assumed.
+              # edullm-landing carries no bucket policy at all: GetBucketPolicy on it
+              # returned NoSuchBucketPolicy on 2026-07-31. So nothing there exempts
+              # principals by name the way edullm-data's policy does, and nothing there has
+              # to move when the identity changes. This was worth reading before the cutover
+              # rather than during it: had a policy existed and named the shared role, the
+              # rejection sentinel would have stopped being writable at the same moment the
+              # identity changed, and the swap above would have had a second half.
+              #
+              # Recorded because a later reader will otherwise have to ask the same question,
+              # and because the answer is the kind that changes without announcing itself --
+              # a policy added to that bucket later reintroduces exactly the coupling this
+              # paragraph rules out today.
+
+Outputs:
+  RoleName:
+    Value:
+      Ref: DatasetValidatorRole
+  RoleArn:
+    Value:
+      Fn::GetAtt:
+        - DatasetValidatorRole
+        - Arn

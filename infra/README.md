@@ -392,6 +392,105 @@ and the recorder writes a lifecycle event with state `cancelled` — `lifecycle_
 reads the termination reason to distinguish an operator's cancellation from a failure. So the
 lineage record of a cancelled run is complete in the same way a successful one is.
 
+## The Phase 4 stacks, in dependency order
+
+| # | Stack | Template | Roles or resources | Applied from |
+| --- | --- | --- | --- | --- |
+| 1 | `sbsandbox-intern-edullm-phase4-gpu-iam` | `infra/iam/batch-gpu-roles.yaml` | `…-batch-gpu-execution`, `…-batch-gpu-workload`, `…-batch-gpu-instance` and its instance profile | laptop |
+| 2 | `sbsandbox-intern-edullm-phase4-gpu` | `infra/batch-compute-gpu.yaml` | compute environment, queue, job definition, log group | CI |
+| 3 | `sbsandbox-intern-edullm-dataset-validator-iam` | `infra/iam/dataset-validator-role.yaml` | `…-dataset-validator` | laptop, not applied yet |
+
+Same rule as Phases 2 and 3: **every laptop stack goes before every CI stack**. Here it is
+not enforced by CloudFormation at all — the comment immediately above the *Deploy Phase 4 GPU
+batch compute stack* step in `.github/workflows/deploy-phase3-batch.yml` (lines 164–166) says
+so directly, and this table exists so that comment is findable from the stack name rather than
+from the workflow file.
+
+- **No committed file named stack 1 before today.** Three roles are deployed under
+  `infra/iam/batch-gpu-roles.yaml` and nothing in this repository recorded which stack owned
+  them, so a change to any one of the three began with a guess at its own stack name.
+  Resolving each role's owning stack against the account on 2026-07-31 returned the same
+  answer for all three — worth stating rather than assuming, because three roles in one
+  template answering to different stacks would mean the template had been deployed twice
+  under two names, and that is not what happened here.
+- **Stack 3 is in this table before it exists, on purpose.** The bullet above is the reason:
+  a template with no committed file naming its stack is what made a change to those three GPU
+  roles begin with a guess, and the guess is removed by one line written before the first
+  deploy rather than recovered from the account afterwards. It sits in the Phase 4 table
+  because this is the section that learned that, not because anything in Phase 4 depends on
+  it.
+
+### Stack 3: the dataset validator role, declared and deliberately not deployed
+
+Laptop-applied when it is applied, like every IAM stack in this file. The command is the one
+under *Deploying one IAM stack* above, with `sbsandbox-intern-edullm-dataset-validator-iam`
+as the stack name and `infra/iam/dataset-validator-role.yaml` as the template.
+
+**Nothing has run it, and that is the intent rather than an unfinished step.** The role is
+the identity a dataset owner's validator will assume instead of
+`sbsandbox-intern-edullm-batch-workload`, which is the shared CPU workload role every team's
+containers run as. Creating it is half a change: the other half detaches the out-of-band
+`dataset-validator` inline policy from that shared role and moves the `edullm-data`
+bucket-policy exemption onto this one, in a single swap, so that no window exists in which
+neither identity can write. That swap lands on a running pipeline: both EventBridge rules
+that can invoke a Batch job resolve the job definition by unversioned name, so a bad revision
+reaches production on the next event, and the failure mode is a manifest that lands and is
+simply never promoted — which raises nothing. So it waits for a window with that pipeline's
+operator watching, rather than going in beside a template addition.
+
+Deploying this stack on its own would be safe and would buy nothing. Until the exemption
+moves, `edullm-data`'s own bucket policy denies this role's writes;
+`infra/iam/dataset-validator-role.yaml` carries that argument beside the grants it is about,
+along with one thing that is **not established** and should be read before the cutover rather
+than during it: whether `edullm-landing` carries a bucket policy of its own.
+
+The role is registered in `role_drift.DATASET_VALIDATOR_ROLE_TEMPLATES`, because registering
+a role is part of shipping it rather than a follow-up — the same rule as Phase 2. No capture
+walks that registry yet, there being no deployed role to read; wiring it into one belongs
+with the deploy above rather than before it.
+
+### A hazard that has expired, and the one it does not take with it
+
+Until `2026-07-31T07:21:51Z` this section would have had to carry a live warning: the deployed
+`sbsandbox-intern-edullm-phase3-batch-iam` held a `secretsmanager:GetSecretValue` grant that
+`main` had not yet declared, because the PR adding it to the execution role's inline policy —
+PR #77 — had not merged. Deploying that stack from `main` would have reconciled the account
+down to the template and silently taken back the grant a CPU job needs to read the W&B API
+key, with no stack error to say so. PR #77 merged at the timestamp above; `main` (`8a444bf`)
+now declares the grant itself, at `infra/iam/batch-roles.yaml:107-110`, and the account agrees
+— confirmed 2026-07-31. That specific hazard is disarmed.
+
+The grant sits on the **execution** role, never the workload role; the comment above it in
+`infra/iam/batch-roles.yaml` (around lines 85–89) is explicit about why the two are not
+interchangeable here, and this file will not repeat that argument only to get it slightly
+wrong.
+
+**The general hazard behind it has not expired, because nothing about *Why IAM is
+laptop-only* above has changed.** Every stack in this file is applied by hand, so the account
+can hold a grant `main` has not yet declared, and `aws cloudformation deploy` reconciles that
+difference away without a stack error the moment somebody runs it from `main`. The symptom
+surfaces inside a container much later — a call failing on a credential the role no longer
+has — not as a deploy failure. That is why this paragraph lives beside the stack table rather
+than beside one PR: it outlives whichever PR happens to close the gap it describes today.
+
+That shape is not hypothetical today, either. `sbsandbox-intern-edullm-batch-workload` — the
+CPU workload role, owned by stack 1 of the Phase 3 table above — carries two inline policies:
+`write-team-outputs-only`, which `infra/iam/batch-roles.yaml:132` declares, and
+`dataset-validator`, which no committed template declares. It grants `s3:PutObject`,
+`s3:PutObjectTagging`, `s3:AbortMultipartUpload`, `s3:ListBucket`, `s3:GetBucketLocation`,
+`s3:GetObject` and `s3:GetObjectAttributes`, attached out-of-band so the dataset owner's
+validator jobs could run under this role. Removing it is a separate task and not this one;
+what belongs in this file is only that the account already holds, measured 2026-07-31, a
+policy no template here declares.
+
+**Not established:** whether an `aws cloudformation deploy` of `…-phase3-batch-iam` from
+`main` today would strip `dataset-validator`. That was not tested, because testing it means
+deploying the stack, so this file says only that reconciliation is the mechanism and not what
+it would do to this particular policy. For contrast,
+`sbsandbox-intern-edullm-batch-gpu-workload` holds exactly the one inline policy
+`infra/iam/batch-gpu-roles.yaml:131` declares — account and template agree there too, also
+measured 2026-07-31.
+
 ## Releasing a Lambda
 
 Two functions now ship this way, and the procedure is the same for both.

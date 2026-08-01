@@ -142,7 +142,7 @@ The kind column separates a `record`, which some payload is validated against, f
 | ResumeEvidence | edullm_platform.phase4_evidence | record | unversioned | sha256:8ad8f5f65f6a1f7aef5d36d049c4a1d09269a0bb217fa2ed5f092a9e220ad96d |
 | SecretDeliveryEvidence | edullm_platform.phase4_evidence | record | unversioned | sha256:1b4eb420671c5194307b71dcdd37ec700d2768b7c97a5c5103cdfd110a421eff |
 | TrainingSummaryEvidence | edullm_platform.phase4_evidence | record | unversioned | sha256:2e97f2b0ed364df6afaf8139f6cebfbd8137094ce7828ad8f2af146924d4fb91 |
-| WorkloadRoleScopeEvidence | edullm_platform.phase4_evidence | record | unversioned | sha256:a291e05094714bdd08465a239732a666b76186e600748a6cea6126d75e05780a |
+| WorkloadRoleScopeEvidence | edullm_platform.phase4_evidence | record | unversioned | sha256:c82e1f0f32998e0cea2afa17647b446eda89170c573d76dbbbcd76b17f08b7e7 |
 | Phase4GateReport | edullm_platform.phase4_gate | record | unversioned | sha256:57cbe195d2a7a6ba2b5117519165f41302c7fcac042472c7931a25831159878b |
 | AdmittedRunEvidence | edullm_platform.phase5_evidence | record | unversioned | sha256:be8cc9a1a6d7d999e2deb1eacc3aedc973a46f5cb0cdffa590c91ca572c74104 |
 | BranchProtectionEvidence | edullm_platform.phase5_evidence | record | unversioned | sha256:844ce60279a4834229d3fafed970f0b1e57efba02023995eacc35a84d2ecef21 |

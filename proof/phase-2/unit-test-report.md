@@ -17,9 +17,9 @@ uv run python tools/build_phase2_proof.py
 
 | measure | count |
 | --- | --- |
-| collected by pytest | 3819 |
-| executed (excluding tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py, tests/test_phase5_proof.py) | 3638 |
-| passed | 3638 |
+| collected by pytest | 3836 |
+| executed (excluding tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py, tests/test_phase5_proof.py) | 3655 |
+| passed | 3655 |
 | failed | 0 |
 | errored | 0 |
 | skipped | 0 |
@@ -31,9 +31,9 @@ Every test node id cited by the negative-case matrix, plus every test in the mod
 
 | measure | count |
 | --- | --- |
-| selected node ids | 612 |
-| executed | 612 |
-| passed | 612 |
+| selected node ids | 613 |
+| executed | 613 |
+| passed | 613 |
 | failed | 0 |
 | errored | 0 |
 | skipped | 0 |
@@ -49,7 +49,7 @@ The test modules Phase 2 added, excluding the ones that invoke a gate or this ge
 | tests/test_phase2_admission.py | 52 | pass |
 | tests/test_phase2_admission_denials.py | 106 | pass |
 | tests/test_phase2_admission_deployment_workflow.py | 20 | pass |
-| tests/test_phase2_admission_handler.py | 11 | pass |
+| tests/test_phase2_admission_handler.py | 12 | pass |
 | tests/test_phase2_admission_records.py | 78 | pass |
 | tests/test_phase2_dataset_registry.py | 32 | pass |
 | tests/test_phase2_github_evidence.py | 10 | pass |
