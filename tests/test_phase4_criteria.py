@@ -13,8 +13,8 @@ were right about the danger -- a gate goes green the moment somebody relabels th
 is red on -- and being right about the danger is why they now assert the shape of each move
 instead of asserting that no such move has happened.
 
-Criterion 9 was capacity failure. It left the phase for Phase 8, which is where the
-queue-wait detector it waits on is built, and its number was not reused. So the numbering
+Criterion 9 was capacity failure. It left the phase to be owned beside the queue-wait
+detector it waits on, which is unbuilt, and its number was not reused. So the numbering
 case pins the hole rather than the range, on the same reasoning Phase 3 pins the hole where
 its three cancellation criteria used to be: a criterion number is an identifier, and closing
 the gap up would silently rewrite every citation written against the old list.
@@ -45,16 +45,16 @@ from edullm_platform.phase4_criteria import (
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 #: Eight of the plan's eleven are marked, and the twelfth this phase added is marked too, so
-#: nine of eleven. It was ten of twelve until criterion 9 left for Phase 8. That criterion
+#: nine of eleven. It was ten of twelve until criterion 9 left the phase. That criterion
 #: was marked, so the pilot set lost a member with it -- as a consequence of the transfer
 #: rather than because anybody's judgement about harm changed.
 PILOT_BLOCKING = ("1", "2", "3", "4", "5", "6", "7", "8", "12")
 
-#: The number no criterion carries. Capacity failure moved to Phase 8, which is where the
-#: queue-wait detector it cannot be closed without is built, and the number was not reused,
-#: so a citation written against the old list still names what it named. Recorded here so
-#: that reinstating it is a change to this file too.
-MOVED_TO_A_LATER_PHASE = ("9",)
+#: The number no criterion carries. Capacity failure is owned beside the queue-wait detector
+#: it cannot be closed without, which is unbuilt, and the number was not reused, so a
+#: citation written against the old list still names what it named. Recorded here so that
+#: reinstating it is a change to this file too.
+TRANSFERRED_OUT_OF_THIS_PHASE = ("9",)
 
 #: The two this phase does not cover, both recorded decisions carrying a trigger. Ten is the
 #: queue-wait detector nobody has built; eleven is the single-item instance list that is
@@ -79,8 +79,8 @@ def test_the_definition_lists_every_check_the_phase_plan_names() -> None:
     """Mutation: drop a criterion, or renumber the list to close the hole 9 left behind.
 
     The count is the plan's eleven plus the prefix-agreement check this phase added when it
-    inherited three answers to where a run writes its output, less the one that moved to
-    Phase 8. A definition short by one reports a phase closer to done than it is, and
+    inherited three answers to where a run writes its output, less the one that moved out of
+    the phase. A definition short by one reports a phase closer to done than it is, and
     nothing else notices.
 
     Closing the hole up would read as a tidy-up and would be a silent rewrite of every
@@ -91,7 +91,7 @@ def test_the_definition_lists_every_check_the_phase_plan_names() -> None:
     permits the hole; this is what keeps it open.
     """
     specs = phase4_criteria()
-    expected = [str(n) for n in range(1, 13) if str(n) not in MOVED_TO_A_LATER_PHASE]
+    expected = [str(n) for n in range(1, 13) if str(n) not in TRANSFERRED_OUT_OF_THIS_PHASE]
 
     assert len(specs) == PHASE4_CRITERION_COUNT == 11
     assert [spec.number for spec in specs] == expected
@@ -109,14 +109,16 @@ def test_the_transferred_criterion_left_the_phase_rather_than_being_softened() -
     What makes the removal legible rather than silent is the module saying where the check
     went. A criterion that vanishes with no destination is a check nobody owns, which is the
     outcome a transfer is supposed to prevent rather than produce -- so the docstring has to
-    name both the number and the phase now carrying it.
+    name both the number and the mechanism the check is now owned beside.
     """
     numbers = {spec.number for spec in phase4_criteria()}
     written = criteria_module.__doc__ or ""
 
-    assert numbers.isdisjoint(MOVED_TO_A_LATER_PHASE)
-    assert "Phase 8" in written, "nothing says which phase carries the transferred check"
-    for number in MOVED_TO_A_LATER_PHASE:
+    assert numbers.isdisjoint(TRANSFERRED_OUT_OF_THIS_PHASE)
+    assert "queue-wait detector" in written, (
+        "nothing says what the transferred check is now owned beside"
+    )
+    for number in TRANSFERRED_OUT_OF_THIS_PHASE:
         assert f"Criterion {number}" in written or f"criterion {number}" in written
 
 

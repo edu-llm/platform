@@ -397,9 +397,9 @@ def every_submit_request_field() -> frozenset[str]:
 def test_the_compute_environment_holds_no_capacity_when_it_is_idle() -> None:
     """Mutation: set ``MinvCpus`` to 1.
 
-    That is the held floor Phase 7 has to decide about, and setting it here would bill
-    continuously from the day it merged -- a monthly figure nobody could attribute to a
-    change, because nothing else in the repository would look different.
+    That is the held floor the bounded capacity window has to decide about, and setting it
+    here would bill continuously from the day it merged -- a monthly figure nobody could
+    attribute to a change, because nothing else in the repository would look different.
     """
     resources = properties_of(COMPUTE_PATH, "AWS::Batch::ComputeEnvironment")["ComputeResources"]
 

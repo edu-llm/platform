@@ -15,7 +15,7 @@ captured, sanitized and committed under ``fixtures/evidence/phase-4/``.
 **Ten of the eleven come from the master plan; criterion 12 was added by this phase.** The
 plan lists eleven checks and marks nine as pilot-blocking, which is the highest proportion
 of any capability phase -- the reason is the hardware, because a GPU instance bills whether
-or not the container is using it. One of the marked nine has since left for Phase 8, so
+or not the container is using it. One of the marked nine has since left this phase, so
 eight of the plan's marked checks remain here and criterion 12 is the ninth marked. That
 criterion is the prefix-agreement check, added when Phase 4 inherited a three-way
 disagreement about where a run writes its output.
@@ -25,11 +25,11 @@ capacity failure: that a job which cannot be placed is surfaced without losing t
 intent. Half of it is already true and half of it could not be closed by running anything.
 AWS Batch does not fail a job it cannot place -- it leaves it ``RUNNABLE`` indefinitely --
 so "surfaced" has no mechanism behind it until the queue-wait detector of criterion 10
-exists, and criterion 10 is deferred with that detector scheduled into Phase 8. A criterion
-blocked on another phase's mechanism holds this phase's gate red for work this phase does
-not own, which is exactly the state Phase 3's three cancellation criteria were in, and it
-went the same way: the check moved to the phase building the mechanism, with its sentence
-and its number unchanged.
+exists, and criterion 10 is deferred until that detector is built. A criterion blocked on a
+mechanism nothing here builds holds this phase's gate red for work this phase does not own,
+which is exactly the state Phase 3's three cancellation criteria were in, and it went the
+same way: the check is owned beside the mechanism instead, with its sentence and its number
+unchanged.
 
 What that costs is real and worth stating. This phase's gate no longer asks whether a
 capacity failure gets noticed, and nothing in this module will notice if the answer stays
@@ -562,8 +562,8 @@ def phase4_criteria() -> tuple[CriterionSpec, ...]:
                 CONFIGURATION_CAPTURES_EXPIRE,
             ),
         ),
-        # There is no criterion 9. Capacity failure moved to Phase 8, which is where the
-        # queue-wait detector it cannot be closed without is built, and the number is a
+        # There is no criterion 9. Capacity failure is owned beside the queue-wait detector
+        # it cannot be closed without, which is unbuilt, and the number is a
         # deliberate hole so that every citation written against this list goes on naming
         # what it named. The module docstring says why, and what the check protected is
         # printed on the summary every accepted submission ends on, held there by
