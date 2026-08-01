@@ -1,5 +1,54 @@
 {
   "$defs": {
+    "PublishedDatasetReference": {
+      "additionalProperties": false,
+      "description": "A corpus somebody else built, named so a submission can ask for it.\n\nNOT A DatasetRelease, AND THE REASON IS A VALIDATOR RATHER THAN A URI TYPE.\n``DatasetRelease.validate_release`` requires either a parent release or the run that\nproduced it, and a corpus published elsewhere has neither -- ``derived_from`` holds\nslash-free identifiers this platform registers and ``produced_by_run_id`` is a ``run_``\nuuid7 we mint. Past that, ``objects`` is ``min_length=1`` with a sha256 and an S3\nVersionId per entry, so the largest of these corpora would need 6,911 records about\nobjects nobody here produced. ``DatasetRelease`` is a statement about provenance this\nplatform can make; this is a statement about a dependency.\n\n``reference_id`` is what a submitter picks on the form and what admission checks, because\n``DATASET_RELEASE_ID_PATTERN`` forbids slashes and ``pretrain/olmo-150b-dolma2`` is\ntherefore not expressible as an identifier. ``dataset_id`` and ``version`` are stored\napart rather than split out of the URI, because the reader takes them as two arguments\nand a caller that split the string differently would read a version nobody registered.\n\nThe field set is the dataset standard's own cross-dataset pin -- its section 7 shows one\ndataset depending on another by ``{dataset_id, version, uri, manifest_sha256}`` -- plus the\ntokenizer, which that standard puts on the group and the published corpora carry one hop\naway in ``groups[].depends_on[]`` with ``role: \"tokenizer\"``.",
+      "properties": {
+        "dataset_id": {
+          "minLength": 1,
+          "pattern": "^[a-z0-9]+(?:[/-][a-z0-9.]+)*$",
+          "title": "Dataset Id",
+          "type": "string"
+        },
+        "manifest_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Manifest Sha256",
+          "type": "string"
+        },
+        "reference_id": {
+          "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$",
+          "title": "Reference Id",
+          "type": "string"
+        },
+        "tokenizer": {
+          "minLength": 1,
+          "pattern": "^tokenizer/[a-z0-9]+(?:-[a-z0-9.]+)*$",
+          "title": "Tokenizer",
+          "type": "string"
+        },
+        "uri": {
+          "pattern": "^s3://edullm-data/[A-Za-z0-9][A-Za-z0-9._/-]*/$",
+          "title": "Uri",
+          "type": "string"
+        },
+        "version": {
+          "minLength": 1,
+          "pattern": "^v[0-9]+$",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reference_id",
+        "uri",
+        "dataset_id",
+        "version",
+        "manifest_sha256",
+        "tokenizer"
+      ],
+      "title": "PublishedDatasetReference",
+      "type": "object"
+    },
     "RegisteredDatasetRelease": {
       "additionalProperties": false,
       "properties": {
@@ -18,6 +67,14 @@
   },
   "additionalProperties": false,
   "properties": {
+    "published": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/PublishedDatasetReference"
+      },
+      "title": "Published",
+      "type": "array"
+    },
     "releases": {
       "items": {
         "$ref": "#/$defs/RegisteredDatasetRelease"

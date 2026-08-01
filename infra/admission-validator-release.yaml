@@ -52,14 +52,41 @@
 # handler reaches, and it needs laptop AWS credentials, so a contributor without them is
 # blocked on somebody who has. The honest reading of a moved digest is unchanged: the
 # deployed zip is not the zip this tree builds.
+#
+# THE RELEASE THIS RECORD WAS OWED HAS BEEN CUT, AND HOW IT CAME TO BE OWED IS WORTH
+# KEEPING. Adding PublishedDatasetReference to
+# src/edullm_platform/contracts/dataset_registry.py changed the bytes of a module the
+# handler imports, so the digest moved and
+# tests/test_phase2_lambda_package.py::test_the_released_zip_is_the_one_this_tree_builds
+# went red. It was left red rather than papered over. The two ways to make it green without
+# uploading anything are both worse: writing a digest for a zip nobody uploaded would defeat
+# the one mechanism here that detects deployed-versus-tree skew, and would do it by making
+# the record assert the thing this whole comment exists to prevent; suppressing the test
+# would be the same act differently spelled, and there is no xfail anywhere in this
+# repository.
+#
+# WAITING FOR SOMEBODY ELSE'S RELEASE WAS TRIED FIRST AND DOES NOT WORK. This change
+# originally sat on a branch beside four IAM and measurement changes, on the reasoning that
+# a concurrent workstream owed the next release anyway and this could ride it. That release
+# was cut -- 9aa6e4f, from a tree without this contract in it -- and recorded a digest this
+# tree did not match. Riding somebody else's release only works if they take your change
+# with them, and nothing in the procedure makes them notice they should. So the branch was
+# split, the IAM work went ahead on its own, and this waited for a release cut on purpose
+# from a tree containing it. That is the ordering rule: the person who moves a packaged
+# module cuts the release, and does not hand the debt to whoever releases next.
+#
+# The change is additive -- no existing field moved, config/datasets.yaml is unchanged, and
+# nothing on the handler's path reads the new list -- so the validator this release deploys
+# makes byte-for-byte the same admission decisions as the one before it. What was stale was
+# the record, never the behaviour.
 schema_version: 1
 
 #: The object the template's Code block names. Kept here as well so the two can be
 #: compared: a version id edited in one place and not the other is a template pointing at
 #: a zip nobody recorded, or a record describing a zip nobody deployed.
 s3_key: admission-validator/admission-validator.zip
-s3_object_version: p1P_bzbsdF68ssVu19sSr7Oc9aCtb.U_
+s3_object_version: .bQjielCkvtOFkOJnydu9e6_q8wV_7WU
 
 #: sha256 of the uploaded zip, as tools/build_admission_lambda.py reports it. This is the
 #: field that ties the release to a tree rather than to a moment.
-sha256: c08782e1dfb4b4cf1d97298c8b83d3c511462c4a00b9420240fac5d026e2eb9a
+sha256: 0e9309e4378772e8236114446df40e6d1219aa19e68e0f0faaee80e7d1059572
