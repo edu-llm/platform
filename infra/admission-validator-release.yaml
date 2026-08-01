@@ -103,14 +103,29 @@
 # Released from main rather than from the branch, because deploy-phase2-admission.yml only
 # runs there. The zip was built from 2baf0ea and the digest below is what a local rebuild of
 # that tree produces, checked rather than copied.
+#
+# THIS RELEASE CARRIES A CONFIG CHANGE AND COVERS TWO MERGES RATHER THAN ONE.
+# config/repositories.yaml registered olmo-eval-full and config/workload-catalog.yaml gave
+# edullm-data and olmo-eval-full their first workload profiles, so a submission naming either
+# was one the deployed validator would have refused as unregistered or as naming an unknown
+# workload. That is the case this whole file exists for: the refusal would have arrived after
+# a lead released the run, from a zip whose registry was a day older than the form the
+# submitter filled in.
+#
+# It was cut twice. The first release covered 8c875df and went stale before it could be
+# recorded, because #159 landed a refusal in the admission path while the values were being
+# carried into these four files. Rather than race a second time, this one covers c9a785d and
+# both merges, which is what infra/README.md says to do when several branches are landing
+# config on the same day. The abandoned upload is still in the bucket, addressed by a version
+# id nothing names.
 schema_version: 1
 
 #: The object the template's Code block names. Kept here as well so the two can be
 #: compared: a version id edited in one place and not the other is a template pointing at
 #: a zip nobody recorded, or a record describing a zip nobody deployed.
 s3_key: admission-validator/admission-validator.zip
-s3_object_version: tub5rH2W9dpCLooOvqBZuy.tHGWslzTe
+s3_object_version: Dc3zjGYZTaD_Au.3NsfHPFxhLQM2wGPa
 
 #: sha256 of the uploaded zip, as tools/build_admission_lambda.py reports it. This is the
 #: field that ties the release to a tree rather than to a moment.
-sha256: 53b6c5e05cc2d2448ed4d71d3227abc6cf41a6261f979a2a30a6f39390c75d38
+sha256: e0e420a5cdba8a028c950db9ac2420e28dd453ba211d42c526c784760587eb09
