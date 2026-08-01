@@ -91,6 +91,7 @@ __all__ = [
     "FOREIGN_ACCOUNT_PLACEHOLDER",
     "INFRA_DEPLOYER_ROLE_NAME",
     "PHASE3_ROLE_TEMPLATES",
+    "PHASE4_ROLE_TEMPLATES",
     "PHASE5_ROLE_TEMPLATES",
     "PUBLISHER_ROLE_NAME",
     "DriftDirection",
@@ -151,6 +152,36 @@ PHASE3_ROLE_TEMPLATES: Final[tuple[tuple[str, str], ...]] = (
     ("sbsandbox-intern-edullm-batch-workload", "infra/iam/batch-roles.yaml"),
     ("sbsandbox-intern-edullm-batch-instance", "infra/iam/batch-roles.yaml"),
     ("sbsandbox-intern-edullm-lifecycle-lambda", "infra/iam/lifecycle-lambda-role.yaml"),
+)
+
+#: The five roles Phase 4 adds, and the committed templates that declare them.
+#:
+#: A tuple of its own for the reason written above ``PHASE3_ROLE_TEMPLATES``: one registry per
+#: phase, so a role this phase adds cannot fail an earlier phase's capture and the counts an
+#: earlier phase's proof bundle prints keep meaning what its prose says they mean.
+#:
+#: The three GPU roles are the Phase 3 trio's counterparts on the second compute environment.
+#: The two GitHub Actions roles are not compute at all -- one stops a job, one reads what the
+#: nightly checks ask about -- and they are here rather than in a registry of their own
+#: because they arrived with this phase and are deployed from the same laptop by the same
+#: hand. The roles Phase 4 *amends* rather than creates are not repeated: the deployer is in
+#: ``COMMITTED_ROLE_TEMPLATES`` and is compared there.
+#:
+#: **WHAT A CLEAN REPORT OVER THIS REGISTRY DOES NOT SAY, WHICH IS WORTH KNOWING BEFORE
+#: READING ONE.** The comparison answers whether the account grants what the committed
+#: template says it grants. It cannot answer whether the grant can be exercised. A condition
+#: keyed on something the action never puts in the request context is present in the
+#: template, present in the account, identical in both, and unsatisfiable -- and IAM reports
+#: the resulting refusal as an implicit deny, indistinguishable from a grant nobody wrote.
+#: ``iam simulate-principal-policy`` does not separate the two either, because it accepts no
+#: ``arn`` context key type. Only calling the action settles it, which is why the templates
+#: carrying such a condition record the call that settled it.
+PHASE4_ROLE_TEMPLATES: Final[tuple[tuple[str, str], ...]] = (
+    ("sbsandbox-intern-edullm-batch-gpu-execution", "infra/iam/batch-gpu-roles.yaml"),
+    ("sbsandbox-intern-edullm-batch-gpu-instance", "infra/iam/batch-gpu-roles.yaml"),
+    ("sbsandbox-intern-edullm-batch-gpu-workload", "infra/iam/batch-gpu-roles.yaml"),
+    ("sbsandbox-intern-edullm-nightly-reader", "infra/iam/nightly-reader-role.yaml"),
+    ("sbsandbox-intern-edullm-run-canceller", "infra/iam/run-canceller-role.yaml"),
 )
 
 #: The role Phase 5 adds so a submission can read which image a commit published, and the

@@ -6,17 +6,24 @@ working-directory refusal, the credential scan on every write, the exit-code map
 live in :mod:`edullm_platform.capture_tooling`. What is left here is the part that is
 genuinely about Phase 4: which facts to gather, and how to read a GPU job's answer.
 
-Six targets, and the split between them is by *what makes the record go stale* rather than
+Seven targets, and the split between them is by *what makes the record go stale* rather than
 by convenience:
 
 ``run``
     A job that ran, the log it printed, the checkpoint it wrote and where its output went.
     None of it expires; the run happened.
-``compute-environment``, ``offerings``, ``secret-delivery``, ``role-scope``
+``compute-environment``, ``offerings``, ``secret-delivery``, ``role-scope``, ``roles``
     Statements about how the account is configured, all of which are one console click from
     being false and therefore carry the freshness window.
 ``all``
     Every target, for the ordinary case.
+
+``roles`` and ``role-scope`` are different questions about overlapping subjects. The first
+walks every role this phase declares and reports how each one differs from the template that
+declares it; the second reads one role's S3 grants into the shape the isolation checks ask
+about. Neither subsumes the other: a comparison against a template says nothing about what
+the grants mean, and a reading of what they mean says nothing about whether they are what
+was committed.
 
 **The checkpoint target runs the platform's own reader against live S3.** That is the point
 of it: everything else in this evidence is the run describing itself, and a checkpoint that
@@ -74,6 +81,8 @@ from edullm_platform.phase4_evidence import (
     TrainingSummaryEvidence,
     WorkloadRoleScopeEvidence,
 )
+from edullm_platform.role_capture import capture_roles
+from edullm_platform.role_drift import PHASE4_ROLE_TEMPLATES, RoleDriftReport
 
 ALLOWED_OUTPUT_SUFFIX: Final = Path("docs-frank/working/phase-4-evidence")
 
@@ -1031,6 +1040,47 @@ def _configuration_target(arguments: argparse.Namespace, targets: Sequence[str])
     return 0
 
 
+def _roles_target(arguments: argparse.Namespace) -> int:
+    """The five roles this phase declares, captured and compared to their templates.
+
+    Exit 0 when every role matches the template that declares it, 1 when one does not. A
+    drifting role is a finding rather than a broken capture, so the records are written
+    either way -- what drifted is the account, and reading it is how anybody finds out.
+
+    Separate from the configuration targets above rather than a sixth one, because those
+    return 0 for anything they could read and this returns the comparison's answer.
+    """
+    records = capture_roles(
+        role_templates=PHASE4_ROLE_TEMPLATES,
+        profile=arguments.aws_profile,
+        region=arguments.aws_region,
+        observed_at=observed_now(),
+    )
+    written: list[str] = []
+    for relative_name, record in records:
+        path = arguments.output_dir / relative_name
+        write_model(path, record)
+        written.append(path.name)
+    drift_reports = [record for _name, record in records if isinstance(record, RoleDriftReport)]
+    findings = sum(len(one.findings) for one in drift_reports)
+    report(
+        {
+            "targets": ["roles"],
+            "written": sorted(written),
+            "roles_compared": len(drift_reports),
+            "drift_findings": findings,
+            "verdict": "role_drift" if findings else "ok",
+        }
+    )
+    for drift_report in drift_reports:
+        for finding in drift_report.findings:
+            print(
+                f"role_drift:{drift_report.role_name}:{finding.direction.value}:{finding.element}",
+                file=sys.stderr,
+            )
+    return 1 if findings else 0
+
+
 CONFIGURATION_TARGETS: Final = ("compute-environment", "offerings", "secret-delivery", "role-scope")
 
 
@@ -1042,7 +1092,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--aws-region", default="us-east-1")
     parser.add_argument(
         "--target",
-        choices=["run", *CONFIGURATION_TARGETS, "all"],
+        choices=["run", "roles", *CONFIGURATION_TARGETS, "all"],
         required=True,
     )
     parser.add_argument(
@@ -1065,9 +1115,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     def target() -> int:
         if arguments.target == "run":
             return _run_target(arguments)
+        if arguments.target == "roles":
+            return _roles_target(arguments)
         if arguments.target == "all":
             outcome = _run_target(arguments)
-            return outcome or _configuration_target(arguments, CONFIGURATION_TARGETS)
+            outcome = outcome or _configuration_target(arguments, CONFIGURATION_TARGETS)
+            return outcome or _roles_target(arguments)
         return _configuration_target(arguments, [arguments.target])
 
     return run_capture(

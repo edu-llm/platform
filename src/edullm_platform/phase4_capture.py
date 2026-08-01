@@ -31,6 +31,7 @@ from edullm_platform.evidence import (
     EVIDENCE_STALE_CODE,
     evidence_load_reason_code,
 )
+from edullm_platform.phase1_capture import CommittedRoleCapture, read_committed_role_captures
 from edullm_platform.phase4_evidence import (
     CheckpointObservation,
     CorpusReadEvidence,
@@ -45,6 +46,7 @@ from edullm_platform.phase4_evidence import (
     TrainingSummaryEvidence,
     WorkloadRoleScopeEvidence,
 )
+from edullm_platform.role_drift import PHASE4_ROLE_TEMPLATES
 
 __all__ = [
     "BATCH_JOB_RECORD",
@@ -57,6 +59,7 @@ __all__ = [
     "OFFERINGS_RECORD",
     "OUTPUTS_RECORD",
     "RESUME_RECORD",
+    "ROLE_CAPTURE_DIR",
     "ROLE_SCOPE_RECORD",
     "SECRET_DELIVERY_RECORD",
     "TRAINING_SUMMARY_RECORD",
@@ -65,12 +68,23 @@ __all__ = [
     "UnreadableCaptureError",
     "captured_runs",
     "read_capture",
+    "role_captures",
     "training_run",
 ]
 
+#: The checkout, so a reader can resolve a template path a registry gives it relative to it.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
 #: Where committed captures live. Under ``fixtures/`` rather than the working directory,
 #: because a record only becomes evidence once somebody has read it and copied it here.
-CAPTURE_ROOT = Path(__file__).resolve().parents[2] / "fixtures" / "evidence" / "phase-4"
+CAPTURE_ROOT = REPO_ROOT / "fixtures" / "evidence" / "phase-4"
+
+#: Where the captures of :data:`~edullm_platform.role_drift.PHASE4_ROLE_TEMPLATES` are
+#: committed. A directory of its own, and the reason is mechanical: the reader below reports
+#: in both directions -- a registered role with no capture, and a capture the registry does
+#: not declare -- so a directory is implicitly owned by exactly one registry, and a stray
+#: file in it reads as a role nobody declared rather than as a filing mistake.
+ROLE_CAPTURE_DIR = CAPTURE_ROOT / "roles"
 
 BATCH_JOB_RECORD = f"batch-job{CAPTURE_SUFFIX}"
 CHECKPOINT_RECORD = f"checkpoint{CAPTURE_SUFFIX}"
@@ -242,3 +256,22 @@ def secret_delivery(root: Path = CAPTURE_ROOT) -> SecretDeliveryEvidence:
 
 def role_scope(root: Path = CAPTURE_ROOT) -> WorkloadRoleScopeEvidence:
     return read_capture(root / ROLE_SCOPE_RECORD, WorkloadRoleScopeEvidence)
+
+
+def role_captures(directory: Path = ROLE_CAPTURE_DIR) -> tuple[CommittedRoleCapture, ...]:
+    """Every role this phase declares, and what the record committed for it establishes today.
+
+    Read through Phase 1's reader rather than through a second one, so a Phase 4 role and a
+    Phase 1 role produce the same verdicts and a reader meeting one has already met the
+    other. What differs is the registry it walks and the directory it walks, which is what
+    keeps a role this phase adds from failing an earlier phase's capture.
+
+    Unlike the records above, this raises nothing for a capture that is absent, stale or
+    drifted: each is a verdict on the capture, and collapsing them into an exception would
+    lose the only part a reader can act on.
+    """
+    return read_committed_role_captures(
+        REPO_ROOT,
+        capture_dir=directory,
+        role_templates=PHASE4_ROLE_TEMPLATES,
+    )

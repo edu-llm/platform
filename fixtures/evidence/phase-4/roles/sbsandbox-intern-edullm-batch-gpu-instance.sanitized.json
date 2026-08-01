@@ -1,0 +1,121 @@
+{
+  "attached_managed_policies": [],
+  "environment": "sandbox",
+  "inline_policies": [
+    {
+      "policy_name": "join-the-batch-managed-gpu-ecs-cluster",
+      "policy_version": "2012-10-17",
+      "statements": [
+        {
+          "action_match": {
+            "actions": [
+              "ecr:GetAuthorizationToken",
+              "ecs:DiscoverPollEndpoint",
+              "ecs:Poll",
+              "ecs:StartTelemetrySession"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "*"
+            ]
+          },
+          "sid": null
+        },
+        {
+          "action_match": {
+            "actions": [
+              "ecs:DeregisterContainerInstance",
+              "ecs:RegisterContainerInstance",
+              "ecs:SubmitAttachmentStateChanges",
+              "ecs:SubmitContainerStateChange",
+              "ecs:SubmitTaskStateChange",
+              "ecs:UpdateContainerInstancesState"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:ecs:us-east-1:<aws-account-id>:cluster/AWSBatch-sbsandbox-intern-edullm-gpu-*"
+            ]
+          },
+          "sid": null
+        },
+        {
+          "action_match": {
+            "actions": [
+              "ecr:BatchCheckLayerAvailability",
+              "ecr:BatchGetImage",
+              "ecr:GetDownloadUrlForLayer"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:ecr:us-east-1:<aws-account-id>:repository/sbsandbox-intern-edullm-olmo-core"
+            ]
+          },
+          "sid": null
+        },
+        {
+          "action_match": {
+            "actions": [
+              "logs:CreateLogGroup",
+              "logs:CreateLogStream",
+              "logs:PutLogEvents"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:logs:us-east-1:<aws-account-id>:log-group:/aws/ecs/sbsandbox-intern-edullm-*"
+            ]
+          },
+          "sid": null
+        }
+      ]
+    }
+  ],
+  "max_session_duration_seconds": 3600,
+  "observed_at": "2026-08-01T15:56:32Z",
+  "permissions_boundary_policy_name": "InternSandboxBoundary",
+  "role_name": "sbsandbox-intern-edullm-batch-gpu-instance",
+  "source": "aws",
+  "status": "ok",
+  "trust_policy_version": "2012-10-17",
+  "trust_statements": [
+    {
+      "action_match": {
+        "actions": [
+          "sts:AssumeRole"
+        ],
+        "element": "Action"
+      },
+      "conditions": [],
+      "effect": "Allow",
+      "principal_match": {
+        "element": "Principal",
+        "principals": [
+          {
+            "identifier": "ec2.amazonaws.com",
+            "principal_type": "Service"
+          }
+        ]
+      },
+      "sid": null
+    }
+  ]
+}

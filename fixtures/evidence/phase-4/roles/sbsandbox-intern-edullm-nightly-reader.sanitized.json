@@ -1,0 +1,180 @@
+{
+  "attached_managed_policies": [],
+  "environment": "sandbox",
+  "inline_policies": [
+    {
+      "policy_name": "read-what-the-nightly-checks-ask-about",
+      "policy_version": "2012-10-17",
+      "statements": [
+        {
+          "action_match": {
+            "actions": [
+              "s3:GetObject"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:s3:::sbsandbox-intern-edullm-lineage/intent/*"
+            ]
+          },
+          "sid": "ReadIntentRecords"
+        },
+        {
+          "action_match": {
+            "actions": [
+              "s3:ListBucket",
+              "s3:GetBucketLocation"
+            ],
+            "element": "Action"
+          },
+          "conditions": [
+            {
+              "condition_key": "s3:prefix",
+              "operator": "StringLike",
+              "values": [
+                "intent/*"
+              ]
+            }
+          ],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:s3:::sbsandbox-intern-edullm-lineage"
+            ]
+          },
+          "sid": "ListIntentRecords"
+        },
+        {
+          "action_match": {
+            "actions": [
+              "s3:GetObject"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:s3:::sbsandbox-intern-edullm-outputs/teams/*/runs/*"
+            ]
+          },
+          "sid": "ReadRunOutput"
+        },
+        {
+          "action_match": {
+            "actions": [
+              "s3:ListBucket",
+              "s3:GetBucketLocation"
+            ],
+            "element": "Action"
+          },
+          "conditions": [
+            {
+              "condition_key": "s3:prefix",
+              "operator": "StringLike",
+              "values": [
+                "teams/*/runs/*"
+              ]
+            }
+          ],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:s3:::sbsandbox-intern-edullm-outputs"
+            ]
+          },
+          "sid": "ListRunOutput"
+        },
+        {
+          "action_match": {
+            "actions": [
+              "secretsmanager:GetSecretValue"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:secretsmanager:us-east-1:<aws-account-id>:secret:sbsandbox-intern-edullm-wandb-api-key-*"
+            ]
+          },
+          "sid": "ReadTheWandbKeyTheCheckValidates"
+        }
+      ]
+    }
+  ],
+  "max_session_duration_seconds": 3600,
+  "observed_at": "2026-08-01T15:56:32Z",
+  "permissions_boundary_policy_name": "InternSandboxBoundary",
+  "role_name": "sbsandbox-intern-edullm-nightly-reader",
+  "source": "aws",
+  "status": "ok",
+  "trust_policy_version": "2012-10-17",
+  "trust_statements": [
+    {
+      "action_match": {
+        "actions": [
+          "sts:AssumeRoleWithWebIdentity"
+        ],
+        "element": "Action"
+      },
+      "conditions": [
+        {
+          "condition_key": "token.actions.githubusercontent.com:aud",
+          "operator": "StringEquals",
+          "values": [
+            "sts.amazonaws.com"
+          ]
+        },
+        {
+          "condition_key": "token.actions.githubusercontent.com:job_workflow_ref",
+          "operator": "StringEquals",
+          "values": [
+            "edu-llm/platform/.github/workflows/nightly.yml@refs/heads/main"
+          ]
+        },
+        {
+          "condition_key": "token.actions.githubusercontent.com:repository_id",
+          "operator": "StringEquals",
+          "values": [
+            "1311508598"
+          ]
+        },
+        {
+          "condition_key": "token.actions.githubusercontent.com:repository_owner_id",
+          "operator": "StringEquals",
+          "values": [
+            "306859726"
+          ]
+        },
+        {
+          "condition_key": "token.actions.githubusercontent.com:sub",
+          "operator": "StringEquals",
+          "values": [
+            "repo:edu-llm@306859726/platform@1311508598:ref:refs/heads/main"
+          ]
+        }
+      ],
+      "effect": "Allow",
+      "principal_match": {
+        "element": "Principal",
+        "principals": [
+          {
+            "identifier": "arn:aws:iam::<aws-account-id>:oidc-provider/token.actions.githubusercontent.com",
+            "principal_type": "Federated"
+          }
+        ]
+      },
+      "sid": null
+    }
+  ]
+}

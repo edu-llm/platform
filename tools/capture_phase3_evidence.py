@@ -92,14 +92,10 @@ from edullm_platform.phase3_evidence import (
     group_opaque_identifier,
 )
 from edullm_platform.publisher_denials import assumed_role_identity
+from edullm_platform.role_capture import capture_roles
 from edullm_platform.role_drift import (
     DATASET_VALIDATOR_ROLE_TEMPLATES,
     PHASE3_ROLE_TEMPLATES,
-    PolicyNotComparableError,
-    compare_role_to_template,
-    load_template_roles,
-    project_deployed_role,
-    split_arn_fields,
 )
 
 __all__ = [
@@ -107,7 +103,6 @@ __all__ = [
     "LINEAGE_BUCKET",
     "RECORD_CONTRACTS",
     "CaptureFailedError",
-    "capture_roles",
     "capture_run",
     "main",
 ]
@@ -482,112 +477,6 @@ def capture_account(
         "service_linked_roles": capture_service_linked_roles(profile=profile),
         "batch": capture_batch(profile=profile, region=home_region),
     }
-
-
-# --------------------------------------------------------------------------------------
-# The four roles Phase 3 creates, compared to the templates that declare them
-# --------------------------------------------------------------------------------------
-
-
-def account_and_partition(*, profile: str, region: str) -> tuple[str, str]:
-    """The account this is running against, and its partition.
-
-    Neither is ever written to a file. The account ID is what tells a captured ARN naming
-    *this* account from one naming another, and the partition is what the drift
-    comparison is allowed to fold. The partition is read here rather than by
-    :func:`~edullm_platform.capture_tooling.account_identity`, because which spellings of
-    a partition may be folded together is the drift comparison's question.
-    """
-    identity = account_identity(profile=profile, region=region)
-    fields = split_arn_fields(identity.arn)
-    if fields is None:
-        raise CaptureFailedError("caller_identity_unreadable")
-    return identity.account_id, fields[1]
-
-
-def capture_role(role_name: str, *, profile: str, region: str, account_id: str,
-                 observed_at: datetime) -> Any:
-    role = aws_json(["iam", "get-role", "--role-name", role_name], profile=profile,
-                    region=region)["Role"]
-    listed = aws_json(["iam", "list-role-policies", "--role-name", role_name], profile=profile,
-                      region=region)
-    inline_documents = [
-        aws_json(
-            ["iam", "get-role-policy", "--role-name", role_name, "--policy-name", policy_name],
-            profile=profile,
-            region=region,
-        )
-        for policy_name in listed.get("PolicyNames", [])
-    ]
-    attached = aws_json(
-        ["iam", "list-attached-role-policies", "--role-name", role_name],
-        profile=profile,
-        region=region,
-    )
-    return project_deployed_role(
-        role,
-        inline_documents,
-        attached.get("AttachedPolicies", []),
-        own_account=account_id,
-        environment="sandbox",
-        observed_at=observed_at,
-    )
-
-
-def capture_roles(
-    *,
-    profile: str,
-    region: str,
-    observed_at: datetime,
-    role_templates: Sequence[tuple[str, str]] = PHASE3_ROLE_TEMPLATES,
-) -> list[tuple[str, Any]]:
-    """Each role in one registry, followed by how it compares to the template that
-    declares it.
-
-    Mirrors ``tools/capture_phase1_evidence.py``'s roles target, including its output
-    layout, because the two produce the same kind of record and a reader comparing a
-    Phase 1 role to a Phase 3 one should not have to learn a second shape. What differs is
-    only which registry is walked: ``PHASE3_ROLE_TEMPLATES`` rather than
-    ``COMMITTED_ROLE_TEMPLATES``, so a Phase 3 role drifting cannot fail a Phase 1 capture.
-
-    THE REGISTRY IS A PARAMETER AND NOT A CONSTANT, so that the one rule this repository
-    already follows -- one registry per unit of work, one drift comparison per registry --
-    costs a caller an argument rather than a second copy of this function. The second
-    caller is ``--target dataset-validator``, which walks
-    ``DATASET_VALIDATOR_ROLE_TEMPLATES``. Defaulted rather than made required, because
-    every existing caller means Phase 3's four and a signature change is not a reason to
-    touch them.
-    """
-    account_id, partition = account_and_partition(profile=profile, region=region)
-    records: list[tuple[str, Any]] = []
-    for role_name, relative_path in role_templates:
-        evidence = capture_role(
-            role_name,
-            profile=profile,
-            region=region,
-            account_id=account_id,
-            observed_at=observed_at,
-        )
-        try:
-            declared = [
-                role
-                for role in load_template_roles(PROJECT_ROOT / relative_path)
-                if role.role_name == role_name
-            ]
-        except PolicyNotComparableError as exc:
-            raise CaptureFailedError(f"template_unreadable:{relative_path}") from exc
-        if len(declared) != 1:
-            raise CaptureFailedError(f"template_does_not_declare_the_role:{relative_path}")
-        report = compare_role_to_template(
-            evidence,
-            declared[0],
-            template_path=relative_path,
-            partition=partition,
-            region=region,
-        )
-        records.append((f"sanitized/roles/{role_name}.sanitized.json", evidence))
-        records.append((f"drift/{role_name}.json", report))
-    return records
 
 
 # --------------------------------------------------------------------------------------

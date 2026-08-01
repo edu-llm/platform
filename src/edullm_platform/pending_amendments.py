@@ -48,7 +48,10 @@ from typing import Final
 from edullm_platform.phase2_evidence import PHASE2_ROLE_TEMPLATES
 from edullm_platform.role_drift import (
     COMMITTED_ROLE_TEMPLATES,
+    DATASET_VALIDATOR_ROLE_TEMPLATES,
     PHASE3_ROLE_TEMPLATES,
+    PHASE4_ROLE_TEMPLATES,
+    PHASE5_ROLE_TEMPLATES,
     DriftDirection,
     RoleDriftFinding,
 )
@@ -70,18 +73,24 @@ class PendingAmendmentError(ValueError):
 
 
 def declared_role_templates() -> dict[str, str]:
-    """Every role some committed template declares, across all three phases.
+    """Every role some committed registry declares, whichever registry declares it.
 
-    The three registries stay separate where they are defined, because a Phase 3 role
-    drifting must not fail a Phase 1 capture. They are merged only here, and only to
-    answer one question: is there a template that will ever compare this role? A pending
+    The registries stay separate where they are defined, because a role one phase adds
+    drifting must not fail an earlier phase's capture. They are merged only here, and only
+    to answer one question: is there a template that will ever compare this role? A pending
     amendment for a role nothing compares would never clear, because nothing would ever
     report the findings it is waiting to stop seeing.
+
+    Every registry, and a registry left out of this list is the way this answer goes wrong:
+    the role would read as undeclared here while being compared perfectly well elsewhere.
     """
     return {
         **dict(COMMITTED_ROLE_TEMPLATES),
         **dict(PHASE2_ROLE_TEMPLATES),
         **dict(PHASE3_ROLE_TEMPLATES),
+        **dict(PHASE4_ROLE_TEMPLATES),
+        **dict(PHASE5_ROLE_TEMPLATES),
+        **dict(DATASET_VALIDATOR_ROLE_TEMPLATES),
     }
 
 
