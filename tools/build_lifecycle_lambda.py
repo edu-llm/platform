@@ -52,7 +52,7 @@ from build_admission_lambda import (
     build_package,
 )
 
-__all__ = ["ARTIFACT_KEY", "HANDLER_ENTRY_POINT", "RECORDER_ENTRYPOINT", "main"]
+__all__ = ["ARTIFACT_KEY", "HANDLER_ENTRY_POINT", "RECORDER_ENTRYPOINT", "build_parser", "main"]
 
 #: Where the artifact is uploaded, and what `infra/batch-events.yaml` names as `S3Key`.
 #: Its own prefix rather than a second file beside the validator's, so the two functions'
@@ -70,12 +70,21 @@ HANDLER_ENTRY_POINT = "edullm_platform.lifecycle_handler.handler"
 RECORDER_ENTRYPOINT = "edullm_platform.lifecycle_handler"
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """Named so ``tests/test_workflow_tool_arguments.py`` can import and read it.
+
+    Extracted alongside the admission builder for the same reason and at the same time; the
+    docstring there carries the account of what an invisible parser cost.
+    """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--output", required=True, type=Path, help="where to write the zip")
     parser.add_argument("--python-platform", default=DEFAULT_PYTHON_PLATFORM)
     parser.add_argument("--python-version", default=DEFAULT_PYTHON_VERSION)
-    arguments = parser.parse_args(argv)
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    arguments = build_parser().parse_args(argv)
 
     try:
         record = build_package(

@@ -63,7 +63,15 @@ def test_workflow_runs_only_on_dispatch_and_pushes_to_main_that_touch_phase2() -
     workflow = _load_workflow()
 
     assert set(workflow["on"]) == {"workflow_dispatch", "push"}
-    assert workflow["on"]["workflow_dispatch"] is None
+    # The dispatch carries exactly one input and it is the release switch. Asserted by name
+    # rather than left open, because an input on a workflow that deploys infrastructure is a
+    # knob a dispatcher can turn, and the guard step above only decides *who* may dispatch --
+    # not what they may ask for. A second input added without a reason lands here.
+    #
+    # It defaults to false so that a plain dispatch, which is what somebody reconciling a
+    # stack presses, still means only "deploy". Releasing is the thing you have to ask for.
+    assert set(workflow["on"]["workflow_dispatch"]["inputs"]) == {"release_lambdas"}
+    assert workflow["on"]["workflow_dispatch"]["inputs"]["release_lambdas"]["default"] is False
     assert workflow["on"]["push"] == {
         "branches": ["main"],
         "paths": [WORKFLOW_FILE, LINEAGE_TEMPLATE, ARTIFACTS_TEMPLATE, ADMISSION_TEMPLATE],
@@ -296,13 +304,18 @@ def test_verification_pins_the_admission_shape_and_fails_loudly_when_it_drifts()
 
 
 def test_every_run_body_is_strict_about_failures_and_unset_variables() -> None:
-    # One per stack, plus validate, plus verify, plus the dispatch guard. The count is the
-    # point rather than scaffolding: a run body added without ``set -euo pipefail`` would
-    # otherwise be checked by nothing, so a new step is meant to fail here once and be
-    # counted in deliberately.
+    # One per stack, plus validate, plus verify, plus the dispatch guard, plus the release
+    # upload. The count is the point rather than scaffolding: a run body added without
+    # ``set -euo pipefail`` would otherwise be checked by nothing, so a new step is meant to
+    # fail here once and be counted in deliberately.
+    #
+    # The release step is the fourth, counted in on 2026-08-01. It matters more than most
+    # that it is strict: it builds a zip, uploads it, and prints the digest somebody will
+    # paste into a release record, so a failure it swallowed would publish a version id
+    # beside a digest from a build that did not finish.
     scripts = _run_scripts()
 
-    assert len(scripts) == len(DEPLOYMENT_ORDER) + 3
+    assert len(scripts) == len(DEPLOYMENT_ORDER) + 4
     assert all(script.startswith("set -euo pipefail\n") for script in scripts)
 
 
