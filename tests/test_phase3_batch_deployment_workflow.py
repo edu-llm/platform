@@ -739,8 +739,8 @@ def test_asking_about_a_run_deploys_nothing() -> None:
     steps = workflow()["jobs"]["deploy"]["steps"]
 
     gated = "inputs.describe_run == ''"
-    for step in steps:
-        script = step.get("run", "")
+    for entry in steps:
+        script = entry.get("run", "")
         touches_the_estate = (
             "cloudformation deploy" in script
             or "cloudformation validate-template" in script
@@ -748,10 +748,10 @@ def test_asking_about_a_run_deploys_nothing() -> None:
         )
         if not touches_the_estate:
             continue
-        assert gated in step.get("if", ""), (
-            f"{step.get('name')!r} changes or reads the estate, so a dispatch that only "
+        assert gated in entry.get("if", ""), (
+            f"{entry.get('name')!r} changes or reads the estate, so a dispatch that only "
             f"asks about a run must skip it"
         )
 
-    reporting = next(step for step in steps if "Say what one run is doing" in step.get("name", ""))
+    reporting = next(entry for entry in steps if "Say what one run is doing" in entry.get("name", ""))
     assert reporting["if"] == "inputs.describe_run != ''"
