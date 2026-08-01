@@ -17,7 +17,7 @@ fill in five fields. The rest have defaults that are correct for a first run.
 | --- | --- |
 | `commit_sha` | Your branch name. A tag or a full commit works too. |
 | `workload_profile` | `olmo-core-check-cpu` |
-| `team` | Your group, lower-case with hyphens, like `memory-split` |
+| `team` | Your group, picked from the list. `scratch` if this is a throwaway. |
 | `experiment` | Anything, like `onboarding`. You are making it up; it needs no registering. |
 | `wandb_project` | Your Weights and Biases project |
 
@@ -39,8 +39,12 @@ the retry limit together, so you do not have to know any of them. There are thre
 - `olmo-core-train-1gpu` — one A10G, twelve hours, two attempts, checkpointing required.
   This is the one for real training.
 
-**`team` routes the approval and nothing else.** It records whose work a run is. Any lead
-may approve any run, so a typo delays nothing and grants nothing.
+**`team` routes the approval and books the cost.** It records whose work a run is, decides
+which lead is asked, and is the S3 prefix your outputs land under. Any lead may approve any
+run, so picking a group you are not on mis-routes the request rather than refusing it, and it
+grants nothing either way. It is a dropdown over the eight declared groups, so there is no
+typo to make; pick `scratch` for work you do not intend to keep, which is what keeps it off a
+research group's total.
 
 **`experiment` groups related runs** — a sweep, an ablation, one week of work. It is also
 what the cost view groups by, so it is worth being consistent within a project.

@@ -49,10 +49,30 @@ on:
           - olmo-original-30b-v1
           - olmo-127b-v1
           - olmo-150b-dolma2-v1
+      # A DROPDOWN BECAUSE THE COST OF A TYPO WAS PAID SOMEWHERE THE TYPIST NEVER LOOKS.
+      # This was free text and nothing refused an unrecognised value, so `pre-traning`
+      # compiled, classified, was approved, ran, wrote its outputs under
+      # teams/pre-traning/runs/ and booked its spend to a group that does not exist. The
+      # cost report groups by whatever people typed, so the run simply is not in its
+      # group's total and no refusal ever names the reason.
+      #
+      # The options are the eight team_ids in config/organization.yaml, in the order that
+      # file declares them, and tests/test_submission_form_options.py holds them to it.
+      # There is no `other`: eight is the whole list, and an escape hatch here would be the
+      # free-text field back under a different name.
       team:
-        description: "Your group, lower-case with hyphens, such as memory-split. It records whose work this is and points the request at a lead. Any lead may approve any run, so a typo here delays nothing."
+        description: "Your group. It records whose work this is, points the request at a lead, and is both the S3 prefix the run writes under and the cost centre it is booked to. Any lead may approve any run, so naming a group you are not on mis-routes the request rather than refusing it. Pick scratch for work you do not intend to keep."
         required: true
-        type: string
+        type: choice
+        options:
+          - platform
+          - memory-split
+          - input-core
+          - pre-training
+          - post-training
+          - data-prep
+          - eval-inference
+          - scratch
       experiment:
         description: "Groups related runs together inside that project — a sweep, an ablation, one week of work. Also names the group on the cost view. Lower-case words joined by hyphens, such as onboarding. Make one up; it needs no registering."
         required: true

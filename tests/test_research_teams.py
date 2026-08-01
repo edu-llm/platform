@@ -50,6 +50,14 @@ def inventory() -> OrganizationInventory:
     return load_yaml(PROJECT_ROOT / "config" / "organization.yaml", OrganizationInventory)
 
 
+#: The three group names this platform renamed on 2026-08-01, listed here because a forward
+#: rename leaves them behind rather than rewriting them. ``config/organization.yaml`` carries
+#: the table and the argument; this is the machine-readable half, and it is written down twice
+#: deliberately: the file is what a person reads and this is what the assertions below use, so
+#: a name dropped from one is caught by the test that pins the pair together.
+RETIRED_TEAM_IDS: frozenset[str] = frozenset({"tokenizer", "modeling", "curriculum"})
+
+
 def declared_team_ids() -> set[str]:
     return {team.team_id for team in inventory().team_bindings.teams}
 
@@ -93,21 +101,71 @@ def teams_named_by_committed_runs() -> set[str]:
     return named
 
 
-def test_every_team_a_committed_run_declared_is_a_team_the_roster_declares() -> None:
+def test_every_team_a_committed_run_declared_is_declared_or_deliberately_retired() -> None:
     """Mutation: submit under a group name nobody wrote down, and declare only the rest.
 
-    This is the direction that matters for attribution. A run whose team is not a declared
-    group is spend and output filed under a name the platform does not recognize, and
-    because the manifest is hashed and the decision record immutable, it stays filed there.
-    Six such names exist in the committed records and all six are declared.
+    This is the direction that matters for attribution. A run whose team is neither a declared
+    group nor a name this file knows was retired is spend and output filed under a name the
+    platform does not recognize, and because the manifest is hashed and the decision record
+    immutable, it stays filed there.
+
+    THE RETIRED NAMES ARE PERMITTED HERE AND NOWHERE ELSE, and the allowance is what makes the
+    rename a forward one. ``tokenizer``, ``modeling`` and ``curriculum`` are gone from the
+    roster and from the submission form, so nothing new can arrive under them; what is left is
+    six committed fixtures that still name two of them. Those were not rewritten, for the same
+    reason a lineage record is not: their canonical bytes are digest-pinned by
+    ``proof/phase-0/serialization-goldens.json``, so editing one breaks a recorded digest.
+
+    The allowance is bounded rather than open. It is exactly three names, asserted below, and
+    it does not extend to the form, which is held to the declared ids alone by
+    ``tests/test_submission_form_options.py``. A fourth rename has to be added here by hand,
+    which is the point: retiring a name is a decision and this is where it is written down.
     """
     named = teams_named_by_committed_runs()
+    resolvable = declared_team_ids() | set(RETIRED_TEAM_IDS)
 
     assert named, "no committed manifest or record names a team, so this test checks nothing"
-    assert named <= declared_team_ids(), (
-        f"{sorted(named - declared_team_ids())} appear as the team on a committed run and "
-        "are declared by no group in config/organization.yaml, so nothing can attribute them"
+    assert named <= resolvable, (
+        f"{sorted(named - resolvable)} appear as the team on a committed run and are neither "
+        "declared by a group in config/organization.yaml nor listed there as retired, so "
+        "nothing can attribute them"
     )
+    # A retired name must be retired, not merely absent from the roster by accident.
+    assert RETIRED_TEAM_IDS.isdisjoint(declared_team_ids())
+    assert len(RETIRED_TEAM_IDS) == 3, (
+        "the rename table in config/organization.yaml lists three renames; a fourth belongs "
+        "in both places or this allowance is wider than the decision it records"
+    )
+
+
+def test_the_retired_names_are_the_ones_the_roster_says_they_are() -> None:
+    """Mutation: retire a name here and leave the table in the roster unchanged.
+
+    The table is a comment, so nothing can parse it, and a comment that has stopped matching
+    the code is worse than no comment because a reader trusts it. This is the cheapest thing
+    that fails when the two drift: the old name and the new one both have to appear in the
+    file, on the line the table puts them on.
+
+    Read as text rather than as YAML deliberately. The rename table is not data, and making it
+    data would mean adding a field to ``OrganizationInventory`` whose only consumer is a test.
+    """
+    roster = (PROJECT_ROOT / "config" / "organization.yaml").read_text(encoding="utf-8")
+    # The table is aligned on the arrow, so the gap before it is presentation. Collapsed
+    # rather than matched, or this test would fail on somebody tidying the column.
+    collapsed = " ".join(roster.split())
+    renames = {
+        "tokenizer": "input-core",
+        "modeling": "pre-training",
+        "curriculum": "post-training",
+    }
+
+    assert set(renames) == set(RETIRED_TEAM_IDS)
+    for old, new in renames.items():
+        assert f"{old} -> {new}" in collapsed, (
+            f"config/organization.yaml does not carry `{old} -> {new}` in its rename table, "
+            "so an audit that finds the old name on a record has nothing to read"
+        )
+        assert new in declared_team_ids()
 
 
 def test_a_declared_group_names_a_github_team_that_exists() -> None:

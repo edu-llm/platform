@@ -21,6 +21,15 @@ second with ``no_execution_target``. Both are deliberately absent from the dropd
 two tests below are what make each absence a decision rather than an oversight: the moment
 dolma is registered, or ``gpu-4xa10g`` is provisioned and given a target, the option has to
 appear.
+
+**``team`` is the fourth key and was the last one still open.** It is different from the
+other three in what a wrong value costs. An unregistered dataset or workload is refused at
+admission, so the submitter finds out; an unrecognised team is refused by nothing. It
+reaches the manifest, the immutable decision record, the S3 prefix the run writes under and
+the ``edullm:team`` tag its spend is grouped by, and the first reader placed to notice is
+somebody wondering why their group's total is short. With eight declared groups there is no
+list to be incomplete against, so this one is held to equality with the declaration in both
+directions and in order.
 """
 
 from __future__ import annotations
@@ -37,6 +46,7 @@ from edullm_platform.contracts.execution import (
     ExecutionTargetCatalog,
     UnbackedComputeProfileError,
 )
+from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.manifest import RunManifest
 from edullm_platform.contracts.workload import ComputeProfileResolutionError, WorkloadCatalog
 from edullm_platform.execution import resolve_execution_target
@@ -325,6 +335,82 @@ def test_the_three_guards_above_have_actually_seen_a_row() -> None:
     )
 
 
+def declared_teams() -> tuple[str, ...]:
+    inventory = load_yaml(PROJECT_ROOT / "config" / "organization.yaml", OrganizationInventory)
+    return tuple(team.team_id for team in inventory.team_bindings.teams)
+
+
+def test_the_team_dropdown_offers_exactly_the_groups_the_roster_declares() -> None:
+    """THE ONE WHOSE WRONG ANSWER NOTHING REFUSES. Mutation: leave the field free text.
+
+    Every other field on this form is checked somewhere. An unregistered dataset, an
+    unregistered repository and an unbacked compute profile are all denied at admission, so
+    a submitter who types one is told. ``team`` is checked by nothing: ``RunManifest.team``
+    is a plain string, admission does not look it up against these bindings, and
+    ``evaluate_authorization`` compares a claimed team only against a submitter whose own
+    membership is recorded -- which nobody's is. So ``pre-traning`` compiles, is approved,
+    runs, writes under ``teams/pre-traning/runs/`` and carries that spelling on its
+    ``edullm:team`` tag forever, because the decision record is immutable.
+
+    Equality in both directions, and in declaration order, which is stronger than the set
+    comparison the dataset dropdown gets. There is no computed exclusion here of the kind
+    that keeps ``lean4-mathlib-bytes-v3`` registered and unoffered: a declared group is a
+    group somebody may submit under, full stop. So declaring a ninth group and not offering
+    it fails, offering a name the roster does not declare fails, and reordering the file
+    without reordering the form fails too -- the order is the only thing that decides which
+    group a first-time submitter reaches first, and it should be decided in one place.
+    """
+    declared = declared_teams()
+
+    assert options_for("team") == list(declared), (
+        "the team dropdown and config/organization.yaml disagree; a group declared and not "
+        "offered cannot be submitted under, and an option the roster does not declare is a "
+        "run whose spend and output are filed under a group that does not exist"
+    )
+    assert len(declared) == len(set(declared))
+    # The eight the owner decided on. Pinned so that adding or removing a group is an edit
+    # to this line as well, rather than something the comparison above absorbs silently.
+    assert set(declared) == {
+        "platform",
+        "memory-split",
+        "input-core",
+        "pre-training",
+        "post-training",
+        "data-prep",
+        "eval-inference",
+        "scratch",
+    }
+
+
+def test_no_option_on_the_team_dropdown_is_a_name_this_rename_retired() -> None:
+    """Mutation: keep the old name beside the new one, so old records still validate.
+
+    ``tokenizer``, ``modeling`` and ``curriculum`` were renamed and the stored records were
+    deliberately not rewritten, for the reason ``config/organization.yaml`` sets out beside
+    the table: a lineage record carries a digest over its own bytes, so editing the team
+    inside one falsifies it. Keeping the old names offerable would be the obvious way to
+    make an audit tidy and is the wrong one -- it would split each group's spend across two
+    names going forward, which is the defect this dropdown exists to prevent, arriving from
+    the direction of compatibility.
+
+    A forward rename means the old names stay readable and stop being submittable. Readable
+    is a property of the records, which nothing here touches; unsubmittable is this
+    assertion.
+    """
+    retired = {"tokenizer", "modeling", "curriculum"}
+    offered = set(options_for("team"))
+
+    assert offered & retired == set(), (
+        f"{sorted(offered & retired)} are pre-rename names still on the form, so a group's "
+        "spend can go on being split between its old and new name"
+    )
+    assert offered & {"evaluation"} == set(), (
+        "two lineage records claim team `evaluation`, which was never a declared group and "
+        "is not eval-inference under an earlier name; offering it would declare it by "
+        "accident"
+    )
+
+
 def test_the_workload_dropdown_offers_only_workloads_whose_repository_is_registered() -> None:
     """THE ONE THAT MATTERS. Mutation: offer every workload in the catalog.
 
@@ -489,7 +575,7 @@ def test_every_dropdown_field_has_no_free_text_twin() -> None:
     names = list(inputs)
 
     assert len(names) == len(set(names))
-    for field in ("repository", "workload_profile", "dataset_release", "compute_profile"):
+    for field in ("repository", "workload_profile", "dataset_release", "team", "compute_profile"):
         assert inputs[field]["type"] == "choice"
         assert f"{field}_name" not in inputs
         assert f"{field}_other" not in inputs
