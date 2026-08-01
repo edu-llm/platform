@@ -147,6 +147,13 @@ jobs:
           # and no API returns it, so the caller who dispatched the run from a terminal --
           # which is the whole point of this step existing -- could not read what it
           # produced. The log is the copy a script can fetch.
+          #
+          # The heredoc marker sits before the pipe, and the first attempt at this put it
+          # after. `python - | tee -a f <<PY` attaches the heredoc to tee rather than to
+          # python, because a redirection binds to the command it follows. tee dutifully
+          # copied the Python source into the summary, python read an empty stdin and
+          # printed nothing, and the step exited 0 -- a green release that produced no
+          # record of itself.
           uv run python tools/build_admission_lambda.py \
             --output "${RUNNER_TEMP}/admission-validator.zip" \
             > "${RUNNER_TEMP}/admission-validator-build.json"
@@ -178,7 +185,7 @@ jobs:
             "${RUNNER_TEMP}/admission-validator-version.txt" \
             "${RUNNER_TEMP}/lifecycle-recorder-build.json" \
             "${RUNNER_TEMP}/lifecycle-recorder-version.txt" \
-            | tee -a "${GITHUB_STEP_SUMMARY}" <<'PY'
+            <<'PY' | tee -a "${GITHUB_STEP_SUMMARY}"
           import json
           import sys
           from pathlib import Path
