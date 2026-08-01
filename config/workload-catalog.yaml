@@ -173,6 +173,44 @@ workloads:
     maximum_runtime_hours: "1"
     maximum_attempts: 1
     checkpoint: null
+  # The entry that makes edullm-data's registration mean something. It was registered, had an
+  # ECR repository and had publisher-role scope, and none of that let anyone submit anything,
+  # because a repository with no workload profile can be selected and then has nothing to run.
+  #
+  # `edullm-data-validate` is a declared console script in that repository and a tested
+  # main(), not a name invented here. It reads a published corpus and checks each shard
+  # against the bounds its family declares, which is CPU work over S3 with no accelerator to
+  # ask for, so cpu-32vcpu, the only CPU profile with a compute environment behind it.
+  #
+  # One hour and one attempt. The validator is a read: it writes a report and holds no state
+  # worth resuming, so a lost machine costs the read again rather than the work, and
+  # checkpoint is null because there is no interval to checkpoint on.
+  - name: edullm-data-validate
+    repository: edullm-data
+    compute_profile: cpu-32vcpu
+    maximum_runtime_hours: "1"
+    maximum_attempts: 1
+    checkpoint: null
+  # The Evaluation group's first submittable entry, and deliberately the check rather than the
+  # eval. olmo-core-check-cpu is the precedent: prove the path before spending a GPU on it.
+  #
+  # WHAT THIS RUNS AND WHAT IT DOES NOT. olmo_eval registers a `mock` provider alongside vllm,
+  # hf, olmo_core, vllm_server and litellm, so `-o provider.kind=mock` exercises the harness,
+  # the task loading and the result writing without a model. That is the whole of what the
+  # published image can do today, because .edullm/Dockerfile leaves torch and vllm out: they
+  # are a default group in that repository, a torch built against its CUDA base adds several
+  # gigabytes, and which backend an eval needs is a decision for the group running it.
+  #
+  # So there is no GPU eval profile here yet, and adding one before the image carries a
+  # backend would offer a dropdown entry that fails after a lead released the run. The GPU
+  # shapes are provisioned and waiting; what is missing is a backend in the image, which is
+  # one line in that repository's Dockerfile and a rebuild.
+  - name: olmo-eval-check-cpu
+    repository: olmo-eval-full
+    compute_profile: cpu-32vcpu
+    maximum_runtime_hours: "1"
+    maximum_attempts: 1
+    checkpoint: null
   # Retained and still unrunnable: dolma has no registration and no image. Kept because the
   # catalog is a pricing-and-shape document and this entry is the shape a tokenizer job
   # takes, not a claim that one can be submitted today.

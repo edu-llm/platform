@@ -17,9 +17,9 @@ uv run python tools/build_phase2_proof.py
 
 | measure | count |
 | --- | --- |
-| collected by pytest | 3982 |
-| executed (excluding tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py, tests/test_phase5_proof.py) | 3789 |
-| passed | 3787 |
+| collected by pytest | 4201 |
+| executed (excluding tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py, tests/test_phase5_proof.py) | 4008 |
+| passed | 4006 |
 | failed | 2 |
 | errored | 0 |
 | skipped | 0 |
@@ -31,9 +31,9 @@ Every test node id cited by the negative-case matrix, plus every test in the mod
 
 | measure | count |
 | --- | --- |
-| selected node ids | 623 |
-| executed | 623 |
-| passed | 622 |
+| selected node ids | 636 |
+| executed | 636 |
+| passed | 635 |
 | failed | 1 |
 | errored | 0 |
 | skipped | 0 |
@@ -57,8 +57,8 @@ The test modules Phase 2 added, excluding the ones that invoke a gate or this ge
 | tests/test_phase2_lambda_package.py | 11 | see below |
 | tests/test_phase2_lineage_evidence.py | 12 | see below |
 | tests/test_phase2_probe_tools.py | 35 | see below |
-| tests/test_phase2_submission.py | 91 | see below |
-| tests/test_phase2_submit_run_workflow.py | 104 | see below |
+| tests/test_phase2_submission.py | 103 | see below |
+| tests/test_phase2_submit_run_workflow.py | 105 | see below |
 
 **A green suite is not evidence that the path works.** Phase 1 shipped one over a workflow that could not complete a run, because every assertion compared the literal text of expressions rather than checking whether they named anything real. The counts above say the tests pass; `negative-case-matrix.md` says what they establish, which for eight of this phase's criteria is not the criterion.
 

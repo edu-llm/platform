@@ -29,6 +29,7 @@ from edullm_platform.submission import (
     SubmissionInputs,
     compile_submission,
     render_approver_context,
+    require_registered_repository,
     require_submitter_on_the_roster,
 )
 
@@ -644,6 +645,108 @@ def test_a_submission_naming_a_repository_nothing_registers_is_refused_before_a_
         compile_payload(cpu_payload(repository="dolma", workload_profile=DOLMA_WORKLOAD))
 
     assert "unregistered_repository" in str(exc_info.value)
+
+
+def test_a_repository_nothing_registers_is_refused_without_naming_a_workload_profile() -> None:
+    """Mutation: leave this to the refusal compiling already produces.
+
+    Compiling does refuse an unregistered repository, and the test above characterises
+    that. It refuses it in one reachable case: ``dolma``, the one repository with a workload
+    profile and no registration. Every other unregistered name is compared against a
+    workload profile first and refused for naming somebody else's profile -- a true sentence
+    about the wrong field, which sends the submitter to change the workload rather than to
+    the registry.
+
+    ``edullm-data`` is the live instance now that it is registered and ``olmo-eval-full``
+    with it: both have an ECR repository, a pinned base and a place on the publisher role,
+    and neither has a workload profile yet. A name with neither would read the same way.
+    """
+    with pytest.raises(SubmissionRefusedError) as exc_info:
+        require_registered_repository(
+            "tokenizer-flores-validation", repositories=load_repository_registry()
+        )
+
+    message = str(exc_info.value)
+    assert "tokenizer-flores-validation" in message
+    assert "workload" not in message
+
+
+def test_the_unregistered_repository_refusal_names_the_registry_and_what_adding_one_takes() -> (
+    None
+):
+    """Mutation: refuse with the reason code alone.
+
+    ``unregistered_repository`` is what admission records, and on its own it reads as a
+    permission somebody could grant. What makes it actionable is that the registry is a file
+    in this repository, that an entry is a pull request, and that the entry is not the whole
+    of the work -- an ECR repository and a place on the publisher role go with it, and a
+    registration without either is inert in a way that fails at AssumeRole later.
+    """
+    with pytest.raises(SubmissionRefusedError) as exc_info:
+        require_registered_repository("dolma", repositories=load_repository_registry())
+
+    message = str(exc_info.value)
+    assert "config/repositories.yaml" in message
+    assert "pull request" in message
+    assert "publisher role" in message
+
+
+def test_the_unregistered_repository_refusal_says_admission_would_refuse_it_anyway() -> None:
+    """Mutation: describe this as a rule the compile step invented.
+
+    The submitter is about to ask somebody to release a run, and the useful thing to know is
+    that asking cannot help. A refusal that read as a local check invites a second attempt
+    through a different approver.
+    """
+    with pytest.raises(SubmissionRefusedError) as exc_info:
+        require_registered_repository("dolma", repositories=load_repository_registry())
+
+    assert "unregistered_repository" in str(exc_info.value)
+
+
+def test_the_unregistered_repository_refusal_lists_what_the_submitter_could_have_picked() -> None:
+    """Mutation: print the count instead of the names.
+
+    Three repositories are registered and one of them is spelled with capitals, so a
+    submitter reading this is as likely to have the wrong spelling as the wrong repository.
+    The list is read out of the registry rather than written here, so registering a fourth
+    puts it in front of the next person to be refused.
+    """
+    registry = load_repository_registry()
+
+    with pytest.raises(SubmissionRefusedError) as exc_info:
+        require_registered_repository("olmo-core", repositories=registry)
+
+    message = str(exc_info.value)
+    for entry in registry.repositories:
+        assert entry.repository in message
+
+
+def test_every_registered_repository_passes_the_check_that_refuses_the_rest() -> None:
+    """The check admits everything the registry carries, including what has no workload.
+
+    Registration and a workload profile are separate facts, and this is the one that has to
+    answer only the first. ``edullm-data`` and ``olmo-eval-full`` are registered with no
+    profile between them, so a check that quietly required one would refuse both here and
+    the refusal would name the wrong file.
+    """
+    registry = load_repository_registry()
+    assert len(registry.repositories) > 1
+
+    for entry in registry.repositories:
+        require_registered_repository(entry.repository, repositories=registry)
+
+
+def test_compiling_still_owns_the_denied_outright_verdict_on_registration() -> None:
+    """The check is beside :func:`compile_submission` rather than inside it.
+
+    ``test_a_submission_naming_a_repository_nothing_registers_is_refused_before_a_reviewer_is_asked``
+    holds that condition to a single refusal path inside compiling, so that
+    ``denied_outright_conditions`` keeps owning the verdict there. Asked beside compiling,
+    this adds no second path through the classification: it decides whether there is
+    anything to compile.
+    """
+    assert "require_registered_repository" not in inspect.getsource(compile_submission)
 
 
 def test_a_submitter_the_roster_does_not_name_is_refused_before_a_reviewer_is_asked() -> None:

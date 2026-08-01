@@ -20,7 +20,12 @@ on:
         required: true
         type: choice
         options:
+          # Three where there was one. Sorted case-insensitively, which is what the option
+          # test compares against, so this reads as a list rather than as the order the
+          # registrations happened in.
+          - edullm-data
           - OLMo-core
+          - olmo-eval-full
       commit_sha:
         description: "Your branch name works here, and so does a tag or a full commit. Whichever you give, the record names the exact commit it resolved to."
         required: true
@@ -35,6 +40,9 @@ on:
         required: true
         type: choice
         options:
+          # The dataset validator, and the first entry here that is not OLMo-core. Reads a
+          # published corpus and checks each shard against the bounds its family declares.
+          - edullm-data-validate
           - olmo-core-check-cpu
           - olmo-core-check-gpu
           - olmo-core-train-1gpu
@@ -45,6 +53,11 @@ on:
           # rank on one of four devices at four devices' price, which reports success. The
           # command field's own description carries the line.
           - olmo-core-train-4gpu
+          # The evaluation harness against its `mock` provider. A check of the path rather
+          # than an eval: the published image leaves torch and vllm out, so there is no GPU
+          # eval entry here until one of them is in it. config/workload-catalog.yaml carries
+          # the reason.
+          - olmo-eval-check-cpu
       dataset_release:
         description: "Which prepared dataset this run reads. Pick none unless you are reading one — a quick check reads nothing, and saying none is what makes the record true. All five corpora are published and read-only, from 5.5B tokens up to 157B."
         required: true

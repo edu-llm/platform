@@ -139,8 +139,13 @@ def test_the_repository_dropdown_offers_the_registered_repositories_that_have_a_
     it is the same broken promise as offering a workload whose repository is unregistered,
     one step further along.
 
-    ``edullm-data`` is registered and has no workload yet. It appears in this dropdown the
-    moment one exists, and not before.
+    ``edullm-data`` was the live instance of that gap and no longer is. It was registered,
+    had an ECR repository and had publisher-role scope, and could not be submitted for,
+    because nothing in the catalog named it. ``edullm-data-validate`` now does, so it is
+    offered, and the assertion that used to say it must not be is gone rather than inverted.
+
+    ``dolma`` still holds the other side of the join: it has a workload and no registration,
+    so it is absent from here for the opposite reason.
     """
     registered = {
         entry["repository"] for entry in registry("repositories.yaml")["repositories"]
@@ -152,10 +157,13 @@ def test_the_repository_dropdown_offers_the_registered_repositories_that_have_a_
     }
 
     assert options_for("repository") == sorted(with_work, key=str.lower)
-    assert "edullm-data" in registered
-    assert "edullm-data" not in options_for("repository"), (
-        "registered, but nothing runs there yet; delete this assertion when a workload "
-        "profile names it"
+    assert {"edullm-data", "olmo-eval-full"} <= with_work, (
+        "both were registered before either had a workload profile, which is the state this "
+        "test was written about; a registration that loses its last workload belongs back "
+        "out of the dropdown"
+    )
+    assert "dolma" not in options_for("repository"), (
+        "dolma has a workload and no registration, so there is no image to run it from"
     )
 
 

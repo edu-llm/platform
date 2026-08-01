@@ -105,9 +105,11 @@ def test_the_registry_and_the_pilot_list_are_asked_different_questions() -> None
     pilots = set(inventory.pilot_repositories)
 
     # Recorded rather than asserted away. The day these coincide again this still passes,
-    # and the derivation below is what keeps the answer right either way.
+    # and the derivation below is what keeps the answer right either way. The second set
+    # grows every time a repository is registered, because the pilot list is a statement
+    # about a programme's scope and is not amended by an onboarding.
     assert pilots - registered == {"dolma"}
-    assert registered - pilots == {"edullm-data"}
+    assert registered - pilots == {"edullm-data", "olmo-eval-full"}
 
     derivation = manifest_helpers.build_request_facts
     assert "repositories.is_registered(manifest.repository)" in inspect.getsource(derivation)

@@ -182,6 +182,95 @@ def test_the_roster_refusal_leaves_no_approver_context_for_a_reviewer_to_read(
 
 
 # ---------------------------------------------------------------------------------------
+# Which repository is being submitted for
+# ---------------------------------------------------------------------------------------
+
+
+def test_a_repository_nothing_registers_is_refused_and_nothing_is_written(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Mutation: let the workload profile check be the one that catches this.
+
+    ``edullm-data`` is registered and has no workload profile, and
+    ``tokenizer-flores-validation`` is neither. Both compile against
+    ``olmo-core-check-cpu`` today into the same refusal -- that the profile belongs to
+    ``OLMo-core`` -- which is true and is about the wrong field for the second one. The
+    compile job loads ``config/repositories.yaml`` already, so it can say which of the two
+    a submitter is looking at before a reviewer is asked either way.
+
+    ``EXIT_REFUSED`` rather than ``EXIT_UNUSABLE`` because this is a verdict on the
+    submission. The workflow prints a different sentence for each, and the one for a
+    refusal is the one that says no reviewer was asked.
+    """
+    exit_code, compiled = compile_form(
+        tmp_path, payload=form(repository="tokenizer-flores-validation")
+    )
+
+    assert exit_code == EXIT_REFUSED
+    assert compiled == {}
+    reported = capsys.readouterr().err
+    assert "config/repositories.yaml" in reported
+    assert "olmo-core-check-cpu" not in reported
+
+
+def test_the_unregistered_repository_refusal_leaves_no_approver_context_to_read(
+    tmp_path: Path,
+) -> None:
+    """A refused submission asks nobody, so the page a reviewer would read is not written."""
+    summary = tmp_path / "approver-context.md"
+    inputs = tmp_path / "submission-form.json"
+    inputs.write_text(
+        json.dumps(form(repository="tokenizer-flores-validation")), encoding="utf-8"
+    )
+    published = tmp_path / "published-image.json"
+    published.write_text(json.dumps(resolved()), encoding="utf-8")
+
+    exit_code = main(
+        [
+            "--inputs",
+            str(inputs),
+            "--config-dir",
+            str(CONFIG_DIR),
+            "--published-images",
+            str(published),
+            "--submitter",
+            SUBMITTER,
+            "--repository-url",
+            REPOSITORY_URL,
+            "--output",
+            str(tmp_path / "compiled-submission.json"),
+            "--summary",
+            str(summary),
+            "--run-id",
+            RUN_ID,
+        ]
+    )
+
+    assert exit_code == EXIT_REFUSED
+    assert not summary.exists()
+
+
+def test_a_registered_repository_with_no_workload_is_refused_for_the_workload(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The other half of the same fork, and the reason the check reads the registry.
+
+    ``edullm-data`` is registered -- ECR repository, pinned base, publisher role -- and has
+    no workload profile, so what stands in its way is the catalog rather than the registry.
+    The refusal has to say so, or registering a repository would start answering a question
+    it was never asked and send its first submitter to a file that is already correct.
+    """
+    exit_code, _ = compile_form(tmp_path, payload=form(repository="edullm-data"))
+
+    assert exit_code == EXIT_REFUSED
+    reported = capsys.readouterr().err
+    assert "olmo-core-check-cpu" in reported
+    assert "config/repositories.yaml" not in reported
+
+
+# ---------------------------------------------------------------------------------------
 # What the resolve job's answer decides
 # ---------------------------------------------------------------------------------------
 

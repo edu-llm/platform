@@ -74,6 +74,7 @@ __all__ = [
     "SubmissionInputs",
     "compile_submission",
     "render_approver_context",
+    "require_registered_repository",
     "require_submitter_on_the_roster",
 ]
 
@@ -189,6 +190,58 @@ def _resolve_workload(catalog: WorkloadCatalog, name: str) -> WorkloadProfile:
     registered = ", ".join(sorted(profile.name for profile in catalog.workloads))
     raise SubmissionRefusedError(
         f"unregistered workload profile {name!r}; the catalog registers: {registered}"
+    )
+
+
+def require_registered_repository(
+    repository: str, *, repositories: RepositoryRegistry
+) -> None:
+    """Refuse a repository nothing registers, before a lead is asked to release the run.
+
+    ADMISSION ALREADY REFUSES THIS AND STAYS THE AUTHORITY ON IT, with
+    ``unregistered_repository`` derived from the registry inside the validator's own zip
+    rather than from a file the compile job could be pointed at. What it cannot do is
+    happen early: it runs past the approval gate, so the submitter fills in the whole form,
+    a lead reads the approver context and releases it, and the refusal arrives from inside
+    AWS with the approval already spent.
+
+    ``compile_submission`` refuses it too, and that refusal is neither early enough nor
+    legible enough to be the one a submitter meets. It comes out of
+    ``denied_outright_conditions``, which owns the verdict and says so as a reason code:
+    "the submission trips conditions policy denies outright rather than classifies:
+    unregistered_repository". That names a condition rather than a file, so it reads as a
+    permissions fault and sends the reader looking for access to grant. And it is reachable
+    only when a workload profile names the unregistered repository, because the two fields
+    are compared first -- so for every other unregistered repository the refusal is about a
+    workload profile belonging to somebody else, which points at a field that was never
+    what stood in the way.
+
+    So this is asked first, out of the same registry, and it says the two things that make
+    the answer actionable: the registry is a file in this repository, and adding an entry to
+    it is a pull request rather than an owner's action.
+
+    A function beside :func:`compile_submission` rather than a check inside it, which is
+    where ``require_submitter_on_the_roster`` sits and for a related reason.
+    ``test_a_submission_naming_a_repository_nothing_registers_is_refused_before_a_reviewer_is_asked``
+    holds that condition to one refusal path inside compiling, so that policy keeps owning
+    the verdict there; a second check in that function would split it. Asked beside
+    compiling, this adds no path through the classification -- it decides whether there is
+    anything to compile at all.
+
+    Raises :class:`SubmissionRefusedError` so the caller needs no second branch, as the
+    roster check does.
+    """
+    if repositories.is_registered(repository):
+        return
+    registered = ", ".join(entry.repository for entry in repositories.repositories)
+    raise SubmissionRefusedError(
+        f"{repository!r} is not registered in config/repositories.yaml, so admission would "
+        f"refuse this run with unregistered_repository whoever released it. Registered "
+        f"today: {registered}. A registration is what gives a repository somewhere for its "
+        "images to go, a pinned base image to build from and a Dockerfile path to build by, "
+        "so there is no image for this run to have named. Adding an entry is a pull request "
+        "against this repository, and it takes an ECR repository and a place on the "
+        "publisher role with it."
     )
 
 

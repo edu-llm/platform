@@ -92,6 +92,13 @@ Resources:
                 Resource:
                   - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-olmo-core
                   - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-data
+                  # Added with olmo-eval-full's registration. The list is now every
+                  # repository a submission can name, which is the set a test compares it
+                  # against rather than a set anybody maintains by hand: a registration with
+                  # a workload profile and no entry here is a job that scales an instance and
+                  # then reports CannotPullContainerError, naming a registry path rather than
+                  # a policy.
+                  - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-olmo-eval-full
               # Deliberately absent: logs:CreateLogGroup. infra/batch-compute.yaml creates
               # the group, so a role that could create it would only ever do so by
               # creating one nobody declared -- under a name a typo chose, with no
@@ -324,15 +331,19 @@ Resources:
                   - ecs:UpdateContainerInstancesState
                 Resource:
                   Fn::Sub: arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:cluster/AWSBatch-sbsandbox-intern-edullm-cpu-*
-              # The image layers the agent pulls on the host's behalf. Same single
-              # repository as the execution role, and for the same reason.
+              # The image layers the agent pulls on the host's behalf. Same repositories as
+              # the execution role, and for the same reason. It was one repository while
+              # only one was submittable, and it lagged the execution role's second entry by
+              # a day, which is the drift a single test over all four roles now catches.
               - Effect: Allow
                 Action:
                   - ecr:BatchCheckLayerAvailability
                   - ecr:BatchGetImage
                   - ecr:GetDownloadUrlForLayer
                 Resource:
-                  Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-olmo-core
+                  - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-olmo-core
+                  - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-data
+                  - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-olmo-eval-full
               # The ECS agent's own log group, which is not the job's. Scoped to the
               # /aws/ecs/ path so an instance cannot write into the record of what a job
               # printed.
