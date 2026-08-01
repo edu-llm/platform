@@ -314,12 +314,28 @@ def build_package(
     }
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """The parser, named the way ``tests/test_workflow_tool_arguments.py`` can find it.
+
+    That module imports every tool a workflow invokes and compares the flags passed against
+    the flags the parser accepts, so a renamed flag fails a test instead of failing a
+    dispatch that has already assumed a role. It looks for ``build_parser`` by name and
+    treats a tool without one as accepting nothing.
+
+    This parser used to be built inline in :func:`main`, which was invisible to that check
+    and cost nothing until 2026-08-01, when a workflow began calling this builder and the
+    guard reported ``--output`` as an argument the parser does not accept. The parser did
+    accept it; the guard simply could not see a parser at all.
+    """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--output", required=True, type=Path, help="where to write the zip")
     parser.add_argument("--python-platform", default=DEFAULT_PYTHON_PLATFORM)
     parser.add_argument("--python-version", default=DEFAULT_PYTHON_VERSION)
-    arguments = parser.parse_args(argv)
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    arguments = build_parser().parse_args(argv)
 
     try:
         record = build_package(

@@ -130,42 +130,74 @@ jobs:
           set -euo pipefail
           uv sync --locked
 
-          # --output is the builder's own contract and it prints a JSON record carrying the
-          # digest. The digest is taken from that record rather than hashed again here: the
-          # tripwire compares against what the builder reports, and a second hasher is a
-          # second chance to disagree with it.
-          release() {
-            local builder="$1" key="$2" zip="$3"
-            local digest version
-            digest="$(uv run python "${builder}" --output "${zip}" | python -c 'import json,sys; print(json.load(sys.stdin)["sha256"])')"
-            version="$(aws s3api put-object \
-              --bucket sbsandbox-intern-edullm-artifacts \
-              --key "${key}" \
-              --body "${zip}" \
-              --content-type application/zip \
-              --query VersionId --output text)"
-            if [[ -z "${version}" || "${version}" == "None" ]]; then
-              echo "the upload returned no VersionId, so the artifacts bucket may not be versioned" >&2
-              exit 1
-            fi
-            {
-              echo "### ${key}"
-              echo ""
-              echo '```yaml'
-              echo "s3_object_version: ${version}"
-              echo "sha256: ${digest}"
-              echo '```'
-            } >> "${GITHUB_STEP_SUMMARY}"
-          }
+          # Each builder prints a JSON record carrying the digest. The digest is read from
+          # that record rather than hashed again here, because the tripwire compares against
+          # what the builder reports and a second hasher is a second chance to disagree.
+          #
+          # WRITTEN OUT LONGHAND, TWICE, RATHER THAN THROUGH A SHELL FUNCTION, AND TWO
+          # HOUSE RULES IN THIS REPOSITORY ARE WHY. workflow_support.aws_commands requires
+          # every CLI invocation to be a top-level command so that a reader can see each one
+          # in the diff, which rules out capturing a version id through a command
+          # substitution. And every script here is shlex-split by the IAM-capability test,
+          # which reads a lone apostrophe in a comment as an unterminated quote. So: no
+          # apostrophes below, and each upload starts its own line and redirects to a file.
+          uv run python tools/build_admission_lambda.py \
+            --output "${RUNNER_TEMP}/admission-validator.zip" \
+            > "${RUNNER_TEMP}/admission-validator-build.json"
 
-          release tools/build_admission_lambda.py \
-            admission-validator/admission-validator.zip \
-            "${RUNNER_TEMP}/admission-validator.zip"
-          release tools/build_lifecycle_lambda.py \
-            lifecycle-recorder/lifecycle-recorder.zip \
-            "${RUNNER_TEMP}/lifecycle-recorder.zip"
+          uv run python tools/build_lifecycle_lambda.py \
+            --output "${RUNNER_TEMP}/lifecycle-recorder.zip" \
+            > "${RUNNER_TEMP}/lifecycle-recorder-build.json"
 
-          echo "RELEASE_UPLOADED"
+          # Both builds before either upload. A record naming a zip whose sibling build then
+          # failed is the half-released state the tripwire cannot describe.
+          aws s3api put-object \
+            --bucket sbsandbox-intern-edullm-artifacts \
+            --key admission-validator/admission-validator.zip \
+            --body "${RUNNER_TEMP}/admission-validator.zip" \
+            --content-type application/zip \
+            --query VersionId --output text \
+            > "${RUNNER_TEMP}/admission-validator-version.txt"
+
+          aws s3api put-object \
+            --bucket sbsandbox-intern-edullm-artifacts \
+            --key lifecycle-recorder/lifecycle-recorder.zip \
+            --body "${RUNNER_TEMP}/lifecycle-recorder.zip" \
+            --content-type application/zip \
+            --query VersionId --output text \
+            > "${RUNNER_TEMP}/lifecycle-recorder-version.txt"
+
+          python - \
+            "${RUNNER_TEMP}/admission-validator-build.json" \
+            "${RUNNER_TEMP}/admission-validator-version.txt" \
+            "${RUNNER_TEMP}/lifecycle-recorder-build.json" \
+            "${RUNNER_TEMP}/lifecycle-recorder-version.txt" \
+            >> "${GITHUB_STEP_SUMMARY}" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          records = [
+              ("infra/admission-validator-release.yaml", sys.argv[1], sys.argv[2]),
+              ("infra/lifecycle-recorder-release.yaml", sys.argv[3], sys.argv[4]),
+          ]
+
+          print("## Released. Paste each block into the file above it, and set the matching")
+          print("## `S3ObjectVersion` in the template beside it. Nothing is deployed yet.")
+          for destination, build_path, version_path in records:
+              digest = json.loads(Path(build_path).read_text(encoding="utf-8"))["sha256"]
+              version = Path(version_path).read_text(encoding="utf-8").strip()
+              # An unversioned bucket answers a put with no VersionId, and the literal
+              # "None" is what --output text prints for it. Recording that would pin the
+              # template to an object that cannot be addressed by version.
+              if not version or version == "None":
+                  raise SystemExit(f"{destination}: the upload returned no VersionId")
+              print(f"\n### {destination}\n")
+              print("```yaml")
+              print(f"s3_object_version: {version}")
+              print(f"sha256: {digest}")
+              print("```")
+          PY
 
       - name: Validate CloudFormation templates
         run: |
