@@ -43,12 +43,23 @@ on:
       # cancel-run.yml stays as it is either way: it names the stream and stops, because
       # widening a two-verb role to read logs would spend the argument for its shape.
       #
-      # A dispatch carrying a run id still deploys first. That is deliberate rather than
-      # sloppy: gating eight deploy steps on an input is eight chances to gate one wrongly,
-      # and `cloudformation deploy` with nothing to change exits successfully having done
-      # nothing. The cost of the honest version is about three minutes.
+      # A DISPATCH CARRYING A RUN ID NOW DEPLOYS NOTHING, having previously deployed
+      # everything. The first version let the deploy run and appended the report, on the
+      # argument that gating eight steps is eight chances to gate one wrongly while an
+      # empty changeset costs only three minutes.
+      #
+      # What that argument missed is the shape of the use. A job sits in RUNNABLE while
+      # Batch finds it a GPU, and the only way to learn that it moved is to ask again --
+      # so this gets pressed every few minutes for as long as a run takes, not once. Each
+      # of those reconciled six CloudFormation stacks in a shared account, against a
+      # working tree that may be mid-change, while another agent deploys into the same
+      # stacks. An empty changeset is cheap; a non-empty one nobody asked for is not.
+      #
+      # So the deploy steps carry `if: inputs.describe_run == ''`, and the eighth-chance
+      # worry is answered by a test that holds every step which touches the account to
+      # carrying that condition, rather than by trusting the list to stay complete.
       describe_run:
-        description: "A run id to report on after deploying — status, why, exit code, and the tail of its log. Leave empty for an ordinary deploy."
+        description: "A run id to report on — status, why, exit code, the command it was given. Reports only: no stack is deployed. Leave empty for an ordinary deploy."
         required: false
         default: ""
         type: string
@@ -73,8 +84,17 @@ permissions:
 # filters, so a push that touches it starts both runs. Sharing the group makes the second
 # wait instead of racing the first into a mid-update stack. The group keeps Phase 2's name
 # because Phase 2 named it first and renaming it is an edit to that workflow.
+#
+# ASKING ABOUT A RUN TAKES A DIFFERENT GROUP, because it changes nothing. A describe
+# dispatch skips every deploy and verify step below, so serialising it against the stacks
+# would make a question wait on somebody else's deploy -- and, worse, make a deploy wait on
+# a question, which is the direction that costs. Per run id rather than one shared name so
+# two people asking about two runs do not queue behind each other either.
 concurrency:
-  group: cloudformation-sbsandbox-intern-edullm-phase2
+  group: >-
+    ${{ inputs.describe_run != ''
+        && format('describe-{0}', inputs.describe_run)
+        || 'cloudformation-sbsandbox-intern-edullm-phase2' }}
   cancel-in-progress: false
 
 jobs:
@@ -150,6 +170,7 @@ jobs:
       # covers the rest is tests/test_phase3_infrastructure.py against the committed files,
       # and the verification step against the deployed account.
       - name: Validate CloudFormation templates
+        if: inputs.describe_run == ''
         run: |
           set -euo pipefail
           aws cloudformation validate-template --template-body file://infra/outputs-bucket.yaml
@@ -174,6 +195,7 @@ jobs:
       # subnet and security group IDs, so CloudFormation does enforce that one -- an import
       # of an export that does not exist fails the deploy. Nothing links the others.
       - name: Deploy Phase 3 outputs bucket stack
+        if: inputs.describe_run == ''
         run: |
           set -euo pipefail
           aws cloudformation deploy \
@@ -182,6 +204,7 @@ jobs:
             --no-fail-on-empty-changeset
 
       - name: Deploy Phase 3 network stack
+        if: inputs.describe_run == ''
         run: |
           set -euo pipefail
           aws cloudformation deploy \
@@ -194,6 +217,7 @@ jobs:
       # infra/README.md and not something this workflow can do or check -- a compute
       # environment created without it fails in a way that names the role and not the reason.
       - name: Deploy Phase 3 batch compute stack
+        if: inputs.describe_run == ''
         run: |
           set -euo pipefail
           aws cloudformation deploy \
@@ -212,6 +236,7 @@ jobs:
       # CloudFormation enforces that dependency. Nothing enforces its ordering against the
       # GPU IAM stack, which is applied from a laptop before this runs.
       - name: Deploy Phase 4 GPU batch compute stack
+        if: inputs.describe_run == ''
         run: |
           set -euo pipefail
           aws cloudformation deploy \
@@ -223,6 +248,7 @@ jobs:
       # ARNs. Nothing makes CloudFormation check that: the pattern is a string, and a rule
       # scoped to a queue that does not exist deploys perfectly and matches nothing forever.
       - name: Deploy Phase 3 batch events stack
+        if: inputs.describe_run == ''
         run: |
           set -euo pipefail
           aws cloudformation deploy \
@@ -235,6 +261,7 @@ jobs:
       # first would leave a submit state pointing at nothing -- which fails at run time
       # rather than at deploy time, on the first accepted run.
       - name: Deploy the amended admission state machine
+        if: inputs.describe_run == ''
         run: |
           set -euo pipefail
           aws cloudformation deploy \
@@ -276,7 +303,7 @@ jobs:
       # continue-on-error so that a diagnostic which cannot itself run does not replace the
       # deploy failure it was trying to explain with a different one.
       - name: Say why the stack refused
-        if: failure()
+        if: failure() && inputs.describe_run == ''
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -297,6 +324,7 @@ jobs:
           done
 
       - name: Verify CPU and GPU batch execution
+        if: inputs.describe_run == ''
         run: |
           set -euo pipefail
           state_machine_arn_file="${RUNNER_TEMP}/phase3-state-machine-arn.txt"

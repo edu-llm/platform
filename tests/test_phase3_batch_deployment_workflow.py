@@ -129,13 +129,23 @@ def test_the_workflow_shares_the_concurrency_group_of_the_workflow_it_overlaps()
     the stack that holds it, so a push touching that file starts both runs. With separate
     groups the second reaches ``cloudformation deploy`` while the first is mid-update, and
     the failure is a change set conflict that reads as a transient.
+
+    The group is an expression because a dispatch that only asks about a run deploys
+    nothing, and queueing a question behind a deploy -- or a deploy behind a question --
+    buys nothing. What matters here is the branch taken when there is no run id: that one
+    has to still be Phase 2's group, spelled the same way.
     """
     parsed = workflow()
     phase2 = load_workflow(PHASE2_WORKFLOW_PATH)
     phase2_paths = set(phase2["on"]["push"]["paths"])
 
-    assert parsed["concurrency"] == {"group": CONCURRENCY_GROUP, "cancel-in-progress": False}
-    assert parsed["concurrency"]["group"] == phase2["concurrency"]["group"]
+    group = parsed["concurrency"]["group"]
+    assert parsed["concurrency"]["cancel-in-progress"] is False
+    assert f"'{phase2['concurrency']['group']}'" in group, (
+        "the deploying branch of the group must be the group Phase 2 named"
+    )
+    assert f"'{CONCURRENCY_GROUP}'" in group
+    assert "describe" in group, "a report should not take the deploy lock"
     assert ADMISSION_TEMPLATE in phase2_paths & set(parsed["on"]["push"]["paths"])
 
 
@@ -709,3 +719,39 @@ def test_a_verification_call_the_stub_does_not_recognize_would_be_noticed(
 
     assert result.returncode != 0
     assert "unexpected aws call" in result.stderr
+
+
+def test_asking_about_a_run_deploys_nothing() -> None:
+    """Mutation: leave one deploy step ungated, which is how this started.
+
+    The first version of ``describe_run`` deployed first and reported after, on the
+    argument that an empty changeset is cheap. It is, once. But a job sits in RUNNABLE
+    until Batch finds it a GPU and the only way to learn it moved is to ask again, so this
+    input gets pressed every few minutes for as long as a run takes -- each press
+    reconciling six stacks in a shared account another agent is also deploying into.
+
+    So every step that reaches CloudFormation or reads the estate has to carry the
+    condition, and enumerating them in the workflow is exactly the "eight chances to gate
+    one wrongly" the original comment worried about. This finds the eighth by looking at
+    what the step does rather than at a list: any step whose script deploys, validates or
+    describes stacks is one that must be skipped when a run id is present.
+    """
+    steps = workflow()["jobs"]["deploy"]["steps"]
+
+    gated = "inputs.describe_run == ''"
+    for entry in steps:
+        script = entry.get("run", "")
+        touches_the_estate = (
+            "cloudformation deploy" in script
+            or "cloudformation validate-template" in script
+            or "cloudformation describe-stacks" in script
+        )
+        if not touches_the_estate:
+            continue
+        assert gated in entry.get("if", ""), (
+            f"{entry.get('name')!r} changes or reads the estate, so a dispatch that only "
+            f"asks about a run must skip it"
+        )
+
+    reporting = next(entry for entry in steps if "Say what one run is doing" in entry.get("name", ""))
+    assert reporting["if"] == "inputs.describe_run != ''"
