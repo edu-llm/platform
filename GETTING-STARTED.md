@@ -141,20 +141,30 @@ what the entry point is doing on your behalf, since none of it is obvious from t
 otherwise, in the first seconds, before anything trains. Set it to `null` if you do not
 want ephemeral checkpoints.
 
-**Turn off checkpoint pruning.** OLMo-core defaults to keeping the last three checkpoints
-and deleting the rest. The workload role deliberately has no delete permission — every run
-writes under its own id, so nothing ever needs to be deleted — and the prune fails. Pass
-`trainer.callbacks.checkpointer.max_checkpoints=null` and keep them all.
+**Turn off checkpoint pruning.** OLMo-core keeps the last three permanent checkpoints and
+deletes the rest, and the one written at step 0 counts toward the three, so at
+`save_interval=200` the fourth is step 600 and the prune fires early in the run rather than
+late. It deletes with `s3:DeleteObject`, one call per object. The workload role does not
+hold that action, because every run writes under its own id and nothing ever needs
+removing, and the refusal is not caught: the run stops with `OLMoNetworkError` on the step
+after that fourth save. Pass `trainer.callbacks.checkpointer.max_checkpoints=null` and keep
+them all.
 
 **`torch.compile` needs a C compiler, and the image now has one.** It did not, and a run
 died on the first compiled region with `Failed to find C compiler` — after the GPU had been
 paid for. If you are on an older image digest than the one the GPU job definition pins, pass
 `train_module.compile_model=false`.
 
-**Turn off the evaluators, or point them at local data.** The example's `lm_evaluator` wants
-a `.csv.gz` metadata file that is not served over HTTP, so it fails while the trainer is
-still being built. Pass `trainer.callbacks.lm_evaluator.enabled=false` and
-`trainer.callbacks.downstream_evaluator.enabled=false` unless you have set up eval data.
+**Turn off both evaluators. They fail for two different reasons.** The example's
+`lm_evaluator` reads a C4 validation shard from `olmo-data.org` and needs a `.csv.gz` index
+beside it saying where each document starts. That index was never published for the
+validation shard: the URL answers 404, while the same file for the training shard answers
+200. The server is reachable and serves that kind of file; this one was never put there.
+`downstream_evaluator` scores HellaSwag through `ai2-olmo-eval`, which is an optional
+OLMo-core dependency the training image does not install, so it fails on the import. Both
+happen while the trainer is being built, in the first seconds, before the first step.
+Pass `trainer.callbacks.lm_evaluator.enabled=false` and
+`trainer.callbacks.downstream_evaluator.enabled=false`.
 
 **Set `max_duration` explicitly.** It defaults to one epoch, which may be far more or far
 less than the twelve hours you have.
