@@ -139,12 +139,23 @@ All five exit `0` on a pass, `1` when the gate ran and a criterion failed, and `
 inputs could not be read. They report criteria only; the `operational_inventory_checks`
 group is Phase 0's and exists because that phase predates the current definition.
 
-**Phases 2, 3 and 4 exit 1 today, and that is the report working rather than a broken
-gate.** All four deployed phases have run. Phase 2 reports twelve of twenty-two criteria
-covered, one deferred and nine gaps; Phase 3 reports thirteen of nineteen covered and six
-gaps; Phase 4 reports nine of twelve covered, one deferred and two gaps. Run the gates for
-the current numbers — the ones above are what they printed when this paragraph was written,
-and a gate is the authority rather than this file.
+**Phases 2 and 3 exit 1 today, and that is the report working rather than a broken gate.**
+All four deployed phases have run. Phase 2 reports thirteen of twenty-two criteria covered,
+one deferred and eight gaps; Phase 3 reports thirteen of nineteen covered and six gaps;
+Phase 4 reports nine of eleven covered and two deferred, with no gaps, and so exits 0. Run
+the gates for the current numbers — the ones above are what they printed when this paragraph
+was written, and a gate is the authority rather than this file.
+
+Two of those numbers moved on 2026-07-31 and they moved for different reasons, which is
+worth separating before anybody reads the trend as progress. Phase 2 closed a criterion by
+capturing something nobody had recorded: who is on the `team-leads` team, which is the
+effective reviewer list on the lead approval gate. Phase 4 reached 0 without any criterion
+being satisfied — one was transferred to a later phase that owns the mechanism it needs, and
+one became a deferral with a written trigger. A gate going green because work moved is a
+different event from a gate going green because work landed. Of these two it is Phase 4
+that went green, and it is the first kind: nothing about the account changed. Phase 2 is
+the second kind and its gate still exits 1, because closing one criterion out of nine left
+eight.
 
 **Phase 5 exits 0 with one criterion outstanding, and that is worth reading rather than
 skipping.** It reports fourteen of fifteen covered and one deferred, and both numbers moved on

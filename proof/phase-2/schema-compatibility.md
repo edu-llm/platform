@@ -1,6 +1,6 @@
 # Phase 2 schema compatibility report
 
-The twelve contract models defined by the modules this bundle's evidence is built from, so that a reviewer can check a shape without reading the whole inventory. The structural digest is `sha256` over the model's JSON schema with sorted keys, so it changes when a field is added, removed, retyped or reconstrained, and does not change when unrelated code moves.
+The thirteen contract models defined by the modules this bundle's evidence is built from, so that a reviewer can check a shape without reading the whole inventory. The structural digest is `sha256` over the model's JSON schema with sorted keys, so it changes when a field is added, removed, retyped or reconstrained, and does not change when unrelated code moves.
 
 What scopes this table is where code sits today, not a record of what the phase delivered. It was introduced for a long time as the contract models the phase added, which is a question it cannot answer: the only thing it knows about a model is which module the model is in now, so moving one to another file changed the count without any phase having delivered anything different. It is a compatibility view over the complete inventory in `proof/phase-0/schema-compatibility.md`, and `tests/test_schema_compatibility.py` fails when either table stops describing the tree.
 
@@ -13,6 +13,7 @@ What scopes this table is where code sits today, not a record of what the phase 
 | AdmissionExecutionInventory | edullm_platform.phase2_evidence | record | unversioned | no | sha256:8193d6d263e3e888b068b9aa36bcaf2dfe5b88ee7d5cbeb70f32481e3de076e1 |
 | EnvironmentInventory | edullm_platform.phase2_evidence | record | unversioned | no | sha256:a496a853cb96ec9f456ebc6fd2c62bca2cbd09221f5e63e1099b13966e9f06d0 |
 | EnvironmentReviewer | edullm_platform.phase2_evidence | record | unversioned | no | sha256:2d2d86e7f72a582de3961f38e82b5bdb4e88cc262c5a95deeab864c5ce3417f6 |
+| LeadTeamMembership | edullm_platform.phase2_evidence | record | unversioned | no | sha256:fcf1ab4981bb9d42b15966eebdd656a42617c7bec19816df63a6fff58158c8cc |
 | LineageInventory | edullm_platform.phase2_evidence | record | unversioned | no | sha256:44fdfa6f1ce14ce085bf18add6364911b6e4ddb95d2915f865c545319c7526b3 |
 | LineageObject | edullm_platform.phase2_evidence | record | unversioned | no | sha256:e8b3a5a7c45fa505cd8a7a2f3d2a8df3cf482684a693d8b96404488ac9773d06 |
 | ProtectedEnvironment | edullm_platform.phase2_evidence | record | unversioned | no | sha256:3d60181d51ce862aa4b65d8d7cbe3da760a50552e10328d96ef5894bc735f692 |

@@ -2,8 +2,8 @@
 
 Phase: phase-0
 Bundle schema version: 1
-Source commit: 1b036a3e46a7cff1a8c588e5f9560d70725e6893
-Generated: 2026-08-01T03:23:42+00:00
+Source commit: 5707d1480a6e5b778e51fe820d521583a33a4d2f
+Generated: 2026-08-01T03:51:54+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 0 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase0_proof.py` at generation time.
 
@@ -18,9 +18,9 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3858 |
-| suite tests executed | 3677 |
-| suite passed | 3677 |
+| suite tests collected | 3879 |
+| suite tests executed | 3686 |
+| suite passed | 3686 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
@@ -33,7 +33,7 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 | criteria GAP (each one fails the gate) | 0 |
 | related recorded deferrals | 1 (D1) |
 | fixtures with recorded digests | 9 |
-| contract models inventoried | 140 |
+| contract models inventoried | 141 |
 | JSON Schema files exported | 16 |
 
 ## Contract versions

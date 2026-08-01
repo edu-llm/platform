@@ -659,7 +659,11 @@ def test_the_shipped_phases_reach_the_verdicts_their_criteria_support() -> None:
 
     assert verdicts["Phase 1"].readiness is PilotReadiness.READY
     assert verdicts["Phase 2"].readiness is PilotReadiness.BLOCKED
-    assert verdicts["Phase 2"].unmet_criteria == ("2", "6", "7", "9", "12", "14", "19")
+    # Criterion 9 left this list on 2026-07-31, when the team-leads team's membership was
+    # captured and compared against config/organization.yaml in both directions. It was
+    # the one entry here waiting on a capture nobody had taken rather than on a run nobody
+    # had made, which is why it moved on its own.
+    assert verdicts["Phase 2"].unmet_criteria == ("2", "6", "7", "12", "14", "19")
     assert verdicts["Phase 3"].readiness is PilotReadiness.BLOCKED
     # Phase 3's rung is now partly open rather than closed, and naming which five are left
     # is the point. Four completed runs moved eight of the thirteen marked criteria at

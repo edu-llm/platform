@@ -7,10 +7,12 @@ reach, an index that does not name the open checks, an empty document quietly di
 and a recorded role digest re-recorded after the template it describes was widened.
 
 There is one more that is particular to this phase and does not arise in Phase 1 or Phase
-3. Eight criteria are covered on committed captures of a live account, and those captures
-expire. A bundle built after they lapse would print eight covered checks the gate reports
+3. Ten criteria are covered on committed captures of a live account, and those captures
+expire. A bundle built after they lapse would print ten covered checks the gate reports
 as failing, so the generator refuses instead, and that refusal is tested here in the three
-ways a capture can stop holding.
+ways a capture can stop holding -- for every capture the generator reads, rather than for
+one of them, because the defect this caught was a committed capture that no test noticed
+was never being loaded.
 
 This module builds bundles, so it is listed in ``REENTRANT_TEST_MODULES`` and no criterion
 may cite it. It is also excluded from the verification run inside every generator, which is
@@ -21,6 +23,7 @@ from __future__ import annotations
 
 import base64
 import json
+import shutil
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -43,13 +46,11 @@ from edullm_platform.proof_bundle import (
 from tests.proof_support import skip_unless_reproducing
 from tools.build_phase2_proof import (
     BUNDLE_FILENAMES,
+    CAPTURE_SOURCES,
     EMPTY_SECTIONS,
-    ENVIRONMENTS_PATH,
-    EXECUTIONS_PATH,
+    EVIDENCE_DIR,
     GENERATOR_TEST_PATH,
-    LINEAGE_PATH,
     NESTED_RUN_ENV,
-    SECRETS_PATH,
     Coherence,
     Verification,
     build_bundle,
@@ -69,7 +70,12 @@ FIRST_INSTANT = datetime(2026, 1, 1, tzinfo=UTC)
 SECOND_INSTANT = datetime(2026, 6, 30, 12, 34, 56, tzinfo=UTC)
 GENERATED_AT_PREFIX = "Generated: "
 
-CAPTURE_PATHS = (ENVIRONMENTS_PATH, SECRETS_PATH, EXECUTIONS_PATH, LINEAGE_PATH)
+#: Read off the generator's own source list rather than repeated here. A path written out
+#: in this module is a second list that can fall behind the first, which is the shape of
+#: the defect that made the lead-team capture invisible: it was committed and measured in
+#: the digest table, and the one list that decides whether a capture is loaded at all did
+#: not have it.
+CAPTURE_PATHS = tuple(path for path, _model in CAPTURE_SOURCES)
 
 
 @pytest.fixture(scope="session")
@@ -220,13 +226,14 @@ def test_the_generator_refuses_a_bundle_that_miscounts_the_criteria_in_the_aggre
 ) -> None:
     # The shape the Phase 1 gate note went stale in: no check is named, so the numbered
     # reader sees nothing, and the sentence is still a status claim about this phase. With
-    # nine gaps this is the easiest sentence in the bundle to get wrong by one.
+    # eight gaps this is the easiest sentence in the bundle to get wrong by one, and the
+    # sentence below is what getting it wrong by one looks like.
     monkeypatch.setattr(
         "tools.build_phase2_proof.known_limitations",
-        lambda checks, evidence, goldens: ("Eight criteria are gaps today.",),
+        lambda checks, evidence, goldens: ("Nine criteria are gaps today.",),
     )
 
-    with pytest.raises(ProofBundleError, match="eight criteria are gap"):
+    with pytest.raises(ProofBundleError, match="nine criteria are gap"):
         build_bundle(PROJECT_ROOT, tmp_path, generated_at=FIRST_INSTANT, verification=verification)
 
     assert not (tmp_path / "README.md").exists()
@@ -426,19 +433,25 @@ def empty_it(payload: dict[str, Any]) -> None:
     payload.clear()
 
 
-def drop_the_reviewers(payload: dict[str, Any]) -> None:
-    for environment in payload.get("environments", []):
-        environment.pop("reviewers", None)
+def drop_a_required_field(payload: dict[str, Any]) -> None:
+    """Remove ``source``, which is the one field every capture model declares.
+
+    A mutation aimed at one capture's own shape -- dropping the environments' reviewer
+    lists, which is what this replaced -- is a no-op against the other four, so a test
+    parametrized over it would report the captures it did nothing to as guarded.
+    """
+    payload.pop("source", None)
 
 
 @pytest.mark.slow
 @pytest.mark.parametrize(
-    ("break_the_capture", "expected"),
-    [
-        (expire, "no longer loads"),
-        (empty_it, "no longer loads"),
-        (drop_the_reviewers, "no longer loads"),
-    ],
+    "relative_path",
+    [path for path, _model in CAPTURE_SOURCES],
+    ids=[Path(path).name for path, _model in CAPTURE_SOURCES],
+)
+@pytest.mark.parametrize(
+    "break_the_capture",
+    [expire, empty_it, drop_a_required_field],
     ids=["expired", "unreadable", "missing a field"],
 )
 def test_the_generator_refuses_to_build_on_a_capture_that_no_longer_holds(
@@ -446,25 +459,33 @@ def test_the_generator_refuses_to_build_on_a_capture_that_no_longer_holds(
     verification: Verification,
     monkeypatch: pytest.MonkeyPatch,
     break_the_capture: Callable[[dict[str, Any]], None],
-    expected: str,
+    relative_path: str,
 ) -> None:
-    # The matrix prints the status the definition records, and eight criteria are covered
-    # on the strength of these captures. Once one stops holding the gate disagrees with
-    # that, and writing the bundle anyway would hand a reviewer a document whose prose the
-    # gate contradicts.
+    """Every capture the generator declares, not the first one somebody thought of.
+
+    The matrix prints the status the definition records, and ten criteria are covered on
+    the strength of these captures. Once one stops holding the gate disagrees with that,
+    and writing the bundle anyway would hand a reviewer a document whose prose the gate
+    contradicts.
+
+    Parametrized over ``CAPTURE_SOURCES`` because that is the list a sixth capture would
+    have to join, and the fifth one did not: ``lead-team.sanitized.json`` was committed,
+    cited by two criteria and never loaded, and a guard aimed at the environments capture
+    alone had nothing to say about it. The whole evidence directory is copied and exactly
+    one file is broken, so the refusal has to name the file under test rather than trip
+    over a capture that is merely absent.
+    """
     broken = tmp_path / "tree"
-    (broken / ENVIRONMENTS_PATH).parent.mkdir(parents=True)
-    payload: dict[str, Any] = json.loads(
-        (PROJECT_ROOT / ENVIRONMENTS_PATH).read_text(encoding="utf-8")
-    )
+    shutil.copytree(PROJECT_ROOT / EVIDENCE_DIR, broken / EVIDENCE_DIR)
+    payload: dict[str, Any] = json.loads((broken / relative_path).read_text(encoding="utf-8"))
     break_the_capture(payload)
-    (broken / ENVIRONMENTS_PATH).write_text(json.dumps(payload), encoding="utf-8")
+    (broken / relative_path).write_text(json.dumps(payload), encoding="utf-8")
     monkeypatch.setattr(
         "tools.build_phase2_proof.read_captures",
         lambda repo_root: read_captures(broken),
     )
 
-    with pytest.raises(ProofBundleError, match=expected):
+    with pytest.raises(ProofBundleError, match="no longer loads") as raised:
         build_bundle(
             PROJECT_ROOT,
             tmp_path / "bundle",
@@ -472,6 +493,7 @@ def test_the_generator_refuses_to_build_on_a_capture_that_no_longer_holds(
             verification=verification,
         )
 
+    assert relative_path in str(raised.value)
     assert not (tmp_path / "bundle" / "README.md").exists()
 
 

@@ -15,6 +15,19 @@ the citations together.
 The reviewer comparison is against ``config/organization.yaml`` rather than against a list
 written here. Drift between GitHub's reviewers and the platform's roster is otherwise
 silent, and the whole authorization model assumes the two agree.
+
+**On the lead gate that comparison has to reach one level further, and until now it did
+not.** That gate's reviewer list names no people at all: its single reviewer is the
+``team-leads`` team, because eight leads exceed the six reviewer slots and a team counts
+as one. Nothing recorded who was in that team, so a member added to it on GitHub became a
+reviewer on the lead gate and every test in this module went on passing. The two
+membership tests below read ``lead-team.sanitized.json`` and compare it against
+``team_leads`` in both directions, as two tests rather than one, because the directions
+are different incidents with different fixes: a login on GitHub and not in the roster can
+open a gate that admission will then refuse, and a login in the roster and not on GitHub
+is a lead the lead gate will never release, even for his own group's run. Both were live
+at once during the two-day window that ended on 2026-07-30, which
+``config/organization.yaml`` records in its own words.
 """
 
 from __future__ import annotations
@@ -28,6 +41,7 @@ import yaml
 from edullm_platform.phase2_evidence import (
     APPROVAL_ENVIRONMENT_NAMES,
     EnvironmentInventory,
+    LeadTeamMembership,
     SecretInventory,
 )
 
@@ -50,6 +64,11 @@ def environments() -> EnvironmentInventory:
 @pytest.fixture(scope="module")
 def secrets() -> SecretInventory:
     return SecretInventory.model_validate(_load("secrets"))
+
+
+@pytest.fixture(scope="module")
+def lead_team() -> LeadTeamMembership:
+    return LeadTeamMembership.model_validate(_load("lead-team"))
 
 
 @pytest.fixture(scope="module")
@@ -151,6 +170,87 @@ def test_no_member_who_is_not_a_lead_or_admin_reviews_either_gate(
     }
 
     assert named <= privileged, sorted(named - privileged)
+
+
+def test_the_membership_captured_is_of_the_team_the_lead_gate_actually_names(
+    environments: EnvironmentInventory,
+    lead_team: LeadTeamMembership,
+) -> None:
+    # What the slug is recorded for. The two tests below compare a list of logins against
+    # the roster, and would go on passing if the capture were of some other team, or if
+    # the gate's reviewer had been swapped for one -- either of which turns them into
+    # assertions about a team that releases nothing. Read out of the same environment
+    # capture the reviewer tests use, so the gate this is tied to cannot drift from the
+    # gate they describe.
+    lead_gate = next(e for e in environments.environments if e.name == "run-approval-lead")
+
+    # Unpacked with a message rather than as a tuple assignment. Two sibling tests fail
+    # loudly if the gate gains a second reviewer, so nothing is missed either way, but a
+    # bare ValueError: too many values to unpack is the one failure in this module that
+    # says nothing about what it is complaining about.
+    assert len(lead_gate.reviewers) == 1, (
+        "the lead gate names more than one reviewer, so there is no longer a single team "
+        "for this capture to be the membership of, and the two comparisons below are "
+        f"about one entry in a longer list: {[(r.kind, r.name) for r in lead_gate.reviewers]}"
+    )
+    (reviewer,) = lead_gate.reviewers
+
+    assert (reviewer.kind, reviewer.name) == ("Team", lead_team.team_slug)
+    # A team belongs to an organization rather than to a repository, and the capture
+    # records both because the claim is about this repository's gate: the same team can
+    # review an environment on a repository this platform does not own.
+    assert (lead_team.organization, lead_team.repository) == (
+        lead_gate.organization,
+        lead_gate.repository,
+    )
+
+
+def test_only_a_lead_the_roster_declares_can_release_a_run_at_the_lead_gate(
+    lead_team: LeadTeamMembership,
+    roster: dict[str, object],
+) -> None:
+    # The direction that widens authority, and the hole this capture was added to close.
+    # GitHub's team is what releases the deployment; config/organization.yaml is what
+    # admission reads afterwards. A login here and not there can open the lead gate on any
+    # team's routine run and is then refused at admission with
+    # approver_lacks_lead_or_admin_role -- the run is stopped, but somebody held approval
+    # authority this repository never granted and nothing here could say who. That was
+    # live for syz2026 through the two-day window ending 2026-07-30.
+    #
+    # Case-insensitive, the way the admin gate's reviewers are compared just above. GitHub
+    # treats a login as case-insensitive, and an exact comparison would report drift that
+    # is not there while saying nothing about the drift that is.
+    declared = {str(login).lower() for login in roster["team_leads"]}
+    undeclared = sorted(
+        login for login in lead_team.member_logins if login.lower() not in declared
+    )
+
+    assert not undeclared, (
+        f"on GitHub's {lead_team.team_slug} team and not in config/organization.yaml's "
+        "team_leads, so each of these can release any team's routine run at the lead gate "
+        f"while admission refuses the submission it released: {undeclared}"
+    )
+
+
+def test_a_lead_the_roster_declares_is_never_locked_out_of_the_lead_gate(
+    lead_team: LeadTeamMembership,
+    roster: dict[str, object],
+) -> None:
+    # The direction that withdraws authority the roster granted, which is a different
+    # incident with a different fix and therefore a different test. A login here and not
+    # on the team is a lead admission would accept and the gate will never release, so
+    # even his own group's routine run waits on somebody else -- which is what
+    # VS-code-cloud met through the same two-day window, from the other side of it.
+    on_github = {login.lower() for login in lead_team.member_logins}
+    absent = sorted(
+        str(login) for login in roster["team_leads"] if str(login).lower() not in on_github
+    )
+
+    assert not absent, (
+        "in config/organization.yaml's team_leads and not on GitHub's "
+        f"{lead_team.team_slug} team, so each of these is a lead this platform authorizes "
+        f"and the lead gate will never let through, their own group's run included: {absent}"
+    )
 
 
 def test_the_repository_holds_no_secret_a_branch_could_read(
