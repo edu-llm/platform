@@ -408,7 +408,15 @@ RETRY_ONLY_WHAT_A_RETRY_FIXES: Final = (
     {"OnStatusReason": "Host EC2*", "Action": "RETRY"},
     # A container that did not fit will not fit on the identical instance type. Retrying
     # buys a second identical OOM and a second hour of the approved ceiling.
-    {"OnReason": "*OutOfMemoryError*", "Action": "EXIT"},
+    #
+    # PREFIX MATCH, BECAUSE A LEADING ASTERISK IS REJECTED. These are glob patterns in one
+    # direction only: the documentation is explicit that a pattern "can optionally end with
+    # an asterisk so that only the start of the string needs to be an exact match", and
+    # nothing says it may begin with one. This first read `*OutOfMemoryError*`, which Batch
+    # refused with `Evaluate on exit condition contains restricted characters.` -- a 400 on
+    # the submit, after the run was already recorded as admitted. Batch's reason for an
+    # out-of-memory kill starts with the word, so anchoring at the start loses nothing.
+    {"OnReason": "OutOfMemoryError*", "Action": "EXIT"},
     # Everything else, which is every exit code including 1 -- what a Python traceback
     # produces, and what a bad config override produces. Last, because Batch stops at the
     # first match and this one matches everything.

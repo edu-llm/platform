@@ -413,9 +413,35 @@ def test_a_retry_fires_on_a_lost_host_and_on_nothing_else(attempts: int) -> None
 
     assert request["RetryStrategy"]["EvaluateOnExit"] == [
         {"OnStatusReason": "Host EC2*", "Action": "RETRY"},
-        {"OnReason": "*OutOfMemoryError*", "Action": "EXIT"},
+        {"OnReason": "OutOfMemoryError*", "Action": "EXIT"},
         {"OnExitCode": "*", "Action": "EXIT"},
     ]
+
+
+def test_no_exit_rule_begins_with_an_asterisk_because_batch_refuses_one() -> None:
+    """Mutation: write `*OutOfMemoryError*`, which is the natural way to spell it.
+
+    These patterns glob in one direction. The API reference says a pattern "can optionally
+    end with an asterisk (*) so that only the start of the string needs to be an exact
+    match", and permits no leading one -- Batch answers a leading asterisk with a 400,
+    `Evaluate on exit condition contains restricted characters.`
+
+    That 400 lands on SubmitJob, which the state machine reaches only after the intent and
+    decision records are written. So the failure mode is a run recorded as admitted whose
+    job was refused, which is the same expensive shape as the key-casing mistake this rule
+    set already made once. Both were submit-time errors invisible to every test that reads
+    the request as data, which is why this one reads it as a pattern.
+    """
+    rules = request_for(maximum_attempts=1, checkpoint=None)["RetryStrategy"]["EvaluateOnExit"]
+
+    for rule in rules:
+        for field, pattern in rule.items():
+            if field == "Action":
+                continue
+            assert not pattern.startswith("*") or pattern == "*", (
+                f"{field}={pattern!r} begins with an asterisk, which Batch refuses with "
+                "'Evaluate on exit condition contains restricted characters'"
+            )
 
 
 def test_every_key_this_request_sends_is_one_step_functions_will_accept() -> None:
