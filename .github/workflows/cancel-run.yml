@@ -192,7 +192,10 @@ jobs:
 
           listed="${RUNNER_TEMP}/mine.txt"
           : > "${listed}"
-          for queue in sbsandbox-intern-edullm-cpu sbsandbox-intern-edullm-gpu; do
+          mapfile -t queues < <(
+            uv run --frozen python -c 'import yaml; from pathlib import Path; print("\n".join(dict.fromkeys(item["job_queue"] for item in yaml.safe_load(Path("config/execution-targets.yaml").read_text())["targets"])))'
+          )
+          for queue in "${queues[@]}"; do
             for state in RUNNING STARTING RUNNABLE SUBMITTED PENDING SUCCEEDED FAILED; do
               aws batch list-jobs --job-queue "${queue}" --job-status "${state}" \
                 --query 'jobSummaryList[].jobId' --output text >> "${listed}"
@@ -264,7 +267,10 @@ jobs:
           # workflow that answers "nothing to report" about a run that failed an hour ago is
           # worse than no answer at all. The live states stay first so that a run id reused
           # across a retry finds the attempt that is still going.
-          for queue in sbsandbox-intern-edullm-cpu sbsandbox-intern-edullm-gpu; do
+          mapfile -t queues < <(
+            uv run --frozen python -c 'import yaml; from pathlib import Path; print("\n".join(dict.fromkeys(item["job_queue"] for item in yaml.safe_load(Path("config/execution-targets.yaml").read_text())["targets"])))'
+          )
+          for queue in "${queues[@]}"; do
             for state in SUBMITTED PENDING RUNNABLE STARTING RUNNING SUCCEEDED FAILED; do
               candidate="$(aws batch list-jobs \
                 --job-queue "${queue}" \
@@ -311,13 +317,22 @@ jobs:
           RUN_ID: ${{ steps.resolve.outputs.run_id }}
         run: |
           set -euo pipefail
-          described="${RUNNER_TEMP}/job.json"
-          aws batch describe-jobs --jobs "${JOB_ID}" --output json > "${described}"
           uv run --frozen python - <<'PY' | tee -a "${GITHUB_STEP_SUMMARY}"
           import json
           import os
+          import subprocess
 
-          job = json.load(open(os.environ["RUNNER_TEMP"] + "/job.json"))["jobs"][0]
+          def aws_json(*arguments):
+              completed = subprocess.run(
+                  ["aws", *arguments, "--output", "json"],
+                  capture_output=True,
+                  check=True,
+                  text=True,
+              )
+              return json.loads(completed.stdout)
+
+          job_id = os.environ["JOB_ID"]
+          job = aws_json("batch", "describe-jobs", "--jobs", job_id)["jobs"][0]
           container = job.get("container", {})
           attempts = job.get("attempts", [])
 
@@ -344,6 +359,71 @@ jobs:
           print(f"| Image | `{container.get('image', 'unknown')}` |")
           print(f"| Log stream | `{container.get('logStreamName') or 'not yet assigned'}` |")
           print()
+
+          array_size = (job.get("arrayProperties") or {}).get("size")
+          if isinstance(array_size, int) and array_size > 0:
+              summaries = []
+              for status in (
+                  "SUBMITTED",
+                  "PENDING",
+                  "RUNNABLE",
+                  "STARTING",
+                  "RUNNING",
+                  "SUCCEEDED",
+                  "FAILED",
+              ):
+                  token = None
+                  while True:
+                      arguments = [
+                          "batch",
+                          "list-jobs",
+                          "--array-job-id",
+                          job_id,
+                          "--job-status",
+                          status,
+                      ]
+                      if token:
+                          arguments.extend(["--next-token", token])
+                      page = aws_json(*arguments)
+                      summaries.extend(page.get("jobSummaryList", []))
+                      token = page.get("nextToken")
+                      if not token:
+                          break
+
+              child_ids = list(
+                  dict.fromkeys(
+                      summary["jobId"] for summary in summaries if summary.get("jobId")
+                  )
+              )
+              children = []
+              for start in range(0, len(child_ids), 100):
+                  children.extend(
+                      aws_json(
+                          "batch",
+                          "describe-jobs",
+                          "--jobs",
+                          *child_ids[start : start + 100],
+                      )["jobs"]
+                  )
+              children.sort(
+                  key=lambda child: (child.get("arrayProperties") or {}).get("index", -1)
+              )
+
+              print(f"### Array children ({len(children)} of {array_size})")
+              print()
+              print("| Index | Status | Why | Exit | Log stream |")
+              print("| ---: | --- | --- | ---: | --- |")
+              for child in children:
+                  child_container = child.get("container") or {}
+                  index = (child.get("arrayProperties") or {}).get("index", "?")
+                  reason = child.get("statusReason") or "nothing reported"
+                  print(
+                      f"| {index} | `{child.get('status')}` | {reason} | "
+                      f"{child_container.get('exitCode', '—')} | "
+                      f"`{child_container.get('logStreamName') or 'not yet assigned'}` |"
+                  )
+              print()
+
           # The log stream is named rather than read: this role holds no logs: permission at
           # all, deliberately, and granting one here would widen a role whose whole argument
           # is that it can do two things. The name is what CloudWatch needs to find it.
@@ -418,8 +498,11 @@ jobs:
           # The reason reaches the lifecycle record, which is what lets
           # lifecycle_projection tell an operator's cancellation from a failure. Naming who
           # asked is the half that a bare reason leaves out.
+          # JOB_ID is the parent id for an array. Batch defines parent termination to
+          # terminate every child, and the parent is the tagged resource this role's IAM
+          # condition can authorize (array child ARNs do not support resource tags).
           aws batch terminate-job --job-id "${JOB_ID}" \
-            --reason "Cancelled by ${ACTOR}: ${REASON}"
+            --reason "edullm:cancelled by ${ACTOR}: ${REASON}"
           {
             echo "## Run stopped"
             echo

@@ -220,6 +220,9 @@ class LifecycleProjection:
     event: LifecycleEvent
     attempt: SchedulerAttempt | None
     result: ResultManifest | None
+    #: Present only for an array child. Kept beside the contracts so the recorder can put
+    #: each child's result at a collision-free key without changing their public schemas.
+    array_index: int | None = None
 
 
 def derived_event_id(eventbridge_event_id: str) -> str:
@@ -364,6 +367,28 @@ def _required_text(detail: Mapping[str, Any], field: str) -> str:
     return value
 
 
+def _array_index(detail: Mapping[str, Any]) -> int | None:
+    """The child index Batch reports, or None for a single job or array parent."""
+    properties = detail.get("arrayProperties")
+    if not isinstance(properties, Mapping) or "index" not in properties:
+        return None
+    index = properties["index"]
+    if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+        raise UnreadableBatchEventError(
+            "detail.arrayProperties.index must be a non-negative integer"
+        )
+    return index
+
+
+def _is_array_parent(detail: Mapping[str, Any]) -> bool:
+    properties = detail.get("arrayProperties")
+    return (
+        isinstance(properties, Mapping)
+        and "size" in properties
+        and "index" not in properties
+    )
+
+
 def container_output_prefix(detail: Mapping[str, Any]) -> str | None:
     """The output prefix this job's container was actually given, or None if it was not.
 
@@ -430,6 +455,8 @@ def project_batch_state_change(
         )
     scheduler_job_id = _required_text(detail, "jobId")
     status = _required_text(detail, "status")
+    array_index = _array_index(detail)
+    is_array_parent = _is_array_parent(detail)
 
     last = _last_attempt(detail)
     state = _run_state_for(
@@ -443,7 +470,11 @@ def project_batch_state_change(
     written_under = container_output_prefix(detail)
     if written_under is not None and not written_under.startswith(f"s3://{output_bucket}/"):
         written_under = None
-    if written_under is None and _terminal_state(state) is AttemptTerminalState.SUCCEEDED:
+    if (
+        written_under is None
+        and _terminal_state(state) is AttemptTerminalState.SUCCEEDED
+        and not is_array_parent
+    ):
         # REFUSED RATHER THAN RECORDED EMPTY, because ResultManifest already says a
         # succeeded run must name where it wrote and it is right to. Every job this
         # platform submits is handed the variable by batch_submit_request, so a succeeded
@@ -547,7 +578,12 @@ def project_batch_state_change(
         state=state,
         occurred_at=occurred_at,
     )
-    return LifecycleProjection(event=event, attempt=attempt, result=result)
+    return LifecycleProjection(
+        event=event,
+        attempt=attempt,
+        result=result,
+        array_index=array_index,
+    )
 
 
 def project_batch_event(

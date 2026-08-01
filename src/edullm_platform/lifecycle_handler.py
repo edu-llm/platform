@@ -175,7 +175,10 @@ def attempt_key(run_id: str, attempt_id: str) -> str:
     return f"attempt/{run_id}/{attempt_id}.json"
 
 
-def result_key(run_id: str) -> str:
+def result_key(run_id: str, *, array_index: int | None = None) -> str:
+    """One result for a single run, or one collision-free result per array child."""
+    if array_index is not None:
+        return f"result/{run_id}/array/{array_index}.json"
     return f"result/{run_id}.json"
 
 
@@ -198,7 +201,15 @@ def lineage_writes(projection: LifecycleProjection) -> tuple[tuple[str, Contract
             )
         )
     if projection.result is not None:
-        writes.append((result_key(projection.result.run_id), projection.result))
+        writes.append(
+            (
+                result_key(
+                    projection.result.run_id,
+                    array_index=projection.array_index,
+                ),
+                projection.result,
+            )
+        )
     return tuple(writes)
 
 

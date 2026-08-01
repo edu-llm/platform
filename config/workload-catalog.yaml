@@ -325,3 +325,21 @@ workloads:
       # writes to. The path is output_prefix(team, run_id) + "checkpoints/".
       destination_prefix: "s3://sbsandbox-intern-edullm-outputs/teams/"
       resume_required: true
+  # The seven-child MixLaw validation array. One child owns all eight A100s on one
+  # p4d.24xlarge; gpu-8xa100's container contract requests 16 vCPU so framework and data
+  # loader threading are bounded independently of the host's indivisible 96-vCPU capacity.
+  #
+  # Four hours is the separately approved 100-step benchmark ceiling from the rollout plan,
+  # not a claim that a production arm completes in four hours. The production limit remains
+  # a deliberate catalog edit after the benchmark projects the full run and adds 25 percent.
+  # Keeping the benchmark bound explicit prevents this entry from silently authorizing an
+  # unmeasured seven-host production run.
+  - name: mixlaw-validation-370m-8xa100
+    repository: edullm-p1
+    compute_profile: gpu-8xa100
+    maximum_runtime_hours: "4"
+    maximum_attempts: 1
+    checkpoint:
+      interval_minutes: 30
+      destination_prefix: "s3://sbsandbox-intern-edullm-outputs/teams/"
+      resume_required: false

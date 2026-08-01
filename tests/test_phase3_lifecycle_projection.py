@@ -47,6 +47,7 @@ from edullm_platform.lifecycle_handler import (
     LifecycleEventError,
     binding_key,
     handler,
+    lineage_writes,
 )
 from edullm_platform.lifecycle_projection import (
     BATCH_JOB_STATUSES,
@@ -151,6 +152,30 @@ def project(status: str, **overrides: Any) -> Any:
 
 def succeeded() -> Any:
     return project("SUCCEEDED", attempts=[attempt_block()])
+
+
+def test_array_children_project_distinct_result_keys_and_parent_success_is_recordable() -> None:
+    child = project(
+        "SUCCEEDED",
+        attempts=[attempt_block()],
+        arrayProperties={"index": 3, "size": 7},
+    )
+    assert child.array_index == 3
+    assert child.result is not None
+    assert [key for key, _record in lineage_writes(child) if key.startswith("result/")] == [
+        f"result/{RUN_ID}/array/3.json"
+    ]
+
+    # Array parents summarize their children and have no container attempt or output prefix
+    # of their own. Their lifecycle state is useful, but fabricating a result would not be.
+    parent = project(
+        "SUCCEEDED",
+        arrayProperties={"size": 7, "statusSummary": {"SUCCEEDED": 7}},
+        container={},
+    )
+    assert parent.array_index is None
+    assert parent.attempt is None
+    assert parent.result is None
 
 
 # ---------------------------------------------------------------------------------------

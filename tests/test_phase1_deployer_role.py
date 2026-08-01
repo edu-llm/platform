@@ -581,15 +581,15 @@ def test_deployer_grants_nothing_outside_the_services_the_two_phases_deploy() ->
 #: inventory rather than a pattern, for the reason the Phase 1 and Phase 2 entries are one:
 #: the widening worth catching is a `*` that looks like the ones around it.
 #:
-#: The six ec2: entries and the lambda event-source-mapping entry are the only scopes in this
+#: The seven ec2: entries and the lambda event-source-mapping entry are the only scopes in this
 #: role that do not carry the project prefix, and none of them can. Each names a resource
 #: addressed by an identifier the service assigns at creation, so `vpc/*` and
-#: `event-source-mapping:*` are the narrowest ARNs that exist. The EC2 six are the ones to
-#: weigh: this role can therefore delete any VPC, subnet, route table, internet gateway or
-#: security group in a shared account. The template says so in the open and names the
-#: narrowing that was not taken; tests/test_phase3_deployer_role.py enumerates the six
-#: resource types so a seventh has to be a visible edit, and pins the mapping scope to one
-#: read-only action.
+#: `event-source-mapping:*` are the narrowest ARNs that exist. The EC2 seven are the ones to
+#: weigh: this role can therefore delete any VPC, subnet, route table, internet gateway,
+#: launch template or security group in a shared account. The template says so in the open
+#: and names the narrowing that was not taken; tests/test_phase3_deployer_role.py enumerates
+#: the resource types so a further addition has to be a visible edit, and pins the mapping
+#: scope to one read-only action.
 PHASE3_WILDCARDS = [
     # The measured no-resource-type actions, then EC2's account-wide describes. Two
     # statements, two different reasons, kept apart on purpose.
@@ -599,6 +599,7 @@ PHASE3_WILDCARDS = [
         REGIONAL_ARN % ("ec2", f"{resource_type}/*")
         for resource_type in (
             "internet-gateway",
+            "launch-template",
             "route-table",
             "security-group",
             "security-group-rule",

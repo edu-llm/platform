@@ -28,9 +28,9 @@ Description: Nine GPU compute environments, their job queues and their digest-pi
 # "Running On-Demand P instances", 768 vCPU, covering p4d and p5. They are separate pools, so
 # the P shapes below cannot starve the G shapes however busy they are.
 #
-# The rule the numbers follow: eight concurrent jobs on a single-GPU shape, two on a four-GPU
-# shape, one on an eight-GPU shape. Concurrency is worth most where a job is cheap and a
-# researcher is iterating, and worth least where one job already occupies a whole large host.
+# The ordinary rule is eight concurrent jobs on a single-GPU shape, two on a four-GPU shape
+# and one on an eight-GPU shape. gpu-8xa100 is the explicit exception: its seven-child
+# production matrix needs seven indivisible hosts.
 #
 #   G and VT pool                                          vCPU     concurrent jobs
 #     gpu-1xa10g   g5.xlarge      other stack, unchanged     128          32
@@ -45,10 +45,10 @@ Description: Nine GPU compute environments, their job queues and their digest-pi
 #                                                            720  of 768, 48 spare
 #
 #   P pool
-#     gpu-8xa100   p4d.24xlarge                               96           1
+#     gpu-8xa100   p4d.24xlarge                              672           7
 #     gpu-8xh100   p5.48xlarge                               192           1
 #                                                           ----
-#                                                            288  of 768, 480 spare
+#                                                            864  of 768
 #
 # gpu-4xl40s is the one deviation from the rule and the reason is price: g6e.12xlarge is
 # $10.493/hour, twice any other four-GPU G shape, so a second concurrent job would be the
@@ -60,12 +60,11 @@ Description: Nine GPU compute environments, their job queues and their digest-pi
 # also the margin that lets the next shape be added without first taking capacity away from
 # one of these. 48 is one g6e.12xlarge or twelve g5.xlarge.
 #
-# WHY THE P POOL IS LEFT 480 SPARE, WHICH IS MOST OF IT. Concurrency there is not the
-# constraint worth relaxing. Saturating the P pool would be eight p5.48xlarge at $440/hour,
-# against an account that spent $3,965 in the whole of July. One p4d and one p5 at a time is
-# $77/hour, which is already the largest sustained rate this platform can reach, and both
-# shapes need an admin per submission because their hourly rate is above
-# EXCEPTION_RATE_CEILING_USD_PER_HOUR in src/edullm_platform/contracts/policy.py.
+# THE P CEILINGS NOW SUM TO 864 AGAINST A 768-vCPU ACCOUNT QUOTA. That does not authorize
+# 864 running vCPU: the regional quota remains the hard cap. It does mean a seven-host p4d
+# matrix (672 vCPU) leaves only 96, not enough for the p5's indivisible 192-vCPU host. The two
+# shapes therefore cannot both reach their declared maxima, and the admin approval already
+# required by their hourly rates must not overlap a p5 run with the seven-host matrix.
 #
 # WHAT A CEILING DOES NOT DO. It caps everybody together and nobody individually, so one
 # person submitting eight jobs on a single-GPU shape still starves the others; it just takes
@@ -883,6 +882,48 @@ Resources:
   # admin per submission because that rate is above policy's exception ceiling. FOUR SUBNETS:
   # p4d.24xlarge is not offered in us-east-1f.
   # -------------------------------------------------------------------------------------
+  # ECS does not assemble p4d's four local NVMe devices. Keep the ECS agent stopped until
+  # RAID0 is mounted so /scratch cannot silently become an ordinary root-volume directory.
+  Gpu8xA100ScratchLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: sbsandbox-intern-edullm-batch-gpu-8xa100-scratch
+      LaunchTemplateData:
+        UserData:
+          Fn::Base64: |
+            MIME-Version: 1.0
+            Content-Type: multipart/mixed; boundary="==EDULLM_SCRATCH=="
+
+            --==EDULLM_SCRATCH==
+            Content-Type: text/x-shellscript; charset="us-ascii"
+
+            #!/bin/bash
+            set -euo pipefail
+            systemctl stop ecs.service || true
+            dnf install -y mdadm nvme-cli xfsprogs
+            mapfile -t devices < <(
+              nvme list | awk '/Amazon EC2 NVMe Instance Storage/ {print $1}'
+            )
+            if [ "${#devices[@]}" -ne 4 ]; then
+              echo "expected four p4d instance-store NVMe devices, found ${#devices[@]}" >&2
+              exit 1
+            fi
+            mdadm --create /dev/md0 --level=0 --raid-devices=4 --force --run "${devices[@]}"
+            mkfs.xfs -f /dev/md0
+            mkdir -p /scratch
+            mount /dev/md0 /scratch
+            chmod 1777 /scratch
+            systemctl start ecs.service
+
+            --==EDULLM_SCRATCH==--
+      TagSpecifications:
+        - ResourceType: launch-template
+          Tags:
+            - Key: Name
+              Value: sbsandbox-intern-edullm-batch-gpu-8xa100-scratch
+            - Key: Project
+              Value: edullm
+
   Gpu8xA100ComputeEnvironment:
     Type: AWS::Batch::ComputeEnvironment
     Properties:
@@ -897,9 +938,18 @@ Resources:
         Type: EC2
         AllocationStrategy: BEST_FIT_PROGRESSIVE
         MinvCpus: 0
-        MaxvCpus: 96
+        # Seven indivisible 96-vCPU hosts. A child reserves 16 vCPU below; the environment
+        # ceiling still describes physical capacity and therefore uses 7 * 96.
+        MaxvCpus: 672
         InstanceTypes:
           - p4d.24xlarge
+        LaunchTemplate:
+          LaunchTemplateId:
+            Ref: Gpu8xA100ScratchLaunchTemplate
+          Version:
+            Fn::GetAtt:
+              - Gpu8xA100ScratchLaunchTemplate
+              - LatestVersionNumber
         InstanceRole:
           Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:instance-profile/sbsandbox-intern-edullm-batch-gpu-instance
         Subnets:
@@ -924,7 +974,9 @@ Resources:
       Priority: 1
       JobStateTimeLimitActions:
         - Action: CANCEL
-          MaxTimeSeconds: 1800
+          # Scarce p4d capacity may arrive gradually for a seven-child array. Preserve
+          # healthy children for a day while retaining the fast misconfiguration limits.
+          MaxTimeSeconds: 86400
           Reason: CAPACITY:INSUFFICIENT_INSTANCE_CAPACITY
           State: RUNNABLE
         - Action: CANCEL
@@ -961,11 +1013,19 @@ Resources:
           Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-workload
         ResourceRequirements:
           - Type: VCPU
-            Value: "96"
+            Value: "16"
           - Type: MEMORY
             Value: "1155072"
           - Type: GPU
             Value: "8"
+        Volumes:
+          - Name: scratch
+            Host:
+              SourcePath: /scratch
+        MountPoints:
+          - SourceVolume: scratch
+            ContainerPath: /scratch
+            ReadOnly: false
         Secrets:
           - Name: WANDB_API_KEY
             ValueFrom:

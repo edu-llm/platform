@@ -20,10 +20,11 @@ on:
         required: true
         type: choice
         options:
-          # Three where there was one. Sorted case-insensitively, which is what the option
+          # Four where there was one. Sorted case-insensitively, which is what the option
           # test compares against, so this reads as a list rather than as the order the
           # registrations happened in.
           - edullm-data
+          - edullm-p1
           - OLMo-core
           - olmo-eval-full
       commit_sha:
@@ -43,6 +44,10 @@ on:
           # The dataset validator, and the first entry here that is not OLMo-core. Reads a
           # published corpus and checks each shard against the bounds its family declares.
           - edullm-data-validate
+          # Eight A100s on one p4d child. Submit the seven non-control mixtures with
+          # fan_out_size 7 and fan_out_parallelism 7 after the production runtime bound is
+          # benchmarked and recorded in the catalog.
+          - mixlaw-validation-370m-8xa100
           - olmo-core-check-cpu
           - olmo-core-check-gpu
           - olmo-core-train-1gpu

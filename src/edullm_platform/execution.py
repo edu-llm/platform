@@ -596,6 +596,10 @@ class ContainerShape:
     #: The default environment, which every real submission overrides. Declared rather than
     #: omitted because an override can only replace a key the definition declares.
     default_environment: tuple[tuple[str, str], ...]
+    #: A host path exposed at the same path in the container. Only the p4d shape carries
+    #: this: its launch template assembles the instance-store NVMe devices there before ECS
+    #: is allowed to accept work.
+    scratch_path: str | None = None
 
 
 #: What every GPU profile's container carries besides its two numbers and its device count.
@@ -610,7 +614,14 @@ class ContainerShape:
 #: difference is deliberate: it names a location outside the only prefix the GPU workload role
 #: permits, so a job that reaches the default is denied on its first write instead of filling
 #: a location no lineage record names.
-def _gpu_shape(*, vcpus: int, memory_mib: int, gpus: int, shared_memory_mib: int) -> ContainerShape:
+def _gpu_shape(
+    *,
+    vcpus: int,
+    memory_mib: int,
+    gpus: int,
+    shared_memory_mib: int,
+    scratch_path: str | None = None,
+) -> ContainerShape:
     return ContainerShape(
         vcpus=vcpus,
         memory_mib=memory_mib,
@@ -624,6 +635,7 @@ def _gpu_shape(*, vcpus: int, memory_mib: int, gpus: int, shared_memory_mib: int
                 f"s3://{SANDBOX_RESOURCE_PREFIX}outputs/no-submission-supplied-a-prefix/",
             ),
         ),
+        scratch_path=scratch_path,
     )
 
 
@@ -668,7 +680,8 @@ CONTAINER_SHAPES: Final[Mapping[str, ContainerShape]] = {
     ),
     # THE NINE SHAPES BELOW, AND WHERE EVERY NUMBER IN THEM COMES FROM.
     #
-    # vcpus and gpus are the whole instance. A GPU instance is not shared between jobs here:
+    # gpus are the whole instance. Apart from gpu-8xa100, vcpus are too. A GPU instance is
+    # not shared between jobs here:
     # the device is the scarce thing, an eight-GPU host running a one-GPU job has seven idle
     # devices billing anyway, and a container asking for a fraction of the vCPU would let
     # Batch pack a second job onto the same host and hand it the leftover devices. So the
@@ -707,7 +720,15 @@ CONTAINER_SHAPES: Final[Mapping[str, ContainerShape]] = {
     "gpu-1xl4": _gpu_shape(vcpus=4, memory_mib=15360, gpus=1, shared_memory_mib=4096),
     "gpu-4xl4": _gpu_shape(vcpus=48, memory_mib=184320, gpus=4, shared_memory_mib=49152),
     "gpu-4xl40s": _gpu_shape(vcpus=48, memory_mib=380928, gpus=4, shared_memory_mib=95232),
-    "gpu-8xa100": _gpu_shape(vcpus=96, memory_mib=1155072, gpus=8, shared_memory_mib=288768),
+    # The p4d child still owns the host by asking for every GPU and almost all memory. Its
+    # 16-vCPU request is the trainer's bounded thread budget; /scratch is the host NVMe RAID.
+    "gpu-8xa100": _gpu_shape(
+        vcpus=16,
+        memory_mib=1155072,
+        gpus=8,
+        shared_memory_mib=288768,
+        scratch_path="/scratch",
+    ),
     "gpu-8xh100": _gpu_shape(vcpus=192, memory_mib=2048000, gpus=8, shared_memory_mib=512000),
 }
 
@@ -851,6 +872,20 @@ def batch_register_job_definition_request(
     ]
     if shape.shared_memory_mib is not None:
         container["LinuxParameters"] = {"SharedMemorySize": shape.shared_memory_mib}
+    if shape.scratch_path is not None:
+        container["Volumes"] = [
+            {
+                "Name": "scratch",
+                "Host": {"SourcePath": shape.scratch_path},
+            }
+        ]
+        container["MountPoints"] = [
+            {
+                "SourceVolume": "scratch",
+                "ContainerPath": shape.scratch_path,
+                "ReadOnly": False,
+            }
+        ]
     container["LogConfiguration"] = {
         "LogDriver": "awslogs",
         "Options": {

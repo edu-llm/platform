@@ -915,6 +915,26 @@ def test_the_registered_definition_carries_both_of_the_containers_identities() -
     assert container["ExecutionRoleArn"] != container["JobRoleArn"]
 
 
+def test_each_mixlaw_child_requests_sixteen_vcpus_and_mounts_p4d_scratch() -> None:
+    """The per-run definition must preserve the p4d child shape, not the host's 96 vCPU."""
+    container = registration_for(
+        "gpu-8xa100",
+        workload_profile="mixlaw-validation-370m-8xa100",
+    )["ContainerProperties"]
+    requirements = {
+        item["Type"]: item["Value"] for item in container["ResourceRequirements"]
+    }
+
+    assert requirements["VCPU"] == "16"
+    assert requirements["GPU"] == "8"
+    assert container["Volumes"] == [
+        {"Name": "scratch", "Host": {"SourcePath": "/scratch"}}
+    ]
+    assert container["MountPoints"] == [
+        {"SourceVolume": "scratch", "ContainerPath": "/scratch", "ReadOnly": False}
+    ]
+
+
 def test_the_registered_definition_is_named_for_the_run_that_asked_for_it() -> None:
     """Mutation: mint a name inside AWS, or reuse the deployed definition's name.
 

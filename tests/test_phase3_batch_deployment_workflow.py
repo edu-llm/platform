@@ -751,7 +751,7 @@ profile="$(printf '%s\\n' "$@" | sed -n 's/^sbsandbox-intern-edullm-\\(gpu-[a-z0
 case "${profile}" in
   gpu-1xt4|gpu-1xl4) vcpus=4 ; gpus=1 ;;
   gpu-4xt4|gpu-4xa10g|gpu-4xl4|gpu-4xl40s) vcpus=48 ; gpus=4 ;;
-  gpu-8xa100) vcpus=96 ; gpus=8 ;;
+  gpu-8xa100) vcpus=16 ; gpus=8 ;;
   gpu-8xa10g|gpu-8xh100) vcpus=192 ; gpus=8 ;;
   *) echo "unexpected aws call: $*" >&2 ; exit 64 ;;
 esac

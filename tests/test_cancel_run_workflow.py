@@ -277,7 +277,28 @@ def test_the_reason_reaches_the_termination_with_the_name_of_who_asked(
     body = workflow_step(workflow, "Stop it")["run"]
 
     assert "terminate-job" in body
-    assert re.search(r'--reason "Cancelled by \$\{ACTOR\}', body)
+    assert re.search(r'--reason "edullm:cancelled by \$\{ACTOR\}', body)
+
+
+def test_status_and_cancellation_cover_every_execution_target_and_array_child(
+    workflow: dict[str, Any],
+) -> None:
+    """The p4d queue and each child must be discoverable without hard-coded queue drift."""
+    for step_name in ("Work out which run", "Find the job"):
+        body = workflow_step(workflow, step_name)["run"]
+        assert "config/execution-targets.yaml" in body
+        assert 'for queue in "${queues[@]}"' in body
+
+    report = workflow_step(workflow, "Say what the run is doing")["run"]
+    stop = workflow_step(workflow, "Stop it")["run"]
+    assert "--array-job-id" in report
+    assert "arrayProperties" in report
+    assert "Array children" in report
+    after_marker = report.split("<<'PY'", maxsplit=1)[1]
+    report_script = after_marker.split("\n", maxsplit=1)[1].split("\nPY", maxsplit=1)[0]
+    compile(report_script, "cancel-run-array-status", "exec")
+    assert '--job-id "${JOB_ID}"' in stop
+    assert "parent termination to" in stop
 
 
 def test_looking_at_a_run_is_what_a_dispatch_does_unless_it_is_told_otherwise(

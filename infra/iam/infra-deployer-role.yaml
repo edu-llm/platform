@@ -401,7 +401,10 @@ Resources:
               #     path that stranded the Phase 1 ECR stack, and a rollback that cannot
               #     finish leaves a DELETE_FAILED stack holding the name;
               #   - DescribeLaunchTemplateVersions: AWS::Batch::ComputeEnvironment's
-              #     Create, Update and Delete, whether or not a launch template is named.
+              #     Create, Update and Delete, whether or not a launch template is named;
+              #   - DescribeLaunchTemplates: AWS::EC2::LaunchTemplate's Create, Update and
+              #     Delete. EC2 documents this account-wide read as part of the minimum
+              #     launch-template permission set.
               #
               # Read-only, and that bounds it: this statement reveals the shape of the
               # shared account's networking and changes none of it. The actions that change
@@ -411,6 +414,7 @@ Resources:
                   - ec2:DescribeAvailabilityZones
                   - ec2:DescribeInstances
                   - ec2:DescribeInternetGateways
+                  - ec2:DescribeLaunchTemplates
                   - ec2:DescribeLaunchTemplateVersions
                   - ec2:DescribeNetworkAcls
                   - ec2:DescribeNetworkInterfaces
@@ -485,6 +489,8 @@ Resources:
                   - ec2:AttachInternetGateway
                   - ec2:AuthorizeSecurityGroupEgress
                   - ec2:CreateInternetGateway
+                  - ec2:CreateLaunchTemplate
+                  - ec2:CreateLaunchTemplateVersion
                   - ec2:CreateRoute
                   - ec2:CreateRouteTable
                   - ec2:CreateSecurityGroup
@@ -492,6 +498,8 @@ Resources:
                   - ec2:CreateTags
                   - ec2:CreateVpc
                   - ec2:DeleteInternetGateway
+                  - ec2:DeleteLaunchTemplate
+                  - ec2:DeleteLaunchTemplateVersions
                   - ec2:DeleteRoute
                   - ec2:DeleteRouteTable
                   - ec2:DeleteSecurityGroup
@@ -501,6 +509,7 @@ Resources:
                   - ec2:DetachInternetGateway
                   - ec2:DisassociateRouteTable
                   - ec2:ModifySubnetAttribute
+                  - ec2:ModifyLaunchTemplate
                   - ec2:ModifyVpcAttribute
                   - ec2:ModifyVpcTenancy
                   - ec2:ReplaceRoute
@@ -509,6 +518,7 @@ Resources:
                   - ec2:UpdateSecurityGroupRuleDescriptionsEgress
                 Resource:
                   - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:internet-gateway/*
+                  - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:launch-template/*
                   - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:route-table/*
                   - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group/*
                   - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group-rule/*

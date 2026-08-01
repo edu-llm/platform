@@ -157,8 +157,8 @@ def test_the_repository_dropdown_offers_the_registered_repositories_that_have_a_
     }
 
     assert options_for("repository") == sorted(with_work, key=str.lower)
-    assert {"edullm-data", "olmo-eval-full"} <= with_work, (
-        "both were registered before either had a workload profile, which is the state this "
+    assert {"edullm-data", "edullm-p1", "olmo-eval-full"} <= with_work, (
+        "these repositories are registered and have a workload profile, which is the state this "
         "test was written about; a registration that loses its last workload belongs back "
         "out of the dropdown"
     )

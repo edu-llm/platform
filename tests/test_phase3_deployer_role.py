@@ -8,9 +8,8 @@ this repository a failed deploy each.
 The first is the ``"*"`` set. An action whose service authorization reference lists no
 resource type cannot be granted on an ARN at all, and scoping one produces a deploy failure
 that names the action without hinting that the scope is what refused it. Phase 2 learned
-that with ``logs:DescribeLogGroups``; Phase 3 has six more in one statement and fifteen EC2
-describes in another, all measured with controls, and the next reader's instinct will be to
-tidy them away.
+that with ``logs:DescribeLogGroups``; Phase 3 has six more in one statement and sixteen EC2
+describes in another, and the next reader's instinct will be to tidy them away.
 
 The third property is newer, and it cost a stack rather than a deploy. A resource handler
 reads and writes configuration surfaces no template mentions, so the audit that keeps this
@@ -97,6 +96,7 @@ EC2_DESCRIBE_ACTIONS = frozenset(
         "ec2:DescribeVpcAttribute",
         "ec2:DescribeVpcs",
         "ec2:DescribeInstances",
+        "ec2:DescribeLaunchTemplates",
         "ec2:DescribeLaunchTemplateVersions",
         "ec2:DescribeNetworkInterfaces",
         "ec2:DescribeVpcEncryptionControls",
@@ -125,10 +125,12 @@ PASS_ROLE_NAMES = [
 #: carry the project prefix. An EC2 network resource is addressed by an ID the service
 #: assigns at creation, so there is no name for IAM to match on and `vpc/*` is the narrowest
 #: ARN that can be written. Enumerated here rather than exempted by a pattern, so that a
-#: sixth unscoped EC2 resource type is a visible edit to this list.
+#: further unscoped EC2 resource type is a visible edit to this list. Launch templates join
+#: the network identifiers because EC2 assigns their IDs even when the template pins a name.
 EC2_NETWORK_RESOURCE_TYPES = frozenset(
     {
         "internet-gateway",
+        "launch-template",
         "route-table",
         "security-group",
         "security-group-rule",

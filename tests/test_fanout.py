@@ -137,6 +137,30 @@ def test_manifest_accepts_a_fanout_block() -> None:
     assert manifest.fanout.index_parameter == "shard_index"
 
 
+def test_the_mixlaw_workload_is_a_seven_child_parallel_array() -> None:
+    manifest = sweep_manifest(
+        repository="edullm-p1",
+        dataset_release="olmo-127b-v1",
+        command=["python", "experiments/skill-dag/mixlaw/run_batch_array.py"],
+        team="pre-training",
+        wandb_project="mixlaw",
+        workload_profile="mixlaw-validation-370m-8xa100",
+        compute_profile="gpu-8xa100",
+        maximum_runtime_hours="4",
+        maximum_attempts=1,
+        checkpoint={
+            "interval_minutes": 30,
+            "destination_prefix": "s3://sbsandbox-intern-edullm-outputs/teams/",
+            "resume_required": False,
+        },
+        fanout=fanout_payload(size=7, max_parallel=7, index_parameter="mixture_index"),
+    )
+
+    assert manifest.fanout is not None
+    assert (manifest.fanout.size, manifest.fanout.max_parallel) == (7, 7)
+    assert manifest_cost(manifest) == Decimal("614.81")
+
+
 def test_manifest_fanout_is_optional() -> None:
     payload = sweep_manifest_payload()
     del payload["fanout"]

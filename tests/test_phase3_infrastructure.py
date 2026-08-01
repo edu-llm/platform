@@ -820,6 +820,57 @@ def test_every_queue_cancels_a_job_stuck_for_every_reason_batch_will_act_on() ->
             )
 
 
+def test_the_p4d_shape_provisions_seven_hosts_and_exposes_instance_store_scratch() -> None:
+    """The environment ceiling, child reservation and host mount are separate contracts."""
+    resources = load_template(GPU_SHAPES_PATH)["Resources"]
+    compute = resources["Gpu8xA100ComputeEnvironment"]["Properties"]["ComputeResources"]
+    definition = resources["Gpu8xA100JobDefinition"]["Properties"]["ContainerProperties"]
+    queue = resources["Gpu8xA100JobQueue"]["Properties"]
+    launch = resources["Gpu8xA100ScratchLaunchTemplate"]["Properties"]
+
+    assert compute["MaxvCpus"] == 672
+    assert compute["InstanceTypes"] == ["p4d.24xlarge"]
+    assert compute["LaunchTemplate"]["LaunchTemplateId"] == {
+        "Ref": "Gpu8xA100ScratchLaunchTemplate"
+    }
+
+    resources_by_type = {
+        item["Type"]: item["Value"] for item in definition["ResourceRequirements"]
+    }
+    assert resources_by_type == {"VCPU": "16", "MEMORY": "1155072", "GPU": "8"}
+    assert definition["Volumes"] == [
+        {"Name": "scratch", "Host": {"SourcePath": "/scratch"}}
+    ]
+    assert definition["MountPoints"] == [
+        {"SourceVolume": "scratch", "ContainerPath": "/scratch", "ReadOnly": False}
+    ]
+
+    user_data = launch["LaunchTemplateData"]["UserData"]["Fn::Base64"]
+    assert user_data.startswith("MIME-Version: 1.0\nContent-Type: multipart/mixed;")
+    assert user_data.rstrip().endswith("--==EDULLM_SCRATCH==--")
+    for required in (
+        "dnf install -y mdadm nvme-cli xfsprogs",
+        "nvme list",
+        "mdadm --create /dev/md0",
+        "mount /dev/md0 /scratch",
+    ):
+        assert required in user_data
+    assert user_data.index("systemctl stop ecs.service") < user_data.index(
+        "mount /dev/md0 /scratch"
+    )
+    assert user_data.index("mount /dev/md0 /scratch") < user_data.index(
+        "systemctl start ecs.service"
+    )
+
+    timeouts = {
+        action["Reason"]: action["MaxTimeSeconds"]
+        for action in queue["JobStateTimeLimitActions"]
+    }
+    assert timeouts["CAPACITY:INSUFFICIENT_INSTANCE_CAPACITY"] == 86400
+    assert timeouts["MISCONFIGURATION:COMPUTE_ENVIRONMENT_MAX_RESOURCE"] == 1800
+    assert timeouts["MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT"] == 1800
+
+
 def test_the_event_rule_matches_the_job_queue_the_compute_stack_creates() -> None:
     """Reads BOTH files. Mutation: rename the queue in one of them.
 

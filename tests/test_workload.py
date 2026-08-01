@@ -295,10 +295,9 @@ def test_workload_catalog_yaml_validates_against_contract() -> None:
     # Thirteen since gpu-8xa10g, the g5.48xlarge the catalog had never priced. Same tripwire
     # role as the workload count below: a profile arriving without a deliberate edit.
     assert len(catalog.compute_profiles) == 13
-    # Seven since edullm-data-validate and olmo-eval-check-cpu, the first entries here that
-    # name a repository other than OLMo-core. The count is the tripwire for a workload
+    # Eight since MixLaw onboarded edullm-p1. The count is the tripwire for a workload
     # appearing without a deliberate edit, so it moves with the edit and not before.
-    assert len(catalog.workloads) == 7
+    assert len(catalog.workloads) == 8
     # The CPU workload Phase 3 runs. It names OLMo-core, which was the only registered
     # repository with a published image when this was written; dolma-tokenize is the same
     # shape against a repository that still has neither.
@@ -314,6 +313,17 @@ def test_workload_catalog_yaml_validates_against_contract() -> None:
     gpu_workload = next(
         workload for workload in catalog.workloads if workload.name == "olmo-core-train-4gpu"
     )
+    mixlaw = next(
+        workload
+        for workload in catalog.workloads
+        if workload.name == "mixlaw-validation-370m-8xa100"
+    )
+    assert mixlaw.repository == "edullm-p1"
+    assert mixlaw.compute_profile == "gpu-8xa100"
+    assert mixlaw.maximum_runtime_hours == Decimal("4")
+    assert mixlaw.maximum_attempts == 1
+    assert mixlaw.checkpoint is not None
+    assert mixlaw.checkpoint.resume_required is False
     cpu_profile = profile_by_name[cpu_workload.compute_profile]
     gpu_profile = profile_by_name[gpu_workload.compute_profile]
     cpu_cost = CostInputs(
