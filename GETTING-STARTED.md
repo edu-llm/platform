@@ -121,6 +121,13 @@ A retry only fires for a lost machine. A crash in your own code exits instead of
 again, because a traceback in the first minute produces the identical traceback in the
 second and spends the budget twice.
 
+**`--save-interval` decides what a lost machine costs.** It counts steps and defaults to
+100, and everything since the last checkpoint is what the second attempt does over again.
+`olmo-core-train-1gpu` declares a checkpoint every 30 minutes, so choose an interval that
+comes in under that. At `--save-interval 200` a 190M model on one A10G saves roughly every
+23 minutes and writes 3.2 GB each time, which takes about 40 seconds on a thread of its
+own, so the trainer goes on stepping while the upload runs.
+
 ## Six things that will bite you
 
 Every one of these came out of getting a real twelve-hour run working, in the order they
