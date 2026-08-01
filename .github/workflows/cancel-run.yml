@@ -1,4 +1,4 @@
-name: Cancel a run
+name: Look at a run, or stop it
 
 # THE AUTHORISATION LIVES HERE AND NOT IN IAM, WHICH IS THE THING TO KNOW ABOUT THIS FILE.
 #
@@ -22,12 +22,26 @@ on:
   workflow_dispatch:
     inputs:
       run_id:
-        description: "The run to stop, as it appears on the submission that started it — run_ followed by a UUID."
+        description: "The run, as it appears on the submission that started it — run_ followed by a UUID."
         required: true
         type: string
+      # LOOKING IS THE DEFAULT AND STOPPING IS THE OPT-IN, WHICH IS THE SAFE WAY ROUND.
+      #
+      # This file used to do one thing, and the question people actually arrive with is the
+      # other one: what is my run doing. There was no answer to it that did not require an
+      # AWS credential, so the answer was to ask somebody who had one -- and the only button
+      # in reach was the one that stops the run.
+      #
+      # Unticked, nothing in the account changes: the job is found and described and that is
+      # all. So a mis-dispatch costs a page of output rather than somebody's twelve hours.
+      stop:
+        description: "Tick to stop the run. Left unticked, this only reports what the run is doing and changes nothing."
+        required: false
+        default: false
+        type: boolean
       reason:
-        description: "Why you are stopping it. Recorded on the termination, so the run's history says what happened rather than just that it ended."
-        required: true
+        description: "Why you are stopping it. Required only when stopping — it is recorded on the termination, so the run's history says what happened rather than just that it ended."
+        required: false
         type: string
 
 permissions:
@@ -41,7 +55,7 @@ concurrency:
 
 jobs:
   cancel:
-    name: Stop the run, if it is yours
+    name: Say what the run is doing, and stop it if asked
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -98,8 +112,14 @@ jobs:
         run: |
           set -euo pipefail
           found=""
+          # SUCCEEDED and FAILED are searched too, and they were not before. A job that has
+          # ended cannot be stopped, so for the cancel path they are the same as not finding
+          # it -- but they are most of what somebody looking at a run wants to see, and a
+          # workflow that answers "nothing to report" about a run that failed an hour ago is
+          # worse than no answer at all. The live states stay first so that a run id reused
+          # across a retry finds the attempt that is still going.
           for queue in sbsandbox-intern-edullm-cpu sbsandbox-intern-edullm-gpu; do
-            for state in SUBMITTED PENDING RUNNABLE STARTING RUNNING; do
+            for state in SUBMITTED PENDING RUNNABLE STARTING RUNNING SUCCEEDED FAILED; do
               candidate="$(aws batch list-jobs \
                 --job-queue "${queue}" \
                 --job-status "${state}" \
@@ -117,7 +137,7 @@ jobs:
             # and telling somebody their cancellation failed when what happened is that
             # their job ended is the kind of message that sends people looking for a fault.
             echo "not_running=true" >> "${GITHUB_OUTPUT}"
-            echo "No job is queued or running under this run id, so there is nothing to stop. It has already reached a terminal state." | tee -a "${GITHUB_STEP_SUMMARY}"
+            echo "No job is queued, running or recently finished under this run id. Batch stops listing a job some days after it ends, so an older run is not missing -- it is out of the window this can search." | tee -a "${GITHUB_STEP_SUMMARY}"
             exit 0
           fi
 
@@ -126,11 +146,71 @@ jobs:
             --query 'jobs[0].tags."edullm:submitter"' --output text)"
           echo "submitter=${submitter}" >> "${GITHUB_OUTPUT}"
 
+      # WHAT THE RUN IS DOING, WHICH IS THE QUESTION THIS FILE NOW ANSWERS FIRST.
+      #
+      # Printed on every dispatch, including one that goes on to stop the run: somebody about
+      # to cancel twelve hours of work should see what they are cancelling in the same output.
+      #
+      # Written to a file and read by python rather than formatted with --query, because the
+      # useful fields are spread across the job, its container and its attempts, and a JMESPath
+      # expression long enough to reach all of them is one nobody can check. statusReason and
+      # the container's reason are the two that carry why a job is not running -- Batch puts
+      # the placement story in the first and the exit story in the second, and a report showing
+      # only status says RUNNABLE for both "waiting for capacity" and "asking for more vCPU
+      # than the instance has".
+      - name: Say what the run is doing
+        if: steps.find.outputs.not_running != 'true'
+        env:
+          JOB_ID: ${{ steps.find.outputs.job_id }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          set -euo pipefail
+          described="${RUNNER_TEMP}/job.json"
+          aws batch describe-jobs --jobs "${JOB_ID}" --output json > "${described}"
+          uv run --frozen python - <<'PY' | tee -a "${GITHUB_STEP_SUMMARY}"
+          import json
+          import os
+
+          job = json.load(open(os.environ["RUNNER_TEMP"] + "/job.json"))["jobs"][0]
+          container = job.get("container", {})
+          attempts = job.get("attempts", [])
+
+          def when(key):
+              milliseconds = job.get(key)
+              if not milliseconds:
+                  return "not yet"
+              from datetime import datetime, timezone
+
+              return datetime.fromtimestamp(milliseconds / 1000, timezone.utc).isoformat()
+
+          print("## " + os.environ["RUN_ID"])
+          print()
+          print("| | |")
+          print("| --- | --- |")
+          print(f"| Status | `{job.get('status')}` |")
+          print(f"| Why | {job.get('statusReason') or 'nothing reported'} |")
+          print(f"| Queued | {when('createdAt')} |")
+          print(f"| Started | {when('startedAt')} |")
+          print(f"| Stopped | {when('stoppedAt')} |")
+          print(f"| Attempts | {len(attempts)} of {job.get('retryStrategy', {}).get('attempts', 1)} |")
+          print(f"| Exit code | {container.get('exitCode', 'none yet')} |")
+          print(f"| Container said | {container.get('reason') or 'nothing'} |")
+          print(f"| Image | `{container.get('image', 'unknown')}` |")
+          print(f"| Log stream | `{container.get('logStreamName') or 'not yet assigned'}` |")
+          print()
+          # The log stream is named rather than read: this role holds no logs: permission at
+          # all, deliberately, and granting one here would widen a role whose whole argument
+          # is that it can do two things. The name is what CloudWatch needs to find it.
+          print("The log stream above is under `/aws/batch/sbsandbox-intern-edullm-gpu` or its")
+          print("CPU sibling in CloudWatch Logs. This workflow does not read logs and holds no")
+          print("permission to.")
+          PY
+
       # THE CHECK. Two ways to be allowed and no third: it is your run, or you are an
       # organization admin. Read out of config/organization.yaml rather than from a list
       # here, so the answer is the same one every other part of this platform gives.
       - name: Refuse a cancellation the actor is not entitled to make
-        if: steps.find.outputs.not_running != 'true'
+        if: inputs.stop && steps.find.outputs.not_running != 'true'
         env:
           ACTOR: ${{ github.actor }}
           SUBMITTER: ${{ steps.find.outputs.submitter }}
@@ -172,7 +252,7 @@ jobs:
           PY
 
       - name: Stop it
-        if: steps.find.outputs.not_running != 'true'
+        if: inputs.stop && steps.find.outputs.not_running != 'true'
         env:
           JOB_ID: ${{ steps.find.outputs.job_id }}
           RUN_ID: ${{ inputs.run_id }}
@@ -180,6 +260,15 @@ jobs:
           ACTOR: ${{ github.actor }}
         run: |
           set -euo pipefail
+          # The reason is optional on the form because looking at a run needs none, and it is
+          # required here because a termination with no recorded reason is the thing
+          # lifecycle_projection cannot tell from a failure. Checked before the call rather
+          # than passed empty.
+          if [[ -z "${REASON// /}" ]]; then
+            echo "cancel_reason_missing" >&2
+            echo "Stopping a run needs a reason: it is recorded on the termination, and without one the run's history cannot say it was cancelled rather than that it broke." >&2
+            exit 1
+          fi
           # The reason reaches the lifecycle record, which is what lets
           # lifecycle_projection tell an operator's cancellation from a failure. Naming who
           # asked is the half that a bare reason leaves out.

@@ -124,6 +124,13 @@ def test_the_role_trusts_only_the_file_that_carries_the_check(role: dict[str, An
     )
 
 
+def dispatch_inputs(workflow: dict[str, Any]) -> dict[str, Any]:
+    """The form fields, reached past YAML's reading of ``on:`` as the boolean true."""
+    triggers = workflow.get("on", workflow.get(True))
+    inputs: dict[str, Any] = triggers["workflow_dispatch"]["inputs"]
+    return inputs
+
+
 def workflow_step(workflow: dict[str, Any], fragment: str) -> dict[str, Any]:
     return next(
         step
@@ -183,7 +190,12 @@ def test_a_run_that_already_finished_is_not_reported_as_a_failure(
     body = workflow_step(workflow, "Find the job")["run"]
 
     assert "not_running=true" in body
-    assert "already reached a terminal state" in body
+    # The message stopped saying "already reached a terminal state" when the search grew to
+    # cover SUCCEEDED and FAILED: a job that ended an hour ago is now found and reported, so
+    # the only thing not finding one can mean is that Batch has stopped listing it. Saying
+    # the run is finished would be a guess, and the wrong one for a run id that was mistyped.
+    assert "out of the window" in body
+    assert "exit 0" in body
 
 
 def test_the_reason_reaches_the_termination_with_the_name_of_who_asked(
@@ -200,6 +212,74 @@ def test_the_reason_reaches_the_termination_with_the_name_of_who_asked(
 
     assert "terminate-job" in body
     assert re.search(r'--reason "Cancelled by \$\{ACTOR\}', body)
+
+
+def test_looking_at_a_run_is_what_a_dispatch_does_unless_it_is_told_otherwise(
+    workflow: dict[str, Any],
+) -> None:
+    """Mutation: default `stop` to true, or drop the input and always stop.
+
+    The question people arrive with is what their run is doing, and until this input existed
+    the only button that answered anything was the one that ends the run. A default of true
+    would mean a mis-dispatch costs somebody twelve hours; a default of false costs a page of
+    output.
+    """
+    stop = dispatch_inputs(workflow)["stop"]
+
+    assert stop["type"] == "boolean"
+    assert stop["default"] is False
+    assert stop["required"] is False
+
+
+def test_nothing_in_the_account_changes_unless_stop_was_ticked(workflow: dict[str, Any]) -> None:
+    """Mutation: gate only the terminate call, leaving the entitlement check unconditional.
+
+    Both are gated, and the entitlement one matters as much: it fails the job for somebody
+    looking at a colleague's run, which turns a read into a refusal and teaches people that
+    looking is something they are not allowed to do.
+    """
+    for step_name in ("Refuse a cancellation the actor is not entitled to make", "Stop it"):
+        condition = workflow_step(workflow, step_name)["if"]
+        assert "inputs.stop" in condition, step_name
+
+    # And the report is not gated, because somebody about to stop twelve hours of work should
+    # see what they are stopping in the same output.
+    assert "inputs.stop" not in workflow_step(workflow, "Say what the run is doing")["if"]
+
+
+def test_the_report_names_why_a_job_is_not_running_and_not_only_that_it_is_not(
+    workflow: dict[str, Any],
+) -> None:
+    """Mutation: report `status` alone.
+
+    Batch says RUNNABLE both for a job waiting on capacity and for one asking for more vCPU
+    than any instance in the environment has, and the difference lives in statusReason. The
+    container's own reason is the other half: an exit code with no reason beside it is the
+    report that sends somebody to read three-gigabyte logs for a message Batch already had.
+    """
+    body = workflow_step(workflow, "Say what the run is doing")["run"]
+
+    for field in ("statusReason", "exitCode", "logStreamName", "attempts"):
+        assert field in body, field
+
+
+def test_stopping_without_a_reason_is_refused_rather_than_recorded_empty(
+    workflow: dict[str, Any],
+) -> None:
+    """Mutation: make `reason` optional on the form and pass it through.
+
+    It had to become optional on the form -- looking at a run needs no reason and requiring
+    one would make the common path ask for a justification it never uses. That moves the
+    requirement here, and dropping it would let a termination be recorded with an empty
+    reason, which is exactly what lifecycle_projection cannot tell from a failure.
+    """
+    assert dispatch_inputs(workflow)["reason"]["required"] is False
+
+    body = workflow_step(workflow, "Stop it")["run"]
+    assert "cancel_reason_missing" in body
+    assert body.index("cancel_reason_missing") < body.index("terminate-job"), (
+        "the reason has to be checked before the job is stopped, not after"
+    )
 
 
 def test_the_run_id_is_checked_before_any_credential_is_taken(workflow: dict[str, Any]) -> None:
