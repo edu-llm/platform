@@ -196,12 +196,18 @@ def capture_gpu_job(run_id: str, *, profile: str, region: str) -> GpuJobEvidence
 
 
 def _log_lines(log_stream: str, *, profile: str, region: str) -> list[str]:
+    """The last lines of a run's log, which is the end a summary is printed at.
+
+    Read from the tail rather than the head. A training program prints its summary after
+    ``fit()`` returns, and everything before it -- the config, the model, one metrics block
+    per step -- runs to thousands of lines, so a window taken from the head reaches its limit
+    somewhere inside the model and reports a run that printed nothing.
+    """
     events = aws_json(
         [
             "logs", "get-log-events",
             "--log-group-name", GPU_LOG_GROUP,
             "--log-stream-name", log_stream,
-            "--start-from-head",
             "--limit", str(MAXIMUM_LOG_LINES),
             "--query", "events[].message",
         ],
@@ -222,25 +228,30 @@ def _summary_object(lines: Sequence[str]) -> Mapping[str, Any] | None:
     None rather than a failure for a log with no summary in it, because a job that failed
     before it printed anything is a real run whose Batch record is still worth capturing --
     and the alternative would make one unparseable log abandon a capture of three runs.
+
+    The LAST such object, not the first. A run prints its summary after everything else, and
+    the lines before it are not all prose: a config dump and a W&B teardown both put a bare
+    brace on a line of their own, and reading forward from the first one finds a fragment.
     """
-    depth = 0
-    collected: list[str] = []
-    for line in lines:
-        if depth == 0 and line.strip() != "{":
+    starts = [index for index, line in enumerate(lines) if line.strip() == "{"]
+    for start in reversed(starts):
+        depth = 0
+        collected: list[str] = []
+        for line in lines[start:]:
+            collected.append(line)
+            depth += line.count("{") - line.count("}")
+            if depth == 0:
+                break
+        if depth != 0:
             continue
-        collected.append(line)
-        depth += line.count("{") - line.count("}")
-        if depth == 0:
-            break
-    if not collected:
-        return None
-    try:
-        parsed = json.loads("\n".join(collected))
-    except ValueError as error:
-        raise CaptureFailedError("run_summary_unreadable") from error
-    if not isinstance(parsed, Mapping):
-        raise CaptureFailedError("run_summary_is_not_an_object")
-    return parsed
+        try:
+            parsed = json.loads("\n".join(collected))
+        except ValueError:
+            continue
+        if not isinstance(parsed, Mapping):
+            raise CaptureFailedError("run_summary_is_not_an_object")
+        return parsed
+    return None
 
 
 def capture_run_summary(
