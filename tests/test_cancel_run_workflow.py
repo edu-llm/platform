@@ -395,3 +395,81 @@ def test_a_missing_canceller_role_is_named_rather_than_reported_as_no_credential
         "the guard should name the workflow an admin can read a run through, since that is "
         "the thing the person dispatching this actually wanted"
     )
+
+
+def test_the_run_id_can_be_left_blank_because_no_dropdown_is_possible(
+    workflow: dict[str, Any],
+) -> None:
+    """The field people arrive without, and the reason it is a field rather than a menu.
+
+    ``workflow_dispatch`` choice options are static text in the file, so a dropdown listing
+    the dispatcher's own jobs cannot be built. Optional plus a look-up is the nearest thing
+    available, and a required field is what it replaces.
+    """
+    run_id = dispatch_inputs(workflow)["run_id"]
+
+    assert run_id.get("required") is False
+    assert run_id.get("default") == ""
+    assert "blank" in run_id["description"].lower()
+
+
+def test_a_blank_run_id_finds_the_runs_belonging_to_whoever_dispatched(
+    workflow: dict[str, Any],
+) -> None:
+    """The look-up keys on the tag the authorisation step already trusts.
+
+    Reading ownership from the job rather than from the lineage store is what keeps this
+    free of any new permission, and it is the same fact the refusal below reads. A look-up
+    that keyed on anything else would be a second, quieter answer to who owns a run.
+    """
+    body = workflow_step(workflow, "Work out which run")["run"]
+
+    assert "edullm:submitter" in body
+    assert "ACTOR" in body
+    assert "describe-jobs" in body, "tags do not come back on a list, only on a describe"
+
+
+def test_stopping_still_names_its_run_rather_than_guessing(workflow: dict[str, Any]) -> None:
+    """The asymmetry the blank default is only safe because of.
+
+    Reporting on the wrong run costs a page of output. Terminating the wrong one costs
+    somebody their work, and "my newest" is most likely to be wrong exactly under a retry,
+    where the run somebody means to stop is not the attempt that just started.
+    """
+    body = workflow_step(workflow, "Check the run id looks like one")["run"]
+
+    assert "stopping_requires_a_run_id" in body
+    assert 'STOP' in body
+
+
+def test_every_step_that_acts_on_a_run_uses_the_resolved_id(workflow: dict[str, Any]) -> None:
+    """Mutation: leave one step reading the raw input.
+
+    A step still reading ``inputs.run_id`` would receive the empty string on the path this
+    change exists for, and would report on nothing while the step beside it reported on a
+    real job. The format check and the look-up itself read the raw input on purpose,
+    because deciding whether one was given is their whole job.
+    """
+    reads_raw = {
+        step["name"]
+        for step in workflow["jobs"]["cancel"]["steps"]
+        if "inputs.run_id" in yaml.safe_dump(step.get("env", {}))
+    }
+
+    assert reads_raw == {
+        "Check the run id looks like one",
+        "Work out which run, if you did not name one",
+    }, f"these steps read the raw input where they need the resolved one: {reads_raw}"
+
+
+def test_two_people_looking_at_their_own_runs_do_not_queue_behind_each_other(
+    workflow: dict[str, Any],
+) -> None:
+    """Mutation: leave the concurrency group keyed on the input alone.
+
+    Blank, every look-up dispatch would land in the group ``cancel-`` and serialise against
+    every other, which reads as the workflow hanging rather than as a queue.
+    """
+    group = workflow["concurrency"]["group"]
+
+    assert "github.run_id" in group, f"a blank run id collapses every dispatch into {group}"

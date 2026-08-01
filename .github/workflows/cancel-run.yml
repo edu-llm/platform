@@ -22,9 +22,22 @@ name: Look at a run, or stop it
 on:
   workflow_dispatch:
     inputs:
+      # LEAVING IT BLANK IS THE ORDINARY CASE, AND A DROPDOWN IS NOT AVAILABLE.
+      #
+      # The question people arrive with is about their own most recent run, and answering it
+      # used to mean finding a UUID on a workflow run from hours ago and copying it by hand.
+      # A dropdown of that person's jobs would be the obvious fix and GitHub does not offer
+      # one: workflow_dispatch choice options are static text in this file, with no way to
+      # generate them per dispatcher, which is why every other dropdown here is a hardcoded
+      # list.
+      #
+      # So the field is optional instead. Blank, this lists the runs Batch still holds for
+      # whoever dispatched it and reports on the newest, which is a dropdown's job done after
+      # the fact and with each run's state beside it rather than only its id.
       run_id:
-        description: "The run, as it appears on the submission that started it — run_ followed by a UUID."
-        required: true
+        description: "Leave blank for your own most recent run. Otherwise run_ followed by a UUID, as printed on the submission that started it."
+        required: false
+        default: ""
         type: string
       # LOOKING IS THE DEFAULT AND STOPPING IS THE OPT-IN, WHICH IS THE SAFE WAY ROUND.
       #
@@ -51,7 +64,11 @@ permissions:
 concurrency:
   # One cancellation per run at a time. Two dispatches racing would have the second find a
   # job already terminating and report a failure that is really a success.
-  group: cancel-${{ inputs.run_id }}
+  #
+  # A blank run id falls back to this workflow run's own id rather than to the empty string,
+  # which would put every look-up dispatch in one group and make two people asking about
+  # their own runs queue behind each other for no reason.
+  group: cancel-${{ inputs.run_id || github.run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -67,8 +84,22 @@ jobs:
       - name: Check the run id looks like one
         env:
           RUN_ID: ${{ inputs.run_id }}
+          STOP: ${{ inputs.stop }}
         run: |
           set -euo pipefail
+          if [[ -z "${RUN_ID}" ]]; then
+            # STOPPING NAMES ITS RUN. Looking is safe to guess at, because the cost of
+            # reporting on the wrong run is a page of output. Terminating the wrong one
+            # costs somebody their work, and "my newest" is exactly the guess most likely
+            # to be wrong under a retry, where the run somebody wants to stop is the one
+            # before the attempt that just started.
+            if [[ "${STOP}" == "true" ]]; then
+              echo "stopping_requires_a_run_id" >&2
+              echo "Leaving the run id blank reports on your most recent run. Stopping one names it, so that a mis-dispatch cannot end a run you did not mean." >&2
+              exit 1
+            fi
+            exit 0
+          fi
           if [[ ! "${RUN_ID}" =~ ^run_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
             echo "run_id_not_well_formed" >&2
             echo "A run id reads run_ followed by a UUID, and is printed on the submission that started it. This is not one." >&2
@@ -136,12 +167,96 @@ jobs:
       # The run id is the Batch job *name*, which is the join this platform maintains
       # deliberately: the S3 key, the Step Functions execution name and the job name are one
       # identifier. Searching by name is why the role needs ListJobs.
+      # WHOSE RUNS THESE ARE, ANSWERED FROM THE JOB RATHER THAN FROM THE LINEAGE STORE.
+      #
+      # Every job carries an edullm:submitter tag naming the login that dispatched the
+      # submission, which is the same fact the authorisation step below reads. Listing on it
+      # costs no new permission: ListJobs and DescribeJobs are already what this role holds.
+      #
+      # Tags do not come back on a list, only on a describe, so the jobs are listed first and
+      # described in batches of a hundred, which is the most DescribeJobs accepts. Runs
+      # submitted before the tag existed carry no submitter and are left out rather than
+      # shown as unowned: this list is offered as "your runs", and one that quietly included
+      # somebody else's would be worse than one that missed an old job of your own.
+      - name: Work out which run, if you did not name one
+        id: resolve
+        env:
+          RUN_ID: ${{ inputs.run_id }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${RUN_ID}" ]]; then
+            echo "run_id=${RUN_ID}" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          listed="${RUNNER_TEMP}/mine.txt"
+          : > "${listed}"
+          for queue in sbsandbox-intern-edullm-cpu sbsandbox-intern-edullm-gpu; do
+            for state in RUNNING STARTING RUNNABLE SUBMITTED PENDING SUCCEEDED FAILED; do
+              aws batch list-jobs --job-queue "${queue}" --job-status "${state}" \
+                --query 'jobSummaryList[].jobId' --output text >> "${listed}"
+            done
+          done
+
+          uv run --frozen python - <<'PY' | tee -a "${GITHUB_STEP_SUMMARY}"
+          import json
+          import os
+          import subprocess
+
+          actor = os.environ["ACTOR"]
+          raw = open(os.environ["RUNNER_TEMP"] + "/mine.txt").read().split()
+          ids = list(dict.fromkeys(job for job in raw if job and job != "None"))
+
+          mine = []
+          for start in range(0, len(ids), 100):
+              batch = ids[start : start + 100]
+              described = subprocess.run(
+                  ["aws", "batch", "describe-jobs", "--jobs", *batch, "--output", "json"],
+                  capture_output=True,
+                  check=True,
+                  text=True,
+              )
+              for job in json.loads(described.stdout)["jobs"]:
+                  if (job.get("tags") or {}).get("edullm:submitter") == actor:
+                      mine.append(job)
+
+          mine.sort(key=lambda job: job.get("createdAt", 0), reverse=True)
+
+          if not mine:
+              print(f"## No runs found for `{actor}`")
+              print()
+              print(
+                  "Batch stops listing a job some days after it ends, so this is either no "
+                  "runs yet or none recent enough to still be listed. Naming a run id "
+                  "explicitly searches for that one job instead."
+              )
+              raise SystemExit(0)
+
+          print(f"## Runs submitted by `{actor}`")
+          print()
+          print("| Run | Status | Queue |")
+          print("| --- | --- | --- |")
+          for job in mine[:20]:
+              queue = job.get("jobQueue", "").rsplit("/", 1)[-1]
+              print(f"| `{job['jobName']}` | {job.get('status')} | {queue} |")
+          print()
+          print("Reporting on the newest below. To act on another, dispatch again naming it.")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as handle:
+              handle.write(f"run_id={mine[0]['jobName']}\n")
+          PY
+
       - name: Find the job, and read whose it is
         id: find
         env:
-          RUN_ID: ${{ inputs.run_id }}
+          RUN_ID: ${{ steps.resolve.outputs.run_id }}
         run: |
           set -euo pipefail
+          if [[ -z "${RUN_ID}" ]]; then
+            echo "not_running=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
           found=""
           # SUCCEEDED and FAILED are searched too, and they were not before. A job that has
           # ended cannot be stopped, so for the cancel path they are the same as not finding
@@ -193,7 +308,7 @@ jobs:
         if: steps.find.outputs.not_running != 'true'
         env:
           JOB_ID: ${{ steps.find.outputs.job_id }}
-          RUN_ID: ${{ inputs.run_id }}
+          RUN_ID: ${{ steps.resolve.outputs.run_id }}
         run: |
           set -euo pipefail
           described="${RUNNER_TEMP}/job.json"
@@ -286,7 +401,7 @@ jobs:
         if: inputs.stop && steps.find.outputs.not_running != 'true'
         env:
           JOB_ID: ${{ steps.find.outputs.job_id }}
-          RUN_ID: ${{ inputs.run_id }}
+          RUN_ID: ${{ steps.resolve.outputs.run_id }}
           REASON: ${{ inputs.reason }}
           ACTOR: ${{ github.actor }}
         run: |
