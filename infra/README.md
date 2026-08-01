@@ -577,16 +577,17 @@ one IAM stack* above, with `sbsandbox-intern-edullm-nightly-reader-iam` as the s
 **It exists because pinning a workflow file works.** Every OIDC role here fixes
 `job_workflow_ref` with `StringEquals` to one file, which is what makes each role's reach
 readable off the workflow that can assume it. The consequence is that a token minted for
-`nightly.yml` matches none of them, so the two nightly checks that read the account had no
+`nightly.yml` matches none of them, so the nightly checks that read the account had no
 identity at all. Widening an existing role's condition to a list was the smaller diff and the
 worse change: the admission role can start an execution and the canceller can stop any job on
 either queue, and either would then sit behind a scheduled workflow nobody watches dispatch.
 
-The role reads three things and writes nothing: the `intent/` prefix of the lineage store,
-the runs' own output under `teams/*/runs/*`, and the one W&B secret. Both listings carry a
-prefix condition, because `s3:ListBucket` cannot be scoped by an object ARN and without one it
-enumerates the whole bucket. `tests/test_nightly_workflow.py` asserts the granted action set
-exactly, so an action added later is argued for in a test rather than merely not forbidden.
+The role reads and writes nothing: the `intent/` and `result/` prefixes of the lineage store,
+the runs' own output under `teams/*/runs/*`, the one W&B secret, and the deployed code digest
+of the two admission functions. Both listings carry a prefix condition, because
+`s3:ListBucket` cannot be scoped by an object ARN and without one it enumerates the whole
+bucket. `tests/test_nightly_workflow.py` asserts the granted action set exactly, so an action
+added later is argued for in a test rather than merely not forbidden.
 
 Verified after the deploy by `iam simulate-principal-policy` rather than by reading the
 template back: `s3:ListBucket` on the lineage bucket is allowed with `s3:prefix` of `intent/`
@@ -594,6 +595,21 @@ and denied without one, `s3:GetObject` is allowed under `intent/` and denied und
 and `s3:PutObject`, `s3:DeleteObject`, `secretsmanager:PutSecretValue` and
 `batch:TerminateJob` are all implicit denies. Simulating is what catches a prefix condition
 that is subtly wrong, which reading the template cannot.
+
+#### Amended 2026-08-01 for the deployed-Lambda check
+
+`lambda:GetFunctionConfiguration` was added on the two function ARNs by name, for
+`.github/workflows/nightly.yml`'s `deployed-lambda-release` job. Re-applied with the same
+command as the original deploy; CloudFormation updates the inline policy in place, so nothing
+about the role's identity or its trust changed and no repository variable moved.
+
+Simulated the same way and for the same reason. `lambda:GetFunctionConfiguration` is
+`allowed` on `…:function:sbsandbox-intern-edullm-admission-validator` and on
+`…:function:sbsandbox-intern-edullm-lifecycle-recorder`, and `lambda:UpdateFunctionCode` is an
+`implicitDeny` on both. The adjacent action is the one worth simulating rather than an
+unrelated one: a check that could deploy could answer its own finding by making the account
+match the record, which is the wrong direction, and the two actions sit on the same ARNs so a
+resource widened by accident shows up as the update becoming allowed.
 
 ### A hazard that has expired, and the one it does not take with it
 

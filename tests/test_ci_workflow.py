@@ -50,7 +50,9 @@ GATE_JOBS = {
 #: The scheduled jobs that read the account rather than the tree, and so the only ones that
 #: may mint an OIDC token. Named here rather than derived, because the point of the list is
 #: that a job joining it is a review of this line.
-CREDENTIALED_NIGHTLY_JOBS = frozenset({"checkpoint-reconciliation", "wandb-credential"})
+CREDENTIALED_NIGHTLY_JOBS = frozenset(
+    {"checkpoint-reconciliation", "wandb-credential", "deployed-lambda-release"}
+)
 
 #: The contexts pinned in branch protection on ``main``. They are job names, so renaming
 #: either one silently stops the protection matching anything.
@@ -203,9 +205,10 @@ def test_the_nightly_run_reproduces_what_the_pull_request_path_skips() -> None:
 
 def test_only_the_jobs_that_read_the_account_can_reach_it() -> None:
     # This said no scheduled job could reach AWS at all, which was true while every check
-    # here read committed records. Two now ask the account a question no committed file
-    # answers: whether the runs that promised a checkpoint have one, and whether the stored
-    # W&B key is one W&B accepts.
+    # here read committed records. Three now ask the account a question no committed file
+    # answers: whether the runs that promised a checkpoint have one, whether the stored W&B
+    # key is one W&B accepts, and whether the two admission functions are running the code
+    # their release records describe.
     #
     # The claim worth keeping is the narrower one, and it is stronger than a file-wide
     # string search was. id-token is declared per job rather than for the file, so a gate

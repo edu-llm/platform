@@ -22,7 +22,8 @@ Resources:
       # the worse change. The admission role can start an execution and the canceller can
       # stop any job on either queue; adding nightly.yml to either would put those powers
       # behind a scheduled workflow that nobody watches dispatch. This role is instead
-      # scoped by what it can do: read three named things and nothing else in the account.
+      # scoped by what it can do: read a named set of things and nothing else in the
+      # account, where every member of that set is argued for beside the statement below.
       #
       # The sub prefix carries owner and repository ids because this organization issues
       # immutable subject claims, verified as
@@ -133,6 +134,40 @@ Resources:
                 Action: secretsmanager:GetSecretValue
                 Resource:
                   Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sbsandbox-intern-edullm-wandb-api-key-*
+              # THE DIGEST OF THE CODE THESE TWO FUNCTIONS ARE ACTUALLY RUNNING. The release
+              # record committed beside each template says what was released, and the two
+              # release tripwires hold each record against a zip built from the tree. Neither
+              # says anything about the account, so a function deployed out of band or a
+              # release recorded from the wrong tree leaves CI green over a validator
+              # enforcing bytes nobody reviewed. GetFunctionConfiguration reports CodeSha256,
+              # which is the same digest in base64, and closes that half of the chain.
+              #
+              # GetFunctionConfiguration rather than GetFunction. The shorter name is the
+              # wider grant: GetFunction answers with a presigned URL to the deployed
+              # artifact, so a job holding it could fetch the code rather than describe it.
+              #
+              # Two statements naming two ARNs rather than one statement wildcarded to
+              # `function:*`. This is a shared sandbox account with sixteen other teams in it,
+              # and a wildcard would let a job nobody watches dispatch enumerate every
+              # function's configuration -- environment variable names, role ARNs, layer
+              # versions -- to answer a question about two of them. The names are the ones
+              # `infra/admission-state-machine.yaml` and `infra/batch-events.yaml` declare, and
+              # tests/test_nightly_workflow.py reads them from those templates rather than
+              # restating them, so a rename that misses this file fails at review.
+              #
+              # Unqualified, with no `:*` for versions or aliases. The check asks about
+              # $LATEST, which is what the state machine and the events rule invoke, and a
+              # qualified ARN would be a grant for something nothing here reads.
+              - Sid: ReadAdmissionValidatorDeployedCode
+                Effect: Allow
+                Action: lambda:GetFunctionConfiguration
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:sbsandbox-intern-edullm-admission-validator
+              - Sid: ReadLifecycleRecorderDeployedCode
+                Effect: Allow
+                Action: lambda:GetFunctionConfiguration
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:sbsandbox-intern-edullm-lifecycle-recorder
               # DELIBERATELY ABSENT, and each for its own reason rather than as a list.
               #
               # Every write. This role exists to describe the account and a check that can
@@ -156,6 +191,14 @@ Resources:
               # secretsmanager:ListSecrets. It has no resource type, so granting it would be
               # an account-wide enumeration of sixteen other teams' secret names to save a
               # call this role never makes.
+              #
+              # lambda:UpdateFunctionCode and lambda:UpdateFunctionConfiguration, which are
+              # the adjacent actions on the two ARNs above and the sharpest instance of the
+              # rule this whole policy is written to. A check that can deploy is a check that
+              # can answer its own finding by making the account match the record, which is
+              # the wrong direction: the record is the reviewed artifact and the deployment
+              # is the thing under suspicion. lambda:GetFunction is absent for the reason
+              # given beside the grant, and lambda:ListFunctions for ListSecrets' reason.
               #
               # Every batch:, states: and logs: action. Neither check asks what is running,
               # and a scheduled workflow that could reach the queues or the state machine

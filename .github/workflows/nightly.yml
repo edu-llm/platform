@@ -1,6 +1,6 @@
 name: Nightly (the checks that are not about one change)
 
-# Five checks that answer a question about the repository or about the account rather
+# Six checks that answer a question about the repository or about the account rather
 # than about a change, and that either cost too much or fail too unpredictably to sit on
 # the pull-request path. Nothing here is continue-on-error, and that is the whole point of
 # moving them: there is no alerting infrastructure, so a red scheduled run is the signal,
@@ -28,21 +28,23 @@ name: Nightly (the checks that are not about one change)
 #     criterion of theirs is a recorded gap; that is a statement about the phase, and it
 #     is a statement worth waking up to rather than one worth suppressing.
 #
-#   checkpoint-reconciliation and wandb-credential — these two read the account, and that
-#     is why they are here rather than on the pull-request path. Both describe a state a
-#     change cannot cause and cannot be blamed for: a run that trained for hours and saved
-#     nothing did so before the diff under review existed, and a credential pasted wrongly
-#     into Secrets Manager has nothing to do with any file. They also need an AWS identity,
-#     and putting one on the pull-request path would mean a fork's pull request runs with
-#     it in reach.
+#   checkpoint-reconciliation, wandb-credential and deployed-lambda-release — these three
+#     read the account, and that is why they are here rather than on the pull-request
+#     path. Each describes a state a change cannot cause and cannot be blamed for: a run
+#     that trained for hours and saved nothing did so before the diff under review
+#     existed, a credential pasted wrongly into Secrets Manager has nothing to do with any
+#     file, and a Lambda deployed out of band is by definition something no diff records.
+#     They also need an AWS identity, and putting one on the pull-request path would mean
+#     a fork's pull request runs with it in reach.
 #
-# Both assume sbsandbox-intern-edullm-nightly-reader, which can read the intent records,
-# what the runs wrote, and one secret, and holds no write anywhere in the account.
+# The three assume sbsandbox-intern-edullm-nightly-reader, which can read the lineage
+# records, what the runs wrote, one secret and the deployed digest of the two admission
+# functions, and holds no write anywhere in the account.
 # infra/iam/nightly-reader-role.yaml argues each grant; the short version is that a check
 # able to change what it is checking can produce its own all-clear. The role is applied
 # from a laptop like every IAM stack here, so a fresh clone of this repository does not
-# bring it with it, and both jobs say so by name rather than failing at the credential
-# step with an empty role.
+# bring it with it, and each of those jobs says so by name rather than failing at the
+# credential step with an empty role.
 #
 # The contract rules the gates enforce are covered by the test suite in ci.yml, which is
 # what blocks a merge. Nothing here is a required check and nothing here should become
@@ -290,3 +292,64 @@ jobs:
             echo "re-run of this job." >&2
             exit 1
           fi
+
+  deployed-lambda-release:
+    name: the deployed functions are the ones released
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check the nightly reader role is deployed
+        env:
+          ROLE_ARN: ${{ vars.AWS_NIGHTLY_READER_ROLE_ARN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${ROLE_ARN}" ]]; then
+            echo "nightly_reader_role_not_deployed" >&2
+            echo "AWS_NIGHTLY_READER_ROLE_ARN is unset, so this job has no identity to assume." >&2
+            echo "The role is infra/iam/nightly-reader-role.yaml, applied from a laptop like" >&2
+            echo "every IAM stack here. See infra/README.md for the stack name and the" >&2
+            echo "repository variable it needs." >&2
+            exit 1
+          fi
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ vars.AWS_NIGHTLY_READER_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # WHAT THIS CATCHES IS A DEPLOYMENT, NOT A DIFF. Two committed tripwires compare each
+      # release record against a zip built from the tree, so record-against-tree fails on
+      # the pull request that causes it. Nothing compared deployed-against-record, and the
+      # gap is not theoretical: on 2026-08-01 two release dispatches ran minutes apart from
+      # the same account, harmless only because both built from the same commit. The
+      # workflow queues releases rather than interleaving them, which does not stop the
+      # second releaser recording the first one's digest as their own.
+      #
+      # No translation of the exit code here, unlike the two jobs above. Those wrap tools
+      # that report a finding without a machine-readable reason, so the step supplies one.
+      # This one prints its own reason and its own sentence, and distinguishes "the digests
+      # disagree" from "I could not look" in its exit code; restating that would be a
+      # second place for the two to drift apart.
+      #
+      # There is a window in which this is legitimately red and a re-run clears it: a
+      # release is recorded in one commit and deployed by CI when that commit reaches main,
+      # so between the merge and the deploy the record describes bytes the account does not
+      # have yet. It is minutes wide and this runs once a day at 05:00, so it is a caveat
+      # for whoever dispatches this by hand after a release rather than a reason to soften
+      # the job. The failure names both digests, so the case is recognisable from the log.
+      - name: Compare what AWS is running against what was released
+        run: uv run --frozen python tools/verify_deployed_lambdas.py
