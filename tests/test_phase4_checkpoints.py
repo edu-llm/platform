@@ -25,6 +25,7 @@ from edullm_platform.checkpoints import (
     CheckpointState,
     UnreadableCheckpointError,
     commit_checkpoint,
+    crc32c,
     inspect_checkpoint,
     resumable_checkpoint,
     success_marker_bytes,
@@ -275,6 +276,103 @@ def test_a_multipart_digest_is_not_compared_as_though_it_were_the_object_digest(
 
     assert inspected.state is CheckpointState.CORRUPT
     assert "whole-object" in inspected.detail
+
+
+def test_the_crc32c_this_module_computes_is_the_one_the_published_constant_names() -> None:
+    """The check value every CRC-32C implementation is measured against.
+
+    CRC-32C is not in the standard library, so this module carries sixteen lines of
+    table-driven arithmetic rather than a dependency the admission validator's zip would
+    have to hold. That trade is only defensible if the arithmetic is checked against
+    something outside this repository, and 0xE3069283 over ``123456789`` is that something.
+    A transposed constant or an unreflected polynomial produces a plausible-looking value
+    that agrees with nothing S3 computes, and every checkpoint would read as corrupt.
+    """
+    assert crc32c(b"123456789") == 0xE3069283
+    assert crc32c(b"") == 0x00000000
+    assert crc32c(b"a") == 0xC1D04330
+
+
+def test_a_checkpoint_the_store_attests_with_crc32c_is_read_rather_than_called_corrupt() -> None:
+    """THE ONE THIS CHANGE EXISTS FOR. Mutation: read only ChecksumSHA256.
+
+    For a multipart upload S3 supports SHA-256 as a composite checksum only; full-object
+    checksums on multipart are available for CRC-32, CRC-32C and CRC-64/NVME and nothing
+    else. ``_attested_digest`` refuses a composite value on purpose, so under the previous
+    SHA-256 write path every checkpoint large enough for a managed transfer to go multipart
+    -- above 8 MB, by boto3's default -- read as CORRUPT, and a resuming run would have
+    thrown away its own good checkpoint and started from step zero.
+
+    Nothing caught it because the only checkpoint the platform ever wrote came from a demo
+    that holds the payload in memory and calls put_object, which is a single part.
+    """
+    store = committed()
+
+    inspected = inspect_checkpoint(store, prefix=PREFIX)
+
+    assert inspected.state is CheckpointState.COMMITTED
+    assert inspected.manifest is not None
+    # The store was asked for CRC32C and attested only that, so a reader still looking for
+    # a SHA-256 attestation finds nothing and reports the payload as unverifiable.
+    head = store.head_object(Key=f"teams/platform/runs/{RUN_ID}/checkpoints/step-20/model.pt")
+    assert "ChecksumCRC32C" in head
+    assert "ChecksumSHA256" not in head
+
+
+def test_a_marker_carrying_no_counterpart_for_what_the_store_attests_is_refused() -> None:
+    """Mutation: fall back to the marker's sha256 when the attested algorithm is missing.
+
+    That comparison cannot fail, because a CRC32C and a SHA-256 of the same bytes are
+    different lengths and different functions -- so the fallback would report every
+    CRC32C-attested checkpoint as corrupt, or, written the other way round, would accept
+    one without comparing anything at all. Neither is a verification.
+    """
+    store = committed()
+    marker_key = f"teams/platform/runs/{RUN_ID}/checkpoints/step-20/{MARKER_OBJECT}"
+    marker = json.loads(store.objects[marker_key]["Body"])
+    del marker["crc32c"]
+    store.put(marker_key, json.dumps(marker, sort_keys=True, separators=(",", ":")).encode())
+
+    inspected = inspect_checkpoint(store, prefix=PREFIX)
+
+    assert inspected.state is CheckpointState.CORRUPT
+    assert "no readable crc32c" in inspected.detail
+
+
+def test_a_crc32c_that_disagrees_with_the_marker_is_still_caught() -> None:
+    """The property the whole comparison exists for, in the new algorithm.
+
+    Switching the write path would be worth nothing if the reader stopped detecting a
+    marker and a payload that came from different attempts, which is the state a retry
+    after a half-finished commit produces.
+    """
+    store = committed()
+    store.put(
+        f"teams/platform/runs/{RUN_ID}/checkpoints/step-20/model.pt",
+        PAYLOAD + b" but different",
+        algorithm="CRC32C",
+    )
+
+    inspected = inspect_checkpoint(store, prefix=PREFIX)
+
+    assert inspected.state is CheckpointState.CORRUPT
+    assert "describe different bytes" in inspected.detail
+
+
+def test_the_manifest_records_a_sha256_even_though_the_store_attested_a_crc32c() -> None:
+    """``CheckpointManifest.checksum`` is typed ``Sha256Digest`` and must stay honest.
+
+    Widening the contract to admit a CRC32C would regenerate four proof bundles for a field
+    nothing reads as bytes; storing a CRC32C in a field named and patterned for a SHA-256
+    would satisfy the type by lying about it. The marker carries a real SHA-256 of the
+    payload, so that is what the manifest records.
+    """
+    store = committed()
+
+    manifest = inspect_checkpoint(store, prefix=PREFIX).manifest
+
+    assert manifest is not None
+    assert manifest.checksum == f"sha256:{hashlib.sha256(PAYLOAD).hexdigest()}"
 
 
 def test_a_marker_whose_byte_count_disagrees_with_the_store_is_refused() -> None:

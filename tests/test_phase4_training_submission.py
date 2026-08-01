@@ -27,6 +27,7 @@ from typing import Any
 import pytest
 
 from edullm_platform.checkpoints import (
+    CHECKSUM_ALGORITHM,
     MARKER_OBJECT,
     CheckpointState,
     inspect_checkpoint,
@@ -248,9 +249,11 @@ def test_both_of_the_programs_writes_ask_the_store_to_attest_a_digest() -> None:
     """
     program = training_program()
 
-    assert program.count('ChecksumAlgorithm=\'SHA256\'') + program.count(
-        'ChecksumAlgorithm="SHA256"'
-    ) == 2
+    # Read against the module's constant rather than a literal. The write path moved from
+    # SHA-256 to CRC32C because S3 cannot give a multipart upload a full-object SHA-256, and
+    # a literal here would have held this test green while the program and the reader
+    # disagreed about which digest the marker owes.
+    assert program.count(f"ChecksumAlgorithm={CHECKSUM_ALGORITHM!r}") == 2
 
 
 @pytest.mark.parametrize("steps", [1, 20, 500])

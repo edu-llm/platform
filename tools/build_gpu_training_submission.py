@@ -78,12 +78,24 @@ FOREIGN_TEAM_PREFIX: Final = "teams/not-a-bound-team/runs/isolation-probe/"
 
 
 def marker_writer_source() -> str:
-    """The platform's marker writer, as the text that goes into the program.
+    """The platform's marker writer and its checksum, as the text that goes into the program.
 
     ``inspect.getsource`` rather than a literal, so that a change to the marker's shape
-    reaches the container without anybody remembering to copy it. The two names the function
-    closes over travel with it; it needs nothing else from the package, which is what makes
-    this extraction sound rather than merely convenient.
+    reaches the container without anybody remembering to copy it.
+
+    THE CRC32C IS READ BACK RATHER THAN EMBEDDED, FOR TWO REASONS THAT AGREE. The write
+    path now asks S3 to attest a CRC32C, so a marker recording only a SHA-256 leaves the
+    reader nothing to compare the attestation against and the checkpoint reads as CORRUPT --
+    the program has to record one. Embedding this module's ``crc32c`` was the obvious way and
+    it is wrong twice over. It pushed the program past the 8,192 bytes Batch accepts for
+    container overrides, which the size check caught; and a table-driven CRC in pure Python
+    would run once per byte of a payload the size of a model, which is minutes of the GPU's
+    time spent recomputing something boto3 has already computed in C.
+
+    So the program takes the value out of the ``put_object`` response. What that gives up is
+    an independent computation at write time -- but the client sent its own checksum with the
+    upload and S3 rejects a mismatch, so the bytes are verified in transit regardless, and
+    the reader's later comparison still catches a payload replaced after the fact.
     """
     return f"MARKER_SCHEMA_VERSION = {MARKER_SCHEMA_VERSION}\n\n" + inspect.getsource(
         success_marker_bytes
@@ -142,7 +154,7 @@ print(json.dumps({{"resumed": resumed}}, sort_keys=True))
     )
 
     return f'''
-import hashlib, io, json, os, time
+import base64, hashlib, io, json, os, time
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
@@ -237,12 +249,17 @@ location = urlparse(prefix)
 bucket = location.netloc
 key = location.path.lstrip("/") + "checkpoints/step-{steps}/"
 s3 = boto3.client("s3")
-s3.put_object(
+written = s3.put_object(
     Bucket=bucket,
     Key=key + "model.pt",
     Body=payload,
     ChecksumAlgorithm={CHECKSUM_ALGORITHM!r},
 )
+# The digest the store attests, which is the one the reader will compare the marker
+# against. Taken from the response rather than recomputed here: boto3 already calculated
+# it in C to send with the upload, and a pure-Python CRC over a payload this size would
+# cost minutes of the GPU's time to arrive at the same number.
+crc = "crc32c:" + base64.b64decode(written["ChecksumCRC32C"]).hex()
 s3.put_object(
     Bucket=bucket,
     Key=key + {MARKER_OBJECT!r},
@@ -252,6 +269,7 @@ s3.put_object(
         digest=digest,
         size_bytes=len(payload),
         created_at=datetime.now(timezone.utc),
+        crc32c_digest=crc,
     ),
     ChecksumAlgorithm={CHECKSUM_ALGORITHM!r},
 )

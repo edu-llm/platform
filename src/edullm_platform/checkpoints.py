@@ -46,7 +46,7 @@ import base64
 import binascii
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -58,6 +58,7 @@ from edullm_platform.contracts.results import CheckpointManifest
 __all__ = [
     "CHECKSUM_ALGORITHM",
     "FULL_OBJECT_CHECKSUM",
+    "LEGACY_CHECKSUM_ALGORITHM",
     "MARKER_OBJECT",
     "MARKER_SCHEMA_VERSION",
     "MISSING_OBJECT_CODES",
@@ -66,6 +67,8 @@ __all__ = [
     "CheckpointStore",
     "UnreadableCheckpointError",
     "commit_checkpoint",
+    "crc32c",
+    "described_checksum",
     "inspect_checkpoint",
     "resumable_checkpoint",
     "success_marker_bytes",
@@ -78,14 +81,29 @@ MARKER_OBJECT: Final = "_SUCCESS"
 
 MARKER_SCHEMA_VERSION: Final = 1
 
-#: Asks S3 to compute and store a SHA-256 over the bytes it received. The same field the
-#: lineage handler sets, for the same reason and with the same history: omitting it costs
+#: Asks S3 to compute and store a checksum over the bytes it received. Omitting it costs
 #: nothing at write time, is invisible in every response, and produces an object that reads
 #: exactly like an attested one until a reader asks for the digest and finds no field. Here
 #: it is load-bearing rather than merely good practice -- without the store's own digest
 #: there is nothing to compare the marker's claim against, and the reader degrades to
 #: trusting whatever the marker says.
-CHECKSUM_ALGORITHM: Final = "SHA256"
+#:
+#: CRC32C RATHER THAN SHA-256, AND THE REASON IS NOT PREFERENCE. For a multipart upload S3
+#: supports SHA-256 as a *composite* checksum only -- the digest of concatenated part
+#: digests, which is not the digest of the object. Full-object checksums on multipart are
+#: available for CRC-32, CRC-32C and CRC-64/NVME and for nothing else; confirmed against
+#: the S3 documentation on 2026-07-31. ``_attested_digest`` refuses a composite value on
+#: purpose, so with SHA-256 on the write path every checkpoint large enough for a managed
+#: transfer to go multipart -- above 8 MB, by boto3's default -- reads as CORRUPT. Nothing
+#: noticed because the only checkpoint the platform has written came from a demo that holds
+#: the whole payload in memory and calls ``put_object``, which is a single part.
+CHECKSUM_ALGORITHM: Final = "CRC32C"
+
+#: What the historical write path asked for, still read and no longer written. The Phase 4
+#: evidence records a real checkpoint attested this way, and it is in a committed proof
+#: bundle -- a reader that stopped understanding it would invalidate the only checkpoint
+#: this platform has ever actually produced.
+LEGACY_CHECKSUM_ALGORITHM: Final = "SHA256"
 
 #: What S3 calls a digest over the whole object, as against ``COMPOSITE`` -- the digest of
 #: concatenated part digests that a multipart upload produces. A composite value is not the
@@ -97,6 +115,64 @@ FULL_OBJECT_CHECKSUM: Final = "FULL_OBJECT"
 #: REST error for GetObject is ``NoSuchKey`` and for HeadObject it is ``404``/``NotFound``,
 #: and recognising one and not the others would report an absent marker as an outage.
 MISSING_OBJECT_CODES: Final = frozenset({"NoSuchKey", "NotFound", "404"})
+
+
+#: Castagnoli's polynomial, reflected. CRC-32C is not in the standard library -- ``zlib.crc32``
+#: is CRC-32, a different polynomial producing a different value -- and the alternatives are
+#: ``google-crc32c`` or reaching into ``botocore``. Both are dependencies, and this module is
+#: dependency-free on purpose: it is imported by the admission validator, whose zip is the
+#: thing the release procedure exists to keep small. Sixteen lines of table-driven CRC is a
+#: smaller cost than either, and it is checkable against a published constant.
+_CRC32C_POLYNOMIAL: Final = 0x82F63B78
+
+
+def _crc32c_table() -> tuple[int, ...]:
+    table = []
+    for byte in range(256):
+        value = byte
+        for _ in range(8):
+            value = (value >> 1) ^ (_CRC32C_POLYNOMIAL if value & 1 else 0)
+        table.append(value)
+    return tuple(table)
+
+
+_CRC32C_TABLE: Final = _crc32c_table()
+
+
+def crc32c(data: bytes) -> int:
+    """CRC-32C over ``data``, as the 32-bit value S3 base64-encodes into ``ChecksumCRC32C``.
+
+    Verified against the published check value: CRC-32C of ``b"123456789"`` is 0xE3069283.
+    That constant is what makes a hand-rolled implementation defensible rather than a place
+    for a silent arithmetic mistake to live, and there is a test that asserts it.
+    """
+    crc = 0xFFFFFFFF
+    for byte in data:
+        crc = _CRC32C_TABLE[(crc ^ byte) & 0xFF] ^ (crc >> 8)
+    return crc ^ 0xFFFFFFFF
+
+
+def described_checksum(entries: Sequence[tuple[str, int, str]]) -> str:
+    """A SHA-256 over a canonical description of what the verifier found.
+
+    ``CheckpointManifest.checksum`` is typed ``Sha256Digest``, and the digest S3 attests is
+    now usually a CRC32C, which cannot go in that field. The tempting fixes are both bad:
+    widening the contract regenerates four proof bundles for a field nobody reads as bytes,
+    and storing a CRC32C in a field named and patterned for a SHA-256 satisfies the type
+    only by lying about it.
+
+    So the field carries a SHA-256 of bytes this module composed -- the sorted
+    ``(key, size, attestation)`` of everything verified -- which is honest about what it is
+    and has the property the field is for: it changes when anything under the prefix
+    changes. Serialised the way :func:`success_marker_bytes` serialises, so two verifiers
+    that found the same thing produce the same value.
+    """
+    described = [
+        {"key": key, "bytes": size, "attestation": attestation}
+        for key, size, attestation in sorted(entries)
+    ]
+    payload = json.dumps(described, sort_keys=True, separators=(",", ":")).encode()
+    return f"sha256:{hashlib.sha256(payload).hexdigest()}"
 
 
 class UnreadableCheckpointError(ValueError):
@@ -185,30 +261,49 @@ def _is_missing(error: BaseException) -> bool:
     return code is not None and code in MISSING_OBJECT_CODES
 
 
+#: Which head field carries which algorithm's value, and how many bytes that value is. CRC32C
+#: is tried first because it is what this module now writes; SHA-256 is second because it is
+#: what the historical checkpoint carries. An object attested with both -- which S3 permits --
+#: is read as CRC32C, and the marker carries both, so the comparison still has a counterpart.
+_ATTESTATION_FIELDS: Final = (
+    ("crc32c", "ChecksumCRC32C", 4),
+    ("sha256", "ChecksumSHA256", hashlib.sha256().digest_size),
+)
+
+
 def _attested_digest(head: Mapping[str, Any]) -> str | None:
-    """The digest S3 says it computed over the bytes it received, as ``sha256:<hex>``.
+    """The digest S3 says it computed, as ``<algorithm>:<hex>``, or None if it said nothing.
 
     None rather than a guess when the object carries no whole-object checksum. That is
     either an object written without ``ChecksumAlgorithm`` or one assembled from parts, and
     in both cases there is no attestation to compare the marker against -- which the caller
     has to be able to distinguish from an attestation that disagrees.
+
+    The algorithm travels with the value because the two sides of the comparison are chosen
+    independently: S3 attests whatever the writer asked for, and the marker carries every
+    digest the writer computed. Returning a bare hex string would let a CRC32C attestation
+    be compared against a SHA-256 claim and reported as corruption, which is the same
+    false alarm as reporting an unattested object -- loud, wrong, and sends a resuming run
+    back to step zero.
     """
-    encoded = head.get("ChecksumSHA256")
-    if not isinstance(encoded, str) or not encoded:
-        return None
     if head.get("ChecksumType") not in (None, FULL_OBJECT_CHECKSUM):
         return None
-    try:
-        raw = base64.b64decode(encoded, validate=True)
-    except (binascii.Error, ValueError):
-        return None
-    if len(raw) != hashlib.sha256().digest_size:
-        return None
-    return f"sha256:{raw.hex()}"
+    for algorithm, field, size in _ATTESTATION_FIELDS:
+        encoded = head.get(field)
+        if not isinstance(encoded, str) or not encoded:
+            continue
+        try:
+            raw = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError):
+            continue
+        if len(raw) != size:
+            continue
+        return f"{algorithm}:{raw.hex()}"
+    return None
 
 
-def _normalise_digest(claimed: object) -> str | None:
-    """The marker's claim as ``sha256:<hex>``, accepting the bare hex it may carry.
+def _normalise_digest(claimed: object, *, algorithm: str = "sha256") -> str | None:
+    """The marker's claim as ``<algorithm>:<hex>``, accepting the bare hex it may carry.
 
     The bare form is accepted because the first GPU training run wrote one, months before
     this module existed, and refusing it would mean this reader cannot read the only real
@@ -217,14 +312,20 @@ def _normalise_digest(claimed: object) -> str | None:
     """
     if not isinstance(claimed, str):
         return None
-    text = claimed.removeprefix("sha256:").strip().lower()
-    if len(text) != hashlib.sha256().digest_size * 2:
+    size = next(
+        (width for name, _, width in _ATTESTATION_FIELDS if name == algorithm),
+        None,
+    )
+    if size is None:
+        return None
+    text = claimed.removeprefix(f"{algorithm}:").strip().lower()
+    if len(text) != size * 2:
         return None
     try:
         bytes.fromhex(text)
     except ValueError:
         return None
-    return f"sha256:{text}"
+    return f"{algorithm}:{text}"
 
 
 def success_marker_bytes(
@@ -235,6 +336,7 @@ def success_marker_bytes(
     size_bytes: int,
     created_at: datetime,
     epoch: int | None = None,
+    crc32c_digest: str | None = None,
 ) -> bytes:
     """The marker's content, as the bytes that go into the object.
 
@@ -245,6 +347,14 @@ def success_marker_bytes(
     ``payload`` is named rather than implied. A marker that did not say what it certified
     would leave the reader to guess, and the guess -- "the one other object here" -- stops
     being right the moment a checkpoint is sharded across files.
+
+    BOTH DIGESTS ARE RECORDED, AND NEITHER IS REDUNDANT. The reader compares the marker
+    against whatever S3 attests, and which algorithm that is depends on how the object was
+    written: this module now asks for CRC32C, the historical checkpoint carries SHA-256, and
+    an object written by some other tool may carry either. A marker holding only the digest
+    the writer happened to prefer would be unverifiable against a store that attested the
+    other one -- reported as corruption, which is a good checkpoint refused. ``sha256`` also
+    stays because ``CheckpointManifest.checksum`` is typed to it.
     """
     marker = {
         "schema_version": MARKER_SCHEMA_VERSION,
@@ -254,6 +364,8 @@ def success_marker_bytes(
         "bytes": size_bytes,
         "created_at": created_at.isoformat(),
     }
+    if crc32c_digest is not None:
+        marker["crc32c"] = crc32c_digest
     if epoch is not None:
         marker["epoch"] = epoch
     return json.dumps(marker, sort_keys=True, separators=(",", ":")).encode()
@@ -287,6 +399,7 @@ def commit_checkpoint(
         raise UnreadableCheckpointError("a checkpoint with no payload certifies nothing")
     bucket, key = _split(prefix)
     digest = f"sha256:{hashlib.sha256(payload).hexdigest()}"
+    crc32c_digest = f"crc32c:{crc32c(payload).to_bytes(4, 'big').hex()}"
 
     # THE ORDER IS THE PROTOCOL. Anything between these two calls -- a spot reclaim, an OOM
     # kill, a network partition -- leaves a payload with no marker, which the reader reports
@@ -308,6 +421,7 @@ def commit_checkpoint(
             size_bytes=len(payload),
             created_at=created_at,
             epoch=epoch,
+            crc32c_digest=crc32c_digest,
         ),
         ChecksumAlgorithm=CHECKSUM_ALGORITHM,
     )
@@ -424,25 +538,33 @@ def inspect_checkpoint(store: CheckpointStore, *, prefix: str) -> CheckpointInsp
             )
         raise
 
-    claimed = _normalise_digest(marker.get("sha256"))
-    if claimed is None:
-        return CheckpointInspection(
-            prefix=prefix,
-            state=CheckpointState.CORRUPT,
-            detail=f"the {MARKER_OBJECT} carries no readable sha256 for {payload_name}",
-        )
+    # The store is asked first, because it decides which algorithm the comparison is in.
+    # Reading the marker's sha256 first and then meeting a CRC32C attestation would leave two
+    # digests that cannot disagree because they do not describe the same function.
     attested = _attested_digest(head)
     if attested is None:
         # NOT TREATED AS AGREEMENT, which is the tempting shortcut and the wrong one. An
-        # object written without ChecksumAlgorithm, or assembled from parts, gives the store
-        # nothing to say about its content -- so the marker's claim is unverifiable, and an
-        # unverifiable claim accepted is a claim nobody is checking.
+        # object written without ChecksumAlgorithm, or assembled from parts under an
+        # algorithm S3 can only combine compositely, gives the store nothing to say about
+        # its content -- so the marker's claim is unverifiable, and an unverifiable claim
+        # accepted is a claim nobody is checking.
         return CheckpointInspection(
             prefix=prefix,
             state=CheckpointState.CORRUPT,
             detail=(
-                f"{payload_name} carries no whole-object SHA-256 from the store, so the "
+                f"{payload_name} carries no whole-object checksum from the store, so the "
                 f"{MARKER_OBJECT}'s claim about it cannot be verified"
+            ),
+        )
+    algorithm = attested.split(":", 1)[0]
+    claimed = _normalise_digest(marker.get(algorithm), algorithm=algorithm)
+    if claimed is None:
+        return CheckpointInspection(
+            prefix=prefix,
+            state=CheckpointState.CORRUPT,
+            detail=(
+                f"the store attests a {algorithm} digest for {payload_name} and the "
+                f"{MARKER_OBJECT} carries no readable {algorithm} to compare it against"
             ),
         )
     if attested != claimed:
@@ -511,7 +633,14 @@ def inspect_checkpoint(store: CheckpointStore, *, prefix: str) -> CheckpointInsp
             epoch=epoch if isinstance(epoch, int) and not isinstance(epoch, bool) else None,
             created_at=created_at,
             size_bytes=size,
-            checksum=attested,
+            # The marker's own SHA-256 when it has one, because that is the digest of the
+            # payload itself and is strictly more informative. Otherwise a SHA-256 over what
+            # was verified, because the field is typed to SHA-256 and the store attested a
+            # CRC32C.
+            checksum=(
+                _normalise_digest(marker.get("sha256"))
+                or described_checksum([(payload_name, size, attested)])
+            ),
             success_marker_uri=prefix + MARKER_OBJECT,
         ),
     )
