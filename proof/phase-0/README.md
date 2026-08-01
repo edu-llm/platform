@@ -2,8 +2,8 @@
 
 Phase: phase-0
 Bundle schema version: 1
-Source commit: 093b1cab611b0148c9a41b68a08b1730e4a00769
-Generated: 2026-08-01T15:36:54+00:00
+Source commit: 4963c568ba1e9b8de09061a4900200be6e9baeb7
+Generated: 2026-08-01T17:03:51+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 0 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase0_proof.py` at generation time.
 
@@ -18,10 +18,10 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 4087 |
-| suite tests executed | 3894 |
-| suite passed | 3894 |
-| suite failed | 0 |
+| suite tests collected | 4169 |
+| suite tests executed | 3976 |
+| suite passed | 3972 |
+| suite failed | 4 |
 | suite errored | 0 |
 | suite skipped | 0 |
 | matrix node ids executed | 254 |
@@ -86,7 +86,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 
 | file | digest |
 | --- | --- |
-| config/organization.yaml | sha256:b78c80269ffbf2fffeb034b4967dbbe232879614b1b51ea0f6cc5874cdb32131 |
+| config/organization.yaml | sha256:46c829a902d05c07aa58a46f440b2837d90c7f2c5011c15487c68a03df6512c8 |
 | config/policy.yaml | sha256:8efa2f00527f9ad1677ed27452a2b6093a6a8c9e8190cf3e0a583b0f68787b39 |
 | config/workload-catalog.yaml | sha256:caccfdc8ecf5877119c2c39277f1a6b1bfe05e55b3f0c2a963d63e97d8479531 |
 | fixtures/authorization/admin-exception.yaml | sha256:4ad48b8ecd405d11428cf446f74d0a8aeabf904365f3fee7b599b6a7ed0b6fa0 |
@@ -109,7 +109,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | schemas/organization.schema.json | sha256:37c30582f008b541fe11a1403f5311026ae908d98e8821b4ed6842c3d4365e66 |
 | schemas/policy.schema.json | sha256:e57443df3ebf18a1b1858a441f99aec2d41121a3f2110d05be30b530ff2b7f67 |
 | schemas/repositories.schema.json | sha256:ee5ef9172b9ab89aa0965cefda9d86fda855c4cd3f0eeda41ab50551327ff68e |
-| schemas/result-manifest.schema.json | sha256:7e7b6a5891444d9d13256202319f5be6e70addb81f0b0c077e5294c63529503b |
+| schemas/result-manifest.schema.json | sha256:5bd07bde5ac6c86323878915dd684dafa2e838fa20b53d78554074159563cb26 |
 | schemas/run-manifest.schema.json | sha256:62851f48df41a1dc270a525b44a8ef01eab660af9d5b60030d6c0a8776e196f2 |
 | schemas/scheduler-attempt.schema.json | sha256:91984a9fb1f7f9150f7799dc337807bd14b93b50908a56e0e230391546c9c4ac |
 | schemas/submission-inputs.schema.json | sha256:741c31071d945861c98abaec766ef5533e6a35cd338306e1d0eff9fb8c8ea845 |
@@ -118,7 +118,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 ## Known limitations
 
 - 2 of 12 compute profiles are provisioned: cpu-32vcpu, gpu-1xa10g. Every other profile is priced and dated but carries provisioned: false, so resolve_compute_profile_for_execution refuses it. Phase 0 proves pricing and classification for all of them and that nothing can run is no longer true of the whole catalog.
-- No member is bound to a team. OrganizationInventory.team_bindings.teams names 6 teams and every one of them has an empty member_logins and lead_logins, so no submitter or lead is bound to a team. Every team-scoped rule is therefore either deferred or unenforceable today. Which group a person belongs to is the one fact the roster has never held, and enforcement is per submitter, so it becomes live for each person as theirs is written down rather than for everybody at once.
+- No member is bound to a team. OrganizationInventory.team_bindings.teams names 8 teams and every one of them has an empty member_logins and lead_logins, so no submitter or lead is bound to a team. Every team-scoped rule is therefore either deferred or unenforceable today. Which group a person belongs to is the one fact the roster has never held, and enforcement is per submitter, so it becomes live for each person as theirs is written down rather than for everybody at once.
 - Approval scope is organization. Any team lead may approve any member's routine submission. Check D1 in the negative-case matrix is deferred for this reason.
 - Cross-team attribution is implemented but cannot reject anything yet. Every decision records the claimed team and a team_verified flag, and a submitter naming a team they do not belong to is denied as soon as that submitter's own membership is recorded. With no member bound, every shipped decision records team_verified: false, which is the audit record's way of saying the attribution was accepted unchecked. Check 9 is deferred for this reason: no test can show a shipped rejection that the shipped configuration cannot produce.
 - The secret scan applied to this bundle masks its own content digests before scanning. A 64-character hexadecimal sha256 digest and a 40-character hexadecimal commit SHA both match the generic long-credential patterns in evidence.py, so the two exact token shapes this bundle emits are replaced with placeholders and everything else is scanned unchanged. No other exemption is applied.

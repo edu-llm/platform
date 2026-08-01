@@ -105,6 +105,21 @@ class ResultManifest(ContractModel):
         tuple[CheckpointManifest, ...], BeforeValidator(require_ordered_sequence)
     ] = Field(default=(), strict=False)
     wandb_run: WandbRunRef | None
+    #: What the container returned, when it returned at all.
+    #:
+    #: HOW A RUN FAILED, WHICH THIS RECORD COULD NOT PREVIOUSLY SAY. ``outcome`` carries
+    #: ``failed`` and nothing else, so every failure read the same: a program that raised,
+    #: one killed for running out of memory, and one whose machine went away were one word
+    #: in the only record that outlives the job. Batch stops listing a job some days after
+    #: it ends, so by the time somebody asks, the exit code is gone from the account and
+    #: this is the only place it could have been.
+    #:
+    #: None rather than a number when the container never reported one, which is the
+    #: ordinary shape for a job whose host was reclaimed: there was no exit, so there is no
+    #: code, and a zero there would read as a clean finish. Optional rather than required
+    #: because every result record already written carries no such field, and they are
+    #: immutable.
+    exit_code: int | None = None
     retention_class: RetentionClassValue
     completed_at: UtcTimestamp
 

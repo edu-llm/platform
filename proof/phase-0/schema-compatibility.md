@@ -41,7 +41,7 @@ The kind column separates a `record`, which some payload is validated against, f
 | RegisteredRepository | edullm_platform.contracts.repository_registry | record | unversioned | sha256:6061c9afa770d4335d829aa1d6ed781cea6bfb492719843918d3bd0e364b2fae |
 | RepositoryRegistry | edullm_platform.contracts.repository_registry | record | unversioned | sha256:d69819572c1f37964e8bf2553d0c66b65b234d221039d95a8085150812ed7429 |
 | CheckpointManifest | edullm_platform.contracts.results | record | 1 | sha256:4a27e4581c4d888b09d99e81d2236353fd5cf012198b4b520e95eb0406077237 |
-| ResultManifest | edullm_platform.contracts.results | record | 1 | sha256:3bc34ee47a6dab8f04d777a05418940e3616a22d2c5c165f294991972e8cef59 |
+| ResultManifest | edullm_platform.contracts.results | record | 1 | sha256:f67ae5069fc63ddff7e750c03963c104b51fe4e187e04bb355063bf2d5ddb5d1 |
 | WandbRunRef | edullm_platform.contracts.results | record | unversioned | sha256:cba8ceb21dd7d198dfbe0976bf225d5a837782d343708a4a251195e8a7aaef97 |
 | CheckpointContract | edullm_platform.contracts.workload | record | unversioned | sha256:97160a720340044f91d3707d703a2a424ff8c3d5479c10c8f6a48e68e34ad9f0 |
 | ComputeProfile | edullm_platform.contracts.workload | record | unversioned | sha256:980b84356011d721f565c7d3fdaa7c852ef286c429d1f2b796a6d4ae163ede20 |
@@ -181,7 +181,7 @@ The checked-in schemas under `schemas/`, with the digest of each file as generat
 | schemas/organization.schema.json | OrganizationInventory | sha256:37c30582f008b541fe11a1403f5311026ae908d98e8821b4ed6842c3d4365e66 |
 | schemas/policy.schema.json | ApprovalPolicy | sha256:e57443df3ebf18a1b1858a441f99aec2d41121a3f2110d05be30b530ff2b7f67 |
 | schemas/repositories.schema.json | RepositoryRegistry | sha256:ee5ef9172b9ab89aa0965cefda9d86fda855c4cd3f0eeda41ab50551327ff68e |
-| schemas/result-manifest.schema.json | ResultManifest | sha256:7e7b6a5891444d9d13256202319f5be6e70addb81f0b0c077e5294c63529503b |
+| schemas/result-manifest.schema.json | ResultManifest | sha256:5bd07bde5ac6c86323878915dd684dafa2e838fa20b53d78554074159563cb26 |
 | schemas/run-manifest.schema.json | RunManifest | sha256:62851f48df41a1dc270a525b44a8ef01eab660af9d5b60030d6c0a8776e196f2 |
 | schemas/scheduler-attempt.schema.json | SchedulerAttempt | sha256:91984a9fb1f7f9150f7799dc337807bd14b93b50908a56e0e230391546c9c4ac |
 | schemas/submission-inputs.schema.json | SubmissionInputs | sha256:741c31071d945861c98abaec766ef5533e6a35cd338306e1d0eff9fb8c8ea845 |

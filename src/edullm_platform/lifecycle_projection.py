@@ -297,6 +297,28 @@ def _last_attempt(detail: Mapping[str, Any]) -> tuple[int, Mapping[str, Any]] | 
     return usable[-1]
 
 
+def _container_exit_code(attempt_detail: Mapping[str, Any]) -> int | None:
+    """What the attempt's container returned, or None because it never returned.
+
+    Read off the attempt rather than off the job. Both carry a container in AWS's published
+    schema for ``BatchJobStateChange``, and on a retried job the job-level one describes
+    whichever attempt Batch last folded up, so a record built from it could attribute one
+    attempt's exit to another.
+
+    Absent is a fact rather than a gap and is kept as None. A host reclaimed mid-run leaves
+    no exit code because there was no exit, and the ordinary default of zero would record
+    that as a clean finish. A boolean is refused for the same reason a string would be:
+    ``True`` is an ``int`` in Python and would land in the record as ``1``.
+    """
+    container = attempt_detail.get("container")
+    if not isinstance(container, Mapping):
+        return None
+    code = container.get("exitCode")
+    if isinstance(code, bool) or not isinstance(code, int):
+        return None
+    return code
+
+
 def _derive_attempt_id(
     *,
     run_id: str,
@@ -488,6 +510,7 @@ def project_batch_state_change(
                     # does not carry. Empty when the job carried no prefix, because a
                     # location nobody named is not a location this record should invent.
                     output_prefixes=tuple(prefix for prefix in (written_under,) if prefix),
+                    exit_code=_container_exit_code(attempt_detail),
                     # STILL EMPTY, AND NOW THAT IS A LIMITATION RATHER THAN A DESCRIPTION.
                     #
                     # This said "Phase 3 runs one CPU container with no W&B and no
@@ -563,9 +586,7 @@ def project_batch_event(
     try:
         parsed = datetime.fromisoformat(occurred_at)
     except ValueError as exc:
-        raise UnreadableBatchEventError(
-            "the delivery's time is not an RFC 3339 date-time"
-        ) from exc
+        raise UnreadableBatchEventError("the delivery's time is not an RFC 3339 date-time") from exc
     if parsed.tzinfo is None:
         # Refused here rather than assumed to be UTC. A naive instant read as UTC is the
         # kind of wrong that is invisible until somebody compares two records written in
