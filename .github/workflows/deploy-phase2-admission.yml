@@ -141,6 +141,12 @@ jobs:
           # substitution. And every script here is shlex-split by the IAM-capability test,
           # which reads a lone apostrophe in a comment as an unterminated quote. So: no
           # apostrophes below, and each upload starts its own line and redirects to a file.
+          #
+          # The two records go to the step summary AND to the log, through tee. The summary
+          # alone was the first attempt and it stranded the values: it renders in the web UI
+          # and no API returns it, so the caller who dispatched the run from a terminal --
+          # which is the whole point of this step existing -- could not read what it
+          # produced. The log is the copy a script can fetch.
           uv run python tools/build_admission_lambda.py \
             --output "${RUNNER_TEMP}/admission-validator.zip" \
             > "${RUNNER_TEMP}/admission-validator-build.json"
@@ -172,7 +178,7 @@ jobs:
             "${RUNNER_TEMP}/admission-validator-version.txt" \
             "${RUNNER_TEMP}/lifecycle-recorder-build.json" \
             "${RUNNER_TEMP}/lifecycle-recorder-version.txt" \
-            >> "${GITHUB_STEP_SUMMARY}" <<'PY'
+            | tee -a "${GITHUB_STEP_SUMMARY}" <<'PY'
           import json
           import sys
           from pathlib import Path
