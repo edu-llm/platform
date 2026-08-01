@@ -44,6 +44,7 @@ from edullm_platform.submission import (
     SubmissionInputs,
     compile_submission,
     render_approver_context,
+    require_registered_repository,
     require_submitter_on_the_roster,
 )
 
@@ -205,6 +206,12 @@ def main(argv: list[str] | None = None) -> int:
         # told that and nothing else. A refusal naming a workload profile would send them
         # to correct a field that was never what stood in the way.
         require_submitter_on_the_roster(args.submitter, inventory=inventory)
+        # And for the same reason, one field further along. Compiling refuses an
+        # unregistered repository too, through the registry fact policy denies outright,
+        # but only once the workload profile has been checked against it -- so for a
+        # repository with no profile at all the refusal names the profile instead. Asked
+        # here, the submitter is told which field is wrong and where the list lives.
+        require_registered_repository(inputs.repository, repositories=repositories)
         submission = compile_submission(
             inputs,
             run_id=args.run_id or new_run_id(),

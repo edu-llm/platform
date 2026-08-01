@@ -21,3 +21,29 @@ repositories:
     base_image_digest: sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
     dockerfile_path: .edullm/Dockerfile
     build_context: .
+  # olmo-eval-full: the evaluation harness, and the first entry that does not build from
+  # the python base. That is the whole cost of this registration rather than a detail. An
+  # evaluation backend loads a model onto a GPU, and the CUDA userspace libraries cannot be
+  # installed by the Dockerfile -- they have to come from the base, because the driver they
+  # match is the host's. So this is the second base the platform registers, and a second
+  # base is a second thing to review, scan, re-pin and carry exceptions for.
+  # config/image-exceptions.yaml records its findings apart from the python base's, because
+  # they are a different distribution's packages at different versions.
+  #
+  # 12.8.1-runtime rather than -devel or -base. -base carries no CUDA libraries at all, so
+  # a torch wheel would find no runtime to link against; -devel adds nvcc and the headers,
+  # which nothing in this image compiles and which roughly doubles it. 12.8 rather than 13
+  # because the GPU hosts report driver 580.159.03, which serves both, and 12.8 is what the
+  # repository's own build script defaults to, so it is the version its authors have run.
+  - repository: olmo-eval-full
+    github_repository_id: 1310135166
+    default_branch: main
+    ecr_repository: sbsandbox-intern-edullm-olmo-eval-full
+    base_image_repository: docker.io/nvidia/cuda
+    # The multi-architecture index digest docker.io/nvidia/cuda:12.8.1-runtime-ubuntu24.04
+    # resolved to on 2026-08-01, read from the registry rather than from a local pull. An
+    # index rather than one platform's manifest, which is the same form the python base
+    # above is pinned in, so a build on the amd64 runner selects the amd64 manifest under it.
+    base_image_digest: sha256:ebef3c171eeef0298e4eb2e4be843105edf3b8b0ac45e0b43acee358e8046867
+    dockerfile_path: .edullm/Dockerfile
+    build_context: .
