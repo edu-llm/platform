@@ -70,3 +70,16 @@ def resource_of_type(template: dict[str, Any], resource_type: str) -> tuple[str,
 def statement_actions(statement: dict[str, Any]) -> list[str]:
     action = statement["Action"]
     return action if isinstance(action, list) else [action]
+
+
+def statement_resources(statement: dict[str, Any]) -> list[str]:
+    """Every resource a statement names, rendered as the string the template writes.
+
+    ``Resource`` is one of four shapes: a literal, an ``Fn::Sub``, or a list of either. A
+    reader that handled only the single ``Fn::Sub`` was what every caller here did until a
+    statement needed twenty-one ARNs, and each of them failed with a TypeError naming the
+    subscript rather than the statement.
+    """
+    resource = statement["Resource"]
+    entries = resource if isinstance(resource, list) else [resource]
+    return [entry["Fn::Sub"] if isinstance(entry, dict) else entry for entry in entries]

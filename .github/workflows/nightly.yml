@@ -1,6 +1,6 @@
 name: Nightly (the checks that are not about one change)
 
-# Six checks that answer a question about the repository or about the account rather
+# Seven checks that answer a question about the repository or about the account rather
 # than about a change, and that either cost too much or fail too unpredictably to sit on
 # the pull-request path. Nothing here is continue-on-error, and that is the whole point of
 # moving them: there is no alerting infrastructure, so a red scheduled run is the signal,
@@ -28,18 +28,20 @@ name: Nightly (the checks that are not about one change)
 #     criterion of theirs is a recorded gap; that is a statement about the phase, and it
 #     is a statement worth waking up to rather than one worth suppressing.
 #
-#   checkpoint-reconciliation, wandb-credential and deployed-lambda-release — these three
-#     read the account, and that is why they are here rather than on the pull-request
-#     path. Each describes a state a change cannot cause and cannot be blamed for: a run
-#     that trained for hours and saved nothing did so before the diff under review
-#     existed, a credential pasted wrongly into Secrets Manager has nothing to do with any
-#     file, and a Lambda deployed out of band is by definition something no diff records.
-#     They also need an AWS identity, and putting one on the pull-request path would mean
-#     a fork's pull request runs with it in reach.
+#   checkpoint-reconciliation, wandb-credential, deployed-lambda-release and
+#     deployed-stack-templates — these four read the account, and that is why they are
+#     here rather than on the pull-request path. Each describes a state a change cannot
+#     cause and cannot be blamed for: a run that trained for hours and saved nothing did
+#     so before the diff under review existed, a credential pasted wrongly into Secrets
+#     Manager has nothing to do with any file, a Lambda deployed out of band is by
+#     definition something no diff records, and a stack applied from a stale branch is a
+#     diff that was never merged. They also need an AWS identity, and putting one on the
+#     pull-request path would mean a fork's pull request runs with it in reach.
 #
-# The three assume sbsandbox-intern-edullm-nightly-reader, which can read the lineage
-# records, what the runs wrote, one secret and the deployed digest of the two admission
-# functions, and holds no write anywhere in the account.
+# The four assume sbsandbox-intern-edullm-nightly-reader, which can read the lineage
+# records, what the runs wrote, one secret, the deployed digest of the two admission
+# functions and the deployed template of each stack, and holds no write anywhere in the
+# account.
 # infra/iam/nightly-reader-role.yaml argues each grant; the short version is that a check
 # able to change what it is checking can produce its own all-clear. The role is applied
 # from a laptop like every IAM stack here, so a fresh clone of this repository does not
@@ -359,3 +361,62 @@ jobs:
       # the job. The failure names both digests, so the case is recognisable from the log.
       - name: Compare what AWS is running against what was released
         run: uv run --frozen python tools/verify_deployed_lambdas.py
+
+  deployed-stack-templates:
+    name: the deployed stacks are the templates main declares
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check the nightly reader role is deployed
+        env:
+          ROLE_ARN: ${{ vars.AWS_NIGHTLY_READER_ROLE_ARN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${ROLE_ARN}" ]]; then
+            echo "nightly_reader_role_not_deployed" >&2
+            echo "AWS_NIGHTLY_READER_ROLE_ARN is unset, so this job has no identity to assume." >&2
+            echo "The role is infra/iam/nightly-reader-role.yaml, applied from a laptop like" >&2
+            echo "every IAM stack here. See infra/README.md for the stack name and the" >&2
+            echo "repository variable it needs." >&2
+            exit 1
+          fi
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ vars.AWS_NIGHTLY_READER_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # WHAT THIS CATCHES IS AN APPLY, NOT A DIFF. Every other check in this repository
+      # compares the repository against itself, and the stacks under infra/iam/ are applied
+      # by hand from laptops with no run log at all. On 2026-08-01 an s3:DeleteObject grant
+      # was added to the GPU workload role and applied at 17:11; at 17:53 the same stack was
+      # applied from a branch cut before the grant existed and the grant was gone. Nothing
+      # warned anybody, because a change set shows what the template being applied says and
+      # not what it omits relative to what is live.
+      #
+      # No translation of the exit code, for the reason the job above gives. The tool prints
+      # its own reason and its own sentence and separates a disagreement from an unanswered
+      # question in its exit code, and restating that here would be a second place for the
+      # two to drift apart.
+      #
+      # There is a window in which this is legitimately red and a re-run clears it, and it is
+      # wider than the release job's: a CI stack is applied when its change reaches main, so
+      # between the merge and the deploy the template on main is not the one deployed. It is
+      # minutes wide against a schedule that runs once a day, so it is a caveat for whoever
+      # dispatches this by hand after a merge rather than a reason to soften the job.
+      - name: Compare each deployed stack against the template main declares
+        run: uv run --frozen python tools/verify_deployed_stacks.py

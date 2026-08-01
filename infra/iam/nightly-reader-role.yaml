@@ -168,6 +168,80 @@ Resources:
                 Action: lambda:GetFunctionConfiguration
                 Resource:
                   Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:sbsandbox-intern-edullm-lifecycle-recorder
+              # WHAT EACH STACK IS ACTUALLY DEPLOYED FROM. Every check in this repository
+              # compares the repository against itself; nothing compared the account against
+              # the repository, and the stacks under infra/iam/ are applied by hand from
+              # laptops so there is not even a run log. On 2026-08-01 an s3:DeleteObject
+              # grant on the GPU workload role was applied at 17:11 and taken back at 17:53
+              # by somebody applying the same stack from a branch cut before it existed. A
+              # change set shows what the template being applied says, not what it omits
+              # relative to what is live, so nothing warned anyone.
+              #
+              # Twenty-one stacks named in full rather than a stack/sbsandbox-intern-edullm-*
+              # prefix. A template is the whole configuration of a stack, so this is the
+              # widest read in this policy and it is the one worth spelling out: a prefix
+              # would silently extend it to whatever a later phase deploys under a matching
+              # name, and the point of the check is that a new stack is noticed rather than
+              # absorbed. The list is the same one STACKS declares in
+              # tools/verify_deployed_stacks.py, which tests/test_nightly_workflow.py reads
+              # rather than restates, so a stack added to one and not the other fails at
+              # review instead of as a denial at 05:00.
+              #
+              # The trailing /* is CloudFormation's stack id, a uuid chosen at creation and
+              # not predictable from the name. Everything before it is complete, so this
+              # cannot reach a second stack unless somebody creates one whose name begins
+              # with one of these.
+              - Sid: ReadTheDeployedTemplateOfEachStack
+                Effect: Allow
+                Action: cloudformation:GetTemplate
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-phase1-ecr/*
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-ecr-publisher-iam/*
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-infra-deployer-iam/*
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-phase2-admission-service-roles/*
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-phase2-admission-iam/*
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-phase2-lineage/*
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-phase2-artifacts/*
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-phase2-admission/*
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-phase3-batch-iam/*
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-phase3-lifecycle-iam/*
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-phase3-outputs/*
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-phase3-network/*
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-phase3-batch/*
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-phase3-events/*
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-phase4-gpu-iam/*
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-phase4-gpu/*
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-phase4-gpu-shapes/*
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-dataset-validator-iam/*
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-run-canceller-iam/*
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-nightly-reader-iam/*
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-phase5-image-resolver-iam/*
+              # THE ONE WILDCARD RESOURCE IN THIS POLICY, AND IT IS FORCED RATHER THAN CHOSEN.
+              # cloudformation:ListStacks has no resource type at all -- the request names no
+              # stack, so there is nothing for a resource ARN to match and a policy that
+              # names one denies the call outright. It is granted anyway because it is the
+              # action that stops the check going blind: the twenty-one names above are a
+              # list somebody wrote, so the stack that will not be on it is the one somebody
+              # deploys next, and listing the account is how that stack gets reported instead
+              # of skipped. Without it the check would silently cover only what it already
+              # knew about, which is the failure it exists to end.
+              #
+              # What it discloses is names, statuses and timestamps -- no template, no
+              # parameter, no output -- for the seventy-odd stacks in this shared sandbox.
+              # That is the price, and it is paid knowingly.
+              #
+              # aws:RequestedRegion is the only narrowing the action admits, and it is a
+              # small one: the region lock permits us-east-1 and us-east-2 and everything
+              # this platform has is in the first. It is here because a listing of a second
+              # region would be a read nothing asks for, not because it prevents much.
+              - Sid: FindStacksNothingInTheRepositoryAccountsFor
+                Effect: Allow
+                Action: cloudformation:ListStacks
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion:
+                      Fn::Sub: ${AWS::Region}
               # DELIBERATELY ABSENT, and each for its own reason rather than as a list.
               #
               # Every write. This role exists to describe the account and a check that can
@@ -199,6 +273,20 @@ Resources:
               # the wrong direction: the record is the reviewed artifact and the deployment
               # is the thing under suspicion. lambda:GetFunction is absent for the reason
               # given beside the grant, and lambda:ListFunctions for ListSecrets' reason.
+              #
+              # cloudformation:CreateStack, UpdateStack, DeleteStack, CreateChangeSet and
+              # ExecuteChangeSet, which are the adjacent actions on the twenty-one ARNs
+              # above and the same rule again. The drift check reports that the account is
+              # not what main says; a check that could apply a template would be able to
+              # answer its own finding by reconciling the account, and reconciling is
+              # precisely the operation that took the delete grant back on 2026-08-01. It
+              # would also be a role-creation path behind a scheduled workflow, since
+              # fourteen of these stacks create roles, which the first section of
+              # infra/README.md is entirely about.
+              #
+              # cloudformation:GetTemplateSummary and DescribeStacks. Neither is needed:
+              # the summary is a derived description rather than the deployed template, and
+              # the drift check reads a stack's status out of the listing it already makes.
               #
               # Every batch:, states: and logs: action. Neither check asks what is running,
               # and a scheduled workflow that could reach the queues or the state machine

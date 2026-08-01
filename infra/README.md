@@ -83,6 +83,55 @@ to `CAPABILITY_NAMED_IAM`.
 an error, which matters because the verification step below is worth running on its own
 and re-deploying first is the cheapest way to be sure the template is what is deployed.
 
+## Which tree you deploy from
+
+**Deploy from `main`, at its tip, with nothing uncommitted. Never from a branch.** Check
+before every apply, in the worktree you are about to apply from:
+
+```bash
+git fetch origin main
+git status --porcelain          # must print nothing
+git rev-parse HEAD origin/main  # must print the same commit twice
+```
+
+The reason is that `aws cloudformation deploy` reconciles rather than merges. It makes the
+stack be the template you hand it, so whatever the template omits is removed from the
+account, and a change set will not tell you: a change set is computed from the template
+being applied, and it has nothing to say about a grant that template never mentions. A
+branch cut before somebody else's merge omits their change by construction, so applying
+from it silently takes their change back. The templates in `infra/iam/` each hold several
+roles that unrelated pull requests touch, which is what makes two people colliding on one
+stack the ordinary case rather than the unlucky one. This is not a hypothetical; the GPU
+workload role lost a grant this way on 2026-08-01, and that incident is written up in full
+under *Stack 1: the delete a retry needs, re-applied 2026-08-01* below.
+
+The rule has a corollary that is easy to get backwards. If your change has not merged yet,
+you have not earned the right to apply it, and applying it early is how the account comes
+to hold something no reviewer has seen. The one exception this repository has made is a
+grant CI needs before its first scheduled run — the nightly reader's
+`cloudformation:GetTemplate` was applied from a branch on 2026-08-01 for exactly that
+reason — and the cost of the exception is a window in which the account is ahead of `main`
+and the check below reports it. Merge promptly and the window closes.
+
+**What catches it when somebody forgets is `tools/verify_deployed_stacks.py`**, which the
+nightly workflow runs as the `deployed-stack-templates` job. It reads each deployed stack's
+template out of CloudFormation, holds it against the file in `main` that declares it, and
+names the resource and the property that differ. It reads which template belongs to which
+stack from `STACKS` in that file, and a stack the account holds that `STACKS` does not name
+is reported rather than skipped, so a stack somebody deploys next is a finding and not a
+blind spot. Adding a stack therefore means adding three things in the same change: the
+entry in `STACKS`, the stack's ARN in the `cloudformation:GetTemplate` grant in
+`infra/iam/nightly-reader-role.yaml`, and the row in the phase table below. Run it by hand
+after applying anything, which is faster than waiting for 05:00:
+
+```bash
+uv run python tools/verify_deployed_stacks.py --profile sbsandbox --region us-east-1
+```
+
+It exits 1 when the account and `main` disagree and 2 when it could not find out, because
+those ask the reader for different things. Directly after a merge that touches a CI stack
+it can be legitimately red until the deploy workflow finishes, and a re-run clears that.
+
 ## The permissions boundary
 
 `arn:aws:iam::<account>:policy/InternSandboxBoundary` must be attached to every role this
@@ -211,6 +260,20 @@ policies with `aws iam delete-role-policy`.
 
 Fix the cause before re-deploying. A stack that stranded once for a missing permission
 will strand again.
+
+## The Phase 1 stacks
+
+Recorded here on 2026-08-01 rather than in Phase 1, which is what the second paragraph of
+this file is about. Both names were read off the account rather than recovered from a
+commit, because neither was ever written down; the deployer's was recovered on 2026-07-27
+with the `describe-stack-resources` command below and the publisher's on 2026-08-01 while
+`tools/verify_deployed_stacks.py` was being given its table.
+
+| # | Stack | Template | Roles or resources | Applied from |
+| --- | --- | --- | --- | --- |
+| 1 | `sbsandbox-intern-edullm-ecr-publisher-iam` | `infra/iam/ecr-publisher-role.yaml` | `…-ecr-publisher` | laptop |
+| 2 | `sbsandbox-intern-edullm-infra-deployer-iam` | `infra/iam/infra-deployer-role.yaml` | `…-infra-deployer` | laptop |
+| 3 | `sbsandbox-intern-edullm-phase1-ecr` | `infra/ecr-repositories.yaml` | the three ECR repositories | CI |
 
 ## The Phase 2 stacks, in dependency order
 
@@ -490,6 +553,29 @@ being applied says, not what it omits relative to what is live, so a stale templ
 grant silently. Two people applying this file from two worktrees will keep doing that until
 the stack is applied from `main` rather than from a branch.
 
+*Which tree you deploy from* above is now that rule, written where somebody about to run
+`aws cloudformation deploy` will read it, and `tools/verify_deployed_stacks.py` is what
+reports it the next morning when they do not. It names the resource and the statement rather
+than saying the stack differs. Deleting the delete grant from the local copy of this template
+and running the check against the account produces exactly this, on 2026-08-01:
+
+```text
+Resources.BatchGpuWorkloadRole.Properties.Policies[0].PolicyDocument.Statement[5]: only in the account ({"Action": "s3:DeleteObject", "Effect": "Allow", "Resource": {"Fn::Sub": "arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-outputs/teams/*/runs/*/checkpoints/*"}})
+```
+
+That is the incident mirrored, and mirrored deliberately: perturbing the template is the only
+way to demonstrate the check without deliberately drifting a live stack, and it necessarily
+runs the difference the other way. At 17:53 the account was the side that had lost the grant,
+so the line would have read `only in main` and the repair would have been to re-apply from
+`main` rather than to decide whether to adopt anything. The check distinguishes those two
+directions because they are different jobs, which is the whole of what the message adds over
+knowing that something differs.
+
+What this does not claim is that a nightly would have caught the 2026-08-01 revert. The gap
+between 17:53 and 18:07 is fourteen minutes and the check runs at 05:00. What it ends is the
+open-ended case: an account that differs from `main` and stays that way, unnoticed, until a
+container fails on a credential months later.
+
 ### Stack 3: the dataset validator role, deployed 2026-08-01
 
 Laptop-applied, like every IAM stack in this file. The command is the one under *Deploying
@@ -611,6 +697,48 @@ unrelated one: a check that could deploy could answer its own finding by making 
 match the record, which is the wrong direction, and the two actions sit on the same ARNs so a
 resource widened by accident shows up as the update becoming allowed.
 
+#### Amended again 2026-08-01 for the deployed-stack check
+
+`cloudformation:GetTemplate` was added for `.github/workflows/nightly.yml`'s
+`deployed-stack-templates` job, on twenty-one stack ARNs written out in full rather than on a
+`stack/sbsandbox-intern-edullm-*` prefix. A template is the entire configuration of a stack,
+which makes this the widest read the role holds and the one where a prefix would matter most:
+a prefix quietly extends the grant to whatever a later phase deploys under a matching name,
+and being unable to read a new stack is precisely how that stack gets reported instead of
+absorbed. The trailing `/*` on each ARN is CloudFormation's stack id, a uuid chosen at
+creation that cannot be predicted from the name, so it is unavoidable and reaches nothing
+beyond the stack it names. The list is the same one `STACKS` declares in
+`tools/verify_deployed_stacks.py`; `tests/test_nightly_workflow.py` reads both and fails when
+they diverge, so a stack added to one and not the other is caught at review rather than as a
+denial at 05:00.
+
+`cloudformation:ListStacks` was added on `Resource: "*"`, which is the only wildcard resource
+in this policy and is forced rather than chosen. The action has no resource type at all — the
+request names no stack, so there is nothing for a resource ARN to match and a policy that
+names one denies the call outright. It is granted because it is what stops the check going
+blind: the twenty-one names above are a list somebody wrote, so the stack that will not be on
+it is the one somebody deploys next, and listing the account is how that stack becomes a
+finding. What it discloses is names, statuses and timestamps — no template, no parameter, no
+output — for every stack in this shared sandbox, and that is the price. `aws:RequestedRegion`
+is the only narrowing the action admits and it is a small one; the region lock permits
+`us-east-1` and `us-east-2` and everything this platform has is in the first.
+
+Simulated after applying, with `aws:RequestedRegion` supplied as a context entry:
+`cloudformation:GetTemplate` is `allowed` on the stack ARNs above and `implicitDeny` on
+another team's stack in the same account; `cloudformation:ListStacks` is `allowed` in
+`us-east-1` and `implicitDeny` in `us-east-2`, which is the region condition doing its work;
+and `UpdateStack`, `DeleteStack`, `CreateStack`, `CreateChangeSet` and `ExecuteChangeSet` are
+each an `implicitDeny` on a stack the role can read. Those five are the adjacent actions and
+the reason for simulating them is the reason above: a check able to apply a template could
+answer its own finding by reconciling the account, and reconciling is exactly the operation
+that took the delete grant back on 2026-08-01. Fourteen of these stacks create roles, so it
+would also be a role-creation path behind a scheduled workflow, which the first section of
+this file is entirely about.
+
+This one was applied from a branch rather than from `main`, which *Which tree you deploy from*
+above otherwise forbids. A scheduled job cannot be merged and then granted its read, because
+between the two it fails; the exception and its cost are recorded there.
+
 ### A hazard that has expired, and the one it does not take with it
 
 Until `2026-07-31T07:21:51Z` this section would have had to carry a live warning: the deployed
@@ -661,6 +789,16 @@ account.
 Both were found the same way — by recapturing the deployed roles and comparing, not by
 anybody noticing. `proof/phase-3/deployed-role-drift.md` reports `ok` for all four Phase 3
 roles for the first time since the first of them was attached.
+
+"Not by anybody noticing" is the part that has since been addressed, though only for one of
+the two shapes. `tools/verify_deployed_stacks.py` runs nightly and would have reported the
+adopted ECR repository, because a stack's deployed template is what it compares. It would not
+have reported the removed inline policy: `dataset-validator` was attached to the role
+directly, outside CloudFormation, so the stack's template never mentioned it and a template
+comparison cannot see it. Reading the roles themselves, which is what
+`tools/capture_phase1_evidence.py` and `edullm_platform.role_drift` do, remains the only thing
+that catches an out-of-band attachment. The two checks answer different questions and neither
+replaces the other.
 
 **Not established:** whether an `aws cloudformation deploy` of `…-phase3-batch-iam` from
 `main` today would strip `dataset-validator`. That was not tested, because testing it means

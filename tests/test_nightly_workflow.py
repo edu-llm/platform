@@ -30,6 +30,8 @@ assume this role, including one added later.
 
 from __future__ import annotations
 
+import importlib.util
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +46,7 @@ from infrastructure_support import (
     load_template,
     resource_of_type,
     statement_actions,
+    statement_resources,
 )
 from workflow_support import (
     WORKFLOWS_ROOT,
@@ -63,20 +66,23 @@ ROLE_PATH = IAM_ROOT / "nightly-reader-role.yaml"
 RECONCILE_JOB = "checkpoint-reconciliation"
 WANDB_JOB = "wandb-credential"
 RELEASE_JOB = "deployed-lambda-release"
+STACKS_JOB = "deployed-stack-templates"
 
 RECONCILE_TOOL = "tools/find_runs_that_saved_nothing.py"
 WANDB_TOOL = "tools/verify_wandb_credential.py"
 RELEASE_TOOL = "tools/verify_deployed_lambdas.py"
+STACKS_TOOL = "tools/verify_deployed_stacks.py"
 
 RECONCILE_STEP = "Reconcile what those runs actually wrote"
 WANDB_STEP = "Ask W&B whether it would accept the stored key"
 RELEASE_STEP = "Compare what AWS is running against what was released"
+STACKS_STEP = "Compare each deployed stack against the template main declares"
 GUARD_STEP = "Check the nightly reader role is deployed"
 
 #: Every job here that takes a credential. Each one is held to the same guard, the same
-#: role and the same refusal to be informational, so the list is what a fourth such job has
+#: role and the same refusal to be informational, so the list is what a fifth such job has
 #: to join rather than a set of tests it has to remember to be added to.
-CREDENTIALED_JOBS = (RECONCILE_JOB, WANDB_JOB, RELEASE_JOB)
+CREDENTIALED_JOBS = (RECONCILE_JOB, WANDB_JOB, RELEASE_JOB, STACKS_JOB)
 
 #: The two functions the release check reads, and the templates that name them to
 #: CloudFormation. Read from the templates rather than spelled here, because the IAM grant
@@ -474,12 +480,101 @@ def test_the_release_check_never_prints_an_account_id(workflow: dict[str, Any]) 
     assert not ACCOUNT_LITERAL.search(source)
 
 
+def stacks_step(workflow: dict[str, Any]) -> str:
+    return step(workflow["jobs"][STACKS_JOB], STACKS_STEP)["run"]
+
+
+def test_the_nightly_compares_each_deployed_stack_against_its_template(
+    workflow: dict[str, Any],
+) -> None:
+    """Mutation: keep the job and drop the step, or point it at a template validator.
+
+    Validating the templates is what CI already does, and it is the half that was never in
+    question. The account is the half nothing read: fourteen of these stacks create roles and
+    every one of them is applied by hand, so a job that installs the tooling, takes a
+    credential and runs nothing leaves the account exactly as unwatched as before.
+    """
+    body = scripts(workflow, STACKS_JOB)
+
+    assert STACKS_TOOL in body
+    assert "uv run --frozen python" in body
+
+
+def test_a_stack_that_is_not_the_template_on_main_fails_the_nightly(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """THE ONE THAT MATTERS. Mutation: report the difference and exit zero.
+
+    The tool exits 1 when a deployed template is not the one main declares, when a stack it
+    declares is not deployed, and when the account holds a stack nothing declares. There is
+    no alerting on this platform, so the red run is the whole signal.
+    """
+    stub = write_stub(tmp_path / "bin", "uv", "exit 1")
+
+    finished = run_step_script(stacks_step(workflow), cwd=tmp_path, env={}, stub_bin=stub.parent)
+
+    assert finished.returncode != 0
+
+
+def test_a_stack_check_that_could_not_look_also_fails_the_nightly(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """Mutation: pass on exit 2, on the ground that it found nothing wrong.
+
+    It found nothing at all. A denied cloudformation:ListStacks is the likeliest way this
+    ever exits 2, and it is the denial that matters most: the listing is what stops the check
+    being confined to the stacks it already knows about, so treating it as a clean run would
+    retire the whole property without anybody deciding to.
+    """
+    stub = write_stub(tmp_path / "bin", "uv", "exit 2")
+
+    finished = run_step_script(stacks_step(workflow), cwd=tmp_path, env={}, stub_bin=stub.parent)
+
+    assert finished.returncode != 0
+
+
+def test_an_account_that_matches_main_passes(workflow: dict[str, Any], tmp_path: Path) -> None:
+    """The other side, so the step cannot pass this file by failing unconditionally."""
+    stub = write_stub(tmp_path / "bin", "uv", "exit 0")
+
+    finished = run_step_script(stacks_step(workflow), cwd=tmp_path, env={}, stub_bin=stub.parent)
+
+    assert finished.returncode == 0, finished.stderr
+
+
+def test_the_stack_step_restates_nothing_the_tool_already_says(
+    workflow: dict[str, Any],
+) -> None:
+    """Same argument as the release step, and the same shape.
+
+    The tool prints a machine-readable reason, a sentence naming what to do, and the paths
+    inside the template that differ. A translation on top would be a second spelling of all
+    of it, and the two would drift.
+    """
+    assert stacks_step(workflow).strip() == f"uv run --frozen python {STACKS_TOOL}"
+
+
+def test_the_stack_check_never_prints_an_account_id(workflow: dict[str, Any]) -> None:
+    """Mutation: print the CLI's stderr when a call is refused.
+
+    A CloudFormation denial names the calling role's ARN and the stack ARN, and both carry
+    the account id. This job also prints template content, which is the account's rather than
+    this repository's, so the tool masks what it renders as well.
+    """
+    assert STACKS_TOOL in scripts(workflow, STACKS_JOB)
+    source = (PROJECT_ROOT / STACKS_TOOL).read_text(encoding="utf-8")
+
+    assert "carries the account id" in source
+    assert not ACCOUNT_LITERAL.search(source)
+
+
 @pytest.mark.parametrize(
     ("job_id", "step_name"),
     [
         (RECONCILE_JOB, RECONCILE_STEP),
         (WANDB_JOB, WANDB_STEP),
         (RELEASE_JOB, RELEASE_STEP),
+        (STACKS_JOB, STACKS_STEP),
     ],
 )
 def test_nothing_in_any_of_these_jobs_is_allowed_to_be_informational(
@@ -587,10 +682,12 @@ def test_the_role_can_read_and_cannot_write(role: dict[str, Any]) -> None:
         "s3:GetBucketLocation",
         "secretsmanager:GetSecretValue",
         "lambda:GetFunctionConfiguration",
+        "cloudformation:GetTemplate",
+        "cloudformation:ListStacks",
     }
     for action in granted:
         assert not any(fragment in action for fragment in MUTATING_ACTION_FRAGMENTS), action
-        assert action.startswith(("s3:", "secretsmanager:", "lambda:")), action
+        assert action.startswith(("s3:", "secretsmanager:", "lambda:", "cloudformation:")), action
         assert "*" not in action, action
 
     # The sharpest instance of the rule this test is for. A release check that could deploy
@@ -607,6 +704,21 @@ def test_the_role_can_read_and_cannot_write(role: dict[str, Any]) -> None:
     # ListSecrets has no resource type, so a grant of it could not be scoped to one secret
     # and would let a scheduled job enumerate every secret in the account.
     assert "secretsmanager:ListSecrets" not in granted
+
+    # The same rule again, on the widest grant in this policy. A drift check that could
+    # apply a template could answer its own finding by reconciling the account, and
+    # reconciling is exactly the operation that took the delete grant back on 2026-08-01.
+    # Fourteen of these stacks create roles, so it would also be a role-creation path behind
+    # a scheduled workflow, which the first section of infra/README.md is entirely about.
+    for forbidden in (
+        "cloudformation:CreateStack",
+        "cloudformation:UpdateStack",
+        "cloudformation:DeleteStack",
+        "cloudformation:CreateChangeSet",
+        "cloudformation:ExecuteChangeSet",
+    ):
+        assert forbidden not in granted
+
     assert all(statement["Effect"] == "Allow" for statement in statements(role))
 
 
@@ -616,31 +728,94 @@ def test_no_grant_reaches_a_whole_bucket_or_every_secret(role: dict[str, Any]) -
     This is a shared sandbox account with sixteen other teams in it. A read grant is not
     harmless here: the lineage store holds every run's records and Secrets Manager holds
     everybody's credentials, so an unscoped read is an exfiltration path with a schedule.
+
+    ONE STATEMENT IS EXEMPT AND IT IS NAMED RATHER THAN PATTERN-MATCHED, so a second one
+    cannot arrive by widening a resource to `*` and calling it precedent.
+    `cloudformation:ListStacks` has no resource type -- the request names no stack, so a
+    policy naming one denies the call -- and it is the action that stops the drift check
+    being confined to the stacks it already knows about. What it discloses is stack names,
+    statuses and timestamps, and no template, parameter or output.
     """
+    unscopable = {
+        statement["Sid"]
+        for statement in statements(role)
+        if statement["Action"] == "cloudformation:ListStacks"
+    }
+    assert unscopable == {"FindStacksNothingInTheRepositoryAccountsFor"}
+
     resources = [
         rendered
         for statement in statements(role)
-        for rendered in (
-            statement["Resource"]
-            if isinstance(statement["Resource"], list)
-            else [statement["Resource"]]
-        )
+        if statement["Sid"] not in unscopable
+        for rendered in statement_resources(statement)
     ]
 
     assert resources, "the policy grants nothing at all"
-    for resource in resources:
-        rendered = resource["Fn::Sub"] if isinstance(resource, dict) else resource
+    for rendered in resources:
         assert rendered != "*", "a wildcard resource is not a scoped grant"
         assert "sbsandbox-intern-edullm-" in rendered, rendered
 
     objects = [
-        str(statement["Resource"]["Fn::Sub"])
+        reachable
         for statement in statements(role)
+        for reachable in statement_resources(statement)
         if "s3:GetObject" in str(statement["Action"])
     ]
     assert all(reachable.count("/") >= 1 for reachable in objects), (
         "an object grant whose ARN stops at the bucket name reaches every key in it"
     )
+
+
+def test_the_unscopable_listing_is_confined_to_the_region_this_platform_deploys_in(
+    role: dict[str, Any],
+) -> None:
+    """Mutation: drop the condition, since the action cannot be scoped anyway.
+
+    It is the only narrowing the action admits and it is a small one, which is a reason to
+    write down what it buys rather than a reason to leave it off. The region lock permits
+    us-east-1 and us-east-2 and everything this platform has is in the first, so a listing of
+    the second is a read nothing here asks for.
+    """
+    listing = [
+        statement
+        for statement in statements(role)
+        if statement["Action"] == "cloudformation:ListStacks"
+    ]
+
+    assert len(listing) == 1
+    assert listing[0]["Condition"] == {
+        "StringEquals": {"aws:RequestedRegion": {"Fn::Sub": "${AWS::Region}"}}
+    }
+
+
+def test_the_template_grant_names_the_stacks_the_drift_check_compares() -> None:
+    """Mutation: widen the resource to `stack/sbsandbox-intern-edullm-*`, which reads scoped.
+
+    A template is the whole configuration of a stack, so this is the widest read in the
+    policy. A prefix would extend it silently to whatever a later phase deploys under a
+    matching name, and the point of the check is that a new stack is noticed rather than
+    absorbed -- an unnamed stack is reported as unaccounted for, and a prefix grant would
+    quietly make it comparable instead.
+
+    The expected names come out of the tool's own table rather than being written here, so a
+    stack added to one and not the other fails at review instead of as a denial at 05:00.
+    """
+    tool = PROJECT_ROOT / "tools" / "verify_deployed_stacks.py"
+    specification = importlib.util.spec_from_file_location("verify_deployed_stacks", tool)
+    assert specification is not None and specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+    sys.modules[specification.name] = module
+    specification.loader.exec_module(module)
+
+    role_properties = next(iter(iam_roles(load_template(ROLE_PATH))))
+    granted = {
+        reachable.rsplit(":stack/", 1)[1].removesuffix("/*")
+        for statement in statements(role_properties)
+        if statement["Action"] == "cloudformation:GetTemplate"
+        for reachable in statement_resources(statement)
+    }
+
+    assert granted == set(module.STACKS)
 
 
 def test_the_role_reads_the_two_buckets_the_reconciliation_asks_about(
@@ -658,9 +833,10 @@ def test_the_role_reads_the_two_buckets_the_reconciliation_asks_about(
     a morning.
     """
     reach = {
-        str(statement["Resource"]["Fn::Sub"]): set(statement_actions(statement))
+        reachable: set(statement_actions(statement))
         for statement in statements(role)
-        if ":s3:::" in str(statement["Resource"]["Fn::Sub"])
+        for reachable in statement_resources(statement)
+        if ":s3:::" in reachable
     }
 
     assert reach == {
@@ -688,9 +864,9 @@ def test_listing_is_confined_to_the_prefixes_each_check_reads(role: dict[str, An
     whatever else the bucket grows.
     """
     conditions = {
-        statement["Resource"]["Fn::Sub"].rsplit(":::", 1)[1]: statement["Condition"]["StringLike"][
-            "s3:prefix"
-        ]
+        statement_resources(statement)[0].rsplit(":::", 1)[1]: statement["Condition"][
+            "StringLike"
+        ]["s3:prefix"]
         for statement in statements(role)
         if "s3:ListBucket" in str(statement["Action"])
     }
@@ -724,11 +900,10 @@ def test_the_lambda_grant_names_the_functions_the_templates_declare(
         declared.add(function["Properties"]["FunctionName"])
 
     reach = {
-        str(statement["Resource"]["Fn::Sub"]).rsplit(":function:", 1)[1]: set(
-            statement_actions(statement)
-        )
+        reachable.rsplit(":function:", 1)[1]: set(statement_actions(statement))
         for statement in statements(role)
-        if ":lambda:" in str(statement["Resource"]["Fn::Sub"])
+        for reachable in statement_resources(statement)
+        if ":lambda:" in reachable
     }
 
     assert set(reach) == declared
@@ -752,11 +927,11 @@ def test_the_secret_grant_names_one_secret_rather_than_the_account(
     secrets = [
         statement
         for statement in statements(role)
-        if ":secretsmanager:" in str(statement["Resource"]["Fn::Sub"])
+        if any(":secretsmanager:" in reachable for reachable in statement_resources(statement))
     ]
 
     assert len(secrets) == 1
-    resource = str(secrets[0]["Resource"]["Fn::Sub"])
+    resource = statement_resources(secrets[0])[0]
     assert resource.endswith(f":secret:{WANDB_SECRET_NAME}-*"), resource
     assert not resource.endswith(":secret:*")
     assert statement_actions(secrets[0]) == ["secretsmanager:GetSecretValue"]
