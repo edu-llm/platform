@@ -74,7 +74,12 @@
 #
 # Cut from main together with the validator's, from c9a785d, because one config edit is two
 # releases and the workflow that can upload only runs on main.
+#
+# AND AGAIN, FROM dccfa06. Twelve reviews were added to config/image-exceptions.yaml for the
+# CUDA base olmo-eval-full builds on. The recorder does not read that file and does not
+# consult the image gate at all; it owes this release because the builder copies
+# config/*.yaml into whatever zip it builds. Same shared-config case as every entry above.
 schema_version: 1
 s3_key: lifecycle-recorder/lifecycle-recorder.zip
-s3_object_version: NAMpQOlE1d_BkcPagnOYpjYV4FvstE5T
-sha256: 99c0223a989f8b2816697804a82367ab911714a3de553092c9ea65b2dd97ab02
+s3_object_version: rAzYU3UI5HktR.SRsm6E2gohemQu_1Ov
+sha256: 66ae2027edb8b4afc572afc6bd304d471e51477e231084f14fda071155773a10

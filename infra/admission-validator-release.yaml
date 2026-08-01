@@ -115,14 +115,21 @@
 # Released from main rather than from the branch, because deploy-phase2-admission.yml only
 # runs there. The zip was built from c9a785d and the digest below is what a local rebuild of
 # that tree produces, checked rather than copied.
+#
+# THIS RELEASE IS THE LAST THING BETWEEN A REGISTERED EVALUATION REPOSITORY AND A RUN, WHICH
+# IS WHY IT IS WORTH SAYING WHAT IT CARRIES. config/image-exceptions.yaml gained twelve
+# reviews of the Ubuntu 24.04 findings in olmo-eval-full's CUDA base. The validator reads
+# that file on every admission, so until this deploys, a submission naming olmo-eval-full is
+# registered, has a workload profile, is offered by the form, and is refused at the image
+# gate on thirteen criticals a reviewer has already accepted. Cut from dccfa06.
 schema_version: 1
 
 #: The object the template's Code block names. Kept here as well so the two can be
 #: compared: a version id edited in one place and not the other is a template pointing at
 #: a zip nobody recorded, or a record describing a zip nobody deployed.
 s3_key: admission-validator/admission-validator.zip
-s3_object_version: mHdAd50L6OURGy255fkPeLxWO32X6Xzp
+s3_object_version: oi_ylciD3ryq7TCdnkd29WVRyFQIl6Tn
 
 #: sha256 of the uploaded zip, as tools/build_admission_lambda.py reports it. This is the
 #: field that ties the release to a tree rather than to a moment.
-sha256: e0e420a5cdba8a028c950db9ac2420e28dd453ba211d42c526c784760587eb09
+sha256: aefde92a2c7a3c1d634cd758a05783c4af82a7fbc86c7bcc82b566dbb0b6efb2
