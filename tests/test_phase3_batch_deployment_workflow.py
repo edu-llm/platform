@@ -95,8 +95,16 @@ def test_the_workflow_runs_only_on_dispatch_and_pushes_to_main_that_touch_phase3
     parsed = workflow()
 
     assert set(parsed["on"]) == {"workflow_dispatch", "push"}
-    assert parsed["on"]["workflow_dispatch"] is None
     assert parsed["on"]["push"]["branches"] == ["main"]
+
+    # The dispatch carries one optional input and it must stay optional with an empty
+    # default: a required one would make every hand-started deploy answer a question about a
+    # run, and a non-empty default would make every deploy try to report on a run that does
+    # not exist.
+    dispatch = parsed["on"]["workflow_dispatch"]
+    assert set(dispatch["inputs"]) == {"describe_run"}
+    assert dispatch["inputs"]["describe_run"]["required"] is False
+    assert dispatch["inputs"]["describe_run"]["default"] == ""
 
 
 def test_the_push_paths_are_exactly_the_templates_this_workflow_deploys() -> None:
@@ -272,10 +280,15 @@ def test_the_workflow_never_submits_a_job_and_never_asks_to() -> None:
 
     assert ("batch", "submit-job") not in verbs
     assert ("batch", "terminate-job") not in verbs
+    # `list-` joined the allowed prefixes with the run report, which finds a job by searching
+    # each queue for one whose name is the run id -- the run id is the job *name*, and only a
+    # list can search by it. `logs` joined the constrained services at the same time: the
+    # report reads a log stream, and a service left off this list is one whose verbs nothing
+    # here checks.
     assert all(
-        command[2].startswith(("describe", "validate", "deploy", "get-"))
+        command[2].startswith(("describe", "validate", "deploy", "get-", "list-"))
         for command in commands
-        if command[1] in ("batch", "events", "stepfunctions", "s3api")
+        if command[1] in ("batch", "events", "stepfunctions", "s3api", "logs")
     )
 
 
@@ -396,12 +409,12 @@ def test_every_run_body_is_strict_about_failures_and_unset_variables() -> None:
     # counted in deliberately.
     scripts = run_scripts()
 
-    # Four rather than three since 2026-08-01: the failure diagnostic is counted in. It is
+    # Five since the run report joined the failure diagnostic, both added 2026-08-01. It is
     # the one run body here that executes only when something has already gone wrong, which
     # makes strictness matter more rather than less -- a diagnostic that swallowed its own
     # error would report nothing and still let the job finish reporting the deploy failure,
     # which is indistinguishable from the diagnostic having found nothing to say.
-    assert len(scripts) == len(DEPLOYMENT_ORDER) + 4
+    assert len(scripts) == len(DEPLOYMENT_ORDER) + 5
     assert all(script.startswith("set -euo pipefail\n") for script in scripts)
 
 
