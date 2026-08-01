@@ -206,6 +206,49 @@ jobs:
       #
       # That proof comes from tools/probe_batch_compute.py before this stack is built, and
       # from the Wave 5 live matrix afterwards.
+      # WHY THE STACK REFUSED, WHICH THE DEPLOY ITSELF DOES NOT SAY.
+      #
+      # `cloudformation deploy` prints "Failed to create/update the stack. Run the following
+      # command to fetch the list of events leading up to the failure" and exits 255. The
+      # command it names is one nobody can run: the deployer role is assumed inside this job
+      # and is gone by the time a person reads the log, and no laptop credential in this
+      # project can reach the account at all right now. So the reason lives for thirty
+      # seconds inside a runner and is then unreachable forever.
+      #
+      # That happened on 2026-08-01 08:06 UTC. Adding JobStateTimeLimitActions to the two job
+      # queues was refused, the deploy reported only its own exit code, and diagnosing it
+      # meant reading the template and guessing at which of the property constraints had been
+      # violated.
+      #
+      # if: failure() rather than always(), because a green deploy has no events worth
+      # printing and this would otherwise add noise to every run. It reads the events rather
+      # than the stack status, and only the FAILED ones, because a rolled-back stack reports
+      # UPDATE_ROLLBACK_COMPLETE at the top level -- a status that says something went wrong
+      # and never says what.
+      #
+      # continue-on-error so that a diagnostic which cannot itself run does not replace the
+      # deploy failure it was trying to explain with a different one.
+      - name: Say why the stack refused
+        if: failure()
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          for stack in \
+            sbsandbox-intern-edullm-phase3-outputs \
+            sbsandbox-intern-edullm-phase3-network \
+            sbsandbox-intern-edullm-phase3-batch \
+            sbsandbox-intern-edullm-phase4-gpu \
+            sbsandbox-intern-edullm-phase3-events \
+            sbsandbox-intern-edullm-phase2-admission
+          do
+            echo "--- ${stack}"
+            aws cloudformation describe-stack-events \
+              --stack-name "${stack}" \
+              --max-items 40 \
+              --query "StackEvents[?contains(ResourceStatus, 'FAILED')].{logical:LogicalResourceId,status:ResourceStatus,reason:ResourceStatusReason}" \
+              --output table || echo "no events readable for ${stack}"
+          done
+
       - name: Verify CPU and GPU batch execution
         run: |
           set -euo pipefail
