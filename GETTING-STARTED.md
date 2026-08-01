@@ -165,11 +165,19 @@ The three dataset variables come from the registry entry behind the field you pi
 from anything you typed, which is what makes it impossible for the record and the run to
 name different corpora.
 
-## Stopping a run
+## Looking at a run, and stopping one
 
-If a run is doing the wrong thing, [Cancel a run](../../actions/workflows/cancel-run.yml)
-stops it. Give it the run id and a reason. You can stop your own runs; admins can stop
-anyone's.
+[Look at a run, or stop it](../../actions/workflows/cancel-run.yml) answers both. Give it a
+run id and press the button: it reports what the run is doing — queued, running, finished,
+why it is not running if it is not, its exit code, and the name of its CloudWatch log
+stream. Nothing changes unless you tick **stop**.
+
+That is the one to reach for when a run seems stuck. Batch says `RUNNABLE` both for a job
+waiting on a machine and for one asking for more of a machine than exists, and the reason
+beside the status is what tells them apart.
+
+To stop a run, tick **stop** and give a reason. You can stop your own runs; admins can stop
+anyone's. Looking is not restricted — you can look at anybody's.
 
 The reason is recorded on the termination, so the run's history says it was cancelled
 rather than that it failed. Anything already written to the output prefix stays, including
@@ -177,7 +185,7 @@ checkpoints — so stopping a run to fix its command and resubmitting does not t
 hours it already did.
 
 A run that has already finished cannot be stopped, and the workflow says so rather than
-reporting a failure.
+reporting a failure. It can still be looked at for a few days, until Batch stops listing it.
 
 ## When it goes wrong
 
