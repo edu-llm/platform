@@ -34,6 +34,19 @@ rate the right number for a forecast and the wrong number for a bill: the actual
 moves continuously and is typically well below it. Reporting the on-demand figure as
 *actual* spend would produce a number that is knowably wrong and indistinguishable from a
 right one, so these runs are reported with no figure and the reason beside them.
+
+**A team is a string somebody typed until it is reconciled against the roster.** The
+``team`` box on the submission form is free text, and the form says as much: any lead may
+approve any run, so a misspelling there delays nothing and nothing else refuses it. Grouped
+by that string alone a misspelling becomes a team with a spend line of its own, no lead
+attached to it and nothing to tell it apart from a group that exists.
+:func:`attribute_to_teams` groups against the ``TeamBindingCatalog`` in
+``config/organization.yaml`` instead, so spend lands on a team that carries a lead, a GitHub
+team and whatever attribution tags were recorded for it. Spend claimed against a name the
+catalog does not carry is reported under that name rather than folded into anything,
+because an unrecognised claim is a finding about the roster or about the form rather than a
+rounding error. Where the catalog binds no teams at all every claim lands there, and that
+is the answer rather than a fault.
 """
 
 from __future__ import annotations
@@ -43,6 +56,7 @@ from dataclasses import dataclass
 from decimal import Decimal, localcontext
 
 from edullm_platform.contracts.admission import IntentRecord
+from edullm_platform.contracts.bindings import AttributionTag, TeamBindingCatalog
 from edullm_platform.contracts.lifecycle import SchedulerAttempt
 from edullm_platform.contracts.workload import ComputeProfile
 
@@ -50,7 +64,11 @@ __all__ = [
     "SECONDS_PER_HOUR",
     "SPOT_PROFILE_SUFFIX",
     "RunCost",
+    "TeamAttribution",
+    "TeamSpend",
+    "UnboundTeamSpend",
     "aggregate",
+    "attribute_to_teams",
     "run_costs",
     "total_priced",
 ]
@@ -194,3 +212,126 @@ def aggregate(costs: Iterable[RunCost], *, key: str) -> Mapping[str, Decimal]:
             continue
         grouped[getattr(entry, key)] = grouped.get(getattr(entry, key), Decimal(0)) + entry.cost_usd
     return grouped
+
+
+@dataclass(frozen=True)
+class TeamSpend:
+    """What one bound team spent, with the roster's answer to who owns it.
+
+    ``runs`` counts every run that claimed the team and ``unpriced_runs`` how many of those
+    carry no figure, so a team whose whole month was spot work reads as busy with nothing
+    priced rather than as idle. ``cost_usd`` is the sum of the priced ones only, for the
+    reason :func:`total_priced` gives.
+    """
+
+    team_id: str
+    github_team_slug: str
+    lead_logins: tuple[str, ...]
+    attribution_tags: tuple[AttributionTag, ...]
+    cost_usd: Decimal
+    runs: int
+    unpriced_runs: int
+
+
+@dataclass(frozen=True)
+class UnboundTeamSpend:
+    """Spend booked against a team name nothing in the binding catalog carries.
+
+    Held apart from :class:`TeamSpend` rather than shaped like it, because there is no lead,
+    no GitHub team and no attribution tag to give: the name came out of a free-text box and
+    the roster has never heard of it. A caller that wanted to render the two alike would
+    have to invent those fields, which is the misattribution this separation prevents.
+    """
+
+    claimed_team: str
+    cost_usd: Decimal
+    runs: int
+    unpriced_runs: int
+
+
+@dataclass(frozen=True)
+class TeamAttribution:
+    """Every bound team's spend, and every claim that matched none of them.
+
+    Both sequences are ordered by spend, highest first, with the name breaking a tie. That
+    leaves the teams which spent nothing together at the end, where they read as a list of
+    quiet groups rather than as an interruption.
+    """
+
+    bound: tuple[TeamSpend, ...]
+    unbound: tuple[UnboundTeamSpend, ...]
+
+    @property
+    def unbound_cost_usd(self) -> Decimal:
+        return sum((entry.cost_usd for entry in self.unbound), Decimal(0))
+
+    @property
+    def unbound_runs(self) -> int:
+        return sum(entry.runs for entry in self.unbound)
+
+
+@dataclass
+class _Tally:
+    cost_usd: Decimal = Decimal(0)
+    runs: int = 0
+    unpriced_runs: int = 0
+
+    def add(self, entry: RunCost) -> None:
+        self.runs += 1
+        if entry.cost_usd is None:
+            self.unpriced_runs += 1
+        else:
+            self.cost_usd += entry.cost_usd
+
+
+def attribute_to_teams(
+    costs: Iterable[RunCost], *, catalog: TeamBindingCatalog
+) -> TeamAttribution:
+    """Spend per bound team, reconciled against the roster, with every stray claim named.
+
+    A bound team that ran nothing is returned at zero rather than omitted. Spending nothing
+    and being a team nobody has heard of are different facts, and a report that dropped the
+    first could not tell a reader that a group had gone quiet.
+
+    A claim is matched to a binding by exact team id and by nothing else. Casefolding it or
+    matching it loosely would launder the misspellings this reconciliation exists to
+    surface, and a run attributed to the wrong team is indistinguishable from a correctly
+    attributed one.
+    """
+    bound_tallies = {team.team_id: _Tally() for team in catalog.teams}
+    unbound_tallies: dict[str, _Tally] = {}
+    for entry in costs:
+        tally = bound_tallies.get(entry.team)
+        if tally is None:
+            tally = unbound_tallies.setdefault(entry.team, _Tally())
+        tally.add(entry)
+
+    bound = tuple(
+        TeamSpend(
+            team_id=team.team_id,
+            github_team_slug=team.github_team_slug,
+            lead_logins=team.lead_logins,
+            attribution_tags=team.attribution_tags,
+            cost_usd=bound_tallies[team.team_id].cost_usd,
+            runs=bound_tallies[team.team_id].runs,
+            unpriced_runs=bound_tallies[team.team_id].unpriced_runs,
+        )
+        for team in catalog.teams
+    )
+    unbound = tuple(
+        UnboundTeamSpend(
+            claimed_team=claimed,
+            cost_usd=tally.cost_usd,
+            runs=tally.runs,
+            unpriced_runs=tally.unpriced_runs,
+        )
+        for claimed, tally in unbound_tallies.items()
+    )
+    return TeamAttribution(
+        # Ordered here rather than at each call site, so that two readings of the same spend
+        # cannot disagree about who is at the top of it.
+        bound=tuple(sorted(bound, key=lambda spend: (-spend.cost_usd, spend.team_id))),
+        unbound=tuple(
+            sorted(unbound, key=lambda spend: (-spend.cost_usd, spend.claimed_team))
+        ),
+    )
