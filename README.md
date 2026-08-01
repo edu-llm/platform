@@ -1,11 +1,48 @@
 # edu-llm platform
 
-**If you came here to run a training job, read [GETTING-STARTED.md](GETTING-STARTED.md)
-instead.** It is about five minutes to your first run, and it lists the six things that
-will otherwise waste a twelve-hour one. Everything below this line is about how the
-platform is built, which you do not need to know to use it.
+**If you came here to run a training job, read [GETTING-STARTED.md](GETTING-STARTED.md).**
+It is about five minutes to your first run, it lists the six things that will otherwise
+waste a twelve-hour one, and it is the only file here you need.
+
+This platform runs training jobs on GPUs in AWS and keeps a record of every one: what code
+ran, on what machine, who approved it, what it cost, and where its output went. You submit
+through a form on GitHub and a lead approves it. You do not need an AWS account,
+credentials, or anything installed on your laptop.
+
+## Submitting a run
+
+[Submit a run](../../actions/workflows/submit-run.yml) is the form. Five fields decide a
+run and the rest have defaults that are correct for a first one, so the shortest useful
+path is to open [GETTING-STARTED.md](GETTING-STARTED.md) beside it and fill in what that
+tells you. It says which workload profile to start on, what the one training command is,
+and what each field actually decides.
+
+If you are on the `team-members` team in this organisation you can already submit, and
+nobody has to grant you anything first. If you are not, ask through the [access
+request](../../issues/new?template=access-request.yml) template.
+
+[Look at a run, or stop it](../../actions/workflows/cancel-run.yml) answers what a run is
+doing once it has been submitted: queued, running, finished, why it is not running if it is
+not, and its exit code. Nothing changes unless you ask it to stop the run. It is not live
+yet, because the identity it assumes needs a stack that has to be applied by hand; it
+refuses today and names that stack, and GETTING-STARTED.md says who to ask in the meantime.
+
+## When a run goes wrong
+
+Open an issue. There are templates for [a run that went
+wrong](../../issues/new?template=run-problem.yml), [a dataset you
+need](../../issues/new?template=dataset-request.yml), and [the platform getting in your
+way](../../issues/new?template=platform-feedback.yml).
+
+**@philote-dev reads these.** Include the workflow run link, which carries the run id, and
+the run id is what every record is filed under.
 
 ---
+
+## How the platform is built
+
+**Everything below this line is for people changing the platform rather than using it.** A
+researcher never needs it, and nothing in GETTING-STARTED.md depends on it.
 
 Shared control plane for eduLLM research workloads. This repository holds the
 contracts that decide whether a compute run is valid and who may approve it, the
@@ -23,7 +60,7 @@ was refused at admission before anything was launched, which is also a result wo
 What each of the eight left behind is committed under `fixtures/evidence/` and rendered in
 `proof/`.
 
-## Layout
+### Layout
 
 | Path | Contents |
 | --- | --- |
@@ -42,7 +79,7 @@ The library is the single implementation. The submission workflow, the admission
 running inside AWS, and the acceptance gates all run these same contracts, rather than
 reimplementing the rules.
 
-## Commands
+### Commands
 
 Requires [uv](https://docs.astral.sh/uv/).
 
@@ -88,7 +125,7 @@ byte-reproducible, so a second run should produce no diff:
 uv run python tools/export_schemas.py
 ```
 
-## Acceptance gate
+### Acceptance gate
 
 ```bash
 uv run python tools/validate_phase0.py
@@ -130,7 +167,7 @@ The criterion-to-test mapping lives in exactly one place,
 `src/edullm_platform/phase0_criteria.py`. The gate and the proof-bundle generator both
 import it, so the matrix in the bundle and the gate's verdict cannot disagree.
 
-### The later phases
+#### The later phases
 
 Each phase has a gate of its own, reading a definition of its own and applying the same
 three statuses through the same shared machinery in `src/edullm_platform/criteria.py`.
@@ -206,7 +243,7 @@ carries and which has been observed stopping a real job. Building cancellation b
 later phase, so Phase 3's criteria no longer carry it and its numbering skips 5, 6 and 7
 where those checks used to be.
 
-## Proof bundle
+### Proof bundle
 
 ```bash
 uv run python tools/build_phase0_proof.py
@@ -255,7 +292,7 @@ empty: `event-evidence.md`, which has no capture, and `rollback-evidence.md`, wh
 rehearsal has not been performed. A document omitted because there was nothing to put in it
 would make the phase look like it has fewer claims than it has.
 
-## Captured evidence
+### Captured evidence
 
 `fixtures/evidence/` holds sanitized, read-only observations of the account, one directory
 per phase: the GitHub organization plan and applied AWS service quotas at the top level;
@@ -292,7 +329,7 @@ the image configurations of one commit built several times from the same pinned 
 the analysis of where they diverge is a test rather than a paragraph. See
 `proof/phase-1/image-rebuild-comparison.md`.
 
-## Open decisions
+### Open decisions
 
 `src/edullm_platform/open_decisions.py` records questions this repository has surfaced and
 deliberately has not answered. A gap means unfinished work and a deferral means a
