@@ -52,6 +52,19 @@ __all__ = [
 
 class RegisteredDatasetRelease(ContractModel):
     release_id: DatasetReleaseId
+    #: Still accepted by admission, no longer offered on the form. The two are separate
+    #: questions and conflating them forces a bad choice.
+    #:
+    #: ``dolma-2026-07`` is the case that needed it. Every historical intent record names it,
+    #: because the field was required before ``none`` existed, so de-registering it would
+    #: make those records unresolvable against the registry that is supposed to explain them.
+    #: But no dataset was ever bound to it and no run ever read one, so offering it on the
+    #: form invites a submitter to record that their run read something it did not -- into a
+    #: record that is immutable by design and cannot be corrected afterwards.
+    #:
+    #: Defaulted false so every existing entry means what it meant, and so retiring one is a
+    #: deliberate line in config/datasets.yaml rather than an omission somewhere.
+    retired: bool = False
 
 
 class PublishedDatasetReference(ContractModel):

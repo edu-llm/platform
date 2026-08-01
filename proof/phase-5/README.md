@@ -2,8 +2,8 @@
 
 Phase: phase-5
 Bundle schema version: 1
-Source commit: 497386522d12cbd76fab6d28691439632f5dd8b8
-Generated: 2026-08-01T06:32:05+00:00
+Source commit: dd5c6eb50c0f07f9ff7c616fe91d99b3e0f5ef40
+Generated: 2026-08-01T07:35:08+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 5 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase5_proof.py` at generation time. No criterion is a gap and the gate is green, and criterion 6 is deferred rather than covered -- a recorded decision not to satisfy it yet, which passes the gate without anybody having observed it. Read that entry in `negative-case-matrix.md` first: it carries the reason and the trigger, and the Known limitations below say what this phase does not establish.
 
@@ -28,10 +28,10 @@ The one check that is outstanding is a different kind of open from every other i
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3888 |
-| suite tests executed | 3695 |
-| suite passed | 3695 |
-| suite failed | 0 |
+| suite tests collected | 3923 |
+| suite tests executed | 3730 |
+| suite passed | 3728 |
+| suite failed | 2 |
 | suite errored | 0 |
 | suite skipped | 0 |
 | matrix node ids executed | 93 |
@@ -71,8 +71,8 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | --- | --- |
 | .github/CODEOWNERS | sha256:defc3ec7e43f5dc70f137ff21566d23e3d961355fbc871467e3676c9ab651df4 |
 | .github/workflows/build-research-image.yml | sha256:f39972c4da20a63b3fd0f725ccaf521dd893d94c4d72d6f376456e081223e122 |
-| .github/workflows/submit-run.yml | sha256:a0b530e38af3f2ab805a78e6f5a7978182f276beecc96635f0d4166ffc76f601 |
-| README.md | sha256:51c34da1f6d766423d1779c989930cefb96d01809a1659fef1de305940f29f4d |
+| .github/workflows/submit-run.yml | sha256:9d5befa5f1b4ed558f9591206029bbeba8f5e85ddd8166d929cf4a6ed1b5f4c6 |
+| README.md | sha256:1e5612ac908f1728593a8d413875f1988d3ee73a1fc3fe380d6892359a304949 |
 | config/image-exceptions.yaml | sha256:0828f4203385bbc3adbd8521f62768e7f4eb46f56382bc6223d37b89aae7a49c |
 | config/organization.yaml | sha256:cea2d2123d2fb5794614e6a4b8a362c8aaa33626f20ae28a13cb673fadf4ac78 |
 | fixtures/evidence/phase-5/branch-protection.sanitized.json | sha256:99a949fb3cae169e5b77cc53661e660410928552213615314bab97ec83100ef5 |

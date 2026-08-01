@@ -23,9 +23,19 @@
 # does not record a fact about a run, it invents one, and it invents it into a record that is
 # immutable by design and so cannot be corrected afterwards.
 #
-# `dolma-2026-07` stays listed. It is named by every historical intent record and by the
-# manifest fixtures, and de-registering it would make those records unresolvable to prove a
-# point already made by the entry above it.
+# `dolma-2026-07` stays listed and is no longer offered, which are separate questions that
+# used to be answered together. It is named by every historical intent record and by the
+# manifest fixtures, so de-registering it would make those records unresolvable against the
+# registry meant to explain them. But nothing was ever bound to it and no run ever read one,
+# so a submitter picking it off the form records that their run read something it did not,
+# into a record that is immutable by design. `retired: true` keeps admission's answer and
+# removes the menu item.
+#
+# That flag and the tokenizer join described below answer the same question by different
+# means, and both are needed. `retired` is a fact about this entry that no computation can
+# derive -- there is nothing to look up, because nothing was ever published under the name.
+# The join is a fact about a corpus that does exist and whose tokenizer no workload can
+# construct, so it changes on its own when OLMo-core grows one.
 #
 # WHY TWO CORPORA AND NOT THE NINE THAT EXIST. Seven pretrain corpora and two tokenizers are
 # published upstream. Every entry here is a promise the option works, and that promise is only
@@ -68,6 +78,7 @@
 schema_version: 1
 releases:
   - release_id: dolma-2026-07
+    retired: true
   - release_id: none
 published:
   - reference_id: lean4-mathlib-bytes-v3

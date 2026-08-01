@@ -2,8 +2,8 @@
 
 Phase: phase-0
 Bundle schema version: 1
-Source commit: 497386522d12cbd76fab6d28691439632f5dd8b8
-Generated: 2026-08-01T06:24:52+00:00
+Source commit: dd5c6eb50c0f07f9ff7c616fe91d99b3e0f5ef40
+Generated: 2026-08-01T07:27:49+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 0 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase0_proof.py` at generation time.
 
@@ -18,10 +18,10 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3888 |
-| suite tests executed | 3695 |
-| suite passed | 3695 |
-| suite failed | 0 |
+| suite tests collected | 3923 |
+| suite tests executed | 3730 |
+| suite passed | 3726 |
+| suite failed | 4 |
 | suite errored | 0 |
 | suite skipped | 0 |
 | matrix node ids executed | 254 |
@@ -100,7 +100,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | fixtures/manifests/sagemaker-routine.yaml | sha256:d5d57c6970bb5c8c618cd70bfedc9dcb3d7fef8393592d9543a6b22dd6e2af2b |
 | schemas/batch-job-binding.schema.json | sha256:41a20845192e959dd91b32f87d57da0cf3b04e5a2177e0200f27aec2cece901c |
 | schemas/checkpoint-manifest.schema.json | sha256:f51cc8c500c81cd1d286dc86c59ff5f24b09a640127034f1527494251d76a07e |
-| schemas/datasets.schema.json | sha256:6d5b79e4153e2241489115eaff52cf659b1f4823fedc41c15cc62d0d131c54c3 |
+| schemas/datasets.schema.json | sha256:28c781ffa1a7df6b999fce428aa8488aec5b8d34081089205e53d5fa6e797f36 |
 | schemas/decision-record.schema.json | sha256:852ee127b92bc2a592f5da86972e32ed50e949548951bd66fed94b237b6ce821 |
 | schemas/image-exceptions.schema.json | sha256:e57e7388a87f331a31c9f1e871065306421772bf1da3a043b46f121bde1ffb17 |
 | schemas/intent-record.schema.json | sha256:39b40c1375c470efe47179c52e898562a7623c1a79f429de8f078f46cf3ddc8d |

@@ -45,7 +45,6 @@ on:
         options:
           - none
           - regmix-10b-v1
-          - dolma-2026-07
       team:
         description: "Your group, lower-case with hyphens, such as memory-split. It records whose work this is and points the request at a lead. Any lead may approve any run, so a typo here delays nothing."
         required: true
