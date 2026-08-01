@@ -58,13 +58,11 @@ TEAM = "platform"
 #: evidence. It cannot be left behind and it cannot cover a digest other than the one in the
 #: template.
 #:
-#: 2026-08-01: OLMo-core 2f111723. Its predecessor, 7eeba5af, carried the C compiler, the
-#: reader and .edullm/train_on_corpus.py and still could not open a corpus -- the entry point
-#: handed edullm_data a boto3 client, which does not implement the four-method protocol the
-#: reader types that parameter against, so every run died with an AttributeError in under a
-#: second. That image never carried a training run and never will; this one is the re-pin.
+#: 2026-08-01: OLMo-core 298afac6. Its predecessor, 2f111723, opened a corpus and trained on
+#: one. What it did not do is report itself: the summary the capture reads is printed by the
+#: entry point, and that print is what this image adds.
 AWAITING_ITS_FIRST_TRAINING_RUN = (
-    "sha256:6e0dd3532a60651acf6e94798425f3bc0cfcf74471d8451f2a7f4a65d84388e7"
+    "sha256:50e2488ab3c77e859a8fe3e6d4a06d7d54f5c852bc7c5dd201fb9db53bff455b"
 )
 
 
