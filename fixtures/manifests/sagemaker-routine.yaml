@@ -12,7 +12,7 @@ command:
   - configs/smoke.yaml
 team: modeling
 wandb_project: olmo-core-smoke
-workload_profile: olmo-core-train-smoke
+workload_profile: olmo-core-train-4gpu
 # BACKEND NEUTRALITY: this is gpu-routine.yaml with one field changed. A SageMaker-managed
 # submission names a SageMaker-intended compute profile and adds no backend field of its own.
 compute_profile: gpu-1xa10g-sagemaker

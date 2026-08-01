@@ -25,7 +25,7 @@ wandb_project: olmo-core-tokenize
 # now requires of a real submission. Its registered runtime bound is one hour; this manifest
 # overrides nothing, and the reviewed cost in REPRESENTATIVE_MANIFEST_COSTS is two hours of
 # c7i.8xlarge, which is the bound this fixture declares rather than the profile's default.
-workload_profile: olmo-core-cpu-smoke
+workload_profile: olmo-core-check-cpu
 compute_profile: cpu-32vcpu
 maximum_runtime_hours: "2"
 maximum_attempts: 1

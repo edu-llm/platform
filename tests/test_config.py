@@ -184,7 +184,7 @@ def catalog_payload() -> dict[str, object]:
         ],
         "workloads": [
             {
-                "name": "dolma-tokenize-smoke",
+                "name": "dolma-tokenize",
                 "repository": "dolma",
                 "compute_profile": "cpu-32vcpu",
                 "maximum_runtime_hours": "2",
@@ -192,7 +192,7 @@ def catalog_payload() -> dict[str, object]:
                 "checkpoint": None,
             },
             {
-                "name": "olmo-core-train-smoke",
+                "name": "olmo-core-train-4gpu",
                 "repository": "OLMo-core",
                 "compute_profile": "gpu-4xa10g",
                 "maximum_runtime_hours": "1",

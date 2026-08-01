@@ -68,7 +68,7 @@ ACCEPTED_EVENT: dict[str, Any] = {
     "approver": "philote-dev",
     "approving_environment": "run-approval-lead",
     "approved_manifest_sha256": (
-        "sha256:d6de8ce982365bf8491922097edf7aeaf28a280e9cf005eb4131cb3a41360770"
+        "sha256:4e7786bd9396a6e4e9a9e184422d28ee18070cfad7f762ea8135c81d5d553147"
     ),
     # Which repository ReadImageScan described against, resolved from the registry by the
     # submitting workflow. Checked against config/repositories.yaml rather than believed:
@@ -81,7 +81,7 @@ ACCEPTED_EVENT: dict[str, Any] = {
         "image_digest": (
             "sha256:4ebdba1ba3b57096efb4f4647ed41ed5ded4ac9e77e8c9038b7ff24db0bc6db8"
         ),
-        "workload_profile": "olmo-core-cpu-smoke",
+        "workload_profile": "olmo-core-check-cpu",
         "compute_profile": "cpu-32vcpu",
         "dataset_release": "dolma-2026-07",
         "team": "memory-split",

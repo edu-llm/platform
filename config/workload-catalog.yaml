@@ -114,11 +114,28 @@ compute_profiles:
     pricing_observed_at: "2026-07-25"
     provisioned: false
 workloads:
+  # THESE FOUR WERE RENAMED, AND RECORDS WRITTEN BEFORE THE RENAME STILL CARRY THE OLD
+  # NAMES. Every one of them ended in "-smoke", which is jargon a researcher reading the
+  # submission dropdown has no reason to know and which understates what the entry is for:
+  # the CPU and GPU entries are the checks somebody runs first, not throwaways.
+  #
+  #   olmo-core-cpu-smoke    -> olmo-core-check-cpu
+  #   olmo-core-gpu-smoke    -> olmo-core-check-gpu
+  #   olmo-core-train-smoke  -> olmo-core-train-4gpu
+  #   dolma-tokenize-smoke   -> dolma-tokenize
+  #
+  # The stored records were deliberately not rewritten. A lineage record states what a run
+  # was submitted as, it carries a manifest_sha256 over its own bytes, and editing the name
+  # inside one would both falsify the record and break its digest. So an audit of anything
+  # submitted before this rename finds a workload_profile that is not in this file, and this
+  # table is the answer to why. RunManifest.workload_profile is a plain string with no
+  # lookup against this catalog, which is what makes those records still parse.
+  #
   # The CPU workload Phase 3 actually runs. It names OLMo-core rather than dolma because
   # OLMo-core is the only repository config/repositories.yaml registers and the only one
   # with a published image; a workload naming an unregistered repository cannot reach Batch
   # however well the rest of the path works.
-  - name: olmo-core-cpu-smoke
+  - name: olmo-core-check-cpu
     repository: OLMo-core
     compute_profile: cpu-32vcpu
     maximum_runtime_hours: "1"
@@ -127,13 +144,13 @@ workloads:
   # Retained and still unrunnable: dolma has no registration and no image. Kept because the
   # catalog is a pricing-and-shape document and this entry is the shape a tokenizer job
   # takes, not a claim that one can be submitted today.
-  - name: dolma-tokenize-smoke
+  - name: dolma-tokenize
     repository: dolma
     compute_profile: cpu-32vcpu
     maximum_runtime_hours: "2"
     maximum_attempts: 1
     checkpoint: null
-  # The GPU workload Phase 4 actually runs, and a sibling of olmo-core-train-smoke rather
+  # The GPU workload Phase 4 actually runs, and a sibling of olmo-core-train-4gpu rather
   # than a repointing of it. The four-GPU shape below is a real future target and deleting
   # it would lose its pricing entry, which is what this catalog is for.
   #
@@ -145,18 +162,18 @@ workloads:
   #
   # checkpoint is null, and that is a claim rather than an omission. A CheckpointContract
   # says the platform requires periodic checkpointing at an interval to a destination; a
-  # twenty-step smoke has no interval to checkpoint on. The checkpoint the training run
+  # twenty-step check has no interval to checkpoint on. The checkpoint the training run
   # writes goes under the run's own output prefix, which
   # contracts/results.py::output_prefix derives at submit time. Writing a static prefix here
   # would add a fourth literal answer to "where does a run write", which is the exact defect
   # D5 exists to have closed -- and a static string cannot carry a run id anyway.
-  - name: olmo-core-gpu-smoke
+  - name: olmo-core-check-gpu
     repository: OLMo-core
     compute_profile: gpu-1xa10g
     maximum_runtime_hours: "1"
     maximum_attempts: 1
     checkpoint: null
-  - name: olmo-core-train-smoke
+  - name: olmo-core-train-4gpu
     repository: OLMo-core
     compute_profile: gpu-4xa10g
     maximum_runtime_hours: "1"

@@ -12,11 +12,11 @@ command:
   - configs/extended-smoke.yaml
 team: modeling
 wandb_project: olmo-core-extended
-workload_profile: olmo-core-train-smoke
+workload_profile: olmo-core-train-4gpu
 compute_profile: gpu-4xa10g
 # POLICY EXCEPTION: maximum_runtime_hours=13 exceeds the routine ceiling of 12 hours.
 # Attempts (1) remain within routine bounds; all references are registered and immutable.
-# Workload profile olmo-core-train-smoke declares 1 hour in the catalog; Phase 0 does not
+# Workload profile olmo-core-train-4gpu declares 1 hour in the catalog; Phase 0 does not
 # enforce manifest-to-catalog conformance because any run over the 12-hour policy ceiling
 # necessarily exceeds these smoke profiles. This divergence is intentional.
 maximum_runtime_hours: "13"

@@ -66,7 +66,7 @@ def sweep_manifest_payload(**overrides: object) -> dict[str, object]:
         "command": ["python", "-m", "olmo_core.data.tokenize", "--shard-index"],
         "team": "data-prep",
         "wandb_project": "olmo-core-sweep",
-        "workload_profile": "olmo-core-cpu-smoke",
+        "workload_profile": "olmo-core-check-cpu",
         "compute_profile": "cpu-32vcpu",
         "maximum_runtime_hours": "2.5",
         "maximum_attempts": 1,

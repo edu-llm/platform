@@ -2,7 +2,7 @@
 
 Four of the eight required fields are keys into committed registries, and until now all
 eight were free-text boxes. A researcher had to know that ``dolma-2026-07`` is the dataset
-id and that ``olmo-core-gpu-smoke`` is a workload profile, and a typo in either was a
+id and that ``olmo-core-check-gpu`` is a workload profile, and a typo in either was a
 refusal after a human had already approved the submission.
 
 They are dropdowns now, and a dropdown is a promise: everything in this list works. That
@@ -11,9 +11,9 @@ workflow YAML with nothing behind them, so a registry entry added and not offere
 invisible, and an option offered and not registered is a refusal wearing a menu item.
 
 **The workload list is the sharp one, and it has two ways of being wrong.**
-``dolma-tokenize-smoke`` is a registered workload naming a repository that nothing
+``dolma-tokenize`` is a registered workload naming a repository that nothing
 registers -- there is no ECR repository for dolma and no image can be published for it.
-``olmo-core-train-smoke`` is the other shape: its repository is registered, but the compute
+``olmo-core-train-4gpu`` is the other shape: its repository is registered, but the compute
 profile it inherits is ``gpu-4xa10g``, which the catalog prices, does not call provisioned,
 and no execution target backs. Both compile, classify as routine, route to a lead, and are
 refused at admission *after* the approval -- the first with ``unregistered_repository``, the
@@ -168,7 +168,7 @@ def test_the_dataset_dropdown_offers_exactly_the_registered_releases() -> None:
 def test_the_workload_dropdown_offers_only_workloads_whose_repository_is_registered() -> None:
     """THE ONE THAT MATTERS. Mutation: offer every workload in the catalog.
 
-    ``dolma-tokenize-smoke`` is in the catalog and names a repository nothing registers.
+    ``dolma-tokenize`` is in the catalog and names a repository nothing registers.
     Offering it would put a menu item in front of a researcher whose only possible outcome
     is ``unregistered_repository`` at admission -- after they filled in eight fields and a
     lead approved it.
@@ -186,7 +186,7 @@ def test_the_workload_dropdown_offers_only_workloads_whose_repository_is_registe
     registered = {entry["repository"] for entry in registry("repositories.yaml")["repositories"]}
 
     assert options_for("workload_profile") == offerable_workloads()
-    assert "dolma-tokenize-smoke" not in options_for("workload_profile"), (
+    assert "dolma-tokenize" not in options_for("workload_profile"), (
         "dolma has no registration and no ECR repository, so this workload cannot run; "
         "when it is registered this assertion is what has to be deleted"
     )
@@ -196,15 +196,15 @@ def test_the_workload_dropdown_offers_only_workloads_whose_repository_is_registe
 
 
 def test_every_offered_workload_inherits_a_compute_profile_with_somewhere_to_run() -> None:
-    """THE THIRD INSTANCE OF ONE DEFECT, CLOSED. Mutation: offer olmo-core-train-smoke.
+    """THE THIRD INSTANCE OF ONE DEFECT, CLOSED. Mutation: offer olmo-core-train-4gpu.
 
     A workload profile fixes the compute profile, and a submitter who leaves the override
     on ``inherit`` never types that profile in. So the two fields are individually valid --
     a registered workload, and an override the submitter did not touch -- and jointly
-    refused, which is the shape ``dolma-tokenize-smoke`` and an unprovisioned override
+    refused, which is the shape ``dolma-tokenize`` and an unprovisioned override
     already had.
 
-    ``olmo-core-train-smoke`` was the live instance. Its repository is registered and its
+    ``olmo-core-train-4gpu`` was the live instance. Its repository is registered and its
     image is published, and it inherits ``gpu-4xa10g``: priced in the catalog, not marked
     provisioned, and named by no execution target. A submission on it compiles, classifies
     as routine at $5.67, routes to a lead, waits for a person, is approved, and is then
@@ -228,14 +228,14 @@ def test_every_offered_workload_inherits_a_compute_profile_with_somewhere_to_run
     # And the profile that put this test here is still the one that cannot run. Written as
     # its own assertion because the loop above passes vacuously if the dropdown is emptied.
     assert resolution_failure("gpu-4xa10g") == "unprovisioned_compute_profile"
-    assert "olmo-core-train-smoke" not in options_for("workload_profile"), (
+    assert "olmo-core-train-4gpu" not in options_for("workload_profile"), (
         "gpu-4xa10g is priced and not provisioned, so this workload has nowhere to run; "
         "when a compute environment backs it this assertion is what has to be deleted"
     )
     # The catalog keeps it, deliberately: the entry is the shape a four-GPU training run
     # takes and its pricing row is what the catalog is for. Removing the menu item is not
     # the same as removing the workload.
-    assert "olmo-core-train-smoke" in {
+    assert "olmo-core-train-4gpu" in {
         workload.name for workload in workload_catalog().workloads
     }
 
@@ -356,7 +356,7 @@ def test_the_command_the_form_arrives_pre_filled_with_is_one_the_contract_accept
         command=arguments,
         team="platform",
         wandb_project="onboarding",
-        workload_profile="olmo-core-cpu-smoke",
+        workload_profile="olmo-core-check-cpu",
         compute_profile="cpu-32vcpu",
         maximum_runtime_hours="1",
         maximum_attempts=1,

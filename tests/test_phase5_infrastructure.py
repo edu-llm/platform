@@ -254,7 +254,7 @@ def manifest(compute_profile: str) -> RunManifest:
         "command": ["python", "-m", "olmo_core.train", "--config", "smoke"],
         "team": "memory-split",
         "wandb_project": "olmo-core-memory-split",
-        "workload_profile": "olmo-core-cpu-smoke",
+        "workload_profile": "olmo-core-check-cpu",
         "compute_profile": compute_profile,
         "maximum_runtime_hours": "1",
         "maximum_attempts": 1,

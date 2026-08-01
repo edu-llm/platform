@@ -43,5 +43,5 @@
 # command to prevent.
 schema_version: 1
 s3_key: lifecycle-recorder/lifecycle-recorder.zip
-s3_object_version: fhN28H3R0SOcjz8RWva1EkaIU_48INrn
-sha256: 3a8a9b44b8f6032d8aa320a90211cd0ac668f2bfee668e4e5f0582a0ba4e79b5
+s3_object_version: TOyH4Zi3pdxtKvpk7cCvlu_ejixXKvm3
+sha256: 7e0fcc0b8a004438de26017fa04144e31d2266d6ce9d32ea12873ab8e0f851a7

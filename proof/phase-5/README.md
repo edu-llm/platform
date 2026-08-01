@@ -2,8 +2,8 @@
 
 Phase: phase-5
 Bundle schema version: 1
-Source commit: 8e13202fd58d060a5ddb30b0433c8879ee1b6ab5
-Generated: 2026-08-01T03:49:06+00:00
+Source commit: 5744b5dbce09cbe3d3a1397b42afe7525bcdeda9
+Generated: 2026-08-01T04:16:05+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 5 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase5_proof.py` at generation time. No criterion is a gap and the gate is green, and criterion 6 is deferred rather than covered -- a recorded decision not to satisfy it yet, which passes the gate without anybody having observed it. Read that entry in `negative-case-matrix.md` first: it carries the reason and the trigger, and the Known limitations below say what this phase does not establish.
 
@@ -28,9 +28,9 @@ The one check that is outstanding is a different kind of open from every other i
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 3857 |
-| suite tests executed | 3664 |
-| suite passed | 3664 |
+| suite tests collected | 3879 |
+| suite tests executed | 3686 |
+| suite passed | 3686 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
@@ -71,7 +71,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | --- | --- |
 | .github/CODEOWNERS | sha256:defc3ec7e43f5dc70f137ff21566d23e3d961355fbc871467e3676c9ab651df4 |
 | .github/workflows/build-research-image.yml | sha256:f39972c4da20a63b3fd0f725ccaf521dd893d94c4d72d6f376456e081223e122 |
-| .github/workflows/submit-run.yml | sha256:5e84834edd9a56757099660eb9d4976658fc5d7280b3aa8e15fbedfee70d7ff0 |
+| .github/workflows/submit-run.yml | sha256:ef281641bd92ab24a4767009847a26d89f68bacee15cd31cf9ebdf3c56dd1c99 |
 | README.md | sha256:51c34da1f6d766423d1779c989930cefb96d01809a1659fef1de305940f29f4d |
 | config/image-exceptions.yaml | sha256:0828f4203385bbc3adbd8521f62768e7f4eb46f56382bc6223d37b89aae7a49c |
 | config/organization.yaml | sha256:cea2d2123d2fb5794614e6a4b8a362c8aaa33626f20ae28a13cb673fadf4ac78 |

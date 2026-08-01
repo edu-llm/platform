@@ -19,11 +19,11 @@ uv run python tools/build_phase0_proof.py
 | --- | --- |
 | collected by pytest | 3879 |
 | executed (excluding tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py, tests/test_phase5_proof.py) | 3686 |
-| passed | 3686 |
-| failed | 0 |
+| passed | 3684 |
+| failed | 2 |
 | errored | 0 |
 | skipped | 0 |
-| pytest exit code | 0 |
+| pytest exit code | 1 |
 
 ## Targeted verification run
 
