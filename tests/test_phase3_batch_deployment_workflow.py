@@ -418,6 +418,30 @@ def test_every_run_body_is_strict_about_failures_and_unset_variables() -> None:
     assert all(script.startswith("set -euo pipefail\n") for script in scripts)
 
 
+def test_no_step_here_reaches_for_an_interpreter_the_workflow_never_installs() -> None:
+    """Mutation: write the run report in ``uv run python``.
+
+    That is how the rest of this repository runs Python, and it is wrong here: this workflow
+    installs nothing but the checkout and the credential, so ``uv`` is not on the runner.
+    The report is ``continue-on-error`` -- a report that cannot be produced must not turn a
+    successful deploy red -- so the failure is a step that exits 127, a job that stays green,
+    and an operator who learns nothing about the run they asked about. It cost a dispatch to
+    find. This makes the next one cost a test run instead.
+    """
+    installed = {
+        candidate.get("uses", "").split("@")[0] for candidate in only_job(workflow())["steps"]
+    }
+    assert not [action for action in installed if "setup-uv" in action or "setup-python" in action]
+
+    for script in run_scripts():
+        # Comments are stripped first, because the note explaining why this workflow uses
+        # python3 has to be free to name the thing it is warning about.
+        executable = "\n".join(
+            line for line in script.splitlines() if not line.lstrip().startswith("#")
+        )
+        assert not re.search(r"(?<![\w-])uv(?![\w-])", executable)
+
+
 def test_the_workflow_does_not_reach_for_the_retired_shared_deploy_role() -> None:
     """Mutation: switch to ``vars.AWS_DEPLOY_ROLE_ARN``.
 
