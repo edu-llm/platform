@@ -552,12 +552,15 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
+          # tee rather than a bare redirect, because the step summary is readable in the web
+          # UI and nowhere else -- there is no API for it. Everything that matters here has to
+          # be in the log too, or a person reading this run through the CLI sees an empty step.
           {
             echo "## What is on the queues"
             echo
             echo "| Queue | State | Run | Started |"
             echo "| --- | --- | --- | --- |"
-          } >> "${GITHUB_STEP_SUMMARY}"
+          } | tee -a "${GITHUB_STEP_SUMMARY}"
           for queue in sbsandbox-intern-edullm-gpu sbsandbox-intern-edullm-cpu; do
             for state in RUNNING STARTING RUNNABLE PENDING SUBMITTED; do
               aws batch list-jobs \
@@ -567,11 +570,11 @@ jobs:
                 --output text > "${RUNNER_TEMP}/q-${queue}-${state}.txt"
               while read -r name started; do
                 [[ -z "${name}" ]] && continue
-                echo "| ${queue##*-} | ${state} | \`${name}\` | ${started} |" >> "${GITHUB_STEP_SUMMARY}"
+                echo "| ${queue##*-} | ${state} | \`${name}\` | ${started} |" | tee -a "${GITHUB_STEP_SUMMARY}"
               done < "${RUNNER_TEMP}/q-${queue}-${state}.txt"
             done
           done
-          echo "Nothing above means both queues are empty of live work." >> "${GITHUB_STEP_SUMMARY}"
+          echo "Nothing above means both queues are empty of live work." | tee -a "${GITHUB_STEP_SUMMARY}"
 
       - name: Say what one run is doing
         if: inputs.describe_run != '' && inputs.describe_run != 'queues'
