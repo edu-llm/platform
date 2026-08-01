@@ -102,13 +102,24 @@ def test_every_environment_variable_the_guide_promises_is_one_the_container_gets
     from edullm_platform.execution import batch_submit_request
     from tests.test_phase3_execution import RUN_ID, manifest, target
 
-    request = batch_submit_request(
-        manifest=manifest(),
-        target=target(),
-        run_id=RUN_ID,
-        job_definition=target().job_definition_arn,
-    )
-    sent = {entry["Name"] for entry in request["ContainerOverrides"]["Environment"]}
+    # Two requests, because three of the variables the guide documents only exist on a run
+    # that named a published corpus. A run submitted with `dataset_release: none` is given no
+    # EDULLM_DATASET_ID at all rather than an empty one -- an empty value would read as a
+    # resolution that was attempted and failed. So the set the guide is checked against is
+    # what a container can be given, which is the union, and the guide says which of the two
+    # cases each variable belongs to.
+    from tests.test_phase4_training_submission import published_reference
+
+    sent: set[str] = set()
+    for dataset_reference in (None, published_reference("regmix-10b-v1")):
+        request = batch_submit_request(
+            manifest=manifest(),
+            target=target(),
+            run_id=RUN_ID,
+            job_definition=target().job_definition_arn,
+            dataset_reference=dataset_reference,
+        )
+        sent |= {entry["Name"] for entry in request["ContainerOverrides"]["Environment"]}
 
     guide = GUIDE_PATH.read_text(encoding="utf-8")
     promised = set(re.findall(r"`(EDULLM_[A-Z_]+|WANDB_[A-Z_]+)`", guide))

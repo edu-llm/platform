@@ -49,36 +49,48 @@ what the cost view groups by, so it is worth being consistent within a project.
 The image is resolved from the commit you named, and the machine comes from the workload
 profile.
 
-## Real training: the one line that matters
+## Real training: one line
 
-Everything below is about `olmo-core-train-1gpu`, and one line decides whether twelve hours
-of GPU time produces anything you can use.
-
-**Your training command must write checkpoints to `$EDULLM_CHECKPOINT_DIR`.**
+Everything below is about `olmo-core-train-1gpu`. Set `dataset_release` to the corpus you
+want and use this command:
 
 ```
-bash -lc 'python src/examples/llm/train.py "$EDULLM_RUN_ID" --save-folder "$EDULLM_CHECKPOINT_DIR"'
+bash -lc 'python .edullm/train_on_corpus.py "$EDULLM_RUN_ID" --steps 4000'
 ```
 
-Three things about that line are deliberate.
+That is the whole thing. It opens the corpus you picked on the form, reads it at the width
+the corpus was written at, checkpoints where a retry can find them, and reports to your W&B
+project. Everything it needs it takes from the environment the container already has.
 
 **`bash -lc` is not decoration.** The container runs your command directly rather than
-through a shell, so without it `$EDULLM_CHECKPOINT_DIR` arrives as those twenty-two literal
-characters and OLMo-core creates a directory with that name. Wrap the command in
-`bash -lc '...'` and the variable expands.
+through a shell, so without it `$EDULLM_RUN_ID` arrives as those fourteen literal characters
+instead of your run id. Wrap the command in `bash -lc '...'` and the variable expands.
 
-**The variable, not a path you write yourself.** The platform mints your run id when it
-compiles the submission, which is after you have filled in the form — so there is no path
-you could have typed. It is handed to the container instead.
+Anything after the flags is a config override, so you can change one thing without leaving
+this entry point:
 
-**Quote it.** `"$EDULLM_CHECKPOINT_DIR"` rather than bare, for the ordinary reason.
+```
+bash -lc 'python .edullm/train_on_corpus.py "$EDULLM_RUN_ID" --steps 4000 --model-factory olmo2_1B optim.lr=3e-4'
+```
 
-### Why this is the line that matters
+`--dry-run` resolves the corpus, prints the whole config, and trains nothing. It is the
+cheapest way to find out that a flag you passed does not exist.
 
-OLMo-core's example defaults `--save-folder` to `/tmp`, which is local disk on a machine
-that stops existing when your job ends. A twelve-hour run that takes the default trains for
-twelve hours, writes checkpoints nobody can reach, exits zero, and is recorded as a
-success. Nothing about that looks wrong until you go looking for the model.
+### Why not the OLMo-core example
+
+`src/examples/llm/train.py` trains on a C4 shard fetched from `olmo-data.org` with the GPT-2
+tokenizer, both written into the file. If you pick `regmix-10b-v1` on the form and run the
+example, you get a loss curve, a checkpoint, and a corpus that was never opened. Nothing
+fails and nothing says anything is wrong — the record says which corpus you asked for, and
+the run read a different one.
+
+The example also defaults `--save-folder` to `/tmp`, which is local disk on a machine that
+stops existing when your job ends. A twelve-hour run that takes the default trains for
+twelve hours, writes checkpoints nobody can reach, exits zero, and is recorded as a success.
+
+You can still run the example, and the long command under **Six things that will bite you**
+is what it takes. The entry point above exists because that list should not be something
+each person rediscovers.
 
 ### What resuming buys you
 
@@ -97,6 +109,10 @@ second and spends the budget twice.
 Every one of these came out of getting a real twelve-hour run working, in the order they
 were hit. They are not hypothetical.
 
+**`.edullm/train_on_corpus.py` already handles all six.** This section is here for anyone
+running the OLMo-core example directly, or writing their own program — and as the list of
+what the entry point is doing on your behalf, since none of it is obvious from the outside.
+
 **`ephemeral_save_interval` must be below `save_interval`.** OLMo-core refuses the config
 otherwise, in the first seconds, before anything trains. Set it to `null` if you do not
 want ephemeral checkpoints.
@@ -106,8 +122,10 @@ and deleting the rest. The workload role deliberately has no delete permission �
 writes under its own id, so nothing ever needs to be deleted — and the prune fails. Pass
 `trainer.callbacks.checkpointer.max_checkpoints=null` and keep them all.
 
-**Turn off `torch.compile`.** The research image carries no C compiler, so compilation dies
-with `Failed to find C compiler`. Pass `train_module.compile_model=false`.
+**`torch.compile` needs a C compiler, and the image now has one.** It did not, and a run
+died on the first compiled region with `Failed to find C compiler` — after the GPU had been
+paid for. If you are on an older image digest than the one the GPU job definition pins, pass
+`train_module.compile_model=false`.
 
 **Turn off the evaluators, or point them at local data.** The example's `lm_evaluator` wants
 a `.csv.gz` metadata file that is not served over HTTP, so it fails while the trainer is
@@ -140,7 +158,12 @@ the command is a value the record will disagree with.
 | `EDULLM_TEAM` | The team you claimed |
 | `EDULLM_COMMIT_SHA` | The commit that was resolved and built |
 | `EDULLM_DATASET_RELEASE` | The dataset you named |
+| `EDULLM_DATASET_ID`, `EDULLM_DATASET_VERSION`, `EDULLM_DATASET_TOKENIZER` | Which published corpus that resolves to, and what tokenized it. Absent when you picked `none`. |
 | `WANDB_PROJECT`, `WANDB_ENTITY` | Read by the W&B client directly |
+
+The three dataset variables come from the registry entry behind the field you picked, not
+from anything you typed, which is what makes it impossible for the record and the run to
+name different corpora.
 
 ## Stopping a run
 
