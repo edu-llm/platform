@@ -58,6 +58,10 @@ class FakeObjectStore:
         self.objects: dict[str, dict[str, Any]] = {}
         self.writes: list[dict[str, Any]] = []
         self.refuse: dict[str, Exception] = {}
+        #: How many keys one list call answers, or None to answer them all. S3's own bound
+        #: is a thousand and cannot be raised, so this is the only way a test reaches the
+        #: continuation path.
+        self.page_size: int | None = None
 
     def put(
         self,
@@ -138,12 +142,26 @@ class FakeObjectStore:
         prefix = arguments["Prefix"]
         # Size is included because S3 includes it, and a reader that sums the listing to
         # size a checkpoint would otherwise see zero here and something real in the account.
+        matching = [
+            {"Key": key, "Size": self.objects[key]["ContentLength"]}
+            for key in sorted(self.objects)
+            if key.startswith(prefix)
+        ]
+        # A page bound, off by default, because a fake that answered everything in one
+        # call could never exercise the continuation the real store returns above a
+        # thousand keys -- and a reader that ignored it would pass here and read a
+        # truncated prefix in the account.
+        if self.page_size is None:
+            return {"Contents": matching}
+        start = int(arguments.get("ContinuationToken") or 0)
+        page = matching[start : start + self.page_size]
+        following = start + len(page)
+        if following >= len(matching):
+            return {"Contents": page, "IsTruncated": False}
         return {
-            "Contents": [
-                {"Key": key, "Size": self.objects[key]["ContentLength"]}
-                for key in sorted(self.objects)
-                if key.startswith(prefix)
-            ]
+            "Contents": page,
+            "IsTruncated": True,
+            "NextContinuationToken": str(following),
         }
 
     @property

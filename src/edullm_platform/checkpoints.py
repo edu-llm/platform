@@ -518,6 +518,31 @@ def olmo_core_checkpoint_shape(names: Iterable[str]) -> str | None:
     return None
 
 
+def _listing(store: CheckpointStore, *, bucket: str, key: str) -> list[Mapping[str, Any]]:
+    """Every object under this prefix, following the continuation the store hands back.
+
+    ONE LIST CALL ANSWERS A THOUSAND KEYS AND SAYS SO IN ``IsTruncated``, AND IGNORING
+    THAT DOES NOT MERELY HIDE THE OLDEST CHECKPOINTS. S3 orders keys lexicographically, so
+    ``step1000/`` sorts before ``step200/`` and the thousandth key lands in the middle of
+    the step sequence rather than after it. A truncated listing therefore hides an
+    arbitrary subset, and which step this module reports a resume would load becomes a
+    function of how many objects the run happened to write. Thirteen objects per
+    checkpoint puts the boundary at seventy-six of them, which the twelve-hour bound on
+    ``olmo-core-train-1gpu`` reaches at a nine-minute save interval.
+    """
+    contents: list[Mapping[str, Any]] = []
+    arguments: dict[str, Any] = {"Bucket": bucket, "Prefix": key}
+    while True:
+        answer = store.list_objects_v2(**arguments)
+        contents.extend(
+            entry for entry in (answer.get("Contents") or []) if isinstance(entry, Mapping)
+        )
+        token = answer.get("NextContinuationToken")
+        if not answer.get("IsTruncated") or not isinstance(token, str) or not token:
+            return contents
+        arguments["ContinuationToken"] = token
+
+
 def _sole_payload(store: CheckpointStore, *, bucket: str, key: str) -> str | None:
     """The one object at this prefix that is not the marker, when the marker does not say.
 
@@ -528,12 +553,10 @@ def _sole_payload(store: CheckpointStore, *, bucket: str, key: str) -> str | Non
     two candidate payloads and a marker that names neither is a checkpoint nobody can say
     the shape of.
     """
-    answer = store.list_objects_v2(Bucket=bucket, Prefix=key)
-    contents = answer.get("Contents") or []
     names = [
         str(entry["Key"]).removeprefix(key)
-        for entry in contents
-        if isinstance(entry, Mapping) and str(entry.get("Key", "")).startswith(key)
+        for entry in _listing(store, bucket=bucket, key=key)
+        if str(entry.get("Key", "")).startswith(key)
     ]
     candidates = [name for name in names if name and name != MARKER_OBJECT]
     if len(candidates) != 1:
@@ -547,26 +570,31 @@ def _olmo_core_checkpoint(
     bucket: str,
     key: str,
 ) -> CheckpointInspection | None:
-    """The newest ``step{N}`` directory under this prefix, judged by the library's rules.
+    """The newest ``step{N}`` directory a resume would load, judged by the library's rules.
 
     None when there is no step directory at all, which is how the caller tells "this is not
     a library-written checkpoint" from "it is one and it is unfinished". Those two need
     different answers: the first falls through to the marker protocol's own reading of the
     prefix, and the second is a run that died mid-write and must not be resumed from.
 
-    The newest directory rather than all of them, because that is the one a resume loads
-    and the earlier ones are history. A run that keeps every checkpoint -- which this
-    platform requires, since the workload role holds no ``s3:DeleteObject`` -- accumulates
-    directories that are all complete and all irrelevant to the question being asked.
+    THE NEWEST ACCEPTABLE DIRECTORY, WHICH IS NOT THE SAME AS THE NEWEST ONE. This used to
+    read the highest step and report the prefix unusable if that one was torn, on the
+    stated ground that the newest is what a resume loads and the rest are history. The
+    first half of that is wrong, and it is wrong in exactly the case the whole module
+    exists for. ``Checkpointer.find_checkpoints`` skips any directory failing
+    ``dir_is_checkpoint`` and ``latest_checkpoint`` takes the highest of what survives, so
+    an attempt reclaimed part-way through writing step 400 resumes from step 200 and keeps
+    going. Reading only step 400 answered UNCOMMITTED for that run -- telling an operator
+    there is nothing to resume from while the trainer beside them resumes from it, which
+    is the two disagreeing about the one question this is asked.
+
+    A prefix whose every step directory is torn is still UNCOMMITTED, and it is named by
+    the newest of them, because that is the write that did not finish.
     """
     prefix_uri = f"s3://{bucket}/{key}"
-    answer = store.list_objects_v2(Bucket=bucket, Prefix=key)
-    contents = answer.get("Contents") or []
 
     under: dict[int, dict[str, int]] = {}
-    for entry in contents:
-        if not isinstance(entry, Mapping):
-            continue
+    for entry in _listing(store, bucket=bucket, key=key):
         relative = str(entry.get("Key", "")).removeprefix(key)
         directory, separator, remainder = relative.partition("/")
         if not separator or not remainder:
@@ -582,25 +610,36 @@ def _olmo_core_checkpoint(
     if not under:
         return None
 
-    step = max(under)
-    members = under[step]
-    shape = olmo_core_checkpoint_shape(members)
-    if shape is None:
+    newest = max(under)
+    # Descending, and stopping at the first the loader would take, because that is the
+    # order find_checkpoints leaves latest_checkpoint to pick from.
+    for step in sorted(under, reverse=True):
+        shape = olmo_core_checkpoint_shape(under[step])
+        if shape is not None:
+            break
+    else:
         return CheckpointInspection(
             prefix=prefix_uri,
             state=CheckpointState.UNCOMMITTED,
             detail=(
-                f"step{step} holds {len(members)} object(s) and is not a shape OLMo-core's "
-                "own loader accepts, so the write that produced it did not finish"
+                f"step{newest} holds {len(under[newest])} object(s) and is not a shape "
+                "OLMo-core's own loader accepts, so the write that produced it did not "
+                "finish, and no earlier step directory here is one either"
             ),
+        )
+
+    members = under[step]
+    detail = f"step{step} is a checkpoint OLMo-core's own loader accepts, carrying {shape}"
+    if step != newest:
+        detail += (
+            f", and step{newest} is newer but unfinished, so a resume skips it the way "
+            "the library's own loader does"
         )
 
     return CheckpointInspection(
         prefix=prefix_uri,
         state=CheckpointState.COMMITTED,
-        detail=(
-            f"step{step} is a checkpoint OLMo-core's own loader accepts, carrying {shape}"
-        ),
+        detail=detail,
         manifest=CheckpointManifest(
             schema_version=1,
             uri=f"{prefix_uri}step{step}/",
