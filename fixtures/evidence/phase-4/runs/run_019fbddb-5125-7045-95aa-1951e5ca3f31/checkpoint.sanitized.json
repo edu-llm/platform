@@ -1,0 +1,14 @@
+{
+  "checksum": "sha256:883da81ef0265d8e75c5bb6635600a1d64c807419ba6ee4fe4904f5fec3c0d0c",
+  "container_claimed_checksum": null,
+  "detail": "step150 is a checkpoint OLMo-core's own loader accepts, carrying model, optimizer and trainer state",
+  "environment": "sandbox",
+  "observed_at": "2026-08-01T15:30:29Z",
+  "prefix": "s3://sbsandbox-intern-edullm-outputs/teams/platform/runs/run_019fbddb-5125-7045-95aa-1951e5ca3f31/checkpoints/",
+  "run_id": "run_019fbddb-5125-7045-95aa-1951e5ca3f31",
+  "size_bytes": 3212619747,
+  "source": "aws",
+  "state": "committed",
+  "step": 150,
+  "success_marker_uri": null
+}

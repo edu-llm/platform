@@ -33,6 +33,7 @@ from edullm_platform.evidence import (
 )
 from edullm_platform.phase4_evidence import (
     CheckpointObservation,
+    CorpusReadEvidence,
     GpuCapabilityEvidence,
     GpuComputeEnvironmentEvidence,
     GpuJobEvidence,
@@ -50,6 +51,7 @@ __all__ = [
     "CAPTURE_ROOT",
     "CHECKPOINT_RECORD",
     "COMPUTE_ENVIRONMENT_RECORD",
+    "CORPUS_READ_RECORD",
     "GPU_CAPABILITY_RECORD",
     "ISOLATION_RECORD",
     "OFFERINGS_RECORD",
@@ -72,6 +74,7 @@ CAPTURE_ROOT = Path(__file__).resolve().parents[2] / "fixtures" / "evidence" / "
 
 BATCH_JOB_RECORD = f"batch-job{CAPTURE_SUFFIX}"
 CHECKPOINT_RECORD = f"checkpoint{CAPTURE_SUFFIX}"
+CORPUS_READ_RECORD = f"corpus-read{CAPTURE_SUFFIX}"
 GPU_CAPABILITY_RECORD = f"gpu-capability{CAPTURE_SUFFIX}"
 ISOLATION_RECORD = f"isolation{CAPTURE_SUFFIX}"
 RESUME_RECORD = f"resume{CAPTURE_SUFFIX}"
@@ -126,11 +129,12 @@ def read_capture[Record: ContractModel](path: Path, contract: type[Record]) -> R
 class CapturedRun:
     """One GPU run's committed records, with the optional ones optional.
 
-    Three runs are committed and they are deliberately not the same shape. One trained and
-    has all four records; one was a capability probe and has no checkpoint; one failed
-    before printing anything and has only its Batch record. A reader that required the full
-    set would have to exclude two thirds of the evidence, and the failed run is the only
-    thing establishing what a failure looks like here.
+    The committed runs are deliberately not the same shape. One read a published corpus and
+    carries every record; two trained on tokens they generated and carry no corpus; one was
+    a capability probe and has no checkpoint; one failed before printing anything and has
+    only its Batch record. A reader that required the full set would have to exclude most of
+    the evidence, and the failed run is the only thing establishing what a failure looks
+    like here.
     """
 
     run_id: str
@@ -143,6 +147,10 @@ class CapturedRun:
     #: rather than about what it found -- which is why they are optional beside the rest.
     isolation: IsolationEvidence | None = None
     resume: ResumeEvidence | None = None
+    #: Present only for a run whose training program resolved a published corpus and saved
+    #: the config it did it with. The runs that predate the entry point trained on synthetic
+    #: tokens, so absence here is a run that read no corpus rather than one nobody looked at.
+    corpus: CorpusReadEvidence | None = None
 
     @property
     def is_a_training_run(self) -> bool:
@@ -185,6 +193,7 @@ def captured_runs(root: Path = CAPTURE_ROOT) -> tuple[CapturedRun, ...]:
                 checkpoint=_optional(entry / CHECKPOINT_RECORD, CheckpointObservation),
                 isolation=_optional(entry / ISOLATION_RECORD, IsolationEvidence),
                 resume=_optional(entry / RESUME_RECORD, ResumeEvidence),
+                corpus=_optional(entry / CORPUS_READ_RECORD, CorpusReadEvidence),
             )
         )
     return tuple(found)

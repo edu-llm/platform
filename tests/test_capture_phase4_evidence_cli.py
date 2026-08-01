@@ -1,12 +1,15 @@
 """``tools/capture_phase4_evidence.py``'s own capture functions, stubbed against ``aws``.
 
-Only one target lives here today: ``capture_role_scope``. It is the function
-``b9cb6d7`` changed to stop folding a grant on some other bucket into the outputs-bucket
-prefix tuples, and none of Phase 4's model-level tests in ``test_phase4_run_evidence.py``
-call it -- they read ``WorkloadRoleScopeEvidence`` back out of a committed capture, which
-proves the model but not the tool that populated it. This exercises the classification
-loop itself, against a synthetic policy naming two buckets, following the same stubbed-
-``aws``-on-``PATH`` pattern the sibling ``test_capture_phaseN_evidence_cli.py`` modules use.
+Two targets live here, and they are here for the same reason. ``capture_role_scope`` is the
+function ``b9cb6d7`` changed to stop folding a grant on some other bucket into the
+outputs-bucket prefix tuples; ``capture_corpus_read`` is the one that decides what a run's
+saved config is written down as. Neither is called by Phase 4's model-level tests in
+``test_phase4_run_evidence.py`` -- those read records back out of a committed capture, which
+proves the model but not the tool that populated it, and a recorder that quietly dropped
+what it could not explain would leave every one of them passing.
+
+Both exercise the loop against a synthetic input, following the same stubbed-``aws``-on-
+``PATH`` pattern the sibling ``test_capture_phaseN_evidence_cli.py`` modules use.
 """
 
 from __future__ import annotations
@@ -22,10 +25,12 @@ from workflow_support import write_stub
 from edullm_platform.capture_tooling import CaptureFailedError, write_record
 from edullm_platform.contracts.results import OUTPUTS_BUCKET
 from edullm_platform.evidence import scan_object_key
+from edullm_platform.phase4_evidence import CheckpointObservation
 from tools.capture_phase4_evidence import (
     GPU_WORKLOAD_ROLE,
     _log_lines,
     _summary_object,
+    capture_corpus_read,
     capture_role_scope,
 )
 
@@ -308,6 +313,121 @@ def test_the_log_window_is_taken_from_the_end_rather_than_the_beginning(
     arguments = recorded.read_text().split("\n")
     assert "--start-from-head" not in arguments
     assert "get-log-events" in arguments
+
+
+def _checkpoint_at(step: int | None) -> CheckpointObservation:
+    return CheckpointObservation.model_validate(
+        {
+            "observed_at": "2026-08-01T15:00:00Z",
+            "source": "aws",
+            "environment": "sandbox",
+            "run_id": "run_1",
+            "prefix": f"s3://{OUTPUTS_BUCKET}/teams/platform/runs/run_1/checkpoints/",
+            "state": "committed",
+            "detail": "a checkpoint OLMo-core's own loader accepts",
+            "step": step,
+            "size_bytes": 1,
+            "checksum": None,
+            "success_marker_uri": None,
+            "container_claimed_checksum": None,
+        }
+    )
+
+
+def install_saved_config_stub(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, config: dict[str, Any] | None
+) -> None:
+    """An ``aws s3api get-object`` that hands back one config, or reports it absent.
+
+    ``$7`` is the destination path, because that is where the CLI puts the file argument and
+    the reader downloads to a file rather than reading stdout -- ``get-object`` writes its
+    metadata response to stdout as well as the body.
+    """
+    stub_bin = tmp_path / "bin"
+    body = (
+        f"cat <<'CONFIG' > \"$7\"\n{json.dumps(config)}\nCONFIG\necho '{{}}'\n"
+        if config is not None
+        else 'echo "An error occurred (NoSuchKey)" >&2\nexit 1\n'
+    )
+    write_stub(stub_bin, "aws", f'if [ "${{2-}}" = "get-object" ]; then\n{body}exit 0\nfi\nexit 64\n')
+    monkeypatch.setenv("PATH", f"{stub_bin}{os.pathsep}{os.defpath}")
+
+
+@pytest.mark.slow
+def test_a_shard_from_outside_the_release_is_recorded_rather_than_filtered_away(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: keep only the paths that sit under the release before recording them.
+
+    The record would then be true of every run and the model's own check would have nothing
+    left to find -- a dataset half of somebody else's corpus would read as clean, which is
+    the whole failure the corpus record exists to catch. The recorder classifies nothing;
+    it writes down the directories it found and the model says which do not belong.
+    """
+    install_saved_config_stub(
+        tmp_path,
+        monkeypatch,
+        config={
+            "dataset_id": "pretrain/regmix-10b",
+            "dataset_version": "v1",
+            "dataset": {
+                "dtype": "uint32",
+                "sequence_length": 2048,
+                "paths": [
+                    f"s3://{OTHER_BUCKET}/pretrain/regmix-10b/v1/tokens/arxiv/train-00000.u32le.bin",
+                    f"s3://{OTHER_BUCKET}/pretrain/regmix-10b/v1/tokens/arxiv/train-00001.u32le.bin",
+                    f"s3://{OTHER_BUCKET}/pretrain/olmo-127b/v1/tokens/dclm/train-00000.u32le.bin",
+                ],
+            },
+            "data_loader": {"global_batch_size": 262144},
+        },
+    )
+
+    corpus = capture_corpus_read(
+        "run_1", checkpoint=_checkpoint_at(150), profile=PROFILE, region=REGION
+    )
+
+    assert corpus is not None
+    assert corpus.shard_count == 3
+    assert corpus.prefixes_outside_the_release == (
+        f"s3://{OTHER_BUCKET}/pretrain/olmo-127b/v1/tokens/dclm/",
+    )
+    assert not corpus.read_only_the_release_it_named
+
+
+@pytest.mark.slow
+def test_a_run_that_saved_no_config_records_no_corpus_rather_than_a_corpus_of_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: return a record with an empty path list.
+
+    Every run predating the corpus entry point generated its own tokens and saved no config,
+    and a record saying "read zero shards of nothing" would read as an answer about what it
+    opened rather than as the absence of the question.
+    """
+    install_saved_config_stub(tmp_path, monkeypatch, config=None)
+
+    assert (
+        capture_corpus_read(
+            "run_1", checkpoint=_checkpoint_at(150), profile=PROFILE, region=REGION
+        )
+        is None
+    )
+
+
+def test_a_checkpoint_with_no_step_has_no_directory_a_config_could_be_under() -> None:
+    """Mutation: build the URI anyway and let the store answer.
+
+    ``step{None}/config.json`` is a key nothing is stored at, so the capture would reach S3
+    to be told what it already knew, and a reader of the code would be left thinking the
+    absent step was handled somewhere.
+    """
+    assert (
+        capture_corpus_read(
+            "run_1", checkpoint=_checkpoint_at(None), profile=PROFILE, region=REGION
+        )
+        is None
+    )
 
 
 def test_a_number_that_looks_like_an_account_id_is_not_read_as_one(tmp_path: Path) -> None:

@@ -49,7 +49,7 @@ from edullm_platform.capture_tooling import (
     run_capture,
     write_model,
 )
-from edullm_platform.checkpoints import inspect_checkpoint
+from edullm_platform.checkpoints import MISSING_OBJECT_CODES, inspect_checkpoint
 from edullm_platform.contracts.results import OUTPUTS_BUCKET
 from edullm_platform.evidence import (
     CAPTURE_SUFFIX,
@@ -60,6 +60,7 @@ from edullm_platform.phase4_evidence import (
     GPU_RESOURCE_TYPE,
     WANDB_SECRET_VARIABLE,
     CheckpointObservation,
+    CorpusReadEvidence,
     GpuCapabilityEvidence,
     GpuComputeEnvironmentEvidence,
     GpuJobEvidence,
@@ -99,9 +100,23 @@ TERMINAL_STATUSES: Final = ("SUCCEEDED", "FAILED")
 #: cap stops a runaway container turning a capture into a megabyte of committed fixture.
 MAXIMUM_LOG_LINES: Final = 400
 
-#: The metric names the training program logs. Read out of the log's own W&B summary rather
-#: than asserted, but listed here so a capture that found none can say which it looked for.
-EXPECTED_METRIC_KEYS: Final = ("train/ce_loss", "train/step")
+#: The metric names the training program logs. Read out of the log rather than asserted, but
+#: listed here so a capture that found none can say which it looked for.
+#:
+#: OLMo-core's spellings, which are not the ones the first GPU runs recorded: those came from
+#: a program passed as the value of a form field and named its own metrics. The committed
+#: records still carry that program's names, because a record of what a run published does
+#: not change when a later run publishes something else.
+#:
+#: Chosen from the ones the console logger prints on every collection interval rather than
+#: from the W&B teardown block, which lists ten and abbreviates the rest -- a capture reading
+#: only the teardown would report a run as having published whichever ten sorted first.
+EXPECTED_METRIC_KEYS: Final = (
+    "train/CE loss",
+    "optim/LR (group 0)",
+    "throughput/device/TPS",
+    "throughput/total tokens",
+)
 
 #: What a freshly initialised olmo2_190M reported on its first step, measured on the run
 #: that had nothing to resume from. Carried here so a resume record can say what the number
@@ -432,6 +447,69 @@ def capture_checkpoint(
             "checksum": manifest.checksum if manifest else None,
             "success_marker_uri": manifest.success_marker_uri if manifest else None,
             "container_claimed_checksum": claimed,
+        }
+    )
+
+
+#: What OLMo-core's config saver writes into every checkpoint directory. Read in preference
+#: to the ``data_paths.txt`` sitting beside it, which carries the same paths and none of the
+#: rest: the token width and the batch size are in here and nowhere else in the store, and
+#: without both there is no byte count to record, only a list of objects that were named.
+SAVED_CONFIG_OBJECT: Final = "config.json"
+
+
+def capture_corpus_read(
+    run_id: str, *, checkpoint: CheckpointObservation, profile: str, region: str
+) -> CorpusReadEvidence | None:
+    """Which corpus objects a run's dataset was built over, from the config it saved.
+
+    **This is the one record that distinguishes a run that named a corpus from one that
+    opened it.** The form field, the decision record and the container's environment all say
+    which release was requested, and all three say the same thing about a run whose program
+    ignored them -- so the answer has to come from the resolved paths the training program
+    built its dataset out of, which the config saver writes into the checkpoint directory.
+
+    None for a run that saved no config. Every run predating the corpus entry point generated
+    its own tokens, so there is no read to record, and a record of a read of nothing would
+    read as an answer.
+    """
+    if checkpoint.step is None:
+        return None
+    uri = f"{checkpoint.prefix}step{checkpoint.step}/{SAVED_CONFIG_OBJECT}"
+    bucket, _, key = uri.removeprefix("s3://").partition("/")
+    try:
+        answer = _CliObjectStore(profile=profile, region=region).get_object(
+            Bucket=bucket, Key=key
+        )
+    except RuntimeError as error:
+        response = getattr(error, "response", {})
+        code = response.get("Error", {}).get("Code") if isinstance(response, Mapping) else None
+        if code not in MISSING_OBJECT_CODES:
+            raise CaptureFailedError(f"saved_config_unreadable:{run_id}") from error
+        return None
+
+    saved = json.loads(answer["Body"].read())
+    dataset = saved.get("dataset") or {}
+    paths = [str(path) for path in dataset.get("paths") or []]
+    if not paths:
+        raise CaptureFailedError(f"saved_config_names_no_shards:{run_id}")
+    return CorpusReadEvidence.model_validate(
+        {
+            "observed_at": observed_now(),
+            "source": "aws",
+            "environment": "sandbox",
+            "run_id": run_id,
+            "config_uri": uri,
+            "dataset_id": saved["dataset_id"],
+            "dataset_version": saved["dataset_version"],
+            "shard_count": len(paths),
+            # Sorted and deduplicated to the directory each shard sits in. A record holding
+            # every path would be a megabyte for the larger corpora and would say nothing the
+            # count and the directories do not.
+            "shard_prefixes": tuple(sorted({path.rsplit("/", 1)[0] + "/" for path in paths})),
+            "token_dtype": dataset["dtype"],
+            "tokens_per_step": (saved.get("data_loader") or {})["global_batch_size"],
+            "sequence_length": dataset["sequence_length"],
         }
     )
 
@@ -854,6 +932,18 @@ def _run_target(arguments: argparse.Namespace) -> int:
         )
         write_model(directory / f"checkpoint{CAPTURE_SUFFIX}", checkpoint, allow_content_digests=True)
         written.append(f"runs/{run_id}/checkpoint{CAPTURE_SUFFIX}")
+
+        corpus = capture_corpus_read(
+            run_id,
+            checkpoint=checkpoint,
+            profile=arguments.aws_profile,
+            region=arguments.aws_region,
+        )
+        if corpus is not None:
+            write_model(
+                directory / f"corpus-read{CAPTURE_SUFFIX}", corpus, allow_content_digests=True
+            )
+            written.append(f"runs/{run_id}/corpus-read{CAPTURE_SUFFIX}")
 
     outputs = capture_output_prefixes(
         profile=arguments.aws_profile, region=arguments.aws_region
