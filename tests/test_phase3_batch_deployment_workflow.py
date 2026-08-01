@@ -396,7 +396,12 @@ def test_every_run_body_is_strict_about_failures_and_unset_variables() -> None:
     # counted in deliberately.
     scripts = run_scripts()
 
-    assert len(scripts) == len(DEPLOYMENT_ORDER) + 3
+    # Four rather than three since 2026-08-01: the failure diagnostic is counted in. It is
+    # the one run body here that executes only when something has already gone wrong, which
+    # makes strictness matter more rather than less -- a diagnostic that swallowed its own
+    # error would report nothing and still let the job finish reporting the deploy failure,
+    # which is indistinguishable from the diagnostic having found nothing to say.
+    assert len(scripts) == len(DEPLOYMENT_ORDER) + 4
     assert all(script.startswith("set -euo pipefail\n") for script in scripts)
 
 
