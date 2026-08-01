@@ -28,6 +28,7 @@ from edullm_platform.evidence import (
     redact_content_digests,
     scan_for_secrets,
 )
+from edullm_platform.rebuild_comparison import BARE_SHA256_HEX
 from tools.capture_phase0_evidence import (
     allowed_output_root,
     assess_capacity_verdict,
@@ -109,9 +110,23 @@ def suspicious_account_id_int(value: int) -> bool:
 
 
 def forbidden_account_id_substrings(source: str) -> list[str]:
+    # BARE_SHA256_HEX is the third place this exemption has been needed and the first where
+    # it fires against a tracked file. redact_content_digests masks `sha256:<hex>` and a
+    # 40-character commit SHA, and a release record writes the digest as a YAML value --
+    # `sha256: 84edb3e8...` -- where the space means the prefix form does not match.
+    #
+    # A 64-character hex digest carries twelve consecutive decimal digits about one time in
+    # six, so without this a Lambda release lands on a red suite roughly every sixth time,
+    # for a reason that has nothing to do with the release and reads as an account id leak.
+    # It happened on 2026-08-01 and cost a diagnosis.
+    #
+    # Nothing an account id could hide behind is given up. An account id leaks inside an ARN
+    # or a JSON field, where it is bounded by a colon, a quote or whitespace; the lookarounds
+    # here mean only a run of digits sitting inside a longer hexadecimal token is skipped.
+    masked = BARE_SHA256_HEX.sub("<sha256-hex>", redact_content_digests(source))
     return [
         match.group(0)
-        for match in AWS_ACCOUNT_ID_PATTERN.finditer(redact_content_digests(source))
+        for match in AWS_ACCOUNT_ID_PATTERN.finditer(masked)
         if match.group(0) != AWS_EXAMPLE_ACCOUNT_ID
     ]
 
@@ -1057,6 +1072,41 @@ def test_redaction_masks_every_account_id_in_one_pass() -> None:
     assert redacted == (
         f"source {AWS_ACCOUNT_ID_PLACEHOLDER} target {AWS_ACCOUNT_ID_PLACEHOLDER} done"
     )
+
+
+#: Twelve digits that are nobody's account, built rather than written so that this file does
+#: not fail the scan it is testing. The same reason the example access keys above are
+#: assembled at import.
+FABRICATED_ACCOUNT_ID = "9" * 12
+
+
+def test_a_release_digest_holding_twelve_digits_is_not_read_as_an_account_id() -> None:
+    """Mutation: scan a release record without masking bare hexadecimal first.
+
+    This is the digest of the admission validator zip released on 2026-08-01, written the way
+    infra/admission-validator-release.yaml writes it: a YAML key, a space, and 64 bare hex
+    characters. Twelve consecutive decimal digits sit inside it, and the tracked-tree scan
+    reported the release record as leaking an account id.
+
+    A 64-character digest carries such a run about one time in six, so without this a Lambda
+    release lands on a red suite roughly every sixth time, for a reason that has nothing to
+    do with the release.
+    """
+    recorded = "sha256: 84edb3e83eb53a775f1c607298380630a9bfaa967bf3ed70f304f769977aab3d"
+
+    assert forbidden_account_id_substrings(recorded) == []
+
+
+def test_an_account_id_beside_a_digest_is_still_found() -> None:
+    """Mutation: mask any twelve-digit run rather than only one inside a hex token.
+
+    The exemption is narrow on purpose. An account id leaks where it is bounded by a colon, a
+    quote or whitespace -- an ARN, a JSON field, a log line -- and none of those is inside a
+    digest, so masking hex tokens gives up nothing the scan was catching.
+    """
+    leaked = f"arn:aws:s3:::bucket {FABRICATED_ACCOUNT_ID} sha256: " + "a" * 64
+
+    assert forbidden_account_id_substrings(leaked) == [FABRICATED_ACCOUNT_ID]
 
 
 @pytest.mark.slow
