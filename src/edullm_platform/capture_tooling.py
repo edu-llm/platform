@@ -62,7 +62,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -229,6 +229,24 @@ def check_output_location(path: Path, *, allowed_suffix: Path) -> None:
         raise CaptureFailedError(f"output_must_be_under:{allowed_suffix.as_posix()}")
 
 
+def strings_in(value: Any) -> Iterator[str]:
+    """Every key and string leaf of a record, which is all of it a credential can hide in.
+
+    Keys as well as values: a mapping built from a live response can carry a name nobody
+    here chose, and a key is as committed as the value beside it.
+    """
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, Mapping):
+        for key, item in value.items():
+            if isinstance(key, str):
+                yield key
+            yield from strings_in(item)
+    elif isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
+        for item in value:
+            yield from strings_in(item)
+
+
 def write_record(
     path: Path, record: Mapping[str, Any], *, allow_content_digests: bool = False
 ) -> None:
@@ -248,13 +266,19 @@ def write_record(
     What the masking gives up, exactly: the ability to notice a real forty-character key in
     a document that also holds commit SHAs. Everything else -- an account id, a GitHub
     token, a JWT, a PEM block, a session token -- is still refused either way.
+
+    Scanned per string rather than over the serialized document, because a number is not
+    text. A float64 loss printed in full holds twelve consecutive digits often enough, and
+    the account ID pattern reads any such run as an account ID; a parameter count in the
+    hundreds of billions is twelve digits outright. Nothing a credential can be is a JSON
+    number, so nothing is given up.
     """
     serialized = json.dumps(record, indent=2, sort_keys=True) + "\n"
-    scanned = redact_content_digests(serialized) if allow_content_digests else serialized
-    try:
-        scan_for_secrets(scanned)
-    except ValueError as error:
-        raise CaptureFailedError("record_holds_a_credential") from error
+    for text in strings_in(record):
+        try:
+            scan_for_secrets(redact_content_digests(text) if allow_content_digests else text)
+        except ValueError as error:
+            raise CaptureFailedError("record_holds_a_credential") from error
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(serialized, encoding="utf-8")
 
