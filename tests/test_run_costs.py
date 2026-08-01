@@ -3,8 +3,9 @@
 The arithmetic is trivial and is not what these guard. What they guard is the four places
 a cost report can be quietly wrong: counting the gap between two attempts as billed time,
 totalling an unpriceable run as zero, putting a forecast rate on a spot run as though it
-were a measurement, and booking spend against a team that only exists because somebody
-mistyped a free-text form field.
+were a measurement, and booking spend against a team the roster does not carry. The form no
+longer lets a new run claim one, and the records that already do cannot be edited, so the
+last of the four is now about history rather than about typing.
 
 The bindings these build are constructed here rather than read out of
 ``config/organization.yaml``. What that file happens to bind today is a roster decision that
@@ -188,7 +189,7 @@ def test_a_run_that_never_reached_an_instance_is_left_out_rather_than_reported_a
 
 
 # ---------------------------------------------------------------------------------------
-# Whose spend it is, once the free-text team box is reconciled against the roster
+# Whose spend it is, once the team a record claims is reconciled against the roster
 # ---------------------------------------------------------------------------------------
 
 

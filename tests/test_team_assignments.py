@@ -120,10 +120,10 @@ def test_a_run_submitted_under_a_declared_team_places_its_submitter_strongly() -
 def test_a_run_claiming_a_team_the_bindings_do_not_carry_places_nobody() -> None:
     """Mutation: treat the string in the manifest as a team because a run carried it.
 
-    The `team` box on the submission form is free text and the form says a typo delays
-    nothing, so a claimed team is a claim. Grading it as a record would let a misspelling
-    become a group with a member in it, and the roster would then carry a team nothing
-    declares.
+    A claimed team is a claim, and `evaluation` is the live instance: two records carry it,
+    it was never a declared group, and it is not `eval-inference` under an earlier spelling.
+    Grading a claim as a record would let it become a group with a member in it, and the
+    roster would then carry a team nothing declares.
     """
     people = assignments(
         inventory(),

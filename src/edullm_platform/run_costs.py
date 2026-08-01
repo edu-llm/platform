@@ -35,11 +35,13 @@ moves continuously and is typically well below it. Reporting the on-demand figur
 *actual* spend would produce a number that is knowably wrong and indistinguishable from a
 right one, so these runs are reported with no figure and the reason beside them.
 
-**A team is a string somebody typed until it is reconciled against the roster.** The
-``team`` box on the submission form is free text, and the form says as much: any lead may
-approve any run, so a misspelling there delays nothing and nothing else refuses it. Grouped
-by that string alone a misspelling becomes a team with a spend line of its own, no lead
-attached to it and nothing to tell it apart from a group that exists.
+**A team is a string in a record until it is reconciled against the roster.** The ``team``
+box on the submission form was free text and nothing refused an unrecognised value, so a
+misspelling became a team with a spend line of its own, no lead attached to it and nothing to
+tell it apart from a group that exists. That box is a dropdown over the declared groups now,
+which closes the way new unbound names arrive and does nothing about the ones already
+recorded: a decision record is immutable, three of them claim ``tokenizer`` and two claim
+``evaluation``, and neither name is a declared group.
 :func:`attribute_to_teams` groups against the ``TeamBindingCatalog`` in
 ``config/organization.yaml`` instead, so spend lands on a team that carries a lead, a GitHub
 team and whatever attribution tags were recorded for it. Spend claimed against a name the
@@ -238,9 +240,10 @@ class UnboundTeamSpend:
     """Spend booked against a team name nothing in the binding catalog carries.
 
     Held apart from :class:`TeamSpend` rather than shaped like it, because there is no lead,
-    no GitHub team and no attribution tag to give: the name came out of a free-text box and
-    the roster has never heard of it. A caller that wanted to render the two alike would
-    have to invent those fields, which is the misattribution this separation prevents.
+    no GitHub team and no attribution tag to give: the roster has never heard of the name, or
+    has been renamed since the record was written. A caller that wanted to render the two
+    alike would have to invent those fields, which is the misattribution this separation
+    prevents.
     """
 
     claimed_team: str

@@ -11,9 +11,12 @@ AWS CLI, because ``boto3`` is deliberately not a dependency of this project -- i
 present in the Lambda runtime and nowhere else.
 
 The per-team section is reconciled against the team bindings in ``config/organization.yaml``
-rather than grouped by the string in the manifest, because that string is a free-text form
-field nothing validates. A bound team that ran nothing is reported at zero, and spend
-claiming a team the catalog does not bind is reported under the name it claimed.
+rather than grouped by the string in the manifest, because the two are not the same list. The
+form now offers only declared groups, so nothing new can claim an unbound name, and the
+records already written are immutable and outlive a rename: three claim ``tokenizer``, which
+is now ``input-core``, and two claim ``evaluation``, which was never declared at all. A bound
+team that ran nothing is reported at zero, and spend claiming a team the catalog does not bind
+is reported under the name it claimed.
 
 Exit codes follow the repository's convention: 0 reported, 2 the inputs could not be read.
 There is no 1, because this tool judges nothing and so has nothing to refuse.
@@ -194,7 +197,8 @@ def by_team(costs: Sequence[RunCost], teams: TeamBindingCatalog) -> list[str]:
             f"${_plain(attribution.unbound_cost_usd)} across "
             f"{_runs(attribution.unbound_runs)} beneath them cannot be routed to a lead or "
             "to a cost centre. Each name is either a group the roster has not been told "
-            "about or a misspelling in the submission form's free-text team box. It is "
+            "about or a group that has since been renamed, and the record naming it cannot "
+            "be edited. It is "
             "listed here rather than folded into a bound team, because reading one group's "
             "spend as another's would be worse than reading it as nobody's."
         )
