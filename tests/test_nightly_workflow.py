@@ -18,6 +18,14 @@ role in ``infra/iam/`` pins ``job_workflow_ref`` to some other workflow file wit
 ``StringEquals``, so this job needed a role of its own. A role added for a scheduled job
 nobody is watching is worth bounding tightly, which is why the action set is asserted
 exactly rather than checked for the absence of anything alarming.
+
+**A second job now runs on the same identity, and it is held to the same two things.**
+``wandb-credential`` asks whether W&B still accepts the stored key, which is a fact about
+the account and about an API outside it rather than about the tree. It fails the same way
+the report does, through an exit code that a missing ``pipefail`` would discard, and it
+reads one secret by name under the same role. Sharing the role is deliberate: a second
+template trusting this file would be a second way into the same schedule, reviewed
+somewhere else, which is what the last test in this module refuses.
 """
 
 from __future__ import annotations
@@ -47,6 +55,7 @@ from edullm_platform.contracts.results import OUTPUTS_BUCKET
 
 WORKFLOW_PATH = WORKFLOWS_ROOT / "nightly.yml"
 ROLE_PATH = IAM_ROOT / "nightly-reader-role.yaml"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 #: The job, the tool it runs, and the variable that names the identity it runs as. Spelled
 #: out because all three are load-bearing strings that nothing else in this repository
@@ -59,6 +68,13 @@ ROLE_VARIABLE = "AWS_NIGHTLY_READER_ROLE_ARN"
 ROLE_NAME = "sbsandbox-intern-edullm-nightly-reader"
 LINEAGE_BUCKET = "sbsandbox-intern-edullm-lineage"
 WORKFLOW_REF = "edu-llm/platform/.github/workflows/nightly.yml@refs/heads/main"
+
+#: The second job on the same identity, and the tool it runs. The secret name is spelled
+#: out because the grant is scoped to it by name and a rename on either side alone is an
+#: access denial at 05:00 rather than a test failure at review time.
+WANDB_JOB_ID = "wandb-credential"
+VERIFIER_TOOL = "tools/verify_wandb_credential.py"
+WANDB_SECRET_NAME = "sbsandbox-intern-edullm-wandb-api-key"
 
 #: A plausible ARN for the guard to accept, on the documentation account id every other
 #: test here uses. A run of twelve digits that is not that one reads as a real account to
@@ -296,20 +312,29 @@ def test_the_workflow_syncs_the_one_prefix_the_role_can_list(
 
 
 def test_the_reader_role_can_list_and_read_and_do_nothing_else(role: dict[str, Any]) -> None:
-    """Mutation: add `s3:PutObject`, or `secretsmanager:GetSecretValue` while passing.
+    """Mutation: add `s3:PutObject`, or widen the secret read to `secretsmanager:*`.
 
     This role is assumable by every job in `nightly.yml`, including one added later, which
     is tolerable only for as long as it is read-only. Asserted as an exact set rather than
     as an absence list, so an action added later has to be argued for in this test instead
     of merely not being forbidden.
+
+    `secretsmanager:GetSecretValue` is the one grant here that leaves the account, and it
+    arrived with the W&B check, which cannot ask whether W&B still accepts the key without
+    holding it. It is still a read. What bounds it is the resource rather than the action,
+    which is asserted separately below.
     """
     actions = granted_actions(role)
 
-    assert actions == {"s3:ListBucket", "s3:GetObject"}
+    assert actions == {"s3:ListBucket", "s3:GetObject", "secretsmanager:GetSecretValue"}
     for action in actions:
         assert not any(fragment in action for fragment in MUTATING_ACTION_FRAGMENTS), action
-        assert action.startswith("s3:"), action
+        assert action.startswith(("s3:", "secretsmanager:")), action
         assert "*" not in action, action
+
+    # ListSecrets has no resource type, so a grant of it could not be scoped to one secret
+    # and would let a scheduled job enumerate every secret in the account.
+    assert "secretsmanager:ListSecrets" not in actions
 
 
 def test_the_reader_role_reaches_the_two_buckets_the_report_asks_about(
@@ -323,10 +348,13 @@ def test_the_reader_role_reaches_the_two_buckets_the_report_asks_about(
     written here twice, because the grant and the prefix drifting apart is a denial nobody
     sees until a morning.
     """
+    # Scoped to the s3 statements, because the secret grant is about a different question
+    # and is asserted where the reason for it is written down.
     statements = [
         statement
         for policy in role["Policies"]
         for statement in policy["PolicyDocument"]["Statement"]
+        if ":s3:::" in str(statement["Resource"]["Fn::Sub"])
     ]
     reach = {
         str(statement["Resource"]["Fn::Sub"]): set(statement_actions(statement))
@@ -403,3 +431,185 @@ def test_no_role_that_already_existed_could_have_been_assumed_from_this_file() -
     }
 
     assert trusting == {ROLE_PATH.name}
+
+
+@pytest.fixture(scope="module")
+def wandb_job(workflow: dict[str, Any]) -> dict[str, Any]:
+    found: dict[str, Any] = workflow["jobs"][WANDB_JOB_ID]
+    return found
+
+
+def test_something_actually_checks_the_stored_key(wandb_job: dict[str, Any]) -> None:
+    """Mutation: keep the job and drop the step, or rename the tool out from under it.
+
+    The verifier was written and merged with nothing running it, which is the same state
+    the report tool was in. A key that W&B has stopped accepting costs nothing visible: the
+    training run succeeds, the metrics go nowhere, and the first person to notice is
+    whoever opens the W&B project expecting a curve.
+    """
+    invocations = [
+        step["run"] for step in wandb_job["steps"] if VERIFIER_TOOL in step.get("run", "")
+    ]
+
+    assert len(invocations) == 1
+    assert "uv run --frozen python" in invocations[0], (
+        "run through the locked environment, like every other job in this file"
+    )
+
+
+def test_a_refused_key_fails_the_job_and_still_reaches_the_summary(
+    wandb_job: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    """THE ONE THAT MATTERS. Mutation: drop `pipefail`, or append `|| true`.
+
+    The verifier exits non-zero when the stored value is the wrong shape and when W&B
+    refuses it or resolves it to an entity other than the one the containers write to. That
+    exit code is the whole signal, and piping into `tee` is one character away from
+    discarding it: without `pipefail` a pipeline reports the status of its last command,
+    and `tee` always succeeds.
+
+    Proved by running the step against a stub that fails the way the tool fails, because
+    reading the script for the word `pipefail` is not the same as watching the status come
+    back.
+    """
+    summary = tmp_path / "summary.md"
+    stub_bin = tmp_path / "bin"
+    write_stub(stub_bin, "uv", 'echo "W&B does not recognise this key"\nexit 1\n')
+
+    answer = run_step_script(
+        named_step(wandb_job, "Check the key W&B is given")["run"],
+        cwd=tmp_path,
+        env={"GITHUB_STEP_SUMMARY": str(summary)},
+        stub_bin=stub_bin,
+    )
+
+    assert answer.returncode != 0, (
+        "the verifier refused the key and the step passed, so the exit code was swallowed "
+        "somewhere between the tool and the runner"
+    )
+    assert "does not recognise" in summary.read_text(encoding="utf-8")
+
+
+def test_a_key_the_platform_still_owns_leaves_the_job_green(
+    wandb_job: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    """The other side of the branch, so the test above cannot pass by always failing.
+
+    A scheduled check that is red every morning is one people learn to scroll past, which
+    is the same outcome as no check at all reached by a longer route.
+    """
+    summary = tmp_path / "summary.md"
+    stub_bin = tmp_path / "bin"
+    write_stub(stub_bin, "uv", 'echo "{\\"looks_wrong\\": []}"\n')
+
+    answer = run_step_script(
+        named_step(wandb_job, "Check the key W&B is given")["run"],
+        cwd=tmp_path,
+        env={"GITHUB_STEP_SUMMARY": str(summary)},
+        stub_bin=stub_bin,
+    )
+
+    assert answer.returncode == 0, answer.stderr
+
+
+def test_nothing_in_the_wandb_job_is_allowed_to_be_informational(
+    wandb_job: dict[str, Any],
+) -> None:
+    """Mutation: `continue-on-error: true` on the job or on the checking step.
+
+    It is the obvious response to a check that goes red on a morning nobody has time for,
+    and it turns the job into one that cannot say anything. The header of the workflow
+    argues the point for the four checks that came before this one.
+    """
+    assert "continue-on-error" not in wandb_job
+    assert "needs" not in wandb_job, "a failure elsewhere in this file must not skip this"
+    for step in wandb_job["steps"]:
+        assert "continue-on-error" not in step, step.get("name")
+
+    body = named_step(wandb_job, "Check the key W&B is given")["run"]
+    assert "|| true" not in body
+    assert "exit 0" not in body
+
+
+def test_the_wandb_job_guards_the_role_variable_before_taking_a_credential(
+    wandb_job: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    """Mutation: drop the guard, or put it after the credential step where it guards nothing.
+
+    This job shares the reader role with the report, so it shares the condition that the
+    role is applied from a laptop and the variable is set by hand. A second job failing
+    with "Credentials could not be loaded" would send the reader to the OIDC configuration
+    for the same reason the first one would have.
+    """
+    guard = named_step(wandb_job, "nightly reader role was never deployed")
+    assert guard["env"] == {"ROLE_ARN": f"${{{{ vars.{ROLE_VARIABLE} }}}}"}
+    assert step_index(wandb_job, "nightly reader role was never deployed") < step_index(
+        wandb_job, "Configure AWS credentials"
+    ), "a guard after the credential step guards nothing"
+
+    refused = run_step_script(guard["run"], cwd=tmp_path, env={"ROLE_ARN": ""})
+
+    assert refused.returncode == 1
+    assert "nightly_reader_role_not_deployed" in refused.stderr
+    assert ROLE_VARIABLE in refused.stderr
+    assert "infra/iam/nightly-reader-role.yaml" in refused.stderr
+
+    allowed = run_step_script(guard["run"], cwd=tmp_path, env={"ROLE_ARN": SOME_ROLE_ARN})
+
+    assert allowed.returncode == 0, allowed.stderr
+
+
+def test_the_wandb_job_takes_a_token_and_assumes_the_same_reader_role(
+    wandb_job: dict[str, Any],
+) -> None:
+    """Mutation: give this job a role of its own, or hoist the token to the workflow.
+
+    One role rather than two is deliberate. A second template trusting `nightly.yml` would
+    be a second way into the same schedule reviewed somewhere else, which is the thing
+    `test_no_role_that_already_existed_could_have_been_assumed_from_this_file` refuses.
+    """
+    assert wandb_job["permissions"] == {"contents": "read", "id-token": "write"}
+
+    credentials = named_step(wandb_job, "Configure AWS credentials")
+    assert credentials["with"]["role-to-assume"] == f"${{{{ vars.{ROLE_VARIABLE} }}}}"
+
+
+def test_the_secret_grant_names_one_secret_rather_than_the_account(
+    role: dict[str, Any],
+) -> None:
+    """Mutation: widen the resource to `secret:*`, which still reads as scoped.
+
+    It is not. `secret:*` is every secret in the account, and this role is assumable by any
+    job in a scheduled workflow. The trailing `-*` on the name is Secrets Manager's own
+    six-character suffix, chosen at creation, so the name cannot be matched without it.
+    """
+    secret_statements = [
+        statement
+        for policy in role["Policies"]
+        for statement in policy["PolicyDocument"]["Statement"]
+        if ":secretsmanager:" in str(statement["Resource"]["Fn::Sub"])
+    ]
+
+    assert len(secret_statements) == 1
+    resource = str(secret_statements[0]["Resource"]["Fn::Sub"])
+    assert resource.endswith(f":secret:{WANDB_SECRET_NAME}-*"), resource
+    assert not resource.endswith(":secret:*")
+    assert statement_actions(secret_statements[0]) == ["secretsmanager:GetSecretValue"]
+
+
+def test_the_verifier_the_job_runs_is_the_one_that_never_prints_the_key() -> None:
+    """Mutation: point the job at a script that prints what it read.
+
+    This job's output goes to a scheduled log and a step summary in a public repository, so
+    the property that makes it safe to run there is that the tool reports a length, a
+    four-character prefix and a truncated digest rather than the value. Asserted here as
+    well as in the verifier's own tests, because the reason it matters is the log this job
+    writes.
+    """
+    source = (PROJECT_ROOT / VERIFIER_TOOL).read_text(encoding="utf-8")
+
+    assert "Never prints the key" in source
+    assert "fingerprint" in source

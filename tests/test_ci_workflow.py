@@ -51,10 +51,11 @@ REQUIRED_CHECK_NAMES = {"checks (python 3.12)", "checks (python 3.13)"}
 #: constant from the same place would pass while the two had drifted apart.
 REPRODUCE_ENV = "EDULLM_REPRODUCE_PROOFS"
 
-#: The one scheduled job that holds an AWS credential, and the only one that may. Named
-#: rather than derived from the file, because the check it appears in is about how many
+#: The scheduled jobs that hold an AWS credential, and the only ones that may. Named
+#: rather than derived from the file, because the check they appear in is about how many
 #: jobs reach AWS and a check reading that off the file would agree with whatever it said.
-CREDENTIALLED_NIGHTLY_JOB = "runs-that-saved-nothing"
+#: Both ask a question about the account, which is the only argument that has bought one.
+CREDENTIALLED_NIGHTLY_JOBS = {"runs-that-saved-nothing", "wandb-credential"}
 
 
 def _load_workflow(path: Path = WORKFLOW_PATH) -> dict[str, Any]:
@@ -196,27 +197,28 @@ def test_the_nightly_run_reproduces_what_the_pull_request_path_skips() -> None:
     assert "continue-on-error" not in job
 
 
-def test_only_the_one_scheduled_job_that_reads_s3_can_reach_aws() -> None:
+def test_only_the_scheduled_jobs_that_ask_about_the_account_can_reach_aws() -> None:
     # The gates read committed records and the reproduction runs the suite, so three of
-    # the four scheduled jobs need no credentials and should stay unable to take one. The
-    # fourth asks a question about the account, which no commit can answer, and it holds
-    # the token on the job rather than at the top of the file so the widening stops there.
-    # What that identity may then do is pinned in tests/test_nightly_workflow.py; what is
-    # held here is the count, because a second job quietly acquiring a credential is the
-    # change this file is placed to notice.
+    # the five scheduled jobs need no credentials and should stay unable to take one. The
+    # other two ask a question about the account, which no commit can answer, and they
+    # hold the token on the job rather than at the top of the file so the widening stops
+    # there. What those identities may then do is pinned in tests/test_nightly_workflow.py;
+    # what is held here is the count, because a further job quietly acquiring a credential
+    # is the change this file is placed to notice.
     workflow = _load_workflow(NIGHTLY_PATH)
     workflow_text = NIGHTLY_PATH.read_text(encoding="utf-8")
 
     assert workflow["permissions"] == {"contents": "read"}
-    assert {job_id for job_id, job in workflow["jobs"].items() if "permissions" in job} == {
-        CREDENTIALLED_NIGHTLY_JOB
-    }
-    assert workflow["jobs"][CREDENTIALLED_NIGHTLY_JOB]["permissions"] == {
-        "contents": "read",
-        "id-token": "write",
-    }
+    assert {
+        job_id for job_id, job in workflow["jobs"].items() if "permissions" in job
+    } == CREDENTIALLED_NIGHTLY_JOBS
+    for job_id in CREDENTIALLED_NIGHTLY_JOBS:
+        assert workflow["jobs"][job_id]["permissions"] == {
+            "contents": "read",
+            "id-token": "write",
+        }
     for job_id, job in workflow["jobs"].items():
-        if job_id == CREDENTIALLED_NIGHTLY_JOB:
+        if job_id in CREDENTIALLED_NIGHTLY_JOBS:
             continue
         reaching = [step for step in job["steps"] if "aws-actions/" in step.get("uses", "")]
         assert reaching == [], f"{job_id} reads committed records and needs no credential"

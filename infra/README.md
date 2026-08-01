@@ -417,10 +417,15 @@ bypass achieves is stopping runs. The role's trust names that one workflow file,
 that could skip the check has to be added beside the check.
 
 Stack 5 needs a repository variable in the same way: `AWS_NIGHTLY_READER_ROLE_ARN`, set to
-the role's ARN, which the `runs-that-saved-nothing` job in `.github/workflows/nightly.yml`
-reads. Until the stack is applied and the variable is set, that job refuses before it takes
-a credential, printing `nightly_reader_role_not_deployed` and naming this section. The
-other three jobs in that file reach no AWS API and are unaffected.
+the role's ARN, which the `runs-that-saved-nothing` and `wandb-credential` jobs in
+`.github/workflows/nightly.yml` read. Until the stack is applied and the variable is set,
+both jobs refuse before they take a credential, printing `nightly_reader_role_not_deployed`
+and naming this section. The other three jobs in that file reach no AWS API and are
+unaffected.
+
+Both jobs share the one role rather than taking one each. A second template trusting the
+same workflow file would be a second way into the same schedule, reviewed somewhere else,
+and the trust condition cannot tell two jobs in one file apart in any case.
 
 **No existing role could have been reused for it, and the reason is the same condition that
 makes the others safe.** Every GitHub role in this directory pins
@@ -428,9 +433,12 @@ makes the others safe.** Every GitHub role in this directory pins
 `StringEquals`: `submit-run.yml` for the admission and image-resolver roles,
 `build-research-image.yml` for the publisher, `cancel-run.yml` for the canceller, and the
 three deploy files for the deployer. A token minted for `nightly.yml` matches none of them.
-The new role reads the `intent/` prefix of the lineage store and lists the two buckets a
-run's checkpoints would be under. It holds no write, no delete, and no
-`secretsmanager:GetSecretValue`.
+The new role reads the `intent/` prefix of the lineage store, lists the two buckets a run's
+checkpoints would be under, and reads the W&B key by name so the nightly check can ask
+whether W&B still accepts it. It holds no write and no delete, and the secret grant names
+`sbsandbox-intern-edullm-wandb-api-key-*` rather than `secret:*`, so it reaches that one
+secret and no other. It carries no `secretsmanager:ListSecrets`, which has no resource type
+and so could not have been scoped to anything narrower than the account.
 
 It sits in this table for the reason stack 3 does rather than because Phase 4 depends on it:
 a template with no committed file naming its stack is a template whose next change begins

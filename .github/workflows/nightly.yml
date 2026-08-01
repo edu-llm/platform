@@ -1,6 +1,6 @@
 name: Nightly (the checks that are not about one change)
 
-# Four checks that answer a question about the repository, or about the account it runs
+# Five checks that answer a question about the repository, or about the account it runs
 # on, rather than about a change, and that either cost too much or fail too unpredictably
 # to sit on the pull-request path. Nothing here is continue-on-error, and that is the
 # whole point of moving them: there is no alerting infrastructure, so a red scheduled run
@@ -38,10 +38,28 @@ name: Nightly (the checks that are not about one change)
 #     On 2026-08-01 the report named six runs in that state, so the first scheduled runs
 #     are red because the runs are, not because the job is broken.
 #
-#     It is also the one job here that holds an AWS credential, which is a property this
+#     It was also the first job here to hold an AWS credential, which is a property this
 #     file did not have before and is worth naming rather than burying. The role lists two
-#     buckets and reads the admission intents and can do nothing else in the account;
-#     infra/iam/nightly-reader-role.yaml carries that argument in full.
+#     buckets, reads the admission intents and reads one secret by name, and can do nothing
+#     else in the account; infra/iam/nightly-reader-role.yaml carries that argument in
+#     full.
+#
+#   wandb-credential — the same kind of question, asked of a value rather than of a prefix.
+#     Whether W&B still accepts the stored key is a fact about the account and about an API
+#     outside it, so no commit can answer it either.
+#
+#     It is here because the failure it catches is silent. The value in the secret until
+#     2026-08-01 was a well-formed service-account key with the literal word `api` on the
+#     front, which is what copying W&B's netrc line as one token produces, and W&B refused
+#     it outright. Nothing went red: a training run whose metrics are refused does not
+#     fail, it trains with nobody watching, and the platform found out by somebody looking
+#     rather than by being told.
+#
+#     A key can also stop working without anybody editing the secret, by being revoked or
+#     rotated to a service account in another entity. That last one is the worst of them,
+#     because the run succeeds and the metrics land where nobody on this project can see
+#     them, so the check compares the entity W&B resolves the key to against the one the
+#     containers are told to write to rather than settling for an authenticated 200.
 #
 # The contract rules the gates enforce are covered by the test suite in ci.yml, which is
 # what blocks a merge. Nothing here is a required check and nothing here should become
@@ -200,3 +218,54 @@ jobs:
           set -euo pipefail
           uv run --frozen python tools/find_runs_that_saved_nothing.py \
             --lineage-root "${RUNNER_TEMP}/lineage" | tee -a "${GITHUB_STEP_SUMMARY}"
+
+  wandb-credential:
+    name: the stored W&B key is one W&B still accepts
+    runs-on: ubuntu-latest
+    # Same shape as the report job above and for the same reason: the token is declared
+    # here so the three jobs that read committed records keep the contents-read they have
+    # always had.
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Say if the nightly reader role was never deployed
+        env:
+          ROLE_ARN: ${{ vars.AWS_NIGHTLY_READER_ROLE_ARN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${ROLE_ARN}" ]]; then
+            echo "nightly_reader_role_not_deployed" >&2
+            echo "AWS_NIGHTLY_READER_ROLE_ARN is unset, so this job has no identity to assume." >&2
+            echo "The role comes from infra/iam/nightly-reader-role.yaml, which is applied from a" >&2
+            echo "laptop because the deployer role holds no iam:CreateRole. See 'The Phase 4 stacks'" >&2
+            echo "in infra/README.md for the stack and the variable it needs." >&2
+            exit 1
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ vars.AWS_NIGHTLY_READER_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # The tool exits non-zero when the stored value is the wrong shape and when W&B
+      # refuses it or answers with an entity other than the one the containers are told to
+      # write to. It prints a length, a four-character prefix and a truncated digest, and
+      # never the key, which is what makes it safe to read the log of a public repository.
+      - name: Check the key W&B is given
+        run: |
+          set -euo pipefail
+          uv run --frozen python tools/verify_wandb_credential.py \
+            | tee -a "${GITHUB_STEP_SUMMARY}"

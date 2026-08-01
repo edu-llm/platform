@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: GitHub Actions role that reads the admission intents and lists what the runs wrote, so the scheduled report can find a run that promised a checkpoint and saved none.
+Description: GitHub Actions role for the scheduled checks that ask a question about the account. It reads the admission intents and lists what the runs wrote, and it reads the W&B key so the nightly check can tell whether W&B still accepts it.
 
 Resources:
   NightlyReaderRole:
@@ -17,8 +17,10 @@ Resources:
       # the worst place in this repository to put an identity that can change something.
       # This one cannot. It lists two buckets and reads the admission intents, which is
       # what `tools/find_runs_that_saved_nothing.py` needs in order to ask whether a run
-      # whose profile promised a checkpoint left its prefix empty, and it is the whole of
-      # what the role can do in the account.
+      # whose profile promised a checkpoint left its prefix empty, and it reads one secret
+      # by name, which is what `tools/verify_wandb_credential.py` needs in order to ask
+      # whether W&B still accepts the key the containers are given. Those three reads are
+      # the whole of what the role can do in the account.
       #
       # A trust policy cannot distinguish jobs within a workflow, so every job in
       # `nightly.yml` presents the same `job_workflow_ref` and the same `sub` and any of
@@ -104,12 +106,37 @@ Resources:
               # s3:GetObject on the outputs bucket, so this cannot read a team's training
               # output on its way past counting it.
               #
-              # secretsmanager:GetSecretValue. Nothing this job runs authenticates to a
-              # service outside the account, so a secret read would be a grant with no
-              # caller.
-              #
               # Every batch:, states: and ecr: action. The report reads records of what
               # already happened and must not be able to start, stop or publish anything.
+
+        - PolicyName: read-the-wandb-key
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # THE ONE SECRET, BY NAME, AND THE ONLY GRANT HERE THAT LEAVES THE ACCOUNT.
+              #
+              # `tools/verify_wandb_credential.py` cannot ask whether W&B still accepts the
+              # key without holding the key, so this is the one read that cannot be
+              # designed away. What is bounded instead is which secret and what may be done
+              # with it: one name, GetSecretValue only, and no
+              # secretsmanager:ListSecrets, which has no resource type and so cannot be
+              # scoped to anything narrower than the account.
+              #
+              # The trailing `-*` is Secrets Manager's six-character suffix rather than a
+              # widening. A secret ARN ends in a suffix the service chooses at creation, so
+              # the name has to be matched with a wildcard; `sbsandbox-intern-edullm-wandb-
+              # api-key-*` reaches that secret and no other, and this is the same pattern
+              # the Batch execution roles use in infra/iam/batch-roles.yaml and
+              # infra/iam/batch-gpu-roles.yaml.
+              #
+              # The check prints a length, a four-character prefix and a truncated digest.
+              # It never prints the key, which is what makes it safe to run in a public
+              # repository's scheduled log, and tests/test_wandb_credential_verifier.py is
+              # what holds that.
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sbsandbox-intern-edullm-wandb-api-key-*
 
 Outputs:
   RoleName:
