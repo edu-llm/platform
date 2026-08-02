@@ -1,9 +1,9 @@
 {
   "fixtures": [
     {
-      "canonical_json_bytes": 2044,
+      "canonical_json_bytes": 2124,
       "contract": "TemplateRole",
-      "digest": "sha256:99f597e80519995aeaec203e2f460f7a487447f4f61dc218bf63c2708be42b4a",
+      "digest": "sha256:e3842507a5b258bfda00b2526fdfdebc88f97bcdc4ad6c2829dcd60e55a453c6",
       "fixture": "sbsandbox-intern-edullm-admission",
       "relative_path": "infra/iam/admission-role.yaml"
     },

@@ -3,7 +3,14 @@
 # place because a decision record naming only its outcome would otherwise be
 # uninterpretable -- a later reader could not tell a v1 approval, taken when no scan was
 # consulted, from a v2 one taken when the findings had been read.
-policy_version: v2
+#
+# v3 adds the automatic approval class: the two automatic_below_ bounds in thresholds
+# below, and with them a third route that no person releases. Bumped for the reason v2 was
+# -- a decision record naming only its outcome would otherwise be uninterpretable. Under v2
+# every accepted run had an approver, so a v3 record reading approval_class: automatic with
+# no approver is a different fact from a v2 record that lost one, and the version is what
+# tells those apart.
+policy_version: v3
 # THERE IS A FIFTH BOUND AND IT IS NOT IN THIS FILE.
 # classify_request also refuses to call a request routine when the compute profile it names
 # costs more than EXCEPTION_RATE_CEILING_USD_PER_HOUR, which is $20/hour and lives in
@@ -22,6 +29,48 @@ thresholds:
   routine_maximum_attempts: 2
   routine_maximum_fanout_size: 64
   routine_maximum_parallelism: 8
+  # THE AUTO-APPROVE BOUNDS. Both must hold, and both are exclusive.
+  #
+  # A run estimated under five dollars that asks for under an hour is released by nobody.
+  # It is still recorded, still carries an intent and a decision record, and still passes
+  # every check above. What it does not get is a person, because 47% of submitted jobs fail
+  # and almost all of them are the container exiting on a code error -- a mistake whose
+  # cheapest discovery is a two-dollar run that starts when it is submitted, not one that
+  # waits for a team lead to release it. Waiting was sending researchers to Colab and
+  # FarmShare instead of here.
+  #
+  # AUTHORIZATION IS UNTOUCHED BY THIS AND THAT IS THE POINT. This changes routing only.
+  # The submitter must still be on the roster and the repository must still be registered,
+  # which is what the original incident actually required. An auto-approved run is still
+  # recorded, still carries a decision record, and is still denied outright if the
+  # submitter is not on the roster. evaluate_authorization returns
+  # automatic_below_approval_thresholds only after the roster, approver-roster and
+  # claimed-team checks have all passed; read it there rather than trusting this note.
+  #
+  # BOTH HALVES, AND EXCLUSIVE ON BOTH. A run that is cheap only because it is short does
+  # not auto-approve if it asks for four hours, and a one-hour run costing eight dollars
+  # does not either. Five dollars exactly and one hour exactly each go to a lead: unlike
+  # every routine_maximum_ bound above, these two are strictly-under comparisons, which is
+  # why they are not named maximum. A bound drawn one value too wide here enlarges the set
+  # of runs nobody ever looks at.
+  #
+  # A FAN-OUT NEVER AUTO-APPROVES, WHATEVER IT COSTS. Sixty-four cells at both count
+  # ceilings really is $4.57 over 0.05 hours, because the estimate already multiplies by
+  # cells. What that total does not say is that sixty-four cells is sixty-four machines
+  # running at once. This rule was written to remove a human from a twenty-step smoke test,
+  # not from a sweep, and a sweep is exactly the shape where a person should see the total
+  # before it starts. The exclusion is on fan-out size in classify_request, not here,
+  # because there is no size that would be small enough to write down.
+  #
+  # EDITING THIS FILE CHANGES NOTHING IN THE ACCOUNT UNTIL THE VALIDATOR IS RE-RELEASED.
+  # tools/build_admission_lambda.py packages config/*.yaml into the admission validator's
+  # zip, so the deployed rule is whatever was in the zip at release time and not what is on
+  # main. Phase 4 paid for that once already: a GPU submission was refused with
+  # unprovisioned_compute_profile because the deployed zip held a catalog in which the
+  # profile was not yet promoted. Follow the release procedure in infra/README.md after
+  # this merges, or the runs this was written for keep waiting for a lead.
+  automatic_below_cost_usd: "5"
+  automatic_below_runtime_hours: "1"
 # Which registry-scan severities require a recorded exception before a digest may run.
 # Enforced at admission, not at publish: ECR scans after the push, Phase 1 tags are
 # immutable, and a publish-time block would leave that commit unpublishable for good.

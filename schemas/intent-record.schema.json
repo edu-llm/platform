@@ -1,8 +1,9 @@
 {
   "$defs": {
     "ApprovalEnvironment": {
-      "description": "The GitHub environment a job passed through to reach AWS.\n\nThese strings are load-bearing in three places at once and must agree in all of them:\nthe ``environment:`` key of the submission workflow, the GitHub environment names\nthemselves, and the ``sub`` condition of the admission role's trust policy, which\nenumerates them exactly rather than matching a wildcard. Renaming one here without\nrenaming it in the other two silently revokes the trust \u2014 and the failure surfaces as\nan ``AssumeRole`` denial that reads like a broken role ARN.",
+      "description": "The GitHub environment a job passed through to reach AWS.\n\nThese strings are load-bearing in three places at once and must agree in all of them:\nthe ``environment:`` key of the submission workflow, the GitHub environment names\nthemselves, and the ``sub`` condition of the admission role's trust policy, which\nenumerates them exactly rather than matching a wildcard. Renaming one here without\nrenaming it in the other two silently revokes the trust \u2014 and the failure surfaces as\nan ``AssumeRole`` denial that reads like a broken role ARN.\n\n``AUTOMATIC`` is a real environment carrying real protection, and the one thing it does\nnot carry is a reviewer. It is pinned to ``main`` by a deployment branch policy and has\n``can_admins_bypass`` false, exactly as the other two do, so what it removes is the\nperson and not the gate. ``prevent_self_review`` is absent on it rather than false: the\nAPI refuses to set that flag on an environment with no reviewers, answering 422, so a\nreader comparing the three captures will see the field derived as false from an absent\nrule instead of configured off. There is nobody to prevent from reviewing.",
       "enum": [
+        "run-approval-automatic",
         "run-approval-lead",
         "run-approval-admin"
       ],

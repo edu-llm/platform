@@ -13,20 +13,31 @@ Resources:
       # puts `:environment:<name>` in the subject claim for a job that declared
       # `environment:` and cleared its protection rules, so the subject is the evidence.
       #
-      # The two environment names are therefore enumerated, never matched. Anyone who can
+      # The three environment names are therefore enumerated, never matched. Anyone who can
       # edit a workflow file can bring a GitHub environment into existence simply by
       # naming it in `environment:`; the environment is auto-created on first use and an
       # auto-created environment carries no protection rules at all. A StringLike on
       # `...:environment:*` would accept the subject minted for that brand new,
       # ungated environment, which is a subject that never passed a gate. Enumerating the
-      # two names means a subject can only match if a human already approved it in one of
-      # the two environments we configured reviewers on.
+      # three names means a subject can only match if it came from an environment somebody
+      # created deliberately and this file names.
+      #
+      # `run-approval-automatic` has no reviewers, and enumerating it is not the same
+      # concession as widening the match. The property this condition protects is that a
+      # subject cannot be minted by a workflow edit alone. A wildcard surrenders that
+      # outright: any name a workflow author invents matches, with no protection rules and
+      # no diff anybody reviewed. A third literal surrenders nothing of it. That
+      # environment was created deliberately with admin:org, carries a deployment branch
+      # policy pinning it to `main` and `can_admins_bypass: false` exactly as the other two
+      # do, and its name reaches this condition only through a reviewed change to this
+      # file. What it removes is the reviewer, which is a policy decision recorded in
+      # config/policy.yaml, and not the gate.
       #
       # An array under a single StringEquals key is an OR across its elements, so this
       # accepts either environment. Separate condition keys are ANDed, so aud,
       # job_workflow_ref, repository_owner_id and repository_id must all match as well.
       #
-      # Both environment names are load-bearing. Renaming `run-approval-lead` in the
+      # All three environment names are load-bearing. Renaming `run-approval-lead` in the
       # repository settings does not fail anything visibly: the workflow creates a fresh
       # unprotected environment under the new name, the subject stops matching, and every
       # submission is refused at AssumeRole. This is the same hazard as renaming a
@@ -51,6 +62,7 @@ Resources:
                 token.actions.githubusercontent.com:repository_owner_id: "306859726"
                 token.actions.githubusercontent.com:repository_id: "1311508598"
                 token.actions.githubusercontent.com:sub:
+                  - repo:edu-llm@306859726/platform@1311508598:environment:run-approval-automatic
                   - repo:edu-llm@306859726/platform@1311508598:environment:run-approval-lead
                   - repo:edu-llm@306859726/platform@1311508598:environment:run-approval-admin
       # Inline rather than a customer managed policy. InternSandboxBoundary denies

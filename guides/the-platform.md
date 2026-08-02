@@ -48,7 +48,9 @@ Ask for all three through the [access request](https://github.com/edu-llm/platfo
 
 ## Approval
 
-Every run waits for a person. Any of the eight team leads can release any group's run, so you are not blocked on one individual — but nobody is paged, so if a run has been waiting, ask.
+**A run estimated under 5 USD that asks for under an hour starts on its own.** No lead, no wait. It is still recorded and still attributed to you, and you still have to be on the roster and running registered code — what you skip is the queue, not the checks. Both halves have to hold: four hours at 50 cents waits, and one hour at 8 USD waits. So does any fan-out, whatever it costs, because a sweep is worth a person's eyes on the total before sixty-four machines start.
+
+Everything else waits for a person. Any of the eight team leads can release any group's run, so you are not blocked on one individual — but nobody is paged, so if a run has been waiting, ask.
 
 If you are approving, it is not a formality. Before you release a run you are shown its cost, its machine, the team it is booked to, whether the submitter will be attributed, and whether it waived any check.
 

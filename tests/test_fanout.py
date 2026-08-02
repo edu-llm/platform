@@ -433,6 +433,18 @@ def test_parallelism_above_the_bound_is_an_exception_on_its_own() -> None:
 
 
 def test_a_fanout_at_both_count_ceilings_stays_routine() -> None:
+    """Routine, and specifically not automatic, which is now a property rather than luck.
+
+    This sweep satisfies both auto-approve bounds on the numbers alone: sixty-four cells at
+    both count ceilings is $4.57 over 0.05 hours, because the estimate already multiplies by
+    cells. Cost and runtime are asserted against the bounds below so that the test states
+    the trap rather than merely avoiding it. What keeps a lead in front of it is the
+    fan-out exclusion in classify_request and nothing else.
+
+    Mutation: drop ``facts.fanout_size == 1`` from the automatic branch. This classifies as
+    automatic, and sixty-four machines start with nobody having seen the total. The rule was
+    written to take a person out of a twenty-step smoke test, not out of a sweep.
+    """
     thresholds = shipped_thresholds()
     sweep = sweep_manifest(
         fanout=fanout_payload(
@@ -446,6 +458,8 @@ def test_a_fanout_at_both_count_ceilings_stays_routine() -> None:
     assert facts.fanout_size == 64
     assert facts.fanout_parallelism == 8
     assert numeric_bound_violations(facts, thresholds) == frozenset()
+    assert facts.estimated_cost_usd < thresholds.automatic_below_cost_usd
+    assert facts.maximum_runtime_hours < thresholds.automatic_below_runtime_hours
     assert classify_request(
         facts, thresholds, hourly_rate_usd=rate_for(sweep)
     ) is ApprovalClass.ROUTINE

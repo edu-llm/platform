@@ -308,7 +308,7 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 *_ids(ADMISSION, "test_a_routine_submission_released_by_the_admin_gate_is_refused"),
             ),
             supporting_node_ids=(
-                *_ids(INFRA, "test_admission_subject_condition_is_a_two_element_array_of_environment_subjects"),
+                *_ids(INFRA, "test_admission_subject_condition_is_a_three_element_array_of_environment_subjects"),
                 *_ids(GITHUB, "test_the_admin_gate_is_reviewed_by_the_roster_admins_and_nobody_else"),
             ),
             scope_limits=(
@@ -559,7 +559,7 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                     "nobody has to pass -- and GitHub grants repository admin in repository "
                     "settings, independently of the admins list in config/organization.yaml, "
                     "so nothing in the roster bounds who holds it. The capture records the "
-                    "flag false on both environments and "
+                    "flag false on all three environments and "
                     "test_no_environment_lets_an_admin_release_without_a_reviewer pins it. If "
                     "somebody turns it on, what still holds is the authorization half: the "
                     "bypass leaves no approver for the submitting job to read, so admission "
@@ -847,8 +847,8 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 *_ids(GITHUB, "test_a_lead_the_roster_declares_is_never_locked_out_of_the_lead_gate"),
             ),
             supporting_node_ids=(
-                *_ids(GITHUB, "test_both_approval_environments_exist_and_no_third_one_does"),
-                *_ids(GITHUB, "test_self_review_is_deliberately_permitted_on_both_gates"),
+                *_ids(GITHUB, "test_all_three_approval_environments_exist_and_no_fourth_one_does"),
+                *_ids(GITHUB, "test_self_review_is_deliberately_permitted_on_the_two_reviewed_gates"),
             ),
             scope_limits=(
                 (
@@ -926,7 +926,7 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
         CriterionSpec(
             number="16",
             statement=(
-                "Both environments restrict deployment to main only, using the "
+                "Every environment restricts deployment to main only, using the "
                 "custom-branch form."
             ),
             status=CriterionStatus.COVERED,
@@ -935,7 +935,7 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 *_ids(GITHUB, "test_every_environment_restricts_deployments_to_main_by_name"),
             ),
             supporting_node_ids=(
-                *_ids(GITHUB, "test_both_approval_environments_exist_and_no_third_one_does"),
+                *_ids(GITHUB, "test_all_three_approval_environments_exist_and_no_fourth_one_does"),
             ),
             scope_limits=(
                 (
@@ -1200,7 +1200,7 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
             supporting_node_ids=(
                 *_ids(
                     GITHUB,
-                    "test_the_only_repository_variables_are_the_two_role_arns_and_the_region",
+                    "test_the_only_repository_variables_are_role_arns_and_the_region",
                 ),
             ),
             scope_limits=(

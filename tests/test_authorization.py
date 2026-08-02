@@ -123,6 +123,18 @@ def exception_facts(**overrides: object) -> RequestFacts:
     return routine_facts(**{"estimated_cost_usd": "5000", **overrides})
 
 
+def automatic_facts(**overrides: object) -> RequestFacts:
+    """Cheap, short and a single cell, so classify_request answers automatic.
+
+    Built from the same base as :func:`routine_facts` and moving only the two bounds the
+    automatic class turns on, so a test using this differs from its routine sibling in
+    nothing else.
+    """
+    return routine_facts(
+        **{"estimated_cost_usd": "0.75", "maximum_runtime_hours": "0.25", **overrides}
+    )
+
+
 def two_team_inventory_payload(
     *,
     memory_split_members: list[str] | None = None,
@@ -652,6 +664,7 @@ def test_decision_records_the_scope_in_force() -> None:
 
 def test_authorization_reason_values_are_stable_machine_readable_codes() -> None:
     assert {reason.value for reason in AuthorizationReason} == {
+        "automatic_below_approval_thresholds",
         "routine_self_authorized",
         "routine_approved_by_lead_or_admin",
         "exception_approved_by_admin",
@@ -670,6 +683,7 @@ def test_authorization_reason_values_are_stable_machine_readable_codes() -> None
 def test_granting_reasons_partition_the_reason_vocabulary() -> None:
     assert GRANTING_REASONS == frozenset(
         {
+            AuthorizationReason.AUTOMATIC_BELOW_APPROVAL_THRESHOLDS,
             AuthorizationReason.ROUTINE_SELF_AUTHORIZED,
             AuthorizationReason.ROUTINE_APPROVED_BY_LEAD_OR_ADMIN,
             AuthorizationReason.EXCEPTION_APPROVED_BY_ADMIN,
@@ -677,6 +691,102 @@ def test_granting_reasons_partition_the_reason_vocabulary() -> None:
         }
     )
     assert GRANTING_REASONS < frozenset(AuthorizationReason)
+
+
+# --------------------------------------------------------------------------------------
+# The automatic class, and the roster checks it does not skip
+# --------------------------------------------------------------------------------------
+
+
+def test_an_ordinary_member_may_run_an_automatic_submission_with_no_approver() -> None:
+    """The behaviour the whole class exists for, and the one a member could not have before.
+
+    A plain member submitting with no approver is self-approval on every other path, and
+    self_approval_not_permitted_for_member refuses it. An automatic run is not an approval
+    by the submitter; it is a decision by policy that no approval is required, so it returns
+    before the approver question is reached.
+
+    Mutation: move the automatic branch below the self-approval test in
+    ``evaluate_authorization``. This is refused, and the cheapest runs on the platform go
+    from unattended to impossible.
+    """
+    decision = evaluate_authorization(
+        PLAIN_MEMBER,
+        None,
+        automatic_facts(),
+        load_approval_policy(),
+        load_organization_inventory(),
+        hourly_rate_usd=ROUTINE_RATE,
+    )
+
+    assert decision.approval_class is ApprovalClass.AUTOMATIC
+    assert decision.granted is True
+    assert decision.reason is AuthorizationReason.AUTOMATIC_BELOW_APPROVAL_THRESHOLDS
+    assert decision.approver is None
+
+
+def test_an_off_roster_submitter_is_refused_an_automatic_submission() -> None:
+    """The control the original incident bought, which auto-approval does not spend.
+
+    This is the sentence config/policy.yaml makes and the only one that matters when
+    somebody asks in six months whether the auto-approve rule weakened anything. Routing
+    changed; who may submit did not.
+
+    Mutation: move the automatic branch above the roster test. Anybody on the internet who
+    can dispatch the workflow gets a run, and the decision record says it was authorized.
+    """
+    decision = evaluate_authorization(
+        UNKNOWN_LOGIN,
+        None,
+        automatic_facts(),
+        load_approval_policy(),
+        load_organization_inventory(),
+        hourly_rate_usd=ROUTINE_RATE,
+    )
+
+    assert decision.approval_class is ApprovalClass.AUTOMATIC
+    assert decision.granted is False
+    assert decision.reason is AuthorizationReason.SUBMITTER_NOT_IN_ROSTER
+
+
+def test_an_automatic_submission_claiming_a_team_the_submitter_is_not_in_is_refused() -> None:
+    """The third roster check, which sits between the other two and is easy to lose.
+
+    A member whose group is recorded may not book spend to a group they are not in, and an
+    automatic run is spend like any other. Refused for the claim rather than released
+    because it was cheap.
+    """
+    decision = evaluate_authorization(
+        MEMORY_SPLIT_MEMBER,
+        None,
+        automatic_facts(claimed_team=CURRICULUM_TEAM),
+        load_approval_policy(),
+        load_organization_inventory(),
+        hourly_rate_usd=ROUTINE_RATE,
+    )
+
+    assert decision.granted is False
+    assert decision.reason is AuthorizationReason.SUBMITTER_NOT_IN_CLAIMED_TEAM
+
+
+def test_a_run_over_the_automatic_bounds_still_needs_the_approver_it_always_did() -> None:
+    """The unchanged half, asserted beside the changed one so the boundary is visible.
+
+    Same submitter, same absent approver, one difference: the request is no longer small
+    enough. It is refused exactly as it was before this class existed.
+    """
+    decision = evaluate_authorization(
+        PLAIN_MEMBER,
+        None,
+        routine_facts(),
+        load_approval_policy(),
+        load_organization_inventory(),
+        hourly_rate_usd=ROUTINE_RATE,
+    )
+
+    assert decision.approval_class is ApprovalClass.ROUTINE
+    assert decision.granted is False
+    assert decision.reason is AuthorizationReason.SELF_APPROVAL_NOT_PERMITTED_FOR_MEMBER
 
 
 def decision_payload(**overrides: object) -> dict[str, object]:

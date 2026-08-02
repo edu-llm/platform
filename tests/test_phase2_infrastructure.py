@@ -39,7 +39,11 @@ STATE_MACHINE_NAME = "sbsandbox-intern-edullm-admission"
 LOG_GROUP_NAME = "/aws/vendedlogs/states/sbsandbox-intern-edullm-admission"
 
 SUBJECT_PREFIX = "repo:edu-llm@306859726/platform@1311508598"
-APPROVAL_ENVIRONMENTS = ("run-approval-lead", "run-approval-admin")
+APPROVAL_ENVIRONMENTS = (
+    "run-approval-automatic",
+    "run-approval-lead",
+    "run-approval-admin",
+)
 EXPECTED_SUBJECTS = [f"{SUBJECT_PREFIX}:environment:{name}" for name in APPROVAL_ENVIRONMENTS]
 SUBMIT_WORKFLOW = ".github/workflows/submit-run.yml"
 SUBMIT_WORKFLOW_REF = f"edu-llm/platform/{SUBMIT_WORKFLOW}@refs/heads/main"
@@ -195,14 +199,18 @@ def test_admission_role_trusts_exactly_the_two_protected_environment_subjects() 
     }
 
 
-def test_admission_subject_condition_is_a_two_element_array_of_environment_subjects() -> None:
+def test_admission_subject_condition_is_a_three_element_array_of_environment_subjects() -> None:
+    # Three since the automatic class landed, and the count is asserted rather than derived
+    # from APPROVAL_ENVIRONMENTS so that adding a fourth is a deliberate edit here. Each name
+    # in this array is an environment that may reach AWS; a name added without somebody
+    # changing this number is a gate nobody decided to trust.
     condition = role_named(ADMISSION_ROLE_PATH, ADMISSION_ROLE_NAME)["AssumeRolePolicyDocument"][
         "Statement"
     ][0]["Condition"]
     subjects = condition["StringEquals"]["token.actions.githubusercontent.com:sub"]
 
     assert isinstance(subjects, list)
-    assert len(subjects) == 2
+    assert len(subjects) == 3
     assert subjects == EXPECTED_SUBJECTS
     assert [subject.rsplit(":", 1)[1] for subject in subjects] == list(APPROVAL_ENVIRONMENTS)
     assert all(subject.startswith(f"{SUBJECT_PREFIX}:environment:") for subject in subjects)
@@ -213,6 +221,22 @@ def test_admission_trust_policy_uses_no_stringlike_and_no_wildcard_anywhere() ->
     # Anyone able to edit a workflow file can bring a GitHub environment into existence by
     # naming it in `environment:`; the auto-created environment has no protection rules,
     # so its subject would match a wildcard while having passed no gate at all.
+    #
+    # THAT ARGUMENT SURVIVED THE ARRIVAL OF A REVIEWER-LESS ENVIRONMENT, AND IT IS WORTH
+    # SAYING WHY, BECAUSE THE TWO LOOK ALIKE AND ARE NOT. `run-approval-automatic` has no
+    # reviewers on purpose, so it is tempting to read the enumeration above as having
+    # conceded what this test defends. It has not. What the enumeration buys is that a
+    # subject cannot be brought into existence by editing a workflow file: a wildcard
+    # accepts any name an author invents, on an environment auto-created with no protection
+    # rules and named in no reviewed diff. A third literal accepts one environment that was
+    # created deliberately, is pinned to `main` by a deployment branch policy, has
+    # can_admins_bypass false, and reaches this condition only through a change to
+    # infra/iam/admission-role.yaml that somebody read.
+    #
+    # So the property is unchanged. Removing a reviewer is a policy decision recorded in
+    # config/policy.yaml and enforced by classify_request; removing the enumeration would
+    # be handing subject minting to anyone with write access. This test goes on refusing
+    # the second.
     trust = role_named(ADMISSION_ROLE_PATH, ADMISSION_ROLE_NAME)["AssumeRolePolicyDocument"]
     condition = trust["Statement"][0]["Condition"]
     trust_strings = list(walk_strings(trust))

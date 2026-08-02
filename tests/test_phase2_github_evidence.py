@@ -79,13 +79,13 @@ def roster() -> dict[str, object]:
     return loaded
 
 
-def test_both_approval_environments_exist_and_no_third_one_does(
+def test_all_three_approval_environments_exist_and_no_fourth_one_does(
     environments: EnvironmentInventory,
 ) -> None:
-    # All of them, not only the two expected. An environment is auto-created with no
+    # All of them, not only the three expected. An environment is auto-created with no
     # protection rules at all by anyone who names one in a workflow file, and everyone who
-    # can submit holds the write access that allows it. The trust policy enumerates two
-    # subjects and would refuse a third, so such an environment could not reach AWS -- but
+    # can submit holds the write access that allows it. The trust policy enumerates three
+    # subjects and would refuse a fourth, so such an environment could not reach AWS -- but
     # a capture that only looked for the expected names could not tell anybody it existed.
     assert set(environments.names) == set(APPROVAL_ENVIRONMENT_NAMES)
 
@@ -114,7 +114,7 @@ def test_no_environment_lets_an_admin_release_without_a_reviewer(
         assert environment.can_admins_bypass is False, environment.name
 
 
-def test_self_review_is_deliberately_permitted_on_both_gates(
+def test_self_review_is_deliberately_permitted_on_the_two_reviewed_gates(
     environments: EnvironmentInventory,
 ) -> None:
     # Asserted as false on purpose, so that somebody "hardening" it has to read why. Leads
@@ -122,8 +122,39 @@ def test_self_review_is_deliberately_permitted_on_both_gates(
     # intended by the global constraints. The prohibition that does apply -- a member
     # cannot approve their own submission -- is enforced by members not being reviewers,
     # and independently by evaluate_authorization.
+    #
+    # False on run-approval-automatic for an unrelated reason, and the name says two gates
+    # because that environment is not one of them. GitHub answers 422 to setting this flag
+    # on an environment with no reviewers, so the capture derives false from the absent
+    # required_reviewers rule. Same value, different fact: there is nobody to prevent.
     for environment in environments.environments:
         assert environment.prevent_self_review is False, environment.name
+
+
+def test_the_automatic_gate_carries_every_protection_the_other_two_do_except_a_reviewer(
+    environments: EnvironmentInventory,
+) -> None:
+    """The claim the third trust policy subject rests on, read off the live capture.
+
+    Enumerating a reviewer-less environment in the trust policy is defensible only because
+    what it drops is the reviewer and nothing else. Three sibling tests above already assert
+    the branch policy, the admin bypass and the wait timer across every environment; this
+    one states the negative half those cannot, which is that the reviewer list is empty on
+    purpose rather than by an edit somebody made in a browser.
+
+    Mutation: add a reviewer to this environment. Nothing else in the suite objects -- the
+    class would still route here, the subject would still match, and runs the policy says
+    need no human would quietly start waiting for one again. This is the only place that
+    would say so.
+    """
+    automatic = next(
+        e for e in environments.environments if e.name == "run-approval-automatic"
+    )
+
+    assert automatic.reviewers == ()
+    assert automatic.branch_policy_names == ("main",)
+    assert automatic.can_admins_bypass is False
+    assert automatic.wait_timer_minutes == 0
 
 
 def test_the_lead_gate_is_reviewed_by_the_leads_team_rather_than_by_named_people(
@@ -273,14 +304,25 @@ def test_phase_two_introduced_no_credential_at_all(secrets: SecretInventory) -> 
     assert set(secrets.environment_secret_names) == set(APPROVAL_ENVIRONMENT_NAMES)
 
 
-def test_the_only_repository_variables_are_the_two_role_arns_and_the_region(
+def test_the_only_repository_variables_are_role_arns_and_the_region(
     secrets: SecretInventory,
 ) -> None:
     # Variables are not secrets and are recorded beside them because the criterion is
     # about what a workflow can read. An ARN carries an account id, which is why these are
     # variables rather than committed into a workflow file.
+    #
+    # Three more than this test knew about, found by re-capturing for the automatic gate
+    # rather than by anybody looking. The capture behind it dated from 2026-07-27 and the
+    # account had moved: the resolver, canceller and nightly reader roles all landed after
+    # it, and infra/README.md records the last two as stacks 4 and 5 with their variables
+    # set by hand. So this list grew for reasons that have nothing to do with the approval
+    # gate, and the test is renamed off the count it used to carry, because a count is the
+    # part of an assertion like this that ages.
     assert secrets.repository_variable_names == (
         "AWS_ADMISSION_ROLE_ARN",
+        "AWS_IMAGE_RESOLVER_ROLE_ARN",
         "AWS_INFRA_DEPLOYER_ROLE_ARN",
+        "AWS_NIGHTLY_READER_ROLE_ARN",
         "AWS_REGION",
+        "AWS_RUN_CANCELLER_ROLE_ARN",
     )
