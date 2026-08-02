@@ -86,6 +86,7 @@ from edullm_platform.canonical import canonical_json_bytes
 from edullm_platform.contracts.base import ContractModel
 from edullm_platform.lifecycle_projection import (
     OUTPUTS_BUCKET,
+    CheckpointLister,
     LifecycleProjection,
     project_batch_event,
 )
@@ -285,12 +286,25 @@ def handler(
     lineage_bucket = os.environ.get(LINEAGE_BUCKET_VARIABLE) or DEFAULT_LINEAGE_BUCKET
     output_bucket = os.environ.get(OUTPUTS_BUCKET_VARIABLE) or OUTPUTS_BUCKET
     writer = store if store is not None else _default_object_store()
+    # THE SAME CLIENT, WHICH IS WHY THIS IS A LINE AND NOT A PARAMETER. A boto3 S3 client
+    # answers both calls, so listing a run's checkpoint prefix costs no second client and no
+    # second argument to this handler.
+    #
+    # Asked for rather than assumed, because ``store`` is a seam a test fills. A store that
+    # implements only the write answers None here, the projection records no checkpoints,
+    # and that is the same honest emptiness a refused listing produces -- so a test that
+    # cares about the lineage writes does not have to grow an S3 listing to keep passing.
+    lister = writer if callable(getattr(writer, "list_objects_v2", None)) else None
 
     records = _records(event)
     failures: list[tuple[str | None, Exception]] = []
     for record in records:
         try:
-            projection = project_batch_event(_envelope(record), output_bucket=output_bucket)
+            projection = project_batch_event(
+                _envelope(record),
+                output_bucket=output_bucket,
+                checkpoint_lister=cast(CheckpointLister | None, lister),
+            )
             for key, written in lineage_writes(projection):
                 _put(writer, bucket=lineage_bucket, key=key, record=written)
         except Exception as error:  # noqa: BLE001

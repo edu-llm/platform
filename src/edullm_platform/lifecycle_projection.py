@@ -1,8 +1,34 @@
 """Read one Batch job state change as the Phase 0 records it implies.
 
-Pure. No SDK, no I/O, no clock. Every value here is a function of the EventBridge envelope
-that was delivered, which is what makes a replayed delivery project to the same bytes and
-what lets the whole projection be checked without an AWS account.
+Pure by default. No SDK, no clock, and no I/O unless a caller hands in something to read
+the run's own output prefix with. Every other value here is a function of the EventBridge
+envelope that was delivered, which is what makes a replayed delivery project to the same
+bytes and what lets the whole projection be checked without an AWS account.
+
+**The one read, and why it is not the read this module refused.** ``checkpoints`` used to
+be written empty on every result, so a run that trained for hours and saved a checkpoint
+and a run that saved nothing were the same record. What a checkpoint list needs is a
+listing of the run's own checkpoint prefix, which is why
+:func:`project_batch_state_change` takes an optional :class:`CheckpointLister` and records
+nothing at all when it is not given one.
+
+That is a different thing from the ``batch:DescribeJobs`` this module and
+``infra/iam/lifecycle-lambda-role.yaml`` both argue against, and the difference is what
+makes it safe. A describe answers with the job as it is when asked, so a redelivered event
+would project from inputs that had moved. A finished run's output prefix does not move --
+the terminal event arrives after the container has exited, and nothing writes there
+afterwards -- so a replay lists the same objects and computes the same bytes. Where they
+do differ, the derived key means the store already holds the first projection and refuses
+the second, which is the mechanism rather than a hole in it.
+
+**A read the role does not hold records an empty list rather than raising.** The recorder
+runs as ``sbsandbox-intern-edullm-lifecycle-lambda``, which today holds four
+``s3:PutObject`` grants and no read of any kind, so the listing is refused. An exception
+here would dead-letter the whole delivery and lose the event, the attempt and the result
+for a run that demonstrably happened, which is a far worse record than one whose checkpoint
+list is empty. So every failure of the listing -- a refusal, an outage, a prefix that is not
+in this platform's own bucket -- is an empty tuple, and that is the same value the field
+carried before.
 
 **Batch reports seven statuses onto a vocabulary of six, so the mapping loses two.**
 :class:`~.contracts.lifecycle.RunState` has ``submitted``, ``runnable``, ``running``,
@@ -76,11 +102,14 @@ attempt. Its lifecycle event is still written, and that is the whole of what hap
 from __future__ import annotations
 
 import hashlib
+import json
+import re
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Final
+from typing import Any, Final, Protocol
+from urllib.parse import urlparse
 
 from .contracts.identity import (
     ATTEMPT_ID_PREFIX,
@@ -104,7 +133,12 @@ from .contracts.lifecycle import (
     SchedulerAttempt,
     is_valid_run_transition,
 )
-from .contracts.results import ResultManifest
+from .contracts.results import (
+    WANDB_NAME_PATTERN,
+    CheckpointManifest,
+    ResultManifest,
+    WandbRunRef,
+)
 from .contracts.vocabulary import RetentionClass
 
 __all__ = [
@@ -112,16 +146,29 @@ __all__ = [
     "BATCH_STATUS_PROGRESSION",
     "BATCH_STATUS_TO_RUN_STATE",
     "CANCELLATION_REASON_MARKERS",
+    "CHECKPOINT_DIR_VARIABLE",
     "EVENTBRIDGE_BATCH_DETAIL_TYPE",
     "EVENTBRIDGE_BATCH_SOURCE",
+    "MARKER_OBJECT",
+    "MAXIMUM_LISTING_PAGES",
     "OUTPUTS_BUCKET",
+    "OUTPUT_PREFIX_VARIABLE",
+    "STEP_DIRECTORY",
+    "WANDB_ENTITY_VARIABLE",
+    "WANDB_PROJECT_VARIABLE",
+    "CheckpointLister",
     "LifecycleProjection",
     "UnmappedBatchStatusError",
     "UnreadableBatchEventError",
+    "checkpoints_under",
+    "container_output_prefix",
+    "container_variable",
     "derived_event_id",
+    "described_listing_checksum",
     "project_batch_event",
     "project_batch_state_change",
     "transition_is_recordable",
+    "wandb_run_for",
 ]
 
 #: What the EventBridge rule is scoped to. Checked again here rather than trusted, because
@@ -141,6 +188,60 @@ OUTPUTS_BUCKET: Final = "sbsandbox-intern-edullm-outputs"
 #: nothing connecting them, which is why a test compares the two rather than each against
 #: a constant: a rename on one side leaves every result manifest silently prefix-less.
 OUTPUT_PREFIX_VARIABLE: Final = "EDULLM_OUTPUT_PREFIX"
+
+#: The one ``batch_submit_request`` sets to the directory a run writes checkpoints under,
+#: which is the output prefix with ``checkpoints/`` on the end. Read back rather than
+#: rebuilt here for the reason :func:`container_output_prefix` gives at length -- the value
+#: recorded is then the location the job was actually pointed at, so a change to how the
+#: path is derived cannot leave this record describing somewhere else. The same
+#: two-modules-with-nothing-between-them seam as the variable above, and a test compares
+#: the two spellings for the same reason.
+CHECKPOINT_DIR_VARIABLE: Final = "EDULLM_CHECKPOINT_DIR"
+
+#: W&B's own variable names, which ``batch_submit_request`` sets under W&B's spelling
+#: because the wandb client reads them itself.
+#:
+#: The entity is read off the event rather than taken from ``execution.WANDB_ENTITY``, and
+#: that is a decision rather than an accident. Importing that module would put the whole
+#: submission path into the recorder's zip, and the value it holds is a claim about what
+#: containers are told where the event carries what this container was told. They agree
+#: today and a test compares them; when they stop agreeing, the record should describe the
+#: run rather than the constant.
+WANDB_ENTITY_VARIABLE: Final = "WANDB_ENTITY"
+WANDB_PROJECT_VARIABLE: Final = "WANDB_PROJECT"
+
+#: A checkpoint directory as OLMo-core names it, which is where the step number lives. The
+#: library reads the step off the directory name and so does this, because a directory
+#: written by the library carries no marker of ours to read one from.
+STEP_DIRECTORY: Final = re.compile(r"^step(\d+)$")
+
+#: The object whose presence means the payload beside it is whole.
+#:
+#: SPELLED HERE AS WELL AS IN ``edullm_platform.checkpoints``, AND THE DUPLICATION IS FORCED
+#: RATHER THAN CHOSEN. That module holds the commit protocol and the reader that verifies
+#: it, and importing it would carry it into the recorder's zip --
+#: ``tests/test_lambda_package_closure.py`` refuses any module either handler carries whose
+#: name matches a phase-specific one, and ``checkpoints`` is on that list. So the two
+#: constants and :func:`described_listing_checksum` are restated, and
+#: ``tests/test_phase3_lifecycle_projection.py`` compares each against its counterpart so
+#: the copies cannot drift apart unnoticed.
+MARKER_OBJECT: Final = "_SUCCESS"
+
+#: How many pages of a listing this will follow before giving up on the prefix.
+#:
+#: A ceiling rather than an unbounded loop, because this runs inside an event handler with
+#: a timeout and a store that kept answering with a continuation token would spend the whole
+#: of it. Twenty pages is twenty thousand keys, against the thirteen objects a checkpoint
+#: directory holds, so a run would need over fifteen hundred surviving checkpoints to reach
+#: it.
+#:
+#: Reaching it records nothing rather than what was seen so far. S3 lists keys
+#: lexicographically, so ``step1000/`` sorts before ``step200/`` and a truncated listing
+#: hides an arbitrary subset rather than the oldest -- a partial list would therefore be a
+#: record claiming a run wrote checkpoints it did not, in an order nothing chose.
+MAXIMUM_LISTING_PAGES: Final = 20
+
+_WANDB_NAME = re.compile(WANDB_NAME_PATTERN)
 
 #: Every status Batch reports for a job, and nothing else. A status outside this set is an
 #: error rather than a default, which is what makes an eighth one detectable.
@@ -364,6 +465,244 @@ def _required_text(detail: Mapping[str, Any], field: str) -> str:
     return value
 
 
+class CheckpointLister(Protocol):
+    """The one S3 call this module makes, described so mypy has something to check.
+
+    boto3 is absent at type-check time by design, so this is the seam -- the same discipline
+    :mod:`edullm_platform.lifecycle_handler` uses for the write. A test supplies its own
+    implementation and gets the same code path the deployed function takes, rather than a
+    branch that only exists for tests.
+
+    One call and not four. :func:`~edullm_platform.checkpoints.inspect_checkpoint` reads a
+    marker and heads a payload as well, which is what lets it verify a digest; doing that
+    here would need ``s3:GetObject`` across every team's output, and a recorder able to read
+    what runs wrote is a wider thing than one able to see that they wrote. A listing carries
+    the key, the size and the write time, which is everything
+    :class:`~edullm_platform.contracts.results.CheckpointManifest` needs except a digest of
+    the payload, and :func:`described_listing_checksum` is what stands in for that.
+    """
+
+    def list_objects_v2(self, **arguments: Any) -> Any: ...
+
+
+def container_variable(detail: Mapping[str, Any], name: str) -> str | None:
+    """What the container was told under one environment variable, or None if nothing.
+
+    The environment is in AWS's published schema for ``BatchJobStateChange`` and the tags
+    are not, which is why every fact this projection recovers about how a job was configured
+    comes through here.
+    """
+    container = detail.get("container")
+    if not isinstance(container, Mapping):
+        return None
+    environment = container.get("environment")
+    if not isinstance(environment, list):
+        return None
+    for entry in environment:
+        if not isinstance(entry, Mapping) or entry.get("name") != name:
+            continue
+        value = entry.get("value")
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def wandb_run_for(run_id: str, detail: Mapping[str, Any]) -> WandbRunRef | None:
+    """Which W&B run this job would have published, or None because it cannot be said.
+
+    THIS IS THE NAMING CONTRACT AND NOT A LOOKUP, WHICH IS WHY IT COSTS NOTHING. A run is
+    named for its run id -- ``batch_submit_request`` passes no run name and the platform
+    tells every submitter to search the project for the run id -- so the third field of a
+    :class:`~edullm_platform.contracts.results.WandbRunRef` is already in hand. The other
+    two are the entity and the project the container was handed, and both are in the
+    event's own environment because the wandb client reads them under W&B's spelling.
+
+    What this does not carry is the id W&B mints for the URL, and it must not pretend to.
+    That id is chosen by W&B when the run is created and is unknowable from outside the
+    container, which is the same reason ``submit-run.yml`` prints a name to search for
+    rather than a link. The field is called ``run_id`` in the contract and holds the run
+    name, which is what a reader searches with.
+
+    None rather than a guess for a job that was never told a project. A CPU job admitted
+    before the variable existed carries none, and a reference naming a project nobody set
+    would send a reader to a place with nothing in it.
+
+    A record rather than an observation, stated plainly. This says where the run would have
+    reported, not that it did -- a container whose key W&B declined trains and logs nowhere
+    and still produces this reference. Closing that needs the container to report back,
+    which is a second source and is deliberately not invented here.
+    """
+    entity = container_variable(detail, WANDB_ENTITY_VARIABLE)
+    project = container_variable(detail, WANDB_PROJECT_VARIABLE)
+    if entity is None or project is None:
+        return None
+    if not all(_WANDB_NAME.fullmatch(value) for value in (entity, project, run_id)):
+        return None
+    try:
+        return WandbRunRef(entity=entity, project=project, run_id=run_id)
+    except ValueError:
+        # The three patterns above are the contract's own, so this is unreachable today and
+        # is here because of where it runs. A ValidationError raised inside the recorder
+        # dead-letters the delivery and loses the event, the attempt and the result for a
+        # run that happened, to save a field that names where its charts would have been.
+        return None
+
+
+def described_listing_checksum(entries: Sequence[tuple[str, int, str]]) -> str:
+    """A SHA-256 over a canonical description of what a listing found.
+
+    ``CheckpointManifest.checksum`` is typed ``Sha256Digest`` and a listing attests no
+    digest of anything, so the field carries a digest of bytes composed here -- the sorted
+    ``(key, size, attestation)`` of every object under the directory. That is honest about
+    what it is and has the property the field is for, which is that it changes when anything
+    under the directory changes.
+
+    BYTE FOR BYTE WHAT ``edullm_platform.checkpoints.described_checksum`` PRODUCES, and
+    restated rather than imported for the reason :data:`MARKER_OBJECT` gives. A test feeds
+    both the same entries and compares, so the copies cannot drift into two answers to one
+    question.
+    """
+    described = [
+        {"key": key, "bytes": size, "attestation": attestation}
+        for key, size, attestation in sorted(entries)
+    ]
+    payload = json.dumps(described, sort_keys=True, separators=(",", ":")).encode()
+    return f"sha256:{hashlib.sha256(payload).hexdigest()}"
+
+
+def _written_at(value: object) -> datetime | None:
+    """A listing's ``LastModified`` as an instant, or None because it cannot be read.
+
+    boto3 answers with a timezone-aware datetime and a CLI-backed store answers with the
+    text it printed, so both are accepted. A naive instant is refused rather than assumed to
+    be UTC, for the reason the envelope reader refuses one: read as UTC it is invisibly
+    wrong until two records written different ways are compared.
+    """
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else None
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo is not None else None
+    return None
+
+
+def _listed(lister: CheckpointLister, *, bucket: str, key: str) -> list[Mapping[str, Any]]:
+    """Every object under this prefix, following the continuation the store hands back.
+
+    Raises rather than truncating when the page ceiling is reached; the caller turns that
+    into an empty checkpoint list. See :data:`MAXIMUM_LISTING_PAGES` for why a partial
+    listing is worse than none.
+    """
+    contents: list[Mapping[str, Any]] = []
+    arguments: dict[str, Any] = {"Bucket": bucket, "Prefix": key}
+    for _page in range(MAXIMUM_LISTING_PAGES):
+        answer = lister.list_objects_v2(**arguments)
+        contents.extend(
+            entry for entry in (answer.get("Contents") or []) if isinstance(entry, Mapping)
+        )
+        token = answer.get("NextContinuationToken")
+        if not answer.get("IsTruncated") or not isinstance(token, str) or not token:
+            return contents
+        arguments["ContinuationToken"] = token
+    raise UnreadableBatchEventError(
+        f"s3://{bucket}/{key} holds more than {MAXIMUM_LISTING_PAGES} pages of objects, so "
+        "which checkpoints are under it cannot be read completely"
+    )
+
+
+def checkpoints_under(lister: CheckpointLister, *, prefix: str) -> tuple[CheckpointManifest, ...]:
+    """What a run wrote under its checkpoint prefix, as the records the contract holds.
+
+    One manifest per ``step{N}`` directory, in increasing step order, which is the order
+    ``ResultManifest`` requires and is also the order a reader wants -- the last entry is
+    the furthest a resume could get.
+
+    WHAT A LISTING CAN SAY AND WHAT IT CANNOT, because the gap is the reason this reads the
+    way it does. A listing gives the key, the size and the write time of every object, so
+    the step comes off the directory name, the size is the sum, the instant is the newest
+    write in it, and the marker is there or it is not. It does not give the contents of a
+    marker, so a prefix written by :func:`~edullm_platform.checkpoints.commit_checkpoint`
+    directly -- a payload and a ``_SUCCESS`` at the checkpoint directory itself, with the
+    step recorded inside the marker -- is not recorded here at all. Recording one would mean
+    inventing a step number, and a step of zero in an immutable record is worse than an
+    absence. Closing that needs ``s3:GetObject`` on the outputs bucket, which is a wider
+    grant than this whole change asks for.
+
+    ``success_marker_uri`` is what separates a directory a resume would load from one a
+    reclaimed attempt left half written, and OLMo-core writes no marker of ours -- so these
+    manifests are honest descriptions rather than resume references, and
+    ``CheckpointManifest.resume_reference`` refuses them, which is correct.
+
+    Every failure is an empty tuple. A refused listing, an unreachable store, a prefix that
+    is not an ``s3://`` directory, a directory this cannot describe -- none of them may
+    raise, because this is called while projecting an event and an exception loses the whole
+    lineage record for the run.
+    """
+    location = urlparse(prefix)
+    bucket, key = location.netloc, location.path.lstrip("/")
+    if location.scheme != "s3" or not bucket or not key.endswith("/"):
+        return ()
+    try:
+        return _describe_step_directories(_listed(lister, bucket=bucket, key=key), bucket, key)
+    except Exception:  # noqa: BLE001
+        # Broad because botocore's exception classes are not importable here and because the
+        # set of ways a listing can fail is open. Narrowed by what it does rather than by
+        # what it catches: nothing is recorded, nothing is raised, and the field reads the
+        # way it read before this function existed.
+        return ()
+
+
+def _describe_step_directories(
+    contents: Sequence[Mapping[str, Any]],
+    bucket: str,
+    key: str,
+) -> tuple[CheckpointManifest, ...]:
+    under: dict[int, dict[str, tuple[int, datetime]]] = {}
+    for entry in contents:
+        relative = str(entry.get("Key", "")).removeprefix(key)
+        directory, separator, member = relative.partition("/")
+        if not separator or not member:
+            continue
+        matched = STEP_DIRECTORY.fullmatch(directory)
+        if matched is None:
+            continue
+        size = entry.get("Size")
+        written = _written_at(entry.get("LastModified"))
+        if not isinstance(size, int) or isinstance(size, bool) or written is None:
+            continue
+        under.setdefault(int(matched.group(1)), {})[member] = (size, written)
+
+    manifests: list[CheckpointManifest] = []
+    for step in sorted(under):
+        members = under[step]
+        total = sum(size for size, _ in members.values())
+        if total <= 0:
+            # A directory of empty objects is a write that started and produced nothing, and
+            # the contract requires a positive size. Left out rather than recorded as zero.
+            continue
+        uri = f"s3://{bucket}/{key}step{step}/"
+        manifests.append(
+            CheckpointManifest(
+                schema_version=1,
+                uri=uri,
+                step=step,
+                # A listing cannot say which epoch a step belongs to, and the directory name
+                # does not carry one. None is the honest answer rather than a derived guess.
+                epoch=None,
+                created_at=max(written for _, written in members.values()),
+                size_bytes=total,
+                checksum=described_listing_checksum(
+                    [(name, size, "listing") for name, (size, _) in members.items()]
+                ),
+                success_marker_uri=f"{uri}{MARKER_OBJECT}" if MARKER_OBJECT in members else None,
+            )
+        )
+    return tuple(manifests)
+
+
 def container_output_prefix(detail: Mapping[str, Any]) -> str | None:
     """The output prefix this job's container was actually given, or None if it was not.
 
@@ -389,21 +728,31 @@ def container_output_prefix(detail: Mapping[str, Any]) -> str | None:
     path that forgets the variable, has no prefix anybody can name -- and an empty
     ``output_prefixes`` says so, where a plausible literal would not.
     """
-    container = detail.get("container")
-    if not isinstance(container, Mapping):
-        return None
-    environment = container.get("environment")
-    if not isinstance(environment, list):
-        return None
-    for entry in environment:
-        if not isinstance(entry, Mapping):
-            continue
-        if entry.get("name") != OUTPUT_PREFIX_VARIABLE:
-            continue
-        value = entry.get("value")
-        if isinstance(value, str) and value.startswith("s3://"):
-            return value
+    value = container_variable(detail, OUTPUT_PREFIX_VARIABLE)
+    if value is not None and value.startswith("s3://"):
+        return value
     return None
+
+
+def _checkpoints_written(
+    detail: Mapping[str, Any],
+    *,
+    output_bucket: str,
+    checkpoint_lister: CheckpointLister | None,
+) -> tuple[CheckpointManifest, ...]:
+    """What is under this job's checkpoint prefix, or nothing because it cannot be read.
+
+    Bounded by the bucket this platform owns, exactly as ``output_prefixes`` is and for the
+    same reason. The prefix comes off the event, so it is only as trustworthy as whoever set
+    the job definition, and a checkpoint list assembled from a foreign bucket would be this
+    record vouching for objects nothing here controls or can read back.
+    """
+    if checkpoint_lister is None:
+        return ()
+    prefix = container_variable(detail, CHECKPOINT_DIR_VARIABLE)
+    if prefix is None or not prefix.startswith(f"s3://{output_bucket}/"):
+        return ()
+    return checkpoints_under(checkpoint_lister, prefix=prefix)
 
 
 def project_batch_state_change(
@@ -413,6 +762,7 @@ def project_batch_state_change(
     occurred_at: datetime,
     output_bucket: str = OUTPUTS_BUCKET,
     retention_class: RetentionClass = RetentionClass.STANDARD,
+    checkpoint_lister: CheckpointLister | None = None,
 ) -> LifecycleProjection:
     """Project one ``Batch Job State Change`` detail onto the Phase 0 contracts.
 
@@ -421,6 +771,11 @@ def project_batch_state_change(
     the instant of *this* state change -- there is no ``pendingAt``. The envelope's time is
     when EventBridge saw the change, which is the closest fact anybody has to it, and using
     it uniformly means the events of one run are ordered by one clock.
+
+    ``checkpoint_lister`` defaults to ``None``, and the default is what keeps this function
+    pure for every caller that does not need the field. Without one, ``checkpoints`` is
+    empty; with one, it is what the run left under its own checkpoint prefix. See the module
+    docstring for why this read does not have the redelivery problem a describe would.
     """
     run_id = _required_text(detail, "jobName")
     if RUN_ID_REGEX.fullmatch(run_id) is None:
@@ -511,29 +866,30 @@ def project_batch_state_change(
                     # location nobody named is not a location this record should invent.
                     output_prefixes=tuple(prefix for prefix in (written_under,) if prefix),
                     exit_code=_container_exit_code(attempt_detail),
-                    # STILL EMPTY, AND NOW THAT IS A LIMITATION RATHER THAN A DESCRIPTION.
+                    # WHAT THE RUN PRODUCED, WHICH THIS RECORD COULD NOT PREVIOUSLY SAY.
                     #
-                    # This said "Phase 3 runs one CPU container with no W&B and no
-                    # checkpoint", which was true of Phase 3 and stopped being true the
-                    # moment a GPU run trained: that run published a W&B run and wrote a
-                    # 762 MB checkpoint with a success marker, and this record says it did
-                    # neither.
+                    # Both fields were written empty on every result, so a run that trained
+                    # for hours and wrote a 762 MB checkpoint and a run that saved nothing
+                    # were the same record. The comment that stood here said neither could
+                    # be known from an event, and it was half right. The W&B run is
+                    # knowable, because the entity and the project are in the event's own
+                    # container environment and the naming contract supplies the third
+                    # field -- see wandb_run_for. The checkpoint list is not in the event,
+                    # and it is not guessed at either; it is read from the prefix the
+                    # container was told to write to, and only when a caller supplied
+                    # something to read with.
                     #
-                    # Nothing here can fix that, and it is worth being precise about why. A
-                    # Batch job state change carries the container's image, command,
-                    # environment, exit code and log stream. It does not carry what the
-                    # process did. The checkpoint's uri, step, size and checksum, and the
-                    # W&B entity and run id, are known only inside the container -- so a
-                    # recorder projecting an event cannot learn them, however carefully it
-                    # reads.
-                    #
-                    # Closing it needs a second source: the container writing a manifest
-                    # the recorder reads back, or a capture that joins the two after the
-                    # fact. That is a design decision with an IAM consequence -- the
-                    # recorder currently reads nothing -- and it is deliberately not made
-                    # here.
-                    checkpoints=(),
-                    wandb_run=None,
+                    # Recorded for a failed run as well as a succeeded one, deliberately.
+                    # An attempt reclaimed at hour eleven of twelve has checkpoints, and
+                    # they are the whole reason a retry is worth paying for -- a record
+                    # that listed them only on success would be silent about exactly the
+                    # runs somebody needs to resume.
+                    checkpoints=_checkpoints_written(
+                        detail,
+                        output_bucket=output_bucket,
+                        checkpoint_lister=checkpoint_lister,
+                    ),
+                    wandb_run=wandb_run_for(run_id, detail),
                     retention_class=retention_class,
                     completed_at=ended_at,
                 )
@@ -555,6 +911,7 @@ def project_batch_event(
     *,
     output_bucket: str = OUTPUTS_BUCKET,
     retention_class: RetentionClass = RetentionClass.STANDARD,
+    checkpoint_lister: CheckpointLister | None = None,
 ) -> LifecycleProjection:
     """Project a whole EventBridge envelope, checking it is one this rule should deliver.
 
@@ -598,4 +955,5 @@ def project_batch_event(
         occurred_at=parsed,
         output_bucket=output_bucket,
         retention_class=retention_class,
+        checkpoint_lister=checkpoint_lister,
     )

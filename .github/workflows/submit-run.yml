@@ -1029,6 +1029,94 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      # NINE FAILURES WERE THIS AND EIGHT OF THEM WERE FILED AS SOMETHING ELSE.
+      #
+      # The tail of the log says `ProcessGroup is not registered`, which is a torch
+      # distributed error, and the cause is twenty lines above it -- `CommError: user is not
+      # logged in`, under a line saying a key is configured, so the key is present and
+      # resolves to the wrong entity rather than being absent. Everybody who read the end of
+      # the log filed a distributed training bug. They were logins, and each one cost a GPU
+      # allocation, a run, and the afternoon of whoever went looking at torch.
+      #
+      # `tools/verify_wandb_credential.py` has answered this question since the nightly
+      # started asking it. What it has never been is on the path that spends money. Two
+      # seconds and a refusal here is the whole change.
+      #
+      # WHERE THIS SITS IN THE SEQUENCE, WHICH IS THE PART WORTH ARGUING.
+      #
+      # Not in the compile job, where it would be cheapest to write. Compiling refuses a
+      # submission naming an unregistered dataset, a commit that published no image, or a
+      # command that contradicts its own profile, and it refuses all of those whatever W&B
+      # says -- so a preflight ahead of that spends a Secrets Manager read and a round trip
+      # to W&B on every submission that was going to be turned away anyway. That job also
+      # holds no credential by construction and must never gain one, so the read could not
+      # happen there at all.
+      #
+      # Not after `Start the admission execution`, which is the other tempting place because
+      # everything is settled by then. That call is the one line in this file that
+      # provisions. The state machine registers a job definition for the run and submits it
+      # to Batch inside the execution it starts, so a check after it is a check with an
+      # instance already coming up and a queue entry already made.
+      #
+      # So it sits between the two denial matrices and the start. After the matrices rather
+      # than before, because those are a statement about the credentials in hand and every
+      # dispatch that is going to reach AWS should make it -- a bad key is a refusal about
+      # this submission and must not be able to skip a security check on the session.
+      # Immediately before the start, because that is the line it exists to stop.
+      #
+      # A REFUSED SECRET READ IS NOT A REFUSED SUBMISSION, AND THE DIFFERENCE IS DELIBERATE.
+      # The admission role holds one `states:StartExecution` and two read-only execution
+      # actions, and no `secretsmanager:GetSecretValue` -- so until that grant is applied by
+      # hand this step cannot read the key and says so on every dispatch. Failing the
+      # submission in that state would take the platform down between this merge and a
+      # laptop, which is the hazard *Why IAM is laptop-only* in infra/README.md is entirely
+      # about. So a read that did not happen is loud and lets the run through, and only a
+      # key W&B has actually refused stops it.
+      - name: Refuse a submission the W&B key would not authenticate
+        env:
+          PREFLIGHT_AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          report="${RUNNER_TEMP}/wandb-credential.json"
+          preflight_status=0
+          uv run --frozen python tools/verify_wandb_credential.py \
+            --region "${PREFLIGHT_AWS_REGION}" > "${report}" || preflight_status=$?
+          if [[ "${preflight_status}" -eq 0 ]]; then
+            cat "${report}"
+            echo "W&B resolves the stored key to the entity this platform logs its runs into."
+            exit 0
+          fi
+          # Two different answers that the exit status alone cannot separate, and the report
+          # file can. The tool prints its JSON only after it has read the secret, so a report
+          # that exists is a verdict on the key and a report that does not is a read that
+          # never happened. Neither the key nor its value is in that file -- it carries a
+          # length, a four character prefix, a truncated digest and the entity W&B named.
+          if [[ ! -s "${report}" ]]; then
+            echo "wandb_preflight_not_attempted" >&2
+            echo "The stored W&B key could not be read, so nothing was checked and this submission continues. This is not a verdict on the key." >&2
+            echo "The admission role holds no secretsmanager:GetSecretValue, so until that grant is applied a wrong key is found by the container twelve hours from now rather than here." >&2
+            exit 0
+          fi
+          cat "${report}"
+          {
+            echo "## This submission was not started"
+            echo
+            echo "The Weights and Biases key this platform injects into every container is one"
+            echo "W&B would refuse, so no job was submitted and nothing was allocated. The"
+            echo "looks_wrong list in this job log names the fault."
+            echo
+            echo "Nothing about your submission caused this and re-running it will not fix it."
+            echo "The key is set from a laptop and from nowhere else, so repairing it is a"
+            echo "person. Open a run problem issue and quote this workflow run."
+            echo
+            echo "Submitting anyway is what this step exists to stop. A container given a key"
+            echo "W&B declines does not fail at the login. It trains, logs nowhere, and dies"
+            echo "later with a torch distributed error that names nothing about credentials."
+          } >> "${GITHUB_STEP_SUMMARY}"
+          echo "wandb_credential_would_be_refused" >&2
+          echo "The stored W&B key would not authenticate, so this run was not submitted." >&2
+          exit 1
+
       # ExecutionAlreadyExists is a success here. That is counter-intuitive enough to be
       # worth writing down before somebody corrects it. Step Functions treats a
       # StartExecution carrying the same name and the same input as idempotent only while
