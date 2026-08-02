@@ -64,6 +64,7 @@ EXPECTED_PROFILE_RATES = {
     "gpu-1xl40s": ("g6e.xlarge", Decimal("1.8610")),
     "gpu-4xl40s": ("g6e.12xlarge", Decimal("10.4926")),
     "gpu-8xl40s": ("g6e.48xlarge", Decimal("30.1312")),
+    "gpu-1xh100": ("p5.4xlarge", Decimal("6.8800")),
     "gpu-8xa100": ("p4d.24xlarge", Decimal("21.9576")),
     "gpu-8xh100": ("p5.48xlarge", Decimal("55.0400")),
 }
@@ -187,6 +188,7 @@ def test_only_the_deliberately_promoted_profiles_are_provisioned() -> None:
         "gpu-1xl40s",
         "gpu-4xl40s",
         "gpu-8xl40s",
+        "gpu-1xh100",
         "gpu-8xa100",
         "gpu-8xh100",
     ]
@@ -241,6 +243,36 @@ def test_an_eight_gpu_p_shape_is_an_exception_at_its_smallest_run(name: str) -> 
             facts, shipped_policy().thresholds, hourly_rate_usd=profile.hourly_rate_usd
         )
         == ApprovalClass.EXCEPTION
+    )
+
+
+def test_the_single_card_p_shape_is_routine_at_a_working_days_run() -> None:
+    """The one P profile a team lead can release, which is the point of having it.
+
+    Every other P shape is an eight-device instance above the rate ceiling, so an H100 of
+    any size needed an admin per submission and billed eight cards to a job using one.
+    p5.4xlarge is $6.88 against a $20 ceiling, so the rate does not force an exception and
+    the four request bounds decide as they do for a G shape.
+
+    Eight hours and one attempt is $55.04, which is under the routine cost ceiling and is
+    also, exactly, one hour of gpu-8xh100. That equality is worth stating rather than
+    leaving as a coincidence of the arithmetic: the choice a researcher who wants one H100
+    is actually making is a working day on one card against an hour on eight.
+
+    Mutation: raise this rate past EXCEPTION_RATE_CEILING_USD_PER_HOUR. The shape still
+    runs and still costs the same, and every single-card H100 run goes back through an
+    admin, which is the friction the profile was added to remove.
+    """
+    profile = next(profile for profile in SHIPPED_PROFILES if profile.name == "gpu-1xh100")
+    assert profile.provisioned
+    facts = facts_for_profile(profile, maximum_runtime_hours=Decimal(8), maximum_attempts=1)
+    assert facts.estimated_cost_usd == Decimal("55.04")
+    assert facts.estimated_cost_usd <= shipped_policy().thresholds.routine_maximum_cost_usd
+    assert (
+        classify_request(
+            facts, shipped_policy().thresholds, hourly_rate_usd=profile.hourly_rate_usd
+        )
+        == ApprovalClass.ROUTINE
     )
 
 

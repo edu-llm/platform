@@ -93,6 +93,7 @@ on:
         options:
           - cpu-32vcpu
           - gpu-1xa10g
+          - gpu-1xh100
           - gpu-1xl4
           - gpu-1xl40s
           - gpu-1xt4

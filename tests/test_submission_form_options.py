@@ -714,6 +714,7 @@ def test_resolving_a_compute_profile_is_the_same_question_the_provisioned_flag_a
         "gpu-1xl40s",
         "gpu-4xl40s",
         "gpu-8xl40s",
+        "gpu-1xh100",
         "gpu-8xa100",
         "gpu-8xh100",
     }

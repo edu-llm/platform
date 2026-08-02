@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: Thirteen GPU compute environments, their job queues and their digest-pinned job definitions, beside the single-A10G stack.
+Description: Fourteen GPU compute environments, their job queues and their digest-pinned job definitions, beside the single-A10G stack.
 
 # The thirteen GPU shapes this account can run, added alongside infra/batch-compute-gpu.yaml
 # rather than into it. That file's single environment had jobs running when these were
@@ -57,10 +57,11 @@ Description: Thirteen GPU compute environments, their job queues and their diges
 #                                                           1232  of 768
 #
 #   P pool
+#     gpu-1xh100   p5.4xlarge                                128           8
 #     gpu-8xa100   p4d.24xlarge                               96           1
 #     gpu-8xh100   p5.48xlarge                               768           4
 #                                                           ----
-#                                                            864  of 768
+#                                                            992  of 768
 #
 # THE G SUM WAS 720 OF 768 WITH 48 SPARE AND IS NOW 1232, WHICH IS ARITHMETIC AND NOT A
 # DECISION TO SPEND MORE. An eight-device environment cannot place even one job unless its
@@ -1379,12 +1380,19 @@ Resources:
   # admin per submission because that rate is above policy's exception ceiling. FOUR SUBNETS:
   # p4d.24xlarge is not offered in us-east-1f.
   #
-  # A100 AND H100 HAVE NO ONE-CARD OR FOUR-CARD FORM ON EC2, WHICH IS WHY THIS FAMILY AND THE
-  # ONE BELOW HAVE ONE ENVIRONMENT EACH WHILE THE FOUR G FAMILIES HAVE THREE. p4d.24xlarge and
-  # p5.48xlarge are eight-device instances and there is nothing smaller to name in
-  # InstanceTypes, so a gpu-1xa100 or gpu-4xh100 cannot be built here at all. Somebody who ran
-  # a single A100 or H100 elsewhere and wants the same on this platform wants gpu-1xl40s,
-  # which is 48 GB against 80 GB and the largest single card this account can start.
+# A100 HAS NO ONE-CARD OR FOUR-CARD FORM ON EC2 AND H100 HAS A ONE-CARD FORM, WHICH IS WHY
+# THIS FAMILY HAS ONE ENVIRONMENT AND THE ONE BELOW NOW HAS TWO. p4d.24xlarge is an
+# eight-device instance with nothing smaller to name in InstanceTypes, so a gpu-1xa100 or
+# gpu-4xa100 cannot be built here at all. Somebody who ran a single A100 elsewhere wants
+# gpu-1xh100, which is a newer card at the same 80 GB.
+#
+# THE SENTENCE THAT STOOD HERE SAID H100 HAD NO ONE-CARD FORM EITHER AND SENT THAT READER TO
+# gpu-1xl40s, "48 GB against 80 GB and the largest single card this account can start". That
+# was measured on the p4d and p5 families as the account then used them and was never
+# rechecked against the p5 family's own size list. p5.4xlarge is one H100 80 GB on 16 vCPU
+# and 256 GiB, offered in all six us-east-1 zones, and describe-instance-types reports it
+# beside p5.48xlarge. There is still no four-card form: the p5 family in this region is
+# p5.4xlarge, p5.48xlarge and p5en.48xlarge and nothing between them.
   # -------------------------------------------------------------------------------------
   Gpu8xA100ComputeEnvironment:
     Type: AWS::Batch::ComputeEnvironment
@@ -1608,6 +1616,140 @@ Resources:
               Ref: AWS::Region
         Privileged: false
 
+  # -------------------------------------------------------------------------------------
+  # gpu-1xh100, one H100 80 GB on p5.4xlarge, $6.88/hour. FIVE SUBNETS: p5.4xlarge is offered
+  # in all six us-east-1 zones and this VPC has a subnet in five of them, so the list is short
+  # of the offering rather than of the family.
+  #
+  # THE ONLY 80 GB SINGLE CARD HERE, AND THE ONE SHAPE THREE PIECES OF WORK ASKED FOR BY NAME.
+  # grpo-tutor's README says one H100 with vLLM. The P7 tutor recipe annotates
+  # per_device_batch: 8 as about 44 GB with gradient checkpointing. Sophia runs vLLM 0.11.2 on
+  # one H100, single node. All three were being routed to gpu-1xl40s, which is 48 GB and fits
+  # the P7 recipe with nothing to spare and does not fit a KV cache sized for an 80 GB card.
+  #
+  # IT IS UNDER THE ADMIN CEILING AND gpu-8xh100 IS NOT, WHICH IS MOST OF WHY IT MATTERS.
+  # $6.88/hour is below EXCEPTION_RATE_CEILING_USD_PER_HOUR, so a single-H100 run is released
+  # by the submitter's own team lead. The only H100 on this platform until now was the
+  # $55.04/hour eight-card node, which needs an admin every time and bills eight devices to a
+  # job that uses one. A researcher who wanted one card was choosing between paying 8x and
+  # waiting for an admin, or taking a smaller card and changing their recipe.
+  #
+  # gpu-1xl40s STAYS. It is the cheaper card at $1.861 against $6.88, it draws on the G pool
+  # rather than the P pool so it cannot be starved by an eight-card H100 job, and 48 GB is
+  # enough for plenty of what asked for it. What changes is that reaching for it is no longer
+  # forced on somebody whose recipe wants 80 GB.
+  # -------------------------------------------------------------------------------------
+  Gpu1xH100ComputeEnvironment:
+    Type: AWS::Batch::ComputeEnvironment
+    Properties:
+      ComputeEnvironmentName: sbsandbox-intern-edullm-gpu-1xh100
+      Type: MANAGED
+      State: ENABLED
+      ReplaceComputeEnvironment: false
+      UpdatePolicy:
+        TerminateJobsOnUpdate: false
+        JobExecutionTimeoutMinutes: 360
+      ComputeResources:
+        Type: EC2
+        AllocationStrategy: BEST_FIT_PROGRESSIVE
+        MinvCpus: 0
+        # Eight concurrent p5.4xlarge at 16 vCPU each, which is the header's rule for a
+        # single-GPU shape applied unchanged. It is also a sixth of the P quota, so eight of
+        # these and one p5.48xlarge can run at once without the pool refusing either.
+        MaxvCpus: 128
+        InstanceTypes:
+          - p5.4xlarge
+        InstanceRole:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:instance-profile/sbsandbox-intern-edullm-batch-gpu-instance
+        Subnets:
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1a
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1b
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1c
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1d
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1f
+        SecurityGroupIds:
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-security-group-id
+        Ec2Configuration:
+          - ImageType: ECS_AL2023_NVIDIA
+        UpdateToLatestImageVersion: true
+        Tags:
+          Name: sbsandbox-intern-edullm-batch-gpu-1xh100
+          Project: edullm
+
+  Gpu1xH100JobQueue:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      JobQueueName: sbsandbox-intern-edullm-gpu-1xh100
+      State: ENABLED
+      Priority: 1
+      JobStateTimeLimitActions:
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: CAPACITY:INSUFFICIENT_INSTANCE_CAPACITY
+          State: RUNNABLE
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: MISCONFIGURATION:COMPUTE_ENVIRONMENT_MAX_RESOURCE
+          State: RUNNABLE
+        - Action: CANCEL
+          MaxTimeSeconds: 1800
+          Reason: MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT
+          State: RUNNABLE
+      ComputeEnvironmentOrder:
+        - Order: 1
+          ComputeEnvironment:
+            Ref: Gpu1xH100ComputeEnvironment
+
+  Gpu1xH100JobDefinition:
+    Type: AWS::Batch::JobDefinition
+    Properties:
+      JobDefinitionName: sbsandbox-intern-edullm-gpu-1xh100-run
+      Type: container
+      PlatformCapabilities:
+        - EC2
+      PropagateTags: true
+      RetryStrategy:
+        Attempts: 1
+      Timeout:
+        AttemptDurationSeconds: 3600
+      ContainerProperties:
+        Image:
+          Fn::Sub: ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/sbsandbox-intern-edullm-olmo-core@sha256:50e2488ab3c77e859a8fe3e6d4a06d7d54f5c852bc7c5dd201fb9db53bff455b
+        ExecutionRoleArn:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-execution
+        JobRoleArn:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-workload
+        ResourceRequirements:
+          - Type: VCPU
+            Value: "16"
+          - Type: MEMORY
+            Value: "258048"
+          - Type: GPU
+            Value: "1"
+        Secrets:
+          - Name: WANDB_API_KEY
+            ValueFrom:
+              Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sbsandbox-intern-edullm-wandb-api-key-fnwEVp
+        Command:
+          - python
+          - -c
+          - 'print("sbsandbox-intern-edullm-gpu-1xh100-run: no command override was supplied")'
+        Environment:
+          - Name: EDULLM_OUTPUT_BUCKET
+            Value: sbsandbox-intern-edullm-outputs
+          - Name: EDULLM_OUTPUT_PREFIX
+            Value: s3://sbsandbox-intern-edullm-outputs/no-submission-supplied-a-prefix/
+        LinuxParameters:
+          SharedMemorySize: 64512
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group: /aws/batch/sbsandbox-intern-edullm-gpu
+            awslogs-stream-prefix: gpu-1xh100-run
+            awslogs-region:
+              Ref: AWS::Region
+        Privileged: false
+
 Outputs:
   Gpu1xT4JobQueueArn:
     Value:
@@ -1648,3 +1790,6 @@ Outputs:
   Gpu8xH100JobQueueArn:
     Value:
       Ref: Gpu8xH100JobQueue
+  Gpu1xH100JobQueueArn:
+    Value:
+      Ref: Gpu1xH100JobQueue

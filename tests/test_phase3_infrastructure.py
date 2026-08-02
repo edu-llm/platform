@@ -124,6 +124,7 @@ GPU_SHAPE_PROFILES = (
     "gpu-1xl40s",
     "gpu-4xl40s",
     "gpu-8xl40s",
+    "gpu-1xh100",
     "gpu-8xa100",
     "gpu-8xh100",
 )

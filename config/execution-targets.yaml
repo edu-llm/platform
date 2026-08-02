@@ -140,6 +140,13 @@ targets:
     execution_role: sbsandbox-intern-edullm-batch-gpu-execution
     workload_role: sbsandbox-intern-edullm-batch-gpu-workload
     log_group: /aws/batch/sbsandbox-intern-edullm-gpu
+  - compute_profile: gpu-1xh100
+    region: us-east-1
+    job_queue: sbsandbox-intern-edullm-gpu-1xh100
+    job_definition: sbsandbox-intern-edullm-gpu-1xh100-run
+    execution_role: sbsandbox-intern-edullm-batch-gpu-execution
+    workload_role: sbsandbox-intern-edullm-batch-gpu-workload
+    log_group: /aws/batch/sbsandbox-intern-edullm-gpu
   - compute_profile: gpu-8xa100
     region: us-east-1
     job_queue: sbsandbox-intern-edullm-gpu-8xa100

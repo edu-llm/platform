@@ -11,7 +11,7 @@ compute_profiles:
     # a second without deploying an environment for it is a contradiction between two files
     # rather than a flag, and a test refuses it.
     provisioned: true
-  # THE FOURTEEN PROFILES BELOW THAT NOW SAY provisioned: true WERE PROMOTED IN TWO ROUNDS,
+  # THE FIFTEEN PROFILES BELOW THAT NOW SAY provisioned: true WERE PROMOTED IN THREE ROUNDS,
   # AND EACH PROMOTION IS FOUR EDITS PER PROFILE RATHER THAN THIS FLAG.
   #
   # A compute environment, a queue and a job definition in
@@ -38,14 +38,20 @@ compute_profiles:
   #
   # gpu-1xl40s IS NOW PROVISIONED, AND THE SENTENCE THAT STOOD HERE SAID IT WAS "a single
   # L40S nobody asked for". Two pieces of work have since asked for it and neither can use
-  # anything else this account can start. grpo-tutor runs vLLM 0.11.2 on one H100 on a single
-  # node, which its own README states, and 48 GB is the largest single card EC2 sells. The P7
-  # tutor recipe annotates per_device_batch: 8 as fitting about 44 GB with gradient
-  # checkpointing, which no 24 GB card holds, so gpu-1xl40s is the only single-GPU profile
-  # here that runs that recipe unchanged. P7's alternative was per_device_batch 2 with
-  # grad_accum 16, which holds the effective batch at 32 but moves the micro-batch boundaries
-  # and therefore the dropout draw, so it is a deviation somebody has to declare and defend
-  # rather than a free substitution. Provisioning the shape takes that choice away from both.
+  # anything smaller. grpo-tutor runs vLLM on one card on a single node, which its own README
+  # states. The P7 tutor recipe annotates per_device_batch: 8 as fitting about 44 GB with
+  # gradient checkpointing, which no 24 GB card holds. P7's alternative was per_device_batch
+  # 2 with grad_accum 16, which holds the effective batch at 32 but moves the micro-batch
+  # boundaries and therefore the dropout draw, so it is a deviation somebody has to declare
+  # and defend rather than a free substitution.
+  #
+  # THAT ENTRY ALSO SAID 48 GB WAS "the largest single card EC2 sells", WHICH WAS WRONG AND
+  # IS THE REASON gpu-1xh100 EXISTS FURTHER DOWN. p5.4xlarge is one H100 80 GB. Both work
+  # named above asked for an H100 specifically and were offered the L40S as the closest thing
+  # available; it was not the closest thing available. gpu-1xl40s stays anyway, because it is
+  # $1.861 against $6.88 and draws on the G pool rather than the P pool, so it cannot be
+  # starved by an eight-card H100 job. What changed is that it is a choice rather than the
+  # only option.
   #
   # gpu-1xa10g-sagemaker stays unprovisioned. It is a SageMaker training instance, which is a
   # different service with a different submission path and no Batch queue to give it.
@@ -191,12 +197,33 @@ compute_profiles:
   # editing one of these numbers downward past $20 would move a shape from admin approval to
   # team-lead approval with nothing else changing.
   #
-  # NEITHER OF THESE TWO CARDS HAS A ONE-CARD OR FOUR-CARD FORM ON EC2, WHICH IS WHY THE GRID
-  # ABOVE HAS SIX FAMILIES AND ONLY FOUR OF THEM ARE COMPLETE. A100 is sold as p4d.24xlarge
-  # and H100 as p5.48xlarge, both eight-device instances, so a gpu-1xa100 or gpu-4xh100
-  # cannot be built here however much a researcher who ran one card elsewhere wants it. The
-  # substitute for a single A100 or H100 is gpu-1xl40s, which is 48 GB against 80 GB and the
-  # largest single card this account can start.
+  # A100 HAS NO ONE-CARD OR FOUR-CARD FORM ON EC2. H100 HAS A ONE-CARD FORM AND THIS FILE
+  # SAID IT DID NOT.
+  #
+  # The sentence that stood here read "neither of these two cards has a one-card or four-card
+  # form on EC2" and sent anybody who wanted a single 80 GB card to gpu-1xl40s at 48 GB. It
+  # was measured on the two P types this account was already using and never rechecked
+  # against the p5 family's own size list. describe-instance-types on 2026-08-02 reports
+  # three p5 types in us-east-1: p5.4xlarge at one H100, p5.48xlarge at eight, and
+  # p5en.48xlarge at eight H200. So gpu-1xh100 below is real, and gpu-4xh100 still is not.
+  #
+  # A100 is unaffected and the original claim holds for it. p4d.24xlarge is eight devices
+  # with nothing smaller in the family, so gpu-1xa100 and gpu-4xa100 cannot be built. The
+  # substitute for one A100 is gpu-1xh100, a newer card at the same 80 GB and a third of the
+  # per-device rate.
+  #
+  # gpu-1xh100 IS THE ONLY P SHAPE THAT DOES NOT NEED AN ADMIN, at $6.88 against the $20
+  # ceiling. That is the point of it rather than a side effect: three pieces of work asked
+  # for one H100 by name and each was choosing between an eight-card node at $55.04 needing
+  # an admin every time, or a 48 GB card and a changed recipe.
+  - name: gpu-1xh100
+    instance_type: p5.4xlarge
+    accelerator: gpu
+    nodes: 1
+    hourly_rate_usd: "6.8800"
+    pricing_source: "AWS Price List API get-products AmazonEC2 p5.4xlarge us-east-1 Linux/Shared/NA/Used"
+    pricing_observed_at: "2026-08-02"
+    provisioned: true
   - name: gpu-8xa100
     instance_type: p4d.24xlarge
     accelerator: gpu

@@ -2,8 +2,8 @@
 
 Phase: phase-2
 Bundle schema version: 1
-Source commit: 94f6f34aca83bd2e1d8abab6b6ecb68f43b2962f
-Generated: 2026-08-02T16:20:23+00:00
+Source commit: 1fc81b7f5b2bf4c5b6cdb1cefecaaf764d027200
+Generated: 2026-08-02T17:04:31+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 2 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase2_proof.py` at generation time. It is not done, and the Result table below says by how much.
 
@@ -44,10 +44,10 @@ This run evaluated 22 acceptance criteria: thirteen criteria are covered, one cr
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 4655 |
-| suite tests executed | 4462 |
-| suite passed | 4457 |
-| suite failed | 5 |
+| suite tests collected | 4661 |
+| suite tests executed | 4468 |
+| suite passed | 4465 |
+| suite failed | 3 |
 | suite errored | 0 |
 | suite skipped | 0 |
 | matrix node ids executed | 661 |
@@ -88,7 +88,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | file | digest |
 | --- | --- |
 | .github/workflows/deploy-phase2-admission.yml | sha256:b2f22ae639f6485e2ca00a36e1a56caa28b25c13e99d5a7858323c75789a960a |
-| .github/workflows/submit-run.yml | sha256:2a9715fda82137ebeee21ccd68ed99a956ab5b2c64b4a172cc91f648f21ef58f |
+| .github/workflows/submit-run.yml | sha256:e1f3d9124b62f7c6c981d719a284ea1f3fe5b04d8c3ced4a06009e8a3545bf12 |
 | config/organization.yaml | sha256:4b3d6cbdc0c080dc01b36918401f720f9cfc87d821a6cfa61787fdc7020d80cf |
 | config/policy.yaml | sha256:5ba9029052c35c3b9d45323f80bcdc44019d6752da3191a13e44b9dac6a59ff2 |
 | fixtures/authorization/admin-exception.yaml | sha256:c49db36e999df3cefd9d3e95127fe947479d121ca6b6b450839e9f0c8ae8144f |
@@ -112,7 +112,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | fixtures/evidence/phase-2/lineage/records/intent/run_019fa4c0-390d-7081-b539-08d9ff6b58be.json | sha256:be35e6f2797c899e1a5b44544ed64d053b125f6d17cb47fb0cc6932f2fd976a5 |
 | infra/admission-state-machine.yaml | sha256:cc63bf3808fabdccbcf400c44f7856ac5d165415356e3b2a91d55a1c476c7d96 |
 | infra/iam/admission-role.yaml | sha256:88e95f2909742310afaee41e0a695ceaff3fafe8a4dc3320033b6e76f71fcd79 |
-| infra/iam/admission-service-roles.yaml | sha256:17ddcffcea5dba7ec9d15017a11ecbb12316ee4fab06d2b0253c0a862bb6333e |
+| infra/iam/admission-service-roles.yaml | sha256:066cfbb4190d757c6b54537725a18f6e99682e2838e2f9f88ecdb2e6094fed25 |
 | infra/iam/infra-deployer-role.yaml | sha256:596abb25126c0f10d734cbecd01bec08495cac63b19a81ab46870318504774ac |
 | infra/lineage-bucket.yaml | sha256:9bad0303f92659a47caa1fe57f1bf10c77a3b11a11a9f58f21b1c341befd761d |
 

@@ -161,6 +161,7 @@ INSTANCE_EVIDENCE: dict[str, InstanceEvidence] = {
     "g6e.12xlarge": {"required_vcpus": 48, "quota_code": "L-DB2E81BA"},
     "g6e.48xlarge": {"required_vcpus": 192, "quota_code": "L-DB2E81BA"},
     "p4d.24xlarge": {"required_vcpus": 96, "quota_code": "L-417A185B"},
+    "p5.4xlarge": {"required_vcpus": 16, "quota_code": "L-417A185B"},
     "p5.48xlarge": {"required_vcpus": 192, "quota_code": "L-417A185B"},
     "c7i.8xlarge": {"required_vcpus": 32, "quota_code": "L-1216C47A"},
 }
@@ -179,6 +180,7 @@ WORKLOAD_PROFILE_REQUIRED_VCPUS: Final = {
     "gpu-4xl40s": INSTANCE_EVIDENCE["g6e.12xlarge"]["required_vcpus"],
     "gpu-8xl40s": INSTANCE_EVIDENCE["g6e.48xlarge"]["required_vcpus"],
     "gpu-8xa100": INSTANCE_EVIDENCE["p4d.24xlarge"]["required_vcpus"],
+    "gpu-1xh100": INSTANCE_EVIDENCE["p5.4xlarge"]["required_vcpus"],
     "gpu-8xh100": INSTANCE_EVIDENCE["p5.48xlarge"]["required_vcpus"],
     "cpu-32vcpu": INSTANCE_EVIDENCE["c7i.8xlarge"]["required_vcpus"],
 }

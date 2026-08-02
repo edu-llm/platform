@@ -2,8 +2,8 @@
 
 Phase: phase-0
 Bundle schema version: 1
-Source commit: 94f6f34aca83bd2e1d8abab6b6ecb68f43b2962f
-Generated: 2026-08-02T16:15:58+00:00
+Source commit: 1fc81b7f5b2bf4c5b6cdb1cefecaaf764d027200
+Generated: 2026-08-02T16:53:54+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 0 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase0_proof.py` at generation time.
 
@@ -18,10 +18,10 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 4655 |
-| suite tests executed | 4462 |
-| suite passed | 4455 |
-| suite failed | 7 |
+| suite tests collected | 4661 |
+| suite tests executed | 4468 |
+| suite passed | 4465 |
+| suite failed | 3 |
 | suite errored | 0 |
 | suite skipped | 0 |
 | matrix node ids executed | 254 |
@@ -88,7 +88,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | --- | --- |
 | config/organization.yaml | sha256:4b3d6cbdc0c080dc01b36918401f720f9cfc87d821a6cfa61787fdc7020d80cf |
 | config/policy.yaml | sha256:5ba9029052c35c3b9d45323f80bcdc44019d6752da3191a13e44b9dac6a59ff2 |
-| config/workload-catalog.yaml | sha256:105db4ff1fd4e75223b80a073433388a6f0f935915c28df03739339b91ef6447 |
+| config/workload-catalog.yaml | sha256:57fde8382e8e6d8bfe0f9de07dcd4508f48f3bceb502051d7b4813d2e8b6a617 |
 | fixtures/authorization/admin-exception.yaml | sha256:c49db36e999df3cefd9d3e95127fe947479d121ca6b6b450839e9f0c8ae8144f |
 | fixtures/authorization/lead-self-authorization.yaml | sha256:4879d23dffb1ae9c3d81cdb35e382a1636b0642f75b7cc2afe0f8a54cebc562b |
 | fixtures/authorization/member-approval.yaml | sha256:d6da4e22145165f4233c7c150789d2eea7fb9a7d8cf8546e72812bb971bd4dc4 |
@@ -117,7 +117,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 
 ## Known limitations
 
-- 15 of 16 compute profiles are provisioned: cpu-32vcpu, gpu-1xa10g, gpu-1xl4, gpu-1xl40s, gpu-1xt4, gpu-4xa10g, gpu-4xl4, gpu-4xl40s, gpu-4xt4, gpu-8xa100, gpu-8xa10g, gpu-8xh100, gpu-8xl4, gpu-8xl40s, gpu-8xt4. Every other profile is priced and dated but carries provisioned: false, so resolve_compute_profile_for_execution refuses it. Phase 0 proves pricing and classification for all of them and that nothing can run is no longer true of the whole catalog.
+- 16 of 17 compute profiles are provisioned: cpu-32vcpu, gpu-1xa10g, gpu-1xh100, gpu-1xl4, gpu-1xl40s, gpu-1xt4, gpu-4xa10g, gpu-4xl4, gpu-4xl40s, gpu-4xt4, gpu-8xa100, gpu-8xa10g, gpu-8xh100, gpu-8xl4, gpu-8xl40s, gpu-8xt4. Every other profile is priced and dated but carries provisioned: false, so resolve_compute_profile_for_execution refuses it. Phase 0 proves pricing and classification for all of them and that nothing can run is no longer true of the whole catalog.
 - Approval scope is organization. Any team lead may approve any member's routine submission. Check D1 in the negative-case matrix is deferred for this reason.
 - The secret scan applied to this bundle masks its own content digests before scanning. A 64-character hexadecimal sha256 digest and a 40-character hexadecimal commit SHA both match the generic long-credential patterns in evidence.py, so the two exact token shapes this bundle emits are replaced with placeholders and everything else is scanned unchanged. No other exemption is applied.
 - The nested verification run excludes every test module that builds a proof bundle (tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py, tests/test_phase5_proof.py), because those tests invoke a generator and would recurse. They run in the reviewer's own `uv run pytest -q`, which is the command this bundle asks the reviewer to run.

@@ -847,6 +847,7 @@ CONTAINER_SHAPES: Final[Mapping[str, ContainerShape]] = {
     #   g6e.12xlarge    384 GiB     393216 -  12288 =  380928     48 vCPU
     #   g6e.48xlarge   1536 GiB    1572864 -  49152 = 1523712    192 vCPU
     #   p4d.24xlarge   1152 GiB    1179648 -  24576 = 1155072     96 vCPU
+    #   p5.4xlarge      256 GiB     262144 -   4096 =  258048     16 vCPU
     #   p5.48xlarge    2048 GiB    2097152 -  49152 = 2048000    192 vCPU
     #
     # g4dn.metal and g6e.12xlarge are both 384 GiB and get different container memory, which
@@ -878,6 +879,12 @@ CONTAINER_SHAPES: Final[Mapping[str, ContainerShape]] = {
     "gpu-4xl40s": _gpu_shape(vcpus=48, memory_mib=380928, gpus=4, shared_memory_mib=95232),
     "gpu-8xl40s": _gpu_shape(vcpus=192, memory_mib=1523712, gpus=8, shared_memory_mib=380928),
     "gpu-8xa100": _gpu_shape(vcpus=96, memory_mib=1155072, gpus=8, shared_memory_mib=288768),
+    # p5.4xlarge is one H100 80 GB and the only single-card P shape. It is 256 GiB of host
+    # memory for one device, which is 16 GiB per vCPU against the g6e.xlarge's 8, so the
+    # container is unusually large beside the other single-GPU entries above. That is the
+    # instance rather than a choice here: the P family sizes host memory for eight-card work
+    # and the quarter-size form keeps the ratio.
+    "gpu-1xh100": _gpu_shape(vcpus=16, memory_mib=258048, gpus=1, shared_memory_mib=64512),
     "gpu-8xh100": _gpu_shape(vcpus=192, memory_mib=2048000, gpus=8, shared_memory_mib=512000),
 }
 
