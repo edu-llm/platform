@@ -77,8 +77,34 @@ DEPLOYMENT_ORDER = (
     ("Deploy Phase 3 batch events stack", "sbsandbox-intern-edullm-phase3-events", EVENTS_TEMPLATE),
     ("Deploy the amended admission state machine", ADMISSION_STACK, ADMISSION_TEMPLATE),
 )
+VALIDATE_STEP = "Upload and validate the CloudFormation templates"
 VERIFY_STEP = "Verify CPU and GPU batch execution"
 SHAPES_VERIFY_STEP = "Verify the remaining GPU shapes"
+
+#: CloudFormation refuses a template carried in the request body above this, on
+#: ValidateTemplate as well as on CreateChangeSet, so it is a limit that fails a workflow
+#: rather than a stack. A template read from S3 is allowed 1 MB instead.
+INLINE_TEMPLATE_LIMIT_BYTES = 51_200
+S3_TEMPLATE_LIMIT_BYTES = 1_000_000
+
+#: The bucket the deployer already holds ``s3:PutObject`` on, and the third top-level name
+#: in it after ``admission-validator/`` and ``lifecycle-recorder/``. Two prefixes because
+#: two things write here: this workflow uploads one readable object per template for the
+#: ``--template-url`` validation, and ``deploy --s3-bucket`` writes its own copies named for
+#: the checksum of the file.
+ARTIFACTS_BUCKET = "sbsandbox-intern-edullm-artifacts"
+TEMPLATE_PREFIX = "cloudformation-templates"
+CHECKSUMMED_PREFIX = f"{TEMPLATE_PREFIX}/checksummed"
+
+
+def uploaded_key(template: str) -> str:
+    return f"{TEMPLATE_PREFIX}/{Path(template).name}"
+
+
+def template_url(template: str) -> str:
+    # Path style, which is what the CLI itself builds when --s3-bucket hands a TemplateURL
+    # to CloudFormation. The region comes from the environment the credential action sets.
+    return f"https://s3.${{AWS_REGION}}.amazonaws.com/{ARTIFACTS_BUCKET}/{uploaded_key(template)}"
 
 #: The same group the Phase 2 workflow declares. The two deploy one stack in common, so a
 #: distinct group would let them race into a mid-update stack.
@@ -219,23 +245,81 @@ def test_the_workflow_assumes_the_deployer_role_and_masks_the_account_id() -> No
     }
 
 
-def test_every_template_is_validated_before_any_of_them_is_deployed() -> None:
+def test_every_template_is_uploaded_and_validated_before_any_of_them_is_deployed() -> None:
     """Mutation: validate after the first deploy.
 
     A malformed fourth template would then be discovered with three stacks already changed,
     which is the state that needs a person with laptop credentials rather than a re-run.
+
+    The upload is in the same step and has to be, because ``validate-template`` reaches a
+    template over 51,200 bytes only through ``--template-url``. It takes no ``--s3-bucket``
+    of its own, so the object has to exist before the validation rather than as a side
+    effect of the deploy that follows.
     """
     job = only_job(workflow())
-    validate_script = step(job, "Validate CloudFormation templates")["run"]
+    validate_script = step(job, VALIDATE_STEP)["run"]
     step_names = [candidate.get("name") for candidate in job["steps"]]
 
-    assert aws_commands(validate_script) == [
-        ["aws", "cloudformation", "validate-template", "--template-body", f"file://{template}"]
-        for _name, _stack, template in DEPLOYMENT_ORDER
-    ]
-    assert step_names.index("Validate CloudFormation templates") < min(
+    expected: list[list[str]] = []
+    for _name, _stack, template in DEPLOYMENT_ORDER:
+        expected.append(
+            [
+                "aws",
+                "s3api",
+                "put-object",
+                "--bucket",
+                ARTIFACTS_BUCKET,
+                "--key",
+                uploaded_key(template),
+                "--body",
+                template,
+            ]
+        )
+        expected.append(
+            ["aws", "cloudformation", "validate-template", "--template-url", template_url(template)]
+        )
+
+    assert aws_commands(validate_script) == expected
+    assert step_names.index(VALIDATE_STEP) < min(
         step_names.index(name) for name, _stack, _template in DEPLOYMENT_ORDER
     )
+
+
+def test_no_template_is_passed_inline_and_none_is_near_the_limit_that_replaced_it() -> None:
+    """Mutation: put the one template that fits back on ``--template-body``.
+
+    That is the arrangement this workflow had until 2026-08-02, and it was already broken:
+    ``infra/batch-compute-gpu-shapes.yaml`` had grown to 68,568 bytes against a 51,200-byte
+    inline limit, so the validation step could not have run. The limit is enforced on the
+    request, not on the stack, so nothing rolls back and nothing partially applies -- the
+    workflow simply cannot proceed until this file changes.
+
+    All seven go the same way rather than only the one over the line, because
+    ``infra/admission-state-machine.yaml`` is 1,568 bytes short of the same cliff and a
+    workflow where six templates take one path and the seventh takes another is a trap for
+    whoever adds the eighth.
+    """
+    repository_root = WORKFLOWS_ROOT.parent.parent
+    scripts = run_scripts()
+    flags = [token for script in scripts for command in aws_commands(script) for token in command]
+
+    assert "--template-body" not in flags
+    assert "file://" not in "".join(flags)
+
+    for _name, _stack, template in DEPLOYMENT_ORDER:
+        size = (repository_root / template).stat().st_size
+        assert size < S3_TEMPLATE_LIMIT_BYTES, (
+            f"{template} is {size} bytes, past the ceiling S3 raises this to as well"
+        )
+
+    # The measurement the decision rests on, kept here so that a template shrinking back
+    # under the inline limit does not read as a reason to undo any of this.
+    oversized = [
+        template
+        for _name, _stack, template in DEPLOYMENT_ORDER
+        if (repository_root / template).stat().st_size > INLINE_TEMPLATE_LIMIT_BYTES
+    ]
+    assert GPU_SHAPES_TEMPLATE in oversized
 
 
 def test_the_stacks_deploy_in_dependency_order_and_the_state_machine_is_last() -> None:
@@ -258,6 +342,13 @@ def test_the_stacks_deploy_in_dependency_order_and_the_state_machine_is_last() -
                 stack,
                 "--template-file",
                 template,
+                # Above the inline limit for one of these and within 1,568 bytes of it for a
+                # second, so the CLI uploads and passes a TemplateURL instead. Keyed by the
+                # checksum of the file, so an unchanged template writes no object.
+                "--s3-bucket",
+                ARTIFACTS_BUCKET,
+                "--s3-prefix",
+                CHECKSUMMED_PREFIX,
                 "--no-fail-on-empty-changeset",
             ]
         ]
@@ -305,10 +396,25 @@ def test_the_workflow_never_submits_a_job_and_never_asks_to() -> None:
     # list can search by it. `logs` joined the constrained services at the same time: the
     # report reads a log stream, and a service left off this list is one whose verbs nothing
     # here checks.
+    # One write, named rather than admitted by prefix. The templates are uploaded before
+    # they are validated because `validate-template` reaches a template over 51,200 bytes
+    # only through --template-url, and a prefix like "put-" would have let a later step put
+    # anything anywhere. Where it may write is settled by IAM rather than here: the grant is
+    # s3:PutObject on sbsandbox-intern-edullm-artifacts/* and reaches no other bucket.
+    permitted_writes = {("s3api", "put-object")}
     assert all(
         command[2].startswith(("describe", "validate", "deploy", "get-", "list-"))
+        or tuple(command[1:3]) in permitted_writes
         for command in commands
         if command[1] in ("batch", "events", "stepfunctions", "s3api", "logs")
+    )
+    assert all(
+        command[3:7] == ["--bucket", ARTIFACTS_BUCKET, "--key", uploaded_key(template)]
+        for command, (_name, _stack, template) in zip(
+            [command for command in commands if tuple(command[1:3]) in permitted_writes],
+            DEPLOYMENT_ORDER,
+            strict=True,
+        )
     )
 
 
