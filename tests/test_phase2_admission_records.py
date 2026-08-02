@@ -177,6 +177,7 @@ def trust_policy_environments() -> set[str]:
 @pytest.mark.parametrize(
     ("approval_class", "expected"),
     [
+        (ApprovalClass.AUTOMATIC, ApprovalEnvironment.AUTOMATIC),
         (ApprovalClass.ROUTINE, ApprovalEnvironment.LEAD),
         (ApprovalClass.EXCEPTION, ApprovalEnvironment.ADMIN),
     ],
@@ -188,10 +189,28 @@ def test_policy_picks_the_gate_a_classification_must_pass_through(
     assert ApprovalEnvironment.for_approval_class(approval_class) is expected
 
 
-def test_the_two_gate_names_are_the_literals_the_trust_policy_pins() -> None:
+def test_every_approval_class_routes_to_a_gate_of_its_own() -> None:
+    """No two classes share a gate, which is what makes the recorded class checkable.
+
+    ``for_approval_class`` used to end in a bare ``return cls.LEAD``, so a class added
+    without a gate silently took the lead's. The record then read ``approval_class:
+    automatic`` for a run a team lead had released, and the accepted-decision validator
+    agreed with it, because the environment did match what the class demanded. Nothing in
+    the tree caught that. A one-to-one mapping is what the validator's comparison is worth
+    anything against.
+    """
+    gates = [ApprovalEnvironment.for_approval_class(entry) for entry in ApprovalClass]
+
+    assert len(set(gates)) == len(list(ApprovalClass))
+    assert set(gates) == set(ApprovalEnvironment)
+
+
+def test_the_three_gate_names_are_the_literals_the_trust_policy_pins() -> None:
+    assert ApprovalEnvironment.AUTOMATIC.value == "run-approval-automatic"
     assert ApprovalEnvironment.LEAD.value == "run-approval-lead"
     assert ApprovalEnvironment.ADMIN.value == "run-approval-admin"
     assert {environment.value for environment in ApprovalEnvironment} == {
+        "run-approval-automatic",
         "run-approval-lead",
         "run-approval-admin",
     }

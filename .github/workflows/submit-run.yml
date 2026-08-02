@@ -734,8 +734,20 @@ jobs:
       # there. Failing here instead is the kinder half of the same outcome: it costs the
       # approval either way, and this way the reason is a line in a log rather than a
       # lineage record that reads as though the approver was not permitted.
+      #
+      # SKIPPED FOR THE AUTOMATIC GATE, WHERE THERE IS NOBODY TO READ. run-approval-automatic
+      # carries a branch policy and no reviewers, so GitHub releases the job without an
+      # approval and this endpoint answers with an empty list. Left unconditional the step
+      # would exit approver_login_unreadable and refuse exactly the cheap runs the automatic
+      # class exists to let through, with a message about an unreadable approver rather than
+      # about a policy that asked for none.
+      #
+      # The condition reads the class the credential-free compile job computed, which is the
+      # same value that chose this job's `environment:` above. Reading `inputs.` here instead
+      # would let a submitter claim the automatic path from the form.
       - name: Read who released the gate
         id: approval
+        if: needs.compile.outputs.approval_class != 'automatic'
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_REPOSITORY: ${{ github.repository }}
@@ -827,6 +839,7 @@ jobs:
       - name: Assemble the admission request
         env:
           APPROVED_SHA256: ${{ needs.compile.outputs.manifest_sha256 }}
+          APPROVAL_CLASS: ${{ needs.compile.outputs.approval_class }}
           APPROVER: ${{ steps.approval.outputs.approver }}
           ECR_REPOSITORY: ${{ steps.registry.outputs.ecr_repository }}
           RUN_REPOSITORY: ${{ github.repository }}
@@ -862,10 +875,30 @@ jobs:
           if "@" not in workflow_ref:
               raise SystemExit("job.workflow_ref must read owner/repo/path@ref")
 
+          # NULL FOR THE AUTOMATIC CLASS, AND REFUSED RATHER THAN IGNORED FOR THE OTHER TWO.
+          # A gate with reviewers must name the person who released it, because
+          # evaluate_authorization decides against the approver. The automatic gate has no
+          # reviewers, so the honest value is null: recording the submitter there would
+          # manufacture a self-approval nobody performed, and recording a lead would name
+          # somebody who was never asked. An approver arriving on an automatic run means the
+          # step above ran when it should not have, which is a routing fault worth stopping
+          # for rather than dropping quietly.
+          approval_class = required("APPROVAL_CLASS")
+          supplied_approver = os.environ.get("APPROVER", "").strip()
+          if approval_class == "automatic":
+              if supplied_approver:
+                  raise SystemExit(
+                      "an automatic submission carries an approver, so the gate that "
+                      "released it was not the reviewer-less one policy chose"
+                  )
+              approver = None
+          else:
+              approver = required("APPROVER")
+
           request = {
               "run_id": document["run_id"],
               "submitter": document["submitter"],
-              "approver": required("APPROVER"),
+              "approver": approver,
               "approving_environment": document["approving_environment"],
               # The digest the compile job published and the reviewer was shown, carried
               # across the gate through `needs` rather than read back out of the very

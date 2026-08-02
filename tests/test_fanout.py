@@ -432,6 +432,25 @@ def test_a_hundred_trivial_cells_is_an_exception_on_count_alone() -> None:
 
 
 def test_a_fanout_at_the_count_ceiling_stays_routine() -> None:
+    """Routine, and specifically not automatic, which is now a property rather than luck.
+
+    This sweep satisfies both auto-approve bounds on the numbers alone: sixty-four cells at
+    the count ceiling is $4.57 over 0.05 hours, because the estimate already multiplies by
+    cells. Cost and runtime are asserted against the bounds below so that the test states
+    the trap rather than merely avoiding it. What keeps a lead in front of it is the
+    fan-out exclusion in classify_request and nothing else.
+
+    Mutation: drop ``facts.fanout_size == 1`` from the automatic branch. This classifies as
+    automatic, and sixty-four machines start with nobody having seen the total. The rule was
+    written to take a person out of a twenty-step smoke test, not out of a sweep.
+
+    There was a second test beside this one asserting that a fan-out over
+    ``routine_maximum_parallelism`` was an exception. It went when the field feeding it did:
+    a submitter can no longer state a concurrency cap, so no manifest can violate that
+    bound. The threshold survives in config/policy.yaml with nothing to compare against,
+    which is recorded there rather than quietly dropped, because removing a bound changes
+    who may release a run.
+    """
     thresholds = shipped_thresholds()
     sweep = sweep_manifest(
         fanout=fanout_payload(size=thresholds.routine_maximum_fanout_size),
@@ -441,6 +460,8 @@ def test_a_fanout_at_the_count_ceiling_stays_routine() -> None:
 
     assert facts.fanout_size == 64
     assert numeric_bound_violations(facts, thresholds) == frozenset()
+    assert facts.estimated_cost_usd < thresholds.automatic_below_cost_usd
+    assert facts.maximum_runtime_hours < thresholds.automatic_below_runtime_hours
     assert classify_request(
         facts, thresholds, hourly_rate_usd=rate_for(sweep)
     ) is ApprovalClass.ROUTINE

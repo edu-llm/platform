@@ -4,14 +4,17 @@ The gate is GitHub configuration rather than code, and nothing in this repositor
 
 Captured by `tools/capture_phase2_evidence.py` from `edu-llm/platform` and read from `fixtures/evidence/phase-2/github/environments.sanitized.json`, `fixtures/evidence/phase-2/github/secrets.sanitized.json` and `fixtures/evidence/phase-2/github/lead-team.sanitized.json`.
 
-## Both approval environments, as configured
+## All three approval environments, as configured
 
 | environment | reviewers | branch policy form | branches | admins may bypass | prevents self-review |
 | --- | --- | --- | --- | --- | --- |
 | run-approval-admin | User:philote-dev, User:BritishAmericqn | custom | main | no | no |
+| run-approval-automatic |  | custom | main | no | no |
 | run-approval-lead | Team:team-leads | custom | main | no | no |
 
-Every environment the capture found is listed, not only the two this phase expects. An environment is auto-created, with no protection rules at all, by anybody who can name one in a workflow file -- which is everybody who can submit -- so a capture reading only the two expected names would report a healthy gate with a third, unprotected environment beside it.
+Every environment the capture found is listed, not only the three this phase expects. An environment is auto-created, with no protection rules at all, by anybody who can name one in a workflow file -- which is everybody who can submit -- so a capture reading only the three expected names would report a healthy gate with a fourth, unprotected environment beside it.
+
+`run-approval-automatic` has no reviewers and that is what it is for: a run the policy priced under five dollars and under an hour is released by nobody. It carries every other protection the reviewed two carry -- pinned to `main` by name, no admin bypass, no wait timer -- so what the class removes is the person and not the gate. Its `prevents self-review` reads no for a different reason than theirs do: GitHub refuses that flag on an environment with no reviewers, answering 422, so the capture derives it from an absent rule rather than from a setting. There is nobody to prevent.
 
 **The lead gate's single reviewer is a team, so its effective reviewer list is a second record.** The environment capture can say that the slot holds a team and cannot say who stands behind it, because that is organization state no file in this repository follows. `fixtures/evidence/phase-2/github/lead-team.sanitized.json` is that record: eight logins in `team-leads`, compared against `team_leads` in `config/organization.yaml` in both directions rather than flattened into the reviewer list above, which would agree with the roster for the wrong reason. It was taken on a later day than the environment capture, and the expiry quoted above is the earlier of the two: a criterion resting on both is only as current as the older one.
 
@@ -27,8 +30,9 @@ Every environment the capture found is listed, not only the two this phase expec
 | organization secrets | none |
 | dependabot secrets | none |
 | environment secrets on `run-approval-admin` | none |
+| environment secrets on `run-approval-automatic` | none |
 | environment secrets on `run-approval-lead` | none |
-| repository variables | `AWS_ADMISSION_ROLE_ARN`, `AWS_INFRA_DEPLOYER_ROLE_ARN`, `AWS_REGION` |
+| repository variables | `AWS_ADMISSION_ROLE_ARN`, `AWS_IMAGE_RESOLVER_ROLE_ARN`, `AWS_INFRA_DEPLOYER_ROLE_ARN`, `AWS_NIGHTLY_READER_ROLE_ARN`, `AWS_REGION`, `AWS_RUN_CANCELLER_ROLE_ARN` |
 
 Names only, and the model has no field a value could occupy, which is a stronger guarantee than a capture tool that is careful. It matters here more than anywhere: the evidence for no-credentials-are-stored must not itself store one.
 

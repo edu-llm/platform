@@ -93,6 +93,8 @@ def thresholds_payload() -> dict[str, object]:
         "routine_maximum_attempts": 2,
         "routine_maximum_fanout_size": 64,
         "routine_maximum_parallelism": 8,
+        "automatic_below_cost_usd": "5",
+        "automatic_below_runtime_hours": "1",
     }
 
 
@@ -120,6 +122,8 @@ def thresholds() -> PolicyThresholds:
         routine_maximum_attempts=2,
         routine_maximum_fanout_size=64,
         routine_maximum_parallelism=8,
+        automatic_below_cost_usd=Decimal(5),
+        automatic_below_runtime_hours=Decimal(1),
     )
 
 
@@ -136,6 +140,8 @@ def policy_payload() -> dict[str, object]:
             "routine_maximum_attempts": 2,
             "routine_maximum_fanout_size": 64,
             "routine_maximum_parallelism": 8,
+            "automatic_below_cost_usd": "5",
+            "automatic_below_runtime_hours": "1",
         },
         "image_scan": {"blocking_severities": ["CRITICAL"]},
         "approval_scope": "organization",
@@ -295,6 +301,184 @@ def test_the_ceiling_sits_between_the_dearest_routine_shape_and_the_cheapest_gat
     assert above == {"gpu-8xa100", "gpu-8xh100", "gpu-8xl40s"}
 
 
+# --------------------------------------------------------------------------------------
+# The automatic class, and the three limits that bound it
+# --------------------------------------------------------------------------------------
+#
+# Every limit is pinned from both sides, because a boundary tested from one side only says
+# which comparison was written rather than which was meant. The two automatic bounds are
+# strictly-under and the rate ceiling is inclusive, which is a deliberate difference and the
+# reason each of the three carries its own at-the-value test.
+
+
+def automatic_facts(**overrides: object) -> RequestFacts:
+    """Facts that satisfy both automatic bounds with room to spare, before overrides.
+
+    Cheap, short and a single cell. Every test below moves exactly one of those and asserts
+    what it costs, so a failure names the bound that moved rather than the fixture.
+    """
+    payload: dict[str, object] = {
+        "estimated_cost_usd": "4.99",
+        "maximum_runtime_hours": "0.99",
+    }
+    payload.update(overrides)
+    return routine_facts(**payload)
+
+
+def test_a_cheap_short_single_cell_run_is_automatic() -> None:
+    """The case the whole class exists for, and the baseline the boundaries move off.
+
+    A twenty-step smoke test costs under a dollar and finishes in minutes. Before this class
+    it waited for a team lead, which is the friction that sent researchers to Colab.
+    """
+    assert classify_request(
+        automatic_facts(), thresholds(), hourly_rate_usd=ROUTINE_RATE
+    ) is ApprovalClass.AUTOMATIC
+
+
+@pytest.mark.parametrize(
+    ("estimated_cost_usd", "expected"),
+    [
+        ("4.99", ApprovalClass.AUTOMATIC),
+        ("5", ApprovalClass.ROUTINE),
+        ("5.01", ApprovalClass.ROUTINE),
+    ],
+)
+def test_the_cost_bound_is_strictly_under_five_dollars(
+    estimated_cost_usd: str,
+    expected: ApprovalClass,
+) -> None:
+    """Five dollars exactly goes to a lead.
+
+    Mutation: change ``<`` to ``<=`` in the automatic branch of ``classify_request``. The
+    middle row flips to automatic. That is the strict-versus-non-strict comparison nobody
+    wrote down, and the direction matters: too wide silently enlarges the set of runs no
+    person ever sees, where too narrow costs a lead one click.
+    """
+    assert classify_request(
+        automatic_facts(estimated_cost_usd=estimated_cost_usd),
+        thresholds(),
+        hourly_rate_usd=ROUTINE_RATE,
+    ) is expected
+
+
+@pytest.mark.parametrize(
+    ("maximum_runtime_hours", "expected"),
+    [
+        ("0.99", ApprovalClass.AUTOMATIC),
+        ("1", ApprovalClass.ROUTINE),
+        ("1.01", ApprovalClass.ROUTINE),
+    ],
+)
+def test_the_runtime_bound_is_strictly_under_one_hour(
+    maximum_runtime_hours: str,
+    expected: ApprovalClass,
+) -> None:
+    """One hour exactly goes to a lead, for the reason the cost bound does.
+
+    Mutation: change ``<`` to ``<=``. The middle row flips to automatic, and a run declaring
+    exactly the bound is the commonest way to declare one.
+    """
+    assert classify_request(
+        automatic_facts(maximum_runtime_hours=maximum_runtime_hours),
+        thresholds(),
+        hourly_rate_usd=ROUTINE_RATE,
+    ) is expected
+
+
+@pytest.mark.parametrize(
+    ("hourly_rate_usd", "expected"),
+    [
+        (Decimal("19.99"), ApprovalClass.AUTOMATIC),
+        (EXCEPTION_RATE_CEILING_USD_PER_HOUR, ApprovalClass.AUTOMATIC),
+        (Decimal("20.01"), ApprovalClass.EXCEPTION),
+    ],
+)
+def test_the_rate_ceiling_is_inclusive_and_outranks_the_automatic_bounds(
+    hourly_rate_usd: Decimal,
+    expected: ApprovalClass,
+) -> None:
+    """The third limit, pinned both ways, and pinned against the cheap short case.
+
+    Inclusive where the two automatic bounds are exclusive: exactly twenty dollars an hour
+    is not an admin's problem, which is how the ceiling has always read and how the four
+    routine bounds beside it read. The interesting row is the last one. These facts are
+    cheap and short and would auto-approve on their own, so the ceiling has to be evaluated
+    before the automatic branch or a request on the largest instance in the account is
+    released by nobody at all.
+
+    Mutation: move the rate comparison below the automatic branch in ``classify_request``.
+    The last row returns automatic, and a p4d.24xlarge starts with no approver.
+    """
+    assert classify_request(
+        automatic_facts(), thresholds(), hourly_rate_usd=hourly_rate_usd
+    ) is expected
+
+
+@pytest.mark.parametrize(
+    ("overrides", "reason"),
+    [
+        ({"maximum_runtime_hours": "4"}, "cheap because it is short, but asks for four hours"),
+        ({"estimated_cost_usd": "8"}, "one hour, and eight dollars"),
+    ],
+)
+def test_both_halves_of_the_automatic_condition_must_hold(
+    overrides: dict[str, object],
+    reason: str,
+) -> None:
+    """Neither bound carries the decision on its own.
+
+    Mutation: replace the ``and`` between the two comparisons with ``or``. Both rows flip to
+    automatic, and a four-hour run auto-approves because it happens to be cheap.
+    """
+    assert classify_request(
+        automatic_facts(**overrides), thresholds(), hourly_rate_usd=ROUTINE_RATE
+    ) is ApprovalClass.ROUTINE, reason
+
+
+def test_a_fanout_never_auto_approves_however_cheap_and_short_it_is() -> None:
+    """The exclusion that no threshold expresses, asserted where the thresholds are.
+
+    tests/test_fanout.py holds the shipped sixty-four cell case against the real catalog.
+    This is the same property stated against the bounds directly: both are satisfied, the
+    only difference from the automatic baseline is that there is more than one cell, and a
+    person still sees it. Sixty-four cells is sixty-four machines starting at once, which is
+    the fact the total does not carry.
+    """
+    facts = automatic_facts(fanout_size=2, fanout_parallelism=2)
+
+    assert facts.estimated_cost_usd < thresholds().automatic_below_cost_usd
+    assert facts.maximum_runtime_hours < thresholds().automatic_below_runtime_hours
+    assert classify_request(
+        facts, thresholds(), hourly_rate_usd=ROUTINE_RATE
+    ) is ApprovalClass.ROUTINE
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("repository_registered", False),
+        ("dataset_registered", False),
+        ("image_scan_reviewed", False),
+        ("maximum_attempts", 3),
+    ],
+)
+def test_a_cheap_short_run_that_trips_any_other_bound_is_still_an_exception(
+    field: str,
+    value: object,
+) -> None:
+    """Automatic is carved out of routine, never out of exception.
+
+    Mutation: evaluate the automatic branch before the exception test in
+    ``classify_request``. Every row here classifies as automatic, and an unregistered
+    repository or an unreviewed image scan reaches AWS with no person having seen it. The
+    ordering is the safety property, which is why it is asserted rather than read.
+    """
+    assert classify_request(
+        automatic_facts(**{field: value}), thresholds(), hourly_rate_usd=ROUTINE_RATE
+    ) is ApprovalClass.EXCEPTION
+
+
 def test_request_facts_describe_a_single_cell_when_no_fanout_is_declared() -> None:
     facts = routine_facts()
     assert facts.fanout_size == 1
@@ -306,11 +490,11 @@ def test_policy_yaml_validates_against_contract() -> None:
     project_root = Path(__file__).resolve().parents[1]
     config_path = project_root / "config" / "policy.yaml"
     policy = load_yaml(config_path, ApprovalPolicy)
-    # v2 since the image-scan gate landed: the image_scan block and the
-    # image_scan_findings_unreviewed denial condition. Pinned rather than merely
-    # pattern-checked so that a policy change without a version bump fails here, which is
-    # the whole reason a decision record carries the version.
-    assert policy.policy_version == "v2"
+    # v3 since the automatic class landed: the two automatic_below_ bounds and a third
+    # route no person releases. Pinned rather than merely pattern-checked so that a policy
+    # change without a version bump fails here, which is the whole reason a decision record
+    # carries the version.
+    assert policy.policy_version == "v3"
     assert policy.thresholds.routine_maximum_cost_usd == Decimal(500)
     # Twenty-four since the runtime ceiling was measured against real work rather than
     # picked. Twelve made an exception of every sweep between sixteen and twenty hours, so
@@ -320,6 +504,8 @@ def test_policy_yaml_validates_against_contract() -> None:
     assert policy.thresholds.routine_maximum_attempts == 2
     assert policy.thresholds.routine_maximum_fanout_size == 64
     assert policy.thresholds.routine_maximum_parallelism == 8
+    assert policy.thresholds.automatic_below_cost_usd == Decimal(5)
+    assert policy.thresholds.automatic_below_runtime_hours == Decimal(1)
     assert policy.routine_approver_role == "team_lead"
     assert policy.exception_approver_roles == ("platform_admin",)
     assert policy.image_scan.blocking_severities == (ImageScanSeverity.CRITICAL,)

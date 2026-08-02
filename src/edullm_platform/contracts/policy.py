@@ -25,6 +25,10 @@ DeniedOutrightCondition = Literal[
 
 
 class ApprovalClass(StrEnum):
+    #: Released by nobody. A run small enough that asking a person costs more than the run
+    #: does; see ``AUTOMATIC_BELOW`` bounds on :class:`PolicyThresholds` for what small
+    #: means and :func:`classify_request` for why a fan-out is never this class.
+    AUTOMATIC = "automatic"
     ROUTINE = "routine"
     EXCEPTION = "exception"
 
@@ -43,6 +47,22 @@ class PolicyThresholds(ContractModel):
     routine_maximum_attempts: int = Field(ge=1)
     routine_maximum_fanout_size: int = Field(ge=1)
     routine_maximum_parallelism: int = Field(ge=1)
+    #: THE TWO EXCLUSIVE BOUNDS, AND THE ONLY ONES IN THIS MODEL THAT ARE.
+    #:
+    #: Every ``routine_maximum_`` bound above is inclusive: a value equal to the bound is
+    #: still routine. These two are not, and the difference is in the name rather than only
+    #: in :func:`classify_request`, because a field called ``automatic_maximum_cost_usd``
+    #: that excluded its own value would be the undocumented strict-versus-non-strict
+    #: comparison this pair exists to avoid. A request at exactly five dollars, or at
+    #: exactly one hour, goes to a lead.
+    #:
+    #: Exclusive because the rule was specified as "under five dollars and under one hour",
+    #: and because the direction of the error matters asymmetrically. These bounds decide
+    #: when no human sees a run at all, so a boundary drawn one value too wide silently
+    #: enlarges the set of runs nobody looks at, while one drawn too narrow costs a lead a
+    #: click on a run that was nearly small enough.
+    automatic_below_cost_usd: StrictDecimal = Field(gt=0)
+    automatic_below_runtime_hours: PositiveStrictDecimal = Field(gt=0)
 
 
 class RequestFacts(ContractModel):
@@ -144,7 +164,31 @@ def classify_request(
     # reintroduce it at every call site that was not updated.
     hourly_rate_usd: Decimal,
 ) -> ApprovalClass:
-    if (
+    """Which of the three approval paths this request takes.
+
+    Ordered as a narrowing rather than as three independent tests, and that ordering is the
+    whole safety property. Everything that was an exception before ``automatic`` existed is
+    still an exception, because the exception test runs first and unchanged; ``automatic``
+    can only ever be carved out of what had already qualified as routine. So the auto-
+    approve rule cannot promote a request past a bound, and reading this function top to
+    bottom is enough to see that it cannot.
+
+    ``estimated_cost_usd`` is the figure an approver is shown, not a second one derived
+    here. Both production callers set it from
+    ``compute_manifest_cost_inputs(...).maximum_compute_cost_usd`` -- ``submission.py``
+    before rendering that same value into the approver context, and ``admission.py`` before
+    re-deriving the class inside AWS. A rule that recomputed its own estimate could route on
+    a number no human ever saw.
+
+    **A FAN-OUT IS NEVER AUTOMATIC, WHATEVER IT COSTS.** The arithmetic is not the problem:
+    a sixty-four cell sweep at both count ceilings genuinely is $4.57 over 0.05 hours,
+    because the estimate already multiplies by cells. What the total does not carry is that
+    sixty-four cells is sixty-four machines starting at once. This rule was written to take
+    a person out of a twenty-step smoke test, not out of a sweep, and a sweep is exactly the
+    shape where somebody should see the total before it starts. Dropping the ``fanout_size``
+    test would auto-approve that sweep and nothing else in this function would object.
+    """
+    if not (
         facts.repository_registered
         and facts.dataset_registered
         and facts.compute_profile_registered
@@ -158,5 +202,13 @@ def classify_request(
         and facts.fanout_parallelism <= thresholds.routine_maximum_parallelism
         and hourly_rate_usd <= EXCEPTION_RATE_CEILING_USD_PER_HOUR
     ):
-        return ApprovalClass.ROUTINE
-    return ApprovalClass.EXCEPTION
+        return ApprovalClass.EXCEPTION
+    # ``FanOut.size`` is ge=2 and the fact defaults to 1, so this reads "one cell" rather
+    # than "a small sweep". There is no fan-out size that auto-approves.
+    if (
+        facts.fanout_size == 1
+        and facts.estimated_cost_usd < thresholds.automatic_below_cost_usd
+        and facts.maximum_runtime_hours < thresholds.automatic_below_runtime_hours
+    ):
+        return ApprovalClass.AUTOMATIC
+    return ApprovalClass.ROUTINE

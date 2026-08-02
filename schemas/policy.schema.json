@@ -43,6 +43,16 @@
     "PolicyThresholds": {
       "additionalProperties": false,
       "properties": {
+        "automatic_below_cost_usd": {
+          "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]+)?$",
+          "title": "Automatic Below Cost Usd",
+          "type": "string"
+        },
+        "automatic_below_runtime_hours": {
+          "pattern": "^(?:[1-9][0-9]*(?:\\.[0-9]+)?|0\\.[0-9]*[1-9][0-9]*)$",
+          "title": "Automatic Below Runtime Hours",
+          "type": "string"
+        },
         "routine_maximum_attempts": {
           "minimum": 1,
           "title": "Routine Maximum Attempts",
@@ -74,7 +84,9 @@
         "routine_maximum_runtime_hours",
         "routine_maximum_attempts",
         "routine_maximum_fanout_size",
-        "routine_maximum_parallelism"
+        "routine_maximum_parallelism",
+        "automatic_below_cost_usd",
+        "automatic_below_runtime_hours"
       ],
       "title": "PolicyThresholds",
       "type": "object"

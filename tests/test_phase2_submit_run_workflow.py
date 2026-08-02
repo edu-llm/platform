@@ -49,6 +49,7 @@ from edullm_platform.config import load_yaml
 from edullm_platform.contracts.admission import ApprovalEnvironment
 from edullm_platform.contracts.execution import ExecutionTarget, ExecutionTargetCatalog
 from edullm_platform.contracts.image import GitHubWorkflowRunReference
+from edullm_platform.contracts.policy import ApprovalClass
 from edullm_platform.contracts.results import output_prefix
 from edullm_platform.execution import CONTAINER_SHAPES, WANDB_ENTITY, batch_submit_request
 from edullm_platform.submission import SubmissionInputs
@@ -435,6 +436,12 @@ def test_every_needs_reference_names_an_output_the_job_actually_declares() -> No
             assert rest[1] in declared[job_name], reference
 
     assert sorted(set(found)) == [
+        # Read twice in the submit job, to skip the approval read on the reviewer-less gate
+        # and to tell the assembly step whether an approver is owed. Both come from here
+        # rather than from `inputs`, because the class that picks the gate and the class the
+        # request records have to be the one a credential-free job computed from policy. A
+        # submitter who could type either would be choosing their own approval path.
+        "needs.compile.outputs.approval_class",
         "needs.compile.outputs.environment",
         "needs.compile.outputs.manifest_sha256",
         "needs.compile.outputs.run_id",
@@ -1413,8 +1420,20 @@ def test_the_cancellation_step_runs_only_on_a_cancellation_and_last() -> None:
 
     assert cancelled["if"] == "cancelled()"
     assert names[-1] == CANCELLED_STEP
+    # TWO CONDITIONAL STEPS IN THIS JOB AND NO MORE, WHICH IS WHY THE LIST IS PINNED RATHER
+    # THAN THE ONE STEP CHECKED. A skipped step in a submission job is the quiet failure
+    # mode: GitHub reports the job green and whatever the step was meant to establish is
+    # simply absent. So each `if:` here has to be one somebody argued for.
+    #
+    # The approval read is the second and it earns it. The automatic gate has no reviewers,
+    # so GitHub releases the job with no approval to read and the endpoint answers with an
+    # empty list; run unconditionally the step would refuse exactly the class that asked for
+    # no approver. It fails closed in the other direction, which is what makes it safe to
+    # skip: if the condition ever misfires on a routine or exception run, APPROVER arrives
+    # empty and the assembly step below refuses the submission by name.
     assert [candidate.get("name") for candidate in submit["steps"] if "if" in candidate] == [
-        CANCELLED_STEP
+        APPROVAL_STEP,
+        CANCELLED_STEP,
     ]
 
 
@@ -1892,6 +1911,27 @@ def _run_approval_step(
     return result, dict(line.split("=", 1) for line in lines)
 
 
+def test_the_approval_read_is_skipped_only_for_the_gate_that_has_no_reviewers() -> None:
+    """The condition, read off the workflow rather than restated.
+
+    Written against the class the compile job computed and not against
+    ``needs.compile.outputs.environment``, though either would work today, because the class
+    is what policy decides and the environment is what it picks. Written against ``inputs.``
+    it would be a submitter's claim, and a submitter who can skip the approval read can
+    reach admission naming no approver on a run that needed one.
+
+    Mutation: change ``!=`` to ``==``. Every routine and exception submission skips the read
+    and is refused at the assembly step, and the automatic ones fail on an empty approvals
+    list. The suite stays green apart from here, because both halves are the same string in
+    two files otherwise.
+    """
+    condition = step(_job("submit"), APPROVAL_STEP)["if"]
+
+    assert condition == "needs.compile.outputs.approval_class != 'automatic'"
+    assert ApprovalClass.AUTOMATIC.value in condition
+    assert "inputs." not in condition
+
+
 def test_the_approver_login_is_read_out_of_the_approvals_endpoint(tmp_path: Path) -> None:
     result, outputs = _run_approval_step(tmp_path, gh_body=f"cat <<'JSON'\n{APPROVED_BODY}\nJSON\n")
 
@@ -1961,6 +2001,11 @@ COMPILED_SUBMISSION = {
 }
 REQUEST_ENVIRONMENT = {
     "APPROVED_SHA256": APPROVED_SHA256,
+    # The routing decision the credential-free compile job made, which the assembly step
+    # reads to know whether an approver is owed. Routine here, so these tests exercise the
+    # path every submission took before the automatic class existed; the automatic path has
+    # its own tests below.
+    "APPROVAL_CLASS": "routine",
     "APPROVER": "team-lead",
     # What the registry step resolved for the repository the manifest above names. The
     # assembly step does not consult the registry -- the step before it does, and the
@@ -2053,6 +2098,10 @@ def test_the_recorded_workflow_run_is_one_the_contract_accepts(tmp_path: Path) -
         "WORKFLOW_FILE_PATH",
         "WORKFLOW_REF",
         "APPROVER",
+        # Empty only if the compile job's output were renamed or dropped, and then every
+        # submission would look automatic to this step and reach admission naming no
+        # approver. Refusing an empty one costs nothing and closes that.
+        "APPROVAL_CLASS",
         "APPROVED_SHA256",
         # Empty is the shape this one actually fails in. The others go empty on GitHub
         # Enterprise Server; this one goes empty if the registry step is ever moved back
@@ -2068,6 +2117,49 @@ def test_an_empty_job_workflow_identity_fails_closed(tmp_path: Path, variable: s
 
     assert result.returncode != 0
     assert variable in result.stderr
+    assert request == {}
+
+
+def test_an_automatic_submission_names_no_approver_in_its_request(tmp_path: Path) -> None:
+    """Null rather than the submitter, and null rather than absent.
+
+    The reviewer-less gate releases the job without an approval, so the step that reads who
+    released it is skipped and ``APPROVER`` arrives empty. Writing the submitter here would
+    manufacture a self-approval nobody performed; writing a lead would name somebody never
+    asked. The key is still present because the state machine's payload block resolves
+    ``$.approver`` by path and a missing key fails the parameter build.
+
+    Mutation: drop the ``approval_class`` branch and call ``required("APPROVER")``
+    unconditionally. Every automatic submission dies here, and the cheap runs this class
+    exists for are worse off than before it.
+    """
+    result, request = _run_request_assembly(
+        tmp_path, APPROVAL_CLASS="automatic", APPROVER=""
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "approver" in request
+    assert request["approver"] is None
+    assert request["submitter"] == "caiiris"
+
+
+def test_an_automatic_submission_that_arrives_with_an_approver_is_refused(
+    tmp_path: Path,
+) -> None:
+    """A routing fault worth stopping for rather than dropping quietly.
+
+    An approver on an automatic run means the reviewer-less gate was not the gate that
+    released it, so either the class or the environment is wrong -- and admission's own
+    check compares the environment against the class, not against this. Recording the run
+    with the approver silently dropped would leave a decision record claiming a class that
+    does not match how the run actually got here.
+    """
+    result, request = _run_request_assembly(
+        tmp_path, APPROVAL_CLASS="automatic", APPROVER="team-lead"
+    )
+
+    assert result.returncode != 0
+    assert "automatic" in result.stderr
     assert request == {}
 
 

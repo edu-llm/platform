@@ -703,7 +703,7 @@ def render_approval_gate(evidence: CommittedEvidence, checks: Sequence[Criterion
                     f"`{ENVIRONMENTS_PATH}`, `{SECRETS_PATH}` and `{LEAD_TEAM_PATH}`."
                 ),
                 "",
-                "## Both approval environments, as configured",
+                "## All three approval environments, as configured",
                 "",
                 table(
                     [
@@ -718,12 +718,24 @@ def render_approval_gate(evidence: CommittedEvidence, checks: Sequence[Criterion
                 ),
                 "",
                 (
-                    "Every environment the capture found is listed, not only the two this "
+                    "Every environment the capture found is listed, not only the three this "
                     "phase expects. An environment is auto-created, with no protection rules "
                     "at all, by anybody who can name one in a workflow file -- which is "
-                    "everybody who can submit -- so a capture reading only the two expected "
-                    "names would report a healthy gate with a third, unprotected environment "
+                    "everybody who can submit -- so a capture reading only the three expected "
+                    "names would report a healthy gate with a fourth, unprotected environment "
                     "beside it."
+                ),
+                "",
+                (
+                    "`run-approval-automatic` has no reviewers and that is what it is for: a "
+                    "run the policy priced under five dollars and under an hour is released "
+                    "by nobody. It carries every other protection the reviewed two carry -- "
+                    "pinned to `main` by name, no admin bypass, no wait timer -- so what the "
+                    "class removes is the person and not the gate. Its `prevents self-review` "
+                    "reads no for a different reason than theirs do: GitHub refuses that flag "
+                    "on an environment with no reviewers, answering 422, so the capture "
+                    "derives it from an absent rule rather than from a setting. There is "
+                    "nobody to prevent."
                 ),
                 "",
                 (

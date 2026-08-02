@@ -25,6 +25,7 @@ __all__ = [
 
 
 class AuthorizationReason(StrEnum):
+    AUTOMATIC_BELOW_APPROVAL_THRESHOLDS = "automatic_below_approval_thresholds"
     ROUTINE_SELF_AUTHORIZED = "routine_self_authorized"
     ROUTINE_APPROVED_BY_LEAD_OR_ADMIN = "routine_approved_by_lead_or_admin"
     EXCEPTION_APPROVED_BY_ADMIN = "exception_approved_by_admin"
@@ -41,6 +42,7 @@ class AuthorizationReason(StrEnum):
 
 GRANTING_REASONS: frozenset[AuthorizationReason] = frozenset(
     {
+        AuthorizationReason.AUTOMATIC_BELOW_APPROVAL_THRESHOLDS,
         AuthorizationReason.ROUTINE_SELF_AUTHORIZED,
         AuthorizationReason.ROUTINE_APPROVED_BY_LEAD_OR_ADMIN,
         AuthorizationReason.EXCEPTION_APPROVED_BY_ADMIN,
@@ -154,6 +156,26 @@ def evaluate_authorization(
         return decision(AuthorizationReason.APPROVER_NOT_IN_ROSTER)
     if membership_is_knowable and not team_verified:
         return decision(AuthorizationReason.SUBMITTER_NOT_IN_CLAIMED_TEAM)
+
+    # BELOW THE ROSTER CHECKS, AND THAT POSITION IS THE WHOLE OF WHAT AUTO-APPROVAL DOES
+    # NOT WEAKEN. The three refusals above have already run: an off-roster submitter, an
+    # off-roster approver and a submitter claiming a group they are not in are all refused
+    # before this line, for an automatic run exactly as for any other. What this returns
+    # early from is the approver question underneath -- who released it, and whether they
+    # were allowed to -- because for this class the answer is nobody, by policy.
+    #
+    # Placed here rather than above the self-approval test, which is the mistake it would be
+    # easy to make. An automatic run reaches admission with no approver, so the fall-through
+    # below would set deciding_approver to the submitter, read it as self-approval, and
+    # refuse an ordinary member with self_approval_not_permitted_for_member -- turning the
+    # cheapest runs on the platform from unattended into impossible.
+    #
+    # The approver is normally None here because the workflow asks GitHub for one only when
+    # a gate had reviewers. If a caller supplies one anyway it has already been roster-
+    # checked above and is recorded as given; it grants nothing that this class did not
+    # already grant.
+    if approval_class is ApprovalClass.AUTOMATIC:
+        return decision(AuthorizationReason.AUTOMATIC_BELOW_APPROVAL_THRESHOLDS)
 
     deciding_approver = submitter if approver is None else approver
     self_authorized = normalize_github_login(deciding_approver) == normalize_github_login(submitter)

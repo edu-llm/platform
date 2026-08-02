@@ -45,8 +45,17 @@ class ApprovalEnvironment(StrEnum):
     enumerates them exactly rather than matching a wildcard. Renaming one here without
     renaming it in the other two silently revokes the trust — and the failure surfaces as
     an ``AssumeRole`` denial that reads like a broken role ARN.
+
+    ``AUTOMATIC`` is a real environment carrying real protection, and the one thing it does
+    not carry is a reviewer. It is pinned to ``main`` by a deployment branch policy and has
+    ``can_admins_bypass`` false, exactly as the other two do, so what it removes is the
+    person and not the gate. ``prevent_self_review`` is absent on it rather than false: the
+    API refuses to set that flag on an environment with no reviewers, answering 422, so a
+    reader comparing the three captures will see the field derived as false from an absent
+    rule instead of configured off. There is nobody to prevent from reviewing.
     """
 
+    AUTOMATIC = "run-approval-automatic"
     LEAD = "run-approval-lead"
     ADMIN = "run-approval-admin"
 
@@ -58,10 +67,22 @@ class ApprovalEnvironment(StrEnum):
         job that holds no credentials, so the routing decision is made before anything can
         reach AWS, and admission re-derives it afterwards to check that the environment
         which actually approved is the one the class demanded.
+
+        Every class is named rather than falling through to a default. This used to end
+        ``return cls.LEAD``, which was correct while there were two classes and became a
+        silent lie the moment there was a third: a new class would route to the lead gate,
+        a lead would release the run, and the decision record would go on claiming the
+        class that asked for no lead. Nothing in the tree caught that, because a record
+        whose environment matches what its class demands is exactly what the accepted-
+        decision validator checks for.
         """
-        if approval_class is ApprovalClass.EXCEPTION:
-            return cls.ADMIN
-        return cls.LEAD
+        match approval_class:
+            case ApprovalClass.AUTOMATIC:
+                return cls.AUTOMATIC
+            case ApprovalClass.ROUTINE:
+                return cls.LEAD
+            case ApprovalClass.EXCEPTION:
+                return cls.ADMIN
 
 
 ApprovalEnvironmentValue = Annotated[

@@ -44,6 +44,8 @@ POLICY_THRESHOLDS_PAYLOAD: dict[str, object] = {
     "routine_maximum_attempts": 2,
     "routine_maximum_fanout_size": 64,
     "routine_maximum_parallelism": 8,
+    "automatic_below_cost_usd": "5",
+    "automatic_below_runtime_hours": "1",
 }
 
 COMPUTE_PROFILE_PAYLOAD: dict[str, object] = {

@@ -40,6 +40,7 @@ DATA_CLASSIFICATION_MEMBERS = {
 }
 
 APPROVAL_CLASS_MEMBERS = {
+    "AUTOMATIC": "automatic",
     "ROUTINE": "routine",
     "EXCEPTION": "exception",
 }

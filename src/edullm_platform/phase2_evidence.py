@@ -70,10 +70,14 @@ __all__ = [
     "SecretInventory",
 ]
 
-#: The two names the admission role's trust policy enumerates. A capture naming anything
+#: The three names the admission role's trust policy enumerates. A capture naming anything
 #: else is capturing the wrong environments, and a capture missing one of these is
 #: capturing an incomplete gate.
-APPROVAL_ENVIRONMENT_NAMES: tuple[str, ...] = ("run-approval-lead", "run-approval-admin")
+APPROVAL_ENVIRONMENT_NAMES: tuple[str, ...] = (
+    "run-approval-automatic",
+    "run-approval-lead",
+    "run-approval-admin",
+)
 
 #: The one team that reviews ``run-approval-lead``. Written down here rather than read off
 #: the environment capture, because a capture is the thing being checked: a tool that
@@ -143,11 +147,18 @@ class ProtectedEnvironment(FreshEvidenceModel):
         tuple[EnvironmentReviewer, ...], BeforeValidator(require_ordered_sequence)
     ] = Field(strict=False)
 
-    #: Deliberately false on both environments. Leads self-authorizing routine runs and
-    #: admins approving their own exceptions are intended, per the global constraints, so
-    #: turning this on would break the behaviour rather than tighten it. The prohibition
-    #: that does apply -- a member cannot approve their own submission -- is enforced by
-    #: members not being reviewers, and independently by evaluate_authorization.
+    #: Deliberately false on the two reviewed environments. Leads self-authorizing routine
+    #: runs and admins approving their own exceptions are intended, per the global
+    #: constraints, so turning this on would break the behaviour rather than tighten it. The
+    #: prohibition that does apply -- a member cannot approve their own submission -- is
+    #: enforced by members not being reviewers, and independently by evaluate_authorization.
+    #:
+    #: False on ``run-approval-automatic`` for a different reason, and a reader comparing the
+    #: three captures should know which reason they are looking at. That environment has no
+    #: reviewers, and GitHub refuses to set this flag on one that does not, answering 422. So
+    #: the capture derives false from an absent ``required_reviewers`` rule rather than
+    #: reading a configured off, and the field says there is nobody to prevent from reviewing
+    #: rather than that self-review was considered and allowed.
     prevent_self_review: bool
 
     #: Whether a repository admin may release a deployment without a reviewer, through
