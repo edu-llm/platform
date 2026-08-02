@@ -679,7 +679,19 @@ def test_the_enumeration_step_lists_every_configured_queue_and_nothing_else(
     first would produce nothing and this workflow would search nowhere.
 
     Running the body is what makes that visible. Reading it for the file name proves the
-    string is present; running it proves the answer is the eleven queues that exist.
+    string is present; running it proves the answer is every queue the configuration names.
+
+    CONFIGURED RATHER THAN DEPLOYED, WHICH IS THE COMPARISON AND NOT A CONVENIENCE. The two
+    sets differ today: the file names sixteen queues and the account holds eleven, because
+    five shapes were merged before their stack was applied. Comparing against the account
+    would make this test go red on a working tree whose infrastructure has not landed yet,
+    and it would be measuring the wrong thing anyway. The two errors are not the same size.
+    A queue this file names and the account lacks answers ``list-jobs`` with an empty list
+    and exits zero -- verified against all five undeployed shapes and against a name that is
+    not a queue at all -- so it costs one call and finds nothing. A queue the account holds
+    and this file has not heard of is a run reported to its owner as one that does not
+    exist. Searching the superset is how the second is made impossible, and the first is the
+    price.
     """
     checkout(tmp_path)
     stub_bin = tmp_path / "bin"
@@ -779,6 +791,224 @@ def test_the_search_for_a_named_run_covers_every_queue_the_enumeration_listed(
         "queue-three",
     }
     assert "not_running=true" in (tmp_path / "step-output.txt").read_text(encoding="utf-8")
+
+
+# --------------------------------------------------------------------------------------
+# What one refused call does to a search of sixteen queues
+# --------------------------------------------------------------------------------------
+
+#: A ``list-jobs`` that can be told to behave like each of the three things the real one
+#: does. Silence with exit zero is a queue that holds no matching job, which is also exactly
+#: what a queue named in configuration and absent from the account answers -- measured. A
+#: non-zero exit is a refusal, which is what throttling looks like from the caller. And a
+#: job id on stdout is a hit. Every call records the queue it was asked about, because the
+#: property under test is which queues were reached and not what came back from them.
+LIST_JOBS_STUB = """
+queue=""
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == "--job-queue" ]]; then
+    shift
+    queue="$1"
+    echo "${queue}" >> "${ASKED_QUEUES}"
+  fi
+  shift
+done
+if [[ -n "${REFUSED_QUEUE:-}" && "${queue}" == "${REFUSED_QUEUE}" ]]; then
+  echo "An error occurred (TooManyRequestsException) when calling the ListJobs operation" >&2
+  exit 254
+fi
+if [[ -n "${queue}" && "${queue}" == "${HOLDING_QUEUE:-}" ]]; then
+  echo "${HELD_JOB:-}"
+fi
+"""
+
+THREE_QUEUES = ("queue-one", "queue-two", "queue-three")
+
+
+def search_for_the_named_run(
+    workflow: dict[str, Any],
+    tmp_path: Path,
+    *,
+    queues: tuple[str, ...] = THREE_QUEUES,
+    refused_queue: str = "",
+    holding_queue: str = "",
+    held_job: str = "",
+) -> tuple[Any, list[str], str, dict[str, str]]:
+    """Run the named-run search, and report which queues it reached and what it said."""
+    stub_bin = tmp_path / "bin"
+    write_stub(stub_bin, "aws", LIST_JOBS_STUB)
+    (tmp_path / "queues.txt").write_text(
+        "".join(f"{queue}\n" for queue in queues), encoding="utf-8"
+    )
+    asked = tmp_path / "asked.txt"
+    asked.touch()
+    summary = tmp_path / "summary.md"
+    summary.touch()
+    outputs = tmp_path / "step-output.txt"
+    outputs.touch()
+
+    result = run_step_script(
+        workflow_step(workflow, "Find the job")["run"],
+        cwd=tmp_path,
+        env={
+            "RUNNER_TEMP": str(tmp_path),
+            "GITHUB_OUTPUT": str(outputs),
+            "GITHUB_STEP_SUMMARY": str(summary),
+            "RUN_ID": RUN_ID,
+            "ASKED_QUEUES": str(asked),
+            "REFUSED_QUEUE": refused_queue,
+            "HOLDING_QUEUE": holding_queue,
+            "HELD_JOB": held_job,
+        },
+        stub_bin=stub_bin,
+    )
+    written = dict(
+        line.split("=", 1)
+        for line in outputs.read_text(encoding="utf-8").splitlines()
+        if "=" in line
+    )
+    return result, asked.read_text(encoding="utf-8").split(), summary.read_text(
+        encoding="utf-8"
+    ), written
+
+
+def test_a_queue_the_account_does_not_have_costs_one_call_and_ends_nothing(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """Executed. The case that made this enumeration look dangerous, and is not.
+
+    ``config/execution-targets.yaml`` names sixteen queues and the account holds eleven,
+    because five GPU shapes were merged before their stack was applied. The worry is that
+    searching a queue Batch has never heard of would fail the step and take the other
+    fifteen down with it. It does not: ``list-jobs`` against a nonexistent queue answers an
+    empty list and exits zero, measured against all five and against a name that is not a
+    queue at all. So the absent queue is stubbed as silence-and-zero, which is the real
+    behaviour rather than a convenient one.
+
+    Mutation: make the enumeration read the account instead of the configuration, to "fix"
+    this. It would be a fix for nothing, and it would put the roster back under whatever the
+    account happens to hold at dispatch time rather than under a reviewed file.
+    """
+    result, asked, summary, outputs = search_for_the_named_run(
+        workflow,
+        tmp_path,
+        queues=("queue-absent", "queue-present"),
+        holding_queue="queue-present",
+        held_job="8ab30ff1",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "queue-absent" in asked, "the absent queue was not even asked about"
+    assert outputs["job_id"] == "8ab30ff1", "the search stopped at the queue that answered nothing"
+    assert "queue_search_incomplete" not in result.stderr + summary, (
+        "an empty answer is not a refusal and must not be reported as one"
+    )
+
+
+def test_a_refused_call_does_not_end_the_search_across_the_remaining_queues(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """THE REGRESSION GUARD. Executed. Mutation: drop the guard on either list-jobs call.
+
+    Neither loop caught a failure. Under ``set -euo pipefail`` one refused call ended the
+    step, and sixteen queues by seven states is a hundred and twelve sequential calls -- long
+    enough that ListJobs throttling is ordinary rather than exceptional. Because the
+    enumeration is sorted, ``gpu-1xh100`` is third of sixteen, so a refusal there would have
+    skipped nine of the eleven queues that exist and answered "no job" about all of them.
+    That is the two-queue defect this file was fixed for, arriving by a different route.
+
+    So the first queue is refused and the job is on the last one. Unguarded, the step exits
+    254 at the first call and finds nothing.
+    """
+    result, asked, _summary, outputs = search_for_the_named_run(
+        workflow,
+        tmp_path,
+        refused_queue="queue-one",
+        holding_queue="queue-three",
+        held_job="8ab30ff1",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert {"queue-two", "queue-three"} <= set(asked), (
+        "a refusal on the first queue ended the search over the rest"
+    )
+    assert outputs["job_id"] == "8ab30ff1"
+
+
+def test_a_search_that_was_refused_somewhere_is_not_reported_as_a_run_that_does_not_exist(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """Executed. Mutation: swallow the refusal with a bare ``|| true``.
+
+    That keeps the search alive, which is the important half, and then hands the reader the
+    ordinary sentence -- no job under this run id, Batch stops listing after some days. A
+    person who reads that stops looking. It is the same confident wrong answer the two-queue
+    bug produced, and it would be reintroduced by the very guard that fixes the abort.
+
+    So a refusal is counted, and a search that could not finish says so instead of
+    pronouncing on a run it never reached.
+    """
+    result, asked, summary, outputs = search_for_the_named_run(
+        workflow, tmp_path, refused_queue="queue-one"
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert set(asked) == set(THREE_QUEUES)
+    assert outputs["not_running"] == "true"
+    assert "queue_search_incomplete" in result.stderr
+    # Seven states on the one refused queue.
+    assert "7 of the queue searches were refused" in summary
+    assert "out of the window" not in summary, (
+        "an incomplete search must not borrow the sentence a complete one uses"
+    )
+
+
+def test_the_list_of_your_own_runs_says_when_it_could_not_be_completed(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """Executed, over the other loop. Mutation: guard the search and print nothing.
+
+    A blank dispatch runs this enumeration and then the named search, so it makes twice the
+    calls and is twice as likely to be throttled. What it produces is a table offered as
+    "your runs", and one silently missing the queues nobody reached is worse than the
+    refusal it hides: the reader concludes they have no run rather than that nobody looked.
+    """
+    checkout(tmp_path)
+    stub_bin = tmp_path / "bin"
+    write_stub(stub_bin, "uv", UV_PASSTHROUGH)
+    write_stub(stub_bin, "aws", LIST_JOBS_STUB)
+    (tmp_path / "queues.txt").write_text(
+        "".join(f"{queue}\n" for queue in THREE_QUEUES), encoding="utf-8"
+    )
+    asked = tmp_path / "asked.txt"
+    asked.touch()
+    summary = tmp_path / "summary.md"
+    summary.touch()
+
+    result = run_step_script(
+        workflow_step(workflow, "Work out which run")["run"],
+        cwd=tmp_path,
+        env={
+            "RUNNER_TEMP": str(tmp_path),
+            "PYTHON_EXECUTABLE": sys.executable,
+            "PYTHONPATH": str(PROJECT_ROOT / "src"),
+            "GITHUB_OUTPUT": str(tmp_path / "step-output.txt"),
+            "GITHUB_STEP_SUMMARY": str(summary),
+            "RUN_ID": "",
+            "ACTOR": "philote-dev",
+            "ASKED_QUEUES": str(asked),
+            "REFUSED_QUEUE": "queue-two",
+        },
+        stub_bin=stub_bin,
+    )
+    written = summary.read_text(encoding="utf-8")
+
+    assert result.returncode == 0, result.stderr
+    assert set(asked.read_text(encoding="utf-8").split()) == set(THREE_QUEUES), (
+        "a refusal on the second queue ended the enumeration over the third"
+    )
+    assert "The search was incomplete." in written
+    assert "7 of the queue searches were refused" in written
 
 
 # --------------------------------------------------------------------------------------

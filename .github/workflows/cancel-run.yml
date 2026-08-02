@@ -246,15 +246,37 @@ jobs:
 
           listed="${RUNNER_TEMP}/mine.txt"
           : > "${listed}"
+          unsearched="${RUNNER_TEMP}/unsearched-listing.txt"
+          : > "${unsearched}"
           # Word splitting on the enumeration rather than mapfile, which needs bash 4.2 and
           # is absent from the bash macOS ships -- a workflow body is executed by the test
           # suite as well as by the runner, and one that only works on the runner is one the
           # suite cannot hold to anything. A queue name carries no whitespace, so splitting
           # on it is exact rather than merely convenient.
+          #
+          # A REFUSED CALL IS RECORDED AND DOES NOT END THE SEARCH, AND THIS IS NOT ABOUT A
+          # QUEUE THAT DOES NOT EXIST. A queue this configuration names and the account has
+          # not been given yet answers with an empty list and exits zero -- measured against
+          # all five undeployed shapes and against a name that is not a queue at all -- so
+          # there is nothing to guard on that side and nothing here pretends otherwise.
+          #
+          # What has to be guarded is a call Batch refuses. Sixteen queues by seven states is
+          # a hundred and twelve sequential calls, six and a half minutes of them, and a blank
+          # dispatch runs that search twice; ListJobs is throttled per account, so a refusal
+          # is an ordinary Tuesday rather than a fault. Under set -e one refusal ends the loop
+          # over every queue left, and the enumeration is sorted, so a throttle on gpu-1xh100
+          # -- third of sixteen -- would skip nine of the eleven queues that exist. That is
+          # the two-queue bug again by a different route.
+          #
+          # Recorded rather than swallowed. A bare `|| true` would keep the search alive and
+          # then answer "no runs" to somebody whose run was on a queue nobody looked at, which
+          # is the confident wrong answer this enumeration exists to stop producing. The count
+          # is carried into the report below so an incomplete search reads as incomplete.
           for queue in $(cat "${RUNNER_TEMP}/queues.txt"); do
             for state in RUNNING STARTING RUNNABLE SUBMITTED PENDING SUCCEEDED FAILED; do
               aws batch list-jobs --job-queue "${queue}" --job-status "${state}" \
-                --query 'jobSummaryList[].jobId' --output text >> "${listed}"
+                --query 'jobSummaryList[].jobId' --output text >> "${listed}" \
+                || echo "${queue} ${state}" >> "${unsearched}"
             done
           done
 
@@ -266,6 +288,13 @@ jobs:
           actor = os.environ["ACTOR"]
           raw = open(os.environ["RUNNER_TEMP"] + "/mine.txt").read().split()
           ids = list(dict.fromkeys(job for job in raw if job and job != "None"))
+          unsearched = [
+              line
+              for line in open(
+                  os.environ["RUNNER_TEMP"] + "/unsearched-listing.txt"
+              ).read().splitlines()
+              if line
+          ]
 
           mine = []
           for start in range(0, len(ids), 100):
@@ -281,6 +310,17 @@ jobs:
                       mine.append(job)
 
           mine.sort(key=lambda job: job.get("createdAt", 0), reverse=True)
+
+          # BEFORE THE ANSWER, BECAUSE IT CHANGES WHAT THE ANSWER MEANS. A list of runs that
+          # is missing the queues Batch refused to search is not a list of your runs, and the
+          # sentence below it would otherwise read as a complete one.
+          if unsearched:
+              print(
+                  f"> **The search was incomplete.** {len(unsearched)} of the queue searches "
+                  "were refused, most likely throttled, so any run of yours on those queues "
+                  "is missing from what follows. Dispatching again re-runs the search."
+              )
+              print()
 
           if not mine:
               print(f"## No runs found for `{actor}`")
@@ -317,19 +357,30 @@ jobs:
             exit 0
           fi
           found=""
+          unsearched="${RUNNER_TEMP}/unsearched-search.txt"
+          : > "${unsearched}"
           # SUCCEEDED and FAILED are searched too, and they were not before. A job that has
           # ended cannot be stopped, so for the cancel path they are the same as not finding
           # it -- but they are most of what somebody looking at a run wants to see, and a
           # workflow that answers "nothing to report" about a run that failed an hour ago is
           # worse than no answer at all. The live states stay first so that a run id reused
           # across a retry finds the attempt that is still going.
+          #
+          # The guard is the one the loop above carries and it is here for the same reason: a
+          # queue the account does not have answers empty and exits zero, while a throttled
+          # call exits non-zero and, unguarded, ends the search over every queue after it.
+          # Which of the two happened decides whether the sentence below is true, so the
+          # refusals are counted rather than dropped.
           for queue in $(cat "${RUNNER_TEMP}/queues.txt"); do
             for state in SUBMITTED PENDING RUNNABLE STARTING RUNNING SUCCEEDED FAILED; do
               candidate="$(aws batch list-jobs \
                 --job-queue "${queue}" \
                 --job-status "${state}" \
                 --query "jobSummaryList[?jobName=='${RUN_ID}'].jobId" \
-                --output text)"
+                --output text)" || {
+                echo "${queue} ${state}" >> "${unsearched}"
+                candidate=""
+              }
               if [[ -n "${candidate}" && "${candidate}" != "None" ]]; then
                 found="${candidate}"
                 break 2
@@ -342,6 +393,16 @@ jobs:
             # and telling somebody their cancellation failed when what happened is that
             # their job ended is the kind of message that sends people looking for a fault.
             echo "not_running=true" >> "${GITHUB_OUTPUT}"
+            refused="$(wc -l < "${unsearched}" | tr -d ' ')"
+            if [[ "${refused}" != "0" ]]; then
+              # NOT THE SAME ANSWER, AND SAYING SO IS THE WHOLE POINT OF COUNTING. "No job
+              # exists" and "part of the search was refused" are different facts, and the
+              # first spoken in place of the second is the defect this enumeration was built
+              # to fix, reappearing as a throttle rather than as a missing queue.
+              echo "queue_search_incomplete" >&2
+              echo "No job was found under this run id, and ${refused} of the queue searches were refused -- so this does not say the run does not exist, it says nobody managed to look everywhere. Batch throttles a long enumeration, and a refused call is a queue that went unread. Dispatch again before concluding the run is gone." | tee -a "${GITHUB_STEP_SUMMARY}"
+              exit 0
+            fi
             echo "No job is queued, running or recently finished under this run id. Batch stops listing a job some days after it ends, so an older run is not missing -- it is out of the window this can search." | tee -a "${GITHUB_STEP_SUMMARY}"
             exit 0
           fi

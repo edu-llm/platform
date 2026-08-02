@@ -38,6 +38,14 @@ WORKFLOW_FILE = ".github/workflows/deploy-phase3-batch.yml"
 WORKFLOW_PATH = WORKFLOWS_ROOT / "deploy-phase3-batch.yml"
 PHASE1_WORKFLOW_PATH = WORKFLOWS_ROOT / "deploy-phase1-ecr.yml"
 PHASE2_WORKFLOW_PATH = WORKFLOWS_ROOT / "deploy-phase2-admission.yml"
+#: The workflow this one is the fallback for. Both search the Batch queues for a run, so
+#: both read the same file to find out which queues those are.
+CANCEL_WORKFLOW_PATH = WORKFLOWS_ROOT / "cancel-run.yml"
+
+ENUMERATION_STEP = "List every queue a run could be on"
+QUEUE_VIEW_STEP = "Say what is on the queues"
+RUN_REPORT_STEP = "Say what one run is doing"
+QUEUE_LIST_FILE = "${RUNNER_TEMP}/queues.txt"
 
 OUTPUTS_TEMPLATE = "infra/outputs-bucket.yaml"
 NETWORK_TEMPLATE = "infra/batch-network.yaml"
@@ -535,41 +543,67 @@ def test_every_run_body_is_strict_about_failures_and_unset_variables() -> None:
     # counted in deliberately.
     scripts = run_scripts()
 
-    # Five since the run report joined the failure diagnostic, both added 2026-08-01. It is
-    # the one run body here that executes only when something has already gone wrong, which
-    # makes strictness matter more rather than less -- a diagnostic that swallowed its own
-    # error would report nothing and still let the job finish reporting the deploy failure,
-    # which is indistinguishable from the diagnostic having found nothing to say.
-        # Seven deploys, plus: the dispatch gate, validate, the failure diagnostic, the two
-        # verifications, the queue view, and the per-run report. The second verification
-        # arrived with the GPU shapes stack and is its own step rather than thirteen more
-        # expectations bolted onto the first.
-    assert len(scripts) == len(DEPLOYMENT_ORDER) + 7
+    # The failure diagnostic is the one run body here that executes only when something has
+    # already gone wrong, which makes strictness matter more rather than less -- a diagnostic
+    # that swallowed its own error would report nothing and still let the job finish
+    # reporting the deploy failure, which is indistinguishable from the diagnostic having
+    # found nothing to say.
+    #
+    # Seven deploys, plus: the dispatch gate, validate, the failure diagnostic, the two
+    # verifications, the tooling install, the queue enumeration, the queue view, and the
+    # per-run report. The second verification arrived with the GPU shapes stack and is its
+    # own step rather than thirteen more expectations bolted onto the first. The install and
+    # the enumeration arrived together, because the two reports stopped looping over a pair
+    # of queue names typed into this file.
+    assert len(scripts) == len(DEPLOYMENT_ORDER) + 9
     assert all(script.startswith("set -euo pipefail\n") for script in scripts)
 
 
 def test_no_step_here_reaches_for_an_interpreter_the_workflow_never_installs() -> None:
-    """Mutation: write the run report in ``uv run python``.
+    """Mutation: read the queue list with ``uv run`` in a step the install does not cover.
 
-    That is how the rest of this repository runs Python, and it is wrong here: this workflow
-    installs nothing but the checkout and the credential, so ``uv`` is not on the runner.
-    The report is ``continue-on-error`` -- a report that cannot be produced must not turn a
-    successful deploy red -- so the failure is a step that exits 127, a job that stays green,
-    and an operator who learns nothing about the run they asked about. It cost a dispatch to
-    find. This makes the next one cost a test run instead.
+    This workflow installed nothing but the checkout and the credential, and the two reports
+    were written in ``python3`` for exactly that reason -- ``uv`` is how the rest of the
+    repository runs Python and it was simply not on this runner. A step reaching for it
+    exits 127, and because the reports are ``continue-on-error`` the job stays green and the
+    operator learns nothing about the run they asked about. That cost a dispatch to find.
+
+    The queue enumeration changed the premise rather than the risk: reading
+    ``config/execution-targets.yaml`` means reading a pydantic contract, so ``uv`` is now
+    installed here. So the invariant becomes the pairing rather than the absence. Every step
+    that reaches for ``uv`` must come after the step that installs it *and* carry the same
+    condition, because an install skipped by its own gate provides nothing to a step whose
+    gate is wider -- which is the 127 back again, on the dispatch shape nobody tested.
     """
-    installed = {
-        candidate.get("uses", "").split("@")[0] for candidate in only_job(workflow())["steps"]
-    }
+    steps = only_job(workflow())["steps"]
+    installed = {candidate.get("uses", "").split("@")[0] for candidate in steps}
     assert not [action for action in installed if "setup-uv" in action or "setup-python" in action]
 
-    for script in run_scripts():
-        # Comments are stripped first, because the note explaining why this workflow uses
-        # python3 has to be free to name the thing it is warning about.
-        executable = "\n".join(
-            line for line in script.splitlines() if not line.lstrip().startswith("#")
+    def executable(entry: dict[str, Any]) -> str:
+        # Comments are stripped first, because the note explaining why the reports still use
+        # python3 has to be free to name the thing it is contrasting with.
+        return "\n".join(
+            line
+            for line in str(entry.get("run", "")).splitlines()
+            if not line.lstrip().startswith("#")
         )
-        assert not re.search(r"(?<![\w-])uv(?![\w-])", executable)
+
+    provides = [index for index, entry in enumerate(steps) if "pipx install" in executable(entry)]
+    assert len(provides) == 1, "one step installs the tooling, and it is the one gated below"
+    install = provides[0]
+    gate = steps[install].get("if", "")
+    assert gate == "inputs.describe_run != ''", (
+        "the install is for the report path only, so an ordinary deploy pays nothing for it"
+    )
+
+    for index, entry in enumerate(steps):
+        if not re.search(r"(?<![\w-])uv(?![\w-])", executable(entry)):
+            continue
+        assert index >= install, f"{entry.get('name')!r} reaches for uv before it is installed"
+        assert entry.get("if", "") == gate, (
+            f"{entry.get('name')!r} reaches for uv under a condition the install does not "
+            "share, so there is a dispatch that skips the install and runs this"
+        )
 
 
 def test_the_workflow_does_not_reach_for_the_retired_shared_deploy_role() -> None:
@@ -1000,11 +1034,11 @@ def test_the_queue_view_answers_the_question_a_single_run_report_cannot() -> Non
     queues = next(entry for entry in steps if "what is on the queues" in entry.get("name", ""))
 
     assert queues["if"] == "inputs.describe_run == 'queues'"
-    # Both queues, and the states a job passes through before it is anybody's answer.
+    # The states a job passes through before it is anybody's answer. Which queues it asks
+    # about is no longer written here at all; that seam is held below.
     for state in ("RUNNING", "STARTING", "RUNNABLE"):
         assert state in queues["run"]
-    assert "sbsandbox-intern-edullm-gpu" in queues["run"]
-    assert "sbsandbox-intern-edullm-cpu" in queues["run"]
+    assert QUEUE_LIST_FILE in queues["run"]
 
     # And it reaches the log, not only the step summary. The summary renders in the web UI
     # and there is no API for it, so a bare redirect makes this step read as empty to anybody
@@ -1018,3 +1052,269 @@ def test_the_queue_view_answers_the_question_a_single_run_report_cannot() -> Non
     # would fail its own format check.
     reporting = next(entry for entry in steps if "Say what one run is doing" in entry.get("name", ""))
     assert "inputs.describe_run != 'queues'" in reporting["if"]
+
+
+# --------------------------------------------------------------------------------------
+# The admin fallback, and the queues it searches
+# --------------------------------------------------------------------------------------
+#
+# cancel-run.yml is what researchers use to look at a run, and when the run-canceller role
+# is missing it sends people here instead. So this workflow is the fallback for the one that
+# was fixed, and until now it carried the defect that fix was for: two queue names typed
+# into the file, against an account holding eleven and a configuration naming sixteen. An
+# admin sent here about a run on a GPU shape queue was told no such job existed.
+
+
+def configured_queues() -> set[str]:
+    from edullm_platform.config import load_yaml
+    from edullm_platform.contracts.execution import ExecutionTargetCatalog
+
+    catalog = load_yaml(
+        WORKFLOWS_ROOT.parent.parent / "config" / "execution-targets.yaml",
+        ExecutionTargetCatalog,
+    )
+    return {target.job_queue for target in catalog.targets}
+
+
+def python_body(script: str) -> str:
+    return script.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+
+
+def test_the_fallback_reads_the_queue_list_the_workflow_it_backs_up_reads() -> None:
+    """Reads BOTH workflow files. Mutation: write a second reader here.
+
+    Two readers of one configuration file are two answers to where a run can be, and the
+    second one stops agreeing at the next promotion -- which is the failure mode that put
+    two queue names in this file in the first place. cancel-run.yml already had a step that
+    reads ``config/execution-targets.yaml`` through the contract that owns it, so this is
+    that step rather than something equivalent to it, and the comparison is byte-for-byte on
+    the part that does the reading.
+    """
+    here = step(only_job(workflow()), ENUMERATION_STEP)["run"]
+    there = next(
+        candidate
+        for candidate in load_workflow(CANCEL_WORKFLOW_PATH)["jobs"]["cancel"]["steps"]
+        if candidate.get("name") == ENUMERATION_STEP
+    )["run"]
+
+    assert python_body(here) == python_body(there), (
+        "the two workflows read the same file, so they must read it with the same code"
+    )
+    assert "ExecutionTargetCatalog" in python_body(here)
+    assert "no_execution_targets_configured" in here, (
+        "a checkout naming no queue must refuse rather than search nowhere, which is the "
+        "same wrong answer a genuine absence produces"
+    )
+
+
+def test_no_queue_name_is_written_into_either_report_step() -> None:
+    """Mutation: leave one of the two loops on the pair it used to name.
+
+    The two report steps answer different questions -- what is on the queues, and what one
+    run is doing -- and either one left behind reproduces the defect for half the dispatches.
+    Asserted as the absence of every configured name so the mutation cannot be half done.
+
+    The rest of the file is deliberately not covered by this. The verification steps name
+    ``sbsandbox-intern-edullm-cpu`` and ``sbsandbox-intern-edullm-gpu`` on purpose: they
+    assert the shape of two specific stacks against written-out expectations, which is a
+    different job from searching for a run and one where naming the resource is the point.
+    """
+    job = only_job(workflow())
+    queues = configured_queues()
+
+    assert queues, "the configuration names no queue, so this test is measuring nothing"
+    for name in (QUEUE_VIEW_STEP, RUN_REPORT_STEP):
+        body = step(job, name)["run"]
+        assert QUEUE_LIST_FILE in body, f"{name} does not read the enumeration"
+        for queue in sorted(queues):
+            assert queue not in body, (
+                f"{queue} is written into the {name!r} step, so the search is a second "
+                "roster that will disagree with config/execution-targets.yaml"
+            )
+
+
+#: The same three behaviours the cancel-run stub models: silence with exit zero for a queue
+#: holding nothing -- which is also what a queue absent from the account answers -- a
+#: non-zero exit for a refusal, and a row for a hit.
+REPORT_STUB = """
+queue=""
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == "--job-queue" ]]; then
+    shift
+    queue="$1"
+    echo "${queue}" >> "${ASKED_QUEUES}"
+  fi
+  shift
+done
+if [[ -n "${REFUSED_QUEUE:-}" && "${queue}" == "${REFUSED_QUEUE}" ]]; then
+  echo "An error occurred (TooManyRequestsException) when calling the ListJobs operation" >&2
+  exit 254
+fi
+if [[ -n "${queue}" && "${queue}" == "${HOLDING_QUEUE:-}" ]]; then
+  printf '%s\\n' "${HELD_ROW:-}"
+fi
+"""
+
+THREE_QUEUES = ("queue-one", "queue-two", "queue-three")
+REPORTED_RUN = "run_0198f0a1-2b3c-7d4e-8f01-23456789abcd"
+
+
+def run_report_step(
+    tmp_path: Path,
+    name: str,
+    *,
+    queues: tuple[str, ...] = THREE_QUEUES,
+    refused_queue: str = "",
+    holding_queue: str = "",
+    held_row: str = "",
+    extra_env: dict[str, str] | None = None,
+) -> tuple[subprocess.CompletedProcess[str], list[str], str]:
+    stub_bin = tmp_path / "bin"
+    write_stub(stub_bin, "aws", REPORT_STUB)
+    (tmp_path / "queues.txt").write_text(
+        "".join(f"{queue}\n" for queue in queues), encoding="utf-8"
+    )
+    asked = tmp_path / "asked.txt"
+    asked.touch()
+    summary = tmp_path / "summary.md"
+    summary.touch()
+
+    result = run_step_script(
+        step(only_job(workflow()), name)["run"],
+        cwd=tmp_path,
+        env={
+            "RUNNER_TEMP": str(tmp_path),
+            "GITHUB_STEP_SUMMARY": str(summary),
+            "ASKED_QUEUES": str(asked),
+            "REFUSED_QUEUE": refused_queue,
+            "HOLDING_QUEUE": holding_queue,
+            "HELD_ROW": held_row,
+            **(extra_env or {}),
+        },
+        stub_bin=stub_bin,
+    )
+    return result, asked.read_text(encoding="utf-8").split(), summary.read_text(encoding="utf-8")
+
+
+def test_the_queue_view_asks_about_every_queue_the_enumeration_listed(tmp_path: Path) -> None:
+    """Executed. Mutation: iterate a pair again, which is what this step did.
+
+    Reading the step for the absence of queue names proves nothing was typed in. Running it
+    proves the loop reaches the queues the enumeration produced -- and a job on a queue this
+    step does not ask about is a job nobody polling the estate can see, which is the whole
+    reason the view exists.
+    """
+    result, asked, summary = run_report_step(
+        tmp_path, QUEUE_VIEW_STEP, holding_queue="queue-two", held_row="run_abc\t1754000000000"
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert set(asked) == set(THREE_QUEUES)
+    assert "`run_abc`" in summary
+
+
+def test_a_queue_the_account_does_not_have_contributes_nothing_to_the_queue_view(
+    tmp_path: Path,
+) -> None:
+    """Executed. The case that looks dangerous and is not, held so nobody "fixes" it.
+
+    The configuration names sixteen queues and the account holds eleven, five shapes having
+    been merged ahead of their stack. ``list-jobs`` against a queue Batch has never heard of
+    answers an empty list and exits zero -- measured against all five and against a name
+    that is not a queue at all -- so the absent queue costs one call and contributes no rows.
+
+    Mutation: enumerate the account instead of the configuration. That trades a queue this
+    workflow searches for nothing against a queue this workflow cannot see, which is the
+    error that costs.
+    """
+    result, asked, summary = run_report_step(
+        tmp_path,
+        QUEUE_VIEW_STEP,
+        queues=("queue-absent", "queue-present"),
+        holding_queue="queue-present",
+        held_row="run_abc\t1754000000000",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "queue-absent" in asked
+    assert "`run_abc`" in summary
+    assert "were refused" not in summary, "an empty answer is not a refusal"
+
+
+def test_a_refused_call_does_not_end_the_queue_view_and_is_counted_in_it(
+    tmp_path: Path,
+) -> None:
+    """THE REGRESSION GUARD, for this workflow. Executed. Mutation: drop the guard.
+
+    Sixteen queues by five states is eighty sequential calls under ``set -euo pipefail``, and
+    ListJobs is throttled per account. One refusal ended the loop over every queue after it,
+    and the queues are sorted, so an early refusal hid most of the estate behind a table that
+    looked complete.
+
+    Counted rather than swallowed for the same reason it is counted in cancel-run.yml: an
+    empty table and a table missing the rows nobody read are indistinguishable, and the
+    closing line would otherwise claim the estate is idle on the strength of a search that
+    did not happen.
+    """
+    result, asked, summary = run_report_step(
+        tmp_path,
+        QUEUE_VIEW_STEP,
+        refused_queue="queue-one",
+        holding_queue="queue-three",
+        held_row="run_abc\t1754000000000",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert {"queue-two", "queue-three"} <= set(asked), (
+        "a refusal on the first queue ended the search over the rest"
+    )
+    assert "`run_abc`" in summary
+    # Five states on the one refused queue.
+    assert "**5 of the queue searches were refused**" in summary
+    assert "every queue this platform configures is empty" not in summary
+
+
+def test_the_per_run_report_searches_every_queue_rather_than_two_of_them(
+    tmp_path: Path,
+) -> None:
+    """Executed. Mutation: leave this loop on the pair while fixing the other.
+
+    This is the step ``cancel-run.yml`` sends an admin to when the run-canceller role is not
+    deployed, and the question it answers is the one the researcher could not get an answer
+    to. Answering it about two queues out of sixteen is the original defect, one workflow
+    over.
+    """
+    result, asked, summary = run_report_step(
+        tmp_path, RUN_REPORT_STEP, extra_env={"RUN_ID": REPORTED_RUN}
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert set(asked) == set(THREE_QUEUES)
+    assert "on any configured queue" in summary
+
+
+def test_a_refused_call_does_not_end_the_per_run_search_or_pass_for_an_absent_run(
+    tmp_path: Path,
+) -> None:
+    """Executed. Mutation: guard the call with a bare ``|| true``.
+
+    The guard alone keeps the search alive, which is the important half, and then hands the
+    reader the ordinary sentence: no job under this run id. That is the confident wrong
+    answer the two-queue bug produced, reintroduced by the fix for the abort. So a refusal
+    is counted and the step says the search was incomplete instead of pronouncing on a run
+    it never reached.
+    """
+    result, asked, summary = run_report_step(
+        tmp_path,
+        RUN_REPORT_STEP,
+        refused_queue="queue-one",
+        extra_env={"RUN_ID": REPORTED_RUN},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert {"queue-two", "queue-three"} <= set(asked)
+    assert "queue_search_incomplete" in result.stderr
+    assert "7 of the queue searches were refused" in summary
+    assert "on any configured queue" not in summary, (
+        "an incomplete search must not borrow the sentence a complete one uses"
+    )

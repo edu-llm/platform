@@ -772,6 +772,74 @@ jobs:
           print("PHASE4_GPU_SHAPE_VERIFICATION_PASSED")
           PY
 
+      # THE TOOLING THE ENUMERATION BELOW NEEDS, INSTALLED ONLY WHEN A REPORT WAS ASKED FOR.
+      #
+      # This workflow installed no interpreter at all until now, and the two report steps
+      # below were written in python3 for exactly that reason. What changed is that they must
+      # read config/execution-targets.yaml, which is a pydantic contract behind a YAML file
+      # rather than a list of strings -- and reading it any other way would be a second
+      # mechanism for a question cancel-run.yml already answers one way.
+      #
+      # Gated on the dispatch carrying a run id, so a deploy pays nothing for it. A report
+      # pays about twenty seconds, against a search of sixteen queues that takes minutes.
+      #
+      # Pinned to the version cancel-run.yml pins, because these two now run the same reader
+      # over the same file and a version skew between them is a difference nobody would look
+      # for.
+      - name: Install the platform tooling
+        if: inputs.describe_run != ''
+        env:
+          UV_VERSION: "0.11.32"
+        run: |
+          set -euo pipefail
+          pipx install "uv==${UV_VERSION}"
+          installed="$(uv --version)"
+          if [[ "${installed}" != "uv ${UV_VERSION}" && "${installed}" != "uv ${UV_VERSION} "* ]]; then
+            echo "unexpected_uv_version" >&2
+            echo "Expected uv ${UV_VERSION} but PATH answers with: ${installed}" >&2
+            exit 1
+          fi
+          uv sync --locked
+
+      # EVERY QUEUE A RUN COULD BE ON, READ OUT OF THE FILE THAT DECIDES WHERE RUNS GO.
+      #
+      # The two report steps below looped over two queue names typed into this file, and the
+      # account has eleven. That is the defect cancel-run.yml was fixed for, still sitting in
+      # the workflow cancel-run.yml points people at when the run-canceller role is missing --
+      # so the fallback answered "no job" about any run on one of the other nine, to an admin
+      # who had been sent here precisely because the ordinary path was unavailable.
+      #
+      # Read rather than listed, and read the same way: this is the step out of cancel-run.yml
+      # unchanged, so a queue promoted in config/execution-targets.yaml is searched in both
+      # workflows with no edit to either. No queue name appears in the report steps below for
+      # a second roster to grow out of.
+      #
+      # An empty answer is refused rather than looped over zero times, for the reason that
+      # file gives: a search across no queues finds no job and reports it in the same words a
+      # genuine absence gets.
+      - name: List every queue a run could be on
+        if: inputs.describe_run != ''
+        run: |
+          set -euo pipefail
+          uv run --frozen python - > "${RUNNER_TEMP}/queues.txt" <<'PY'
+          from pathlib import Path
+
+          from edullm_platform.config import load_yaml
+          from edullm_platform.contracts.execution import ExecutionTargetCatalog
+
+          catalog = load_yaml(Path("config/execution-targets.yaml"), ExecutionTargetCatalog)
+          # Deduplicated and sorted, because two profiles may share a queue and the order a
+          # configuration file happens to declare its rows in is not a search order.
+          for queue in sorted({target.job_queue for target in catalog.targets}):
+              print(queue)
+          PY
+          if [[ ! -s "${RUNNER_TEMP}/queues.txt" ]]; then
+            echo "no_execution_targets_configured" >&2
+            echo "config/execution-targets.yaml names no job queue, so there is nowhere to look. That is a broken checkout rather than an empty estate." >&2
+            exit 1
+          fi
+          echo "Searching $(wc -l < "${RUNNER_TEMP}/queues.txt") queue(s)."
+
       # WHAT ONE RUN IS DOING, INCLUDING WHAT IT PRINTED.
       #
       # Runs only when the dispatch named a run, so an ordinary deploy is unchanged. See the
@@ -807,20 +875,39 @@ jobs:
             echo "| Queue | State | Run | Started |"
             echo "| --- | --- | --- | --- |"
           } | tee -a "${GITHUB_STEP_SUMMARY}"
-          for queue in sbsandbox-intern-edullm-gpu sbsandbox-intern-edullm-cpu; do
+          # A REFUSED CALL IS COUNTED AND DOES NOT END THE SEARCH, AND THAT IS NOT ABOUT A
+          # QUEUE THE ACCOUNT DOES NOT HAVE. A queue named in the configuration and not yet
+          # deployed answers an empty list and exits zero, so it costs a call and contributes
+          # nothing, which is correct and needs no guard. A throttled call exits non-zero, and
+          # under set -e one of those would end the loop over every queue after it -- sixteen
+          # queues by five states is eighty sequential calls, which is long enough for Batch
+          # to say no. The queues are sorted, so an early refusal hides most of the estate.
+          refused=0
+          for queue in $(cat "${RUNNER_TEMP}/queues.txt"); do
             for state in RUNNING STARTING RUNNABLE PENDING SUBMITTED; do
               aws batch list-jobs \
                 --job-queue "${queue}" \
                 --job-status "${state}" \
                 --query "jobSummaryList[].[jobName,startedAt]" \
-                --output text > "${RUNNER_TEMP}/q-${queue}-${state}.txt"
+                --output text > "${RUNNER_TEMP}/q-${queue}-${state}.txt" || {
+                refused=$((refused + 1))
+                : > "${RUNNER_TEMP}/q-${queue}-${state}.txt"
+              }
               while read -r name started; do
                 [[ -z "${name}" ]] && continue
                 echo "| ${queue##*-} | ${state} | \`${name}\` | ${started} |" | tee -a "${GITHUB_STEP_SUMMARY}"
               done < "${RUNNER_TEMP}/q-${queue}-${state}.txt"
             done
           done
-          echo "Nothing above means both queues are empty of live work." | tee -a "${GITHUB_STEP_SUMMARY}"
+          if [[ "${refused}" -ne 0 ]]; then
+            # Counted rather than swallowed, because an empty table and a table missing the
+            # rows nobody managed to read look identical, and the sentence below would be a
+            # confident claim about an estate that went half unread.
+            echo "queue_search_incomplete" >&2
+            echo "**${refused} of the queue searches were refused**, so rows are missing above and the line below does not hold. Batch throttles a long enumeration; dispatch again to re-read." | tee -a "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          echo "Nothing above means every queue this platform configures is empty of live work." | tee -a "${GITHUB_STEP_SUMMARY}"
 
       - name: Say what one run is doing
         if: inputs.describe_run != '' && inputs.describe_run != 'queues'
@@ -835,14 +922,22 @@ jobs:
           fi
           found=""
           queue_of=""
-          for queue in sbsandbox-intern-edullm-gpu sbsandbox-intern-edullm-cpu; do
+          # The guard the queue view above carries, for the same reason and with the same
+          # distinction: a queue the account has not been given answers empty and exits zero,
+          # and a throttled call exits non-zero and would otherwise end the search over every
+          # queue left. Sixteen queues by seven states is a hundred and twelve calls.
+          refused=0
+          for queue in $(cat "${RUNNER_TEMP}/queues.txt"); do
             for state in RUNNING STARTING RUNNABLE PENDING SUBMITTED SUCCEEDED FAILED; do
               candidate="${RUNNER_TEMP}/list-${queue}-${state}.txt"
               aws batch list-jobs \
                 --job-queue "${queue}" \
                 --job-status "${state}" \
                 --query "jobSummaryList[?jobName=='${RUN_ID}'].jobId" \
-                --output text > "${candidate}"
+                --output text > "${candidate}" || {
+                refused=$((refused + 1))
+                : > "${candidate}"
+              }
               if [[ -s "${candidate}" && "$(cat "${candidate}")" != "None" ]]; then
                 found="$(cat "${candidate}")"
                 queue_of="${queue}"
@@ -851,7 +946,15 @@ jobs:
             done
           done
           if [[ -z "${found}" ]]; then
-            echo "No job under ${RUN_ID} on either queue, within the window Batch still lists." | tee -a "${GITHUB_STEP_SUMMARY}"
+            if [[ "${refused}" -ne 0 ]]; then
+              # Two different facts, and the wrong one of them is what sent people looking
+              # for runs that were there all along. Not finding a job says the run is not
+              # listed; a refused call says nobody looked at that queue.
+              echo "queue_search_incomplete" >&2
+              echo "No job under ${RUN_ID} was found, and ${refused} of the queue searches were refused -- so the search was incomplete rather than the run being absent. Dispatch again before concluding anything." | tee -a "${GITHUB_STEP_SUMMARY}"
+              exit 0
+            fi
+            echo "No job under ${RUN_ID} on any configured queue, within the window Batch still lists." | tee -a "${GITHUB_STEP_SUMMARY}"
             exit 0
           fi
           aws batch describe-jobs --jobs "${found}" --output json > "${RUNNER_TEMP}/job.json"
@@ -868,8 +971,9 @@ jobs:
           aws s3 ls "s3://sbsandbox-intern-edullm-outputs/teams/" --recursive \
             > "${RUNNER_TEMP}/outputs.txt" 2>/dev/null || : > "${RUNNER_TEMP}/outputs.txt"
           grep -F "${RUN_ID}" "${RUNNER_TEMP}/outputs.txt" > "${RUNNER_TEMP}/wrote.txt" || : > "${RUNNER_TEMP}/wrote.txt"
-          # python3, not `uv run`: this workflow never installs uv, and the report imports
-          # nothing outside the standard library.
+          # python3, not `uv run`, though uv is now installed above for the queue enumeration.
+          # This report imports nothing outside the standard library, and the interpreter that
+          # is on the runner already needs no virtualenv resolved in front of it.
           stream="$(python3 -c "import json,os;print(json.load(open(os.environ['RUNNER_TEMP']+'/job.json'))['jobs'][0].get('container',{}).get('logStreamName') or '')")"
           if [[ -n "${stream}" ]]; then
             aws logs get-log-events \
