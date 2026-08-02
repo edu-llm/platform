@@ -90,7 +90,7 @@ Resources:
       Code:
         S3Bucket: sbsandbox-intern-edullm-artifacts
         S3Key: admission-validator/admission-validator.zip
-        S3ObjectVersion: jSl_C58jdGM0v5Fc2TZmOACHk6.g2Xo9
+        S3ObjectVersion: kxyOsJowUh3tevezrIGyr7wB59V9PQ1o
       Timeout: 30
       MemorySize: 512
 
