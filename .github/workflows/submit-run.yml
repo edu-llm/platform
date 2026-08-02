@@ -1054,19 +1054,54 @@ jobs:
       # the log filed a distributed training bug. They were logins, and each one cost a GPU
       # allocation, a run, and the afternoon of whoever went looking at torch.
       #
-      # `tools/verify_wandb_credential.py` has answered this question since the nightly
-      # started asking it. What it has never been is on the path that spends money. Two
-      # seconds and a refusal here is the whole change.
+      # `tools/verify_wandb_credential.py` has answered this question every night since the
+      # nightly started asking it. What the answer had never been until this step existed is
+      # on the path that spends money. A refused key made `nightly.yml` red and stopped
+      # nothing: the header of that file says there is no alerting infrastructure and a red
+      # scheduled run is the whole signal, so a key W&B had already refused went on costing
+      # a GPU allocation per dispatch for as long as nobody happened to look. Two seconds
+      # and a refusal here is the whole change.
+      #
+      # WHY THIS READS A VERDICT AND DOES NOT READ THE KEY, WHICH IS THE DECISION.
+      #
+      # Three principals in this account hold `secretsmanager:GetSecretValue` on
+      # `sbsandbox-intern-edullm-wandb-api-key-*`, read off the live account on 2026-08-02:
+      # `…-batch-execution` and `…-batch-gpu-execution`, which are trusted to
+      # `ecs-tasks.amazonaws.com` and put the value into a container at task start, and
+      # `…-nightly-reader`, which is trusted to `nightly.yml@refs/heads/main` and exists to
+      # ask W&B this exact question. No identity this file can obtain holds it.
+      #
+      # Both of the obvious ways to change that are worse than the gap they close. Adding
+      # the grant to the admission role would mean a session that has crossed the approval
+      # gate can read the credential every team's runs log through, and that role has one
+      # documented property -- it starts the admission state machine and does nothing else
+      # -- which the two denial matrices above prove from the live session on every single
+      # dispatch. A fifth OIDC role trusted to this file would keep that
+      # property and buy a second copy of the environment enumeration in
+      # `infra/iam/admission-role.yaml`: `run-approval-automatic` exists now beside
+      # `run-approval-lead` and `run-approval-admin`, and a role list that gained a fourth
+      # environment on one side and not the other would fail silently and only for the
+      # submissions routed to it. `src/edullm_platform/wandb_preflight.py` carries both
+      # arguments in full.
+      #
+      # So the credential path for this preflight is that there is not one. The submit job
+      # already holds `actions: read` for the approvals endpoint, and that is enough to read
+      # what the nightly published. This step adds no permission to any identity, in GitHub
+      # or in AWS.
+      #
+      # WHAT THAT COSTS, SAID PLAINLY RATHER THAN LEFT TO BE FOUND OUT. The verdict is up to
+      # a night old, so a key rewritten since the last check is not caught here. The value
+      # changes only when a person writes it -- rotation is not enabled on the secret -- so
+      # the remedy is a step in the rotation rather than a grant, and infra/README.md
+      # carries it as one.
       #
       # WHERE THIS SITS IN THE SEQUENCE, WHICH IS THE PART WORTH ARGUING.
       #
       # Not in the compile job, where it would be cheapest to write. Compiling refuses a
       # submission naming an unregistered dataset, a commit that published no image, or a
       # command that contradicts its own profile, and it refuses all of those whatever W&B
-      # says -- so a preflight ahead of that spends a Secrets Manager read and a round trip
-      # to W&B on every submission that was going to be turned away anyway. That job also
-      # holds no credential by construction and must never gain one, so the read could not
-      # happen there at all.
+      # says -- so a preflight ahead of that spends its lookups on every submission that was
+      # going to be turned away anyway.
       #
       # Not after `Start the admission execution`, which is the other tempting place because
       # everything is settled by then. That call is the one line in this file that
@@ -1080,50 +1115,55 @@ jobs:
       # this submission and must not be able to skip a security check on the session.
       # Immediately before the start, because that is the line it exists to stop.
       #
-      # A REFUSED SECRET READ IS NOT A REFUSED SUBMISSION, AND THE DIFFERENCE IS DELIBERATE.
-      # The admission role holds one `states:StartExecution` and two read-only execution
-      # actions, and no `secretsmanager:GetSecretValue` -- so until that grant is applied by
-      # hand this step cannot read the key and says so on every dispatch. Failing the
-      # submission in that state would take the platform down between this merge and a
-      # laptop, which is the hazard *Why IAM is laptop-only* in infra/README.md is entirely
-      # about. So a read that did not happen is loud and lets the run through, and only a
-      # key W&B has actually refused stops it.
+      # AN UNANSWERED QUESTION IS NOT A REFUSED SUBMISSION, AND THE DIFFERENCE IS THE WHOLE
+      # SHAPE OF THIS STEP. Exit 1 is a verdict: W&B was asked and said no. Exit 2 is every
+      # way the question can go unanswered -- no run has published a verdict yet, the newest
+      # one predates the field this reads, the last check could not reach W&B, or the newest
+      # acceptance is older than the tool treats as current. Only the first stops a run.
+      #
+      # That asymmetry is deliberate and is argued where the decision is made. A measured
+      # refusal does not expire because a schedule slipped; the absence of a fresh
+      # acceptance is not evidence of anything. And this file lands before the first nightly
+      # that can publish anything at all, so a step that failed closed on a missing verdict
+      # would take the platform down in order to add a check to it, which is the hazard
+      # *Why IAM is laptop-only* in infra/README.md is about wearing different clothes.
       - name: Refuse a submission the W&B key would not authenticate
         env:
-          PREFLIGHT_AWS_REGION: ${{ vars.AWS_REGION }}
+          GH_TOKEN: ${{ github.token }}
+          PREFLIGHT_REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          report="${RUNNER_TEMP}/wandb-credential.json"
+          report="${RUNNER_TEMP}/wandb-preflight.json"
           preflight_status=0
-          uv run --frozen python tools/verify_wandb_credential.py \
-            --region "${PREFLIGHT_AWS_REGION}" > "${report}" || preflight_status=$?
+          uv run --frozen python tools/verify_wandb_preflight.py \
+            --repository "${PREFLIGHT_REPOSITORY}" \
+            --output "${report}" || preflight_status=$?
           if [[ "${preflight_status}" -eq 0 ]]; then
-            cat "${report}"
-            echo "W&B resolves the stored key to the entity this platform logs its runs into."
+            echo "The last nightly check accepted the key every container on this platform is given."
             exit 0
           fi
-          # Two different answers that the exit status alone cannot separate, and the report
-          # file can. The tool prints its JSON only after it has read the secret, so a report
-          # that exists is a verdict on the key and a report that does not is a read that
-          # never happened. Neither the key nor its value is in that file -- it carries a
-          # length, a four character prefix, a truncated digest and the entity W&B named.
-          if [[ ! -s "${report}" ]]; then
+          # The tool has already printed its answer, including the published report whole,
+          # so nothing is restated here. That report carries a length, a four character
+          # prefix, a truncated digest and the entity W&B named, and never the key.
+          if [[ "${preflight_status}" -ne 1 ]]; then
             echo "wandb_preflight_not_attempted" >&2
-            echo "The stored W&B key could not be read, so nothing was checked and this submission continues. This is not a verdict on the key." >&2
-            echo "The admission role holds no secretsmanager:GetSecretValue, so until that grant is applied a wrong key is found by the container twelve hours from now rather than here." >&2
+            echo "No usable W&B credential verdict was found, so nothing was checked and this submission continues. This is not a verdict on the key." >&2
+            echo "The verdict is published by the nightly workflow, which is the only thing here holding secretsmanager:GetSecretValue on that secret. Dispatch it to produce one." >&2
             exit 0
           fi
-          cat "${report}"
           {
             echo "## This submission was not started"
             echo
             echo "The Weights and Biases key this platform injects into every container is one"
-            echo "W&B would refuse, so no job was submitted and nothing was allocated. The"
-            echo "looks_wrong list in this job log names the fault."
+            echo "W&B refused when it was last asked, so no job was submitted and nothing was"
+            echo "allocated. The looks_wrong list in this job log names the fault."
             echo
             echo "Nothing about your submission caused this and re-running it will not fix it."
             echo "The key is set from a laptop and from nowhere else, so repairing it is a"
             echo "person. Open a run problem issue and quote this workflow run."
+            echo
+            echo "If the key has just been repaired, dispatch the nightly workflow to check it"
+            echo "again. Until something does, this reads the last answer anybody measured."
             echo
             echo "Submitting anyway is what this step exists to stop. A container given a key"
             echo "W&B declines does not fail at the login. It trains, logs nowhere, and dies"

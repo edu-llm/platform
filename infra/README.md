@@ -971,6 +971,49 @@ Both functions package the same `src/edullm_platform` tree, so a contract change
 both and both need releasing. `tools/build_lifecycle_lambda.py` prints the `sha256` of what
 it built for exactly this reason: if neither digest moved, there is nothing to release.
 
+## Rotating the W&B API key
+
+`sbsandbox-intern-edullm-wandb-api-key` is the credential every container on this platform
+logs its runs through. It is written from a laptop and from nowhere else: rotation is not
+enabled on the secret, and no workflow here holds `secretsmanager:PutSecretValue`.
+
+Three principals read it, confirmed against the account on 2026-08-02 and worth knowing
+before changing anything about it. `…-batch-execution` and `…-batch-gpu-execution` inject it
+into a container at task start, and they are trusted to `ecs-tasks.amazonaws.com`, so no
+person and no workflow can assume either. `…-nightly-reader` is trusted to
+`nightly.yml@refs/heads/main` and holds the read so the nightly can ask W&B whether the
+stored value is one it would accept. Nothing else in the account reaches it by name.
+
+**Dispatching the nightly is part of the rotation, not a follow-up to it.**
+
+```bash
+aws secretsmanager put-secret-value \
+  --secret-id sbsandbox-intern-edullm-wandb-api-key \
+  --secret-string file:///path/to/the/key \
+  --profile sbsandbox --region us-east-1
+
+gh workflow run nightly.yml --ref main
+```
+
+`--secret-string file://…` rather than the value on the command line, and the file must hold
+the key and nothing else. The fault this platform has actually paid for was a good key with
+the literal word `api` glued to the front, which is what pasting W&B's netrc line as one
+token produces: the right length, the right shape at a glance, and refused by W&B. Nothing
+went red, because a training run does not fail when W&B declines it — it trains, logs
+nowhere, and dies later with `ProcessGroup is not registered`.
+
+The second command is what closes the window this rotation opens.
+`.github/workflows/submit-run.yml` refuses a submission on the strength of the verdict
+`nightly.yml` publishes, because no identity the submit path can obtain holds the read —
+`infra/iam/admission-role.yaml` argues that at length beside the grant it declines. So
+between writing a value and the next verdict, the preflight is reading the answer to a
+question about the value before this one. The schedule closes that within a day and the
+dispatch closes it within a minute.
+
+The same command is the repair when the preflight refuses a submission and the key has
+already been fixed. A verdict of "refused" is honoured however old it is, deliberately, so
+the only thing that clears one is a newer measurement.
+
 ## The one-off role the conditional-write probe needs
 
 `infra/admission-state-machine.yaml` catches `States.ALL` around each lineage write and

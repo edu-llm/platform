@@ -39,6 +39,16 @@ name: Nightly (the checks that are not about one change)
 #     They also need an AWS identity, and putting one on the
 #     pull-request path would mean a fork's pull request runs with it in reach.
 #
+# ONE OF THE EIGHT IS NO LONGER ONLY A SIGNAL, AND THAT CHANGES WHAT A RED CROSS ON IT
+# COSTS. wandb-credential publishes its answer as an artifact, and submit-run.yml refuses a
+# submission on the strength of it -- because the role this job assumes is the only
+# GitHub-facing identity in the account holding secretsmanager:GetSecretValue on that
+# secret, and infra/iam/admission-role.yaml argues at length why the submit path should not
+# be given one. So a refused key stops submissions rather than waiting for somebody to
+# notice a red scheduled run, which is the whole reason the artifact exists. It also means
+# repairing the key is not finished until this workflow is dispatched again: nothing else
+# writes a newer verdict, and a refusal is honoured until one does.
+#
 # The five assume sbsandbox-intern-edullm-nightly-reader, which can read the lineage
 # records, what the runs wrote, one secret, the deployed digest of the two admission
 # functions and the deployed template of each stack, and holds no write anywhere in the
@@ -301,18 +311,53 @@ jobs:
       #
       # It never prints the key. The output is a length, a truncated digest and the entity
       # W&B resolved it to.
+      #
+      # THE ANSWER IS WRITTEN TO A FILE AS WELL AS TO THE LOG, BECAUSE SOMETHING ELSE READS
+      # IT NOW. submit-run.yml refuses a submission on the strength of this verdict, and it
+      # has to, because no identity that workflow can obtain holds the read this job makes
+      # -- infra/iam/admission-role.yaml argues that beside the grant it is an argument
+      # about. So this job is the only place the question gets answered, and the artifact
+      # below is how the answer reaches the path that spends money.
+      #
+      # A run that could not read the secret at all leaves the file empty rather than
+      # absent, because the redirect creates it before the tool runs. That is the wanted
+      # shape: the preflight reads an unparseable report as no verdict and falls back to the
+      # night before, which is genuinely the newest thing anybody knows.
       - name: Ask W&B whether it would accept the stored key
         run: |
           set -uo pipefail
+          report="${RUNNER_TEMP}/wandb-credential.json"
           status=0
-          uv run --frozen python tools/verify_wandb_credential.py || status=$?
+          uv run --frozen python tools/verify_wandb_credential.py > "${report}" || status=$?
+          cat "${report}"
           if [[ "${status}" -ne 0 ]]; then
             echo "wandb_credential_would_be_refused" >&2
             echo "The looks_wrong list above names the fault. The secret is set from a" >&2
             echo "laptop and from nowhere else, so repairing it is a person rather than a" >&2
             echo "re-run of this job." >&2
+            echo "Submissions are refused while this stands, because submit-run.yml reads" >&2
+            echo "this verdict. Repair the key, then dispatch this workflow again." >&2
             exit 1
           fi
+
+      # if: always(), and that is the entire point of the step rather than caution. The
+      # verdict worth publishing most is the refusal, and the step above exits 1 on exactly
+      # that -- so an upload conditioned on success would publish every answer except the
+      # one submit-run.yml exists to act on, and a bad key would read downstream as no
+      # verdict rather than as a refusal.
+      #
+      # Ninety days, which is the default spelled out. The preflight only ever reads the
+      # newest few, and a verdict older than a day and a half is reported as stale there
+      # rather than acted on, so the retention is for a person reading back over a rotation
+      # rather than for the check.
+      - name: Publish what W&B said, for the submission preflight to read
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: wandb-credential
+          path: ${{ runner.temp }}/wandb-credential.json
+          if-no-files-found: error
+          retention-days: 90
 
   deployed-lambda-release:
     name: the deployed functions are the ones released

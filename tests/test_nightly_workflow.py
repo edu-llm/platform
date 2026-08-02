@@ -31,6 +31,7 @@ assume this role, including one added later.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -58,6 +59,12 @@ from workflow_support import (
 
 from edullm_platform.admission_denials import LINEAGE_BUCKET
 from edullm_platform.contracts.results import OUTPUTS_BUCKET
+from edullm_platform.wandb_preflight import (
+    NIGHTLY_VERDICT_ARTIFACT,
+    NIGHTLY_VERDICT_FILENAME,
+    VERDICT_FIELD,
+    Verdict,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_PATH = WORKFLOWS_ROOT / "nightly.yml"
@@ -77,6 +84,7 @@ BOARD_TOOL = "tools/visibility_board.py"
 
 RECONCILE_STEP = "Reconcile what those runs actually wrote"
 WANDB_STEP = "Ask W&B whether it would accept the stored key"
+WANDB_UPLOAD_STEP = "Publish what W&B said, for the submission preflight to read"
 RELEASE_STEP = "Compare what AWS is running against what was released"
 STACKS_STEP = "Compare each deployed stack against the template main declares"
 BOARD_STEP = "Join what W&B, the account and the outputs bucket each say"
@@ -262,6 +270,17 @@ def wandb_step(workflow: dict[str, Any]) -> str:
     return step(workflow["jobs"][WANDB_JOB], WANDB_STEP)["run"]
 
 
+def load_wandb_tool() -> Any:
+    """The verifier as a module, so its vocabulary can be compared rather than grepped."""
+    specification = importlib.util.spec_from_file_location(
+        "_nightly_wandb_tool", PROJECT_ROOT / WANDB_TOOL
+    )
+    assert specification is not None and specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
 def stub_tool(tmp_path: Path, *, exit_code: int, report: str = "") -> Path:
     """A stand-in for the tool, honouring --output the way the real one does.
 
@@ -366,6 +385,16 @@ def test_the_report_reaches_the_log_and_not_only_the_step_summary(
     assert "run_019fbbfb wrote a fragment" in summary.read_text(encoding="utf-8")
 
 
+def run_wandb_check(workflow: dict[str, Any], tmp_path: Path, *, exit_code: int, report: str) -> Any:
+    stub = stub_tool(tmp_path, exit_code=exit_code, report=report)
+    return run_step_script(
+        wandb_step(workflow),
+        cwd=tmp_path,
+        env={"RUNNER_TEMP": str(tmp_path)},
+        stub_bin=stub.parent,
+    )
+
+
 def test_a_key_wandb_would_refuse_fails_the_nightly(
     workflow: dict[str, Any], tmp_path: Path
 ) -> None:
@@ -374,20 +403,90 @@ def test_a_key_wandb_would_refuse_fails_the_nightly(
     The check exists because nothing else goes red when W&B declines a key. A job that prints
     `looks_wrong` and succeeds reproduces exactly the condition it was written to end.
     """
-    stub = stub_tool(tmp_path, exit_code=1, report='{"looks_wrong": ["prefixed with api"]}')
-
-    finished = run_step_script(wandb_step(workflow), cwd=tmp_path, env={}, stub_bin=stub.parent)
+    finished = run_wandb_check(
+        workflow,
+        tmp_path,
+        exit_code=1,
+        report='{"looks_wrong": ["prefixed with api"], "verdict": "refused"}',
+    )
 
     assert finished.returncode != 0
     assert "wandb_credential_would_be_refused" in finished.stderr
+    # And it says what the refusal now costs, because it costs more than it used to. The
+    # submission preflight reads this verdict, so a red run here refuses every dispatch
+    # until a later run says otherwise -- and the person repairing the key has to know that
+    # dispatching this workflow is what clears it.
+    assert "dispatch this workflow again" in finished.stderr
 
 
 def test_a_key_wandb_accepts_passes(workflow: dict[str, Any], tmp_path: Path) -> None:
-    stub = stub_tool(tmp_path, exit_code=0, report='{"looks_wrong": []}')
-
-    finished = run_step_script(wandb_step(workflow), cwd=tmp_path, env={}, stub_bin=stub.parent)
+    finished = run_wandb_check(
+        workflow, tmp_path, exit_code=0, report='{"looks_wrong": [], "verdict": "accepted"}'
+    )
 
     assert finished.returncode == 0, finished.stderr
+
+
+def test_the_verdict_is_written_where_the_submission_preflight_can_read_it(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """Mutation: print the report and upload nothing, which is what this job used to do.
+
+    The verdict has a second reader now. ``submit-run.yml`` refuses a submission on the
+    strength of it, because no identity that workflow can obtain holds
+    ``secretsmanager:GetSecretValue`` on this secret and
+    ``infra/iam/admission-role.yaml`` argues that none should. So the answer has to leave
+    this job as a document rather than only as log output: a step summary is exposed by no
+    REST endpoint, and a job log is a zip somebody has to parse.
+
+    The upload is ``if: always()`` and that is the whole point rather than caution. The step
+    above exits 1 on exactly the answer worth publishing, so an upload conditioned on
+    success would publish every verdict except the refusal.
+    """
+    upload = step(workflow["jobs"][WANDB_JOB], WANDB_UPLOAD_STEP)
+    names = [candidate.get("name") for candidate in workflow["jobs"][WANDB_JOB]["steps"]]
+
+    assert upload["uses"].startswith("actions/upload-artifact@")
+    assert upload["if"] == "always()"
+    assert upload["with"]["name"] == NIGHTLY_VERDICT_ARTIFACT
+    assert upload["with"]["path"].endswith(NIGHTLY_VERDICT_FILENAME)
+    assert upload["with"]["if-no-files-found"] == "error"
+    assert names.index(WANDB_STEP) < names.index(WANDB_UPLOAD_STEP)
+
+    # And the file it names is the one the check actually writes, run rather than read.
+    finished = run_wandb_check(
+        workflow, tmp_path, exit_code=0, report='{"looks_wrong": [], "verdict": "accepted"}'
+    )
+
+    assert finished.returncode == 0, finished.stderr
+    published = tmp_path / NIGHTLY_VERDICT_FILENAME
+    assert published.is_file(), "the upload would find nothing to publish"
+    assert json.loads(published.read_text(encoding="utf-8"))["verdict"] == "accepted"
+    # In the log as well, because the person triaging a red cross is already looking at it.
+    assert "accepted" in finished.stdout
+
+
+def test_the_verdict_vocabulary_is_the_one_the_preflight_decides_on() -> None:
+    """Mutation: spell a verdict as a string in either the tool or the preflight.
+
+    Two files decide with this vocabulary and nothing at runtime would notice them
+    disagreeing: a verdict the preflight does not recognise reads as no verdict, which lets
+    every submission through silently. So the tool imports the enumeration rather than
+    restating it, and this is what says so.
+    """
+    module = load_wandb_tool()
+
+    assert module.Verdict is Verdict
+    assert module.VERDICT_FIELD == VERDICT_FIELD
+    assert {member.value for member in Verdict} == {"accepted", "refused", "unreachable"}
+    # An outage is not a bad key, and keeping them apart is the reason there are three.
+    assert module.verdict_for({"error": f"{module.UNREACHABLE_PREFIX}: URLError"}, faults=["x"]) is (
+        Verdict.UNREACHABLE
+    )
+    assert module.verdict_for({"error": "W&B does not recognise this key"}, faults=["x"]) is (
+        Verdict.REFUSED
+    )
+    assert module.verdict_for({"entity": "eduLLM"}, faults=[]) is Verdict.ACCEPTED
 
 
 def release_step(workflow: dict[str, Any]) -> str:

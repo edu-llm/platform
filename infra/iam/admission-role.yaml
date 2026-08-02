@@ -67,6 +67,55 @@ Resources:
               # because the state machine already carries its own execution role and this
               # role never names one; and every s3: action, because the lineage record is
               # written by the state machine, not by the caller who asked for it.
+              #
+              # AND secretsmanager:GetSecretValue ON THE W&B KEY, WHICH WAS PROPOSED AND
+              # DECLINED ON 2026-08-02. THIS IS THE PARAGRAPH TO READ BEFORE PROPOSING IT
+              # AGAIN.
+              #
+              # submit-run.yml carries a preflight that refuses a submission the platform
+              # W&B key would not authenticate. It exists because nine of the last
+              # sixty-seven job failures were that key and eight were filed as torch
+              # distributed bugs, and it is worth having. The cheap way to power it is one
+              # statement here, on
+              # secret:sbsandbox-intern-edullm-wandb-api-key-*, and it is the wrong way.
+              #
+              # This role has exactly one documented property: it starts the admission state
+              # machine and does nothing else. That property is not a claim in a template.
+              # It is proved from the live session on every single dispatch, by two denial
+              # matrices that run immediately before the one call this role may make,
+              # because the role is created from a laptop and a policy widened in the
+              # console leaves every test in this repository green. The value of the
+              # property is that it is short enough to hold in the head of whoever reviews
+              # the next change to this file. A second sentence beginning "and it may also"
+              # is not a small addition to it; it is the end of a bright line, and the next
+              # proposal argues from the precedent rather than from first principles.
+              #
+              # What it would buy is also smaller than it looks. The nightly already asks
+              # W&B this question under sbsandbox-intern-edullm-nightly-reader, which holds
+              # the read for exactly that purpose and can be assumed only from
+              # nightly.yml@refs/heads/main. So the grant here would not add a check. It
+              # would move an existing one onto a session that a GitHub Actions runner
+              # holds, in order to shorten the age of the answer from at most a night to
+              # zero -- and the value changes only when a person writes it, since rotation
+              # is not enabled on the secret. The preflight reads the nightly verdict
+              # instead, through the actions: read the submit job already holds, and
+              # src/edullm_platform/wandb_preflight.py carries the whole argument.
+              #
+              # A FIFTH OIDC ROLE TRUSTED TO submit-run.yml WAS THE OTHER PROPOSAL, AND IT
+              # FAILS ON THE CONDITION BELOW RATHER THAN ON COST. Such a role has to pin its
+              # subject the way this one does, and it would then hold a second copy of the
+              # environment enumeration twenty lines above. There are three approval
+              # environments now where there were two. A fourth added to one list and not
+              # the other does not fail loudly: the submissions routed to it would reach the
+              # credential step of a role that will not have them, or -- because the
+              # preflight is deliberately fail-open -- would quietly stop being checked at
+              # all, on exactly the gate nobody is watching. Not pinning the subject is
+              # worse still, since every job in that file would then be able to read the
+              # key, including the two that run before any approval.
+              #
+              # The design that survives all of this is the one that needs no AWS identity
+              # in the submit path at all, and it is correct under any number of approval
+              # environments because it never looks at one.
               - Effect: Allow
                 Action: states:StartExecution
                 Resource:
