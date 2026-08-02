@@ -22,9 +22,9 @@
       "relative_path": "infra/iam/batch-roles.yaml"
     },
     {
-      "canonical_json_bytes": 1684,
+      "canonical_json_bytes": 2004,
       "contract": "TemplateRole",
-      "digest": "sha256:818390fae8b9ff8160acf7b7611a1be49355a66ce5ac888ee7d43f9083953be1",
+      "digest": "sha256:60c744aa4376c4d015989fb2c2a1896e1daf196bc4f44dc2133448d32879ad7e",
       "fixture": "sbsandbox-intern-edullm-lifecycle-lambda",
       "relative_path": "infra/iam/lifecycle-lambda-role.yaml"
     }
