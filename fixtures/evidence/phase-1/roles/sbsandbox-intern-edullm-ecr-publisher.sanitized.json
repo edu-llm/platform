@@ -45,7 +45,8 @@
             "resources": [
               "arn:aws:ecr:us-east-1:<aws-account-id>:repository/sbsandbox-intern-edullm-olmo-core",
               "arn:aws:ecr:us-east-1:<aws-account-id>:repository/sbsandbox-intern-edullm-data",
-              "arn:aws:ecr:us-east-1:<aws-account-id>:repository/sbsandbox-intern-edullm-olmo-eval-full"
+              "arn:aws:ecr:us-east-1:<aws-account-id>:repository/sbsandbox-intern-edullm-olmo-eval-full",
+              "arn:aws:ecr:us-east-1:<aws-account-id>:repository/sbsandbox-intern-edullm-alt-cl"
             ]
           },
           "sid": null
@@ -89,7 +90,8 @@
           "values": [
             "1306868157",
             "1315813778",
-            "1310135166"
+            "1310135166",
+            "1319807085"
           ]
         },
         {
@@ -105,7 +107,8 @@
           "values": [
             "repo:edu-llm@306859726/OLMo-core@1306868157:ref:refs/heads/*",
             "repo:edu-llm@306859726/edullm-data@1315813778:ref:refs/heads/*",
-            "repo:edu-llm@306859726/olmo-eval-full@1310135166:ref:refs/heads/*"
+            "repo:edu-llm@306859726/olmo-eval-full@1310135166:ref:refs/heads/*",
+            "repo:edu-llm@306859726/edullm-alt-cl@1319807085:ref:refs/heads/*"
           ]
         }
       ],

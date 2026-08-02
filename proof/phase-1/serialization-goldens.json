@@ -1,9 +1,9 @@
 {
   "fixtures": [
     {
-      "canonical_json_bytes": 2404,
+      "canonical_json_bytes": 2587,
       "contract": "TemplateRole",
-      "digest": "sha256:9e592cee6b2206974c76ce325e7a192a64daf74b38d8efebdf83fed5f7ba2663",
+      "digest": "sha256:d68ab9e3ea2beffb220d6c8526e1dcd624465a2f28aa7c9be10931a8efb1945f",
       "fixture": "sbsandbox-intern-edullm-ecr-publisher",
       "relative_path": "infra/iam/ecr-publisher-role.yaml"
     },
