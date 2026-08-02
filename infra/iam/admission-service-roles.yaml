@@ -317,6 +317,7 @@ Resources:
                   - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-olmo-core
                   - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-data
                   - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-olmo-eval-full
+                  - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-alt-cl
               # "*" is the narrowest grant that exists for the delivery half of this list.
               # CreateLogDelivery, GetLogDelivery, UpdateLogDelivery, DeleteLogDelivery,
               # ListLogDeliveries, PutResourcePolicy and DescribeResourcePolicies are

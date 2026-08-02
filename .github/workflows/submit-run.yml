@@ -25,9 +25,9 @@ on:
         required: true
         type: choice
         options:
-          # Three where there was one. Sorted case-insensitively, which is what the option
-          # test compares against, so this reads as a list rather than as the order the
-          # registrations happened in.
+          # Sorted case-insensitively, which is what the option test compares against, so
+          # this reads as a list rather than as the order the registrations happened in.
+          - edullm-alt-cl
           - edullm-data
           - OLMo-core
           - olmo-eval-full
@@ -47,6 +47,8 @@ on:
         options:
           # The dataset validator, and the first entry here that is not OLMo-core. Reads a
           # published corpus and checks each shard against the bounds its family declares.
+          - edullm-alt-cl-check
+          - edullm-alt-cl-train
           - edullm-data-validate
           # One check entry where there were two. It named no machine even before the
           # catalog stopped letting entries name one, so whether a check runs on a CPU or a

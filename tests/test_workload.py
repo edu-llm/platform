@@ -301,12 +301,10 @@ def test_workload_catalog_yaml_validates_against_contract() -> None:
     # Thirteen since gpu-8xa10g, the g5.48xlarge the catalog had never priced. Same tripwire
     # role as the workload count below: a profile arriving without a deliberate edit.
     assert len(catalog.compute_profiles) == 13
-    # Five since the presets collapsed. It was seven, and the two pairs that merged --
-    # olmo-core-check-cpu with olmo-core-check-gpu, and olmo-core-train-1gpu with
-    # olmo-core-train-4gpu -- differed only in a compute profile the submission form
-    # overrode. The count is the tripwire for a workload appearing without a deliberate
-    # edit, so it moves with the edit and not before.
-    assert len(catalog.workloads) == 5
+    # Seven since the presets collapsed (five) plus edullm-alt-cl-check and
+    # edullm-alt-cl-train. The count is the tripwire for a workload appearing without a
+    # deliberate edit, so it moves with the edit and not before.
+    assert len(catalog.workloads) == 7
     # The check Phase 3 runs. It names OLMo-core, which was the only registered repository
     # with a published image when this was written; dolma-tokenize is the same shape against
     # a repository that still has neither.

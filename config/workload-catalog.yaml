@@ -343,3 +343,25 @@ workloads:
       # writes to. The path is output_prefix(team, run_id) + "checkpoints/".
       destination_prefix: "s3://sbsandbox-intern-edullm-outputs/teams/"
       resume_required: true
+  # edullm-alt-cl: the math front-load / anneal experiment. A registration with no workload
+  # is a dropdown that cannot be submitted for, so these two presets are what make the
+  # repository usable rather than merely named. Same shape as olmo-core-check / olmo-core-train:
+  # bounds and checkpoint live here; the machine is the form's compute_profile field.
+  #
+  # The check is a dry-run of the treatment arm -- plan JSON only, no fit -- so pick
+  # cpu-32vcpu. Training matches OLMo-core's 24h / 2-attempt ceiling; pick gpu-1xa10g /
+  # gpu-4xa10g / gpu-8xa10g (or gpu-8xa100 with admin approval) to match the command's
+  # --nproc-per-node.
+  - name: edullm-alt-cl-check
+    repository: edullm-alt-cl
+    maximum_runtime_hours: "1"
+    maximum_attempts: 1
+    checkpoint: null
+  - name: edullm-alt-cl-train
+    repository: edullm-alt-cl
+    maximum_runtime_hours: "24"
+    maximum_attempts: 2
+    checkpoint:
+      interval_minutes: 30
+      destination_prefix: "s3://sbsandbox-intern-edullm-outputs/teams/"
+      resume_required: true

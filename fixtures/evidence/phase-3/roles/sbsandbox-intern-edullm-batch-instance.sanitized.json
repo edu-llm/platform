@@ -64,7 +64,8 @@
             "resources": [
               "arn:aws:ecr:us-east-1:<aws-account-id>:repository/sbsandbox-intern-edullm-olmo-core",
               "arn:aws:ecr:us-east-1:<aws-account-id>:repository/sbsandbox-intern-edullm-data",
-              "arn:aws:ecr:us-east-1:<aws-account-id>:repository/sbsandbox-intern-edullm-olmo-eval-full"
+              "arn:aws:ecr:us-east-1:<aws-account-id>:repository/sbsandbox-intern-edullm-olmo-eval-full",
+              "arn:aws:ecr:us-east-1:<aws-account-id>:repository/sbsandbox-intern-edullm-alt-cl"
             ]
           },
           "sid": null
