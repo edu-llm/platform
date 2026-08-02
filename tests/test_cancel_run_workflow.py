@@ -4,8 +4,15 @@
 A trust policy cannot see who dispatched a workflow -- every dispatch of a file presents
 the same ``sub`` and ``job_workflow_ref`` whoever pressed the button -- and Batch has no
 condition key for a job's tags on ``TerminateJob``. So "may this person stop this run"
-cannot be written as a grant, and the role the workflow assumes can stop any job on either
-queue.
+cannot be written as a grant, and the role the workflow assumes can stop any job this
+platform submitted, on any of its queues.
+
+The second half of this module is about the other way this workflow was wrong, which cost
+more and was quieter. It searched two of the eleven queues and reported a run on any of the
+other nine as no job at all, and it named a log stream that only somebody holding an AWS
+credential could read. Both are fixed by reading ``config/execution-targets.yaml`` rather
+than by writing names down, so the tests below compare the workflow and the grant against
+that file rather than against a list restated here.
 
 What bounds that is the role's shape rather than its scope, and these tests hold both
 halves: the role reaches nothing but describing and stopping jobs, and the workflow refuses
@@ -19,16 +26,54 @@ for any input, a missing record would become an authorisation.
 
 from __future__ import annotations
 
+import json
 import re
+import shutil
+import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
+from workflow_support import run_step_script, write_stub
+
+from edullm_platform.config import load_yaml
+from edullm_platform.contracts.execution import ExecutionTargetCatalog
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW_PATH = PROJECT_ROOT / ".github" / "workflows" / "cancel-run.yml"
 ROLE_PATH = PROJECT_ROOT / "infra" / "iam" / "run-canceller-role.yaml"
+EXECUTION_TARGETS_PATH = PROJECT_ROOT / "config" / "execution-targets.yaml"
+
+RUN_ID = "run_0198f0a1-2b3c-7d4e-8f01-23456789abcd"
+
+#: The stub that drops the locked-environment wrapper and runs the workflow's own heredoc
+#: under this interpreter. Three words to shift, because every invocation here reads
+#: ``uv run --frozen python``.
+UV_PASSTHROUGH = 'shift 3\nexec "${PYTHON_EXECUTABLE}" "$@"\n'
+
+
+def execution_targets() -> ExecutionTargetCatalog:
+    return load_yaml(EXECUTION_TARGETS_PATH, ExecutionTargetCatalog)
+
+
+def configured_queues() -> set[str]:
+    return {target.job_queue for target in execution_targets().targets}
+
+
+def configured_log_groups() -> set[str]:
+    return {target.log_group for target in execution_targets().targets}
+
+
+def checkout(tmp_path: Path) -> None:
+    """The one configuration file these steps read, beside the script that reads it.
+
+    The step reads ``config/execution-targets.yaml`` relative to the working directory, and
+    a run body writes itself to disk before it executes -- so running it in the checkout
+    would leave a stray file in the repository root every time this ran.
+    """
+    (tmp_path / "config").mkdir(exist_ok=True)
+    shutil.copy2(EXECUTION_TARGETS_PATH, tmp_path / "config" / "execution-targets.yaml")
 
 
 @pytest.fixture(scope="module")
@@ -59,18 +104,8 @@ def role() -> dict[str, Any]:
     return resource["Properties"]
 
 
-def test_the_canceller_can_stop_a_job_and_do_nothing_else(role: dict[str, Any]) -> None:
-    """Mutation: add batch:SubmitJob, which looks harmless beside a cancel grant.
-
-    It is not. A role that can cancel *and* submit is a role that can replace somebody's
-    run with its own, which is worse than either power alone -- and because the
-    authorisation for cancelling is a workflow check rather than a policy, the blast radius
-    of a mistake in that check is exactly the set of actions granted here.
-
-    Asserted as an exact set rather than an absence list, so an action added later has to
-    be argued for in this test rather than merely not-forbidden.
-    """
-    granted = {
+def granted_actions(role: dict[str, Any]) -> set[str]:
+    return {
         action
         for policy in role["Policies"]
         for statement in policy["PolicyDocument"]["Statement"]
@@ -81,7 +116,136 @@ def test_the_canceller_can_stop_a_job_and_do_nothing_else(role: dict[str, Any]) 
         )
     }
 
-    assert granted == {"batch:DescribeJobs", "batch:ListJobs", "batch:TerminateJob"}
+
+def test_the_canceller_can_stop_a_job_read_its_log_and_do_nothing_else(
+    role: dict[str, Any],
+) -> None:
+    """Mutation: add batch:SubmitJob, which looks harmless beside a cancel grant.
+
+    It is not. A role that can cancel *and* submit is a role that can replace somebody's
+    run with its own, which is worse than either power alone -- and because the
+    authorisation for cancelling is a workflow check rather than a policy, the blast radius
+    of a mistake in that check is exactly the set of actions granted here.
+
+    Asserted as an exact set rather than an absence list, so an action added later has to
+    be argued for in this test rather than merely not-forbidden. ``logs:GetLogEvents`` is
+    the fourth and it is argued for here rather than only in the template. Naming a log
+    stream to somebody who has no AWS credential is not an answer to what their run did,
+    and the next step was always an operator reading the end of the log -- which is the
+    reading that filed nine credential failures as distributed training bugs. What it costs
+    is a disclosure rather than an action, and the two neighbours that would make it worse
+    are refused separately below.
+    """
+    assert granted_actions(role) == {
+        "batch:DescribeJobs",
+        "batch:ListJobs",
+        "batch:TerminateJob",
+        "logs:GetLogEvents",
+    }
+
+
+def test_the_log_read_cannot_search_a_group_and_cannot_change_one(role: dict[str, Any]) -> None:
+    """Mutation: grant logs:FilterLogEvents, which is the natural way to write "read a log".
+
+    It takes a log group and searches every stream in it, so a read aimed at one run would
+    be able to return another run's output -- and this workflow answers a question about one
+    named run. ``GetLogEvents`` takes the stream the job itself reported, so the read is
+    aimed at one job by construction rather than by the caller being careful.
+
+    Every writing action is refused on a separate ground. A role that can read what a run
+    printed and also change it is one that can edit the evidence of the failure it was
+    dispatched to explain.
+    """
+    granted = granted_actions(role)
+    logs_actions = {action for action in granted if action.startswith("logs:")}
+
+    assert logs_actions == {"logs:GetLogEvents"}
+    for refused in (
+        "logs:FilterLogEvents",
+        "logs:StartQuery",
+        "logs:DescribeLogStreams",
+        "logs:DeleteLogGroup",
+        "logs:PutRetentionPolicy",
+        "logs:PutLogEvents",
+    ):
+        assert refused not in granted, refused
+
+
+def test_the_log_grant_names_a_stream_and_carries_no_condition_it_cannot_satisfy(
+    role: dict[str, Any],
+) -> None:
+    """THE STACK 4 LESSON, APPLIED TO THE NEXT GRANT RATHER THAN ONLY RECORDED.
+
+    ``batch:TerminateJob`` was once conditioned on ``batch:JobQueue``, which TerminateJob
+    never supplies, so the grant read correctly, deployed cleanly, passed every template
+    test and could stop nothing -- and the denial named a missing action rather than an
+    unsatisfiable condition. ``iam simulate-principal-policy`` could not separate the two
+    either.
+
+    The service authorization reference offers ``logs:GetLogEvents`` exactly one condition
+    key, ``aws:ResourceTag/${TagKey}``, and its required resource type is ``log-stream``. A
+    log stream cannot be tagged, so that key is never populated for the resource in the
+    request, and a condition on it would be the same shape a second time. So this grant
+    carries none and narrows by the resource instead, which is a narrowing that is evaluated
+    on every call.
+
+    Mutation: add any Condition here. The role would deploy, read back byte-identical to
+    this template, and refuse every log read with a message about the action.
+    """
+    statements = [
+        statement
+        for policy in role["Policies"]
+        for statement in policy["PolicyDocument"]["Statement"]
+        if "logs:GetLogEvents" in (
+            statement["Action"] if isinstance(statement["Action"], list) else [statement["Action"]]
+        )
+    ]
+
+    assert len(statements) == 1
+    assert "Condition" not in statements[0], (
+        "the only condition key GetLogEvents offers is aws:ResourceTag, the resource it is "
+        "authorized against is a log stream, and a log stream cannot be tagged -- so a "
+        "condition here can never be satisfied and the denial will name the action"
+    )
+    resources = statements[0]["Resource"]
+    assert isinstance(resources, list)
+    for resource in resources:
+        arn = resource["Fn::Sub"]
+        # The stream name is minted by ECS when it starts the task, so it cannot be pinned.
+        # What can be is the group it is under, which is the whole narrowing.
+        assert arn.endswith(":log-stream:*"), arn
+        assert ":log-group:/aws/batch/" in arn, arn
+
+
+def test_the_log_groups_the_grant_names_are_the_ones_the_configuration_declares(
+    role: dict[str, Any],
+) -> None:
+    """Reads BOTH files. Mutation: promote a queue with a log group of its own.
+
+    ``config/execution-targets.yaml`` decides which log group each queue writes to and this
+    template decides which the workflow may read, and nothing in CloudFormation connects
+    them -- the same shape ``tests/test_phase3_infrastructure.py`` compares three copies of
+    the queue name across.
+
+    Both directions matter. A group the configuration names and this does not is a run whose
+    log the workflow silently cannot read, reported to the researcher as an unreadable
+    stream. A group this names and the configuration does not is a read of somebody else's
+    Batch logs in a shared account, kept alive by a policy nobody revisited.
+    """
+    statement = next(
+        statement
+        for policy in role["Policies"]
+        for statement in policy["PolicyDocument"]["Statement"]
+        if "logs:GetLogEvents" in (
+            statement["Action"] if isinstance(statement["Action"], list) else [statement["Action"]]
+        )
+    )
+    reachable = {
+        resource["Fn::Sub"].split(":log-group:", 1)[1].removesuffix(":log-stream:*")
+        for resource in statement["Resource"]
+    }
+
+    assert reachable == configured_log_groups()
 
 
 def test_stopping_a_job_is_confined_to_the_runs_this_platform_submitted(
@@ -473,3 +637,397 @@ def test_two_people_looking_at_their_own_runs_do_not_queue_behind_each_other(
     group = workflow["concurrency"]["group"]
 
     assert "github.run_id" in group, f"a blank run id collapses every dispatch into {group}"
+
+
+# --------------------------------------------------------------------------------------
+# Seam: the queues this searches, against the queues the configuration declares
+# --------------------------------------------------------------------------------------
+
+
+def test_no_queue_name_is_written_into_this_workflow() -> None:
+    """Mutation: put the eleven queue names in the loops, which is where two of them were.
+
+    A list here is a second roster. It agrees with ``config/execution-targets.yaml`` on the
+    day it is typed and stops agreeing at the next promotion, and the failure is silent in
+    the direction that matters -- a run on the queue this file has not heard of is reported
+    as a run that does not exist, in the same words a run Batch has stopped listing gets.
+    That is what happened. Nine GPU shapes were promoted and this file went on searching two
+    queues, so anybody on gpu-4xa10g or gpu-8xh100 was told their run was not there while it
+    billed to its ceiling.
+
+    Asserted as an absence of every configured name, so the mutation cannot be half done.
+    """
+    text = WORKFLOW_PATH.read_text(encoding="utf-8")
+    queues = configured_queues()
+
+    assert queues, "the configuration names no queue, so this test is measuring nothing"
+    for queue in sorted(queues):
+        assert queue not in text, (
+            f"{queue} is written into cancel-run.yml, so the search is a second roster that "
+            "will disagree with config/execution-targets.yaml at the next promotion"
+        )
+
+
+def test_the_enumeration_step_lists_every_configured_queue_and_nothing_else(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """Executed rather than read. Mutation: read the workload catalog instead.
+
+    Two configuration files answer questions that sound the same. ``workload-catalog.yaml``
+    is a pricing-and-shape document and ``execution-targets.yaml`` is the one that says
+    where a run actually goes, and only the second names a queue -- so a step reading the
+    first would produce nothing and this workflow would search nowhere.
+
+    Running the body is what makes that visible. Reading it for the file name proves the
+    string is present; running it proves the answer is the eleven queues that exist.
+    """
+    checkout(tmp_path)
+    stub_bin = tmp_path / "bin"
+    write_stub(stub_bin, "uv", UV_PASSTHROUGH)
+
+    result = run_step_script(
+        workflow_step(workflow, "List every queue a run could be on")["run"],
+        cwd=tmp_path,
+        env={
+            "RUNNER_TEMP": str(tmp_path),
+            "PYTHON_EXECUTABLE": sys.executable,
+            "PYTHONPATH": str(PROJECT_ROOT / "src"),
+        },
+        stub_bin=stub_bin,
+    )
+    listed = (tmp_path / "queues.txt").read_text(encoding="utf-8").split()
+
+    assert result.returncode == 0, result.stderr
+    assert set(listed) == configured_queues()
+    # Deduplicated, because the nine GPU shapes each have a queue of their own while several
+    # profiles may not, and listing one twice would describe every job on it twice.
+    assert len(listed) == len(set(listed))
+
+
+def test_a_checkout_that_names_no_queue_refuses_rather_than_searching_nowhere(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """Mutation: let an empty enumeration through and loop over it zero times.
+
+    A search across no queues finds no job, and this workflow reports that as a run Batch
+    has stopped listing -- the same sentence a genuine absence produces. That is the exact
+    confusion the enumeration exists to end, so an empty answer has to be loud rather than
+    indistinguishable from the ordinary one.
+    """
+    (tmp_path / "config").mkdir(exist_ok=True)
+    (tmp_path / "config" / "execution-targets.yaml").write_text(
+        "schema_version: 1\ntargets: []\n", encoding="utf-8"
+    )
+    stub_bin = tmp_path / "bin"
+    write_stub(stub_bin, "uv", UV_PASSTHROUGH)
+
+    result = run_step_script(
+        workflow_step(workflow, "List every queue a run could be on")["run"],
+        cwd=tmp_path,
+        env={
+            "RUNNER_TEMP": str(tmp_path),
+            "PYTHON_EXECUTABLE": sys.executable,
+            "PYTHONPATH": str(PROJECT_ROOT / "src"),
+        },
+        stub_bin=stub_bin,
+    )
+
+    assert result.returncode == 1
+    assert "no_execution_targets_configured" in result.stderr
+
+
+def test_the_search_for_a_named_run_covers_every_queue_the_enumeration_listed(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """Executed. Mutation: leave one loop reading a hardcoded pair, which is how this began.
+
+    Both loops in this file searched the same two queues, and either one left behind would
+    reproduce the defect for half the dispatches -- the look-up by submitter would miss a
+    run the named search found, or the other way round. So the queues each loop actually
+    asks Batch about are recorded and compared against the enumeration.
+    """
+    stub_bin = tmp_path / "bin"
+    asked = tmp_path / "asked.txt"
+    (tmp_path / "queues.txt").write_text("queue-one\nqueue-two\nqueue-three\n", encoding="utf-8")
+    write_stub(
+        stub_bin,
+        "aws",
+        'while [[ $# -gt 0 ]]; do\n'
+        '  if [[ "$1" == "--job-queue" ]]; then shift; echo "$1" >> "' + str(asked) + '"; fi\n'
+        "  shift\n"
+        "done\n",
+    )
+    summary = tmp_path / "summary.md"
+    summary.touch()
+
+    result = run_step_script(
+        workflow_step(workflow, "Find the job")["run"],
+        cwd=tmp_path,
+        env={
+            "RUNNER_TEMP": str(tmp_path),
+            "GITHUB_OUTPUT": str(tmp_path / "step-output.txt"),
+            "GITHUB_STEP_SUMMARY": str(summary),
+            "RUN_ID": RUN_ID,
+        },
+        stub_bin=stub_bin,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert set(asked.read_text(encoding="utf-8").split()) == {
+        "queue-one",
+        "queue-two",
+        "queue-three",
+    }
+    assert "not_running=true" in (tmp_path / "step-output.txt").read_text(encoding="utf-8")
+
+
+# --------------------------------------------------------------------------------------
+# The log, which is what the person dispatching this came for
+# --------------------------------------------------------------------------------------
+
+
+def test_the_log_group_is_resolved_from_the_queue_rather_than_guessed(
+    workflow: dict[str, Any],
+) -> None:
+    """Mutation: name a log group in this workflow, as the sentence it replaces did.
+
+    The step this replaces told the reader their stream was under the GPU group "or its CPU
+    sibling", which is a guess written into a workflow, and the two are not interchangeable
+    -- asking CloudWatch for a stream in the wrong group answers ResourceNotFound. The group
+    is a property of the queue, so it is resolved from the same file the search enumerates.
+    """
+    body = workflow_step(workflow, "Say what the run is doing")["run"]
+    text = WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    assert "config/execution-targets.yaml" in body
+    assert "jobQueue" in body
+    for log_group in sorted(configured_log_groups()):
+        assert log_group not in text, (
+            f"{log_group} is written into cancel-run.yml, so the workflow has an opinion "
+            "about where a queue logs that config/execution-targets.yaml already holds"
+        )
+
+
+def test_the_report_hands_the_group_and_the_stream_to_the_step_that_reads_them(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """Executed, because the seam between these two steps is a pair of step outputs.
+
+    A ``steps.`` output that is never written resolves to the empty string rather than
+    failing, so a report that stopped writing them would leave the tail step reporting that
+    the container has not started -- about a run that finished hours ago. Running the body
+    is the only way to see that both values arrive.
+    """
+    checkout(tmp_path)
+    # Under a name of its own, because the step redirects the CLI into
+    # ``${RUNNER_TEMP}/job.json`` and the shell truncates that file before the stub runs.
+    described = tmp_path / "described.json"
+    described.write_text(
+        json.dumps(
+            {
+                "jobs": [
+                    {
+                        "status": "FAILED",
+                        "jobQueue": (
+                            "arn:aws:batch:us-east-1:123456789012:job-queue/"
+                            "sbsandbox-intern-edullm-gpu-4xa10g"
+                        ),
+                        "container": {
+                            "exitCode": 1,
+                            "logStreamName": "gpu-4xa10g-run/default/abc",
+                        },
+                        "attempts": [{"startedAt": 1}],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    stub_bin = tmp_path / "bin"
+    write_stub(stub_bin, "uv", UV_PASSTHROUGH)
+    write_stub(stub_bin, "aws", f'cat "{described}"\n')
+    summary = tmp_path / "summary.md"
+    summary.touch()
+
+    result = run_step_script(
+        workflow_step(workflow, "Say what the run is doing")["run"],
+        cwd=tmp_path,
+        env={
+            "RUNNER_TEMP": str(tmp_path),
+            "PYTHON_EXECUTABLE": sys.executable,
+            "PYTHONPATH": str(PROJECT_ROOT / "src"),
+            "GITHUB_OUTPUT": str(tmp_path / "step-output.txt"),
+            "GITHUB_STEP_SUMMARY": str(summary),
+            "JOB_ID": "3f9d1f1e",
+            "RUN_ID": RUN_ID,
+        },
+        stub_bin=stub_bin,
+    )
+    assert result.returncode == 0, result.stderr
+    outputs = dict(
+        line.split("=", 1)
+        for line in (tmp_path / "step-output.txt").read_text(encoding="utf-8").splitlines()
+    )
+    binding = next(
+        target
+        for target in execution_targets().targets
+        if target.job_queue == "sbsandbox-intern-edullm-gpu-4xa10g"
+    )
+
+    # The group is the one the configuration gives that queue, which is the shared GPU group
+    # rather than one named after the shape.
+    assert outputs["log_group"] == binding.log_group
+    assert outputs["log_stream"] == "gpu-4xa10g-run/default/abc"
+    assert f"| Log group | `{binding.log_group}` |" in summary.read_text(encoding="utf-8")
+
+
+def test_the_tail_reaches_the_step_summary_and_says_to_read_upward(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """Executed, because a heredoc into a summary is easy to get wrong and quiet about it.
+
+    The sentence about reading upward is the deliverable rather than decoration. Eight of
+    the nine W&B failures were filed as distributed training bugs by somebody who read the
+    last lines of a torch log, and the tail this step prints ends the same way -- so the tail
+    has to arrive with the instruction that the cause is above it.
+    """
+    summary = tmp_path / "summary.md"
+    summary.touch()
+    stub_bin = tmp_path / "bin"
+    write_stub(stub_bin, "uv", UV_PASSTHROUGH)
+    write_stub(
+        stub_bin,
+        "aws",
+        "cat <<'JSON'\n"
+        + json.dumps(
+            {
+                "events": [
+                    {"timestamp": 1, "message": "CommError: user is not logged in"},
+                    {"timestamp": 2, "message": "ProcessGroup is not registered"},
+                ]
+            }
+        )
+        + "\nJSON\n",
+    )
+
+    result = run_step_script(
+        workflow_step(workflow, "Show the last fifty lines")["run"],
+        cwd=tmp_path,
+        env={
+            "RUNNER_TEMP": str(tmp_path),
+            "PYTHON_EXECUTABLE": sys.executable,
+            "GITHUB_STEP_SUMMARY": str(summary),
+            "LOG_GROUP": "/aws/batch/sbsandbox-intern-edullm-gpu",
+            "LOG_STREAM": "gpu-run/default/abc",
+        },
+        stub_bin=stub_bin,
+    )
+    written = summary.read_text(encoding="utf-8")
+
+    assert result.returncode == 0, result.stderr
+    assert "CommError: user is not logged in" in written
+    assert "ProcessGroup is not registered" in written
+    assert "Read upward from the end" in written
+
+
+@pytest.mark.parametrize(
+    ("probe", "environment", "expected"),
+    [
+        (
+            "the container has not started",
+            {"LOG_GROUP": "/aws/batch/sbsandbox-intern-edullm-cpu", "LOG_STREAM": ""},
+            "no log stream to read yet",
+        ),
+        (
+            "the queue is not one this checkout names",
+            {"LOG_GROUP": "", "LOG_STREAM": "gpu-run/default/abc"},
+            "does not name",
+        ),
+    ],
+)
+def test_a_run_with_no_readable_log_is_reported_rather_than_failed(
+    workflow: dict[str, Any],
+    tmp_path: Path,
+    probe: str,
+    environment: dict[str, str],
+    expected: str,
+) -> None:
+    """Mutation: exit non-zero when there is nothing to read.
+
+    A queued job has no stream and a queue outside this checkout resolves to no group.
+    Neither is a fault, and a red dispatch would send somebody looking for a broken workflow
+    when what happened is that their job has not started yet. The report above this step is
+    already written and is the thing they came for.
+    """
+    summary = tmp_path / "summary.md"
+    summary.touch()
+
+    result = run_step_script(
+        workflow_step(workflow, "Show the last fifty lines")["run"],
+        cwd=tmp_path,
+        env={
+            "RUNNER_TEMP": str(tmp_path),
+            "GITHUB_STEP_SUMMARY": str(summary),
+            **environment,
+        },
+    )
+
+    assert result.returncode == 0, probe
+    assert expected in summary.read_text(encoding="utf-8"), probe
+
+
+def test_a_refused_log_read_names_the_grant_and_does_not_fail_the_dispatch(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """Mutation: fail the job, or print the CLI error.
+
+    The role is applied from a laptop, so this workflow can legitimately be merged before
+    the grant exists in the account. Failing then would break the one workflow a researcher
+    uses to look at a run, in order to add a feature to it. And the error text is withheld
+    rather than printed because a CLI diagnostic names the resource it was refused, and a
+    log stream ARN carries the account id into a page anybody on the repository may read.
+    """
+    summary = tmp_path / "summary.md"
+    summary.touch()
+    stub_bin = tmp_path / "bin"
+    write_stub(
+        stub_bin,
+        "aws",
+        'echo "An error occurred (AccessDeniedException) when calling the GetLogEvents '
+        'operation: not authorized on arn:aws:logs:us-east-1:123456789012:log-group:x" >&2\n'
+        "exit 254\n",
+    )
+
+    result = run_step_script(
+        workflow_step(workflow, "Show the last fifty lines")["run"],
+        cwd=tmp_path,
+        env={
+            "RUNNER_TEMP": str(tmp_path),
+            "GITHUB_STEP_SUMMARY": str(summary),
+            "LOG_GROUP": "/aws/batch/sbsandbox-intern-edullm-gpu",
+            "LOG_STREAM": "gpu-run/default/abc",
+        },
+        stub_bin=stub_bin,
+    )
+    written = summary.read_text(encoding="utf-8")
+
+    assert result.returncode == 0
+    assert "log_tail_unreadable" in result.stderr
+    assert "logs:GetLogEvents" in written
+    assert "123456789012" not in written + result.stdout + result.stderr
+
+
+def test_the_exit_code_is_reported_as_a_number_and_never_as_a_platform_stage(
+    workflow: dict[str, Any],
+) -> None:
+    """Mutation: map the exit code onto the staged scheme and print the stage name.
+
+    Two of the sixty-seven failures in the retained window carry a staged code and six carry
+    researcher-invented ones in the same numeric range, so a report that read a 76 or an 85
+    as a stage of this platform would misdescribe three runs for every one it described. The
+    number is printed and the sentence beside it says whose number it is.
+    """
+    body = workflow_step(workflow, "Say what the run is doing")["run"]
+
+    assert "not a stage" in body
+    assert "exitCode" in body

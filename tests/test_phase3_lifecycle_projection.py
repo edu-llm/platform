@@ -42,7 +42,7 @@ from edullm_platform.contracts.lifecycle import (
 from edullm_platform.contracts.manifest import RunManifest
 from edullm_platform.contracts.results import ResultManifest
 from edullm_platform.contracts.vocabulary import RetentionClass
-from edullm_platform.execution import batch_submit_request
+from edullm_platform.execution import WANDB_ENTITY, batch_submit_request
 from edullm_platform.lifecycle_handler import (
     LifecycleEventError,
     binding_key,
@@ -53,17 +53,25 @@ from edullm_platform.lifecycle_projection import (
     BATCH_STATUS_PROGRESSION,
     BATCH_STATUS_TO_RUN_STATE,
     CANCELLATION_REASON_MARKERS,
+    CHECKPOINT_DIR_VARIABLE,
     EVENTBRIDGE_BATCH_DETAIL_TYPE,
     EVENTBRIDGE_BATCH_SOURCE,
+    MARKER_OBJECT,
+    MAXIMUM_LISTING_PAGES,
     OUTPUT_PREFIX_VARIABLE,
     OUTPUTS_BUCKET,
+    STEP_DIRECTORY,
+    WANDB_ENTITY_VARIABLE,
+    WANDB_PROJECT_VARIABLE,
     UnmappedBatchStatusError,
     UnreadableBatchEventError,
     derived_event_id,
+    described_listing_checksum,
     project_batch_event,
     project_batch_state_change,
     transition_is_recordable,
 )
+from tests.test_manifest import load_representative_manifest
 
 RUN_ID = "run_0198f0a1-2b3c-7d4e-8f01-23456789abcd"
 BATCH_JOB_ID = "3f9d1f1e-6b18-4a63-9c0d-2f6d4a1b8c70"
@@ -367,9 +375,10 @@ def test_a_successful_run_records_where_its_output_went() -> None:
     assert projected.result is not None
     assert projected.result.output_prefixes == (CONTAINER_OUTPUT_PREFIX,)
     assert projected.result.retention_class is RetentionClass.STANDARD
-    # Both still empty, and both are limitations rather than descriptions. A Batch state
-    # change carries what the container was configured with, never what its process did,
-    # so the checkpoint it wrote and the W&B run it published are unreachable from here.
+    # Both empty for this event, and for two different reasons that the tests below
+    # separate. This fixture's container was told no W&B project, so there is no reference
+    # to derive; and no caller handed this projection anything to list a prefix with, which
+    # is the default and is what keeps the function pure.
     assert projected.result.wandb_run is None
     assert projected.result.checkpoints == ()
 
@@ -975,3 +984,402 @@ def test_a_result_written_before_the_field_existed_still_parses() -> None:
     }
 
     assert ResultManifest.model_validate(stored).exit_code is None
+
+
+# ---------------------------------------------------------------------------------------
+# What the run produced, which the record could not previously say
+# ---------------------------------------------------------------------------------------
+
+CHECKPOINT_PREFIX = f"{CONTAINER_OUTPUT_PREFIX}checkpoints/"
+WANDB_PROJECT = "onboarding"
+WRITTEN_AT = datetime(2026, 7, 27, 20, 10, tzinfo=UTC)
+
+
+def with_environment(status: str, environment: list[dict[str, str]], **overrides: Any) -> Any:
+    delivered = detail(status, **overrides)
+    delivered["container"] = dict(delivered["container"], environment=environment)
+    return delivered
+
+
+def platform_environment() -> list[dict[str, str]]:
+    """What ``batch_submit_request`` hands a GPU container, in the shape the event carries."""
+    return [
+        {"name": OUTPUT_PREFIX_VARIABLE, "value": CONTAINER_OUTPUT_PREFIX},
+        {"name": CHECKPOINT_DIR_VARIABLE, "value": CHECKPOINT_PREFIX},
+        {"name": WANDB_ENTITY_VARIABLE, "value": WANDB_ENTITY},
+        {"name": WANDB_PROJECT_VARIABLE, "value": WANDB_PROJECT},
+    ]
+
+
+class FakeLister:
+    """A store that answers one listing, in the shape boto3 answers one.
+
+    Keys are given relative to the checkpoint prefix, because that is how a reader of this
+    file thinks about them and the absolute form is noise.
+    """
+
+    def __init__(self, members: dict[str, int], *, pages: int = 1) -> None:
+        self.members = members
+        self.pages = pages
+        self.calls: list[dict[str, Any]] = []
+
+    def list_objects_v2(self, **arguments: Any) -> Any:
+        self.calls.append(arguments)
+        if len(self.calls) < self.pages:
+            return {"Contents": [], "IsTruncated": True, "NextContinuationToken": "more"}
+        key = str(arguments["Prefix"])
+        return {
+            "Contents": [
+                {"Key": key + name, "Size": size, "LastModified": WRITTEN_AT}
+                for name, size in self.members.items()
+            ],
+            "IsTruncated": False,
+        }
+
+
+class RefusingLister:
+    """A store that answers the way S3 answers a principal holding no ``s3:ListBucket``."""
+
+    def list_objects_v2(self, **arguments: Any) -> Any:
+        del arguments
+        error = RuntimeError("An error occurred (AccessDenied) when calling ListObjectsV2")
+        error.response = {"Error": {"Code": "AccessDenied"}}  # type: ignore[attr-defined]
+        raise error
+
+
+def projected_with(lister: Any, **overrides: Any) -> Any:
+    return project_batch_state_change(
+        eventbridge_event_id=EVENTBRIDGE_EVENT_ID,
+        detail=with_environment("SUCCEEDED", platform_environment(), attempts=[attempt_block()]),
+        occurred_at=OCCURRED_AT_INSTANT,
+        checkpoint_lister=lister,
+        **overrides,
+    )
+
+
+def test_the_wandb_reference_is_the_naming_contract_read_off_the_event() -> None:
+    """Reads BOTH sides. Mutation: put the entity in a constant here or in the projection.
+
+    A run is named for its run id and the entity and project are in the container's own
+    environment, so the reference costs no read at all -- which is why it was worth writing
+    even though the checkpoint half needs a grant nobody has applied. Comparing it against
+    what ``batch_submit_request`` actually sends is what holds the two modules together; a
+    projection compared against a constant would only be self-consistent.
+    """
+    manifest = load_representative_manifest("gpu-routine.yaml")
+    account = "123456789012"
+    target = ExecutionTarget(
+        compute_profile="gpu-1xa10g",
+        region="us-east-1",
+        job_queue_arn=f"arn:aws:batch:us-east-1:{account}:job-queue/q",
+        job_definition_arn=f"arn:aws:batch:us-east-1:{account}:job-definition/d",
+        execution_role_arn=f"arn:aws:iam::{account}:role/e",
+        workload_role_arn=f"arn:aws:iam::{account}:role/w",
+        log_group="/aws/batch/g",
+    )
+    told = [
+        {"name": entry["Name"], "value": entry["Value"]}
+        for entry in batch_submit_request(
+            manifest=manifest,
+            target=target,
+            run_id=RUN_ID,
+            job_definition=target.job_definition_arn,
+        )["ContainerOverrides"]["Environment"]
+    ]
+
+    projected = project_batch_state_change(
+        eventbridge_event_id=EVENTBRIDGE_EVENT_ID,
+        detail=with_environment("SUCCEEDED", told, attempts=[attempt_block()]),
+        occurred_at=OCCURRED_AT_INSTANT,
+    )
+
+    assert projected.result is not None
+    assert projected.result.wandb_run is not None
+    assert projected.result.wandb_run.entity == WANDB_ENTITY
+    assert projected.result.wandb_run.project == manifest.wandb_project
+    # The run name and not the id W&B mints for the URL, which is unknowable from outside
+    # the container. This is what a reader searches the project with.
+    assert projected.result.wandb_run.run_id == RUN_ID
+
+
+@pytest.mark.parametrize(
+    ("label", "environment"),
+    [
+        ("the container was told no project", [{"name": WANDB_ENTITY_VARIABLE, "value": "eduLLM"}]),
+        (
+            "the container was told no entity",
+            [{"name": WANDB_PROJECT_VARIABLE, "value": WANDB_PROJECT}],
+        ),
+        (
+            "the project is not a name W&B accepts",
+            [
+                {"name": WANDB_ENTITY_VARIABLE, "value": "eduLLM"},
+                {"name": WANDB_PROJECT_VARIABLE, "value": "-not a project"},
+            ],
+        ),
+    ],
+)
+def test_a_run_that_names_no_reachable_wandb_run_records_none(
+    label: str, environment: list[dict[str, str]]
+) -> None:
+    """Mutation: fill the entity from a constant when the event does not carry one.
+
+    A reference naming a project nobody set sends a reader to a place with nothing in it,
+    which is worse than an empty field -- an empty field says the record does not know. A
+    CPU run admitted before the project variable existed is exactly this case, and there
+    are stored records of them.
+
+    The refusal must be an absence and never an exception. This runs inside the recorder,
+    where a raise dead-letters the delivery and loses the event, the attempt and the result
+    for a run that happened.
+    """
+    delivered = with_environment(
+        "FAILED", [*environment, {"name": "EDULLM_RUN_ID", "value": RUN_ID}]
+    )
+    delivered["attempts"] = [attempt_block(container={"exitCode": 1})]
+
+    projected = project_batch_state_change(
+        eventbridge_event_id=EVENTBRIDGE_EVENT_ID,
+        detail=delivered,
+        occurred_at=OCCURRED_AT_INSTANT,
+    )
+
+    assert projected.result is not None, label
+    assert projected.result.wandb_run is None, label
+
+
+def test_the_checkpoint_variable_is_the_one_the_container_is_told() -> None:
+    """Reads BOTH sides. Mutation: rename it on either.
+
+    The same seam ``OUTPUT_PREFIX_VARIABLE`` has, and the same silent failure: a rename on
+    one side leaves every result manifest reporting that no run ever wrote a checkpoint,
+    with nothing anywhere saying why.
+    """
+    manifest = load_representative_manifest("gpu-routine.yaml")
+    account = "123456789012"
+    target = ExecutionTarget(
+        compute_profile="gpu-1xa10g",
+        region="us-east-1",
+        job_queue_arn=f"arn:aws:batch:us-east-1:{account}:job-queue/q",
+        job_definition_arn=f"arn:aws:batch:us-east-1:{account}:job-definition/d",
+        execution_role_arn=f"arn:aws:iam::{account}:role/e",
+        workload_role_arn=f"arn:aws:iam::{account}:role/w",
+        log_group="/aws/batch/g",
+    )
+    told = {
+        entry["Name"]: entry["Value"]
+        for entry in batch_submit_request(
+            manifest=manifest,
+            target=target,
+            run_id=RUN_ID,
+            job_definition=target.job_definition_arn,
+        )["ContainerOverrides"]["Environment"]
+    }
+
+    assert CHECKPOINT_DIR_VARIABLE in told
+    assert told[CHECKPOINT_DIR_VARIABLE] == told[OUTPUT_PREFIX_VARIABLE] + "checkpoints/"
+
+
+def test_a_run_that_saved_a_checkpoint_is_no_longer_the_same_record_as_one_that_saved_nothing() -> (
+    None
+):
+    """THE DEFECT, STATED AS THE TWO RECORDS IT COULD NOT TELL APART.
+
+    Mutation: write ``checkpoints=()`` unconditionally, which is what this did.
+
+    The step number comes off the directory name because OLMo-core writes no marker of
+    ours, the size is the sum of what is in it, the instant is the newest write, and the
+    absence of a ``_SUCCESS`` is recorded as an absence rather than smoothed over -- a
+    directory the library wrote is describable and is not a resume reference, and
+    ``resume_reference`` refuses it for that reason.
+    """
+    lister = FakeLister(
+        {
+            "step200/model_and_optim/.metadata": 400,
+            "step200/train/rank0.pt": 600,
+            "step400/model_and_optim/.metadata": 500,
+            "step400/train/rank0.pt": 700,
+        }
+    )
+
+    projected = projected_with(lister)
+
+    assert projected.result is not None
+    written = projected.result.checkpoints
+    assert [checkpoint.step for checkpoint in written] == [200, 400]
+    assert written[1].uri == f"{CHECKPOINT_PREFIX}step400/"
+    assert written[1].size_bytes == 1200
+    assert written[1].created_at == WRITTEN_AT
+    assert written[1].success_marker_uri is None
+    assert written[1].epoch is None
+    assert projected.result.resumable_checkpoints == ()
+    assert lister.calls[0]["Prefix"].endswith("/checkpoints/")
+
+
+def test_a_marker_beside_a_step_directory_is_recorded_as_one() -> None:
+    """Mutation: report every directory as resumable, or none of them.
+
+    ``success_marker_uri`` is the difference between a checkpoint a resume would load and
+    one a reclaimed attempt left half written, and it is the only thing in this record that
+    says which. Reported from the listing rather than from reading the marker, because a
+    listing says whether the object is there and that is what the field means.
+    """
+    projected = projected_with(FakeLister({"step10/model.pt": 900, "step10/_SUCCESS": 120}))
+
+    assert projected.result is not None
+    ((checkpoint,)) = projected.result.checkpoints
+    assert checkpoint.success_marker_uri == f"{CHECKPOINT_PREFIX}step10/_SUCCESS"
+    assert checkpoint.is_resumable
+    assert projected.result.latest_resumable_checkpoint() == checkpoint
+
+
+def test_a_refused_listing_records_no_checkpoints_and_does_not_lose_the_run() -> None:
+    """THE CASE THIS SHIPS IN. Mutation: let the refusal propagate.
+
+    ``sbsandbox-intern-edullm-lifecycle-lambda`` holds four ``s3:PutObject`` grants and no
+    read of any kind, so the listing is refused until somebody applies an IAM stack by hand.
+    A raise here would dead-letter the delivery and lose the event, the attempt and the
+    result for a run that demonstrably happened, in order to leave a field empty that was
+    empty before -- which is trading the whole lineage record for a decoration.
+    """
+    projected = projected_with(RefusingLister())
+
+    assert projected.result is not None
+    assert projected.result.checkpoints == ()
+    # And the rest of the record is untouched, which is the point of the trade.
+    assert projected.result.output_prefixes == (CONTAINER_OUTPUT_PREFIX,)
+    assert projected.result.wandb_run is not None
+    assert projected.attempt is not None
+
+
+def test_a_checkpoint_prefix_outside_this_platforms_bucket_is_not_listed() -> None:
+    """Mutation: list whatever the container was told.
+
+    The prefix comes off the event, so it is only as trustworthy as whoever set the job
+    definition -- the same reasoning that bounds ``output_prefixes``. A checkpoint list read
+    out of somebody else's bucket would be this record vouching for objects nothing here
+    controls, and the listing would be attempted against a bucket this role has no business
+    reading.
+    """
+    lister = FakeLister({"step1/model.pt": 10})
+    delivered = with_environment(
+        "SUCCEEDED",
+        [
+            {"name": OUTPUT_PREFIX_VARIABLE, "value": CONTAINER_OUTPUT_PREFIX},
+            {"name": CHECKPOINT_DIR_VARIABLE, "value": "s3://not-ours/teams/x/runs/y/checkpoints/"},
+        ],
+        attempts=[attempt_block()],
+    )
+
+    projected = project_batch_state_change(
+        eventbridge_event_id=EVENTBRIDGE_EVENT_ID,
+        detail=delivered,
+        occurred_at=OCCURRED_AT_INSTANT,
+        checkpoint_lister=lister,
+    )
+
+    assert projected.result is not None
+    assert projected.result.checkpoints == ()
+    assert lister.calls == [], "the foreign prefix was listed rather than refused"
+
+
+def test_a_listing_longer_than_the_ceiling_records_nothing_rather_than_a_subset() -> None:
+    """Mutation: return what was read when the page ceiling is reached.
+
+    S3 lists keys lexicographically, so ``step1000/`` sorts before ``step200/`` and a
+    truncated listing hides an arbitrary subset rather than the oldest entries. A partial
+    list would therefore be a record claiming a run wrote checkpoints it did not, in an
+    order nothing chose -- and it would be indistinguishable from a complete one.
+    """
+    projected = projected_with(
+        FakeLister({"step1/model.pt": 10}, pages=MAXIMUM_LISTING_PAGES + 1)
+    )
+
+    assert projected.result is not None
+    assert projected.result.checkpoints == ()
+
+
+def test_a_failed_attempt_records_the_checkpoints_it_managed_to_write() -> None:
+    """Mutation: list only on a success.
+
+    An attempt reclaimed at hour eleven of twelve has checkpoints, and they are the whole
+    reason a second attempt is worth paying for. A record that listed them only for a
+    succeeded run would be silent about exactly the runs somebody needs to resume.
+    """
+    delivered = with_environment(
+        "FAILED", platform_environment(), attempts=[attempt_block(container={"exitCode": 1})]
+    )
+
+    projected = project_batch_state_change(
+        eventbridge_event_id=EVENTBRIDGE_EVENT_ID,
+        detail=delivered,
+        occurred_at=OCCURRED_AT_INSTANT,
+        checkpoint_lister=FakeLister({"step7/model.pt": 42}),
+    )
+
+    assert projected.result is not None
+    assert [checkpoint.step for checkpoint in projected.result.checkpoints] == [7]
+
+
+def test_nothing_is_listed_when_no_caller_supplied_something_to_list_with() -> None:
+    """The default, which is what keeps this module checkable without an AWS account.
+
+    Mutation: build a client here. Every test in this file that asserts the bytes a
+    delivery projects to would then need one, and the module would stop being the pure
+    thing its docstring claims.
+    """
+    projected = project_batch_state_change(
+        eventbridge_event_id=EVENTBRIDGE_EVENT_ID,
+        detail=with_environment("SUCCEEDED", platform_environment(), attempts=[attempt_block()]),
+        occurred_at=OCCURRED_AT_INSTANT,
+    )
+
+    assert projected.result is not None
+    assert projected.result.checkpoints == ()
+    # The half that needs no read is still filled, which is the difference between the two.
+    assert projected.result.wandb_run is not None
+
+
+def test_a_replayed_delivery_over_an_unchanged_prefix_projects_to_the_same_bytes() -> None:
+    """The property the recorder's whole write-once design rests on.
+
+    Mutation: read something that moves -- a describe, a clock, a listing of a prefix the
+    run is still writing to. A redelivery would then compute different bytes under the same
+    derived key, the conditional write would refuse the second, and which projection the
+    store kept would be decided by timing.
+
+    A terminal event arrives after the container has exited and nothing writes to the prefix
+    afterwards, so two projections of one delivery list the same objects. That is the whole
+    argument for this read being safe where ``batch:DescribeJobs`` was not.
+    """
+    members = {"step3/model.pt": 30, "step3/_SUCCESS": 8}
+
+    first = projected_with(FakeLister(members))
+    second = projected_with(FakeLister(members))
+
+    assert first.result is not None
+    assert second.result is not None
+    assert canonical_json_bytes(first.result) == canonical_json_bytes(second.result)
+
+
+def test_the_two_copies_of_the_checkpoint_vocabulary_agree() -> None:
+    """Reads BOTH modules. Mutation: change either copy.
+
+    ``edullm_platform.checkpoints`` holds the commit protocol and the reader that verifies
+    it, and this projection cannot import it: ``tests/test_lambda_package_closure.py``
+    refuses any module either handler carries whose name matches a phase-specific one, and
+    ``checkpoints`` is on that list, so importing it would put the whole protocol into the
+    recorder's zip.
+
+    So the marker name, the step directory pattern and the listing checksum are restated,
+    and this is what stops the copies becoming two answers to one question. The checksum in
+    particular has to agree byte for byte, because it is the value a reader would compare a
+    directory against.
+    """
+    from edullm_platform import checkpoints as protocol
+
+    entries = [("train/rank0.pt", 600, "listing"), ("model_and_optim/.metadata", 400, "listing")]
+
+    assert MARKER_OBJECT == protocol.MARKER_OBJECT
+    assert STEP_DIRECTORY.pattern == protocol.OLMO_CORE_STEP_DIRECTORY.pattern
+    assert described_listing_checksum(entries) == protocol.described_checksum(entries)
