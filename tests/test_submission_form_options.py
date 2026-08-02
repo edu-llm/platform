@@ -171,13 +171,27 @@ def corpora_a_run_could_actually_train_on() -> set[str]:
     """Registered published corpora whose declared tokenizer this platform can build.
 
     The join that makes the dropdown a promise rather than a list. A corpus is offerable when
-    it is registered AND something can turn its tokenizer into a model, and the second half is
-    a fact about OLMo-core rather than about the registry.
+    it is registered AND it is a corpus rather than an input to one AND something can turn its
+    tokenizer into a model. The first two are facts about this registry and are read off the
+    entry. The third is a fact about OLMo-core, which is why it is looked up rather than
+    written down.
+
+    THE FAMILY TEST IS HERE AS WELL AS IN ITS OWN TEST BELOW, AND THE DUPLICATION IS THE
+    POINT. That test asserts the family over every published entry, which is stronger than
+    the dropdown needs and is only true while the registry holds pretrain corpora alone.
+    Three published corpora already cannot be written into it for an unrelated reason
+    (``config/datasets.yaml`` says which), and the day the model can hold them, the obvious
+    edit is to narrow that assertion to the offered entries. Narrowing it is safe only
+    because this join makes the same test itself. Without that, a tokenizer entry naming
+    itself in its own ``tokenizer`` field would become offerable the moment that tokenizer
+    reached ``TOKENIZERS``, and the run would memmap ``tokenizer.json`` as uint16 tokens and
+    report nothing.
     """
     return {
         entry["reference_id"]
         for entry in registry("datasets.yaml").get("published", [])
-        if entry["tokenizer"] in TOKENIZERS
+        if entry["dataset_id"].split("/", maxsplit=1)[0] == "pretrain"
+        and entry["tokenizer"] in TOKENIZERS
     }
 
 
@@ -255,18 +269,66 @@ def test_a_corpus_whose_tokenizer_nothing_can_build_stays_registered_and_unoffer
     listed. Add ``tokenizer/bytes-utf8`` to ``TOKENIZERS`` and the test above starts demanding
     the option; publish a corpus on a tokenizer nothing can build and it starts demanding its
     absence. Neither needs anybody to remember this test exists.
+
+    FOUR CORPORA ARE IN THAT STATE NOW AND THEY ARE NOT ALL THE SAME CASE, which matters
+    because the symmetry is what sent the last diagnosis to the wrong repository.
+    ``math-memory-full-v1`` joins lean4-mathlib-bytes on ``tokenizer/bytes-utf8``, which has
+    no OLMo-core equivalent to name. ``fineweb-edu-1b-v2`` and ``fineweb-edu-1b-v6`` are on
+    ``tokenizer/smollm2-bpe``, which has an exact one, because their tokenizer's own
+    dataset.json names ``HuggingFaceTB/SmolLM2-135M`` and ``from_hf`` reproduces it. So one
+    of the two exclusions is a missing upstream feature and the other is a line nobody has
+    written, and only the second resolves by somebody deciding to resolve it.
     """
     registered = {
         entry["reference_id"] for entry in registry("datasets.yaml").get("published", [])
     }
     offerable = corpora_a_run_could_actually_train_on()
 
-    assert "lean4-mathlib-bytes-v3" in registered
-    assert "lean4-mathlib-bytes-v3" not in offerable
-    assert "lean4-mathlib-bytes-v3" not in options_for("dataset_release")
+    for reference_id in ("lean4-mathlib-bytes-v3", "math-memory-full-v1", "fineweb-edu-1b-v6"):
+        assert reference_id in registered
+        assert reference_id not in offerable
+        assert reference_id not in options_for("dataset_release")
     assert "regmix-10b-v1" in offerable, (
         "at least one registered corpus must be trainable, or the dropdown offers no real "
         "data at all and the exclusion above has quietly become the rule"
+    )
+
+
+def test_two_versions_of_one_corpus_are_never_offered_at_the_same_time() -> None:
+    """Mutation: register both published versions of a corpus and offer whatever qualifies.
+
+    ``pretrain/fineweb-edu-1b`` is the live instance and the only corpus registered twice.
+    v2 and v6 are both published, sealed and frozen, so both belong in the registry, and
+    only v6 is current. Nothing distinguishes them to the join above, which sees the same
+    family, the same tokenizer and the same pinned digest, that last because their token
+    manifests are byte identical.
+
+    So they are excluded together today and would be offered together tomorrow. The moment
+    ``tokenizer/smollm2-bpe`` reaches ``TOKENIZERS`` this fails and names the corpus, which
+    is the intent. A superseded corpus on the dropdown is not a refusal a submitter would
+    ever see; it is a run that reads real tokens nobody meant them to read, and it costs a
+    GPU day to produce a result against the wrong version of the data.
+
+    Resolving it needs ``retired`` on ``PublishedDatasetReference``, which
+    ``RegisteredDatasetRelease`` already has and which this model cannot be given without
+    moving the schema and the digests ``proof/phase-0`` records for it. That is the decision
+    this test exists to surface, at the moment it starts costing something.
+    """
+    offerable = corpora_a_run_could_actually_train_on()
+    offered_families = [
+        entry["dataset_id"]
+        for entry in registry("datasets.yaml").get("published", [])
+        if entry["reference_id"] in offerable
+    ]
+    duplicated = sorted(
+        {family for family in offered_families if offered_families.count(family) > 1}
+    )
+
+    assert offered_families, "no corpus is offered at all, so this guard proves nothing"
+    assert not duplicated, (
+        f"{duplicated} is offered at more than one version, and a submitter picking between "
+        "them is choosing on a reference id rather than on which one is current; "
+        "config/datasets.yaml records which version each corpus's owner named"
     )
 
 
@@ -307,6 +369,15 @@ def test_no_offered_dataset_is_one_a_training_run_cannot_use_as_a_corpus() -> No
     A tokenizer is an input to a corpus, not a corpus. Asserted on the family segment because
     that is the mechanical form of the distinction and because the standard's own family enum
     does not contain ``tokenizer`` at all.
+
+    ASSERTED OVER EVERY PUBLISHED ENTRY RATHER THAN OVER THE OFFERED ONES, WHICH IS STRONGER
+    THAN THE TITLE AND STRONGER THAN THE DROPDOWN NEEDS. It holds because the registry carries
+    pretrain corpora alone, and it does so for a reason unrelated to this rule:
+    ``PublishedDatasetReference`` requires a ``tokenizer`` and every other family published so
+    far declares none, so ``sft/pedagogy70-normal30``, ``vendor/openai-prm800k`` and
+    ``tokenizer/smollm2-bpe`` cannot be written into the file at all. When that changes, this
+    is the assertion to narrow to the offered entries, and narrowing it is safe because
+    ``corpora_a_run_could_actually_train_on`` makes the same family test itself.
     """
     for entry in registry("datasets.yaml").get("published", []):
         assert entry["dataset_id"].split("/", maxsplit=1)[0] == "pretrain", (
