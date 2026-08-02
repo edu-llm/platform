@@ -466,6 +466,7 @@ def test_the_step_is_not_a_gate_because_admission_admits_the_person_it_describes
             claimed_team="memory-split",
             repository_registered=True,
             dataset_registered=True,
+            dataset_is_a_corpus=True,
             compute_profile_registered=True,
             immutable_revision=True,
             immutable_image=True,

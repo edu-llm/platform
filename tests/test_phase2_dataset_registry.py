@@ -5,11 +5,21 @@ import yaml
 from pydantic import ValidationError
 
 from edullm_platform.config import load_yaml
+from edullm_platform.contracts.admission import AdmissionReason
 from edullm_platform.contracts.dataset_registry import (
     DatasetRegistry,
     PublishedDatasetReference,
     RegisteredDatasetRelease,
 )
+from edullm_platform.contracts.execution import ExecutionTargetCatalog
+from edullm_platform.contracts.manifest import RunManifest
+from edullm_platform.contracts.workload import WorkloadCatalog
+from edullm_platform.execution import (
+    NotATrainingCorpusError,
+    batch_submit_request,
+    resolve_execution_target,
+)
+from tests.test_phase2_admission import ACCOUNT_ID, admit_submission
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -342,6 +352,123 @@ def test_is_registered_answers_for_published_references_too() -> None:
     assert registry.is_registered(SHIPPED_RELEASE_ID) is True
     assert registry.reference_for(SHIPPED_RELEASE_ID) is None
     assert registry.is_registered("nothing-registers-this") is False
+
+
+def test_is_a_trainable_corpus_separates_what_resolves_from_what_a_run_may_read() -> None:
+    """Mutation: fold the family test into ``is_registered`` instead of adding a method.
+
+    They are two questions and the answers go to different readers. "Nothing registers this"
+    sends a submitter to check the identifier they typed; "this is registered and is not a
+    corpus" sends them to look for the derived artifact they actually want. Folding them
+    would answer the second with ``unregistered_dataset``, which names a dataset that is
+    plainly listed in the file the refusal points at.
+
+    A release id and an unknown identifier both answer True here, and that is not a hole. A
+    release id names no family, so there is no family question to ask about one, and an
+    unknown identifier is refused by ``is_registered`` before this is consulted. Each
+    condition answers exactly one thing and a submission trips whichever apply.
+    """
+    payload = registry_payload()
+    payload["published"] = [
+        published_reference_payload(),
+        published_reference_payload(
+            reference_id="smollm2-bpe-v1",
+            uri="s3://edullm-data/tokenizer/smollm2-bpe/v1/",
+            dataset_id="tokenizer/smollm2-bpe",
+            manifest_sha256="354a65ca1bd51076f972205fe1fbb8f261c6a022787be84f3bbae4aa13d3c529",
+            tokenizer=None,
+        ),
+    ]
+
+    registry = DatasetRegistry.model_validate(payload)
+
+    assert registry.is_registered("smollm2-bpe-v1") is True
+    assert registry.is_a_trainable_corpus("smollm2-bpe-v1") is False
+    assert registry.is_a_trainable_corpus("olmo-150b-dolma2-v1") is True
+    assert registry.is_a_trainable_corpus(SHIPPED_RELEASE_ID) is True
+    assert registry.is_a_trainable_corpus(NO_DATASET_ID) is True
+
+
+def test_a_hand_written_manifest_naming_a_tokenizer_is_refused_rather_than_trained_on() -> None:
+    """Mutation: keep the family test at the dropdown, where it started.
+
+    THIS IS THE TEST THE WHOLE FAMILY RULE EXISTS FOR, and the dropdown is not where it can
+    be made. A ``choice`` input constrains what the form sends; it constrains nothing about
+    what ``admit`` is handed, and the manifest is a YAML document a submitter can write by
+    hand and dispatch. So the question this asks is what happens when somebody does.
+
+    What used to happen, before this rule, is the worst shape a failure has. ``is_registered``
+    answers True for a tokenizer, so admission accepts; ``reference_for`` resolves it, so the
+    execution block names ``tokenizer/smollm2-bpe`` as ``EDULLM_DATASET_ID``; the reader hands
+    back every object in the prefix, because a tokenizer declares no partitions; the group
+    carries no dtype, so ``NumpyFSLDatasetConfig`` takes OLMo-core's ``uint16`` default; and
+    the run memmaps ``tokenizer.json`` as tokens and trains on it. The loss moves. Nothing
+    raises, no exit code is non-zero, and the result is a checkpoint somebody believes.
+
+    Asserted through ``admit`` rather than against the registry method, because what has to
+    hold is that a submission carrying this is refused, not that a helper returns False. The
+    detail is checked for the condition's own name for the same reason: a denial that said
+    only ``unregistered_dataset`` would send its reader to look for a missing registry entry
+    that is right there.
+    """
+    outcome = admit_submission(manifest_overrides={"dataset_release": "smollm2-bpe-v1"})
+
+    assert not outcome.accepted
+    assert outcome.decision.reason is AdmissionReason.DENIED_OUTRIGHT
+    assert "dataset_is_not_a_corpus" in outcome.decision.detail
+    assert "unregistered_dataset" not in outcome.decision.detail, (
+        "the dataset is registered, and a refusal naming it as unregistered sends its reader "
+        "to add an entry that already exists"
+    )
+    assert outcome.execution is None
+    assert load_dataset_registry().is_registered("smollm2-bpe-v1"), (
+        "the refusal must not have come from de-registering the tokenizer; it is registered "
+        "on purpose, because both fineweb-edu-1b entries pin its digest"
+    )
+
+
+def test_nothing_downstream_of_admission_can_build_a_training_block_for_a_tokenizer() -> None:
+    """Mutation: trust admission, since it is the gate and it is tested directly above.
+
+    A BACKSTOP, AND THE ARGUMENT FOR IT IS THE COST OF THE FAILURE RATHER THAN ITS ODDS. The
+    admission path is one code path, and what a gap in it produces is not a wasted GPU day
+    but a result nobody can tell from a real one. ``batch_submit_request`` is the last place
+    the corpus is still an object with a family attached, and after it there is only an
+    environment variable a container reads.
+
+    Reads the tokenizer's entry out of ``config/datasets.yaml`` rather than building one, so
+    that this exercises the reference the platform would really resolve.
+    """
+    registry = load_dataset_registry()
+    tokenizer_reference = registry.reference_for("smollm2-bpe-v1")
+    assert tokenizer_reference is not None, "the tokenizer is registered on purpose"
+
+    manifest = load_yaml(
+        PROJECT_ROOT / "fixtures" / "manifests" / "cpu-routine.yaml", RunManifest
+    )
+    target = resolve_execution_target(
+        compute_profile=manifest.compute_profile,
+        catalog=load_yaml(PROJECT_ROOT / "config" / "workload-catalog.yaml", WorkloadCatalog),
+        targets=load_yaml(
+            PROJECT_ROOT / "config" / "execution-targets.yaml", ExecutionTargetCatalog
+        ),
+        account_id=ACCOUNT_ID,
+    )
+
+    with pytest.raises(NotATrainingCorpusError) as exc_info:
+        batch_submit_request(
+            manifest=manifest,
+            target=target,
+            run_id="run_01khd4a1b2c3d4e5f6g7h8j9k0",
+            job_definition=target.job_definition_arn,
+            dataset_reference=tokenizer_reference,
+        )
+
+    assert "tokenizer" in str(exc_info.value)
+    assert "dataset_is_not_a_corpus" in str(exc_info.value), (
+        "a backstop firing means admission has a gap, so the message has to name the gate "
+        "that should have caught it rather than reading as a submitter's mistake"
+    )
 
 
 def test_registry_unknown_schema_version_fails_closed() -> None:

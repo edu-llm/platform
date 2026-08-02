@@ -172,6 +172,7 @@ def build_request_facts(
         claimed_team=manifest.team,
         repository_registered=repositories.is_registered(manifest.repository),
         dataset_registered=dataset_registry.is_registered(manifest.dataset_release),
+        dataset_is_a_corpus=dataset_registry.is_a_trainable_corpus(manifest.dataset_release),
         compute_profile_registered=is_compute_profile_registered(manifest, catalog),
         immutable_revision=manifest_has_immutable_revision(manifest),
         immutable_image=manifest_has_immutable_image(manifest),

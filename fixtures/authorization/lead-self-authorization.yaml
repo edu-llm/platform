@@ -9,6 +9,7 @@ request:
   claimed_team: memory-split
   repository_registered: true
   dataset_registered: true
+  dataset_is_a_corpus: true
   compute_profile_registered: true
   immutable_revision: true
   immutable_image: true

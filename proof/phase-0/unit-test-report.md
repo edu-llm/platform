@@ -17,10 +17,10 @@ uv run python tools/build_phase0_proof.py
 
 | measure | count |
 | --- | --- |
-| collected by pytest | 4465 |
-| executed (excluding tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py, tests/test_phase5_proof.py) | 4272 |
-| passed | 4270 |
-| failed | 2 |
+| collected by pytest | 4655 |
+| executed (excluding tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py, tests/test_phase5_proof.py) | 4462 |
+| passed | 4455 |
+| failed | 7 |
 | errored | 0 |
 | skipped | 0 |
 | pytest exit code | 1 |
@@ -31,9 +31,9 @@ Every test node id cited by the negative-case matrix, plus every test parametris
 
 | measure | count |
 | --- | --- |
-| selected node ids | 255 |
-| executed | 255 |
-| passed | 255 |
+| selected node ids | 254 |
+| executed | 254 |
+| passed | 254 |
 | failed | 0 |
 | errored | 0 |
 | skipped | 0 |

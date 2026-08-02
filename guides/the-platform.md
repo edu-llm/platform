@@ -93,6 +93,7 @@ A waiver lands in the run's manifest and the approving lead is told which check 
 
 | `dataset_release` | Train tokens | Objects |
 | --- | --- | --- |
+| `math-frontload-100m-v1` | 0.1B | 3 |
 | `refhq-regmix-5p5b-v2` | 5.5B | 24 |
 | `regmix-10b-v1` | 10.0B | 41 |
 | `olmo-original-30b-v1` | 31.3B | 120 |

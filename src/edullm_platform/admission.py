@@ -107,6 +107,7 @@ _NAMED_FINDINGS_LIMIT = 5
 _CONDITION_FOR_FALSE_FACT: dict[str, str] = {
     "repository_registered": "unregistered_repository",
     "dataset_registered": "unregistered_dataset",
+    "dataset_is_a_corpus": "dataset_is_not_a_corpus",
     "compute_profile_registered": "unregistered_compute_profile",
     "immutable_revision": "mutable_repository_revision",
     "immutable_image": "mutable_image_reference",

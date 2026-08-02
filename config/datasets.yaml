@@ -37,15 +37,53 @@
 # The join is a fact about a corpus that does exist and whose tokenizer no workload can
 # construct, so it changes on its own when OLMo-core grows one.
 #
-# WHY NINE ENTRIES AND WHY FIVE OF THEM REACH THE FORM. Every entry here is a promise the
+# WHY FIFTEEN ENTRIES AND WHY SIX OF THEM REACH THE FORM. Every entry here is a promise the
 # corpus can be resolved; a dropdown option is the stronger promise that a run picking it
-# works. The five dolma2 corpora carry both. The other four carry only the first, because
-# nothing here can build the tokenizer they were tokenized with, and that gap is computed
-# rather than listed. See the join at the end of this comment.
+# works. The six dolma2 corpora carry both. The other nine carry only the first, and for three
+# separate reasons -- a tokenizer nothing can build, a version its owner has superseded, or a
+# family a run must not train on. All three gaps are computed rather than listed, so this
+# comment cannot drift out of agreement with the file.
+#
+# NOT EVERY REGISTERED DATASET IS A CORPUS, WHICH IS NEW AND IS THE MOST IMPORTANT LINE HERE.
+# This list now carries two tokenizers, a verbatim vendor mirror and two sft conversation
+# corpora, because dependents pin them by digest and admission has to be able to resolve what
+# a lineage record names. Being registered is not permission to train on one. A tokenizer
+# declares no partitions, so the reader hands back every object rather than a trainable split,
+# and its group carries no dtype, which a NumpyFSLDatasetConfig turns into OLMo-core's uint16
+# default and then memmaps tokenizer.json as if it were tokens. The run trains, the loss
+# moves, and nothing anywhere reports a problem.
+#
+# WHAT REFUSES THAT IS NOW A RULE AND USED TO BE AN ACCIDENT. Until this change `tokenizer`
+# was a required non-null field, and a tokenizer declares no tokenizer of its own, so the
+# entry simply could not be written. That refused the right thing for no reason, and it
+# evaporated the moment the field learned to hold null so the five entries above could exist.
+# The replacement is TRAINABLE_FAMILIES in src/edullm_platform/contracts/dataset_registry.py,
+# an allowlist of the `dataset_id` families a run may name as its training corpus, holding
+# `pretrain` and `sft`. It is enforced at admission, where a manifest naming anything else is
+# denied outright under the `dataset_is_not_a_corpus` condition in config/policy.yaml, and
+# again in execution.py, which refuses to build the EDULLM_DATASET_ID block at all. The
+# dropdown join reads the same allowlist, so the form, the gate and the submission agree by
+# construction rather than by three lists being kept in step.
+#
+# WHY `sft` IS ALLOWED AND `vendor` IS NOT. The P7 tutor work trains on
+# sft/pedagogy70-normal30, so forbidding the family would refuse a real training input to buy
+# a guarantee that excluding tokenizers already buys. vendor/openai-prm800k is excluded on its
+# own evidence rather than on a hunch: its limitations block records that records are kept
+# verbatim and that any train-ready representation must be a separately validated derived
+# artifact. Naming it as a corpus asks a run to train on the thing that corpus says is not
+# trainable yet. An allowlist rather than a denylist because the next family somebody
+# publishes should be refused until a person decides it is trainable, and the refusal names
+# the file to edit.
 #
 # pretrain/fineweb-edu-1b is carried at v2 AND v6, the one corpus in this file registered
 # twice. Both are published, sealed and frozen, and the registry's job is to carry what
-# exists. v6 is the current one.
+# exists. v6 is the current one and v2 is `retired: true`, which is the same flag and the same
+# reason as dolma-2026-07 above: nothing computable tells the two apart. They share a family
+# and a tokenizer and pin the same digest, and the bucket does not close the gap either --
+# v6 declares `supersedes` of v5 and v2 declares `supersedes` of v1, and v3 through v5 were
+# never published, so no chain in the data reaches from one to the other. Un-retiring v2 puts
+# two versions of one corpus on the form for a submitter to choose between on reference id
+# alone, and tests/test_submission_form_options.py fails rather than letting that happen.
 #
 # THE TWO fineweb ENTRIES PIN THE SAME DIGEST AND THAT IS NOT A COPY-PASTE ERROR.
 # tokens/manifest.json is byte identical under both prefixes, 1,793 bytes hashing to
@@ -55,45 +93,6 @@
 # here, so the two entries agree by construction and a reader comparing them is looking at one
 # manifest twice.
 #
-# WHAT HAPPENS THE DAY tokenizer/smollm2-bpe BECOMES BUILDABLE, WHICH NOBODY HAS DECIDED YET.
-# The join offers a corpus once something can build its tokenizer, so adding that entry to the
-# TOKENIZERS map offers v2 and v6 together and only v6 should be offered. This file cannot say
-# so today. `retired` separates a registered release from an offered one and lives on
-# RegisteredDatasetRelease alone, and giving PublishedDatasetReference the same flag moves
-# schemas/datasets.schema.json along with both the file digest and the structural digest
-# proof/phase-0 records for it. tests/test_submission_form_options.py refuses two versions
-# of one dataset id
-# at once, so that day costs a red test naming the decision rather than a superseded corpus
-# sitting on the form.
-#
-# THE TOKENIZERS ARE NOT REGISTRABLE, AND NOT BECAUSE THEY ARE UNREADABLE. All three are
-# published, sealed and openable. A tokenizer declares no partitions, so the reader hands back
-# every object rather than a trainable split, and its group carries no dtype, which a
-# NumpyFSLDatasetConfig turns into OLMo-core's uint16 default and then memmaps tokenizer.json
-# as if it were tokens. The run trains and the loss moves. A tokenizer is an input to a
-# corpus, named below in each entry's `tokenizer` field, not a corpus a run reads.
-#
-# WHAT ACTUALLY REFUSES ONE IS THINNER THAN THAT PARAGRAPH READS. No field on
-# PublishedDatasetReference marks an entry as a tokenizer. What stops one being written is
-# that `tokenizer` is required and has no null, and a tokenizer declares no tokenizer
-# dependency of its own, so there is no value to put there. That is a shape that happens to
-# refuse rather than a rule about families. The one rule about families is an assertion in
-# tests/test_submission_form_options.py that every published entry is a pretrain corpus, and
-# the offerability join now carries the same family test, so narrowing that assertion to
-# admit an sft or vendor corpus cannot quietly put a tokenizer on the form as well.
-#
-# THREE PUBLISHED CORPORA BELONG IN THIS LIST AND CANNOT BE WRITTEN INTO IT TODAY.
-# sft/pedagogy70-normal30/v1, vendor/openai-prm800k/v1 and tokenizer/smollm2-bpe/v1 are all
-# sealed and frozen and none of them declares a tokenizer. The first is pre-tokenization
-# conversation text, 25,329 train rows and 2,401 val over two objects, whose own limitations
-# block records that val holds no pedagogy rows and is only the unused no_robots remainder.
-# The second is a verbatim vendor mirror whose limitations block says a train-ready form must
-# be a separately validated derived artifact. The third is a tokenizer. Registering any of
-# them needs `tokenizer` to accept an explicit null, which is one line on the model and not a
-# small change from here, because it moves schemas/datasets.schema.json, the digest
-# proof/phase-0/schema-compatibility.md records for that file, and DatasetRegistry's
-# structural digest in the same table.
-#
 # Every entry below was confirmed against the account on 2026-08-02, and each digest was read
 # from two places written by two different passes, the group's `manifest_sha256` in
 # dataset.json and the `manifest_sha256` map in the corpus's own _VALIDATED.json seal. All
@@ -101,43 +100,73 @@
 # requires the digest for frozen datasets alone, so a `live` or `append-only` dataset has
 # nothing to pin here and cannot be registered.
 #
+# dolma2-bpe-v1 IS THE ONE ENTRY WHOSE DIGEST DID NOT COME FROM THOSE TWO PLACES, and it is
+# called out here rather than left for a reader to notice. Its seal predates the current shape
+# and carries `bytes`, `objects`, `validated_at` and nothing else -- no `dataset_sha256` and no
+# `manifest_sha256` map at all, where every other seal in the bucket has both. What replaces
+# the missing second reading is stronger than it rather than weaker: b37b8954 appears in its
+# own dataset.json group and in the `depends_on` block of all six dolma2 corpora below, each
+# written by a different sealing pass on a different day, and all seven agree exactly. The
+# thing that is genuinely not attested is that any validator ever recomputed it, which is why
+# this paragraph exists. Re-sealing the tokenizer under the current shape is what would remove
+# the asterisk, and that is upstream's change to make.
+#
 # Their licences differ and several are honestly unknown. lean4-mathlib-bytes declares
-# Apache-2.0, fineweb-edu-1b, math-memory-full and olmo-150b-dolma2 declare ODC-By-1.0, and
-# the rest declare `{basis: unknown, id: null}`. Registering those anyway is correct rather
-# than sloppy: the upstream standard prefers an honest unknown to a false MIT. What it means
-# downstream is that a lineage record will name a corpus whose licence basis nobody has
-# established, which is a fact about the corpus and not a defect in the record.
+# Apache-2.0, openai-prm800k declares MIT, fineweb-edu-1b, math-frontload-100m and
+# math-memory-full declare ODC-By-1.0, math-sft-60m declares `mixed`, and the rest declare
+# `{basis: unknown, id: null}`. Registering those anyway is correct rather than sloppy: the
+# upstream standard prefers an honest unknown to a false MIT. `mixed` is the interesting one,
+# because it is a declared answer rather than an absent one and it is still not a licence --
+# it says the corpus was assembled from sources under more than one, without naming them, so
+# anybody redistributing a model trained on it has a question to answer that this file cannot.
+# What all of this means downstream is that a lineage record will name a corpus whose licence
+# basis nobody has established, which is a fact about the corpus and not a defect in the
+# record.
 #
-# FOUR ARE REGISTERED HERE AND NOT OFFERED ON THE FORM, AND THAT IS DELIBERATE.
-# lean4-mathlib-bytes and math-memory-full depend on `tokenizer/bytes-utf8`, and OLMo-core has
-# no byte tokenizer. TokenizerConfig offers dolma2, dolma2_sigdig, gpt_neox_olmo_dolma_v1_5,
-# gpt2 and from_hf, and nothing under olmo_core/data/ mentions bytes or utf8, measured on
-# 2026-08-02 against the checkout the training image builds from. fineweb-edu-1b v2 and v6
-# depend on `tokenizer/smollm2-bpe`, which is the different case and the one that will resolve
-# first. It has an exact OLMo-core equivalent, because its own dataset.json names
-# HuggingFaceTB/SmolLM2-135M as its source and from_hf reproduces that tokenizer, so the gap
-# is a line nobody has added rather than a feature nobody has. A run picking any of the four
-# today reaches a container that cannot construct a model for the tokens it just resolved and
-# exits 69.
+# NINE ARE REGISTERED HERE AND NOT OFFERED ON THE FORM, AND THAT IS DELIBERATE.
+# Four are refused by family, above. lean4-mathlib-bytes and math-memory-full depend on
+# `tokenizer/bytes-utf8`, and OLMo-core has no byte tokenizer. TokenizerConfig offers dolma2,
+# dolma2_sigdig, gpt_neox_olmo_dolma_v1_5, gpt2 and from_hf, and nothing under olmo_core/data/
+# mentions bytes or utf8, measured on 2026-08-02 against the checkout the training image builds
+# from. fineweb-edu-1b v2 and v6 depend on `tokenizer/smollm2-bpe`, which is the different case
+# and the one that will resolve first. It has an exact OLMo-core equivalent, because its own
+# dataset.json names HuggingFaceTB/SmolLM2-135M as its source and from_hf reproduces that
+# tokenizer, so the gap is a line nobody has added rather than a feature nobody has. A run
+# picking either of those tokenizer cases today reaches a container that cannot construct a
+# model for the tokens it just resolved and exits 69. v2 would stay off the form regardless,
+# being retired.
 #
-# They stay registered because this file answers "may a submission name this", and the honest
-# answer is yes: they are real sealed corpora, admission can resolve them, and a workload that
-# is not an OLMo-core training run could read them tomorrow. The dropdown answers the
-# different question of whether it will work. The join between the two lives in
-# tests/test_submission_form_options.py and is computed from tools' TOKENIZERS map, so adding
-# a tokenizer config makes the option appear without anybody editing this comment.
+# The tokenizer cases stay registered because this file answers "may a submission name this",
+# and the honest answer is yes: they are real sealed corpora, admission can resolve them, and a
+# workload that is not an OLMo-core training run could read them tomorrow. The dropdown answers
+# the different question of whether it will work. The join between the two lives in
+# tests/test_submission_form_options.py and is computed from tools' TOKENIZERS map and
+# TRAINABLE_FAMILIES, so adding a tokenizer config makes the option appear without anybody
+# editing this comment.
 schema_version: 1
 releases:
   - release_id: dolma-2026-07
     retired: true
   - release_id: none
 published:
+  # Registered so the six dolma2 corpora below can be read against the tokenizer they name,
+  # and unreachable as a corpus by family. The digest is the one with seven attestations and
+  # no seal, described above.
+  - reference_id: dolma2-bpe-v1
+    uri: "s3://edullm-data/tokenizer/dolma2-bpe/v1/"
+    dataset_id: tokenizer/dolma2-bpe
+    version: v1
+    manifest_sha256: "b37b8954f767a351b726aa66f47867c299be41f96aee7b17171bf8851a772267"
+    tokenizer: null
   - reference_id: fineweb-edu-1b-v2
     uri: "s3://edullm-data/pretrain/fineweb-edu-1b/v2/"
     dataset_id: pretrain/fineweb-edu-1b
     version: v2
     manifest_sha256: "047d001de3d08d443f99f1b12a7c998dc06bdef57a914e26f7feeaf4601be2ca"
     tokenizer: tokenizer/smollm2-bpe
+    # Superseded by v6, which is its owner's answer and not something this file can compute.
+    # Both remain published and sealed, so the entry stays and the menu item goes.
+    retired: true
   - reference_id: fineweb-edu-1b-v6
     uri: "s3://edullm-data/pretrain/fineweb-edu-1b/v6/"
     dataset_id: pretrain/fineweb-edu-1b
@@ -150,12 +179,29 @@ published:
     version: v3
     manifest_sha256: "2b8bb3786e0920078794c5aaa91c311790f693a47a362aebce64beff0b6f55ad"
     tokenizer: tokenizer/bytes-utf8
+  # dolma2, so this one is offered the day it is registered rather than waiting on anything.
+  # 99,793,454 train tokens and 226,553 val over three objects and 400,080,028 bytes.
+  - reference_id: math-frontload-100m-v1
+    uri: "s3://edullm-data/pretrain/math-frontload-100m/v1/"
+    dataset_id: pretrain/math-frontload-100m
+    version: v1
+    manifest_sha256: "f1fa04487acaecee730b966049494a4099c4ee5510429b647e3da0f1475b28b4"
+    tokenizer: tokenizer/dolma2-bpe
   - reference_id: math-memory-full-v1
     uri: "s3://edullm-data/pretrain/math-memory-full/v1/"
     dataset_id: pretrain/math-memory-full
     version: v1
     manifest_sha256: "be0bd3ed9ecb2df8846ea184fa0c7919a9883dc055c216436a283dd29a06ac03"
     tokenizer: tokenizer/bytes-utf8
+  # Pre-tokenization conversation text, so `tokenizer` is null rather than unknown. 203,324
+  # train rows and 2,078 val over two objects and 71,278,801 bytes. Its licence is declared as
+  # `mixed`, which is the case the paragraph above is about.
+  - reference_id: math-sft-60m-v1
+    uri: "s3://edullm-data/sft/math-sft-60m/v1/"
+    dataset_id: sft/math-sft-60m
+    version: v1
+    manifest_sha256: "af2fa14d3f3d818f7a99a60543d9a5800fc3351295e3a497c2e13dfb8742382e"
+    tokenizer: null
   - reference_id: olmo-127b-v1
     uri: "s3://edullm-data/pretrain/olmo-127b/v1/"
     dataset_id: pretrain/olmo-127b
@@ -174,6 +220,33 @@ published:
     version: v1
     manifest_sha256: "7371ce63878d9a4525ac82fcba151665d1711563b14bd93b1083116bc03d00bc"
     tokenizer: tokenizer/dolma2-bpe
+  # A verbatim vendor mirror for reward and reasoning work, four jsonl files over 477,105,425
+  # bytes, with no partitions and so no train split to read. Its own limitations block says any
+  # train-ready representation must be a separately validated derived artifact, which is why
+  # `vendor` is not in TRAINABLE_FAMILIES; registering it is what lets that derived artifact
+  # name its parent by digest.
+  - reference_id: openai-prm800k-v1
+    uri: "s3://edullm-data/vendor/openai-prm800k/v1/"
+    dataset_id: vendor/openai-prm800k
+    version: v1
+    manifest_sha256: "f7d678ba40d48403fec9be0db53bc78d991b6b755af72143d0f7476ae7255822"
+    tokenizer: null
+  # The P7 tutor corpus. Pre-tokenization conversation text, so `tokenizer` is null rather than
+  # unknown, 25,329 train rows and 2,401 val over two objects and 21,630,120 bytes.
+  #
+  # ITS OWN LIMITATIONS BLOCK RECORDS THAT val HOLDS NO PEDAGOGY ROWS AND IS ONLY THE UNUSED
+  # no_robots REMAINDER, which is carried here because it is invisible from the registry entry
+  # and changes what a number means. The corpus is 70 percent pedagogy by construction and its
+  # validation split is 0 percent, so a val loss computed on it measures how well the model
+  # writes ordinary assistant replies, not how well it teaches. Reporting that as the tutor
+  # metric is the mistake this note exists to prevent, and the fix is a held-out pedagogy split
+  # upstream rather than anything in this file.
+  - reference_id: pedagogy70-normal30-v1
+    uri: "s3://edullm-data/sft/pedagogy70-normal30/v1/"
+    dataset_id: sft/pedagogy70-normal30
+    version: v1
+    manifest_sha256: "527f66916a4995f52ea667e6dc2008e7ecf83cdeb1886df9387bf04cc3b495fd"
+    tokenizer: null
   - reference_id: refhq-regmix-5p5b-v2
     uri: "s3://edullm-data/pretrain/refhq-regmix-5p5b/v2/"
     dataset_id: pretrain/refhq-regmix-5p5b
@@ -186,3 +259,12 @@ published:
     version: v1
     manifest_sha256: "a24992f53dc4a900bacf8fa571d77e343fd28ffa9054c14b93d54204b0a38cb4"
     tokenizer: tokenizer/dolma2-bpe
+  # Registered because both fineweb-edu-1b entries pin this digest in their `depends_on`, and
+  # unreachable as a corpus by family. Its dataset.json names HuggingFaceTB/SmolLM2-135M as its
+  # source, which is the fact OLMo-core needs to build it.
+  - reference_id: smollm2-bpe-v1
+    uri: "s3://edullm-data/tokenizer/smollm2-bpe/v1/"
+    dataset_id: tokenizer/smollm2-bpe
+    version: v1
+    manifest_sha256: "354a65ca1bd51076f972205fe1fbb8f261c6a022787be84f3bbae4aa13d3c529"
+    tokenizer: null

@@ -142,6 +142,12 @@ def test_a_reference_names_the_tokenizer_the_corpus_declares_and_never_a_default
     Required rather than defaulted for the same reason the standard gives for license.basis:
     an honest declaration beats a convenient one, and a field nobody had to fill in is a field
     nobody checked.
+
+    STILL TRUE AFTER THE FIELD LEARNED TO HOLD NULL, WHICH IS WHY THIS SURVIVED. Nullable and
+    optional are different properties and only the first was wanted. Four registered datasets
+    genuinely declare no tokenizer, so the honest answer had to become spellable; leaving the
+    key out is not that answer, it is the answer nobody wrote down, and it is the one the
+    paragraph above is about. The test below covers the null that is now accepted.
     """
     payload = reference_payload()
     del payload["tokenizer"]
@@ -149,6 +155,85 @@ def test_a_reference_names_the_tokenizer_the_corpus_declares_and_never_a_default
     with pytest.raises(ValidationError) as exc_info:
         PublishedDatasetReference.model_validate(payload)
     assert_validation_error(exc_info.value, error_type="missing", loc=("tokenizer",))
+
+
+def test_a_corpus_that_declares_no_tokenizer_says_so_rather_than_borrowing_one() -> None:
+    """Mutation: keep tokenizer non-null and write tokenizer/dolma2-bpe into the sft entries.
+
+    Four registered datasets declare no tokenizer dependency at all, and they are not one
+    case. ``sft/pedagogy70-normal30`` and ``sft/math-sft-60m`` are pre-tokenization
+    conversation text, so there is nothing to name yet; ``vendor/openai-prm800k`` is a
+    verbatim mirror of somebody else's jsonl; and a tokenizer has no tokenizer of its own.
+
+    What a mandatory field buys in that situation is a plausible wrong value, which is the
+    exact failure the test above is written about. Writing ``tokenizer/dolma2-bpe`` on the
+    pedagogy corpus to satisfy the schema would publish a claim about how that corpus was
+    built which nobody made and which nothing downstream could tell from a real one.
+    """
+    reference = PublishedDatasetReference.model_validate(
+        reference_payload(
+            reference_id="pedagogy70-normal30-v1",
+            uri="s3://edullm-data/sft/pedagogy70-normal30/v1/",
+            dataset_id="sft/pedagogy70-normal30",
+            manifest_sha256="527f66916a4995f52ea667e6dc2008e7ecf83cdeb1886df9387bf04cc3b495fd",
+            tokenizer=None,
+        )
+    )
+
+    assert reference.tokenizer is None
+    assert reference.family == "sft"
+    assert reference.is_a_corpus_a_run_may_read
+
+
+def test_a_tokenizer_is_registrable_and_is_not_a_corpus_a_run_may_read() -> None:
+    """Mutation: rely on the null tokenizer to keep tokenizers out, as the shape used to.
+
+    THE TWO PROPERTIES IN THIS TEST ARE INDEPENDENT AND BOTH ARE WANTED. Registrable, because
+    ``pretrain/fineweb-edu-1b`` pins this digest in its ``depends_on`` and a lineage record
+    naming a corpus built on a tokenizer nobody registered cannot be resolved back to what was
+    read. Not a corpus, because a tokenizer declares no partitions and no dtype, so a run
+    handed one memmaps ``tokenizer.json`` as uint16 tokens and trains on it without raising.
+
+    ``tokenizer=None`` is passed here on purpose, since that is what the entry really carries
+    and it is the state in which the old accidental refusal has been removed. If the family
+    rule were not doing the work, this reference would be indistinguishable from the sft one
+    above.
+    """
+    reference = PublishedDatasetReference.model_validate(
+        reference_payload(
+            reference_id="smollm2-bpe-v1",
+            uri="s3://edullm-data/tokenizer/smollm2-bpe/v1/",
+            dataset_id="tokenizer/smollm2-bpe",
+            manifest_sha256="354a65ca1bd51076f972205fe1fbb8f261c6a022787be84f3bbae4aa13d3c529",
+            tokenizer=None,
+        )
+    )
+
+    assert reference.family == "tokenizer"
+    assert not reference.is_a_corpus_a_run_may_read
+
+
+def test_retiring_a_reference_leaves_it_registered() -> None:
+    """Mutation: drop the superseded version from the file instead of flagging it.
+
+    ``pretrain/fineweb-edu-1b`` is published at v2 and v6 and only v6 is current, which is its
+    owner's answer rather than anything computable -- the two share a family and a tokenizer
+    and pin the same digest. Deleting v2 would make the registry disagree with the bucket and
+    leave any record naming it unresolvable, so the flag separates "exists" from "offered",
+    exactly as ``RegisteredDatasetRelease`` already does for ``dolma-2026-07``.
+
+    Defaulted false so that every entry written before the flag existed still means what it
+    meant, and so retiring one is a deliberate line rather than an omission.
+    """
+    assert PublishedDatasetReference.model_validate(reference_payload()).retired is False
+
+    retired = PublishedDatasetReference.model_validate(reference_payload(retired=True))
+
+    assert retired.retired is True
+    assert retired.is_a_corpus_a_run_may_read, (
+        "retirement is about which version the form offers and not about what the dataset is; "
+        "conflating them would make un-retiring an entry a safety question as well"
+    )
 
 
 @pytest.mark.parametrize("uri", NOT_A_PUBLISHED_PREFIX)

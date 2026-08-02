@@ -21,6 +21,11 @@ DeniedOutrightCondition = Literal[
     "mutable_repository_revision",
     "mutable_image_reference",
     "image_scan_findings_unreviewed",
+    # A dataset this platform can resolve and that a run must not train on. Separate from
+    # `unregistered_dataset` because the two send a reader to different places: one says the
+    # registry has never heard of this, and this one says the registry knows exactly what it
+    # is and it is an input to a corpus rather than a corpus. See TRAINABLE_FAMILIES.
+    "dataset_is_not_a_corpus",
 ]
 
 
@@ -69,6 +74,12 @@ class RequestFacts(ContractModel):
     claimed_team: TeamId
     repository_registered: bool
     dataset_registered: bool
+    #: Whether the dataset named is one a run may train on, as opposed to one this platform
+    #: can merely resolve. Required rather than defaulted, for the reason
+    #: ``image_scan_reviewed`` is: the answer this fact carries when nobody supplies it would
+    #: be "yes, train on it", and the failure it guards is a run that trains on a tokenizer
+    #: and reports nothing wrong. Three places in the tree build one of these.
+    dataset_is_a_corpus: bool
     compute_profile_registered: bool
     immutable_revision: bool
     immutable_image: bool

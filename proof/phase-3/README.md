@@ -2,8 +2,8 @@
 
 Phase: phase-3
 Bundle schema version: 1
-Source commit: f2cf2ffa6b8a16c64159e8424371d4a69a9d859b
-Generated: 2026-08-02T16:05:32+00:00
+Source commit: 94f6f34aca83bd2e1d8abab6b6ecb68f43b2962f
+Generated: 2026-08-02T16:22:56+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 3 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase3_proof.py` at generation time. It is not done, and the Result table below says by how much.
 
@@ -29,10 +29,10 @@ What is not done is captures rather than mechanism, which is a change in this bu
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 4617 |
-| suite tests executed | 4424 |
-| suite passed | 4406 |
-| suite failed | 18 |
+| suite tests collected | 4655 |
+| suite tests executed | 4462 |
+| suite passed | 4459 |
+| suite failed | 3 |
 | suite errored | 0 |
 | suite skipped | 0 |
 | matrix node ids executed | 470 |
@@ -72,7 +72,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | file | digest |
 | --- | --- |
 | .github/workflows/deploy-phase3-batch.yml | sha256:a9d5c44ff9bf62a3203b0dac325ea71f11f345f405a030aa5438bc78dec405e0 |
-| .github/workflows/submit-run.yml | sha256:2fa07b46b6bdb836929692e570d96ac747989077819a66896907307e9a0eace4 |
+| .github/workflows/submit-run.yml | sha256:2a9715fda82137ebeee21ccd68ed99a956ab5b2c64b4a172cc91f648f21ef58f |
 | config/execution-targets.yaml | sha256:7c17ec0cb0064a9c824cdea5113239e1c4fb5d24c1436a111a697bf9fee9710f |
 | config/image-exceptions.yaml | sha256:8b1e3e6ac779215e0c521b91a2889b5e2404139678752534ac1bfb0f34751716 |
 | config/workload-catalog.yaml | sha256:105db4ff1fd4e75223b80a073433388a6f0f935915c28df03739339b91ef6447 |

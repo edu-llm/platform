@@ -23,15 +23,23 @@ version, a content digest and a tokenizer because those are the facts a later re
 to resolve and pin it, and none of them belong on the thin model — adding them there would
 put a field with no admission-time reader next to the one field admission actually checks.
 
-Two lists, but one admission question. :meth:`DatasetRegistry.is_registered` answers over
-both, because ``unregistered_dataset`` denies a submission outright and a corpus that names
-its own uri and digest is not an unresolvable input. The lists stay separate because they
-carry different facts, not because a submitter is being asked which kind they picked.
+Two lists, and admission asks two questions of them. :meth:`DatasetRegistry.is_registered`
+answers over both, because ``unregistered_dataset`` denies a submission outright and a corpus
+that names its own uri and digest is not an unresolvable input. The lists stay separate
+because they carry different facts, not because a submitter is being asked which kind they
+picked.
+
+:meth:`DatasetRegistry.is_a_trainable_corpus` is the second question and arrived with the
+first non-corpus entries. This registry now carries a tokenizer, a verbatim vendor mirror and
+two sft conversation corpora, because dependents pin them by digest and the registry's job is
+to carry what exists. Being registered is what lets a submission resolve one; it is not
+permission to train on one, and ``TRAINABLE_FAMILIES`` is where the difference is written
+down.
 """
 
 from __future__ import annotations
 
-from typing import Annotated, Literal, Self
+from typing import Annotated, Final, Literal, Self
 
 from pydantic import BeforeValidator, Field, model_validator
 
@@ -44,10 +52,44 @@ from .dataset import (
 )
 
 __all__ = [
+    "TRAINABLE_FAMILIES",
     "DatasetRegistry",
     "PublishedDatasetReference",
     "RegisteredDatasetRelease",
 ]
+
+#: Which dataset families a run may name as the corpus it trains on.
+#:
+#: THE ONE THING STANDING BETWEEN A TOKENIZER AND A TRAINING RUN, and it is written as an
+#: allowlist because the failure it prevents is silent. A tokenizer declares no partitions, so
+#: the reader hands back every object rather than a trainable split, and its group carries no
+#: dtype, which a ``NumpyFSLDatasetConfig`` turns into OLMo-core's ``uint16`` default before
+#: memmapping ``tokenizer.json`` as if it were tokens. The run trains, the loss moves, and
+#: nothing anywhere reports a problem. A result produced that way is indistinguishable from a
+#: real one until somebody asks what the model read.
+#:
+#: WHAT USED TO REFUSE IT WAS A SHAPE RATHER THAN A RULE. ``tokenizer`` was required and
+#: non-null, and a tokenizer declares no tokenizer of its own, so the entry could not be
+#: written at all. That was never a decision about families; it was an accident of a field
+#: that happened to be mandatory, and it evaporated the moment the field learned to hold
+#: ``None`` so that the sft and vendor corpora could be registered. This is the deliberate
+#: replacement, added in the same commit that removed the accident.
+#:
+#: AN ALLOWLIST AND NOT A DENYLIST, WHICH IS THE WHOLE SAFETY ARGUMENT. A denylist naming
+#: ``tokenizer`` and ``vendor`` is correct today and admits the next family somebody publishes
+#: without anybody deciding it is trainable. The dataset standard fixes six families and calls
+#: adding one "a deliberate change to this document", and the upstream reader already carries
+#: a seventh, so families do arrive. Failing closed means a new one is refused until a person
+#: puts it here, and the cost of that is a refusal naming exactly what to do.
+#:
+#: WHY ``sft`` IS IN IT AND ``vendor`` IS NOT. The P7 tutor work trains on
+#: ``sft/pedagogy70-normal30``, so forbidding the family would refuse a real training input to
+#: buy a guarantee about tokenizers that excluding tokenizers already buys.
+#: ``vendor/openai-prm800k`` is left out on its own evidence rather than on a hunch: its
+#: ``limitations`` block records that records are preserved verbatim and that "any train-ready
+#: representation must be a separately validated derived artifact". Naming it directly as a
+#: corpus asks a run to train on the thing that corpus says is not trainable yet.
+TRAINABLE_FAMILIES: Final = frozenset({"pretrain", "sft"})
 
 
 class RegisteredDatasetRelease(ContractModel):
@@ -123,7 +165,34 @@ class PublishedDatasetReference(ContractModel):
     #: than defaulted: the upstream family file turns its own family-wide tokenizer default OFF
     #: and records the reason -- a mismatched tokenizer's ids usually still fall in range, so
     #: the failure is a plausible loss curve rather than an exception.
-    tokenizer: str = Field(min_length=1, pattern=r"^tokenizer/[a-z0-9]+(?:-[a-z0-9.]+)*$")
+    #:
+    #: NULLABLE AND STILL REQUIRED, WHICH ARE DIFFERENT PROPERTIES AND BOTH ARE WANTED. The
+    #: annotation carries no default, so pydantic still refuses an entry that omits the key;
+    #: what it now accepts is an explicit ``null``. Four registered datasets declare no
+    #: tokenizer dependency at all -- two sft corpora of pre-tokenization conversation text, a
+    #: verbatim vendor mirror, and the tokenizers themselves -- and the value the bucket offers
+    #: for them is nothing. Writing ``tokenizer/dolma2-bpe`` there to satisfy a mandatory field
+    #: would be the exact invented fact the paragraph above refuses, so the honest answer has
+    #: to be spellable and has to be spelled out.
+    #:
+    #: A NULL HERE IS NOT WHAT KEEPS A TOKENIZER OFF A TRAINING RUN. It happens to, because
+    #: ``None`` is not a key in any tokenizer map, and relying on that would be the same
+    #: accident this field used to be. ``TRAINABLE_FAMILIES`` is the rule.
+    tokenizer: str | None = Field(pattern=r"^tokenizer/[a-z0-9]+(?:-[a-z0-9.]+)*$")
+    #: Registered and no longer offered, the same two questions ``RegisteredDatasetRelease``
+    #: separates and for a reason that turned out to be identical.
+    #:
+    #: ``pretrain/fineweb-edu-1b`` is published at v2 and at v6, both sealed and frozen, and
+    #: v6 is the one its owner names as current. Nothing computable tells them apart. They
+    #: share a family and a tokenizer, and they pin the same digest, because their
+    #: ``tokens/manifest.json`` objects are byte identical. The bucket does not close the gap
+    #: either: v6 declares ``supersedes`` of v5 and v2 declares ``supersedes`` of v1, and v3
+    #: through v5 were never published, so no chain in the data reaches from one to the other.
+    #:
+    #: So this is a fact no computation can derive, which is precisely the test the release
+    #: list already applies to ``retired``. Defaulted false so every existing entry means what
+    #: it meant, and so retiring one is a deliberate line in config/datasets.yaml.
+    retired: bool = False
 
     # Deliberately no per-release source snapshot (a corpus's constituent names and their token
     # counts) here, though a compile-time mixture check would need exactly one and this model
@@ -131,6 +200,22 @@ class PublishedDatasetReference(ContractModel):
     # than merely deferred: adding it later is purely additive -- a defaulted tuple field, the
     # same shape WorkloadRoleScopeEvidence uses -- so no committed registry entry has to be
     # rewritten when the mixture fields ship.
+
+    @property
+    def family(self) -> str:
+        """The first segment of the dataset id, which is where the standard puts the family.
+
+        Derived rather than stored, deliberately. A second field would be a second place for
+        the same fact and the first place to find it disagreeing with the id a reader passes
+        to ``dataset_paths``, and the two are one statement for the same reason ``uri``,
+        ``dataset_id`` and ``version`` are held to reconstructing each other.
+        """
+        return self.dataset_id.split("/", maxsplit=1)[0]
+
+    @property
+    def is_a_corpus_a_run_may_read(self) -> bool:
+        """Whether a run may name this as the corpus it trains on. See TRAINABLE_FAMILIES."""
+        return self.family in TRAINABLE_FAMILIES
 
     @model_validator(mode="after")
     def validate_reference(self) -> Self:
@@ -205,6 +290,25 @@ class DatasetRegistry(ContractModel):
         forgotten again.
         """
         return dataset_id in self.release_ids or dataset_id in self.reference_ids
+
+    def is_a_trainable_corpus(self, dataset_id: str) -> bool:
+        """Whether a run naming this dataset would be reading a corpus rather than an input.
+
+        A SECOND QUESTION AND NOT A STRICTER VERSION OF :meth:`is_registered`, which is why
+        it is a second method and a second denied-outright condition rather than a narrowing
+        of the first. "Nothing registers this" and "this is registered and is not a corpus"
+        send a submitter to two different places, and folding them together would answer the
+        second with ``unregistered_dataset`` -- a refusal naming a dataset that is in the file
+        the refusal points at.
+
+        True for anything this cannot resolve to a published corpus, which covers ``none``,
+        ``dolma-2026-07`` and every identifier nothing registers. That is not a fail-open
+        default. A release id names no family, so there is no family question to ask about
+        one, and an unregistered identifier is already denied by :meth:`is_registered`. Each
+        condition answers exactly one thing and a submission trips whichever apply.
+        """
+        reference = self.reference_for(dataset_id)
+        return reference is None or reference.is_a_corpus_a_run_may_read
 
     def reference_for(self, reference_id: str) -> PublishedDatasetReference | None:
         """Resolve a published corpus to the facts a reader needs. Published list only.

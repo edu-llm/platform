@@ -103,6 +103,7 @@ def request_facts_payload(**overrides: object) -> dict[str, object]:
         "claimed_team": "memory-split",
         "repository_registered": True,
         "dataset_registered": True,
+        "dataset_is_a_corpus": True,
         "compute_profile_registered": True,
         "immutable_revision": True,
         "immutable_image": True,
@@ -168,6 +169,7 @@ def test_any_policy_violation_is_exception() -> None:
         claimed_team="memory-split",
         repository_registered=True,
         dataset_registered=True,
+        dataset_is_a_corpus=True,
         compute_profile_registered=True,
         immutable_revision=True,
         immutable_image=False,
@@ -516,6 +518,7 @@ def test_policy_yaml_validates_against_contract() -> None:
         "mutable_repository_revision",
         "mutable_image_reference",
         "image_scan_findings_unreviewed",
+        "dataset_is_not_a_corpus",
     )
 
 
@@ -587,6 +590,7 @@ def test_request_facts_reject_non_decimal_runtime() -> None:
                 "claimed_team": "memory-split",
                 "repository_registered": True,
                 "dataset_registered": True,
+                "dataset_is_a_corpus": True,
                 "compute_profile_registered": True,
                 "immutable_revision": True,
                 "immutable_image": True,

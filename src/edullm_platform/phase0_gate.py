@@ -14,7 +14,7 @@ from edullm_platform.contracts.base import (
     ContractModel,
     require_ordered_sequence,
 )
-from edullm_platform.contracts.dataset_registry import DatasetRegistry
+from edullm_platform.contracts.dataset_registry import TRAINABLE_FAMILIES, DatasetRegistry
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.manifest import RunManifest
 from edullm_platform.contracts.policy import (
@@ -72,6 +72,10 @@ REQUIRED_DENIED_OUTRIGHT: Final = (
     "unregistered_compute_profile",
     "mutable_repository_revision",
     "mutable_image_reference",
+    # A registered dataset that is an input to a corpus rather than a corpus. Required in
+    # policy rather than merely available, because the condition exists to stop a run
+    # training on a tokenizer and the enforcement is worth nothing if policy can drop it.
+    "dataset_is_not_a_corpus",
 )
 
 REQUIRED_REPRESENTATIVE_MANIFESTS: Final = frozenset(
@@ -586,6 +590,25 @@ def check_representative_manifests(
                 (
                     f"Manifest {filename!r} references unregistered dataset release "
                     f"{manifest.dataset_release!r}."
+                ),
+            )
+        if not dataset_registry.is_a_trainable_corpus(manifest.dataset_release):
+            reference = dataset_registry.reference_for(manifest.dataset_release)
+            # Narrowing for the type checker only. The branch above already refused anything
+            # the registry cannot resolve, and `is_a_trainable_corpus` answers True whenever
+            # `reference_for` finds nothing, so reaching here without a reference is not a
+            # reachable state -- the assert says so rather than a `None` leaking into the
+            # message as the word "None".
+            assert reference is not None
+            return fail_check(
+                "inventory_representative_manifests",
+                "dataset_is_not_a_corpus",
+                (
+                    f"Manifest {filename!r} names {manifest.dataset_release!r} as its "
+                    f"dataset release, and {reference.dataset_id!r} is in the "
+                    f"{reference.family!r} family, which is an input to a corpus rather "
+                    f"than a corpus a run may train on. Trainable families are "
+                    f"{', '.join(sorted(TRAINABLE_FAMILIES))}."
                 ),
             )
         cost = compute_manifest_cost_inputs(manifest, catalog)
