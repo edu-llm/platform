@@ -98,21 +98,32 @@ PROMOTED_PROFILES = (
     PROMOTED_PROFILE,
     "gpu-1xt4",
     "gpu-4xt4",
+    "gpu-8xt4",
     "gpu-1xa10g",
     "gpu-4xa10g",
     "gpu-8xa10g",
     "gpu-1xl4",
     "gpu-4xl4",
+    "gpu-8xl4",
+    "gpu-1xl40s",
     "gpu-4xl40s",
+    "gpu-8xl40s",
     "gpu-8xa100",
     "gpu-8xh100",
 )
-#: The profile the refusal tests below ask for, and it moved from gpu-4xa10g when that shape
-#: was promoted. It has to be a profile the catalog prices and does not provision, and the
-#: only two left are this and gpu-1xa10g-sagemaker. This one, because the SageMaker profile
-#: is unprovisioned for a second reason -- a different service with no Batch queue to give
-#: it -- and a test about a missing execution target should not lean on that.
-UNPROVISIONED_PROFILE = "gpu-1xl40s"
+#: The profile the refusal tests below ask for. It has to be a profile the catalog prices and
+#: does not provision, and it moved from gpu-4xa10g to gpu-1xl40s and now to here as each of
+#: those was promoted. gpu-1xa10g-sagemaker is the only one left, so this constant has run out
+#: of room. It is also the weaker choice the note here used to explain avoiding, because it is
+#: unprovisioned for a second reason as well: it is a different service with no Batch queue to
+#: give it, so a reader could think these tests turn on that rather than on the flag. They do
+#: not. What they need is a priced profile whose provisioned flag is false, and this file
+#: flips that flag itself where a test needs it true.
+#:
+#: Promoting the sagemaker profile or removing it leaves nothing here to name, and the answer
+#: then is a profile the catalog does not ship, built in the test rather than read from
+#: config/workload-catalog.yaml.
+UNPROVISIONED_PROFILE = "gpu-1xa10g-sagemaker"
 UNREGISTERED_PROFILE = "cpu-1024vcpu"
 
 MEMBER = "caiiris"

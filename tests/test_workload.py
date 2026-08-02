@@ -298,9 +298,9 @@ def test_workload_catalog_yaml_validates_against_contract() -> None:
     project_root = Path(__file__).resolve().parents[1]
     config_path = project_root / "config" / "workload-catalog.yaml"
     catalog = load_yaml(config_path, WorkloadCatalog)
-    # Thirteen since gpu-8xa10g, the g5.48xlarge the catalog had never priced. Same tripwire
-    # role as the workload count below: a profile arriving without a deliberate edit.
-    assert len(catalog.compute_profiles) == 13
+    # Sixteen since gpu-8xt4, gpu-8xl4 and gpu-8xl40s filled the eight-device row. Same
+    # tripwire role as the workload count below: a profile arriving without a deliberate edit.
+    assert len(catalog.compute_profiles) == 16
     # Five since the presets collapsed. It was seven, and the two pairs that merged --
     # olmo-core-check-cpu with olmo-core-check-gpu, and olmo-core-train-1gpu with
     # olmo-core-train-4gpu -- differed only in a compute profile the submission form

@@ -436,7 +436,7 @@ def test_every_run_body_is_strict_about_failures_and_unset_variables() -> None:
     # which is indistinguishable from the diagnostic having found nothing to say.
         # Seven deploys, plus: the dispatch gate, validate, the failure diagnostic, the two
         # verifications, the queue view, and the per-run report. The second verification
-        # arrived with the nine GPU shapes and is its own step rather than nine more
+        # arrived with the GPU shapes stack and is its own step rather than thirteen more
         # expectations bolted onto the first.
     assert len(scripts) == len(DEPLOYMENT_ORDER) + 7
     assert all(script.startswith("set -euo pipefail\n") for script in scripts)
@@ -736,23 +736,25 @@ def test_a_verification_call_the_stub_does_not_recognize_would_be_noticed(
 
 
 # --------------------------------------------------------------------------------------
-# The nine-shape verification, executed against stubbed answers
+# The thirteen-shape verification, executed against stubbed answers
 # --------------------------------------------------------------------------------------
 
 #: One environment, one queue and one definition per shape, answered from the arguments
-#: rather than from a variable per shape. The step appends nine of each in a loop, so a stub
-#: keyed by name would be twenty-seven variables saying the same thing; this composes the
+#: rather than from a variable per shape. The step appends thirteen of each in a loop, so a
+#: stub keyed by name would be thirty-nine variables saying the same thing; this composes the
 #: expected answer from the profile name in the call and lets a test drift one field of it.
 #:
 #: The vCPU and GPU counts come out of the shape name, which is why the names carry them.
-#: gpu-8xa10g is 192 and 8, gpu-4xt4 is 48 and 4, and so on, matching CONTAINER_SHAPES.
+#: gpu-8xa10g is 192 and 8, gpu-4xt4 is 48 and 4, and so on, matching CONTAINER_SHAPES. The
+#: two exceptions are gpu-8xt4 on the g4dn.metal host, which is 96 vCPU rather than 192, and
+#: gpu-8xa100 on p4d.24xlarge, which is also 96.
 SHAPES_STUB = """
 profile="$(printf '%s\\n' "$@" | sed -n 's/^sbsandbox-intern-edullm-\\(gpu-[a-z0-9]*\\)\\(-run\\)*$/\\1/p' | head -n 1)"
 case "${profile}" in
-  gpu-1xt4|gpu-1xl4) vcpus=4 ; gpus=1 ;;
+  gpu-1xt4|gpu-1xl4|gpu-1xl40s) vcpus=4 ; gpus=1 ;;
   gpu-4xt4|gpu-4xa10g|gpu-4xl4|gpu-4xl40s) vcpus=48 ; gpus=4 ;;
-  gpu-8xa100) vcpus=96 ; gpus=8 ;;
-  gpu-8xa10g|gpu-8xh100) vcpus=192 ; gpus=8 ;;
+  gpu-8xt4|gpu-8xa100) vcpus=96 ; gpus=8 ;;
+  gpu-8xa10g|gpu-8xl4|gpu-8xl40s|gpu-8xh100) vcpus=192 ; gpus=8 ;;
   *) echo "unexpected aws call: $*" >&2 ; exit 64 ;;
 esac
 name="sbsandbox-intern-edullm-${profile}"
@@ -797,14 +799,14 @@ def run_shapes_verification(
     )
 
 
-def test_the_nine_shape_verification_passes_against_the_estate_the_template_describes(
+def test_the_thirteen_shape_verification_passes_against_the_estate_the_template_describes(
     tmp_path: Path,
 ) -> None:
     """The anchor for the two drift cases below.
 
-    It also establishes that the step asks about all nine: the stub refuses any name outside
-    the list, so a loop that had lost a shape would still pass here, but a loop that had
-    gained a tenth or misspelt one exits 64.
+    It also establishes that the step asks about all thirteen: the stub refuses any name
+    outside the list, so a loop that had lost a shape would still pass here, but a loop that
+    had gained a fourteenth or misspelt one exits 64.
     """
     result = run_shapes_verification(tmp_path)
 
@@ -813,7 +815,7 @@ def test_the_nine_shape_verification_passes_against_the_estate_the_template_desc
 
 
 def test_a_shape_left_on_the_cpu_ami_fails_the_run(tmp_path: Path) -> None:
-    """The drift with no other symptom, now reachable nine more ways than before.
+    """The drift with no other symptom, now reachable thirteen more ways than before.
 
     An environment on the default AMI carries no NVIDIA driver, so an instance launches,
     joins the cluster, takes the job and trains on the CPU at GPU prices. Nothing errors and

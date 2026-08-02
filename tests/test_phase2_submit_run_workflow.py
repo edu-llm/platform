@@ -2471,9 +2471,10 @@ def test_a_profile_this_checkout_cannot_resolve_is_reported_as_unknown(
     not guaranteed to be, so a run can legitimately be accepted on a profile this tree has
     no target for. Failing here would report a submitted run as a broken workflow.
     """
-    # gpu-1xl40s, because gpu-4xa10g gained a target when the nine GPU shapes were promoted
-    # and this test needs a profile config/execution-targets.yaml does not name.
-    result, summary = _run_where_it_went(tmp_path, compute_profile="gpu-1xl40s")
+    # gpu-1xa10g-sagemaker, because this test needs a profile config/execution-targets.yaml
+    # does not name and it is the only one left. gpu-4xa10g gained a target when the nine GPU
+    # shapes were promoted and gpu-1xl40s gained one when two teams asked for it.
+    result, summary = _run_where_it_went(tmp_path, compute_profile="gpu-1xa10g-sagemaker")
 
     assert result.returncode == 0, result.stderr
     assert "| Batch job queue | `not resolvable from this checkout` |" in summary

@@ -132,11 +132,11 @@ Resources:
           # tests/test_phase3_infrastructure.py reads all the files and compares them for
           # exactly this reason.
           #
-          # ELEVEN ARNS RATHER THAN ELEVEN RULES, which is what the Phase 4 plan assumed a
+          # FIFTEEN ARNS RATHER THAN FIFTEEN RULES, which is what the Phase 4 plan assumed a
           # second queue would cost. EventBridge matches a list of values as an OR, so a
           # queue is one line here. A rule apiece would need its own dead-letter target and
           # its own delivery permission in the queue policy above, and would give the same
-          # recorder eleven independent paths to fall off. One rule, one target, one measured
+          # recorder fifteen independent paths to fall off. One rule, one target, one measured
           # delivery path, covering every queue.
           #
           # Listed rather than left out. Omitting jobQueue entirely would match every Batch
@@ -149,17 +149,21 @@ Resources:
           # The recorder needs no change. project_batch_event reads the job name as the run
           # id and never looks at which queue the event came from, so a GPU state change is
           # projected by the same code that projects a CPU one -- which is the property that
-          # makes the run id the join for all eleven.
+          # makes the run id the join for all fifteen.
           jobQueue:
             - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-cpu
             - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu
             - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu-1xt4
             - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu-4xt4
+            - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu-8xt4
             - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu-4xa10g
             - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu-8xa10g
             - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu-1xl4
             - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu-4xl4
+            - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu-8xl4
+            - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu-1xl40s
             - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu-4xl40s
+            - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu-8xl40s
             - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu-8xa100
             - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-gpu-8xh100
       Targets:

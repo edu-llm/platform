@@ -246,16 +246,16 @@ jobs:
             --template-file infra/batch-compute-gpu.yaml \
             --no-fail-on-empty-changeset
 
-      # THE OTHER NINE GPU SHAPES, IN A SECOND STACK RATHER THAN IN THE ONE ABOVE. That
+      # THE OTHER THIRTEEN GPU SHAPES, IN A SECOND STACK RATHER THAN IN THE ONE ABOVE. That
       # stack had running training jobs when these were added, and an update to it replaces
       # nothing by itself but does put a live compute environment through a change nobody
-      # needed. A separate stack also means the nine can be rolled back without touching
+      # needed. A separate stack also means the thirteen can be rolled back without touching
       # the shape researchers are already using.
       #
       # After the stack above rather than beside it, because this template creates no log
       # group. It names /aws/batch/sbsandbox-intern-edullm-gpu, which that one creates, and
       # the awslogs driver takes a string so CloudFormation enforces nothing. Deployed first
-      # into an account without that stack, these nine definitions would register cleanly
+      # into an account without that stack, these thirteen definitions would register cleanly
       # and log nowhere.
       - name: Deploy the remaining GPU shapes stack
         if: inputs.describe_run == ''
@@ -548,20 +548,29 @@ jobs:
           print("PHASE3_BATCH_VERIFICATION_PASSED")
           PY
 
-      # THE NINE SHAPES, IN A STEP OF THEIR OWN AND NOT ADDED TO THE ONE ABOVE. That step
+      # THE THIRTEEN SHAPES, IN A STEP OF THEIR OWN AND NOT ADDED TO THE ONE ABOVE. That step
       # names one environment, one queue and one definition per axis and compares each
-      # against a written-out expectation; nine more of each would be twenty-seven more
-      # files and twenty-seven more literals, and the interesting property is the same for
+      # against a written-out expectation; thirteen more of each would be thirty-nine more
+      # files and thirty-nine more literals, and the interesting property is the same for
       # all of them. So this loops and the expectation is the loop body.
       #
       # imageType is the check worth having here, for the reason the step above records at
       # length: an environment left on the default AMI carries no NVIDIA driver, so an
       # instance launches, takes the job and runs it on the CPU at GPU prices with nothing
-      # erroring anywhere. Nine environments is nine chances to get that wrong.
+      # erroring anywhere. Thirteen environments is thirteen chances to get that wrong.
       #
       # requestsAGpu and gpuCount together, because the count is what a shape is. A
       # g5.48xlarge definition asking for one GPU deploys, runs, bills for eight devices and
       # uses one, and every other line of this check passes.
+      #
+      # subnetCount is deliberately not read here, unlike in the step above. Four of these
+      # thirteen place into four subnets rather than five, because g6e.xlarge, g6e.12xlarge,
+      # g6e.48xlarge and p4d.24xlarge are not offered in us-east-1f, so one expected count in
+      # this loop body would be wrong for four shapes and a per-shape count is a fourth field
+      # in the list below that nothing would check the correctness of. The measurement lives
+      # in infra/batch-compute-gpu-shapes.yaml beside the subnet lists it produced, and no
+      # test in this repository compares the two. Re-measure with
+      # describe-instance-type-offerings before promoting a fourteenth.
       #
       # No apostrophe in this body. tests/test_phase3_batch_deployment_workflow.py parses
       # these scripts with shlex, and one unbalanced quote makes the whole script
@@ -572,7 +581,7 @@ jobs:
           set -euo pipefail
           shapes_json="${RUNNER_TEMP}/phase4-gpu-shapes.json"
           : > "${shapes_json}"
-          for shape in gpu-1xt4:4:1 gpu-4xt4:48:4 gpu-4xa10g:48:4 gpu-8xa10g:192:8 gpu-1xl4:4:1 gpu-4xl4:48:4 gpu-4xl40s:48:4 gpu-8xa100:96:8 gpu-8xh100:192:8; do
+          for shape in gpu-1xt4:4:1 gpu-4xt4:48:4 gpu-8xt4:96:8 gpu-4xa10g:48:4 gpu-8xa10g:192:8 gpu-1xl4:4:1 gpu-4xl4:48:4 gpu-8xl4:192:8 gpu-1xl40s:4:1 gpu-4xl40s:48:4 gpu-8xl40s:192:8 gpu-8xa100:96:8 gpu-8xh100:192:8; do
             profile="${shape%%:*}"
             rest="${shape#*:}"
             vcpus="${rest%%:*}"
