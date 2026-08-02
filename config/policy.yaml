@@ -45,3 +45,15 @@ denied_outright:
   # classified as an exception on purpose: the point is that somebody read the findings
   # before the run was submitted, not that an admin waved it through while it waited.
   - image_scan_findings_unreviewed
+  # A dataset config/datasets.yaml carries and whose family is not one a run may train on.
+  # Distinct from unregistered_dataset, which says nothing registers this identifier; this
+  # one says the registry resolves it exactly and it is an input to a corpus rather than a
+  # corpus. Trainable families are listed in TRAINABLE_FAMILIES in
+  # src/edullm_platform/contracts/dataset_registry.py, with the reasoning for the allowlist.
+  #
+  # Denied outright rather than routed for approval, because there is no approver for whom
+  # this is a judgement call. A tokenizer names no partitions and declares no dtype, so a
+  # run handed one memmaps tokenizer.json as uint16 tokens, trains, and produces a loss
+  # curve that looks ordinary. An approver reading "train on tokenizer/smollm2-bpe" cannot
+  # see that from the request, and the run reports nothing wrong afterwards either.
+  - dataset_is_not_a_corpus

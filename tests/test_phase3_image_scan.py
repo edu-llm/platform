@@ -769,6 +769,7 @@ def test_an_unreviewed_image_classifies_as_something_other_than_routine() -> Non
         "claimed_team": "memory-split",
         "repository_registered": True,
         "dataset_registered": True,
+        "dataset_is_a_corpus": True,
         "compute_profile_registered": True,
         "immutable_revision": True,
         "immutable_image": True,

@@ -20,11 +20,22 @@
           "title": "Reference Id",
           "type": "string"
         },
+        "retired": {
+          "default": false,
+          "title": "Retired",
+          "type": "boolean"
+        },
         "tokenizer": {
-          "minLength": 1,
-          "pattern": "^tokenizer/[a-z0-9]+(?:-[a-z0-9.]+)*$",
-          "title": "Tokenizer",
-          "type": "string"
+          "anyOf": [
+            {
+              "pattern": "^tokenizer/[a-z0-9]+(?:-[a-z0-9.]+)*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Tokenizer"
         },
         "uri": {
           "pattern": "^s3://edullm-data/[A-Za-z0-9][A-Za-z0-9._/-]*/$",

@@ -78,6 +78,7 @@ from .contracts.workload import (
 
 __all__ = [
     "MINIMUM_ATTEMPT_DURATION_SECONDS",
+    "NotATrainingCorpusError",
     "UnshapedComputeProfileError",
     "attempt_duration_seconds",
     "batch_register_job_definition_request",
@@ -366,6 +367,26 @@ def batch_submit_request(
         # `experiment` is a key somebody else's stack may also be writing.
         request["Tags"]["edullm:experiment"] = experiment
     if dataset_reference is not None:
+        if not dataset_reference.is_a_corpus_a_run_may_read:
+            # A BACKSTOP, AND IT SHOULD NEVER FIRE. Admission denies this outright with
+            # `dataset_is_not_a_corpus` well before a submission gets here, which is where the
+            # refusal belongs because that is where it is a decision record naming what is
+            # wrong rather than an exception. This is here because that is one code path and
+            # what it protects is a run that trains on tokenizer.json as uint16 tokens,
+            # produces a moving loss curve and reports nothing wrong -- a failure whose cost
+            # is not a wasted run but a result somebody believes. A property that expensive is
+            # not left resting on a single caller remembering to ask.
+            #
+            # Raising rather than dropping the three variables. A submission that reached here
+            # naming a tokenizer means admission let it through, and the container falling
+            # back to whatever it does without EDULLM_DATASET_ID would hide that.
+            raise NotATrainingCorpusError(
+                f"{dataset_reference.reference_id!r} resolves to "
+                f"{dataset_reference.dataset_id!r}, which is in the "
+                f"{dataset_reference.family!r} family and is an input to a corpus rather "
+                f"than a corpus a run may train on; admission should have denied this "
+                f"outright under dataset_is_not_a_corpus"
+            )
         # THREE VARIABLES, AND THE THIRD IS THE ONE THAT STOPS A WRONG RUN LOOKING RIGHT.
         #
         # The two registered corpora were built with different tokenizers --
@@ -391,9 +412,20 @@ def batch_submit_request(
             (
                 {"Name": "EDULLM_DATASET_ID", "Value": dataset_reference.dataset_id},
                 {"Name": "EDULLM_DATASET_VERSION", "Value": dataset_reference.version},
-                {"Name": "EDULLM_DATASET_TOKENIZER", "Value": dataset_reference.tokenizer},
             )
         )
+        if dataset_reference.tokenizer is not None:
+            # Omitted rather than sent empty or sent as the string "none", and the three are
+            # different claims. An sft conversation corpus is pre-tokenization text and
+            # declares no tokenizer, so there is no third fact to publish; a program reading
+            # an absent variable knows nothing was resolved, where one reading "none" has to
+            # know that no tokenizer is called that. The pretrain path needs the variable and
+            # every pretrain corpus registered carries one, so a run that needs it and finds
+            # it missing is reading a corpus its program cannot train on -- which is a
+            # refusal worth having rather than a default worth supplying.
+            request["ContainerOverrides"]["Environment"].append(
+                {"Name": "EDULLM_DATASET_TOKENIZER", "Value": dataset_reference.tokenizer}
+            )
     if submitter is not None:
         # See the note beside the Tags block. Appended rather than always present, because
         # a run admitted before this field existed has nobody to name and an empty tag reads
@@ -407,6 +439,21 @@ def batch_submit_request(
         request["ArrayProperties"] = {"Size": manifest.fanout.size}
     refuse_an_oversized_override(request["ContainerOverrides"])
     return request
+
+
+class NotATrainingCorpusError(ValueError):
+    """A submission reached the execution block naming a dataset a run must not train on.
+
+    An invariant violation rather than a submitter's mistake, and phrased that way. Admission
+    denies this outright under ``dataset_is_not_a_corpus``, so anything that gets here has
+    already passed the gate that exists to stop it, and the reader who sees this is looking
+    at a bug in the platform rather than at a request they should fix.
+
+    Raised rather than logged, because the alternative to raising is submitting. The failure
+    this guards is a run that memmaps ``tokenizer.json`` as ``uint16`` tokens, trains on it,
+    and finishes with a loss curve that looks like every other one -- so there is no later
+    point at which anybody finds out.
+    """
 
 
 #: What Batch will accept as one job's ``containerOverrides``, serialized. An AWS service

@@ -19,8 +19,8 @@ The kind column separates a `record`, which some payload is validated against, f
 | RepositoryBinding | edullm_platform.contracts.bindings | record | unversioned | sha256:acfb98fa6a3ecffb8258ab1ea4f150e721c0f1c067e067a701e61837a9fcfd6c |
 | TeamBinding | edullm_platform.contracts.bindings | record | unversioned | sha256:59ced5000c7a439b3fc063ab0685a9339aa82289365181ccce4365c11623cae7 |
 | TeamBindingCatalog | edullm_platform.contracts.bindings | record | unversioned | sha256:ad706a267df31f57c1bd7e64195cd855cfd95be85a32e741bde1429f318852ad |
-| DatasetRegistry | edullm_platform.contracts.dataset_registry | record | 1 | sha256:fe5d63aec1fe1ff581178a6492c0c1dc93fabc16f8c315d7f29847bbeac6a394 |
-| PublishedDatasetReference | edullm_platform.contracts.dataset_registry | record | unversioned | sha256:ede191dda61eb24ed7b84eb6ae5966b77ecf9f0660a76f58c748642f46057ab3 |
+| DatasetRegistry | edullm_platform.contracts.dataset_registry | record | 1 | sha256:2eb0a2e62fd359c2fb927c1f5060546cd2093d8b6d7a599b77a4a328313653ae |
+| PublishedDatasetReference | edullm_platform.contracts.dataset_registry | record | unversioned | sha256:281fc1b6cf010f71cde18e94c44d8f6400cb9d0685d7e21ded46247478aeb41c |
 | RegisteredDatasetRelease | edullm_platform.contracts.dataset_registry | record | unversioned | sha256:ae83ea63439eaeb2627954783bb33f3289051e4cfbc3918f30503dffe6869d49 |
 | BatchJobBinding | edullm_platform.contracts.execution | record | 1 | sha256:e42641ace737ac344e31cfe56152e7b41bf2fff4d888cd8a3741c3c7b805ba1a |
 | GitHubWorkflowRunReference | edullm_platform.contracts.image | record | unversioned | sha256:a80e5dc8c40056fbc75557716cac82f11e5f4d80ec840dcb76d33ad56c57604f |
@@ -36,7 +36,7 @@ The kind column separates a `record`, which some payload is validated against, f
 | SchedulerAttempt | edullm_platform.contracts.lifecycle | record | 1 | sha256:4cf54ad2ac3a0c40f5ad8bcb792daa837fc8abad32de5223f3f680d9d890a688 |
 | FanOut | edullm_platform.contracts.manifest | record | unversioned | sha256:86de4fcb96a84d6753317c71207aecc11838a96b7713a33fd29c3d97e3c5c870 |
 | RunManifest | edullm_platform.contracts.manifest | record | 1 | sha256:819ed6a07eb28bf235d73b8df36fdc5fbc16e391bcfe26ae7c0abd40b862df02 |
-| ApprovalPolicy | edullm_platform.contracts.policy | record | unversioned | sha256:10b38d3b612f94f3ca2d06d6c004c183de2a6e5ed99b267a7d66c339d1cfb473 |
+| ApprovalPolicy | edullm_platform.contracts.policy | record | unversioned | sha256:412f76fbc76edc8a7e35a9c41061b23e32f46cc289d6892e747cb92fec1974dc |
 | PolicyThresholds | edullm_platform.contracts.policy | record | unversioned | sha256:7e11224790f5297718e233801ed7ee9fc8ef40405b8b0abdf709e70625a98a00 |
 | RegisteredRepository | edullm_platform.contracts.repository_registry | record | unversioned | sha256:6061c9afa770d4335d829aa1d6ed781cea6bfb492719843918d3bd0e364b2fae |
 | RepositoryRegistry | edullm_platform.contracts.repository_registry | record | unversioned | sha256:d69819572c1f37964e8bf2553d0c66b65b234d221039d95a8085150812ed7429 |
@@ -62,7 +62,7 @@ The kind column separates a `record`, which some payload is validated against, f
 | DatasetObject | edullm_platform.contracts.dataset | record | unversioned | sha256:48028f7a41435bcec6d43186a456188f46f3d49b09fa29c73c67e95440577646 |
 | DatasetRelease | edullm_platform.contracts.dataset | record | 1 | sha256:b01afe271ecd1ac6260da0b7f7063fa0562aa16becb10b3edfecb2ea9c32f14d |
 | DatasetSchemaRef | edullm_platform.contracts.dataset | record | unversioned | sha256:428524feed425756f7183ef5952bef3bce25b6f1a4e7998926ab1882cf2899a1 |
-| AuthorizationScenario | edullm_platform.contracts.decision_matrix | record | 1 | sha256:0c7409b810840c4024bc9979c3a57af21aa2c1be58b486c2e0eadcb5ab3cf687 |
+| AuthorizationScenario | edullm_platform.contracts.decision_matrix | record | 1 | sha256:e8c4ad2cbaddb5c814dc671cc4e24f824e68f28489d3e98b388e6c2e41817671 |
 | ExpectedAuthorization | edullm_platform.contracts.decision_matrix | record | unversioned | sha256:44224e7839f149446ecf5fd8a011becf303fa4fcb14fe3e48471cfd1f4f8caaf |
 | ScenarioActor | edullm_platform.contracts.decision_matrix | record | unversioned | sha256:6a7342c0b0639b375aaa9c008760cc47826abab381bce2a9c37b3aea6e9b828f |
 | ExecutionTarget | edullm_platform.contracts.execution | record | unversioned | sha256:5b237400b5a505d9c8fd5b4b81a4a4d01b7c65cfc97b05023cf7b8c3c152ec9c |
@@ -71,7 +71,7 @@ The kind column separates a `record`, which some payload is validated against, f
 | ImageProvenance | edullm_platform.contracts.image | record | 1 | sha256:102aa35cb3107bfc48c8d448b8047b6a897fa0939cc8de34a63d1987d5b601c4 |
 | ImageScanSummary | edullm_platform.contracts.image_scan | record | 1 | sha256:4ae0dbc073e6e33a52d8caf9213d1b8344b8ceb49d60d6475a766702cb6b2f30 |
 | ScanFinding | edullm_platform.contracts.image_scan | record | unversioned | sha256:07e6f38f7190b357b088220a80499f36683d42270fa428292bb67cb1112e9ffd |
-| RequestFacts | edullm_platform.contracts.policy | record | unversioned | sha256:966ee518a0ef0f15641cb8d0579d63c9534080783452153f8fcc01a6dcffd9d2 |
+| RequestFacts | edullm_platform.contracts.policy | record | unversioned | sha256:485e40ae5aadececec2074170641563a8246726c1067fdee8148c6d72a2645b5 |
 | SourceIdentity | edullm_platform.contracts.source_identity | record | 1 | sha256:c785066e238f71471c7cab1aaaca9f2fd53f3b9eb5653abe1f444d18dca1efa1 |
 | CriterionResult | edullm_platform.criteria | record | unversioned | sha256:b45d908a731eeb75ddc20bf1abb24357fe952d605a399dc7773bb1e4a4bbf11c |
 | PilotVerdict | edullm_platform.criteria | record | unversioned | sha256:ca942afc4f5bc9cd57d1f215ddd65aa166fd6d572c26e88f9f1d81d3a5074488 |
@@ -172,14 +172,14 @@ The checked-in schemas under `schemas/`, with the digest of each file as generat
 | --- | --- | --- |
 | schemas/batch-job-binding.schema.json | BatchJobBinding | sha256:41a20845192e959dd91b32f87d57da0cf3b04e5a2177e0200f27aec2cece901c |
 | schemas/checkpoint-manifest.schema.json | CheckpointManifest | sha256:f51cc8c500c81cd1d286dc86c59ff5f24b09a640127034f1527494251d76a07e |
-| schemas/datasets.schema.json | DatasetRegistry | sha256:28c781ffa1a7df6b999fce428aa8488aec5b8d34081089205e53d5fa6e797f36 |
+| schemas/datasets.schema.json | DatasetRegistry | sha256:12bd81126ee022c25cc0b8bc3b8e35b446f3c672a840cf13afcc88e4e690823c |
 | schemas/decision-record.schema.json | DecisionRecord | sha256:852ee127b92bc2a592f5da86972e32ed50e949548951bd66fed94b237b6ce821 |
 | schemas/image-exceptions.schema.json | ImageScanExceptionRegistry | sha256:e57e7388a87f331a31c9f1e871065306421772bf1da3a043b46f121bde1ffb17 |
 | schemas/intent-record.schema.json | IntentRecord | sha256:39b40c1375c470efe47179c52e898562a7623c1a79f429de8f078f46cf3ddc8d |
 | schemas/lifecycle-event.schema.json | LifecycleEvent | sha256:f747e330743b4f471021b38e161d26e24ecda8fb47ab02b08939ee298a1921ab |
 | schemas/logical-run.schema.json | LogicalRun | sha256:898f1d6b338ea810a75c0614035a49e0812147aef7816037c97447a602d37688 |
 | schemas/organization.schema.json | OrganizationInventory | sha256:37c30582f008b541fe11a1403f5311026ae908d98e8821b4ed6842c3d4365e66 |
-| schemas/policy.schema.json | ApprovalPolicy | sha256:e57443df3ebf18a1b1858a441f99aec2d41121a3f2110d05be30b530ff2b7f67 |
+| schemas/policy.schema.json | ApprovalPolicy | sha256:e4030f6190b01c200a16bf998da52f4e25951685fc3b1df5e81874a3ebd97722 |
 | schemas/repositories.schema.json | RepositoryRegistry | sha256:ee5ef9172b9ab89aa0965cefda9d86fda855c4cd3f0eeda41ab50551327ff68e |
 | schemas/result-manifest.schema.json | ResultManifest | sha256:5bd07bde5ac6c86323878915dd684dafa2e838fa20b53d78554074159563cb26 |
 | schemas/run-manifest.schema.json | RunManifest | sha256:62851f48df41a1dc270a525b44a8ef01eab660af9d5b60030d6c0a8776e196f2 |

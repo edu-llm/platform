@@ -125,6 +125,7 @@ def request_facts_payload(**overrides: object) -> dict[str, object]:
         "claimed_team": "modeling",
         "repository_registered": True,
         "dataset_registered": True,
+        "dataset_is_a_corpus": True,
         "compute_profile_registered": True,
         "immutable_revision": True,
         "immutable_image": True,

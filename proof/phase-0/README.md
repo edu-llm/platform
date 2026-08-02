@@ -2,8 +2,8 @@
 
 Phase: phase-0
 Bundle schema version: 1
-Source commit: 962b7eba6ead3c27a0147eb049f3ed944df3eaf7
-Generated: 2026-08-02T04:20:58+00:00
+Source commit: 1bfbacb839a315a5e95529287dc10c938bb19756
+Generated: 2026-08-02T15:03:51+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 0 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase0_proof.py` at generation time.
 
@@ -18,9 +18,9 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 4433 |
-| suite tests executed | 4240 |
-| suite passed | 4238 |
+| suite tests collected | 4500 |
+| suite tests executed | 4307 |
+| suite passed | 4305 |
 | suite failed | 2 |
 | suite errored | 0 |
 | suite skipped | 0 |
@@ -87,11 +87,11 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | file | digest |
 | --- | --- |
 | config/organization.yaml | sha256:4b3d6cbdc0c080dc01b36918401f720f9cfc87d821a6cfa61787fdc7020d80cf |
-| config/policy.yaml | sha256:9543e8f98bcf207e9187819096c7fb6b5db3d65b1277b911ff77375f2e373414 |
+| config/policy.yaml | sha256:9217d17abbb34aa85812d4796220288e1043f1e9ca1482b93a517da0687e6e51 |
 | config/workload-catalog.yaml | sha256:8a2c8c6b6880c0719d51859b53e64ec004234aeb276568d8cf4539186dbe7b97 |
-| fixtures/authorization/admin-exception.yaml | sha256:a5cf59d4ed25d02769785b6ff1f9c363474ff30f02ea8a8ae54974fbd15930ac |
-| fixtures/authorization/lead-self-authorization.yaml | sha256:4ede75bdc3b8ecfe22e958da3ee4ac3d73c6fc50d012aa10507f311cb7e2a45e |
-| fixtures/authorization/member-approval.yaml | sha256:71146bcb26b212ed86cc883807243280b522f2c8882d8f0d53feeb4619c6d571 |
+| fixtures/authorization/admin-exception.yaml | sha256:34aa5778205f2d40629c8ea769e443984ab0cda901711d8ce943da4a08adeb0c |
+| fixtures/authorization/lead-self-authorization.yaml | sha256:7616de94f8a4ffb338e358163fef4240ed99bb9e59f90d5c5c566ed62bd4f2b0 |
+| fixtures/authorization/member-approval.yaml | sha256:d6da4e22145165f4233c7c150789d2eea7fb9a7d8cf8546e72812bb971bd4dc4 |
 | fixtures/manifests/cpu-routine.yaml | sha256:38bb87c5171d9bb9eb6ba74172d07cd975477c96cdbf6493c17a1ca1d3628467 |
 | fixtures/manifests/gpu-exception.yaml | sha256:c49687a49020b47f8e5de88fd736cb0dc49672df471c7d345d1d70089edb47be |
 | fixtures/manifests/gpu-routine.yaml | sha256:e83601657638685d58a590ac6a272777672ad184a39f9edc37a319c8e415fbdf |
@@ -100,14 +100,14 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | fixtures/manifests/sagemaker-routine.yaml | sha256:c1cee5e54c60a700ac0ab0260b3249fbe1f37e807cf52ac381d58b5691cb0248 |
 | schemas/batch-job-binding.schema.json | sha256:41a20845192e959dd91b32f87d57da0cf3b04e5a2177e0200f27aec2cece901c |
 | schemas/checkpoint-manifest.schema.json | sha256:f51cc8c500c81cd1d286dc86c59ff5f24b09a640127034f1527494251d76a07e |
-| schemas/datasets.schema.json | sha256:28c781ffa1a7df6b999fce428aa8488aec5b8d34081089205e53d5fa6e797f36 |
+| schemas/datasets.schema.json | sha256:12bd81126ee022c25cc0b8bc3b8e35b446f3c672a840cf13afcc88e4e690823c |
 | schemas/decision-record.schema.json | sha256:852ee127b92bc2a592f5da86972e32ed50e949548951bd66fed94b237b6ce821 |
 | schemas/image-exceptions.schema.json | sha256:e57e7388a87f331a31c9f1e871065306421772bf1da3a043b46f121bde1ffb17 |
 | schemas/intent-record.schema.json | sha256:39b40c1375c470efe47179c52e898562a7623c1a79f429de8f078f46cf3ddc8d |
 | schemas/lifecycle-event.schema.json | sha256:f747e330743b4f471021b38e161d26e24ecda8fb47ab02b08939ee298a1921ab |
 | schemas/logical-run.schema.json | sha256:898f1d6b338ea810a75c0614035a49e0812147aef7816037c97447a602d37688 |
 | schemas/organization.schema.json | sha256:37c30582f008b541fe11a1403f5311026ae908d98e8821b4ed6842c3d4365e66 |
-| schemas/policy.schema.json | sha256:e57443df3ebf18a1b1858a441f99aec2d41121a3f2110d05be30b530ff2b7f67 |
+| schemas/policy.schema.json | sha256:e4030f6190b01c200a16bf998da52f4e25951685fc3b1df5e81874a3ebd97722 |
 | schemas/repositories.schema.json | sha256:ee5ef9172b9ab89aa0965cefda9d86fda855c4cd3f0eeda41ab50551327ff68e |
 | schemas/result-manifest.schema.json | sha256:5bd07bde5ac6c86323878915dd684dafa2e838fa20b53d78554074159563cb26 |
 | schemas/run-manifest.schema.json | sha256:62851f48df41a1dc270a525b44a8ef01eab660af9d5b60030d6c0a8776e196f2 |
