@@ -10,11 +10,18 @@ name: Look at a run, or stop it
 # The role can therefore stop any run this platform submitted. The check below is the whole
 # control, and a change to it is the change to review.
 #
-# What bounds the damage is the role's shape rather than its scope: it can describe jobs
-# and stop them and do nothing else in the account. It cannot submit, cannot register a job
+# What bounds the damage is the role's shape rather than its scope: it can describe jobs,
+# stop them, and read events out of the two log groups this platform's jobs write to, and
+# it can do nothing else in the account. It cannot submit, cannot register a job
 # definition, cannot read a bucket, cannot reach the state machine. The worst a bypass
 # achieves is stopping runs -- disruptive, recoverable, and written into the lifecycle
 # record like any other termination.
+#
+# The log read is the newest of those and the only one that discloses rather than acts. It
+# is granted because naming a log stream to somebody who has no AWS credential is not an
+# answer, and because reading the tail of a log by hand is what filed nine credential
+# failures as distributed training bugs. What it costs is that a container's own output now
+# reaches everybody who can see a workflow run here.
 #
 # The role's trust names this file specifically, so a job added to submit-run.yml cannot
 # reach it and a job added here is reviewed alongside the check it would bypass.
@@ -158,6 +165,53 @@ jobs:
           fi
           uv sync --locked
 
+      # EVERY QUEUE A RUN COULD BE ON, READ OUT OF THE FILE THAT DECIDES WHERE RUNS GO.
+      #
+      # This file used to loop over two queue names typed into it and the account has
+      # eleven. A run on gpu-4xa10g or gpu-8xh100 was therefore reported as no job at all.
+      # The person asking was told nothing exists under their run id, could not see the run
+      # and could not stop it, and the container went on billing until its runtime ceiling.
+      # That is the worst way this workflow can be wrong, because the wrong answer is a
+      # confident one and reads exactly like a run that finished days ago.
+      #
+      # Read rather than listed, because the list moves. Nine GPU shapes were promoted in
+      # one change and more are being provisioned, so any spelling of the queues inside this
+      # file is a second roster that agrees with config/execution-targets.yaml until the next
+      # promotion and then silently stops. Reading the configuration means a queue added
+      # there is searched here with no edit to this file, which is the whole argument.
+      #
+      # Nothing in CloudFormation connects that file to this one. That is the same seam
+      # tests/test_phase3_infrastructure.py compares three copies of the queue name across,
+      # and tests/test_cancel_run_workflow.py adds the equivalent comparison for this one.
+      # The queues this searches are the queues the configuration names, and no queue name
+      # appears anywhere in this file for either side to drift from.
+      #
+      # An empty answer is refused rather than looped over zero times. A search across no
+      # queues finds no job and reports the run as one Batch has stopped listing, which is
+      # the same sentence a genuine absence produces and is the confusion this step exists
+      # to end.
+      - name: List every queue a run could be on
+        run: |
+          set -euo pipefail
+          uv run --frozen python - > "${RUNNER_TEMP}/queues.txt" <<'PY'
+          from pathlib import Path
+
+          from edullm_platform.config import load_yaml
+          from edullm_platform.contracts.execution import ExecutionTargetCatalog
+
+          catalog = load_yaml(Path("config/execution-targets.yaml"), ExecutionTargetCatalog)
+          # Deduplicated and sorted, because two profiles may share a queue and the order a
+          # configuration file happens to declare its rows in is not a search order.
+          for queue in sorted({target.job_queue for target in catalog.targets}):
+              print(queue)
+          PY
+          if [[ ! -s "${RUNNER_TEMP}/queues.txt" ]]; then
+            echo "no_execution_targets_configured" >&2
+            echo "config/execution-targets.yaml names no job queue, so there is nowhere to look for this run. That is a broken checkout rather than a missing run." >&2
+            exit 1
+          fi
+          echo "Searching $(wc -l < "${RUNNER_TEMP}/queues.txt") queue(s)."
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
         with:
@@ -192,7 +246,12 @@ jobs:
 
           listed="${RUNNER_TEMP}/mine.txt"
           : > "${listed}"
-          for queue in sbsandbox-intern-edullm-cpu sbsandbox-intern-edullm-gpu; do
+          # Word splitting on the enumeration rather than mapfile, which needs bash 4.2 and
+          # is absent from the bash macOS ships -- a workflow body is executed by the test
+          # suite as well as by the runner, and one that only works on the runner is one the
+          # suite cannot hold to anything. A queue name carries no whitespace, so splitting
+          # on it is exact rather than merely convenient.
+          for queue in $(cat "${RUNNER_TEMP}/queues.txt"); do
             for state in RUNNING STARTING RUNNABLE SUBMITTED PENDING SUCCEEDED FAILED; do
               aws batch list-jobs --job-queue "${queue}" --job-status "${state}" \
                 --query 'jobSummaryList[].jobId' --output text >> "${listed}"
@@ -264,7 +323,7 @@ jobs:
           # workflow that answers "nothing to report" about a run that failed an hour ago is
           # worse than no answer at all. The live states stay first so that a run id reused
           # across a retry finds the attempt that is still going.
-          for queue in sbsandbox-intern-edullm-cpu sbsandbox-intern-edullm-gpu; do
+          for queue in $(cat "${RUNNER_TEMP}/queues.txt"); do
             for state in SUBMITTED PENDING RUNNABLE STARTING RUNNING SUCCEEDED FAILED; do
               candidate="$(aws batch list-jobs \
                 --job-queue "${queue}" \
@@ -304,7 +363,15 @@ jobs:
       # the placement story in the first and the exit story in the second, and a report showing
       # only status says RUNNABLE for both "waiting for capacity" and "asking for more vCPU
       # than the instance has".
+      #
+      # THE EXIT CODE IS PRINTED AS A NUMBER AND NEVER AS A STAGE. Six of the sixty-seven
+      # failures in the retained window carry codes researchers invented in the same numeric
+      # range this platform's staged scheme uses, and only two carry a staged one, so reading
+      # a 76 or an 85 as a platform stage would misdescribe three runs for every one it
+      # described. Thirty-eight of those failures carry exit code 1, which says only that a
+      # program raised, and the log tail below is the only thing that says which.
       - name: Say what the run is doing
+        id: describe
         if: steps.find.outputs.not_running != 'true'
         env:
           JOB_ID: ${{ steps.find.outputs.job_id }}
@@ -316,6 +383,10 @@ jobs:
           uv run --frozen python - <<'PY' | tee -a "${GITHUB_STEP_SUMMARY}"
           import json
           import os
+          from pathlib import Path
+
+          from edullm_platform.config import load_yaml
+          from edullm_platform.contracts.execution import ExecutionTargetCatalog
 
           job = json.load(open(os.environ["RUNNER_TEMP"] + "/job.json"))["jobs"][0]
           container = job.get("container", {})
@@ -328,6 +399,21 @@ jobs:
               from datetime import datetime, timezone
 
               return datetime.fromtimestamp(milliseconds / 1000, timezone.utc).isoformat()
+
+          # WHICH LOG GROUP, RESOLVED FROM THE QUEUE THROUGH THE SAME FILE THE SEARCH ABOVE
+          # ENUMERATES. The nine GPU shapes share one group with the original GPU queue and
+          # the CPU queue has its own, so the group is a property of the queue rather than
+          # something derivable from the run id or the stream name. Reading it here means the
+          # step below asks CloudWatch for a group this repository declares rather than one
+          # this workflow guessed, and a queue promoted with a group of its own is picked up
+          # with no edit here.
+          queue = job.get("jobQueue", "").rsplit("/", 1)[-1]
+          catalog = load_yaml(Path("config/execution-targets.yaml"), ExecutionTargetCatalog)
+          log_group = next(
+              (target.log_group for target in catalog.targets if target.job_queue == queue),
+              None,
+          )
+          log_stream = container.get("logStreamName") or None
 
           print("## " + os.environ["RUN_ID"])
           print()
@@ -342,14 +428,116 @@ jobs:
           print(f"| Exit code | {container.get('exitCode', 'none yet')} |")
           print(f"| Container said | {container.get('reason') or 'nothing'} |")
           print(f"| Image | `{container.get('image', 'unknown')}` |")
-          print(f"| Log stream | `{container.get('logStreamName') or 'not yet assigned'}` |")
+          print(f"| Queue | `{queue or 'unknown'}` |")
+          print(f"| Log group | `{log_group or 'not named by config/execution-targets.yaml'}` |")
+          print(f"| Log stream | `{log_stream or 'not yet assigned'}` |")
           print()
-          # The log stream is named rather than read: this role holds no logs: permission at
-          # all, deliberately, and granting one here would widen a role whose whole argument
-          # is that it can do two things. The name is what CloudWatch needs to find it.
-          print("The log stream above is under `/aws/batch/sbsandbox-intern-edullm-gpu` or its")
-          print("CPU sibling in CloudWatch Logs. This workflow does not read logs and holds no")
-          print("permission to.")
+          # AN EXIT CODE IS A NUMBER THIS PLATFORM DID NOT CHOOSE, AND SAYING SO IS THE POINT.
+          # Two of the sixty-seven failures in the retained window carry a staged code and six
+          # carry researcher-invented ones in the same range, so any sentence here that read a
+          # number as a stage would be wrong three times as often as it was right.
+          print(
+              "The exit code above is whatever the container returned, and it is not a stage "
+              "of this platform. Researchers have used codes in the same range for their own "
+              "meanings, so read it against the program that ran."
+          )
+          with open(os.environ["GITHUB_OUTPUT"], "a") as handle:
+              handle.write(f"log_group={log_group or ''}\n")
+              handle.write(f"log_stream={log_stream or ''}\n")
+          PY
+
+      # THE LOG ITSELF, WHICH IS THE THING THE PERSON DISPATCHING THIS ACTUALLY CAME FOR.
+      #
+      # Naming the stream and stopping was this workflow's whole answer, and the name is
+      # useless to the reader it is printed for: reaching a stream needs an AWS credential,
+      # and not having one is why they are here. So a run that failed sent somebody to ask an
+      # operator, and the operator read the tail of the log -- which is exactly the reading
+      # that filed nine W&B login failures as distributed training bugs, because the last
+      # lines of a torch run say `ProcessGroup is not registered` and the cause is twenty
+      # lines earlier.
+      #
+      # Fifty lines rather than the whole stream, and that number is a judgement worth
+      # stating. A GPU training log is hundreds of megabytes and a step summary is capped, so
+      # the whole thing cannot go here whatever anybody prefers. Fifty is enough to carry a
+      # Python traceback with its cause, which is the shape most of these failures have, and
+      # it is deliberately not enough to bury the reader -- somebody who needs more now knows
+      # the group and the stream and can be given credentials for one read.
+      #
+      # WHAT THIS CHANGES ABOUT WHO CAN READ A RUN'S OUTPUT, STATED RATHER THAN LEFT TO BE
+      # DISCOVERED. A step summary is visible to everybody who can see this repository's
+      # workflow runs, so a container's own output now reaches them, where before it needed
+      # an AWS credential. That is the intended effect and it is also the cost: a program that
+      # prints something it should not is now printing it somewhere wider. The grant behind it
+      # is a read of two log groups and nothing else, and infra/iam/run-canceller-role.yaml
+      # carries the argument beside the statement.
+      #
+      # Not gated on `stop`, for the reason the report above is not: the question people
+      # arrive with is what their run did, and answering it must not require ending the run.
+      - name: Show the last fifty lines the container printed
+        if: steps.find.outputs.not_running != 'true'
+        env:
+          LOG_GROUP: ${{ steps.describe.outputs.log_group }}
+          LOG_STREAM: ${{ steps.describe.outputs.log_stream }}
+        run: |
+          set -euo pipefail
+          # A queued job has no stream yet and a queue outside the configuration resolves to
+          # no group. Both are ordinary and neither is an error. There is nothing to read in
+          # either case, and saying which of the two it is beats a refusal nobody can act on.
+          if [[ -z "${LOG_STREAM}" ]]; then
+            echo "The container has not started, so there is no log stream to read yet." | tee -a "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          if [[ -z "${LOG_GROUP}" ]]; then
+            echo "This job is on a queue config/execution-targets.yaml does not name, so which log group holds its stream cannot be resolved from this checkout." | tee -a "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          # --no-start-from-head is what makes this the tail. GetLogEvents returns the newest
+          # events when it is false, which is its default, and the events come back oldest
+          # first inside that window either way -- so the block below reads in the order the
+          # container printed and holds the last fifty lines rather than the first fifty.
+          events="${RUNNER_TEMP}/log-tail.json"
+          read_status=0
+          aws logs get-log-events \
+            --log-group-name "${LOG_GROUP}" \
+            --log-stream-name "${LOG_STREAM}" \
+            --limit 50 \
+            --no-start-from-head \
+            --output json > "${events}" 2> "${RUNNER_TEMP}/log-tail-error.txt" || read_status=$?
+          if [[ "${read_status}" -ne 0 ]]; then
+            # Never a failed dispatch. The report above is already written and is worth
+            # having, and a run whose log cannot be read is not a run nobody should be told
+            # about. The error text is withheld because a CLI diagnostic names the resource,
+            # and a log stream ARN carries the account id into a page anybody may read.
+            echo "log_tail_unreadable" >&2
+            echo "The log stream was named and could not be read. The likeliest cause is that the logs:GetLogEvents grant on the canceller role is not applied in this account. See Stack 4 in infra/README.md." | tee -a "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          uv run --frozen python - <<'PY' | tee -a "${GITHUB_STEP_SUMMARY}"
+          import json
+          import os
+
+          events = json.load(open(os.environ["RUNNER_TEMP"] + "/log-tail.json")).get("events", [])
+          print("### The last lines this run printed")
+          print()
+          if not events:
+              print(
+                  "The stream exists and holds no events. A container that was killed before "
+                  "it wrote anything looks like this, and so does one whose output went "
+                  "somewhere other than stdout."
+              )
+          else:
+              print(f"{len(events)} line(s), oldest first. This is the end of the stream.")
+              print()
+              print("```")
+              for event in events:
+                  print(str(event.get("message", "")).rstrip("\n"))
+              print("```")
+              print()
+              print(
+                  "Read upward from the end rather than only at it. A failure whose last "
+                  "lines are a torch distributed error is usually a credential or a "
+                  "configuration refused much earlier, and the line that says so is above."
+              )
           PY
 
       # THE CHECK. Two ways to be allowed and no third: it is your run, or you are an

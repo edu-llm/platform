@@ -10,9 +10,9 @@ command:
   - olmo_core.train
   - --config
   - configs/smoke.yaml
-team: modeling
+team: pre-training
 wandb_project: olmo-core-smoke
-workload_profile: olmo-core-train-4gpu
+workload_profile: olmo-core-train
 compute_profile: gpu-4xa10g
 maximum_runtime_hours: "1"
 maximum_attempts: 1

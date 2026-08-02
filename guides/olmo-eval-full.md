@@ -48,9 +48,11 @@ git rev-parse HEAD                   # the commit you put on the form
 
 ## Workload profiles
 
-| Profile | Machine | Limits | Use for |
-| --- | --- | --- | --- |
-| `olmo-eval-check-cpu` | `cpu-32vcpu` — c7i.8xlarge, 32 vCPU, $1.428/hr | 1h, 1 attempt, no checkpoint | The only entry this repository has. Deliberately the check rather than the eval, on `olmo-core-check-cpu`'s precedent: prove the path before spending a GPU on it |
+| Profile | Limits | Use for |
+| --- | --- | --- |
+| `olmo-eval-check` | 1h, 1 attempt, no checkpoint | The only entry this repository has. Deliberately the check rather than the eval, on `olmo-core-check`'s precedent: prove the path before spending a GPU on it |
+
+Pick `cpu-32vcpu` for `compute_profile`, which is c7i.8xlarge at $1.428/hr. The profile stopped being part of this entry's name because the entry never decided it — the form always did — and it is still the right answer here for as long as the image carries no GPU backend. A `mock` provider on eight H100s costs $55 an hour to do the same thing.
 
 ## Running an evaluation
 

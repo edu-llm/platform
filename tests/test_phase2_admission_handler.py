@@ -68,7 +68,7 @@ ACCEPTED_EVENT: dict[str, Any] = {
     "approver": "philote-dev",
     "approving_environment": "run-approval-lead",
     "approved_manifest_sha256": (
-        "sha256:4e7786bd9396a6e4e9a9e184422d28ee18070cfad7f762ea8135c81d5d553147"
+        "sha256:ea122cba141a80662b4a714337c5d02df3a2cb5073976b12b59d9e221982fb67"
     ),
     # Which repository ReadImageScan described against, resolved from the registry by the
     # submitting workflow. Checked against config/repositories.yaml rather than believed:
@@ -84,7 +84,7 @@ ACCEPTED_EVENT: dict[str, Any] = {
         "workload_profile": "olmo-core-check-cpu",
         "compute_profile": "cpu-32vcpu",
         "dataset_release": "dolma-2026-07",
-        "team": "memory-split",
+        "team": "platform",
         "wandb_project": "olmo-core-memory-split",
         "command": ["python", "-m", "olmo_core.train", "--config", "smoke"],
         "maximum_runtime_hours": "1",

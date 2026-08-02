@@ -46,9 +46,11 @@ git rev-parse HEAD                        # the commit you put on the form
 
 ## Workload profiles
 
-| Profile | Machine | Limits | Use for |
-| --- | --- | --- | --- |
-| `edullm-data-validate` | `cpu-32vcpu` — c7i.8xlarge, 32 vCPU, $1.428/hr | 1h, 1 attempt, no checkpoint | The only entry this repository has. Reading a corpus is CPU work over S3 with no accelerator to ask for, and a read holds no state worth resuming |
+| Profile | Limits | Use for |
+| --- | --- | --- |
+| `edullm-data-validate` | 1h, 1 attempt, no checkpoint | The only entry this repository has. Reading a corpus holds no state worth resuming |
+
+Pick `cpu-32vcpu` for `compute_profile`, which is c7i.8xlarge at $1.428/hr. Validating a corpus is CPU work over S3 with no accelerator to ask for, and this entry used to say so by naming the profile. It cannot any more, because the form overrode whatever it named, so a GPU shape here is available to you and buys nothing.
 
 ## Running a validation
 

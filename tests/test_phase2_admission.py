@@ -41,7 +41,7 @@ EXCEPTION_MANIFEST = "gpu-exception.yaml"
 
 ADMIN = "philote-dev"
 LEAD = "ericrcwu001"
-MEMBER = "caiiris"
+MEMBER = "GMatherne"
 OTHER_MEMBER = "nzhao721"
 OUTSIDER = "not-a-member"
 

@@ -4,13 +4,14 @@ Everything true whichever repository you work in. For what to actually run, see 
 
 ## Your first run
 
-Open [Submit a run](https://github.com/edu-llm/platform/actions/workflows/submit-run.yml), press **Run workflow**, and fill in five fields. Everything else has a correct default.
+Open [Submit a run](https://github.com/edu-llm/platform/actions/workflows/submit-run.yml), press **Run workflow**, and fill in six fields. Everything else has a correct default.
 
 | Field | Value |
 | --- | --- |
 | `repository` | `OLMo-core` |
 | `commit_sha` | `main` |
-| `workload_profile` | `olmo-core-check-cpu` |
+| `workload_profile` | `olmo-core-check` |
+| `compute_profile` | `cpu-32vcpu` |
 | `team` | `scratch` |
 | `experiment` | Anything, such as `onboarding` |
 | `wandb_project` | Your Weights and Biases project |
@@ -38,13 +39,29 @@ Ask for all three through the [access request](https://github.com/edu-llm/platfo
 | Field | What it decides |
 | --- | --- |
 | `repository`, `commit_sha` | What code runs. The commit must already have an image — see *Building your image* in your repository's guide |
-| `workload_profile` | The machine, the time limit, the retry limit and the checkpoint contract, together |
+| `workload_profile` | The time limit, the retry limit and the checkpoint contract, together. Not the machine |
+| `compute_profile` | The machine. Required, and the field that decides what your run costs |
 | `team` | Who reviews it, and the S3 prefix your output lands under. Closed dropdown: `platform`, `memory-split`, `input-core`, `pre-training`, `post-training`, `data-prep`, `eval-inference`, `scratch` |
 | `experiment` | Groups related runs — a sweep, an ablation, a week. Free text, registers nothing, and what the cost view groups by |
 | `dataset_release` | The corpus your job reads. `none` if it reads none |
 | `command` | What the container runs. No shell: the first word must be a program name, and the line must not be wrapped in outer quotes |
 | `wandb_project` | Where the run reports |
-| `compute_profile`, `image_digest`, `maximum_runtime_hours`, `maximum_attempts`, the fan-out fields | Advanced. Leave them. The image comes from your commit and the machine from the workload profile, so overriding either makes those two disagree |
+| `image_digest`, `maximum_runtime_hours`, `maximum_attempts`, the fan-out fields | Advanced. Leave them. The image comes from your commit, and the two bounds come from the workload profile |
+
+## Choosing a machine
+
+`compute_profile` is a closed dropdown of every shape with a queue behind it, and it is the most expensive field on the form by two orders of magnitude — $0.53 an hour at one end and $55.04 at the other. Nothing infers it from what you are running, and nothing refuses a small job on a large machine.
+
+| You are | Pick |
+| --- | --- |
+| Doing anything for the first time | `cpu-32vcpu` |
+| Checking your code sees a GPU | `gpu-1xa10g` |
+| Training, one device | `gpu-1xa10g` |
+| Training, several devices | A `4x` or `8x` shape, and start one process per device — see your repository's guide |
+
+**This used to say to leave the field alone, and that advice was wrong the whole time it was there.** The workload profile appeared to name a machine and the form outranked it silently, so a run labelled `olmo-core-train-1gpu` could land on eight H100s and nothing anywhere said so. The catalog no longer claims a machine and this field is required, so you are asked once rather than defaulted somewhere you did not choose.
+
+Your image is unaffected by this field. It is built from your commit for one architecture and runs on every shape here, so picking a bigger machine changes what you are billed and nothing about what runs.
 
 ## Approval
 

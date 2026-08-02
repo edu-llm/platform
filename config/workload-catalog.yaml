@@ -146,30 +146,66 @@ compute_profiles:
     pricing_observed_at: "2026-07-25"
     provisioned: true
 workloads:
-  # THESE FOUR WERE RENAMED, AND RECORDS WRITTEN BEFORE THE RENAME STILL CARRY THE OLD
-  # NAMES. Every one of them ended in "-smoke", which is jargon a researcher reading the
-  # submission dropdown has no reason to know and which understates what the entry is for:
-  # the CPU and GPU entries are the checks somebody runs first, not throwaways.
+  # THESE NINE WERE RENAMED, IN TWO WAVES, AND RECORDS WRITTEN BEFORE EITHER WAVE STILL
+  # CARRY THE OLD NAMES.
+  #
+  # The first four ended in "-smoke", which is jargon a researcher reading the submission
+  # dropdown has no reason to know and which understates what the entry is for: the CPU and
+  # GPU entries are the checks somebody runs first, not throwaways.
+  #
+  # The five below them lost a machine out of their names, because the entries stopped
+  # naming a machine. An entry declared a compute_profile, the submission form's own
+  # compute_profile overrode it whatever it said, and nothing refused a disagreement
+  # between the two, so the name promised a placement the form was already outranking. Two
+  # entries that differed only in that field were therefore one policy written twice, and
+  # each such pair collapsed into the entry it always was.
   #
   #   olmo-core-cpu-smoke    -> olmo-core-check-cpu
   #   olmo-core-gpu-smoke    -> olmo-core-check-gpu
   #   olmo-core-train-smoke  -> olmo-core-train-4gpu
   #   dolma-tokenize-smoke   -> dolma-tokenize
+  #   olmo-core-check-cpu    -> olmo-core-check
+  #   olmo-core-check-gpu    -> olmo-core-check
+  #   olmo-core-train-1gpu   -> olmo-core-train
+  #   olmo-core-train-4gpu   -> olmo-core-train
+  #   olmo-eval-check-cpu    -> olmo-eval-check
   #
-  # The stored records were deliberately not rewritten. A lineage record states what a run
-  # was submitted as, it carries a manifest_sha256 over its own bytes, and editing the name
-  # inside one would both falsify the record and break its digest. So an audit of anything
-  # submitted before this rename finds a workload_profile that is not in this file, and this
-  # table is the answer to why. RunManifest.workload_profile is a plain string with no
-  # lookup against this catalog, which is what makes those records still parse.
+  # Read the table right to left to resolve a stored name, and follow it twice where it
+  # chains: a record naming olmo-core-train-smoke was renamed to olmo-core-train-4gpu and
+  # is olmo-core-train now.
   #
-  # The CPU workload Phase 3 actually runs. It names OLMo-core rather than dolma because
-  # OLMo-core is the only repository config/repositories.yaml registers and the only one
-  # with a published image; a workload naming an unregistered repository cannot reach Batch
-  # however well the rest of the path works.
-  - name: olmo-core-check-cpu
+  # The stored records were deliberately not rewritten, in either wave. A lineage record
+  # states what a run was submitted as, it carries a manifest_sha256 over its own bytes,
+  # and editing the name inside one would both falsify the record and break its digest. So
+  # an audit of anything submitted before a rename finds a workload_profile that is not in
+  # this file, and this table is the answer to why. RunManifest.workload_profile is a plain
+  # string with no lookup against this catalog, which is what makes those records still
+  # parse.
+  #
+  # A record from before the second wave also carries a compute_profile of its own, and
+  # that field is unaffected and still resolves here. What a collapsed record loses is
+  # nothing: the machine it ran on was always the manifest's answer rather than the
+  # workload's, which is the defect the collapse closed.
+  #
+  # The CPU check Phase 3 actually runs, and the entry a first submission picks. It names
+  # OLMo-core rather than dolma because OLMo-core is the only repository
+  # config/repositories.yaml registers and the only one with a published image; a workload
+  # naming an unregistered repository cannot reach Batch however well the rest of the path
+  # works.
+  #
+  # ONE ENTRY WHERE THERE WERE TWO, AND THE PAIR WAS NEVER TWO POLICIES. olmo-core-check-cpu
+  # and olmo-core-check-gpu declared the same hour, the same single attempt and the same
+  # absent checkpoint contract, and differed only in a compute_profile the form overrode.
+  # Whether a check runs on a CPU or on a GPU is now the compute_profile field on the
+  # submission, which is where the question was already being answered.
+  #
+  # checkpoint is null, and that is a claim rather than an omission. A CheckpointContract
+  # says the platform requires periodic checkpointing at an interval to a destination; a
+  # twenty-step check has no interval to checkpoint on. Writing a static prefix here would
+  # add a fourth literal answer to "where does a run write", which is the exact defect D5
+  # exists to have closed -- and a static string cannot carry a run id anyway.
+  - name: olmo-core-check
     repository: OLMo-core
-    compute_profile: cpu-32vcpu
     maximum_runtime_hours: "1"
     maximum_attempts: 1
     checkpoint: null
@@ -180,19 +216,25 @@ workloads:
   # `edullm-data-validate` is a declared console script in that repository and a tested
   # main(), not a name invented here. It reads a published corpus and checks each shard
   # against the bounds its family declares, which is CPU work over S3 with no accelerator to
-  # ask for, so cpu-32vcpu, the only CPU profile with a compute environment behind it.
+  # ask for. It kept its name through the collapse because the name never carried one.
+  #
+  # THAT IT WANTS NO ACCELERATOR IS ADVICE THIS FILE CANNOT ENFORCE, AND SAYING SO IS THE
+  # HONEST VERSION OF THE cpu-32vcpu THIS ENTRY USED TO DECLARE. That declaration was
+  # overridden by the form on every submission, so it refused nothing; what it did was read
+  # as a promise that a validator could not be started on a p5.48xlarge. It can, it always
+  # could, and the only thing standing between a submitter and that mistake is the hourly
+  # rate on the approver's summary. Pick cpu-32vcpu.
   #
   # One hour and one attempt. The validator is a read: it writes a report and holds no state
   # worth resuming, so a lost machine costs the read again rather than the work, and
   # checkpoint is null because there is no interval to checkpoint on.
   - name: edullm-data-validate
     repository: edullm-data
-    compute_profile: cpu-32vcpu
     maximum_runtime_hours: "1"
     maximum_attempts: 1
     checkpoint: null
   # The Evaluation group's first submittable entry, and deliberately the check rather than the
-  # eval. olmo-core-check-cpu is the precedent: prove the path before spending a GPU on it.
+  # eval. olmo-core-check is the precedent: prove the path before spending a GPU on it.
   #
   # WHAT THIS RUNS AND WHAT IT DOES NOT. olmo_eval registers a `mock` provider alongside vllm,
   # hf, olmo_core, vllm_server and litellm, so `-o provider.kind=mock` exercises the harness,
@@ -201,55 +243,53 @@ workloads:
   # are a default group in that repository, a torch built against its CUDA base adds several
   # gigabytes, and which backend an eval needs is a decision for the group running it.
   #
-  # So there is no GPU eval profile here yet, and adding one before the image carries a
-  # backend would offer a dropdown entry that fails after a lead released the run. The GPU
-  # shapes are provisioned and waiting; what is missing is a backend in the image, which is
-  # one line in that repository's Dockerfile and a rebuild.
-  - name: olmo-eval-check-cpu
+  # THE "-cpu" CAME OFF THE NAME AND THE SENTENCE IT WAS SHORTHAND FOR IS STILL TRUE. There
+  # is no eval entry here that a GPU would help, and there will not be one until the image
+  # carries a backend, which is one line in that repository's Dockerfile and a rebuild. The
+  # GPU shapes are provisioned and waiting. What the suffix implied and could not deliver is
+  # that picking this entry kept a submitter off them; the form has always been able to put
+  # a mock-provider eval on a p5.48xlarge, and removing the suffix stops the name claiming
+  # otherwise.
+  - name: olmo-eval-check
     repository: olmo-eval-full
-    compute_profile: cpu-32vcpu
     maximum_runtime_hours: "1"
     maximum_attempts: 1
     checkpoint: null
   # Retained and still unrunnable: dolma has no registration and no image. Kept because the
-  # catalog is a pricing-and-shape document and this entry is the shape a tokenizer job
-  # takes, not a claim that one can be submitted today.
+  # catalog is a policy document and this entry is the contract a tokenizer job runs under,
+  # not a claim that one can be submitted today. Two hours rather than one because
+  # tokenizing a corpus is the longest thing here that is not training.
   - name: dolma-tokenize
     repository: dolma
-    compute_profile: cpu-32vcpu
     maximum_runtime_hours: "2"
     maximum_attempts: 1
     checkpoint: null
-  # The GPU workload Phase 4 actually runs, and a sibling of olmo-core-train-4gpu rather
-  # than a repointing of it.
+  # The only entry here that is for training rather than for proving the platform works,
+  # and the collapse of olmo-core-train-1gpu and olmo-core-train-4gpu, which carried
+  # identical bounds and identical checkpoint contracts and differed in one field the form
+  # overrode. Everything either of them promised about a machine is now the compute_profile
+  # on the submission, which is a required field and the first real choice a submitter
+  # makes. How many devices the run gets is priced on the approver's summary before it is
+  # released.
   #
-  # One entry serves both of the phase's live runs, because a workload profile fixes the
-  # compute profile, the bounds and the checkpoint contract while the command arrives with
-  # the submission. So the capability run -- which asks the container what devices it can
-  # see -- and the training run that follows it are the same profile with different
-  # commands, and the second inherits the first's proven placement.
+  # TWENTY-FOUR HOURS IS THE POLICY CEILING AND NOT A ROUND NUMBER. config/policy.yaml sets
+  # routine_maximum_runtime_hours to 24, so this is the longest run that still routes to an
+  # ordinary lead approval; a twenty-fifth hour would make every submission an exception and
+  # put a second person in the path of every training job.
   #
-  # checkpoint is null, and that is a claim rather than an omission. A CheckpointContract
-  # says the platform requires periodic checkpointing at an interval to a destination; a
-  # twenty-step check has no interval to checkpoint on. The checkpoint the training run
-  # writes goes under the run's own output prefix, which
-  # contracts/results.py::output_prefix derives at submit time. Writing a static prefix here
-  # would add a fourth literal answer to "where does a run write", which is the exact defect
-  # D5 exists to have closed -- and a static string cannot carry a run id anyway.
-  - name: olmo-core-check-gpu
-    repository: OLMo-core
-    compute_profile: gpu-1xa10g
-    maximum_runtime_hours: "1"
-    maximum_attempts: 1
-    checkpoint: null
-  # The first profile on this platform that is for training rather than for proving the
-  # platform works. One A10G, twelve hours, two attempts.
+  # IT WAS TWELVE AND THE TWELVE WAS MEASURABLY WRONG, WHICH IS WHY BOTH NUMBERS MOVED
+  # TOGETHER. Memory-split's eight seed pairs and P7's 192-checkpoint sweep each land
+  # between sixteen and twenty hours, so under the old ceiling every one of them was an
+  # exception and the exception path was carrying ordinary work. Twelve was never measured
+  # against anything; twenty-four covers both of those and leaves the cost ceiling as the
+  # bound that actually bites.
   #
-  # TWELVE HOURS IS THE POLICY CEILING AND NOT A ROUND NUMBER. config/policy.yaml sets
-  # routine_maximum_runtime_hours to 12, so this is the longest run that still routes to an
-  # ordinary lead approval; a thirteenth hour would make every submission an exception and
-  # put a second person in the path of every training job. At the A10G's $1.006/hour that is
-  # $12.07 an attempt and $24.14 across both, against a routine cost ceiling of $500.
+  # WHAT THE LONGER CEILING COSTS, PER SHAPE, AGAINST A ROUTINE COST CEILING OF $500. Two
+  # attempts at twenty-four hours is $48.29 on gpu-1xa10g and $272.26 on gpu-4xa10g, both
+  # routine. It is $781.82 on gpu-8xa10g, which is an exception on cost where the same
+  # submission at twelve hours was routine at $390.91. That is the raise working rather than
+  # a regression: the eight-GPU shapes are where a doubled runtime is worth a second reader,
+  # and the cost ceiling is the bound that says so.
   #
   # TWO ATTEMPTS IS THE POINT OF THE ENTRY, AND IT IS ONLY SAFE BECAUSE OF THREE THINGS THAT
   # ARE NOW TRUE TOGETHER. EDULLM_RUN_ID is in the container environment, so a Batch retry
@@ -263,36 +303,13 @@ workloads:
   # resume_required: true is still a declaration -- no code branches on the field. What makes
   # it true in practice is the paragraph above, and what makes it checkable is that a run
   # whose save folder was left at OLMo-core's /tmp default writes nothing here at all.
-  - name: olmo-core-train-1gpu
-    repository: OLMo-core
-    compute_profile: gpu-1xa10g
-    maximum_runtime_hours: "12"
-    maximum_attempts: 2
-    checkpoint:
-      interval_minutes: 30
-      # The root the per-run prefix hangs under, not a path anything writes to; the value the
-      # container is handed is output_prefix(team, run_id) + "checkpoints/". Same string as
-      # the four-GPU entry below, and for the same reason recorded there.
-      destination_prefix: "s3://sbsandbox-intern-edullm-outputs/teams/"
-      resume_required: true
-  # RAISED FROM ONE HOUR AND ONE ATTEMPT, WHICH WERE THE BOUNDS OF A SHAPE NOBODY COULD
-  # SUBMIT. An hour trains nothing and one attempt means a lost machine loses the run, so both
-  # now match olmo-core-train-1gpu: twelve hours because that is
-  # routine_maximum_runtime_hours in config/policy.yaml and a thirteenth would make every
-  # submission an exception, and two attempts because Batch re-runs a retry with the same
-  # EDULLM_RUN_ID and therefore the same EDULLM_CHECKPOINT_DIR, which is what OLMo-core's
-  # Trainer.fit() auto-resumes from. At $5.672/hour that is $68.06 an attempt and $136.13
-  # across both, against a routine cost ceiling of $500.
   #
-  # resume_required went true with the second attempt. It was false while one attempt made
-  # resume meaningless; leaving it false with two would declare that the second attempt is
-  # allowed to repeat the first at full price.
-  #
-  # FOUR GPUS NEED FOUR RANKS, WHICH IS THE SUBMITTED COMMAND AND NOT THIS ENTRY.
-  # .edullm/train_on_corpus.py already handles being one rank of several: it initialises the
-  # process group, shards the model with FSDP and writes one checkpoint shard per rank. What
-  # it does not do is start the other three processes. Nothing on this side does either, since
-  # the command arrives with the submission and is exec'd as typed, so a four-GPU run needs
+  # A MULTI-GPU MACHINE NEEDS A RANK PER DEVICE, WHICH IS THE SUBMITTED COMMAND AND NOT THIS
+  # ENTRY. .edullm/train_on_corpus.py already handles being one rank of several: it
+  # initialises the process group, shards the model with FSDP and writes one checkpoint
+  # shard per rank. What it does not do is start the other processes. Nothing on this side
+  # does either, since the command arrives with the submission and is exec'd as typed, so a
+  # four-GPU run needs
   #
   #   python -m torch.distributed.run --nproc-per-node=4 --standalone \
   #     .edullm/train_on_corpus.py <run_id> --steps <n>
@@ -303,15 +320,16 @@ workloads:
   # A run that omitted it used to train on one device, bill for four, and succeed. That is
   # now refused while the submission compiles, by
   # edullm_platform.launchers.require_a_process_for_every_device, which reads the device
-  # count out of CONTAINER_SHAPES rather than out of the profile's name -- so this entry
-  # needs no field for it and a profile named for something other than its device count is
-  # still covered. Nothing here is what enforces the rule, and this paragraph is here
-  # because the rule is about a command rather than about a catalog entry, which is not
-  # where a reader of this file would think to look for it.
-  - name: olmo-core-train-4gpu
+  # count out of CONTAINER_SHAPES against the compute profile the manifest resolved to.
+  # That is why one entry can serve every shape: the rule is derived from the machine the
+  # submission names rather than from anything declared here, so it covered the four-GPU
+  # entry before the collapse and covers a submitter picking gpu-8xh100 after it. Nothing
+  # here is what enforces it, and this paragraph is here because the rule is about a command
+  # rather than about a catalog entry, which is not where a reader of this file would think
+  # to look for it.
+  - name: olmo-core-train
     repository: OLMo-core
-    compute_profile: gpu-4xa10g
-    maximum_runtime_hours: "12"
+    maximum_runtime_hours: "24"
     maximum_attempts: 2
     checkpoint:
       interval_minutes: 30
@@ -326,43 +344,22 @@ workloads:
       destination_prefix: "s3://sbsandbox-intern-edullm-outputs/teams/"
       resume_required: true
   # edullm-alt-cl: the math front-load / anneal experiment. A registration with no workload
-  # is a dropdown that cannot be submitted for, so these three entries are what make the
-  # repository usable rather than merely named. Bounds match the OLMo-core train entries:
-  # twelve hours is routine_maximum_runtime_hours, two attempts because Batch retries keep
-  # EDULLM_RUN_ID / EDULLM_CHECKPOINT_DIR and the Trainer auto-resumes.
+  # is a dropdown that cannot be submitted for, so these two presets are what make the
+  # repository usable rather than merely named. Same shape as olmo-core-check / olmo-core-train:
+  # bounds and checkpoint live here; the machine is the form's compute_profile field.
   #
-  # The check is a dry-run of the treatment arm on CPU -- plan JSON only, no fit -- so the
-  # path is proven before anybody spends a GPU. The 1/4/8 GPU entries are the real trains;
-  # eight A10G stays under the $20/hr exception ceiling, so it is ordinary lead approval
-  # rather than admin. An eight-A100 run still needs the advanced compute override.
-  - name: edullm-alt-cl-check-cpu
+  # The check is a dry-run of the treatment arm -- plan JSON only, no fit -- so pick
+  # cpu-32vcpu. Training matches OLMo-core's 24h / 2-attempt ceiling; pick gpu-1xa10g /
+  # gpu-4xa10g / gpu-8xa10g (or gpu-8xa100 with admin approval) to match the command's
+  # --nproc-per-node.
+  - name: edullm-alt-cl-check
     repository: edullm-alt-cl
-    compute_profile: cpu-32vcpu
     maximum_runtime_hours: "1"
     maximum_attempts: 1
     checkpoint: null
-  - name: edullm-alt-cl-train-1gpu
+  - name: edullm-alt-cl-train
     repository: edullm-alt-cl
-    compute_profile: gpu-1xa10g
-    maximum_runtime_hours: "12"
-    maximum_attempts: 2
-    checkpoint:
-      interval_minutes: 30
-      destination_prefix: "s3://sbsandbox-intern-edullm-outputs/teams/"
-      resume_required: true
-  - name: edullm-alt-cl-train-4gpu
-    repository: edullm-alt-cl
-    compute_profile: gpu-4xa10g
-    maximum_runtime_hours: "12"
-    maximum_attempts: 2
-    checkpoint:
-      interval_minutes: 30
-      destination_prefix: "s3://sbsandbox-intern-edullm-outputs/teams/"
-      resume_required: true
-  - name: edullm-alt-cl-train-8gpu
-    repository: edullm-alt-cl
-    compute_profile: gpu-8xa10g
-    maximum_runtime_hours: "12"
+    maximum_runtime_hours: "24"
     maximum_attempts: 2
     checkpoint:
       interval_minutes: 30

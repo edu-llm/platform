@@ -19,11 +19,18 @@ Resources:
       # it against: the identity in hand is the workflow, never the person who ran it.
       #
       # So the authorisation is in the workflow, and this role is scoped by what it can do
-      # rather than by whose it can do it to: describe jobs and stop the ones this platform
-      # submitted, and nothing else in the account. It cannot submit, cannot register a job
-      # definition, cannot read or write S3, and cannot reach the state machine -- so the
-      # worst a bypass achieves is stopping runs, which is disruptive, recoverable, and
+      # rather than by whose it can do it to: describe jobs, stop the ones this platform
+      # submitted, read events out of the two log groups those jobs write to, and nothing
+      # else in the account. It cannot submit, cannot register a job definition, cannot read
+      # or write S3, and cannot reach the state machine -- so the worst a bypass achieves is
+      # stopping runs and reading what they printed, which is disruptive, recoverable, and
       # loud in the lifecycle record.
+      #
+      # The log read is the one grant here that discloses rather than acts, so the argument
+      # above does not cover it. A bypass of the workflow check would read a run's output
+      # rather than stop it, and reading is not undone by anything. What bounds it is that
+      # the two groups hold only this platform's own Batch jobs, and that the workflow asks
+      # for the stream the job itself names rather than searching a group.
       #
       # That is a real trade and it is worth naming rather than burying: the check that
       # matters lives in YAML, and a change to that file is the change to review. It is the
@@ -107,6 +114,57 @@ Resources:
                 Condition:
                   StringLike:
                     aws:ResourceTag/edullm:run-id: "run_*"
+              # THE LOG, BECAUSE NAMING A STREAM TO SOMEBODY WITHOUT A CREDENTIAL IS NOT AN
+              # ANSWER.
+              #
+              # cancel-run.yml reported the stream name and stopped, and reaching a stream
+              # needs an AWS credential -- which is the thing the person reading that report
+              # does not have and is why they dispatched a workflow instead. So the next step
+              # was always to ask an operator, and an operator reads the end of the log. That
+              # reading filed nine W&B credential failures as distributed training bugs,
+              # because the last lines of a torch run say `ProcessGroup is not registered`
+              # while the cause is `CommError: user is not logged in` twenty lines above it.
+              # Putting fifty lines in front of the person who owns the run is what ends that.
+              #
+              # ONE ACTION AND NO CONDITION, AND THE MISSING CONDITION IS THE DECISION HERE.
+              # `logs:GetLogEvents` takes the `log-stream` resource type and the service
+              # authorization reference offers it exactly one condition key,
+              # `aws:ResourceTag/${TagKey}`. A log stream cannot be tagged -- CloudWatch Logs
+              # tags log groups, and there is no TagLogStream -- so the resource in the
+              # request carries no tags for that key to be read off, and the two groups below
+              # carry only the three `aws:cloudformation:` tags CloudFormation writes, which
+              # are not ours to key on. A condition there would be the Stack 4 shape again.
+              # `batch:TerminateJob` was scoped by `batch:JobQueue`, which TerminateJob never
+              # supplies, and the denial named a missing action rather than an unsatisfiable
+              # condition. Refusing to write a second one of those is worth more than the
+              # appearance of a narrower grant.
+              #
+              # What narrows it instead is the resource, and it narrows it to exactly the two
+              # groups config/execution-targets.yaml names. Every one of the eleven queues
+              # writes to one of these, because the CPU queue has its own group and the
+              # original GPU queue's group is shared by all nine GPU shapes, which
+              # config/execution-targets.yaml argues for at length. A prefix such as
+              # `/aws/batch/*` would be one character shorter and would reach every other
+              # team's Batch logs in this shared account.
+              # tests/test_cancel_run_workflow.py compares these two names against the
+              # distinct log groups that file declares, because nothing in CloudFormation
+              # connects the two and a queue promoted with a group of its own would otherwise
+              # be a run whose log this role silently cannot read.
+              #
+              # The `log-stream:*` is unavoidable rather than lazy. ECS mints the stream name
+              # when it starts the task -- `gpu-run/default/` followed by a hex identifier --
+              # so there is no stream name any policy could predict, and the narrowing that is
+              # available is the group the stream is under.
+              #
+              # Read only, and `logs:FilterLogEvents` in particular is absent because it takes
+              # a log-group resource and searches across every stream in it, which would let
+              # this role read one run's output while looking at another's. GetLogEvents takes
+              # the stream the job named, so a read is aimed at one job by construction.
+              - Effect: Allow
+                Action: logs:GetLogEvents
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/batch/sbsandbox-intern-edullm-cpu:log-stream:*
+                  - Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/batch/sbsandbox-intern-edullm-gpu:log-stream:*
               # DELIBERATELY ABSENT, and each for its own reason rather than as a list.
               #
               # batch:SubmitJob and batch:RegisterJobDefinition: a role that can cancel and
@@ -115,6 +173,17 @@ Resources:
               #
               # batch:CancelJob: it only affects a job that has not started, TerminateJob
               # covers both cases, and two verbs would mean two authorisation paths.
+              #
+              # logs:FilterLogEvents and logs:StartQuery. Both search a whole log group, so
+              # either would let a read aimed at one run return another run's output, where
+              # the grant above takes the stream the job itself named. logs:DescribeLogStreams
+              # for the same reason and one more, which is that the stream name comes off the
+              # job -- enumerating a group would only be a way to reach a run this workflow
+              # was not asked about.
+              #
+              # Every writing logs: action, and logs:DeleteLogGroup and logs:PutRetentionPolicy
+              # in particular. A role that can read what a run printed and also change it is a
+              # role that can edit the evidence of the failure it was dispatched to explain.
               #
               # Every s3: action. The cancel path learns whose run it is from a tag on the
               # job precisely so it never needs to read the lineage store, and a grant here

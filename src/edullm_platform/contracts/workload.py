@@ -120,9 +120,30 @@ class ComputeProfile(ContractModel):
 
 
 class WorkloadProfile(ContractModel):
+    """A policy preset, which is a repository, two bounds and a checkpoint contract.
+
+    IT NAMED A MACHINE AND THE NAMING WAS A FICTION, WHICH IS WHY THE FIELD IS GONE.
+    ``compute_profile`` sat here and ``SubmissionInputs.compute_profile`` overrode it
+    unconditionally, so what a run landed on was whatever the form said and this value was
+    read only when the form left the field empty. Nothing refused a disagreement between
+    the two, and nothing ever could: an override that is refused when it differs is not an
+    override. So a researcher reading ``olmo-core-train-1gpu`` believed the name bound the
+    run to one A10G while the dropdown beside it outranked the name in silence.
+
+    Removing the field rather than enforcing it is the choice that follows from who owns
+    the answer. The machine is the submitter's decision, made per run and priced per run;
+    what a workload can honestly fix is the contract the codebase keeps -- how long it may
+    take, how many attempts it may have, and whether an interrupted attempt has somewhere
+    to resume from. Two entries differing only in a machine were therefore two spellings of
+    one policy, and the catalog now carries one of each.
+
+    :class:`~edullm_platform.contracts.manifest.RunManifest` is unaffected and keeps its
+    own ``compute_profile``. It records what a run was submitted with, which is a different
+    question from what a preset declares, and its serialized shape is content addressed.
+    """
+
     name: str = Field(min_length=1)
     repository: str = Field(min_length=1)
-    compute_profile: str = Field(min_length=1)
     maximum_runtime_hours: PositiveStrictDecimal = Field(gt=0)
     maximum_attempts: int = Field(ge=1)
     checkpoint: CheckpointContract | None
@@ -152,15 +173,15 @@ class WorkloadCatalog(ContractModel):
         workload_names = {workload.name for workload in self.workloads}
         if len(workload_names) != len(self.workloads):
             raise ValueError("workload names must be unique")
-        profile_by_name = {profile.name: profile for profile in self.compute_profiles}
-        for workload in self.workloads:
-            if workload.compute_profile not in profile_names:
-                raise ValueError(f"unknown compute profile: {workload.compute_profile}")
-        workload_accelerators = {
-            profile_by_name[workload.compute_profile].accelerator for workload in self.workloads
-        }
-        if workload_accelerators != {"cpu", "gpu"}:
-            raise ValueError("representative CPU and GPU workloads are required")
+        # ASKED OF THE PROFILES BECAUSE A WORKLOAD NO LONGER NAMES ONE. This required a
+        # workload on a CPU profile and a workload on a GPU profile, through the join
+        # WorkloadProfile.compute_profile used to carry. The property it was establishing
+        # is that this platform can run both kinds of work, which the profiles answer on
+        # their own, so it is asked where the accelerator is declared. A catalog that
+        # priced only CPU shapes would offer no GPU on the submission form at all.
+        accelerators = {profile.accelerator for profile in self.compute_profiles}
+        if accelerators != {"cpu", "gpu"}:
+            raise ValueError("representative CPU and GPU compute profiles are required")
         return self
 
 

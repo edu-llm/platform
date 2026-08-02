@@ -1,7 +1,7 @@
 schema_version: 1
 scenario: lead-self-authorization
 submitter:
-  github_login: ericrcwu001
+  github_login: VS-code-cloud
   admin: false
   team_lead: true
 approver: null

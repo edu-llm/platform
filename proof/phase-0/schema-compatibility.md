@@ -46,9 +46,9 @@ The kind column separates a `record`, which some payload is validated against, f
 | CheckpointContract | edullm_platform.contracts.workload | record | unversioned | sha256:97160a720340044f91d3707d703a2a424ff8c3d5479c10c8f6a48e68e34ad9f0 |
 | ComputeProfile | edullm_platform.contracts.workload | record | unversioned | sha256:980b84356011d721f565c7d3fdaa7c852ef286c429d1f2b796a6d4ae163ede20 |
 | CostInputs | edullm_platform.contracts.workload | record | unversioned | sha256:42d9b8e66cb97787e2c46e55b6d2254a8c7bab7930cc53653cc14d9b0740d424 |
-| WorkloadCatalog | edullm_platform.contracts.workload | record | unversioned | sha256:d5eb8b6f40addd387722837c9d0f52bfada42e7d30087589d9f9b43f21497312 |
-| WorkloadProfile | edullm_platform.contracts.workload | record | unversioned | sha256:e5a748fc939a27a220a1da81ad515c719678d757d29b42b008158217baaa10a7 |
-| SubmissionInputs | edullm_platform.submission | record | unversioned | sha256:3cee9123c490cb1f7dcdc7c88f5f09eb5f1d232462ab30fc37b7a584055f725b |
+| WorkloadCatalog | edullm_platform.contracts.workload | record | unversioned | sha256:626769fbb943492d6101b90e8cdfe8209635d669172569571d4fa134635a05d1 |
+| WorkloadProfile | edullm_platform.contracts.workload | record | unversioned | sha256:82e29b6a8169249896bbcfb883e1e5aff2ade8251d9b52729c58259f59018c4a |
+| SubmissionInputs | edullm_platform.submission | record | unversioned | sha256:b1f2b22c341e62011bb504d452169d58ab1d86a1b2058fedf8e873befd7042cb |
 
 ## Runtime records
 
@@ -184,8 +184,8 @@ The checked-in schemas under `schemas/`, with the digest of each file as generat
 | schemas/result-manifest.schema.json | ResultManifest | sha256:5bd07bde5ac6c86323878915dd684dafa2e838fa20b53d78554074159563cb26 |
 | schemas/run-manifest.schema.json | RunManifest | sha256:62851f48df41a1dc270a525b44a8ef01eab660af9d5b60030d6c0a8776e196f2 |
 | schemas/scheduler-attempt.schema.json | SchedulerAttempt | sha256:91984a9fb1f7f9150f7799dc337807bd14b93b50908a56e0e230391546c9c4ac |
-| schemas/submission-inputs.schema.json | SubmissionInputs | sha256:741c31071d945861c98abaec766ef5533e6a35cd338306e1d0eff9fb8c8ea845 |
-| schemas/workload-catalog.schema.json | WorkloadCatalog | sha256:4039ead3f77c0949db2a701dae90461788ed6856838075a1f223f3d4b853fa06 |
+| schemas/submission-inputs.schema.json | SubmissionInputs | sha256:7d3ab10e3a517eef85701881d1aa2eafec02a89b293e79309a88a8dbaceed5d1 |
+| schemas/workload-catalog.schema.json | WorkloadCatalog | sha256:2345ae1bd3a2985fa55bdb2c7b7e8bba4127c925ba43f086929f443fa32d1384 |
 
 Regenerate with `uv run python tools/export_schemas.py`. Verify a file by hand with `shasum -a 256 schemas/<file>`.
 

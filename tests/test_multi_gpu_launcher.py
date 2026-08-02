@@ -5,11 +5,11 @@ exec'd exactly as typed. ``.edullm/train_on_corpus.py`` handles being one rank o
 it initialises the process group, shards with FSDP and writes one checkpoint shard per rank
 -- and it does not start the other processes. Nothing else does either, so a command without
 a launcher trains on one device, bills for all of them, and exits zero. On ``gpu-4xa10g`` at
-$5.672/hour over the workload's twelve hours that is $68 for a quarter of the work, and
-``gpu-8xh100`` is four times worse again.
+$5.672/hour over ``olmo-core-train``'s twenty-four hours that is $136 for a quarter of the
+work, and the same command on ``gpu-8xh100`` is $1,321 for an eighth of it.
 
 **The refusal is at compile time because that is where both halves are known and where a
-refusal is still cheap.** The workload fixes the compute profile, the compute profile fixes
+refusal is still cheap.** The submission names the compute profile, the compute profile fixes
 the device count, and the command is on the form. Everything before Batch is reversible; the
 approval is a person's attention, and this platform already refuses an off-roster submitter
 here rather than after the gate for exactly that reason.
@@ -284,8 +284,8 @@ def test_the_shells_this_unwraps_include_every_one_the_manifest_contract_knows()
 
 
 def test_fewer_ranks_than_devices_is_refused_and_the_message_names_both() -> None:
-    """Two idle A10Gs billed for twelve hours is $68 of the same waste, so it is the same
-    refusal rather than a warning.
+    """Two idle A10Gs billed for twenty-four hours is $68 of the same waste, so it is the
+    same refusal rather than a warning.
 
     The submitter has already thought about ranks, which is what makes this different from
     the no-launcher case and why the message says what to change rather than what to add.
@@ -507,8 +507,8 @@ def test_a_waived_run_puts_a_sentence_in_front_of_the_lead_who_releases_it() -> 
 def test_compiling_a_four_gpu_submission_without_a_launcher_is_refused() -> None:
     """The rule reached through the function the workflow calls, rather than in isolation.
 
-    ``olmo-core-train-4gpu`` inherits ``gpu-4xa10g``, so this is the submission the defect
-    was found on: twelve hours, two attempts, $136 of ceiling, and a quarter of the work.
+    ``olmo-core-train`` on ``gpu-4xa10g`` is the submission the defect was found on:
+    twenty-four hours, two attempts, $272 of ceiling, and a quarter of the work.
     """
     with pytest.raises(SubmissionRefusedError) as exc_info:
         compile_payload(olmo_payload(command=["python", "-m", "olmo_core.train"]))
@@ -516,12 +516,13 @@ def test_compiling_a_four_gpu_submission_without_a_launcher_is_refused() -> None
     assert "gpu-4xa10g" in str(exc_info.value)
 
 
-def test_an_overridden_compute_profile_is_the_one_the_command_is_checked_against() -> None:
-    """Mutation: read the workload's profile instead of the manifest's.
+def test_the_submitted_compute_profile_is_the_one_the_command_is_checked_against() -> None:
+    """Mutation: read a device count from anywhere but the profile the submission names.
 
-    ``compute_profile`` is an override on the form, so the profile a run lands on is not
-    always the one its workload names. Checking the workload's would let an override onto an
-    eight-GPU shape through with a four-rank command.
+    The machine is a field on the form and the only statement of it anywhere, since the
+    workload profile stopped declaring one. This is the case that used to say an override
+    beat the catalog; there is no catalog answer to beat now, and what it still says is that
+    a four-rank command on an eight-GPU shape is refused for the shape it names.
     """
     with pytest.raises(SubmissionRefusedError) as exc_info:
         compile_payload(
@@ -546,8 +547,8 @@ def test_a_compiled_four_gpu_submission_with_a_launcher_still_compiles() -> None
 def test_the_approver_context_carries_the_waiver_when_a_run_uses_one() -> None:
     """A benchmark on the four-GPU training workload, which is two waivers rather than one.
 
-    ``olmo-core-train-4gpu`` carries a checkpoint contract as well as four devices, and a
-    benchmark writes no checkpoint, so the second check refuses this command too. Both are
+    ``olmo-core-train`` carries a checkpoint contract, this submission names four devices,
+    and a benchmark writes no checkpoint, so the second check refuses this command too. Both are
     waived here because both are genuinely being waived; the point of the case is that the
     device-count one reaches the approver page, and it still does beside another.
     """

@@ -18,7 +18,24 @@ policy_version: v2
 # EXCEPTION_RATE_CEILING_USD_PER_HOUR carries the reasoning for the number itself.
 thresholds:
   routine_maximum_cost_usd: "500"
-  routine_maximum_runtime_hours: "12"
+  # RAISED FROM 12, WHICH WAS ARBITRARY AND IS NOW MEASURABLY WRONG. Twelve was never
+  # measured against a real run. Memory-split's eight seed pairs and P7's 192-checkpoint
+  # sweep each land between sixteen and twenty hours, so every one of them was an exception
+  # under the old ceiling and the exception path was carrying ordinary work. A bound that
+  # routes routine work to an admin does not make that work safer, it makes the admin gate
+  # the thing people learn to route around.
+  #
+  # WHAT THIS COSTS IS PAID BY THE COST CEILING RATHER THAN BY THIS ONE, WHICH IS WHY IT IS
+  # SAFE TO DOUBLE. classify_request applies both, so a routine run has to satisfy every
+  # bound. At olmo-core-train's two attempts, twenty-four hours is $272.26 on gpu-4xa10g and
+  # $781.82 on gpu-8xa10g, so the shapes where a doubled runtime is worth a second reader
+  # cross routine_maximum_cost_usd on their own. Raising this without raising that is the
+  # whole of the change; raising both would be the loosening this is not.
+  #
+  # The catalog's olmo-core-train entry declares exactly this many hours, and its comment
+  # carries the same reasoning beside the bound it sets. The two numbers move together or
+  # the longer of them stops being submittable without an admin.
+  routine_maximum_runtime_hours: "24"
   routine_maximum_attempts: 2
   routine_maximum_fanout_size: 64
   routine_maximum_parallelism: 8

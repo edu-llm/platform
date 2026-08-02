@@ -4,7 +4,7 @@ The 13 Phase 0 acceptance criteria, mapped to the tests cited for each one by no
 
 This mapping is defined once, in `src/edullm_platform/phase0_criteria.py`. The acceptance gate reads the same definition and executes the same node ids, so this matrix and `tools/validate_phase0.py` cannot disagree.
 
-Verification run: 254 tests executed, 254 passed, 0 failed, 0 errored, pytest exit code 0.
+Verification run: 255 tests executed, 255 passed, 0 failed, 0 errored, pytest exit code 0.
 
 Three statuses exist and no more. **COVERED** means one or more cited tests prove the criterion as stated against the shipped configuration and all of them pass; the gate passes it. **DEFERRED** means an explicit recorded decision not to satisfy it yet, which requires both a written reason and a written trigger describing what makes it live again; the gate passes it. **GAP** is everything else, and the gate fails it. There is no in-between status, because an in-between status is what lets a gate be green and wrong at the same time.
 
@@ -20,7 +20,7 @@ Three statuses exist and no more. **COVERED** means one or more cited tests prov
 | 6 | COVERED | 5 | 0 | Short commit SHAs are rejected. |
 | 7 | COVERED | 22 | 0 | Arbitrary IAM roles, queues, networking, instance types, and mounts are rejected. |
 | 8 | COVERED | 13 | 0 | Logical run IDs and attempt IDs cannot be confused. |
-| 9 | DEFERRED | 0 | 15 | Cross-team attribution fails; a submission naming a team the submitter does not belong to is rejected. Approver scope is a separate question and follows `approval_scope`. |
+| 9 | COVERED | 4 | 12 | Cross-team attribution fails; a submission naming a team the submitter does not belong to is rejected. Approver scope is a separate question and follows `approval_scope`. |
 | 10 | DEFERRED | 0 | 10 | Lead self-authorization succeeds only within the lead's bound team and policy. |
 | 11 | COVERED | 7 | 0 | A fan-out is priced across the whole submission, not per cell. |
 | 12 | COVERED | 9 | 0 | A fan-out whose total exceeds the routine ceiling classifies as an exception, so a costly sweep cannot be decomposed into routine single runs. |
@@ -32,12 +32,6 @@ Rows numbered 1 to 13 are the phase criteria. Rows numbered D-something are reco
 ## Deferred by explicit decision
 
 These wait on sub-team assignments. They are recorded here rather than omitted, no test in this bundle claims them as proved, and each one states the condition that makes it live again.
-
-### Check 9 (DEFERRED) — Cross-team attribution fails; a submission naming a team the submitter does not belong to is rejected. Approver scope is a separate question and follows `approval_scope`.
-
-The rule is implemented and exercised, but it rejects nothing in the shipped configuration. config/organization.yaml declares six teams and records no member in any of them, so no submitter or lead is bound to a team and membership cannot be checked at all. Enforcing the rule literally today would deny every submission, including all six run-manifest fixtures, so evaluate_authorization treats empty bindings as unverifiable rather than as failure and records team_verified: false on every shipped decision. No test can therefore show the shipped rejection this criterion asks for, which is why it is not COVERED. It is a deferral rather than a gap because the thing that is missing is data, the decision to withhold that data is recorded here and on D1, and the condition that reverses it is written down below.
-
-Live again when: config/organization.yaml records member_logins on a team, which happens once each group's lead confirms who is in theirs. Enforcement is per submitter and needs no code change: the supporting tests cited here already drive the denial against a bound member. When the first group lands, this criterion must be re-recorded as COVERED with those citations promoted to proving tests, or argued again.
 
 ### Check 10 (DEFERRED) — Lead self-authorization succeeds only within the lead's bound team and policy.
 
@@ -222,7 +216,7 @@ Proving tests (22), all executed and passing:
 - `tests/test_fanout.py::test_the_fanout_block_cannot_carry_per_cell_resource_overrides[dataset_release]`
 - `tests/test_fanout.py::test_the_fanout_block_cannot_carry_per_cell_resource_overrides[overrides]`
 - `tests/test_compute_profiles.py::test_unpriced_profile_is_refused_as_unregistered`
-- `tests/test_compute_profiles.py::test_an_unprovisioned_profile_is_refused_at_execution[gpu-4xa10g]`
+- `tests/test_compute_profiles.py::test_an_unprovisioned_profile_is_refused_at_execution[gpu-1xl40s]`
 - `tests/test_workload.py::test_resolving_unknown_profile_reports_unregistered_profile`
 - `tests/test_phase0_gate.py::test_representative_manifests_fails_for_unregistered_compute_profile`
 - `tests/test_bindings.py::test_team_binding_rejects_s3_namespaces_outside_the_sandbox[memory-split]`
@@ -251,24 +245,21 @@ Proving tests (13), all executed and passing:
 
 ### Check 9 — Cross-team attribution fails; a submission naming a team the submitter does not belong to is rejected. Approver scope is a separate question and follows `approval_scope`.
 
-**Status: DEFERRED**
-
-Deferred because:
-
-The rule is implemented and exercised, but it rejects nothing in the shipped configuration. config/organization.yaml declares six teams and records no member in any of them, so no submitter or lead is bound to a team and membership cannot be checked at all. Enforcing the rule literally today would deny every submission, including all six run-manifest fixtures, so evaluate_authorization treats empty bindings as unverifiable rather than as failure and records team_verified: false on every shipped decision. No test can therefore show the shipped rejection this criterion asks for, which is why it is not COVERED. It is a deferral rather than a gap because the thing that is missing is data, the decision to withhold that data is recorded here and on D1, and the condition that reverses it is written down below.
-
-Live again when:
-
-config/organization.yaml records member_logins on a team, which happens once each group's lead confirms who is in theirs. Enforcement is per submitter and needs no code change: the supporting tests cited here already drive the denial against a bound member. When the first group lands, this criterion must be re-recorded as COVERED with those citations promoted to proving tests, or argued again.
+**Status: COVERED**
 
 Scope:
 
 - Attribution travels the whole path. RunManifest.team fills RequestFacts.claimed_team, which is required rather than defaulted so a caller cannot skip it, and every AuthorizationDecision records both the claimed team and whether membership was verified. Three states are distinguishable in the audit record: verified and correct (team_verified true), verified and wrong (denied with submitter_not_in_claimed_team), and not verifiable yet (team_verified false with an ordinary approval reason). Every shipped decision today is the third state.
 - Attribution is checked against the submitter's own membership and nothing else. It is independent of who approves, so a lead self-authorising and an admin self-approving an exception are both refused a team they do not belong to. It is also independent of the repository: RepositoryBinding exists but no rule derives a team from it.
 
-No test proves this check.
+Proving tests (4), all executed and passing:
 
-Supporting tests (15), all executed and passing, cited as evidence rather than as proof:
+- `tests/test_authorization.py::test_attribution_is_enforced_against_the_shipped_roster[curriculum]`
+- `tests/test_authorization.py::test_attribution_is_enforced_against_the_shipped_roster[not-a-team]`
+- `tests/test_authorization.py::test_a_recorded_member_claiming_their_own_group_is_verified_on_the_shipped_roster`
+- `tests/test_authorization.py::test_every_recorded_member_may_claim_scratch`
+
+Supporting tests (12), all executed and passing, cited as evidence rather than as proof:
 
 - `tests/test_authorization.py::test_a_submitter_naming_their_own_team_is_granted_and_recorded_verified`
 - `tests/test_authorization.py::test_a_submitter_naming_another_teams_id_is_denied_despite_a_valid_lead_approval`
@@ -276,9 +267,6 @@ Supporting tests (15), all executed and passing, cited as evidence rather than a
 - `tests/test_authorization.py::test_a_lead_self_authorizing_cannot_attribute_the_run_to_a_foreign_team`
 - `tests/test_authorization.py::test_an_admin_may_not_attribute_their_run_to_another_teams_budget`
 - `tests/test_policy.py::test_request_facts_require_an_explicit_claimed_team`
-- `tests/test_authorization.py::test_attribution_is_recorded_unverified_while_no_member_is_bound_to_a_team[memory-split]`
-- `tests/test_authorization.py::test_attribution_is_recorded_unverified_while_no_member_is_bound_to_a_team[curriculum]`
-- `tests/test_authorization.py::test_attribution_is_recorded_unverified_while_no_member_is_bound_to_a_team[not-a-team]`
 - `tests/test_authorization.py::test_attribution_changes_no_classification_outcome[cpu-routine.yaml]`
 - `tests/test_authorization.py::test_attribution_changes_no_classification_outcome[gpu-exception.yaml]`
 - `tests/test_authorization.py::test_attribution_changes_no_classification_outcome[gpu-routine.yaml]`

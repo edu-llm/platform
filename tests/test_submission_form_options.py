@@ -1,27 +1,33 @@
 """What the submission form offers, held to what the platform will actually accept.
 
-Four of the eight required fields are keys into committed registries, and until now all
-eight were free-text boxes. A researcher had to know that ``dolma-2026-07`` is the dataset
-id and that ``olmo-core-check-gpu`` is a workload profile, and a typo in either was a
-refusal after a human had already approved the submission.
+Five of the nine required fields are keys into committed registries, and until recently all
+of them were free-text boxes. A researcher had to know that ``dolma-2026-07`` is the dataset
+id and that ``olmo-core-check`` is a workload profile, and a typo in either was a refusal
+after a human had already approved the submission.
 
 They are dropdowns now, and a dropdown is a promise: everything in this list works. That
 promise is what these tests keep. A ``choice`` input's options are static text in the
 workflow YAML with nothing behind them, so a registry entry added and not offered is
 invisible, and an option offered and not registered is a refusal wearing a menu item.
 
-**The workload list is the sharp one, and it has two ways of being wrong.** A workload can
-name a repository nothing registers, or inherit a compute profile nothing backs. Either one
-compiles, classifies as routine, routes to a lead, and is refused at admission *after* the
-approval, the first with ``unregistered_repository`` and the second with
+**Two lists can promise a refusal, and they used to be one list checked twice.** A workload
+could name a repository nothing registers, or inherit a compute profile nothing backs.
+Either one compiled, classified as routine, routed to a lead, and was refused at admission
+*after* the approval, the first with ``unregistered_repository`` and the second with
 ``no_execution_target``. The cost of that is a person's attention spent on a decision that
 could never have gone the other way.
 
+**The second half is asked of the compute dropdown now, because that is where the machine
+is chosen.** A workload profile declared one and the form overrode it, so the join these
+tests walked was never what decided where a run landed. The catalog carries policy presets
+now and names no machine, so a workload has one way of being wrong and the machine has its
+own, asserted directly against the list a submitter picks from.
+
 ``dolma-tokenize`` is the live instance of the first: there is no ECR repository for dolma
-and no image can be published for it, so it is deliberately absent from the dropdown.
-``olmo-core-train-4gpu`` was the live instance of the second and is not any more, because
-``gpu-4xa10g`` is provisioned now and the four-rank launch it needs has been run. The rule
-outlived the instance, and the tests below still hold every offered workload to both halves.
+and no image can be published for it, so it is deliberately absent from the dropdown. The
+second is demonstrated by whichever priced profile has no execution target, which is
+derived rather than named below, because which profiles are provisioned is a deployment
+fact that moves and a test naming one goes red for a promotion rather than for a defect.
 
 **``team`` is the fourth key and was the last one still open.** It is different from the
 other three in what a wrong value costs. An unregistered dataset or workload is refused at
@@ -56,8 +62,10 @@ from tools.build_gpu_training_submission import TOKENIZERS
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "submit-run.yml"
 
-#: How a dropdown spells "leave this empty", because a choice option cannot be blank.
-INHERIT = "inherit"
+#: How a dropdown used to spell "leave this empty" while ``compute_profile`` was an
+#: override. Kept as a name for the thing that must stay gone, the way the retired team
+#: names are, rather than as something the form may still say.
+RETIRED_SENTINEL = "inherit"
 
 #: AWS's own documented example account, which this repository's secret scan exempts.
 #: ``resolve_execution_target`` composes ARNs from whatever account it is handed and this
@@ -115,17 +123,32 @@ def resolution_failure(compute_profile: str) -> str | None:
 def offerable_workloads() -> list[str]:
     """Every workload a submitter could pick and have reach Batch, sorted.
 
-    Two conditions, and a workload has to clear both. Its repository has to be registered,
-    or there is no image to run. And the compute profile it inherits has to resolve to an
-    execution target, or there is nowhere to run it. Each is asserted on its own below;
-    this is the set the dropdown is compared against.
+    One condition now, and it is the only one a workload profile can still fail. Its
+    repository has to be registered, or there is no image to run. The second condition was
+    that the compute profile it inherited resolved to an execution target, and a workload
+    profile inherits nothing any more; that question is asked of the compute dropdown
+    below, where it is a fact about what the submitter picks rather than about what a
+    catalog entry once declared.
     """
     registered = {entry["repository"] for entry in registry("repositories.yaml")["repositories"]}
     return sorted(
         workload.name
         for workload in workload_catalog().workloads
         if workload.repository in registered
-        and resolution_failure(workload.compute_profile) is None
+    )
+
+
+def offerable_compute_profiles() -> list[str]:
+    """Every machine a submitter could pick and have a job placed on, sorted.
+
+    Computed through the resolver rather than read off ``provisioned``, for the reason the
+    test below records: the flag and the deployed target can disagree, and what a submitter
+    meets is the resolver's answer.
+    """
+    return sorted(
+        profile.name
+        for profile in workload_catalog().compute_profiles
+        if resolution_failure(profile.name) is None
     )
 
 
@@ -171,13 +194,27 @@ def corpora_a_run_could_actually_train_on() -> set[str]:
     """Registered published corpora whose declared tokenizer this platform can build.
 
     The join that makes the dropdown a promise rather than a list. A corpus is offerable when
-    it is registered AND something can turn its tokenizer into a model, and the second half is
-    a fact about OLMo-core rather than about the registry.
+    it is registered AND it is a corpus rather than an input to one AND something can turn its
+    tokenizer into a model. The first two are facts about this registry and are read off the
+    entry. The third is a fact about OLMo-core, which is why it is looked up rather than
+    written down.
+
+    THE FAMILY TEST IS HERE AS WELL AS IN ITS OWN TEST BELOW, AND THE DUPLICATION IS THE
+    POINT. That test asserts the family over every published entry, which is stronger than
+    the dropdown needs and is only true while the registry holds pretrain corpora alone.
+    Three published corpora already cannot be written into it for an unrelated reason
+    (``config/datasets.yaml`` says which), and the day the model can hold them, the obvious
+    edit is to narrow that assertion to the offered entries. Narrowing it is safe only
+    because this join makes the same test itself. Without that, a tokenizer entry naming
+    itself in its own ``tokenizer`` field would become offerable the moment that tokenizer
+    reached ``TOKENIZERS``, and the run would memmap ``tokenizer.json`` as uint16 tokens and
+    report nothing.
     """
     return {
         entry["reference_id"]
         for entry in registry("datasets.yaml").get("published", [])
-        if entry["tokenizer"] in TOKENIZERS
+        if entry["dataset_id"].split("/", maxsplit=1)[0] == "pretrain"
+        and entry["tokenizer"] in TOKENIZERS
     }
 
 
@@ -255,18 +292,66 @@ def test_a_corpus_whose_tokenizer_nothing_can_build_stays_registered_and_unoffer
     listed. Add ``tokenizer/bytes-utf8`` to ``TOKENIZERS`` and the test above starts demanding
     the option; publish a corpus on a tokenizer nothing can build and it starts demanding its
     absence. Neither needs anybody to remember this test exists.
+
+    FOUR CORPORA ARE IN THAT STATE NOW AND THEY ARE NOT ALL THE SAME CASE, which matters
+    because the symmetry is what sent the last diagnosis to the wrong repository.
+    ``math-memory-full-v1`` joins lean4-mathlib-bytes on ``tokenizer/bytes-utf8``, which has
+    no OLMo-core equivalent to name. ``fineweb-edu-1b-v2`` and ``fineweb-edu-1b-v6`` are on
+    ``tokenizer/smollm2-bpe``, which has an exact one, because their tokenizer's own
+    dataset.json names ``HuggingFaceTB/SmolLM2-135M`` and ``from_hf`` reproduces it. So one
+    of the two exclusions is a missing upstream feature and the other is a line nobody has
+    written, and only the second resolves by somebody deciding to resolve it.
     """
     registered = {
         entry["reference_id"] for entry in registry("datasets.yaml").get("published", [])
     }
     offerable = corpora_a_run_could_actually_train_on()
 
-    assert "lean4-mathlib-bytes-v3" in registered
-    assert "lean4-mathlib-bytes-v3" not in offerable
-    assert "lean4-mathlib-bytes-v3" not in options_for("dataset_release")
+    for reference_id in ("lean4-mathlib-bytes-v3", "math-memory-full-v1", "fineweb-edu-1b-v6"):
+        assert reference_id in registered
+        assert reference_id not in offerable
+        assert reference_id not in options_for("dataset_release")
     assert "regmix-10b-v1" in offerable, (
         "at least one registered corpus must be trainable, or the dropdown offers no real "
         "data at all and the exclusion above has quietly become the rule"
+    )
+
+
+def test_two_versions_of_one_corpus_are_never_offered_at_the_same_time() -> None:
+    """Mutation: register both published versions of a corpus and offer whatever qualifies.
+
+    ``pretrain/fineweb-edu-1b`` is the live instance and the only corpus registered twice.
+    v2 and v6 are both published, sealed and frozen, so both belong in the registry, and
+    only v6 is current. Nothing distinguishes them to the join above, which sees the same
+    family, the same tokenizer and the same pinned digest, that last because their token
+    manifests are byte identical.
+
+    So they are excluded together today and would be offered together tomorrow. The moment
+    ``tokenizer/smollm2-bpe`` reaches ``TOKENIZERS`` this fails and names the corpus, which
+    is the intent. A superseded corpus on the dropdown is not a refusal a submitter would
+    ever see; it is a run that reads real tokens nobody meant them to read, and it costs a
+    GPU day to produce a result against the wrong version of the data.
+
+    Resolving it needs ``retired`` on ``PublishedDatasetReference``, which
+    ``RegisteredDatasetRelease`` already has and which this model cannot be given without
+    moving the schema and the digests ``proof/phase-0`` records for it. That is the decision
+    this test exists to surface, at the moment it starts costing something.
+    """
+    offerable = corpora_a_run_could_actually_train_on()
+    offered_families = [
+        entry["dataset_id"]
+        for entry in registry("datasets.yaml").get("published", [])
+        if entry["reference_id"] in offerable
+    ]
+    duplicated = sorted(
+        {family for family in offered_families if offered_families.count(family) > 1}
+    )
+
+    assert offered_families, "no corpus is offered at all, so this guard proves nothing"
+    assert not duplicated, (
+        f"{duplicated} is offered at more than one version, and a submitter picking between "
+        "them is choosing on a reference id rather than on which one is current; "
+        "config/datasets.yaml records which version each corpus's owner named"
     )
 
 
@@ -307,6 +392,15 @@ def test_no_offered_dataset_is_one_a_training_run_cannot_use_as_a_corpus() -> No
     A tokenizer is an input to a corpus, not a corpus. Asserted on the family segment because
     that is the mechanical form of the distinction and because the standard's own family enum
     does not contain ``tokenizer`` at all.
+
+    ASSERTED OVER EVERY PUBLISHED ENTRY RATHER THAN OVER THE OFFERED ONES, WHICH IS STRONGER
+    THAN THE TITLE AND STRONGER THAN THE DROPDOWN NEEDS. It holds because the registry carries
+    pretrain corpora alone, and it does so for a reason unrelated to this rule:
+    ``PublishedDatasetReference`` requires a ``tokenizer`` and every other family published so
+    far declares none, so ``sft/pedagogy70-normal30``, ``vendor/openai-prm800k`` and
+    ``tokenizer/smollm2-bpe`` cannot be written into the file at all. When that changes, this
+    is the assertion to narrow to the offered entries, and narrowing it is safe because
+    ``corpora_a_run_could_actually_train_on`` makes the same family test itself.
     """
     for entry in registry("datasets.yaml").get("published", []):
         assert entry["dataset_id"].split("/", maxsplit=1)[0] == "pretrain", (
@@ -433,10 +527,10 @@ def test_the_workload_dropdown_offers_only_workloads_whose_repository_is_registe
     offer a workload whose repository is still unregistered and the dropdown is promising
     something that does not.
 
-    The set it compares against carries the second condition too -- the inherited compute
-    profile has to have somewhere to run -- because a dropdown held to one of two
-    requirements is a dropdown that can still promise a refusal. That half is isolated in
-    the test below, so a failure here says which of the two moved.
+    The set it compares against used to carry a second condition, that the compute profile
+    the workload inherited had somewhere to run. There is no inherited profile to check, and
+    the machine is a field of its own on this form, so that half is asserted against the
+    compute dropdown in the test below rather than folded in here.
     """
     registered = {entry["repository"] for entry in registry("repositories.yaml")["repositories"]}
 
@@ -450,75 +544,80 @@ def test_the_workload_dropdown_offers_only_workloads_whose_repository_is_registe
     } - registered == {"dolma"}
 
 
-def test_every_offered_workload_inherits_a_compute_profile_with_somewhere_to_run() -> None:
-    """THE THIRD INSTANCE OF ONE DEFECT, CLOSED. Mutation: offer olmo-core-train-4gpu.
+def test_every_compute_profile_the_form_offers_has_somewhere_to_run() -> None:
+    """THE SAME DEFECT, ASKED WHERE THE MACHINE IS NOW CHOSEN. Mutation: offer every priced
+    profile.
 
-    A workload profile fixes the compute profile, and a submitter who leaves the override
-    on ``inherit`` never types that profile in. So the two fields are individually valid --
-    a registered workload, and an override the submitter did not touch -- and jointly
-    refused, which is the shape ``dolma-tokenize`` and an unprovisioned override
-    already had.
+    This used to walk the workload dropdown and check the compute profile each entry
+    inherited. That join was the wrong one to check even while it existed, because the
+    compute field overrode whatever a workload declared: a submitter who picked a profile
+    with no execution target got ``no_execution_target`` regardless of which workload they
+    named, and this test could not see it. The catalog declares no machine now and the
+    field is required, so the question is asked of the list the submitter actually picks
+    from.
 
-    ``olmo-core-train-4gpu`` was the live instance and is no longer one. It inherits
-    ``gpu-4xa10g``, which was priced and not provisioned; that profile now has a compute
-    environment, a queue and a definition, so the workload is on the menu and the
-    assertions that kept it off have been deleted. What stays is the rule, and
-    ``gpu-1xl40s`` is what still demonstrates it: a single L40S the catalog prices and
-    nothing backs. No offered workload inherits it, and the day one does this test is what
-    says so before a lead spends attention approving a submission that ends in
-    ``no_execution_target``.
+    Written as a comparison rather than a loop, so it fails in both directions. A profile
+    provisioned and not offered is a machine nobody can reach; a profile offered and not
+    backed is a menu item whose only outcome is a refusal after a lead has spent an
+    approval on it.
 
     Asserted through ``resolve_execution_target`` rather than by reading ``provisioned``
     out of the catalog, so this fails for the reason the submitter would meet: the resolver
     separates a profile nobody registered from one nobody provisioned from one whose two
     configuration files disagree, and any of the three is a refused submission.
+
+    THE EXCLUDED PROFILES ARE DERIVED RATHER THAN NAMED, WHICH IS A DELIBERATE WEAKENING.
+    Naming one pins a deployment fact into a test, so promoting that profile turns this red
+    for a reason that is not a defect. What is asserted instead is that the catalog prices
+    at least one profile the form withholds, so the comparison above has something to be
+    right about.
     """
-    for name in options_for("workload_profile"):
-        workload = next(
-            candidate for candidate in workload_catalog().workloads if candidate.name == name
-        )
-        assert resolution_failure(workload.compute_profile) is None, (
-            f"{name} inherits compute profile {workload.compute_profile!r}, which has "
-            "nowhere to run, so every submission that picks it is refused after approval"
-        )
+    offered = options_for("compute_profile")
+    priced = {profile.name for profile in workload_catalog().compute_profiles}
+    withheld = sorted(priced - set(offered))
 
-    # A profile that still cannot run, so the loop above has something to be right about.
-    # Written as its own assertion because the loop passes vacuously on an empty dropdown.
-    assert resolution_failure("gpu-1xl40s") == "unprovisioned_compute_profile"
-    assert not any(
-        workload.compute_profile == "gpu-1xl40s" for workload in workload_catalog().workloads
+    assert offered == offerable_compute_profiles()
+    assert offered, "the compute dropdown is empty, so the comparison above proves nothing"
+    assert withheld, (
+        "every priced compute profile is offered, so this test would pass on a catalog that "
+        "had stopped withholding anything; if that is now genuinely true, the assertion "
+        "below has to be replaced by something else that can fail"
     )
-    # And the workload this test was written for is now offered rather than withheld.
-    assert "olmo-core-train-4gpu" in options_for("workload_profile")
-    assert resolution_failure("gpu-4xa10g") is None
+    for name in withheld:
+        assert resolution_failure(name) is not None, (
+            f"{name} is priced, resolves to an execution target and is not offered, so a "
+            "machine this platform can start is unreachable from the submission form"
+        )
 
 
-def test_a_workload_that_reads_a_corpus_is_offered_and_has_somewhere_to_run() -> None:
+def test_a_workload_that_reads_a_corpus_is_offered_and_can_be_run_long_enough() -> None:
     """Mutation: drop the training profile from the dropdown and leave the checks above.
 
     Every test around this one compares the two directions of a list, so all of them pass
     on an empty dropdown -- offering nothing offers nothing unbacked. What none of them
     says is that the one workload a researcher actually came here for is on the menu.
 
-    Two workloads are for training rather than for proving the platform works, and both
-    have to be on the menu. ``olmo-core-train-1gpu`` and ``olmo-core-train-4gpu`` carry the
-    same bounds, twelve hours against the policy ceiling and two attempts, and both declare
-    a checkpoint contract so the second attempt resumes instead of repeating the first at
-    full price.
+    One workload is for training rather than for proving the platform works, and it has to
+    be on the menu. ``olmo-core-train`` is the collapse of ``olmo-core-train-1gpu`` and
+    ``olmo-core-train-4gpu``, which carried identical bounds and differed only in a machine
+    the form overrode, so the pair this test used to require is one entry and the machine is
+    a separate field. Its bounds are twenty-four hours against the policy ceiling and two
+    attempts, and it declares a checkpoint contract so the second attempt resumes instead of
+    repeating the first at full price.
     """
     offered = options_for("workload_profile")
-    assert "olmo-core-train-1gpu" in offered
-    assert "olmo-core-train-4gpu" in offered
+    assert "olmo-core-train" in offered
 
     workload = next(
         candidate
         for candidate in workload_catalog().workloads
-        if candidate.name == "olmo-core-train-1gpu"
+        if candidate.name == "olmo-core-train"
     )
-    assert resolution_failure(workload.compute_profile) is None
     # A run long enough to read a corpus, with somewhere for the interrupted half to live.
     assert int(workload.maximum_runtime_hours) > 1
     assert workload.checkpoint is not None
+    # And a machine to run it on, which is the submitter's choice and has to be offerable.
+    assert "gpu-4xa10g" in options_for("compute_profile")
 
 
 def test_resolving_a_compute_profile_is_the_same_question_the_provisioned_flag_answers() -> None:
@@ -553,34 +652,52 @@ def test_resolving_a_compute_profile_is_the_same_question_the_provisioned_flag_a
         assert resolution_failure(name) is None
 
 
-def test_the_compute_override_offers_inherit_and_the_provisioned_profiles() -> None:
+def test_the_compute_dropdown_offers_exactly_the_provisioned_profiles() -> None:
     """Mutation: offer a profile the catalog prices but nothing backs.
 
-    The catalog prices thirteen profiles and eleven are provisioned. Offering an
-    unprovisioned one is the same failure as the dolma workload: a selectable option whose
-    only outcome is a refusal, this time ``unprovisioned_compute_profile``.
+    Offering an unprovisioned profile is the same failure as the dolma workload: a
+    selectable option whose only outcome is a refusal, this time
+    ``unprovisioned_compute_profile``.
+
+    Read straight off the ``provisioned`` flag rather than through the resolver, which is
+    the weaker of the two reads and is the point of having both. The test above asks the
+    resolver, so the two together say that the dropdown, the flag and the deployed target
+    are one answer; on their own either could agree with a dropdown the other refuses.
     """
     catalog = registry("workload-catalog.yaml")["compute_profiles"]
     provisioned = sorted(
         profile["name"] for profile in catalog if profile.get("provisioned") is True
     )
 
-    assert options_for("compute_profile") == [INHERIT, *provisioned]
+    assert options_for("compute_profile") == provisioned
 
 
-def test_inherit_is_translated_away_before_the_form_is_assembled() -> None:
-    """Mutation: drop the translation and let ``inherit`` through.
+def test_the_form_spells_absence_nowhere_because_nothing_on_it_is_absent() -> None:
+    """Mutation: leave the sentinel in place beside a required field.
 
-    A ``choice`` option cannot be blank, so "take the registered default" has to be spelled
-    as a word. Left untranslated it reaches admission as the name of a compute profile
-    nothing has ever registered, and the refusal names the profile rather than the form --
-    which sends the reader to the catalog to look for something that was never meant to be
-    there.
+    A ``choice`` option cannot be blank, so while ``compute_profile`` was an override it
+    spelled "take the registered default" as ``inherit`` and the workflow translated it back
+    to nothing before assembling the form. Nothing on this form takes a registered default
+    from the catalog any more, because the catalog declares no machine, so the sentinel
+    would be a default that resolves to nothing and every submission that left it alone
+    would be refused for naming a compute profile nobody registered.
+
+    Three places, because the word lived in three and leaving any one of them would put it
+    back within a rename: an option on the dropdown, the input's default, and the constant
+    the assembly step translated against. The last is asserted on the identifier rather than
+    on the word, so that a comment explaining why the sentinel is gone does not read as the
+    sentinel still being there.
     """
-    workflow = WORKFLOW.read_text(encoding="utf-8")
+    inputs = form_inputs()
 
-    assert f'INHERIT = "{INHERIT}"' in workflow
-    assert "if text and text != INHERIT:" in workflow
+    for name, spec in inputs.items():
+        assert spec.get("default") != RETIRED_SENTINEL, name
+        assert RETIRED_SENTINEL not in spec.get("options", ()), name
+    assert "INHERIT" not in WORKFLOW.read_text(encoding="utf-8"), (
+        "the assembly step still translates a sentinel away; there is nothing left for a "
+        "field to take a registered default from, so nothing needs a word for its absence"
+    )
+    assert inputs["compute_profile"]["required"] is True
 
 
 def test_every_dropdown_field_has_no_free_text_twin() -> None:
@@ -649,7 +766,7 @@ def test_the_command_the_form_arrives_pre_filled_with_is_one_the_contract_accept
         command=arguments,
         team="platform",
         wandb_project="onboarding",
-        workload_profile="olmo-core-check-cpu",
+        workload_profile="olmo-core-check",
         compute_profile="cpu-32vcpu",
         maximum_runtime_hours="1",
         maximum_attempts=1,

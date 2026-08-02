@@ -1,0 +1,41 @@
+[project]
+name = "edullm-client"
+version = "0.1.0"
+description = "The environment, S3 layout and W&B conventions a run on the eduLLM platform executes under."
+requires-python = ">=3.12"
+
+# EMPTY, AND THAT IS THE WHOLE DESIGN CONSTRAINT RATHER THAN AN OVERSIGHT. This is installed
+# into research images the platform does not build and cannot re-resolve, next to a torch
+# and a numpy that were pinned by somebody else against a CUDA build. A runtime dependency
+# here is a version constraint applied to every one of those images at install time, and the
+# way that fails is a pip backtrack that downgrades torch in an image whose whole purpose is
+# the torch it carries. Nothing below the standard library is needed to read an environment
+# variable or join a path, so nothing below the standard library is asked for.
+#
+# The parent distribution declares pydantic and PyYAML. Neither is here on purpose. A typed
+# view of ten strings does not need a validation framework, and pulling one in would make a
+# CPU tokenization job's image resolve a compiled core it never calls.
+dependencies = []
+
+# The two libraries this touches and neither requires, both named under the feature that
+# wants them so `pip install edullm-client[wandb]` is a line somebody can copy.
+#
+# Optional rather than required because the population is split and the smaller half is the
+# one that would pay. A CPU tokenization job wants output_prefix and checkpoint_prefix and
+# calls neither W&B nor S3; making it install wandb would add sentry-sdk, protobuf, GitPython
+# and a service that spawns a process, to a job that writes one file. Both are already in the
+# GPU training image, so the half that does want them is not asked to install anything.
+#
+# There is no import of either at module scope. telemetry.py imports wandb inside the
+# function that uses it and inside that function's try, which is what makes a missing wandb
+# the same non-event as an unusable one.
+[project.optional-dependencies]
+wandb = ["wandb"]
+s3 = ["boto3"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/edullm_client"]

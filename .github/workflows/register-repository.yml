@@ -1,0 +1,221 @@
+name: "Register a research repository"
+
+# THIS WORKFLOW ASSUMES NO AWS ROLE, AND THE ABSENCE IS THE DESIGN RATHER THAN AN OVERSIGHT.
+# Read this before adding `id-token: write` to the job below.
+#
+# Registering a repository needs an ECR repository to exist, and the obvious way to get one
+# is `ecr:CreateRepository`, which `sbsandbox-intern-edullm-infra-deployer` genuinely holds
+# on `repository/sbsandbox-intern-edullm-*`. Measured on 2026-08-02 rather than taken from
+# the template, by simulating the action for that role against a repository ARN that does
+# not exist, which answered `allowed`.
+#
+# It is still the wrong call to make. Every ECR repository in this account is a
+# CloudFormation resource in `sbsandbox-intern-edullm-phase1-ecr`, and that one stack holds
+# all of them. A repository created through the API would sit in the account with the stack
+# still intending to create it, so the next Phase 1 deploy would fail on a name that already
+# exists and roll back, taking the other registered repositories with it. Adding the
+# resource to `infra/ecr-repositories.yaml` reaches the same account through the path that
+# already owns it. The merge of this pull request matches the `paths` filter on
+# `deploy-phase1-ecr.yml`, and that workflow creates the repository with the encryption,
+# scan-on-push, immutability and lifecycle policy every other one has.
+#
+# So the trust-policy problem this file would otherwise have does not arise. The deployer
+# role pins `job_workflow_ref` to exactly three workflow files at `refs/heads/main` and this
+# is not one of them, which `infra/README.md` calls a door that only opens from inside,
+# because amending the trust policy needs the AWS access the new file was supposed to
+# provide. A workflow that wants no credential is not standing at that door. Nothing in
+# `infra/iam/infra-deployer-role.yaml` has to change for this to work, and the alternative
+# of adding a job to an existing deploy workflow buys a credential this one does not want.
+#
+# NO DEPLOY AUTHORIZATION GUARD, DECIDED RATHER THAN FORGOTTEN. The three deploy workflows
+# each open with a step refusing a hand-started run from anybody outside the admin roster in
+# `config/organization.yaml`, and `tests/test_deploy_authorization.py` holds all three to it.
+# The reason that step exists is that `workflow_dispatch` is offered to everybody holding
+# write, and behind those buttons is a role that reconciles CloudFormation stacks in a shared
+# account. Behind this button is a pull request. Anybody who can press it can already open
+# the same pull request with two git commands, so the guard would forbid through this file
+# something it does not forbid at all, which teaches a reader that the button is the control
+# when the review is. What is actually load-bearing is already in place. CODEOWNERS puts
+# `/config/**`, `/infra/**` and `/.github/workflows/**` behind a review from the same two
+# admins the roster names, the ECR repository is created by `deploy-phase1-ecr.yml` on merge
+# and that workflow does carry the guard, and the publisher role widening is an IAM stack
+# nobody can apply from CI at all. Three gates, none of them this one.
+#
+# This file is not named `deploy-*.yml`, and that is load-bearing.
+# `test_no_deploy_workflow_exists_that_this_module_does_not_know_about` treats anything
+# matching that glob as a deploy workflow that must carry the guard above, which is the right
+# rule and the right name to stay outside of.
+on:
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: "GitHub repository name, exactly as it is spelled in the organization"
+        required: true
+        type: string
+      github_repository_id:
+        description: "Numeric repository id, from `gh api repos/edu-llm/<name> --jq .id`"
+        required: true
+        type: string
+      reason:
+        description: "Why this needs a repository of its own rather than a workload in an existing one. Written into a comment above the entry."
+        required: true
+        type: string
+      dockerfile_path:
+        description: "Repository-relative path to the Dockerfile"
+        required: false
+        default: .edullm/Dockerfile
+        type: string
+      base_image_repository:
+        description: "Base image to build from, with no tag or digest. The default is the one two registrations already share, because a second base is a second thing to review, scan and re-pin."
+        required: false
+        default: docker.io/library/python
+        type: string
+      base_image_digest:
+        description: "Digest to pin the base at. Leave empty to inherit the digest an existing registration of the same base already carries, which is the reviewed one."
+        required: false
+        default: ""
+        type: string
+      default_branch:
+        description: "Default branch of the repository being registered"
+        required: false
+        default: main
+        type: string
+
+permissions:
+  contents: read
+
+# One at a time. Two concurrent runs would each branch from the same tip and each write the
+# last entry in three files, so the second pull request would be a conflict in all three
+# rather than an entry after the first.
+concurrency:
+  group: register-repository
+  cancel-in-progress: false
+
+jobs:
+  register:
+    name: Write the registration and open a pull request
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # Enough to push a branch and open a pull request against it, and nothing else. No
+      # `id-token: write`, for the reason at the top of this file.
+      contents: write
+      pull-requests: write
+    steps:
+      # `main` explicitly rather than whatever ref the dispatch chose. A registration is an
+      # addition to the tip, and branching from an unrelated feature branch would put its
+      # unmerged commits into the pull request beside the entry, where a reviewer reading a
+      # four-line registration would not think to look for them.
+      - name: Check out main
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: main
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      # EVERY INPUT ARRIVES THROUGH `env` RATHER THAN INTERPOLATED INTO THE SCRIPT. A
+      # `${{ inputs.repository }}` written inline is substituted before bash sees the line,
+      # so a name carrying a semicolon becomes a second command running with this token.
+      # Through the environment it is data. The tool refuses anything outside letters,
+      # digits, dot, dash and underscore as well, because the name also reaches an OIDC
+      # subject pattern in a trust policy and a CloudFormation logical id.
+      #
+      # The record goes to a file rather than to a variable so the next two steps read the
+      # same bytes this one produced. It carries the diff, the derived destination name, the
+      # branch, and the follow-up steps that need a person.
+      - name: Write the registration
+        env:
+          REPOSITORY: ${{ inputs.repository }}
+          GITHUB_REPOSITORY_ID: ${{ inputs.github_repository_id }}
+          REASON: ${{ inputs.reason }}
+          DOCKERFILE_PATH: ${{ inputs.dockerfile_path }}
+          BASE_IMAGE_REPOSITORY: ${{ inputs.base_image_repository }}
+          BASE_IMAGE_DIGEST: ${{ inputs.base_image_digest }}
+          DEFAULT_BRANCH: ${{ inputs.default_branch }}
+        run: |
+          set -euo pipefail
+          uv run --frozen python tools/register_repository.py \
+            --repository "${REPOSITORY}" \
+            --github-repository-id "${GITHUB_REPOSITORY_ID}" \
+            --dockerfile-path "${DOCKERFILE_PATH}" \
+            --reason "${REASON}" \
+            --base-image-repository "${BASE_IMAGE_REPOSITORY}" \
+            --base-image-digest "${BASE_IMAGE_DIGEST}" \
+            --default-branch "${DEFAULT_BRANCH}" \
+            > "${RUNNER_TEMP}/registration.json"
+
+      # UNPACKED TO FILES RATHER THAN TO SHELL VARIABLES, AND THE REASON IS THE `reason`.
+      # It is free text somebody typed into a dispatch form, and it reaches a commit message
+      # and a pull request body that are both several lines long. A heredoc would terminate
+      # on any line of it that happened to match the marker, and a command substitution
+      # would strip its trailing newlines and word-split it. Reading the JSON and writing
+      # files gives back the bytes the tool produced whatever is in them, and `git commit`
+      # and `gh pr create` both accept a path instead of a string.
+      #
+      # `--pathspec-from-file` stages the three paths the tool declares rather than a list
+      # repeated here, so a fourth file added to a registration is committed without this
+      # step having to be remembered. It also means an untracked file a future step leaves
+      # behind cannot ride along in the commit.
+      #
+      # The tool refuses to write anything unless the files it produced still satisfy the
+      # invariants the suite asserts about them, so what reaches this step has already been
+      # checked against the registry contract, the ECR template and the publisher role in
+      # both directions. The rest of the suite is deliberately not run. A registration turns
+      # two release tripwires and one golden digest red on purpose, because the registry is
+      # copied into both Lambda zips and the publisher template is canonically hashed, so a
+      # workflow that ran the suite and failed on them could never succeed at all. The pull
+      # request body names them as remaining work instead.
+      - name: Commit the registration to a branch of its own
+        env:
+          RECORD: ${{ runner.temp }}/registration.json
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          record = json.loads(Path(os.environ["RECORD"]).read_text(encoding="utf-8"))
+          temp = Path(os.environ["RUNNER_TEMP"])
+          (temp / "branch.txt").write_text(record["branch"] + "\n", encoding="utf-8")
+          (temp / "message.txt").write_text(record["commit_message"], encoding="utf-8")
+          # Both of the files a `read -r` below consumes end in a newline, and that is not
+          # cosmetic. `read` returns non-zero when it reaches EOF without meeting its
+          # delimiter, so under `set -e` a title written without one aborts the step after
+          # assigning the variable correctly, which reads as the step before it having
+          # failed.
+          (temp / "title.txt").write_text(record["pull_request_title"] + "\n", encoding="utf-8")
+          (temp / "body.md").write_text(record["pull_request_body"], encoding="utf-8")
+          (temp / "paths.txt").write_text("\n".join(record["paths"]) + "\n", encoding="utf-8")
+          PY
+
+          read -r branch < "${RUNNER_TEMP}/branch.txt"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch --create "${branch}"
+          git add --pathspec-from-file "${RUNNER_TEMP}/paths.txt"
+          git commit --file "${RUNNER_TEMP}/message.txt"
+
+      - name: Open the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          read -r branch < "${RUNNER_TEMP}/branch.txt"
+          read -r title < "${RUNNER_TEMP}/title.txt"
+
+          git push --set-upstream origin "${branch}"
+
+          gh pr create \
+            --base main \
+            --head "${branch}" \
+            --title "${title}" \
+            --body-file "${RUNNER_TEMP}/body.md"

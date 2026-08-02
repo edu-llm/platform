@@ -613,28 +613,45 @@ def test_the_shipped_roster_reports_the_people_nothing_can_attribute() -> None:
     """
     shipped = load_yaml(PROJECT_ROOT / "config" / "organization.yaml", OrganizationInventory)
     logins = [member.github_login for member in shipped.members]
+    # The GitHub half is synthesized as everything being right, which is what leaves the W&B
+    # gap as the only thing this test can find. Synthesizing only `team-leads` was enough
+    # while no group recorded anyone, because a person on no group is asked for no GitHub
+    # team. Recording the assignments gave every person a group and therefore a GitHub team
+    # to be missing from, so the research teams are synthesized here too. Without this the
+    # test reports a gap in GitHub rather than the gap in the roster it exists to name.
+    synthesized_teams = {"team-leads": list(shipped.team_leads)}
+    for team in shipped.team_bindings.teams:
+        synthesized_teams[team.github_team_slug] = list(team.lead_logins + team.member_logins)
     people = readiness(
         shipped,
         access(
             organization_members=logins,
             repository_writers=logins,
-            team_members={"team-leads": list(shipped.team_leads)},
+            team_members=synthesized_teams,
         ),
     )
     unattributable = [
         member.github_login for member in shipped.members if member.wandb_username is None
     ]
 
-    assert len(unattributable) == 6
+    assert len(unattributable) == 7
     for login in unattributable:
         entry = person(people, login)
         # A superset rather than equality: BritishAmericqn is an admin, and the synthesized
         # access above grants nobody admin approval authority on GitHub, so he carries a
         # third step that has nothing to do with attribution.
-        assert {STEP_WANDB, STEP_TEAM} <= missing_names(entry)
+        # W&B alone now. STEP_TEAM used to appear beside it because no group recorded
+        # anybody, so every person was missing a research team as well as an account.
+        # Recording the assignments closed that half for all thirty-four, which leaves this
+        # test measuring only the gap it was named for.
+        assert STEP_WANDB in missing_names(entry)
+        assert STEP_TEAM not in missing_names(entry)
         # Unattributed is a whole run that works, so none of this blocks anybody.
         assert entry.blocked is False
-    assert missing_names(person(people, "aryanjverma")) == {STEP_TEAM}
+    # He was the counter-example when the roster called him unattributable and W&B had held
+    # his account all along. He is now the fully onboarded case, which is the point: nothing
+    # is missing, and this line moves on its own if either half regresses.
+    assert missing_names(person(people, "aryanjverma")) == set()
 
 
 def test_gathered_facts_missing_a_key_are_refused_rather_than_read_as_an_empty_list() -> None:

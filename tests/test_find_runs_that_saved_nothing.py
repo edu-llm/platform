@@ -114,12 +114,12 @@ def test_a_run_whose_profile_promises_nothing_is_not_reported_as_having_saved_no
 ) -> None:
     """Mutation: report every run with an empty checkpoint prefix.
 
-    ``olmo-core-check-cpu`` carries no checkpoint contract, so writing no checkpoint is the
+    ``olmo-core-check`` carries no checkpoint contract, so writing no checkpoint is the
     correct outcome for it and not a defect. A report that listed those alongside the real
     failures would be mostly correct entries, which is how a report stops being read.
     """
     states = checkpoint_states(
-        [intent("olmo-core-check-cpu")], catalog, store=FakeObjectStore()
+        [intent("olmo-core-check")], catalog, store=FakeObjectStore()
     )
 
     assert states == []
@@ -130,7 +130,7 @@ def test_a_run_that_promised_a_checkpoint_and_wrote_none_is_reported(
 ) -> None:
     """The case the tool was written for, and the one nothing else on the platform reports."""
     states = checkpoint_states(
-        [intent("olmo-core-train-1gpu")], catalog, store=FakeObjectStore()
+        [intent("olmo-core-train")], catalog, store=FakeObjectStore()
     )
 
     assert len(states) == 1
@@ -158,7 +158,7 @@ def test_a_step_directory_holding_only_rank0_is_not_reported_as_having_saved(
     zero, which is the twelve hours the report exists to stop somebody losing.
     """
     states = checkpoint_states(
-        [intent("olmo-core-train-1gpu")], catalog, store=store_holding((0, STUB))
+        [intent("olmo-core-train")], catalog, store=store_holding((0, STUB))
     )
 
     assert len(states) == 1
@@ -183,7 +183,7 @@ def test_the_shape_a_run_that_checkpointed_writes_is_reported_as_loadable(
     ``.metadata``, the trainer state, and the config the run was started from.
     """
     states = checkpoint_states(
-        [intent("olmo-core-train-1gpu")], catalog, store=store_holding((0, FULL_STEP))
+        [intent("olmo-core-train")], catalog, store=store_holding((0, FULL_STEP))
     )
 
     assert len(states) == 1
@@ -209,7 +209,7 @@ def test_a_torn_newest_step_is_not_a_finding_when_an_earlier_one_still_loads(
     know a write did not finish even though the run is fine.
     """
     states = checkpoint_states(
-        [intent("olmo-core-train-1gpu")],
+        [intent("olmo-core-train")],
         catalog,
         store=store_holding((0, FULL_STEP), (1, FULL_STEP), (2, STUB)),
     )
@@ -227,7 +227,7 @@ def test_a_prefix_whose_every_step_is_torn_is_a_finding(catalog: WorkloadCatalog
     resume from however many of them there are.
     """
     states = checkpoint_states(
-        [intent("olmo-core-train-1gpu")],
+        [intent("olmo-core-train")],
         catalog,
         store=store_holding((0, STUB), (1, STUB)),
     )
@@ -266,7 +266,7 @@ def test_a_missing_success_marker_is_an_absence_rather_than_an_outage(
 
     monkeypatch.setattr("find_runs_that_saved_nothing.subprocess.run", answer)
 
-    states = checkpoint_states([intent("olmo-core-train-1gpu")], catalog)
+    states = checkpoint_states([intent("olmo-core-train")], catalog)
 
     assert states[0].state is CheckpointState.ABSENT
 
@@ -295,7 +295,7 @@ def test_an_outage_is_not_reported_as_an_empty_prefix(
     monkeypatch.setattr("find_runs_that_saved_nothing.subprocess.run", refused)
 
     with pytest.raises(ReportInputError, match="could not"):
-        checkpoint_states([intent("olmo-core-train-1gpu")], catalog)
+        checkpoint_states([intent("olmo-core-train")], catalog)
 
 
 def test_a_code_that_is_not_about_a_missing_object_stops_the_report(
@@ -374,7 +374,7 @@ def described(
     return RunCheckpointState(
         run_id=run_id,
         team=TEAM,
-        workload_profile="olmo-core-train-1gpu",
+        workload_profile="olmo-core-train",
         prefix=CHECKPOINTS,
         objects=objects,
         state=state,
@@ -438,7 +438,7 @@ def test_a_fragment_exits_non_zero_so_the_nightly_can_gate_on_it(
     loaded = json.loads(source.read_text(encoding="utf-8"))
     if isinstance(loaded, str):
         loaded = json.loads(loaded)
-    loaded["manifest"]["workload_profile"] = "olmo-core-train-1gpu"
+    loaded["manifest"]["workload_profile"] = "olmo-core-train"
     loaded["manifest"]["compute_profile"] = "gpu-1xa10g"
     (records / f"{RUN_ID}.json").write_text(json.dumps(loaded), encoding="utf-8")
 
@@ -610,7 +610,7 @@ def test_a_failed_run_does_not_fail_the_nightly_but_a_succeeded_one_does(
     loaded = json.loads(source.read_text(encoding="utf-8"))
     if isinstance(loaded, str):
         loaded = json.loads(loaded)
-    loaded["manifest"]["workload_profile"] = "olmo-core-train-1gpu"
+    loaded["manifest"]["workload_profile"] = "olmo-core-train"
     loaded["manifest"]["compute_profile"] = "gpu-1xa10g"
     (records / f"{RUN_ID}.json").write_text(json.dumps(loaded), encoding="utf-8")
 
@@ -673,7 +673,7 @@ def a_lineage_root_holding_one_succeeded_run(root: Path, run_id: str = RUN_ID) -
     loaded = json.loads(source.read_text(encoding="utf-8"))
     if isinstance(loaded, str):
         loaded = json.loads(loaded)
-    loaded["manifest"]["workload_profile"] = "olmo-core-train-1gpu"
+    loaded["manifest"]["workload_profile"] = "olmo-core-train"
     loaded["manifest"]["compute_profile"] = "gpu-1xa10g"
     loaded["run_id"] = run_id
     (records / f"{run_id}.json").write_text(json.dumps(loaded), encoding="utf-8")
@@ -691,7 +691,7 @@ def test_an_acknowledged_run_is_still_read_and_still_printed(
     still read out of the account, so the report goes on saying what is there.
     """
     states = checkpoint_states(
-        [intent("olmo-core-train-1gpu")],
+        [intent("olmo-core-train")],
         catalog,
         store=FakeObjectStore(),
         acknowledgements={RUN_ID: ADJUDICATED},

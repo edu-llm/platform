@@ -9,6 +9,23 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+  # THE SECOND DISTRIBUTABLE THIS REPOSITORY PUBLISHES, AND IT IS IN THE DEV GROUP RATHER
+  # THAN IN project.dependencies FOR A REASON THAT WOULD BREAK A DEPLOY IF IT MOVED. The two
+  # Lambda builders read project.dependencies and resolve each name into a size-limited zip
+  # with --only-binary=:all:, so a workspace member listed there is a name no index has and a
+  # build that fails at the point of deployment. Nothing in edullm_platform imports it
+  # either; the dependency runs the other way, since the client restates the layout that
+  # src/edullm_platform/contracts owns.
+  #
+  # It is here at all so that `uv sync` puts it in the same virtualenv as the suite. The
+  # tests under tests/test_client_*.py are what hold the client's restatement of the bucket
+  # names, the entity and the prefix shape to the contracts they were copied from, and a test
+  # that cannot import the client is a restatement held to nothing.
+  #
+  # Without extras, deliberately. wandb and boto3 are optional there and stay uninstalled
+  # here, which is what makes tests/test_client_telemetry.py's absent-wandb case the real
+  # thing rather than a simulation of it.
+  "edullm-client",
   "jsonschema",
   "mypy",
   "pytest",
@@ -35,6 +52,21 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/edullm_platform"]
 
+# A second package in the same checkout, built and versioned separately. client/ carries its
+# own [project] table because one pyproject.toml declares one distribution, and edullm-client
+# has to be installable on its own into a research image that must not receive pydantic,
+# PyYAML or anything else this project depends on.
+#
+# A workspace rather than a plain path source, because it is the arrangement that keeps one
+# lockfile over both. Two resolutions of the same tree can disagree about a shared
+# transitive pin, and the way that surfaces is a client tested here against one version and
+# shipped against another.
+[tool.uv.workspace]
+members = ["client"]
+
+[tool.uv.sources]
+edullm-client = { workspace = true }
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
@@ -50,4 +82,4 @@ target-version = "py312"
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["src/edullm_platform", "tools"]
+files = ["src/edullm_platform", "tools", "client/src/edullm_client"]

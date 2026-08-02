@@ -105,14 +105,25 @@ If you submit inside that window the refusal reads `image_scan_findings_unreview
 
 ## Workload profiles
 
-| Profile | Machine | Limits | Use for |
-| --- | --- | --- | --- |
-| `olmo-core-check-cpu` | c7i.8xlarge, $1.43/hr | 1h, 1 attempt | **Start here.** Proves the path works |
-| `olmo-core-check-gpu` | 1 × A10G, $1.01/hr | 1h, 1 attempt | Checking your code sees a GPU |
-| `olmo-core-train-1gpu` | 1 × A10G, $1.01/hr | 12h, 2 attempts, checkpoint every 30 min | Real training |
-| `olmo-core-train-4gpu` | 4 × A10G, $5.67/hr | 12h, 2 attempts, checkpoint every 30 min | Real training, four ways |
+A profile is a policy preset. It fixes how long a run may take, how many attempts it may have and whether it promises a checkpoint. It does not pick your machine.
 
-Twelve hours is the ceiling for routine approval, not a round number: a longer run would make every training submission an exception and put a second approver in front of all of them. The check profiles carry no checkpoint contract because a twenty-step run has nothing worth resuming.
+| Profile | Limits | Use for |
+| --- | --- | --- |
+| `olmo-core-check` | 1h, 1 attempt | **Start here.** Proves the path works |
+| `olmo-core-train` | 24h, 2 attempts, checkpoint every 30 min | Real training |
+
+There were four of these and two of them were the other two on a different machine. `compute_profile` is a required field beside this one, so pick the machine there.
+
+| You are | Pick | Costs |
+| --- | --- | --- |
+| Proving the path works | `olmo-core-check` on `cpu-32vcpu` | $1.43/hr |
+| Checking your code sees a GPU | `olmo-core-check` on `gpu-1xa10g` | $1.01/hr |
+| Training on one device | `olmo-core-train` on `gpu-1xa10g` | $1.01/hr |
+| Training on four | `olmo-core-train` on `gpu-4xa10g` | $5.67/hr |
+
+Twenty-four hours is the ceiling for routine approval, not a round number: a longer run would make every training submission an exception and put a second approver in front of all of them. It was twelve, which made an exception of every sweep that ran overnight. `olmo-core-check` carries no checkpoint contract because a twenty-step run has nothing worth resuming.
+
+**The check and the training preset differ in what they promise, not in what they cost.** A one-hour check on eight H100s is available to you and bills $55 an hour, and nothing refuses it. What the approver is shown is the machine and its rate, which is the whole of what stands between a mistyped dropdown and a bill.
 
 ## Running a training job
 
@@ -129,7 +140,7 @@ That is the whole thing. It opens the corpus you picked, reads it at the width t
 | `bash -lc` is required | The container runs your command directly, with no shell. Without it, `$EDULLM_RUN_ID` arrives as fourteen literal characters |
 | Config overrides | Append them: `--model-factory olmo2_1B optim.lr=3e-4` |
 | `--dry-run` | Resolves the corpus, prints the config, trains nothing. The cheapest way to find a bad flag |
-| `--save-interval` | Counts steps, defaults to 100. `olmo-core-train-1gpu` promises a checkpoint every 30 minutes, so stay under that. At `200` a 190M model on one A10G saves about every 23 minutes, writing 3.2 GB in roughly 40 seconds on its own thread |
+| `--save-interval` | Counts steps, defaults to 100. `olmo-core-train` promises a checkpoint every 30 minutes, so stay under that. At `200` a 190M model on one A10G saves about every 23 minutes, writing 3.2 GB in roughly 40 seconds on its own thread |
 
 **A retry only fires for a lost machine.** Batch starts a second attempt with the same run id, so the same `$EDULLM_CHECKPOINT_DIR`, and `Trainer.fit()` resumes on its own. A crash in your own code exits instead, because the same traceback twice costs the budget twice.
 
@@ -153,9 +164,9 @@ bash -lc 'python -m torch.distributed.run --nproc-per-node=4 --standalone .edull
 
 Set `--nproc-per-node` to the device count of the shape you picked. `torchrun`, `accelerate launch`, `deepspeed`, `mpirun` and `srun` all work.
 
-Leaving the launcher out used to be free and silent: the run trained on one device, billed for four, and exited zero — $68 for a quarter of the work over twelve hours. It is now refused at submission, and the refusal prints the corrected command. The same check catches too few ranks, too many ranks, and `torchrun` with no `--nproc-per-node` at all.
+Leaving the launcher out used to be free and silent: the run trained on one device, billed for four, and exited zero — $136 for a quarter of the work over twenty-four hours. It is now refused at submission, and the refusal prints the corrected command. The same check catches too few ranks, too many ranks, and `torchrun` with no `--nproc-per-node` at all.
 
-**To run one process on a multi-GPU machine deliberately** — a benchmark, a memory profile — waive the check. `olmo-core-train-4gpu` also declares a checkpoint contract, so a benchmark on that shape is waiving both, which is why two tokens appear. Each is recorded on the manifest and shown to the approver:
+**To run one process on a multi-GPU machine deliberately** — a benchmark, a memory profile — waive the check. `olmo-core-train` also declares a checkpoint contract, so a benchmark under it is waiving both, which is why two tokens appear. Each is recorded on the manifest and shown to the approver:
 
 ```
 bash -lc 'EDULLM_LAUNCH_CHECK=waived EDULLM_CHECKPOINT_CHECK=waived python benchmarks/memory.py --batch 64'
@@ -163,7 +174,7 @@ bash -lc 'EDULLM_LAUNCH_CHECK=waived EDULLM_CHECKPOINT_CHECK=waived python bench
 
 ## The checkpoint refusal
 
-`olmo-core-train-1gpu` and `olmo-core-train-4gpu` declare a checkpoint contract, which is what their second attempt is granted on. **A command under either has to expand `$EDULLM_CHECKPOINT_DIR`, or the submission is refused when it compiles**, before a lead is asked.
+`olmo-core-train` declares a checkpoint contract, which is what its second attempt is granted on. **A command under it has to expand `$EDULLM_CHECKPOINT_DIR`, or the submission is refused when it compiles**, before a lead is asked.
 
 Keep `--save-folder "$EDULLM_CHECKPOINT_DIR"` on the line even though `train_on_corpus.py` already defaults to it. The check reads your command text and cannot see inside your program, so writing the flag costs nothing at runtime and puts the save folder in the manifest where the approver can see it.
 
@@ -175,7 +186,7 @@ Keep `--save-folder "$EDULLM_CHECKPOINT_DIR"` on the line even though `train_on_
 
 The refusal names which of those it found. The unexpanded forms reach your program as the literal text `$EDULLM_CHECKPOINT_DIR`, and OLMo-core creates a directory by that name rather than failing — which is why they count as absent.
 
-**This is what the check exists to stop.** A trainer that is not told where to save uses its own default, `/tmp` for the OLMo-core example, on a machine that stops existing. The run trains for twelve hours, writes checkpoints nobody can reach, exits zero, and is recorded as an unqualified success. One run in this account is in that state and nothing is recoverable from it.
+**This is what the check exists to stop.** A trainer that is not told where to save uses its own default, `/tmp` for the OLMo-core example, on a machine that stops existing. The run trains for a day, writes checkpoints nobody can reach, exits zero, and is recorded as an unqualified success. One run in this account is in that state and nothing is recoverable from it.
 
 **If your run genuinely does not save where the platform looks** — a program that derives its own path, or a throwaway nobody will resume — waive it:
 
@@ -191,12 +202,12 @@ Same convention as the launcher waiver, deliberately the same spelling. What it 
 
 | Setting | Value | Why |
 | --- | --- | --- |
-| `--save-folder` | `"$EDULLM_CHECKPOINT_DIR"` | Defaults to `/tmp`, which is local disk on a machine that stops existing. A twelve-hour run writes checkpoints nobody can reach, exits zero, and is **recorded as a success** |
+| `--save-folder` | `"$EDULLM_CHECKPOINT_DIR"` | Defaults to `/tmp`, which is local disk on a machine that stops existing. A twenty-four-hour run writes checkpoints nobody can reach, exits zero, and is **recorded as a success** |
 | `trainer.callbacks.checkpointer.max_checkpoints` | `null` | OLMo-core keeps three and deletes the rest. The prune deletes `.metadata.json` first and the workload role is denied that key by name, so the run dies with `OLMoNetworkError` — at `save_interval=200` that is step 600, about an hour in |
 | `trainer.callbacks.checkpointer.ephemeral_save_interval` | `null` | Must be below `save_interval` or OLMo-core refuses the config in the first seconds |
 | `trainer.callbacks.lm_evaluator.enabled` | `false` | Reads a C4 validation shard whose `.csv.gz` index was never published — the URL 404s |
 | `trainer.callbacks.downstream_evaluator.enabled` | `false` | Scores HellaSwag through `ai2-olmo-eval`, which the training image does not install |
-| `trainer.max_duration` | Set it | Defaults to one epoch, which may be far more or far less than twelve hours |
+| `trainer.max_duration` | Set it | Defaults to one epoch, which may be far more or far less than twenty-four hours |
 | `train_module.compile_model` | `false`, if needed | `torch.compile` needs a C compiler. Recent images have one; older commits do not |
 
 Both evaluators fail while the trainer is being built, before the first step, so disabling one sends you back to a crash seconds later with the obvious fix already applied.
