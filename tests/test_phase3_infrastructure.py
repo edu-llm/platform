@@ -1718,18 +1718,47 @@ def test_only_the_execution_and_instance_roles_may_pull_the_image() -> None:
 
 
 def test_the_recorder_role_writes_lineage_and_cannot_make_anything_happen() -> None:
-    """Mutation: add ``batch:SubmitJob`` or ``batch:TerminateJob``.
+    """Mutation: add ``batch:SubmitJob``, ``batch:TerminateJob`` or ``s3:DeleteObject``.
 
     The recorder is reached by an EventBridge delivery rather than by an execution somebody
     approved, so it is the component furthest from the gate. The only thing it may do with
     that distance is append a record of something that already happened.
+
+    THE LISTING IS PART OF OBSERVING RATHER THAN AN EXCEPTION TO IT. ``s3:ListBucket`` on
+    the outputs bucket is how ``lifecycle_projection`` says which checkpoints a run left,
+    and enumerating objects some other principal already wrote makes nothing happen. It
+    starts no job, changes no state, and nothing downstream can tell that it was called.
+    The property this test holds is that the recorder cannot cause an effect, which is a
+    statement about writes and about reaching the schedulers, so a bounded read passes it
+    unchanged. Widening the list without saying that would leave the next reader unable to
+    tell an argued grant from a drifted one.
+
+    Bounded is doing work in that sentence, so the condition is asserted beside the action.
+    ``s3:ListBucket`` is authorized against the bucket ARN, so an unconditioned grant
+    enumerates every team's output and the claim above would be false. The prefix pattern
+    is the one ``checkpoints_under`` sends, which is the path of ``EDULLM_CHECKPOINT_DIR``.
+
+    ``s3:GetObject`` is absent, and it is the read the exact list still refuses. The
+    projection reads keys, sizes and write times and never an object's contents, so the
+    grant would buy nothing and would let the recorder read what every run produced.
     """
     actions = role_actions(LIFECYCLE_ROLE_PATH, LIFECYCLE_ROLE_NAME)
     s3_actions = [action for action in actions if action.startswith("s3:")]
+    listing = [
+        statement
+        for policy in role_named(LIFECYCLE_ROLE_PATH, LIFECYCLE_ROLE_NAME)["Policies"]
+        for statement in policy["PolicyDocument"]["Statement"]
+        if "s3:ListBucket" in statement_actions(statement)
+    ]
 
-    assert s3_actions == ["s3:PutObject"]
+    assert s3_actions == ["s3:PutObject", "s3:ListBucket"]
     assert "sqs:ReceiveMessage" in actions
     assert "sqs:DeleteMessage" in actions
+    assert len(listing) == 1
+    assert resource_arns(listing[0]["Resource"]) == [
+        f"arn:${{AWS::Partition}}:s3:::{OUTPUTS_BUCKET}"
+    ]
+    assert listing[0]["Condition"]["StringLike"]["s3:prefix"] == "teams/*/runs/*/checkpoints/*"
 
 
 def test_the_recorder_role_holds_no_batch_action_at_all() -> None:

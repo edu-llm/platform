@@ -32,10 +32,12 @@ Resources:
               # is the component furthest from the gate, and the only thing it may do with
               # that distance is append a record of something that already happened.
               #
-              # PutObject only, and only under the four prefixes this phase writes. No
-              # GetObject, no DeleteObject, no ListBucket: the bucket policy already
-              # refuses an unconditional write, and a recorder that could read the store
-              # could read every team's admission decisions on its way past.
+              # PutObject only on the lineage store, and only under the four prefixes this
+              # phase writes. No GetObject, no DeleteObject and no ListBucket on that
+              # bucket: the bucket policy already refuses an unconditional write, and a
+              # recorder that could read the store could read every team's admission
+              # decisions on its way past. The one read this role does hold is a listing of
+              # the outputs bucket, argued for beside the statement below.
               - Effect: Allow
                 Action: s3:PutObject
                 Resource:
@@ -43,6 +45,51 @@ Resources:
                   - Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-lineage/events/*
                   - Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-lineage/attempt/*
                   - Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-lineage/result/*
+              # THE ONE READ THIS ROLE HOLDS, AND IT ENUMERATES RATHER THAN FETCHES.
+              #
+              # lifecycle_projection.py fills ResultManifest.checkpoints from the prefix
+              # the container was handed in EDULLM_CHECKPOINT_DIR, which execution.py sets
+              # to output_prefix(team, run_id) with checkpoints/ on the end. Without this
+              # grant the listing is refused, checkpoints_under turns the refusal into an
+              # empty tuple, and a run that trained for hours and saved a checkpoint is the
+              # same record as a run that saved nothing. That degradation is deliberate,
+              # because an exception inside the recorder dead-letters the delivery and
+              # loses the event, the attempt and the result for a run that demonstrably
+              # happened. It is also silent, so the field stays empty on every run until
+              # somebody applies this stack, and nothing goes red to say so.
+              #
+              # s3:ListBucket IS AUTHORIZED AGAINST THE BUCKET ARN AND NOT AN OBJECT ONE,
+              # so the Resource cannot narrow it and the prefix condition is the whole of
+              # the narrowing. Drop the Condition and this enumerates every key in the
+              # outputs bucket, which is every team's output rather than the checkpoints of
+              # the run being recorded. infra/iam/nightly-reader-role.yaml gives that same
+              # reasoning beside both of its listings and is the precedent this matches.
+              #
+              # The pattern is the value the projection actually sends. list_objects_v2 is
+              # called with Prefix set to the path of EDULLM_CHECKPOINT_DIR, which is
+              # teams/{team}/runs/{run_id}/checkpoints/, and IAM's * matches zero
+              # characters, so the trailing segment admits that prefix as well as every
+              # deeper one under it. A listing of the bucket root, of teams/, or of a run's
+              # own output prefix carries a value this pattern does not match and is
+              # refused, which is what keeps the grant to the question being asked.
+              #
+              # NO s3:GetObject, AND THAT IS A DECISION RATHER THAN AN OVERSIGHT. A listing
+              # carries the key, the size and the write time, which is everything a
+              # CheckpointManifest needs except a digest of the payload, and
+              # described_listing_checksum stands in for that. One consequence is worth
+              # recording honestly. A listing cannot read the contents of a _SUCCESS
+              # marker, so a checkpoint prefix whose step number lives inside the marker
+              # rather than in a step{N} directory name records nothing rather than a step
+              # of zero. Closing that would need s3:GetObject across the outputs bucket,
+              # which buys one field on a shape OLMo-core does not write and pays for it
+              # with a recorder that can read what every team's runs produced.
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-outputs
+                Condition:
+                  StringLike:
+                    s3:prefix: "teams/*/runs/*/checkpoints/*"
               # The event source mapping polls as this role, so receive, delete and the
               # attribute read are all needed; without DeleteMessage a projected event is
               # redelivered until it reaches the dead-letter queue, which reads as a
