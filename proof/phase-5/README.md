@@ -2,8 +2,8 @@
 
 Phase: phase-5
 Bundle schema version: 1
-Source commit: 4d35878d2ad323849cc74bda76b93d12463462be
-Generated: 2026-08-01T16:33:42+00:00
+Source commit: 09313ead451c08b596ac8d6dcf8116bffec71af8
+Generated: 2026-08-02T14:45:37+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 5 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase5_proof.py` at generation time. No criterion is a gap and the gate is green, and criterion 6 is deferred rather than covered -- a recorded decision not to satisfy it yet, which passes the gate without anybody having observed it. Read that entry in `negative-case-matrix.md` first: it carries the reason and the trigger, and the Known limitations below say what this phase does not establish.
 
@@ -28,14 +28,14 @@ The one check that is outstanding is a different kind of open from every other i
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 4099 |
-| suite tests executed | 3906 |
-| suite passed | 3905 |
+| suite tests collected | 4434 |
+| suite tests executed | 4241 |
+| suite passed | 4240 |
 | suite failed | 1 |
 | suite errored | 0 |
 | suite skipped | 0 |
-| matrix node ids executed | 93 |
-| matrix node ids passed | 93 |
+| matrix node ids executed | 96 |
+| matrix node ids passed | 96 |
 | matrix node ids failed | 0 |
 | phase criteria | 15 |
 | criteria COVERED | 14 (1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15) |
@@ -71,10 +71,10 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | --- | --- |
 | .github/CODEOWNERS | sha256:defc3ec7e43f5dc70f137ff21566d23e3d961355fbc871467e3676c9ab651df4 |
 | .github/workflows/build-research-image.yml | sha256:f39972c4da20a63b3fd0f725ccaf521dd893d94c4d72d6f376456e081223e122 |
-| .github/workflows/submit-run.yml | sha256:66f0ed1797799a83938974a6328a237e0d55e81538771062de5b83ca8c06c4cb |
-| README.md | sha256:024fade809e749f1a33a1a23cc588e4617bba209dc1e50b829ac853adf69fc8e |
-| config/image-exceptions.yaml | sha256:0828f4203385bbc3adbd8521f62768e7f4eb46f56382bc6223d37b89aae7a49c |
-| config/organization.yaml | sha256:b78c80269ffbf2fffeb034b4967dbbe232879614b1b51ea0f6cc5874cdb32131 |
+| .github/workflows/submit-run.yml | sha256:34a0712273b6ffdc4af3dbd3f86adb28f4231206f827a09488117a2951a2b274 |
+| README.md | sha256:3ee434c2dce810367306b1dea7ed70364dc60f582087a8aeb08c2ee254dc9e66 |
+| config/image-exceptions.yaml | sha256:8b1e3e6ac779215e0c521b91a2889b5e2404139678752534ac1bfb0f34751716 |
+| config/organization.yaml | sha256:4b3d6cbdc0c080dc01b36918401f720f9cfc87d821a6cfa61787fdc7020d80cf |
 | fixtures/evidence/phase-5/branch-protection.sanitized.json | sha256:99a949fb3cae169e5b77cc53661e660410928552213615314bab97ec83100ef5 |
 | fixtures/evidence/phase-5/published-image.sanitized.json | sha256:65f9b7ef2f121541a121944641c51d5e3548675b9da58f15e5aa2dee2d313d37 |
 | src/edullm_platform/image_resolution.py | sha256:0bd11cece57c91d6d82680dbffb1e959dade2ea9f60094a5a1a747accbf554fd |

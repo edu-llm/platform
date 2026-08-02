@@ -20,28 +20,30 @@ IMAGE_DIGEST_PATTERN = SHA256_DIGEST_PATTERN
 
 
 class FanOut(ContractModel):
+    #: THERE WAS A max_parallel BESIDE THIS AND REMOVING IT IS THE POINT OF ITS ABSENCE.
+    #:
+    #: ``SubmitJob``'s ``arrayProperties`` accepts ``size`` and nothing else, so the field
+    #: had nowhere to go and ``batch_submit_request`` never sent it. It was kept for a
+    #: while as the submitter's stated intent, on the argument that an approver reading a
+    #: fan-out of two hundred should see what the submitter believed would run at once.
+    #: That argument was wrong in the direction that costs something. A submitter who set
+    #: it believed a concurrency limit existed, no limit existed, and the number they read
+    #: back on the approver page confirmed the belief. A control that does nothing is worse
+    #: than no control, because the absent one sends somebody to ask how concurrency is
+    #: actually bounded.
+    #:
+    #: What bounds it is the compute environment's ``MaxvCpus`` divided by what one child
+    #: reserves, and nothing in a manifest can change that.
+    #:
+    #: THE COST OF REMOVAL WAS CHECKED RATHER THAN ASSUMED, because a contract field is
+    #: content-addressed and the note this replaces claimed the removal would change the
+    #: canonical form of every manifest carrying a fan-out. It does, and no such record
+    #: exists. Every intent record committed under fixtures/evidence carries
+    #: ``"fanout":null``, which serializes the same whatever this model holds, so no stored
+    #: digest moves. A record written with a ``max_parallel`` would now fail to load rather
+    #: than load wrongly, because ContractModel forbids extra keys.
     size: int = Field(ge=2)
-    #: DECLARED AND NOT ENFORCED, AND BATCH IS THE REASON RATHER THAN AN OVERSIGHT HERE.
-    #:
-    #: ``SubmitJob``'s ``arrayProperties`` accepts ``size`` and nothing else, confirmed
-    #: against the API reference on 2026-08-01. There is no cap on how many children of an
-    #: array job run at once, so this value has nowhere to go and ``batch_submit_request``
-    #: correctly does not send it. What actually bounds concurrency is the compute
-    #: environment's ``MaxvCpus`` divided by what one child reserves.
-    #:
-    #: Kept rather than removed, because it is the submitter's stated intent and an
-    #: approver reading a fan-out of two hundred should see what the submitter believed
-    #: would run at once. Removing it would also change the canonical form of every
-    #: manifest carrying a fan-out, and those records are immutable. What was wrong was
-    #: presenting it as a control, which the form and the approver summary now do not.
-    max_parallel: int = Field(ge=1)
     index_parameter: str = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def validate_parallelism_within_size(self) -> Self:
-        if self.max_parallel > self.size:
-            raise ValueError("fan-out parallelism must not exceed fan-out size")
-        return self
 
 
 class RunManifest(ContractModel):

@@ -17,7 +17,12 @@ request:
   maximum_runtime_hours: "4"
   maximum_attempts: 1
   fanout_size: 5
-  fanout_parallelism: 5
+  # One rather than five, matching what request_facts_from_manifest now derives from
+  # multiseed-routine.yaml. The manifest declared five cells at once until
+  # FanOut.max_parallel was removed, and nothing in a manifest describes concurrency any
+  # more, so every request classifies at one however wide it fans out. The five above is
+  # still the fan-out this scenario is about.
+  fanout_parallelism: 1
 expected:
   granted: true
   approval_class: routine

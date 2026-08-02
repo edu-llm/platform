@@ -18,7 +18,9 @@ capacity that does not exist.
 from __future__ import annotations
 
 import json
+import os
 import re
+import subprocess
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -58,6 +60,7 @@ from edullm_platform.contracts.workload import (
 )
 from edullm_platform.execution import (
     CONTAINER_SHAPES,
+    FANOUT_INDEX_VARIABLE,
     MAXIMUM_CONTAINER_OVERRIDES_BYTES,
     MINIMUM_ATTEMPT_DURATION_SECONDS,
     WANDB_ENTITY,
@@ -524,16 +527,219 @@ def test_a_single_container_submits_no_array_properties() -> None:
     assert "ArrayProperties" not in request_for()
 
 
-def test_a_fan_out_submits_its_size_and_nothing_else_changes() -> None:
+def test_a_fan_out_submits_its_size() -> None:
     """Mutation: read the array size from anything but ``fanout.size``.
 
-    ``max_parallel`` is the obvious wrong field and is bounded above by ``size``, so a
-    fixture where the two agree would pass either way. Here they differ.
+    ``max_parallel`` used to sit beside it as the obvious wrong field to read, bounded
+    above by ``size`` so that a fixture where the two agreed would pass either way. It was
+    removed, because Batch accepts no concurrency cap and a recorded one is a control that
+    does nothing. Size is the only number ``ArrayProperties`` has ever taken.
     """
-    fanout = {"size": 4, "max_parallel": 2, "index_parameter": "SEED"}
-    request = request_for(fanout=fanout)
+    request = request_for(fanout={"size": 4, "index_parameter": "SEED"})
 
     assert request["ArrayProperties"] == {"Size": 4}
+
+
+#: A fan-out block of the shape that lost data, kept as one value so the tests below argue
+#: about one submission rather than about four unrelated ones. Forty cells over a curriculum
+#: matrix is a real submitted run and not a round number chosen for a test.
+CURRICULUM_MATRIX = {"size": 40, "index_parameter": "curriculum_shard"}
+
+
+def container_environment(request: Mapping[str, Any]) -> dict[str, str]:
+    return {entry["Name"]: entry["Value"] for entry in request["ContainerOverrides"]["Environment"]}
+
+
+def start_the_container_command(request: Mapping[str, Any], *, array_index: str) -> str:
+    """Run the submitted command the way the container will, and return what it printed.
+
+    THE ONLY ASSERTION IN THIS FILE THAT EXECUTES ANYTHING, AND IT EARNS THE EXCEPTION.
+    Every other test here compares a structure against the manifest that produced it, which
+    is the right shape for a pure function. This one is about whether a string is expanded
+    by a shell, and there is no way to assert that from the structure -- a request carrying
+    ``cell-$AWS_BATCH_JOB_ARRAY_INDEX`` somewhere is either exactly right or exactly the
+    defect, depending on whether the thing holding it is shell text or an environment
+    value, and both look identical to a reader comparing dictionaries.
+
+    The environment is the request's own, plus the index Batch sets per child. PATH is
+    carried through because the wrapper resolves ``bash`` and the submitted program against
+    it, and passing an empty environment would fail for a reason that has nothing to do
+    with what is being tested.
+    """
+    environment = container_environment(request)
+    environment[FANOUT_INDEX_VARIABLE] = array_index
+    started = subprocess.run(
+        list(request["ContainerOverrides"]["Command"]),
+        capture_output=True,
+        text=True,
+        check=True,
+        env={"PATH": os.environ.get("PATH", ""), **environment},
+    )
+    return started.stdout.strip()
+
+
+def test_each_cell_of_a_fan_out_writes_under_a_prefix_of_its_own() -> None:
+    """THE ONE THAT MATTERS. Mutation: leave the prefix alone and fan the same one out.
+
+    This is the defect the whole change exists for. Every cell of an array job is handed
+    one environment block, so forty cells shared one output prefix and one checkpoint
+    directory, forty processes wrote into it, the last writer won and nothing said so. A
+    forty cell curriculum matrix of exactly this shape had already been submitted.
+
+    Two indices rather than one, because a derivation that ignored the index entirely would
+    satisfy any single-cell assertion.
+    """
+    request = request_for(fanout=CURRICULUM_MATRIX, command=["printenv", "EDULLM_OUTPUT_PREFIX"])
+    run_prefix = output_prefix(team="memory-split", run_id=RUN_ID)
+
+    assert start_the_container_command(request, array_index="0") == f"{run_prefix}cell-0/"
+    assert start_the_container_command(request, array_index="39") == f"{run_prefix}cell-39/"
+
+
+def test_a_cell_that_reached_the_container_unexpanded_would_fail_this() -> None:
+    """Mutation: set EDULLM_OUTPUT_PREFIX to a literal holding $AWS_BATCH_JOB_ARRAY_INDEX.
+
+    THIS IS THE TRAP THE CHANGE HAD TO GET PAST AND IT PASSES REVIEW EASILY. A job
+    definition's environment values are static strings and Batch does not shell-expand
+    them, so a prefix written that way produces a container whose ``EDULLM_OUTPUT_PREFIX``
+    is the name of the variable rather than a number. Every cell still collides, and the
+    collision is now filed under a directory called ``cell-$AWS_BATCH_JOB_ARRAY_INDEX`` --
+    which reads as a bug in the researcher's training script rather than in the platform,
+    so it costs somebody a day before it is even reported here.
+
+    Asserted twice on purpose. The first half is the structural claim that nothing this
+    function sends carries a dollar sign, which is what the mutation above would break.
+    The second half is what the container actually receives, because a request could
+    satisfy the first and still hand the program an unexpanded string through some other
+    route.
+    """
+    request = request_for(fanout=CURRICULUM_MATRIX)
+
+    for name, value in container_environment(request).items():
+        assert "$" not in value, (
+            f"{name} carries {value!r}, and Batch does not shell-expand an environment "
+            "value, so the container would receive the name of the variable as text"
+        )
+
+    printed = start_the_container_command(
+        request_for(fanout=CURRICULUM_MATRIX, command=["printenv", "EDULLM_OUTPUT_PREFIX"]),
+        array_index="7",
+    )
+    assert FANOUT_INDEX_VARIABLE not in printed
+    assert printed.endswith("cell-7/")
+
+
+def test_a_cell_checkpoints_under_its_own_prefix_rather_than_the_runs() -> None:
+    """Mutation: move the output prefix per cell and leave the checkpoint directory alone.
+
+    This is the half that would have been easy to miss and is the more expensive one. The
+    checkpoint directory is defined as the output prefix followed by ``checkpoints/``, and
+    a fan-out that moved only the prefix would still have forty trainers writing
+    checkpoints over each other -- and unlike scattered artifacts, a corrupted checkpoint
+    is what the retry the contract paid for resumes from.
+    """
+    request = request_for(
+        fanout=CURRICULUM_MATRIX, command=["printenv", "EDULLM_CHECKPOINT_DIR"]
+    )
+    run_prefix = output_prefix(team="memory-split", run_id=RUN_ID)
+
+    assert start_the_container_command(request, array_index="3") == (
+        f"{run_prefix}cell-3/checkpoints/"
+    )
+
+
+def test_a_single_run_keeps_the_command_and_the_prefix_it_has_always_had() -> None:
+    """Mutation: give every run a cell segment, since the derivation is already written.
+
+    Every run this platform has recorded wrote under ``teams/{team}/runs/{run_id}/`` and
+    every lineage record naming one of those locations is immutable. Adding a segment to
+    the single-run case would orphan all of that output while every test about fan-out
+    stayed green, which is why this asserts the absence rather than trusting the branch.
+
+    The command is asserted verbatim as well. A wrapper applied to a single run would be
+    invisible in the prefix and would still change what a submitter's ``$0`` is, and would
+    put a shell in front of a command that had deliberately not asked for one.
+    """
+    declared = manifest()
+    request = request_for()
+
+    assert request["ContainerOverrides"]["Command"] == list(declared.command)
+    environment = container_environment(request)
+    assert environment["EDULLM_OUTPUT_PREFIX"] == output_prefix(
+        team=declared.team, run_id=RUN_ID
+    )
+    assert "cell-" not in environment["EDULLM_OUTPUT_PREFIX"]
+    assert "EDULLM_FANOUT_INDEX_PARAMETER" not in environment
+
+
+def test_a_cell_is_told_what_its_index_varies() -> None:
+    """Mutation: keep fanout.index_parameter on the approver page and stop there.
+
+    The manifest has carried it since fan-out existed and it never reached the container,
+    so a cell knew it was number seven of forty and not what seven meant. An entrypoint
+    picking a seed and one picking a curriculum shard read the same integer, which left the
+    mapping from index to experiment recorded nowhere a later reader could reach it.
+    """
+    request = request_for(fanout=CURRICULUM_MATRIX)
+
+    assert container_environment(request)["EDULLM_FANOUT_INDEX_PARAMETER"] == "curriculum_shard"
+
+
+def test_wrapping_a_cell_command_does_not_expand_what_exec_form_would_not() -> None:
+    """Mutation: join the submitted words with spaces instead of quoting them.
+
+    ``ContainerOverrides.Command`` is exec form, so a submitted ``$EDULLM_RUN_ID`` reaches
+    the program as thirteen literal characters and a submitter who wrote one meant those
+    characters. Putting a shell in front of a fan-out is this platform's decision rather
+    than the submitter's, so it must not change what any word means. An unquoted join would
+    expand the word, and the container would run a command that is not the one the approver
+    read or the lineage record sealed.
+    """
+    request = request_for(
+        fanout=CURRICULUM_MATRIX,
+        command=["printf", "%s", "$EDULLM_RUN_ID"],
+    )
+
+    assert start_the_container_command(request, array_index="1") == "$EDULLM_RUN_ID"
+
+
+def test_a_submitters_own_shell_still_expands_inside_the_wrapper() -> None:
+    """Mutation: quote the whole command as one word rather than word by word.
+
+    The line the guide prints is ``bash -lc 'python train.py --save-folder
+    "$EDULLM_CHECKPOINT_DIR"'``, and the checkpoint guard refuses a contracted run whose
+    command does not reference that variable. So the inner shell has to keep working and
+    has to see the values this cell's prologue exported rather than the run's. A wrapper
+    that quoted the command as a single word would hand ``bash`` a program name with spaces
+    in it and every fan-out with a real training command would fail to start.
+    """
+    request = request_for(
+        fanout=CURRICULUM_MATRIX,
+        command=["bash", "-lc", 'printf %s "$EDULLM_CHECKPOINT_DIR"'],
+    )
+    run_prefix = output_prefix(team="memory-split", run_id=RUN_ID)
+
+    assert start_the_container_command(request, array_index="12") == (
+        f"{run_prefix}cell-12/checkpoints/"
+    )
+
+
+def test_a_wrapped_fan_out_command_is_still_measured_against_the_batch_limit() -> None:
+    """Mutation: wrap the command after the oversize check rather than before it.
+
+    The prologue and the quoting are inside the 8,192 bytes Batch accepts for a container
+    override, so a submission that fitted as typed can stop fitting once wrapped. Checking
+    the unwrapped form would let that submission through to Batch, which refuses it with a
+    message naming neither the command nor the wrapper -- after the approval is spent,
+    which is the cost this check exists to avoid.
+    """
+    with pytest.raises(ContainerOverridesTooLargeError) as refusal:
+        request_for(
+            fanout=CURRICULUM_MATRIX,
+            command=["python", "-c", "x" * (MAXIMUM_CONTAINER_OVERRIDES_BYTES - 600)],
+        )
+
+    assert str(MAXIMUM_CONTAINER_OVERRIDES_BYTES) in str(refusal.value)
 
 
 def test_the_job_name_is_the_run_id_so_batch_is_a_third_join() -> None:

@@ -461,7 +461,7 @@ TEXT_FIELDS: Final = (
     "maximum_runtime_hours",
     "fanout_index_parameter",
 )
-WHOLE_FIELDS: Final = ("maximum_attempts", "fanout_size", "fanout_parallelism")
+WHOLE_FIELDS: Final = ("maximum_attempts", "fanout_size")
 
 
 def dispatch_inputs(form: dict[str, str]) -> dict[str, str]:
@@ -488,7 +488,7 @@ def workflow_inputs(form: dict[str, str]) -> dict[str, object]:
     """The form the *workflow* assembles from those inputs, with the command already split.
 
     Mirrors the inline script in ``.github/workflows/submit-run.yml``: text fields stripped
-    and dropped when empty, the three bounds parsed as whole numbers, and the command run
+    and dropped when empty, the two bounds parsed as whole numbers, and the command run
     through ``shlex.split``. It exists so a payload can be validated against
     ``SubmissionInputs`` on a laptop rather than discovered to be wrong by a runner.
     """

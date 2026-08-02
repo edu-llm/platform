@@ -236,9 +236,11 @@ def test_no_optional_field_defaults_to_a_value_somebody_could_have_meant() -> No
         name for name, field in SubmissionInputs.model_fields.items() if not field.is_required()
     ]
 
-    # Seven since ``image_digest`` stopped being required: a run's image is derived from
-    # the commit it declares, and what survives is an override for a deliberate pin.
-    assert len(optional) == 7
+    # Six since ``fanout_parallelism`` was removed. It went to seven when ``image_digest``
+    # stopped being required, a run's image now being derived from the commit it declares
+    # with an override surviving for a deliberate pin, and back to six when the fan-out
+    # concurrency box was taken off the form because Batch accepts no such cap.
+    assert len(optional) == 6
     for name in optional:
         default = declared[name]["default"]
         assert default in ("", INHERIT_SENTINEL), name
@@ -1275,7 +1277,6 @@ def test_the_assembled_form_carries_the_overrides_in_the_types_the_contract_dema
         FORM_MAXIMUM_RUNTIME_HOURS="0.5",
         FORM_MAXIMUM_ATTEMPTS="2",
         FORM_FANOUT_SIZE="4",
-        FORM_FANOUT_PARALLELISM="2",
         FORM_FANOUT_INDEX_PARAMETER="seed",
     )
 
@@ -1283,7 +1284,6 @@ def test_the_assembled_form_carries_the_overrides_in_the_types_the_contract_dema
     assert payload["maximum_runtime_hours"] == "0.5"
     assert isinstance(payload["maximum_attempts"], int)
     assert isinstance(payload["fanout_size"], int)
-    assert isinstance(payload["fanout_parallelism"], int)
     inputs = SubmissionInputs.model_validate(payload)
     assert inputs.fanout_index_parameter == "seed"
 
@@ -2219,19 +2219,21 @@ def test_a_profile_this_checkout_cannot_resolve_is_reported_as_unknown(
     assert f"| Run id | `{RUN_ID}` |" in summary
 
 
-def test_the_form_does_not_present_fanout_parallelism_as_a_limit() -> None:
-    """Mutation: describe it as how many cells may run at once.
+def test_the_form_does_not_offer_a_fanout_parallelism_box_at_all() -> None:
+    """Mutation: put the field back with a description saying it is not enforced.
 
-    Batch's SubmitJob takes a size for an array job and no concurrency cap, so this value
-    has nowhere to go and `batch_submit_request` correctly never sends it. A form that
-    collected it, showed it to an approver and called it a limit was describing a control
-    that does not exist, which is worse than not offering it: somebody sizing a fan-out
-    against a cap would be sizing against nothing.
+    That was the previous state and this test asserted it. Batch's SubmitJob takes a size
+    for an array job and no concurrency cap, so the value had nowhere to go and
+    `batch_submit_request` correctly never sent it. Wording it carefully was not enough. A
+    box on a form is read as a control whatever sits beside it, so a submitter filled it
+    in, saw the same number echoed back on the approver page, and sized a fan-out against
+    a cap that did not exist.
+
+    The two remaining fan-out fields are asserted present in the same breath, because a
+    form that had lost all three would pass an assertion about the absence of one and
+    would refuse every sweep anybody tried to submit.
     """
-    described = _load()["on"]["workflow_dispatch"]["inputs"]["fanout_parallelism"]["description"]
+    offered = _load()["on"]["workflow_dispatch"]["inputs"]
 
-    assert "not enforced" in described
-    assert "capacity" in described
-    assert "may run at once" not in described, (
-        "this is the wording that claimed a limit Batch cannot apply"
-    )
+    assert "fanout_parallelism" not in offered
+    assert {"fanout_size", "fanout_index_parameter"} <= set(offered)

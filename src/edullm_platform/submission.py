@@ -137,21 +137,23 @@ class SubmissionInputs(ContractModel):
     compute_profile: str | None = Field(default=None, min_length=1)
     maximum_runtime_hours: PositiveStrictDecimal | None = Field(default=None, gt=0)
     maximum_attempts: int | None = Field(default=None, ge=1)
+    # Two fields rather than the three this form used to take. `fanout_parallelism` was
+    # removed because Batch's arrayProperties accepts a size and no concurrency cap, so
+    # the number a submitter typed was recorded and never applied -- and a box on a form
+    # is read as a control whatever the description beside it says. See FanOut in
+    # contracts/manifest.py for the whole argument and for what it cost to keep.
     fanout_size: int | None = Field(default=None, ge=2)
-    fanout_parallelism: int | None = Field(default=None, ge=1)
     fanout_index_parameter: str | None = Field(default=None, min_length=1)
 
     @model_validator(mode="after")
     def validate_fanout_is_whole_or_absent(self) -> Self:
         declared = (
             self.fanout_size is not None,
-            self.fanout_parallelism is not None,
             self.fanout_index_parameter is not None,
         )
         if any(declared) and not all(declared):
             raise ValueError(
-                "a fan-out must declare its size, its parallelism and what its index varies, "
-                "or none of the three"
+                "a fan-out must declare both its size and what its index varies, or neither"
             )
         return self
 
@@ -347,12 +349,9 @@ def compile_submission(
     fanout = (
         FanOut(
             size=inputs.fanout_size,
-            max_parallel=inputs.fanout_parallelism,
             index_parameter=inputs.fanout_index_parameter,
         )
-        if inputs.fanout_size is not None
-        and inputs.fanout_parallelism is not None
-        and inputs.fanout_index_parameter is not None
+        if inputs.fanout_size is not None and inputs.fanout_index_parameter is not None
         else None
     )
 
@@ -559,6 +558,12 @@ def _exceeded_bounds(submission: CompiledSubmission, policy: ApprovalPolicy) -> 
             f"fan-out size of {facts.fanout_size} exceeds the routine ceiling of "
             f"{limits.routine_maximum_fanout_size}"
         )
+    # NOTHING BUILT FROM A MANIFEST REACHES THIS BRANCH ANY MORE. build_request_facts
+    # stopped supplying fanout_parallelism when FanOut.max_parallel was removed, so a
+    # submission always arrives here declaring one. Kept rather than deleted because the
+    # threshold it reads is still in config/policy.yaml and removing a bound changes who
+    # may release a run, which is a policy_version decision rather than a consequence of
+    # this refactor. Delete the two together or neither.
     if facts.fanout_parallelism > limits.routine_maximum_parallelism:
         exceeded.append(
             f"fan-out parallelism of {facts.fanout_parallelism} exceeds the routine ceiling "

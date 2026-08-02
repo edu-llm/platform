@@ -73,12 +73,16 @@ UNREGISTERED_COMPUTE_PROFILE = "cpu-1024vcpu"
 
 FANOUT_FIELDS: dict[str, object] = {
     "fanout_size": 4,
-    "fanout_parallelism": 2,
     "fanout_index_parameter": "seed",
 }
+#: Every proper subset of the fan-out fields, which is what the whole-or-absent rule
+#: refuses. Only singletons now that ``fanout_parallelism`` is gone and two fields remain,
+#: and the range has to be derived rather than written as ``(1, 2)`` -- with two fields a
+#: count of two is the complete declaration, so the old literal would have parametrized
+#: this test with a form it is supposed to accept and asserted a refusal of it.
 PARTIAL_FANOUTS = [
     declared
-    for count in (1, 2)
+    for count in range(1, len(FANOUT_FIELDS))
     for declared in combinations(sorted(FANOUT_FIELDS), count)
 ]
 
@@ -105,7 +109,6 @@ EXCEEDED_CEILINGS: tuple[tuple[str, dict[str, object], str], ...] = (
         {
             "maximum_runtime_hours": "12",
             "fanout_size": 10,
-            "fanout_parallelism": 5,
             "fanout_index_parameter": "seed",
         },
         # Doubled from $680.64 without the form changing, because the workload's attempt
@@ -130,21 +133,15 @@ EXCEEDED_CEILINGS: tuple[tuple[str, dict[str, object], str], ...] = (
         {
             "maximum_runtime_hours": "0.5",
             "fanout_size": 65,
-            "fanout_parallelism": 8,
             "fanout_index_parameter": "shard",
         },
         "fan-out size of 65 exceeds the routine ceiling of 64",
     ),
-    (
-        "fan-out parallelism",
-        {
-            "maximum_runtime_hours": "0.5",
-            "fanout_size": 64,
-            "fanout_parallelism": 9,
-            "fanout_index_parameter": "shard",
-        },
-        "fan-out parallelism of 9 exceeds the routine ceiling of 8",
-    ),
+    # A "fan-out parallelism" row sat here and went with the form field. No submission can
+    # raise fanout_parallelism now that FanOut.max_parallel is gone, so the summary line
+    # for that ceiling is unreachable from a form. numeric_bound_violations still writes it
+    # and tests/test_policy.py still covers it from RequestFacts directly, because the
+    # threshold it reads is still in config/policy.yaml.
 )
 
 CEILING_IDS = [name for name, _form, _phrase in EXCEEDED_CEILINGS]
@@ -469,7 +466,7 @@ def test_a_partially_declared_fanout_is_rejected(declared: tuple[str, ...]) -> N
     with pytest.raises(ValidationError) as exc_info:
         submission_inputs(cpu_payload(**overrides))
     assert any(
-        "a fan-out must declare its size, its parallelism and what its index varies" in item["msg"]
+        "a fan-out must declare both its size and what its index varies" in item["msg"]
         for item in exc_info.value.errors()
     ), f"expected the whole-or-absent message, got {exc_info.value.errors()}"
 
@@ -478,7 +475,6 @@ def test_a_fanout_declared_in_full_is_accepted() -> None:
     inputs = submission_inputs(cpu_payload(**FANOUT_FIELDS))
 
     assert inputs.fanout_size == 4
-    assert inputs.fanout_parallelism == 2
     assert inputs.fanout_index_parameter == "seed"
 
 
@@ -486,8 +482,26 @@ def test_a_form_that_declares_no_fanout_is_accepted() -> None:
     inputs = submission_inputs(cpu_payload())
 
     assert inputs.fanout_size is None
-    assert inputs.fanout_parallelism is None
     assert inputs.fanout_index_parameter is None
+
+
+def test_the_form_refuses_a_parallelism_field_rather_than_ignoring_one() -> None:
+    """Mutation: drop the input from the workflow and leave SubmissionInputs accepting it.
+
+    The two halves of the form are the workflow's inputs and this model, and removing only
+    the first would leave a dispatch assembled by hand or by
+    tools/build_gpu_training_submission.py still able to supply the field. It would then be
+    silently dropped on the way to the manifest, which is the same wrong answer as before
+    with less evidence -- the submitter would have declared a limit and nothing, including
+    the approver page, would say it went nowhere.
+    """
+    with pytest.raises(ValidationError) as exc_info:
+        submission_inputs(cpu_payload(**FANOUT_FIELDS, fanout_parallelism=2))
+
+    assert any(
+        item["type"] == "extra_forbidden" and item["loc"] == ("fanout_parallelism",)
+        for item in exc_info.value.errors()
+    ), f"expected fanout_parallelism to be refused outright, got {exc_info.value.errors()}"
 
 
 def test_the_form_fits_inside_the_workflow_dispatch_input_ceiling() -> None:
@@ -618,14 +632,11 @@ def test_the_cost_is_recomputed_from_the_rate_the_catalog_records() -> None:
 
 
 def test_a_fanout_declared_on_the_form_reaches_the_manifest_and_the_price() -> None:
-    compiled = compile_payload(
-        cpu_payload(fanout_size=5, fanout_parallelism=5, fanout_index_parameter="seed")
-    )
+    compiled = compile_payload(cpu_payload(fanout_size=5, fanout_index_parameter="seed"))
 
-    assert compiled.manifest.fanout == FanOut(size=5, max_parallel=5, index_parameter="seed")
+    assert compiled.manifest.fanout == FanOut(size=5, index_parameter="seed")
     assert compiled.cost.cells == 5
     assert compiled.facts.fanout_size == 5
-    assert compiled.facts.fanout_parallelism == 5
 
 
 def test_a_form_without_a_fanout_compiles_to_a_manifest_without_one() -> None:
@@ -985,9 +996,7 @@ def test_the_summary_states_every_field_the_reviewer_must_see(field: str) -> Non
 
 
 def test_the_cost_is_shown_as_a_product_rather_than_only_a_total() -> None:
-    compiled = compile_payload(
-        cpu_payload(fanout_size=4, fanout_parallelism=2, fanout_index_parameter="seed")
-    )
+    compiled = compile_payload(cpu_payload(fanout_size=4, fanout_index_parameter="seed"))
     summary = render(compiled)
     cost = compiled.cost
 

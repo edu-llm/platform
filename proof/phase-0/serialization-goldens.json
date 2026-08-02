@@ -10,7 +10,7 @@
     {
       "canonical_json_bytes": 595,
       "contract": "AuthorizationScenario",
-      "digest": "sha256:f86d4d6a196dfaaa06885f3511fe12d90fce2026705f28140be7829531d608ca",
+      "digest": "sha256:6be0fa9a4e2e6b737579c7d7a777783515a255cfbf9aa70a8f599fc498d24313",
       "fixture": "lead-self-authorization.yaml",
       "relative_path": "fixtures/authorization/lead-self-authorization.yaml"
     },
@@ -43,9 +43,9 @@
       "relative_path": "fixtures/manifests/gpu-routine.yaml"
     },
     {
-      "canonical_json_bytes": 694,
+      "canonical_json_bytes": 677,
       "contract": "RunManifest",
-      "digest": "sha256:108ae519bfcf00355b90b6f8faa73f83654db2e1e10a1b916863ba4d084ba87d",
+      "digest": "sha256:f690e9af8325fc0441dbe872b3d96abbe46f2dbf5cccb52bedd0a45ade24cdce",
       "fixture": "multiseed-routine.yaml",
       "relative_path": "fixtures/manifests/multiseed-routine.yaml"
     },

@@ -57,7 +57,8 @@ CPU at GPU prices and reports nothing wrong.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+import shlex
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Final
@@ -77,11 +78,14 @@ from .contracts.workload import (
 )
 
 __all__ = [
+    "FANOUT_INDEX_VARIABLE",
+    "FANOUT_PROLOGUE",
     "MINIMUM_ATTEMPT_DURATION_SECONDS",
     "UnshapedComputeProfileError",
     "attempt_duration_seconds",
     "batch_register_job_definition_request",
     "batch_submit_request",
+    "fanout_cell_command",
     "resolve_execution_target",
 ]
 
@@ -92,6 +96,77 @@ __all__ = [
 MINIMUM_ATTEMPT_DURATION_SECONDS: Final = 60
 
 SECONDS_PER_HOUR: Final = Decimal(3600)
+
+#: The variable Batch sets in each child of an array job, and the only place a cell's own
+#: index ever exists. Batch assigns it while starting the child, so no submitter and no
+#: part of this module can know it, which is what forces the derivation below into the
+#: container instead of into the environment block.
+FANOUT_INDEX_VARIABLE: Final = "AWS_BATCH_JOB_ARRAY_INDEX"
+
+#: WHAT AN ARRAY JOB'S COMMAND RUNS BEFORE THE SUBMITTED PROGRAM, AND WHY THIS IS SHELL
+#: TEXT RATHER THAN AN ENVIRONMENT VALUE.
+#:
+#: Every cell of an array job is handed one environment block. The output prefix is built
+#: from the team and the run id at submit time and ``ArrayProperties`` fans that single
+#: block out unchanged, so a forty cell curriculum matrix had forty processes writing
+#: checkpoints and artifacts into one prefix, last writer winning, with nothing reporting
+#: it. A run of exactly that shape was submitted before this existed.
+#:
+#: THE OBVIOUS FIX DOES NOT WORK AND FAILS SILENTLY, WHICH IS WHY IT IS WRITTEN DOWN.
+#: Setting ``EDULLM_OUTPUT_PREFIX`` to a literal holding ``$AWS_BATCH_JOB_ARRAY_INDEX``
+#: reads correctly in a job definition and in the console. Batch does not shell-expand an
+#: environment value, so the container receives the name of the variable as text and the
+#: run writes under a directory literally called ``cell-$AWS_BATCH_JOB_ARRAY_INDEX``.
+#: Every cell still collides, and the collision now sits under a name that reads as a bug
+#: in somebody's training script rather than as a platform defect. This is the same trap
+#: the ``EDULLM_CHECKPOINT_DIR`` note below records against exec form, arriving by a
+#: different road.
+#:
+#: So the derivation has to run where a shell is running, which is what this prologue is.
+#: The index is read at container start, after Batch has assigned it, which is the first
+#: moment it exists anywhere.
+#:
+#: THE CHECKPOINT DIRECTORY IS RE-EXPORTED WITH IT AND HAS TO BE. It is defined as the
+#: output prefix followed by ``checkpoints/`` and the submit request builds both from one
+#: call, so moving only the prefix would leave forty cells sharing one checkpoint
+#: directory. That is the larger half of the data loss rather than a detail, and it would
+#: also break the one relationship between the two variables that the guide's copied line
+#: and ``checkpoint_commands.py`` both rest on. The second export reads the first, so the
+#: two stay defined the same way they are for a single run.
+FANOUT_PROLOGUE: Final = (
+    'export EDULLM_OUTPUT_PREFIX="${EDULLM_OUTPUT_PREFIX}'
+    f'cell-${{{FANOUT_INDEX_VARIABLE}}}/"; '
+    'export EDULLM_CHECKPOINT_DIR="${EDULLM_OUTPUT_PREFIX}checkpoints/"; '
+    "exec "
+)
+
+
+def fanout_cell_command(command: Sequence[str]) -> list[str]:
+    """The submitted command, behind the prologue that gives this cell a prefix of its own.
+
+    QUOTED THROUGH ``shlex.join``, WHICH IS WHAT KEEPS THIS FROM CHANGING WHAT A COMMAND
+    MEANS. ``ContainerOverrides.Command`` is exec form, so a submitted word reaches the
+    program untouched and a ``$NAME`` inside one is literal characters rather than an
+    expansion. ``shlex.join`` quotes every word that needs it, so the wrapping shell
+    reproduces exactly that. A submission that already carries its own ``bash -lc '...'``
+    keeps that inner shell and expands the two variables this prologue exported, which is
+    the case the guide's copied line depends on. Joining the words without quoting would
+    expand something the exec form never would, and the container would then run a command
+    that is not the one the approver read and the lineage record sealed.
+
+    ``-c`` rather than the ``-lc`` the guide prints for submitters, and the difference is
+    deliberate. A login shell sources the image's profile, which can rewrite ``PATH`` and
+    change which ``python`` starts. That is a change this wrapper has no business making to
+    a command that did not ask for it, and a submission wanting login semantics still has
+    its own wrapper inside this one.
+
+    ``exec`` rather than an ordinary call, so the submitted program replaces the wrapper
+    rather than running underneath it. A wrapping shell that stays alive is what receives
+    the SIGTERM a Batch cancellation sends, and a trainer that never sees the signal keeps
+    running until the attempt timeout stops the instance -- which bills the whole approved
+    ceiling for a run somebody already asked to stop.
+    """
+    return ["bash", "-c", FANOUT_PROLOGUE + shlex.join(command)]
 
 
 def resolve_execution_target(
@@ -228,6 +303,14 @@ def batch_submit_request(
                 # workload role is scoped against, so a container that computed it
                 # differently would simply be denied, at the end of a run rather than at
                 # the start. Sending the whole prefix keeps one function the author of it.
+                #
+                # A FAN-OUT APPENDS ONE SEGMENT TO THIS AND CANNOT DO IT HERE. Each cell
+                # writes under cell-<index>/ of this prefix, derived at container start by
+                # FANOUT_PROLOGUE because the index does not exist until Batch starts the
+                # child. So this value stays the run's prefix on every submission and is
+                # the parent of the cells rather than a location any cell writes to
+                # directly. The workload role permits teams/*/runs/*, so the deeper key
+                # needs no grant it did not already have.
                 {
                     "Name": "EDULLM_OUTPUT_PREFIX",
                     "Value": output_prefix(team=manifest.team, run_id=run_id),
@@ -405,6 +488,28 @@ def batch_submit_request(
         # array job of size one, so emitting ArrayProperties unconditionally would fail
         # every non-fan-out submission -- and no fan-out fixture would catch it.
         request["ArrayProperties"] = {"Size": manifest.fanout.size}
+        # THE FAN-OUT BRANCH IS THE ONLY ONE THAT TOUCHES THE COMMAND, AND KEEPING IT THAT
+        # WAY IS THE POINT RATHER THAN AN ECONOMY. A single run's prefix is what it has
+        # always been, so nothing already written moves. Giving every run a cell segment
+        # would have been simpler here and would have orphaned the output of every run
+        # this platform has recorded, none of which anything rewrites.
+        request["ContainerOverrides"]["Command"] = fanout_cell_command(manifest.command)
+        # WHAT THIS CELL VARIES, WHICH A CELL PREVIOUSLY HAD NO WAY TO LEARN. The manifest
+        # has carried fanout.index_parameter since fan-out existed and it reached the
+        # approver page and stopped there, so a container knew its index and not what the
+        # index meant. An entrypoint choosing a seed and one choosing a curriculum shard
+        # read the same integer, which left the mapping from index to experiment written
+        # down nowhere except in the submitter's head.
+        #
+        # Beside AWS_BATCH_JOB_ARRAY_INDEX rather than folded into it. Batch owns that
+        # variable and sets it per child, so this one is the platform's half of the same
+        # sentence and the two are read together.
+        request["ContainerOverrides"]["Environment"].append(
+            {
+                "Name": "EDULLM_FANOUT_INDEX_PARAMETER",
+                "Value": manifest.fanout.index_parameter,
+            }
+        )
     refuse_an_oversized_override(request["ContainerOverrides"])
     return request
 
