@@ -325,3 +325,46 @@ workloads:
       # writes to. The path is output_prefix(team, run_id) + "checkpoints/".
       destination_prefix: "s3://sbsandbox-intern-edullm-outputs/teams/"
       resume_required: true
+  # edullm-alt-cl: the math front-load / anneal experiment. A registration with no workload
+  # is a dropdown that cannot be submitted for, so these three entries are what make the
+  # repository usable rather than merely named. Bounds match the OLMo-core train entries:
+  # twelve hours is routine_maximum_runtime_hours, two attempts because Batch retries keep
+  # EDULLM_RUN_ID / EDULLM_CHECKPOINT_DIR and the Trainer auto-resumes.
+  #
+  # The check is a dry-run of the treatment arm on CPU -- plan JSON only, no fit -- so the
+  # path is proven before anybody spends a GPU. The 1/4/8 GPU entries are the real trains;
+  # eight A10G stays under the $20/hr exception ceiling, so it is ordinary lead approval
+  # rather than admin. An eight-A100 run still needs the advanced compute override.
+  - name: edullm-alt-cl-check-cpu
+    repository: edullm-alt-cl
+    compute_profile: cpu-32vcpu
+    maximum_runtime_hours: "1"
+    maximum_attempts: 1
+    checkpoint: null
+  - name: edullm-alt-cl-train-1gpu
+    repository: edullm-alt-cl
+    compute_profile: gpu-1xa10g
+    maximum_runtime_hours: "12"
+    maximum_attempts: 2
+    checkpoint:
+      interval_minutes: 30
+      destination_prefix: "s3://sbsandbox-intern-edullm-outputs/teams/"
+      resume_required: true
+  - name: edullm-alt-cl-train-4gpu
+    repository: edullm-alt-cl
+    compute_profile: gpu-4xa10g
+    maximum_runtime_hours: "12"
+    maximum_attempts: 2
+    checkpoint:
+      interval_minutes: 30
+      destination_prefix: "s3://sbsandbox-intern-edullm-outputs/teams/"
+      resume_required: true
+  - name: edullm-alt-cl-train-8gpu
+    repository: edullm-alt-cl
+    compute_profile: gpu-8xa10g
+    maximum_runtime_hours: "12"
+    maximum_attempts: 2
+    checkpoint:
+      interval_minutes: 30
+      destination_prefix: "s3://sbsandbox-intern-edullm-outputs/teams/"
+      resume_required: true

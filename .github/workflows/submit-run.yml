@@ -20,9 +20,9 @@ on:
         required: true
         type: choice
         options:
-          # Three where there was one. Sorted case-insensitively, which is what the option
-          # test compares against, so this reads as a list rather than as the order the
-          # registrations happened in.
+          # Sorted case-insensitively, which is what the option test compares against, so
+          # this reads as a list rather than as the order the registrations happened in.
+          - edullm-alt-cl
           - edullm-data
           - OLMo-core
           - olmo-eval-full
@@ -42,6 +42,13 @@ on:
         options:
           # The dataset validator, and the first entry here that is not OLMo-core. Reads a
           # published corpus and checks each shard against the bounds its family declares.
+          - edullm-alt-cl-check-cpu
+          - edullm-alt-cl-train-1gpu
+          - edullm-alt-cl-train-4gpu
+          # Eight A10G: same nproc-per-node=8 shape the experiment wants, under the $20/hr
+          # exception ceiling so it stays ordinary lead approval. Eight A100 still needs the
+          # advanced compute override.
+          - edullm-alt-cl-train-8gpu
           - edullm-data-validate
           - olmo-core-check-cpu
           - olmo-core-check-gpu
