@@ -134,8 +134,11 @@ from .contracts.lifecycle import (
     is_valid_run_transition,
 )
 from .contracts.results import (
+    UNPARSED_DIRECTORY_SAMPLE,
     WANDB_NAME_PATTERN,
+    CheckpointListingOutcome,
     CheckpointManifest,
+    CheckpointSurvey,
     ResultManifest,
     WandbRunRef,
 )
@@ -146,9 +149,11 @@ __all__ = [
     "BATCH_STATUS_PROGRESSION",
     "BATCH_STATUS_TO_RUN_STATE",
     "CANCELLATION_REASON_MARKERS",
+    "CHECKPOINT_DIRECTORIES",
     "CHECKPOINT_DIR_VARIABLE",
     "EVENTBRIDGE_BATCH_DETAIL_TYPE",
     "EVENTBRIDGE_BATCH_SOURCE",
+    "HUGGINGFACE_CHECKPOINT_DIRECTORY",
     "MARKER_OBJECT",
     "MAXIMUM_LISTING_PAGES",
     "OUTPUTS_BUCKET",
@@ -214,6 +219,31 @@ WANDB_PROJECT_VARIABLE: Final = "WANDB_PROJECT"
 #: library reads the step off the directory name and so does this, because a directory
 #: written by the library carries no marker of ours to read one from.
 STEP_DIRECTORY: Final = re.compile(r"^step(\d+)$")
+
+#: The same thing as HuggingFace's ``Trainer`` names it, which is what post-training writes.
+#:
+#: RECORDED HERE EVEN THOUGH ``edullm_platform.checkpoints`` WILL NOT RESUME FROM ONE,
+#: BECAUSE THIS FUNCTION ANSWERS A DIFFERENT QUESTION FROM THAT MODULE'S. A
+#: ``CheckpointManifest`` built here is an honest description of what is under a prefix and
+#: not a resume reference -- it carries no ``success_marker_uri``, so
+#: ``CheckpointManifest.resume_reference`` refuses it. Describing a directory therefore
+#: cannot cause a resume from it, and leaving it undescribed is what made a run that wrote
+#: 200 MB indistinguishable from one that wrote nothing.
+#:
+#: Measured on run_019fc308-8858-706e-b1c0-a516d86147a0, which exited 0 and wrote sixteen
+#: objects totalling 200,371,840 bytes into ``checkpoint-32/`` and whose result record said
+#: ``"checkpoints": []``, beside run_019fc2e3 which wrote nothing and said the same.
+HUGGINGFACE_CHECKPOINT_DIRECTORY: Final = re.compile(r"^checkpoint-(\d+)$")
+
+#: The two layouts, tried in order, each paired with how the recorded URI spells the step.
+#:
+#: A tuple rather than one widened pattern because the URI has to be rebuildable: the record
+#: names the directory it described, and ``step{n}`` and ``checkpoint-{n}`` are not
+#: interchangeable in a location somebody will later try to open.
+CHECKPOINT_DIRECTORIES: Final = (
+    (STEP_DIRECTORY, "step{step}/"),
+    (HUGGINGFACE_CHECKPOINT_DIRECTORY, "checkpoint-{step}/"),
+)
 
 #: The object whose presence means the payload beside it is whole.
 #:
@@ -613,12 +643,20 @@ def _listed(lister: CheckpointLister, *, bucket: str, key: str) -> list[Mapping[
     )
 
 
-def checkpoints_under(lister: CheckpointLister, *, prefix: str) -> tuple[CheckpointManifest, ...]:
-    """What a run wrote under its checkpoint prefix, as the records the contract holds.
+def checkpoints_under(
+    lister: CheckpointLister, *, prefix: str
+) -> tuple[tuple[CheckpointManifest, ...], CheckpointSurvey]:
+    """What a run wrote under its checkpoint prefix, and what the listing itself saw.
 
-    One manifest per ``step{N}`` directory, in increasing step order, which is the order
+    One manifest per checkpoint directory, in increasing step order, which is the order
     ``ResultManifest`` requires and is also the order a reader wants -- the last entry is
     the furthest a resume could get.
+
+    THE SECOND RETURN VALUE IS THE POINT OF THE PAIR AND NOT A CONVENIENCE. The manifests
+    are a parse and the survey is an observation, and conflating them is what let one empty
+    tuple mean six different things. A caller that only reads the first value learns
+    nothing it did not know before; a caller that reads both can tell a prefix that was
+    read and was bare from one that was never read at all.
 
     WHAT A LISTING CAN SAY AND WHAT IT CANNOT, because the gap is the reason this reads the
     way it does. A listing gives the key, the size and the write time of every object, so
@@ -636,45 +674,123 @@ def checkpoints_under(lister: CheckpointLister, *, prefix: str) -> tuple[Checkpo
     manifests are honest descriptions rather than resume references, and
     ``CheckpointManifest.resume_reference`` refuses them, which is correct.
 
-    Every failure is an empty tuple. A refused listing, an unreachable store, a prefix that
-    is not an ``s3://`` directory, a directory this cannot describe -- none of them may
-    raise, because this is called while projecting an event and an exception loses the whole
-    lineage record for the run.
+    Every failure is still an empty tuple and still never raises, because this is called
+    while projecting an event and an exception loses the whole lineage record for the run.
+    What changed is that each failure now names itself in the survey instead of arriving as
+    the same silence.
     """
     location = urlparse(prefix)
     bucket, key = location.netloc, location.path.lstrip("/")
     if location.scheme != "s3" or not bucket or not key.endswith("/"):
-        return ()
+        return (), _survey(CheckpointListingOutcome.PREFIX_NOT_OURS)
     try:
-        return _describe_step_directories(_listed(lister, bucket=bucket, key=key), bucket, key)
+        contents = _listed(lister, bucket=bucket, key=key)
+    except UnreadableBatchEventError:
+        # The page ceiling, which is this module's own refusal rather than the store's, and
+        # is worth separating from a store that said no: one means the run wrote more than
+        # this can read and the other means nobody was allowed to look.
+        return (), _survey(CheckpointListingOutcome.TOO_MANY_PAGES)
     except Exception:  # noqa: BLE001
         # Broad because botocore's exception classes are not importable here and because the
         # set of ways a listing can fail is open. Narrowed by what it does rather than by
-        # what it catches: nothing is recorded, nothing is raised, and the field reads the
-        # way it read before this function existed.
-        return ()
+        # what it catches: nothing is recorded and nothing is raised. Unlike before, the
+        # record now says a refusal happened rather than presenting it as an empty prefix.
+        return (), _survey(CheckpointListingOutcome.REFUSED)
+    try:
+        return _describe_checkpoint_directories(contents, bucket, key)
+    except Exception:  # noqa: BLE001
+        return (), _survey(CheckpointListingOutcome.REFUSED)
 
 
-def _describe_step_directories(
+def _survey(
+    outcome: CheckpointListingOutcome,
+    *,
+    objects_seen: int = 0,
+    bytes_seen: int = 0,
+    unparsed: Sequence[str] = (),
+) -> CheckpointSurvey:
+    return CheckpointSurvey(
+        schema_version=1,
+        outcome=outcome,
+        objects_seen=objects_seen,
+        bytes_seen=bytes_seen,
+        unparsed_directories=tuple(sorted(unparsed)[:UNPARSED_DIRECTORY_SAMPLE]),
+    )
+
+
+def _describe_checkpoint_directories(
     contents: Sequence[Mapping[str, Any]],
     bucket: str,
     key: str,
-) -> tuple[CheckpointManifest, ...]:
-    under: dict[int, dict[str, tuple[int, datetime]]] = {}
+) -> tuple[tuple[CheckpointManifest, ...], CheckpointSurvey]:
+    """Describe one layout's directories, and say what the listing saw either way.
+
+    ONE LAYOUT PER PREFIX, CHOSEN BY WHICH ONE IS THERE, RATHER THAN BOTH MERGED. The two
+    patterns cannot match the same directory name, but they can both appear under one
+    prefix, and their step numbers share a namespace: ``step32/`` and ``checkpoint-32/``
+    together would produce two manifests at step 32, which ``ResultManifest`` refuses as a
+    duplicate and which would have been caught by the broad handler above and turned back
+    into the empty list this whole change exists to stop. OLMo-core wins that tie because
+    it is the layout this platform can actually resume from, and the other is then reported
+    as unparsed, which is true and visible rather than silently dropped.
+    """
+    objects_seen = 0
+    bytes_seen = 0
+    directories: set[str] = set()
+    per_layout: list[dict[int, dict[str, tuple[int, datetime]]]] = [
+        {} for _ in CHECKPOINT_DIRECTORIES
+    ]
     for entry in contents:
         relative = str(entry.get("Key", "")).removeprefix(key)
-        directory, separator, member = relative.partition("/")
-        if not separator or not member:
-            continue
-        matched = STEP_DIRECTORY.fullmatch(directory)
-        if matched is None:
+        if not relative:
             continue
         size = entry.get("Size")
-        written = _written_at(entry.get("LastModified"))
-        if not isinstance(size, int) or isinstance(size, bool) or written is None:
+        clean_size = size if isinstance(size, int) and not isinstance(size, bool) else 0
+        objects_seen += 1
+        bytes_seen += clean_size
+        directory, separator, member = relative.partition("/")
+        if not separator or not member:
+            # An object sitting at the prefix root rather than in a directory, which is what
+            # a HuggingFace final save_model leaves. Counted, so the survey sees it, and not
+            # describable as a checkpoint because there is no step to name it by.
             continue
-        under.setdefault(int(matched.group(1)), {})[member] = (size, written)
+        directories.add(directory)
+        written = _written_at(entry.get("LastModified"))
+        if written is None or not isinstance(size, int) or isinstance(size, bool):
+            continue
+        for index, (pattern, _) in enumerate(CHECKPOINT_DIRECTORIES):
+            matched = pattern.fullmatch(directory)
+            if matched is not None:
+                per_layout[index].setdefault(int(matched.group(1)), {})[member] = (size, written)
+                break
 
+    for index, (pattern, template) in enumerate(CHECKPOINT_DIRECTORIES):
+        manifests = _manifests_for(per_layout[index], bucket=bucket, key=key, template=template)
+        if not manifests:
+            continue
+        unparsed = sorted(name for name in directories if pattern.fullmatch(name) is None)
+        return manifests, _survey(
+            CheckpointListingOutcome.LISTED,
+            objects_seen=objects_seen,
+            bytes_seen=bytes_seen,
+            unparsed=unparsed,
+        )
+
+    return (), _survey(
+        CheckpointListingOutcome.LISTED,
+        objects_seen=objects_seen,
+        bytes_seen=bytes_seen,
+        unparsed=sorted(directories),
+    )
+
+
+def _manifests_for(
+    under: Mapping[int, Mapping[str, tuple[int, datetime]]],
+    *,
+    bucket: str,
+    key: str,
+    template: str,
+) -> tuple[CheckpointManifest, ...]:
     manifests: list[CheckpointManifest] = []
     for step in sorted(under):
         members = under[step]
@@ -683,7 +799,7 @@ def _describe_step_directories(
             # A directory of empty objects is a write that started and produced nothing, and
             # the contract requires a positive size. Left out rather than recorded as zero.
             continue
-        uri = f"s3://{bucket}/{key}step{step}/"
+        uri = f"s3://{bucket}/{key}{template.format(step=step)}"
         manifests.append(
             CheckpointManifest(
                 schema_version=1,
@@ -739,19 +855,25 @@ def _checkpoints_written(
     *,
     output_bucket: str,
     checkpoint_lister: CheckpointLister | None,
-) -> tuple[CheckpointManifest, ...]:
-    """What is under this job's checkpoint prefix, or nothing because it cannot be read.
+) -> tuple[tuple[CheckpointManifest, ...], CheckpointSurvey]:
+    """What is under this job's checkpoint prefix, and why that is what it says.
 
     Bounded by the bucket this platform owns, exactly as ``output_prefixes`` is and for the
     same reason. The prefix comes off the event, so it is only as trustworthy as whoever set
     the job definition, and a checkpoint list assembled from a foreign bucket would be this
     record vouching for objects nothing here controls or can read back.
+
+    The three refusals here are separated in the survey rather than collapsed, because they
+    have different owners. Nothing to list with is this platform's own wiring, no declared
+    prefix is the job definition, and a prefix in somebody else's bucket is the submission.
     """
     if checkpoint_lister is None:
-        return ()
+        return (), _survey(CheckpointListingOutcome.NOT_ATTEMPTED)
     prefix = container_variable(detail, CHECKPOINT_DIR_VARIABLE)
-    if prefix is None or not prefix.startswith(f"s3://{output_bucket}/"):
-        return ()
+    if prefix is None:
+        return (), _survey(CheckpointListingOutcome.NO_PREFIX_DECLARED)
+    if not prefix.startswith(f"s3://{output_bucket}/"):
+        return (), _survey(CheckpointListingOutcome.PREFIX_NOT_OURS)
     return checkpoints_under(checkpoint_lister, prefix=prefix)
 
 
@@ -849,6 +971,11 @@ def project_batch_state_change(
                     ended_at=ended_at,
                     terminal_state=terminal_state,
                 )
+                checkpoints_written, checkpoint_survey = _checkpoints_written(
+                    detail,
+                    output_bucket=output_bucket,
+                    checkpoint_lister=checkpoint_lister,
+                )
                 result = ResultManifest(
                     schema_version=1,
                     run_id=run_id,
@@ -884,11 +1011,13 @@ def project_batch_state_change(
                     # they are the whole reason a retry is worth paying for -- a record
                     # that listed them only on success would be silent about exactly the
                     # runs somebody needs to resume.
-                    checkpoints=_checkpoints_written(
-                        detail,
-                        output_bucket=output_bucket,
-                        checkpoint_lister=checkpoint_lister,
-                    ),
+                    checkpoints=checkpoints_written,
+                    # What the listing behind that field saw, which is a separate fact from
+                    # what it parsed. An empty list beside `objects_seen: 16` is a run that
+                    # saved in a layout nothing here reads; beside `objects_seen: 0` and
+                    # `outcome: listed` it is a run that genuinely saved nothing; beside
+                    # `outcome: refused` it is nobody having looked.
+                    checkpoint_survey=checkpoint_survey,
                     wandb_run=wandb_run_for(run_id, detail),
                     retention_class=retention_class,
                     completed_at=ended_at,

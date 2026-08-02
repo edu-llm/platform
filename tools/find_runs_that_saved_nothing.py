@@ -368,13 +368,31 @@ class RunCheckpointState:
         return self.state is CheckpointState.COMMITTED
 
     @property
+    def wrote_a_foreign_checkpoint(self) -> bool:
+        """Wrote a complete checkpoint that OLMo-core's loader does not read.
+
+        Kept out of both categories below rather than folded into either, because it is not
+        a fault and the other two are. A HuggingFace ``Trainer`` checkpoint resumes through
+        its own trainer perfectly well; what it does not do is satisfy this platform's retry
+        path, which reruns the same command from the start.
+
+        Before this existed such a run landed in "wrote nothing" and was told it had
+        probably forgotten `--save-folder "$EDULLM_CHECKPOINT_DIR"`. It had not. That is a
+        false accusation aimed at whichever migration succeeds first, and post-training's
+        is the one in flight.
+        """
+        return self.state is CheckpointState.FOREIGN
+
+    @property
     def wrote_something_unloadable(self) -> bool:
         """Wrote, and a resume would still start from step zero.
 
         The state that was invisible while this counted objects, and the one that costs the
         most: the run looks like it saved and did not.
         """
-        return not self.saved_nothing and not self.is_loadable
+        return (
+            not self.saved_nothing and not self.is_loadable and not self.wrote_a_foreign_checkpoint
+        )
 
 
 def _load_intents(directory: Path) -> list[IntentRecord]:
@@ -550,6 +568,7 @@ def render(
     unjudged = [state for state in states if not state.judged]
     silent = [state for state in judged if state.saved_nothing]
     unloadable = [state for state in judged if state.wrote_something_unloadable]
+    foreign = [state for state in judged if state.wrote_a_foreign_checkpoint]
     loadable = [state for state in judged if state.is_loadable]
     headline = (
         f"{len(states)} run(s) were submitted under a profile carrying a checkpoint "
@@ -557,6 +576,11 @@ def render(
         f"{len(silent)} wrote nothing, {len(unloadable)} wrote something no loader will "
         f"accept, and {len(loadable)} can be resumed from."
     )
+    if foreign:
+        headline += (
+            f" A further {len(foreign)} wrote a complete checkpoint in another trainer's "
+            "layout; they saved correctly and this platform cannot resume them."
+        )
     if adjudicated:
         headline += (
             f" A further {len(adjudicated)} finished successfully and have been read and "
@@ -611,6 +635,30 @@ def render(
         lines += [
             f"| `{state.run_id}` | {state.team} | {state.objects} | {state.detail} |"
             for state in unloadable
+        ]
+        lines.append("")
+
+    if foreign:
+        explanation = (
+            "These saved correctly, in a layout OLMo-core's loader does not read. That is "
+            "ordinarily a HuggingFace `Trainer`, which writes `checkpoint-{step}/` where "
+            "OLMo-core writes `step{N}/`, and which resumes from its own checkpoints "
+            "through `resume_from_checkpoint`. Nothing here is wrong with the run. What is "
+            "worth knowing is that this platform's retry reruns the submitted command from "
+            "the start, so a second attempt does not continue from these unless the "
+            "command itself resumes."
+        )
+        lines += [
+            "## Wrote a checkpoint this platform cannot resume",
+            "",
+            explanation,
+            "",
+            "| Run | Team | Objects | What is there |",
+            "| --- | --- | --- | --- |",
+        ]
+        lines += [
+            f"| `{state.run_id}` | {state.team} | {state.objects} | {state.detail} |"
+            for state in foreign
         ]
         lines.append("")
 

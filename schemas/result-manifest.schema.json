@@ -9,6 +9,19 @@
       "title": "AttemptTerminalState",
       "type": "string"
     },
+    "CheckpointListingOutcome": {
+      "description": "Why ``ResultManifest.checkpoints`` holds what it holds.\n\nAN EMPTY LIST CARRIED SIX MEANINGS AND A READER COULD NOT SEPARATE THEM. No lister was\nsupplied, the listing was refused, the prefix genuinely held nothing, the layout was one\nthe matcher does not read, the listing ran past its page ceiling, or the prefix named a\nbucket this platform does not own. All six serialized as ``\"checkpoints\": []``, so a run\nthat trained for hours and saved 200 MB and a run that saved nothing produced the same\nrecord in the one field that exists to tell them apart.\n\nEvery member below except ``LISTED`` means the list is empty for a reason that is not\n\"nothing was written\". ``LISTED`` with an empty list, and only that combination, is the\nstatement that the prefix was read and was genuinely bare.",
+      "enum": [
+        "listed",
+        "not_attempted",
+        "no_prefix_declared",
+        "prefix_not_ours",
+        "refused",
+        "too_many_pages"
+      ],
+      "title": "CheckpointListingOutcome",
+      "type": "string"
+    },
     "CheckpointManifest": {
       "additionalProperties": false,
       "properties": {
@@ -81,6 +94,46 @@
       "title": "CheckpointManifest",
       "type": "object"
     },
+    "CheckpointSurvey": {
+      "additionalProperties": false,
+      "description": "What the listing saw, as distinct from what the matcher could parse out of it.\n\nAN OBJECT COUNT AND A PARSED LIST ARE DIFFERENT FACTS, WHICH IS THE WHOLE REASON THIS\nEXISTS. ``checkpoints`` is the second one and it is the one that goes empty for six\ndifferent reasons. ``objects_seen`` is the first, and it is what separates the two\ncases that matter most: zero objects under a prefix that was successfully read is a run\nthat saved nothing, and sixteen objects under the same prefix is a run that saved and\nwhose layout nothing here recognised.\n\n``unparsed_directories`` names what was skipped, bounded, because the count alone says\nsomething is wrong and the names say what. A record reading ``checkpoint-32`` tells the\nnext reader it is a HuggingFace layout in one glance, where a bare count sends them to\nthe bucket.",
+      "properties": {
+        "bytes_seen": {
+          "minimum": 0,
+          "title": "Bytes Seen",
+          "type": "integer"
+        },
+        "objects_seen": {
+          "minimum": 0,
+          "title": "Objects Seen",
+          "type": "integer"
+        },
+        "outcome": {
+          "$ref": "#/$defs/CheckpointListingOutcome"
+        },
+        "schema_version": {
+          "const": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "unparsed_directories": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Unparsed Directories",
+          "type": "array"
+        }
+      },
+      "required": [
+        "schema_version",
+        "outcome",
+        "objects_seen",
+        "bytes_seen"
+      ],
+      "title": "CheckpointSurvey",
+      "type": "object"
+    },
     "RetentionClass": {
       "enum": [
         "transient",
@@ -126,6 +179,17 @@
       "pattern": "^att_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
       "title": "Attempt Id",
       "type": "string"
+    },
+    "checkpoint_survey": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CheckpointSurvey"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "checkpoints": {
       "default": [],

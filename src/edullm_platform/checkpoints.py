@@ -207,12 +207,28 @@ class CheckpointState(StrEnum):
     would be a mistake a resume path pays for later: nothing there is an ordinary first
     run, whereas a payload with no marker is a run that got most of the way and died, and
     the second is worth saying out loud in a log where the first is noise.
+
+    ``FOREIGN`` IS THE ONE THAT IS NOT ABOUT THIS PLATFORM'S OWN WRITES, AND IT WAS ADDED
+    AFTER A RUN THAT SAVED 200 MB WAS REPORTED AS HAVING SAVED NOTHING. Every other member
+    describes an OLMo-core checkpoint at some stage of being written. This one says the
+    prefix holds a complete checkpoint that a different trainer wrote, which on this
+    platform means a HuggingFace ``Trainer`` and is most of what post-training runs.
+
+    Collapsing it into ABSENT is the bug it exists to fix: the reader said "nothing is
+    stored at this prefix" about a directory holding a 48 MB adapter and a 96 MB optimizer
+    state, and the nightly then told the researcher they had forgotten ``--save-folder``.
+    Collapsing it into UNCOMMITTED would be the opposite error, because that word means a
+    write that did not finish and a resume from it starts at step zero -- where a
+    HuggingFace checkpoint resumes perfectly well, just not through OLMo-core's loader.
+    And COMMITTED is reserved for what ``Trainer.fit()`` will load, so claiming it here
+    would tell a retry it is continuing when it would be starting over.
     """
 
     ABSENT = "absent"
     UNCOMMITTED = "uncommitted"
     ORPHANED = "orphaned"
     CORRUPT = "corrupt"
+    FOREIGN = "foreign"
     COMMITTED = "committed"
 
 
@@ -488,6 +504,54 @@ OLMO_CORE_FULL_CHECKPOINT: Final = (
 #: so does this, because a directory carries no marker of ours to read one from.
 OLMO_CORE_STEP_DIRECTORY: Final = re.compile(r"^step(\d+)$")
 
+#: What HuggingFace's ``Trainer`` calls the same thing, which is the other trainer this
+#: platform actually runs.
+#:
+#: A SECOND PATTERN RATHER THAN A WIDER FIRST ONE, AND THE DIFFERENCE IS THE WHOLE POINT.
+#: Recognising a checkpoint here is two tests, the directory name and then the contents, and
+#: only the name is shared between the two frameworks. Widening ``OLMO_CORE_STEP_DIRECTORY``
+#: to admit ``checkpoint-32`` would send a HuggingFace directory into
+#: :func:`olmo_core_checkpoint_shape`, which would correctly reject its contents, and the
+#: prefix would be reported UNCOMMITTED -- "the write that produced it did not finish" --
+#: about a checkpoint that finished and is loadable. That is the same false statement the
+#: old ABSENT gave, reworded.
+#:
+#: THE OTHER WAY ROUND WAS TRIED FIRST AND IS WORSE. Renaming the uploaded directories to
+#: ``step{N}`` was the cheap fix and it does not work, because the contents test still fails.
+#: Forcing that test to pass by writing a ``.metadata`` file beside the adapter would
+#: satisfy ``OLMO_CORE_WEIGHTS_ONLY`` and make this module report a checkpoint OLMo-core can
+#: resume from, which it cannot. The comment above those constants names that exact failure.
+HUGGINGFACE_CHECKPOINT_DIRECTORY: Final = re.compile(r"^checkpoint-(\d+)$")
+
+#: What a HuggingFace checkpoint has to hold for its own trainer to resume step and epoch.
+#:
+#: ``Trainer._init_training_state`` gates the whole restore on
+#: ``os.path.isfile(os.path.join(resume_from_checkpoint, TRAINER_STATE_NAME))``, so this one
+#: file is the difference between continuing and starting over with warm weights. It is the
+#: same distinction ``OLMO_CORE_FULL_CHECKPOINT`` draws against ``OLMO_CORE_WEIGHTS_ONLY``,
+#: at a different filename.
+HUGGINGFACE_TRAINER_STATE: Final = "trainer_state.json"
+
+#: The optimizer state, which v5 of the library stops writing by default.
+#:
+#: Worth naming separately rather than folding into the full-checkpoint set, because
+#: ``Trainer`` saves "excluding optimizer state by default" as of transformers 5, so the
+#: ordinary shape of a modern HuggingFace checkpoint restores the step counter and starts
+#: the optimizer cold. A workload profile declaring ``resume_required`` against one of these
+#: is getting less than the word implies, and a reader has to be able to see which.
+HUGGINGFACE_OPTIMIZER: Final = "optimizer.pt"
+
+#: Every filename the library uses for the weights themselves, sharded or whole, full
+#: fine-tune or PEFT adapter. Any one of them present means weights are here.
+HUGGINGFACE_WEIGHTS: Final = (
+    "model.safetensors",
+    "model.safetensors.index.json",
+    "pytorch_model.bin",
+    "pytorch_model.bin.index.json",
+    "adapter_model.safetensors",
+    "adapter_model.bin",
+)
+
 
 def olmo_core_checkpoint_shape(names: Iterable[str]) -> str | None:
     """Which of OLMo-core's two accepted shapes these object names form, if either.
@@ -516,6 +580,39 @@ def olmo_core_checkpoint_shape(names: Iterable[str]) -> str | None:
     if all(required in present for required in OLMO_CORE_WEIGHTS_ONLY):
         return "model state and possibly optimizer state, but no trainer state"
     return None
+
+
+def huggingface_checkpoint_shape(names: Iterable[str]) -> str | None:
+    """What a HuggingFace ``Trainer`` would restore from these object names, if anything.
+
+    ``names`` are the keys under one ``checkpoint-{N}`` directory, relative to it.
+
+    Three answers rather than two, because this library's own default moved. Weights plus
+    ``trainer_state.json`` plus ``optimizer.pt`` is a full continuation. Weights plus
+    ``trainer_state.json`` restores the step counter and the data position and starts the
+    optimizer cold, and that is the ordinary shape as of transformers 5, which stops writing
+    optimizer state unless asked. Weights alone is a cold start with warm parameters.
+
+    None when there are no weights at all, which is a directory that is not a checkpoint --
+    a bare ``trainer_state.json`` from a torn write, or something else entirely.
+
+    THIS ANSWERS A DIFFERENT QUESTION FROM :func:`olmo_core_checkpoint_shape` AND THE TWO
+    MUST NOT BE MERGED. That one asks whether ``Trainer.fit()`` will load a directory, and
+    this asks whether ``Trainer.train(resume_from_checkpoint=...)`` will. Neither loader
+    reads the other's layout, so a prefix that satisfies this one is still not resumable by
+    OLMo-core, which is why the caller reports FOREIGN rather than COMMITTED.
+    """
+    present = set(names)
+    if not any(weights in present for weights in HUGGINGFACE_WEIGHTS):
+        return None
+    if HUGGINGFACE_TRAINER_STATE not in present:
+        return "model weights, with no trainer state, so a resume would start from step zero"
+    if HUGGINGFACE_OPTIMIZER in present:
+        return "model, optimizer and trainer state"
+    return (
+        "model and trainer state, but no optimizer state, which is what transformers 5 "
+        "writes unless asked otherwise"
+    )
 
 
 def _listing(store: CheckpointStore, *, bucket: str, key: str) -> list[Mapping[str, Any]]:
@@ -663,6 +760,79 @@ def _olmo_core_checkpoint(
     )
 
 
+def _huggingface_checkpoint(
+    store: CheckpointStore,
+    *,
+    bucket: str,
+    key: str,
+) -> CheckpointInspection | None:
+    """The newest ``checkpoint-{N}`` directory here, or weights the final save left at the root.
+
+    None when neither is present, so the caller falls through to the marker protocol's own
+    reading exactly as it does for a prefix with no ``step{N}`` directory.
+
+    NO MANIFEST IS EVER RETURNED FROM HERE, AND THAT IS THE POINT RATHER THAN AN OMISSION.
+    ``CheckpointInspection.manifest`` is populated for COMMITTED and nothing else, and
+    COMMITTED means this platform's retry path may resume from it. It may not: nothing here
+    passes ``resume_from_checkpoint`` to a HuggingFace ``Trainer``, and the retry rule fires
+    on host loss with the same command, which starts over. Saying FOREIGN and describing
+    what is there is the whole of what this can honestly claim.
+
+    THE SECOND SHAPE IS THE FINAL SAVE AND IT SITS OUTSIDE ANY DIRECTORY. ``save_model`` at
+    the end of training writes the weights straight to ``output_dir``, so a completed run
+    has a bare ``adapter_model.safetensors`` at the prefix root alongside its
+    ``checkpoint-{N}`` directories. Read on its own that root was falling through to
+    ``_sole_payload``, which returns None for more than one non-marker object, and the
+    prefix came back ABSENT. A finished run is the case most worth not calling empty.
+    """
+    prefix_uri = f"s3://{bucket}/{key}"
+
+    under: dict[int, dict[str, int]] = {}
+    at_root: dict[str, int] = {}
+    for entry in _listing(store, bucket=bucket, key=key):
+        relative = str(entry.get("Key", "")).removeprefix(key)
+        size = entry.get("Size")
+        size = size if isinstance(size, int) and not isinstance(size, bool) else 0
+        directory, separator, remainder = relative.partition("/")
+        if not separator or not remainder:
+            if relative:
+                at_root[relative] = size
+            continue
+        matched = HUGGINGFACE_CHECKPOINT_DIRECTORY.match(directory)
+        if matched is None:
+            continue
+        under.setdefault(int(matched.group(1)), {})[remainder] = size
+
+    # Descending, and stopping at the first one that holds weights, which mirrors what the
+    # library's own `get_last_checkpoint` does after sorting on the trailing number.
+    for step in sorted(under, reverse=True):
+        shape = huggingface_checkpoint_shape(under[step])
+        if shape is None:
+            continue
+        newest = max(under)
+        detail = (
+            f"checkpoint-{step} is a HuggingFace Trainer checkpoint carrying {shape}; "
+            "OLMo-core's loader does not read this layout, so this platform's own retry "
+            "would start over"
+        )
+        if step != newest:
+            detail += f", and checkpoint-{newest} is newer and holds no weights"
+        return CheckpointInspection(prefix=prefix_uri, state=CheckpointState.FOREIGN, detail=detail)
+
+    root_shape = huggingface_checkpoint_shape(at_root)
+    if root_shape is not None:
+        return CheckpointInspection(
+            prefix=prefix_uri,
+            state=CheckpointState.FOREIGN,
+            detail=(
+                f"the prefix root holds {root_shape}, which is what a HuggingFace "
+                "Trainer's final save_model writes outside any checkpoint directory; "
+                "OLMo-core's loader does not read this layout"
+            ),
+        )
+    return None
+
+
 def _newest_write(
     store: CheckpointStore,
     *,
@@ -695,6 +865,13 @@ def inspect_checkpoint(store: CheckpointStore, *, prefix: str) -> CheckpointInsp
     The order of the questions matters. The marker is read first because it names the
     payload; only then is the payload headed, so a prefix with no marker costs one call and
     never reaches the point where it could be described as a checkpoint.
+
+    OLMo-core IS ASKED BEFORE HUGGINGFACE AND THE ORDER IS NOT ARBITRARY. Only OLMo-core can
+    return COMMITTED and a manifest, so asking it first means a prefix this platform can
+    genuinely resume from is never described as something weaker. The two layouts do not
+    overlap -- ``step32`` and ``checkpoint-32`` cannot both match one directory name -- so a
+    prefix holding both is one this platform resumes and also reports on, rather than an
+    ambiguity to break.
     """
     bucket, key = _split(prefix)
     marker = _read_marker(store, bucket=bucket, key=key)
@@ -706,6 +883,13 @@ def inspect_checkpoint(store: CheckpointStore, *, prefix: str) -> CheckpointInsp
         library = _olmo_core_checkpoint(store, bucket=bucket, key=key)
         if library is not None:
             return library
+        # Then the other trainer this platform runs. Before _sole_payload, which answers
+        # only for a prefix holding exactly one non-marker object and returns None for the
+        # sixteen a HuggingFace checkpoint writes -- so without this a complete checkpoint
+        # fell through to ABSENT, "nothing is stored at this prefix".
+        foreign = _huggingface_checkpoint(store, bucket=bucket, key=key)
+        if foreign is not None:
+            return foreign
         payload_name = _sole_payload(store, bucket=bucket, key=key)
         if payload_name is None:
             return CheckpointInspection(

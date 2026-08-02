@@ -2,8 +2,8 @@
 
 Phase: phase-5
 Bundle schema version: 1
-Source commit: 1fc81b7f5b2bf4c5b6cdb1cefecaaf764d027200
-Generated: 2026-08-02T17:01:54+00:00
+Source commit: 62471208a98cec75c2122a408303d2d0538f5ffd
+Generated: 2026-08-02T17:34:46+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 5 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase5_proof.py` at generation time. No criterion is a gap and the gate is green, and criterion 6 is deferred rather than covered -- a recorded decision not to satisfy it yet, which passes the gate without anybody having observed it. Read that entry in `negative-case-matrix.md` first: it carries the reason and the trigger, and the Known limitations below say what this phase does not establish.
 
@@ -28,9 +28,9 @@ The one check that is outstanding is a different kind of open from every other i
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 4661 |
-| suite tests executed | 4468 |
-| suite passed | 4465 |
+| suite tests collected | 4680 |
+| suite tests executed | 4487 |
+| suite passed | 4484 |
 | suite failed | 3 |
 | suite errored | 0 |
 | suite skipped | 0 |
@@ -71,7 +71,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | --- | --- |
 | .github/CODEOWNERS | sha256:defc3ec7e43f5dc70f137ff21566d23e3d961355fbc871467e3676c9ab651df4 |
 | .github/workflows/build-research-image.yml | sha256:f39972c4da20a63b3fd0f725ccaf521dd893d94c4d72d6f376456e081223e122 |
-| .github/workflows/submit-run.yml | sha256:e1f3d9124b62f7c6c981d719a284ea1f3fe5b04d8c3ced4a06009e8a3545bf12 |
+| .github/workflows/submit-run.yml | sha256:e3f6e14cd30a1b82fb8bc52d58f8263d6267cc85f978277de8b03158f5340318 |
 | README.md | sha256:3ee434c2dce810367306b1dea7ed70364dc60f582087a8aeb08c2ee254dc9e66 |
 | config/image-exceptions.yaml | sha256:8b1e3e6ac779215e0c521b91a2889b5e2404139678752534ac1bfb0f34751716 |
 | config/organization.yaml | sha256:4b3d6cbdc0c080dc01b36918401f720f9cfc87d821a6cfa61787fdc7020d80cf |

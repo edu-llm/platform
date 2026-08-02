@@ -2,8 +2,8 @@
 
 Phase: phase-2
 Bundle schema version: 1
-Source commit: 1fc81b7f5b2bf4c5b6cdb1cefecaaf764d027200
-Generated: 2026-08-02T17:04:31+00:00
+Source commit: 62471208a98cec75c2122a408303d2d0538f5ffd
+Generated: 2026-08-02T17:28:44+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 2 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase2_proof.py` at generation time. It is not done, and the Result table below says by how much.
 
@@ -44,9 +44,9 @@ This run evaluated 22 acceptance criteria: thirteen criteria are covered, one cr
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 4661 |
-| suite tests executed | 4468 |
-| suite passed | 4465 |
+| suite tests collected | 4680 |
+| suite tests executed | 4487 |
+| suite passed | 4484 |
 | suite failed | 3 |
 | suite errored | 0 |
 | suite skipped | 0 |
@@ -88,7 +88,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | file | digest |
 | --- | --- |
 | .github/workflows/deploy-phase2-admission.yml | sha256:b2f22ae639f6485e2ca00a36e1a56caa28b25c13e99d5a7858323c75789a960a |
-| .github/workflows/submit-run.yml | sha256:e1f3d9124b62f7c6c981d719a284ea1f3fe5b04d8c3ced4a06009e8a3545bf12 |
+| .github/workflows/submit-run.yml | sha256:e3f6e14cd30a1b82fb8bc52d58f8263d6267cc85f978277de8b03158f5340318 |
 | config/organization.yaml | sha256:4b3d6cbdc0c080dc01b36918401f720f9cfc87d821a6cfa61787fdc7020d80cf |
 | config/policy.yaml | sha256:5ba9029052c35c3b9d45323f80bcdc44019d6752da3191a13e44b9dac6a59ff2 |
 | fixtures/authorization/admin-exception.yaml | sha256:c49db36e999df3cefd9d3e95127fe947479d121ca6b6b450839e9f0c8ae8144f |

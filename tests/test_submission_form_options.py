@@ -295,15 +295,22 @@ def test_a_corpus_whose_tokenizer_nothing_can_build_stays_registered_and_unoffer
     the option; publish a corpus on a tokenizer nothing can build and it starts demanding its
     absence. Neither needs anybody to remember this test exists.
 
-    THREE CORPORA ARE IN THAT STATE AND THEY ARE NOT THE SAME CASE, which matters because the
-    symmetry is what sent the last diagnosis to the wrong repository. ``math-memory-full-v1``
-    joins lean4-mathlib-bytes on ``tokenizer/bytes-utf8``, which has no OLMo-core equivalent
-    to name. ``fineweb-edu-1b-v6`` is on ``tokenizer/smollm2-bpe``, which has an exact one,
-    because its tokenizer's own dataset.json names ``HuggingFaceTB/SmolLM2-135M`` and
-    ``from_hf`` reproduces it. So one exclusion is a missing upstream feature and the other is
-    a line nobody has written, and only the second resolves by somebody deciding to resolve
-    it. ``fineweb-edu-1b-v2`` is on that tokenizer too and is not counted here, because it is
-    retired and would stay off the form even if the tokenizer landed tomorrow.
+    TWO CORPORA ARE IN THAT STATE AND THERE WERE THREE, WHICH IS THIS TEST WORKING RATHER
+    THAN THIS TEST WEAKENING. ``math-memory-full-v1`` joins lean4-mathlib-bytes on
+    ``tokenizer/bytes-utf8``, which has no OLMo-core equivalent to name and is still a
+    missing upstream feature.
+
+    ``fineweb-edu-1b-v6`` left this list, and the paragraph above predicted the exact
+    mechanism: it was on ``tokenizer/smollm2-bpe``, which had an exact OLMo-core equivalent
+    and no line naming it, and "only the second resolves by somebody deciding to resolve
+    it". Somebody did. ``TokenizerConfig.from_hf("HuggingFaceTB/SmolLM2-135M")`` is in both
+    ``TOKENIZERS`` maps now, so the join above started demanding the option and this test
+    started demanding its absence, and the two could not both be satisfied until one of them
+    was corrected. Nobody had to remember either was here.
+
+    ``fineweb-edu-1b-v2`` is on that tokenizer too and stays off the form regardless, because
+    it is retired -- which is what stopped the resolution offering two versions of one corpus
+    at once, and is asserted separately below.
 
     THIS IS NOT THE TEST THAT KEEPS A TOKENIZER OFF THE FORM, and the two are worth not
     confusing. A tokenizer entry declares no tokenizer of its own, so it fails the map lookup
@@ -315,10 +322,14 @@ def test_a_corpus_whose_tokenizer_nothing_can_build_stays_registered_and_unoffer
     }
     offerable = corpora_a_run_could_actually_train_on()
 
-    for reference_id in ("lean4-mathlib-bytes-v3", "math-memory-full-v1", "fineweb-edu-1b-v6"):
+    for reference_id in ("lean4-mathlib-bytes-v3", "math-memory-full-v1"):
         assert reference_id in registered
         assert reference_id not in offerable
         assert reference_id not in options_for("dataset_release")
+    assert "fineweb-edu-1b-v6" in offerable, (
+        "the tokenizer line landed, so the corpus this test used to hold up as unofferable "
+        "is now the worked example of the exclusion retiring itself"
+    )
     assert "regmix-10b-v1" in offerable, (
         "at least one registered corpus must be trainable, or the dropdown offers no real "
         "data at all and the exclusion above has quietly become the rule"

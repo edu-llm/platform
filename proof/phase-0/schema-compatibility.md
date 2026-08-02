@@ -1,6 +1,6 @@
 # Phase 0 schema compatibility report
 
-144 contract models. The structural digest is `sha256` over the model's JSON schema with sorted keys, so it changes when a field is added, removed, retyped, or reconstrained, and does not change when unrelated code moves. Comparing this table between phases answers whether a schema changed.
+145 contract models. The structural digest is `sha256` over the model's JSON schema with sorted keys, so it changes when a field is added, removed, retyped, or reconstrained, and does not change when unrelated code moves. Comparing this table between phases answers whether a schema changed.
 
 This is the complete inventory: every contract model in the repository is below, whichever phase wrote it and whichever module it has since moved to. The three phase bundles carry a scoped view of the same digests and none of them carries a digest that is not here. `tests/test_schema_compatibility.py` recomputes every row of every one of those tables against the tree and fails when one stops describing it.
 
@@ -8,7 +8,7 @@ The kind column separates a `record`, which some payload is validated against, f
 
 ## Repository-configuration contracts
 
-37 models are reachable from the sixteen root models exported to `schemas/`. These describe what the repository declares: who is in the organization, what compute exists, what policy applies, and what a submission looks like. They are versioned by the checked-in JSON Schema files below rather than by a `schema_version` field, except for RunManifest, which carries both.
+38 models are reachable from the sixteen root models exported to `schemas/`. These describe what the repository declares: who is in the organization, what compute exists, what policy applies, and what a submission looks like. They are versioned by the checked-in JSON Schema files below rather than by a `schema_version` field, except for RunManifest, which carries both.
 
 | model | module | kind | schema_version | structural digest |
 | --- | --- | --- | --- | --- |
@@ -41,7 +41,8 @@ The kind column separates a `record`, which some payload is validated against, f
 | RegisteredRepository | edullm_platform.contracts.repository_registry | record | unversioned | sha256:6061c9afa770d4335d829aa1d6ed781cea6bfb492719843918d3bd0e364b2fae |
 | RepositoryRegistry | edullm_platform.contracts.repository_registry | record | unversioned | sha256:d69819572c1f37964e8bf2553d0c66b65b234d221039d95a8085150812ed7429 |
 | CheckpointManifest | edullm_platform.contracts.results | record | 1 | sha256:4a27e4581c4d888b09d99e81d2236353fd5cf012198b4b520e95eb0406077237 |
-| ResultManifest | edullm_platform.contracts.results | record | 1 | sha256:f67ae5069fc63ddff7e750c03963c104b51fe4e187e04bb355063bf2d5ddb5d1 |
+| CheckpointSurvey | edullm_platform.contracts.results | record | 1 | sha256:eb628ae8c4baad97da4aa1321ba454b01ee5f8cf99f8b70d5c7058f4debb7230 |
+| ResultManifest | edullm_platform.contracts.results | record | 1 | sha256:47ba07791dc06f0b05512ffdcc18ad5b953a650c88e68b30a7b40d93ac1f39e4 |
 | WandbRunRef | edullm_platform.contracts.results | record | unversioned | sha256:cba8ceb21dd7d198dfbe0976bf225d5a837782d343708a4a251195e8a7aaef97 |
 | CheckpointContract | edullm_platform.contracts.workload | record | unversioned | sha256:97160a720340044f91d3707d703a2a424ff8c3d5479c10c8f6a48e68e34ad9f0 |
 | ComputeProfile | edullm_platform.contracts.workload | record | unversioned | sha256:980b84356011d721f565c7d3fdaa7c852ef286c429d1f2b796a6d4ae163ede20 |
@@ -181,7 +182,7 @@ The checked-in schemas under `schemas/`, with the digest of each file as generat
 | schemas/organization.schema.json | OrganizationInventory | sha256:37c30582f008b541fe11a1403f5311026ae908d98e8821b4ed6842c3d4365e66 |
 | schemas/policy.schema.json | ApprovalPolicy | sha256:8a99f30cbfad406c46853fc115e3cdba9e380f793bf0b34bc7bc231df8eff6ff |
 | schemas/repositories.schema.json | RepositoryRegistry | sha256:ee5ef9172b9ab89aa0965cefda9d86fda855c4cd3f0eeda41ab50551327ff68e |
-| schemas/result-manifest.schema.json | ResultManifest | sha256:5bd07bde5ac6c86323878915dd684dafa2e838fa20b53d78554074159563cb26 |
+| schemas/result-manifest.schema.json | ResultManifest | sha256:38421f82a8c861df341fcfd514e9a1bb621f7ced55258b20061d310d0c61b7f9 |
 | schemas/run-manifest.schema.json | RunManifest | sha256:7f6795c9a7a246b2670bc181f19f07ef16086b233b6d14d1d8def41971b04769 |
 | schemas/scheduler-attempt.schema.json | SchedulerAttempt | sha256:91984a9fb1f7f9150f7799dc337807bd14b93b50908a56e0e230391546c9c4ac |
 | schemas/submission-inputs.schema.json | SubmissionInputs | sha256:02585ab3655cb95c5cf574c9e4906f6709ad54973db5cf353b868cd747880fe7 |
@@ -199,6 +200,7 @@ Regenerate with `uv run python tools/export_schemas.py`. Verify a file by hand w
 | BatchDenialMatrix | 1 |
 | BatchJobBinding | 1 |
 | CheckpointManifest | 1 |
+| CheckpointSurvey | 1 |
 | DatasetRegistry | 1 |
 | DatasetRelease | 1 |
 | DecisionRecord | 1 |

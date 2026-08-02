@@ -40,7 +40,7 @@ from edullm_platform.contracts.lifecycle import (
     new_event_id,
 )
 from edullm_platform.contracts.manifest import RunManifest
-from edullm_platform.contracts.results import ResultManifest
+from edullm_platform.contracts.results import CheckpointListingOutcome, ResultManifest
 from edullm_platform.contracts.vocabulary import RetentionClass
 from edullm_platform.execution import WANDB_ENTITY, batch_submit_request
 from edullm_platform.lifecycle_handler import (
@@ -54,8 +54,10 @@ from edullm_platform.lifecycle_projection import (
     BATCH_STATUS_TO_RUN_STATE,
     CANCELLATION_REASON_MARKERS,
     CHECKPOINT_DIR_VARIABLE,
+    CHECKPOINT_DIRECTORIES,
     EVENTBRIDGE_BATCH_DETAIL_TYPE,
     EVENTBRIDGE_BATCH_SOURCE,
+    HUGGINGFACE_CHECKPOINT_DIRECTORY,
     MARKER_OBJECT,
     MAXIMUM_LISTING_PAGES,
     OUTPUT_PREFIX_VARIABLE,
@@ -1250,6 +1252,120 @@ def test_a_refused_listing_records_no_checkpoints_and_does_not_lose_the_run() ->
     assert projected.result.output_prefixes == (CONTAINER_OUTPUT_PREFIX,)
     assert projected.result.wandb_run is not None
     assert projected.attempt is not None
+    # The empty list still reads the same and the record no longer stops there. A refusal
+    # and a prefix that was read and was bare are two different statements about a run, and
+    # this field is the only place they are told apart.
+    assert projected.result.checkpoint_survey is not None
+    assert projected.result.checkpoint_survey.outcome is CheckpointListingOutcome.REFUSED
+    assert projected.result.checkpoint_survey.objects_seen == 0
+
+
+def test_a_run_that_saved_in_another_trainers_layout_is_not_recorded_as_saving_nothing() -> None:
+    """Two runs, opposite outcomes, one record. Measured on 2026-08-02 rather than argued.
+
+    ``run_019fc2e3`` wrote nothing and recorded ``checkpoints: []``. ``run_019fc308`` wrote
+    sixteen objects and 200,371,840 bytes into ``checkpoint-32/`` and recorded the same
+    thing. The field that exists to tell those apart could not.
+
+    Mutation: drop ``HUGGINGFACE_CHECKPOINT_DIRECTORY`` from ``CHECKPOINT_DIRECTORIES``.
+    The manifests go empty again, and the survey is the only thing left saying anything
+    was there -- which is why both halves of this are asserted.
+    """
+    lister = FakeLister(
+        {
+            "checkpoint-32/adapter_model.safetensors": 50_000_000,
+            "checkpoint-32/optimizer.pt": 100_000_000,
+            "checkpoint-32/trainer_state.json": 1_024,
+        }
+    )
+    projected = projected_with(lister)
+
+    assert projected.result is not None
+    survey = projected.result.checkpoint_survey
+    assert survey is not None
+    assert survey.outcome is CheckpointListingOutcome.LISTED
+    assert survey.objects_seen == 3
+    assert survey.bytes_seen == 150_001_024
+
+    (checkpoint,) = projected.result.checkpoints
+    assert checkpoint.step == 32
+    assert checkpoint.uri.endswith("checkpoint-32/")
+    assert checkpoint.size_bytes == 150_001_024
+    # Described, and still not resumable, because no marker of ours certifies it.
+    assert checkpoint.success_marker_uri is None
+
+
+def test_a_prefix_that_was_read_and_was_bare_says_so_rather_than_looking_refused() -> None:
+    """The other side of the same field, and the reason an object count is worth recording.
+
+    An empty list beside ``objects_seen: 0`` and ``outcome: listed`` is a run that genuinely
+    saved nothing, which is a real finding somebody should act on. The same empty list
+    beside ``outcome: refused`` is nobody having looked, which is a permissions bug. Before
+    the survey these were one value.
+    """
+    projected = projected_with(FakeLister({}))
+
+    assert projected.result is not None
+    survey = projected.result.checkpoint_survey
+    assert survey is not None
+    assert survey.outcome is CheckpointListingOutcome.LISTED
+    assert survey.objects_seen == 0
+    assert not survey.wrote_something_unrecognised
+
+
+def test_objects_in_a_layout_no_matcher_reads_are_counted_and_named() -> None:
+    """The case the survey exists for, and the one a count alone would leave unactionable.
+
+    Something is under the prefix and nothing here understands it. The count says the run
+    saved; the directory names say what wrote it, which is what turns a nightly finding
+    into a one-line diagnosis rather than a trip to the bucket.
+    """
+    lister = FakeLister(
+        {
+            "epoch_7/model.pt": 4_096,
+            "epoch_8/model.pt": 4_096,
+            "epoch_9/model.pt": 4_096,
+            "epoch_10/model.pt": 4_096,
+        }
+    )
+    projected = projected_with(lister)
+
+    assert projected.result is not None
+    survey = projected.result.checkpoint_survey
+    assert survey is not None
+    assert projected.result.checkpoints == ()
+    assert survey.outcome is CheckpointListingOutcome.LISTED
+    assert survey.objects_seen == 4
+    assert survey.wrote_something_unrecognised
+    # Bounded, because a prefix with a thousand unreadable directories must not make an
+    # immutable lineage record grow to match it.
+    assert survey.unparsed_directories == ("epoch_10", "epoch_7", "epoch_8")
+
+
+def test_a_prefix_holding_both_layouts_records_the_one_this_platform_can_resume() -> None:
+    """Mutation: describe both layouts. Their step numbers share a namespace.
+
+    ``step32/`` and ``checkpoint-32/`` under one prefix would produce two manifests at step
+    32, which ``ResultManifest`` refuses as a duplicate, which the broad handler above
+    catches, which turns the whole field back into the empty list this change exists to
+    stop. OLMo-core wins because it is the layout a resume can use, and the other is
+    reported as unparsed rather than silently dropped.
+    """
+    lister = FakeLister(
+        {
+            "step32/model_and_optim/.metadata": 2_048,
+            "checkpoint-32/adapter_model.safetensors": 4_096,
+        }
+    )
+    projected = projected_with(lister)
+
+    assert projected.result is not None
+    (checkpoint,) = projected.result.checkpoints
+    assert checkpoint.uri.endswith("step32/")
+    survey = projected.result.checkpoint_survey
+    assert survey is not None
+    assert survey.unparsed_directories == ("checkpoint-32",)
+    assert survey.objects_seen == 2
 
 
 def test_a_checkpoint_prefix_outside_this_platforms_bucket_is_not_listed() -> None:
@@ -1383,3 +1499,17 @@ def test_the_two_copies_of_the_checkpoint_vocabulary_agree() -> None:
     assert MARKER_OBJECT == protocol.MARKER_OBJECT
     assert STEP_DIRECTORY.pattern == protocol.OLMO_CORE_STEP_DIRECTORY.pattern
     assert described_listing_checksum(entries) == protocol.described_checksum(entries)
+
+    # The second layout has to agree too, and it arrived after this test did. Both modules
+    # now match two directory names rather than one, and a copy that learned only one of
+    # them would put the recorder and the reader back into disagreement about the same
+    # prefix -- which is the specific failure where one says a run saved and the other says
+    # it saved nothing.
+    assert (
+        HUGGINGFACE_CHECKPOINT_DIRECTORY.pattern
+        == protocol.HUGGINGFACE_CHECKPOINT_DIRECTORY.pattern
+    )
+    assert [pattern.pattern for pattern, _ in CHECKPOINT_DIRECTORIES] == [
+        protocol.OLMO_CORE_STEP_DIRECTORY.pattern,
+        protocol.HUGGINGFACE_CHECKPOINT_DIRECTORY.pattern,
+    ], "the order decides which layout wins a prefix holding both, and it is OLMo-core first"

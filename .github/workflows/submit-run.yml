@@ -119,6 +119,7 @@ on:
           - olmo-127b-v1
           - olmo-150b-dolma2-v1
           - math-frontload-100m-v1
+          - fineweb-edu-1b-v6
       # A DROPDOWN BECAUSE THE COST OF A TYPO WAS PAID SOMEWHERE THE TYPIST NEVER LOOKS.
       # This was free text and nothing refused an unrecognised value, so `pre-traning`
       # compiled, classified, was approved, ran, wrote its outputs under

@@ -92,8 +92,38 @@ TRAINING_STEPS: Final = 20
 #: `tokenizer/bytes-utf8` does about that is something to read out of its own tokenizer.json
 #: rather than to infer. An invented eos id is the quiet kind of wrong this whole map exists
 #: to refuse.
+#:
+#: TWO ENTRIES NOW, AND THE ARGUMENT ABOVE SURVIVES FOR ONE OF THEM AND NOT THE OTHER. The
+#: paragraph beginning "ONE ENTRY, NOT TWO" is still exactly right about `tokenizer/bytes-utf8`
+#: and was wrong to be read as covering `tokenizer/smollm2-bpe`, which is the reading that
+#: kept `pretrain/fineweb-edu-1b` unusable and sent the diagnosis to `edullm-data` to fix
+#: manifests that were never broken. bytes-utf8 has no OLMo-core equivalent to name.
+#: smollm2-bpe has an exact one: `s3://edullm-data/tokenizer/smollm2-bpe/v1/dataset.json`
+#: names `HuggingFaceTB/SmolLM2-135M` as its source in those words, and `TokenizerConfig.from_hf`
+#: reproduces it. Called for real before this line was written, it reports vocab_size 49,152.
+#:
+#: THIS MAP MUST NOT LEAD OLMo-core's, AND TODAY IT WOULD. The container's own copy lives at
+#: `OLMo-core/.edullm/train_on_corpus.py`, and the entry there is on branch
+#: `edullm/smollm2-tokenizer` rather than on main. A submission naming a commit that lacks it
+#: resolves the corpus, reaches the container, and exits 69. So this line is correct and its
+#: ordering is not optional: the OLMo-core branch merges to main first, and this ships after.
+#: Landing them the other way round offers a corpus every image refuses.
+#:
+#: WHAT THIS ENTRY COSTS THAT THE DOLMA2 ONE DOES NOT. `from_hf` fetches the tokenizer's
+#: config from the HuggingFace Hub when the config is built, so a corpus resolved through it
+#: needs network egress at container runtime that a dolma2 corpus does not. Batch hosts sit in
+#: public subnets with allow-all egress and the payload is a few hundred kilobytes, so this is
+#: a real dependency rather than a real risk -- but a Hub outage can now refuse a run that
+#: dolma2 would have started, and that is worth knowing before it happens.
+#:
+#: AND THE HAZARD THIS MAP EXISTS FOR APPLIES HERE TOO, AT A DIFFERENT NUMBER. SmolLM2's 49,152
+#: fits in uint16 exactly as dolma2's 100,278 does, so a fineweb shard read without the
+#: manifest's explicit dtype would be decoded two bytes at a time into in-range ids and a loss
+#: curve that is merely bad. The dtype comes from the manifest and is never inferred, which is
+#: what makes adding this safe.
 TOKENIZERS: Final[dict[str, str]] = {
     "tokenizer/dolma2-bpe": "TokenizerConfig.dolma2()",
+    "tokenizer/smollm2-bpe": 'TokenizerConfig.from_hf("HuggingFaceTB/SmolLM2-135M")',
 }
 
 #: A prefix belonging to a team that does not exist, which is the point. The workload role

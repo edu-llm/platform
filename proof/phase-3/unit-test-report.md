@@ -17,9 +17,9 @@ uv run python tools/build_phase3_proof.py
 
 | measure | count |
 | --- | --- |
-| collected by pytest | 4661 |
-| executed (excluding tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py, tests/test_phase5_proof.py) | 4468 |
-| passed | 4465 |
+| collected by pytest | 4680 |
+| executed (excluding tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py, tests/test_phase5_proof.py) | 4487 |
+| passed | 4484 |
 | failed | 3 |
 | errored | 0 |
 | skipped | 0 |
@@ -31,9 +31,9 @@ Every test node id cited by the negative-case matrix, plus every test in the mod
 
 | measure | count |
 | --- | --- |
-| selected node ids | 472 |
-| executed | 472 |
-| passed | 470 |
+| selected node ids | 476 |
+| executed | 476 |
+| passed | 474 |
 | failed | 2 |
 | errored | 0 |
 | skipped | 0 |
@@ -56,7 +56,7 @@ The test modules Phase 3 added, excluding the ones that invoke a gate or this ge
 | tests/test_phase3_image_scan.py | 63 | see below |
 | tests/test_phase3_infrastructure.py | 60 | see below |
 | tests/test_phase3_lifecycle_package.py | 3 | see below |
-| tests/test_phase3_lifecycle_projection.py | 75 | see below |
+| tests/test_phase3_lifecycle_projection.py | 79 | see below |
 | tests/test_phase3_run_evidence.py | 37 | see below |
 
 **A green suite is not evidence that the path works.** Phase 1 shipped one over a workflow that could not complete a run and Phase 2 shipped one over a state machine that could not complete an execution, both times because both sides of a seam were asserted and neither compared to the other. The counts above say the tests pass; `negative-case-matrix.md` says what they establish, which for most of this phase's criteria is not the criterion.

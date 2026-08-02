@@ -32,7 +32,16 @@ LATER_CHECKPOINT_DIGEST = "sha256:" + "c" * 64
 CHECKPOINT_MANIFEST_DIGEST = (
     "sha256:40895c7e549ac5aa0aa0fc524f0310e9ed567484f6f64482997b4829c717e45d"
 )
-RESULT_MANIFEST_DIGEST = "sha256:19791d11e6a19ddd96b172f81f890d0e7be470cba7d2fef1071fe9d4ed0c41f2"
+# Moved when ``checkpoint_survey`` was added, and only this one moved, which is the shape
+# of the change: ``CheckpointManifest`` above is untouched, so a checkpoint recorded before
+# and after this serializes identically and only the record wrapping it grew a field.
+#
+# The field is optional and defaults to None, for the reason ``exit_code`` beside it is, so
+# every result record already in the lineage store still validates. What it does not do is
+# still serialize to the same bytes -- a None is written rather than omitted -- so this
+# digest is a new one rather than a preserved one, exactly as it was when ``exit_code``
+# arrived.
+RESULT_MANIFEST_DIGEST = "sha256:f5992720ad1b68ea30e1d2b147563df71ec55a60d5a703fb08589ac6168a2ba2"
 
 OUTSIDE_SANDBOX_PREFIXES = (
     "s3://edullm-checkpoints/runs/olmo/",

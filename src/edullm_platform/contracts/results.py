@@ -1,8 +1,15 @@
+from enum import StrEnum
 from typing import Annotated, Literal, Self
 
 from pydantic import BeforeValidator, Field, model_validator
 
-from .base import ContractModel, Sha256Digest, UtcTimestamp, require_ordered_sequence
+from .base import (
+    ContractModel,
+    Sha256Digest,
+    UtcTimestamp,
+    parse_str_enum,
+    require_ordered_sequence,
+)
 from .bindings import WandbEntity
 from .identity import AttemptId, RunId
 from .lifecycle import (
@@ -14,6 +21,12 @@ from .lifecycle import (
 from .vocabulary import RetentionClassValue
 
 WANDB_NAME_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]*$"
+
+#: How many unparsed directory names one survey records.
+#:
+#: Enough to identify a layout and not enough to make a lineage record grow with the size of
+#: whatever confused it. Three names is one glance at a pattern; a hundred is a log.
+UNPARSED_DIRECTORY_SAMPLE = 3
 
 #: The bucket a workload writes its own output to. Never the lineage bucket, whose entire
 #: property is that only the platform writes to it.
@@ -93,6 +106,103 @@ class CheckpointManifest(ContractModel):
         return CheckpointRef(uri=self.uri, checksum=self.checksum)
 
 
+class CheckpointListingOutcome(StrEnum):
+    """Why ``ResultManifest.checkpoints`` holds what it holds.
+
+    AN EMPTY LIST CARRIED SIX MEANINGS AND A READER COULD NOT SEPARATE THEM. No lister was
+    supplied, the listing was refused, the prefix genuinely held nothing, the layout was one
+    the matcher does not read, the listing ran past its page ceiling, or the prefix named a
+    bucket this platform does not own. All six serialized as ``"checkpoints": []``, so a run
+    that trained for hours and saved 200 MB and a run that saved nothing produced the same
+    record in the one field that exists to tell them apart.
+
+    Every member below except ``LISTED`` means the list is empty for a reason that is not
+    "nothing was written". ``LISTED`` with an empty list, and only that combination, is the
+    statement that the prefix was read and was genuinely bare.
+    """
+
+    #: The listing completed and what is recorded is what is there.
+    LISTED = "listed"
+    #: No lister was passed in, so nothing was asked. The ordinary shape for a projection
+    #: built off an event without a store behind it.
+    NOT_ATTEMPTED = "not_attempted"
+    #: The event carried no ``EDULLM_CHECKPOINT_DIR``, so there is no prefix to read.
+    NO_PREFIX_DECLARED = "no_prefix_declared"
+    #: The prefix is not an ``s3://`` directory inside this platform's own outputs bucket.
+    PREFIX_NOT_OURS = "prefix_not_ours"
+    #: The store refused or failed. Until the lifecycle role carried ``s3:ListBucket`` this
+    #: was the live answer for every run, and it read as an empty list.
+    REFUSED = "refused"
+    #: More pages than the ceiling, so a partial answer was discarded rather than recorded.
+    TOO_MANY_PAGES = "too_many_pages"
+
+
+CheckpointListingOutcomeValue = Annotated[
+    CheckpointListingOutcome, BeforeValidator(parse_str_enum(CheckpointListingOutcome))
+]
+
+
+class CheckpointSurvey(ContractModel):
+    """What the listing saw, as distinct from what the matcher could parse out of it.
+
+    AN OBJECT COUNT AND A PARSED LIST ARE DIFFERENT FACTS, WHICH IS THE WHOLE REASON THIS
+    EXISTS. ``checkpoints`` is the second one and it is the one that goes empty for six
+    different reasons. ``objects_seen`` is the first, and it is what separates the two
+    cases that matter most: zero objects under a prefix that was successfully read is a run
+    that saved nothing, and sixteen objects under the same prefix is a run that saved and
+    whose layout nothing here recognised.
+
+    ``unparsed_directories`` names what was skipped, bounded, because the count alone says
+    something is wrong and the names say what. A record reading ``checkpoint-32`` tells the
+    next reader it is a HuggingFace layout in one glance, where a bare count sends them to
+    the bucket.
+    """
+
+    schema_version: Literal[1]
+    outcome: CheckpointListingOutcomeValue
+    #: Every object under the prefix, whatever directory it sat in and whether or not the
+    #: matcher understood it. Zero when the outcome is anything other than ``LISTED``,
+    #: because nothing was counted rather than nothing was there.
+    objects_seen: int = Field(ge=0)
+    #: Their total size. A run that wrote 200 MB and a run that wrote four empty files are
+    #: both "objects present" and only one of them saved a model.
+    bytes_seen: int = Field(ge=0)
+    #: Directory names directly under the prefix that no layout matched, sorted, and capped
+    #: at :data:`UNPARSED_DIRECTORY_SAMPLE` so a pathological prefix cannot make this record
+    #: unbounded. Empty when everything was understood.
+    unparsed_directories: Annotated[
+        tuple[str, ...], BeforeValidator(require_ordered_sequence)
+    ] = Field(default=(), strict=False)
+
+    @model_validator(mode="after")
+    def validate_survey(self) -> Self:
+        if self.outcome is not CheckpointListingOutcome.LISTED and (
+            self.objects_seen or self.bytes_seen or self.unparsed_directories
+        ):
+            raise ValueError(
+                "only a completed listing may report what it saw; every other outcome means "
+                "nothing was counted"
+            )
+        if len(set(self.unparsed_directories)) != len(self.unparsed_directories):
+            raise ValueError("unparsed directory names must be unique")
+        if len(self.unparsed_directories) > UNPARSED_DIRECTORY_SAMPLE:
+            raise ValueError(
+                f"at most {UNPARSED_DIRECTORY_SAMPLE} unparsed directory names are recorded"
+            )
+        if self.bytes_seen and not self.objects_seen:
+            raise ValueError("bytes cannot have been seen without an object to hold them")
+        return self
+
+    @property
+    def wrote_something_unrecognised(self) -> bool:
+        """Objects are here and nothing was parsed out of them.
+
+        The state that was invisible while an empty list was the only signal, and the one
+        that costs the most, because every other field on the record says the run succeeded.
+        """
+        return self.outcome is CheckpointListingOutcome.LISTED and self.objects_seen > 0
+
+
 class ResultManifest(ContractModel):
     schema_version: Literal[1]
     run_id: RunId
@@ -120,6 +230,14 @@ class ResultManifest(ContractModel):
     #: because every result record already written carries no such field, and they are
     #: immutable.
     exit_code: int | None = None
+    #: What the listing behind ``checkpoints`` actually saw, or None on a record written
+    #: before the field existed.
+    #:
+    #: Optional and defaulted for the same reason ``exit_code`` above is: every result
+    #: record already in the lineage store carries no such field and none of them can be
+    #: rewritten. A required field here would make the whole history unreadable by the
+    #: contract that describes it.
+    checkpoint_survey: CheckpointSurvey | None = None
     retention_class: RetentionClassValue
     completed_at: UtcTimestamp
 

@@ -677,6 +677,105 @@ def test_an_empty_prefix_is_absent_rather_than_incomplete() -> None:
     assert inspected.manifest is None
 
 
+def a_huggingface_run() -> FakeStore:
+    """The shape run_019fc308-8858-706e-b1c0-a516d86147a0 actually left in S3.
+
+    Sixteen objects and 200,371,840 bytes, of which the three named here are the ones any
+    reader has to recognise. Reproduced at a size that fits a test rather than at the real
+    one, because what is being asserted is the layout and not the byte count.
+    """
+    store = FakeStore()
+    directory = PREFIX.split(f"{BUCKET}/", maxsplit=1)[1] + "checkpoint-32/"
+    store.put(directory + "adapter_model.safetensors", PAYLOAD)
+    store.put(directory + "adapter_config.json", b'{"peft_type": "LORA"}')
+    store.put(directory + "trainer_state.json", b'{"global_step": 32}')
+    store.put(directory + "optimizer.pt", b"optimizer state")
+    store.put(directory + "scheduler.pt", b"scheduler state")
+    store.put(directory + "rng_state.pth", b"rng state")
+    store.put(directory + "tokenizer.json", b"{}")
+    return store
+
+
+def test_a_huggingface_checkpoint_is_not_reported_as_an_empty_prefix() -> None:
+    """The regression that arrives the day a migration succeeds rather than the day one fails.
+
+    Two runs measured on 2026-08-02 wrote opposite amounts to S3, nothing and 200,371,840
+    bytes, and this reader described both the same way: ABSENT, "nothing is stored at this
+    prefix". The nightly then put the second one under "Wrote nothing" and told its owner
+    they had probably forgotten to pass ``--save-folder``. They had not.
+
+    Mutation: delete the ``_huggingface_checkpoint`` call from ``inspect_checkpoint``. The
+    prefix falls through to ``_sole_payload``, which answers only for a prefix holding one
+    non-marker object and returns None for the seven here, and the state goes back to
+    ABSENT. Nothing else in the suite notices, because every other checkpoint test writes
+    OLMo-core's layout.
+    """
+    inspected = inspect_checkpoint(a_huggingface_run(), prefix=PREFIX)
+
+    assert inspected.state is CheckpointState.FOREIGN
+    assert "checkpoint-32" in inspected.detail
+    assert "nothing is stored at this prefix" not in inspected.detail
+
+
+def test_a_huggingface_checkpoint_is_never_offered_as_resumable() -> None:
+    """The other half, and the one that would be worse to get wrong than the bug it replaces.
+
+    FOREIGN says a complete checkpoint is here in a layout OLMo-core does not read. It must
+    not imply that this platform's retry continues from it, because the retry reruns the
+    submitted command from the start and would restart training while a reader believed it
+    had resumed.
+
+    Mutation: return a manifest alongside FOREIGN. ``resumable_checkpoint`` starts handing
+    one back, and a retry believes it is continuing from step 32 when it is starting over.
+    That is the exact failure the comment above ``OLMO_CORE_WEIGHTS_ONLY`` describes, which
+    is also why the rejected alternative -- writing a ``.metadata`` file beside the adapter
+    so the OLMo-core shape test passes -- is worse than the bug.
+    """
+    inspected = inspect_checkpoint(a_huggingface_run(), prefix=PREFIX)
+
+    assert inspected.manifest is None
+    assert not inspected.is_resumable
+    assert resumable_checkpoint(a_huggingface_run(), prefix=PREFIX) is None
+
+
+def test_a_final_save_outside_any_directory_is_still_a_checkpoint() -> None:
+    """The third shape, which none of the three readers described.
+
+    ``Trainer.save_model`` at the end of training writes the weights straight to
+    ``output_dir`` rather than into a ``checkpoint-{N}`` directory, so a run that finished
+    has weights at the prefix root. More than one object there means ``_sole_payload``
+    returns None, so a completed run was the case most likely to be called empty.
+    """
+    store = FakeStore()
+    root = PREFIX.split(f"{BUCKET}/", maxsplit=1)[1]
+    store.put(root + "adapter_model.safetensors", PAYLOAD)
+    store.put(root + "adapter_config.json", b'{"peft_type": "LORA"}')
+
+    inspected = inspect_checkpoint(store, prefix=PREFIX)
+
+    assert inspected.state is CheckpointState.FOREIGN
+    assert "final save_model" in inspected.detail
+
+
+def test_an_olmo_core_checkpoint_still_wins_over_a_huggingface_one_beside_it() -> None:
+    """Order, asserted rather than left to the sequence of two if-statements.
+
+    Only OLMo-core can return COMMITTED and a manifest, so asking it first is what stops a
+    prefix this platform can genuinely resume from being described as merely foreign. The
+    two names cannot collide on one directory, so this is about which answer is preferred
+    when both layouts are present rather than about an ambiguity.
+    """
+    store = committed()
+    directory = PREFIX.split(f"{BUCKET}/", maxsplit=1)[1] + "checkpoint-32/"
+    store.put(directory + "adapter_model.safetensors", PAYLOAD)
+    store.put(directory + "trainer_state.json", b'{"global_step": 32}')
+
+    inspected = inspect_checkpoint(store, prefix=PREFIX)
+
+    assert inspected.state is CheckpointState.COMMITTED
+    assert inspected.manifest is not None
+
+
 def test_a_marker_naming_no_payload_among_several_candidates_is_refused() -> None:
     """Mutation: pick the first object that is not the marker.
 
@@ -740,6 +839,17 @@ def test_the_manifest_is_populated_for_the_committed_state_and_for_no_other() ->
     corrupt = committed()
     corrupt.put(base + "model.pt", b"different weights")
     stores[CheckpointState.CORRUPT] = corrupt
+
+    # A HuggingFace Trainer checkpoint, which is a real and complete checkpoint written by
+    # the other trainer this platform runs. It gets a manifest for the same reason a torn
+    # OLMo-core directory does not: `manifest` means this platform's retry may resume from
+    # it, and the retry reruns the submitted command from the start.
+    foreign = FakeStore()
+    hf = base + "checkpoint-32/"
+    foreign.put(hf + "adapter_model.safetensors", PAYLOAD)
+    foreign.put(hf + "trainer_state.json", b'{"global_step": 32}')
+    foreign.put(hf + "optimizer.pt", b"optimizer state")
+    stores[CheckpointState.FOREIGN] = foreign
 
     stores[CheckpointState.COMMITTED] = committed()
 

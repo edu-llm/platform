@@ -2,8 +2,8 @@
 
 Phase: phase-0
 Bundle schema version: 1
-Source commit: 1fc81b7f5b2bf4c5b6cdb1cefecaaf764d027200
-Generated: 2026-08-02T16:53:54+00:00
+Source commit: 62471208a98cec75c2122a408303d2d0538f5ffd
+Generated: 2026-08-02T17:23:47+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 0 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase0_proof.py` at generation time.
 
@@ -18,10 +18,10 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 4661 |
-| suite tests executed | 4468 |
-| suite passed | 4465 |
-| suite failed | 3 |
+| suite tests collected | 4680 |
+| suite tests executed | 4487 |
+| suite passed | 4482 |
+| suite failed | 5 |
 | suite errored | 0 |
 | suite skipped | 0 |
 | matrix node ids executed | 254 |
@@ -33,7 +33,7 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 | criteria GAP (each one fails the gate) | 0 |
 | related recorded deferrals | 1 (D1) |
 | fixtures with recorded digests | 9 |
-| contract models inventoried | 144 |
+| contract models inventoried | 145 |
 | JSON Schema files exported | 16 |
 
 ## Contract versions
@@ -46,6 +46,7 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 | BatchDenialMatrix | 1 |
 | BatchJobBinding | 1 |
 | CheckpointManifest | 1 |
+| CheckpointSurvey | 1 |
 | DatasetRegistry | 1 |
 | DatasetRelease | 1 |
 | DecisionRecord | 1 |
@@ -109,7 +110,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | schemas/organization.schema.json | sha256:37c30582f008b541fe11a1403f5311026ae908d98e8821b4ed6842c3d4365e66 |
 | schemas/policy.schema.json | sha256:8a99f30cbfad406c46853fc115e3cdba9e380f793bf0b34bc7bc231df8eff6ff |
 | schemas/repositories.schema.json | sha256:ee5ef9172b9ab89aa0965cefda9d86fda855c4cd3f0eeda41ab50551327ff68e |
-| schemas/result-manifest.schema.json | sha256:5bd07bde5ac6c86323878915dd684dafa2e838fa20b53d78554074159563cb26 |
+| schemas/result-manifest.schema.json | sha256:38421f82a8c861df341fcfd514e9a1bb621f7ced55258b20061d310d0c61b7f9 |
 | schemas/run-manifest.schema.json | sha256:7f6795c9a7a246b2670bc181f19f07ef16086b233b6d14d1d8def41971b04769 |
 | schemas/scheduler-attempt.schema.json | sha256:91984a9fb1f7f9150f7799dc337807bd14b93b50908a56e0e230391546c9c4ac |
 | schemas/submission-inputs.schema.json | sha256:02585ab3655cb95c5cf574c9e4906f6709ad54973db5cf353b868cd747880fe7 |
