@@ -56,6 +56,7 @@ CREDENTIALED_NIGHTLY_JOBS = frozenset(
         "wandb-credential",
         "deployed-lambda-release",
         "deployed-stack-templates",
+        "visibility-board",
     }
 )
 
@@ -210,10 +211,12 @@ def test_the_nightly_run_reproduces_what_the_pull_request_path_skips() -> None:
 
 def test_only_the_jobs_that_read_the_account_can_reach_it() -> None:
     # This said no scheduled job could reach AWS at all, which was true while every check
-    # here read committed records. Four now ask the account a question no committed file
+    # here read committed records. Five now ask the account a question no committed file
     # answers: whether the runs that promised a checkpoint have one, whether the stored W&B
     # key is one W&B accepts, whether the two admission functions are running the code their
-    # release records describe, and whether each deployed stack is the template main declares.
+    # release records describe, whether each deployed stack is the template main declares, and
+    # whether what the account is running, what W&B logged and what the outputs bucket holds
+    # describe the same set of runs.
     #
     # The claim worth keeping is the narrower one, and it is stronger than a file-wide
     # string search was. id-token is declared per job rather than for the file, so a gate

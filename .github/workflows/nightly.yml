@@ -1,6 +1,6 @@
 name: Nightly (the checks that are not about one change)
 
-# Seven checks that answer a question about the repository or about the account rather
+# Eight checks that answer a question about the repository or about the account rather
 # than about a change, and that either cost too much or fail too unpredictably to sit on
 # the pull-request path. Nothing here is continue-on-error, and that is the whole point of
 # moving them: there is no alerting infrastructure, so a red scheduled run is the signal,
@@ -28,17 +28,18 @@ name: Nightly (the checks that are not about one change)
 #     criterion of theirs is a recorded gap; that is a statement about the phase, and it
 #     is a statement worth waking up to rather than one worth suppressing.
 #
-#   checkpoint-reconciliation, wandb-credential, deployed-lambda-release and
-#     deployed-stack-templates — these four read the account, and that is why they are
-#     here rather than on the pull-request path. Each describes a state a change cannot
-#     cause and cannot be blamed for: a run that trained for hours and saved nothing did
-#     so before the diff under review existed, a credential pasted wrongly into Secrets
-#     Manager has nothing to do with any file, a Lambda deployed out of band is by
-#     definition something no diff records, and a stack applied from a stale branch is a
-#     diff that was never merged. They also need an AWS identity, and putting one on the
+#   checkpoint-reconciliation, wandb-credential, deployed-lambda-release,
+#     deployed-stack-templates and visibility-board — these five read the account, and that
+#     is why they are here rather than on the pull-request path. Each describes a state a
+#     change cannot cause and cannot be blamed for: a run that trained for hours and saved
+#     nothing did so before the diff under review existed, a credential pasted wrongly into
+#     Secrets Manager has nothing to do with any file, a Lambda deployed out of band is by
+#     definition something no diff records, a stack applied from a stale branch is a
+#     diff that was never merged, and a run that logged nowhere logged nowhere weeks ago.
+#     They also need an AWS identity, and putting one on the
 #     pull-request path would mean a fork's pull request runs with it in reach.
 #
-# The four assume sbsandbox-intern-edullm-nightly-reader, which can read the lineage
+# The five assume sbsandbox-intern-edullm-nightly-reader, which can read the lineage
 # records, what the runs wrote, one secret, the deployed digest of the two admission
 # functions and the deployed template of each stack, and holds no write anywhere in the
 # account.
@@ -47,6 +48,18 @@ name: Nightly (the checks that are not about one change)
 # from a laptop like every IAM stack here, so a fresh clone of this repository does not
 # bring it with it, and each of those jobs says so by name rather than failing at the
 # credential step with an empty role.
+#
+# THAT ROLE DOES NOT YET HOLD EVERYTHING THE EIGHTH JOB READS, AND IT IS RED UNTIL IT DOES.
+# The visibility board reads what the account is running out of the resource tags every
+# submission sets, which needs tag:GetResources, and the role holds no tagging action and no
+# batch: action at all. There is no substitute for it. Enumerating the queues needs
+# batch:ListJobs and batch:DescribeJobs, which that template omits deliberately, and the
+# lineage records say what this platform submitted rather than what the account is running.
+# So the job reports the statement it needs, quoted, and exits 2 rather than pretending the
+# account agrees with W&B.
+# That is a red job with one available action rather than a permanently red one, which is the
+# distinction tools/find_runs_that_saved_nothing.py draws when it argues for its
+# acknowledgement list. The other two thirds of the board still report every night.
 #
 # The contract rules the gates enforce are covered by the test suite in ci.yml, which is
 # what blocks a merge. Nothing here is a required check and nothing here should become
@@ -420,3 +433,86 @@ jobs:
       # dispatches this by hand after a merge rather than a reason to soften the job.
       - name: Compare each deployed stack against the template main declares
         run: uv run --frozen python tools/verify_deployed_stacks.py
+
+  visibility-board:
+    name: the three records of a run agree
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check the nightly reader role is deployed
+        env:
+          ROLE_ARN: ${{ vars.AWS_NIGHTLY_READER_ROLE_ARN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${ROLE_ARN}" ]]; then
+            echo "nightly_reader_role_not_deployed" >&2
+            echo "AWS_NIGHTLY_READER_ROLE_ARN is unset, so this job has no identity to assume." >&2
+            echo "The role is infra/iam/nightly-reader-role.yaml, applied from a laptop like" >&2
+            echo "every IAM stack here. See infra/README.md for the stack name and the" >&2
+            echo "repository variable it needs." >&2
+            exit 1
+          fi
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ vars.AWS_NIGHTLY_READER_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # WHAT THIS CATCHES IS A RUN NOBODY CAN ACCOUNT FOR, AND THE UNION IS NOT THE POINT.
+      # Three systems each hold a third of the truth about a run. W&B holds what it logged,
+      # the account holds what it ran on, and the outputs bucket holds what it left behind,
+      # and nothing joins them, so a run present in one and absent from the other two stays
+      # that way. Measured live on 2026-08-02 the account was running 46 runs that log nowhere
+      # anybody can find, and the bucket held a nine gibibyte prefix whose directory name is a
+      # uuid4, so no run id can ever match it and nothing says what config produced it.
+      #
+      # There is no fetch step. The board syncs the lineage prefixes it needs itself, because
+      # the attempt records it prices unlogged spend from are a prefix the reader role does not
+      # hold; a fetch step would have to carry the same degradation the tool already carries,
+      # and the two spellings would drift.
+      #
+      # The exit code is translated here rather than left to the tool, which is the
+      # checkpoint job's arrangement and not the release job's. The board's output is a
+      # markdown report meant for the step summary, so this step has a body whatever else it
+      # does, and the two non-zero exits mean different things: 1 is a disagreement and sends
+      # the reader to a run, 2 is a source that was not read and sends them to a grant. A
+      # reader who cannot tell those apart goes hunting a submitter on the morning a
+      # credential lapsed.
+      - name: Join what W&B, the account and the outputs bucket each say
+        run: |
+          set -uo pipefail
+          status=0
+          uv run --frozen python tools/visibility_board.py --output board.md || status=$?
+
+          if [[ -s board.md ]]; then
+            cat board.md >> "${GITHUB_STEP_SUMMARY}"
+            cat board.md
+          fi
+
+          if [[ "${status}" -eq 2 ]]; then
+            echo "visibility_board_incomplete" >&2
+            echo "A source was not read, so the comparisons that need it were not made. The" >&2
+            echo "board above names each gap and what stopped being answerable, and quotes" >&2
+            echo "the IAM statement where a grant is what is missing." >&2
+            exit 1
+          fi
+          if [[ "${status}" -ne 0 ]]; then
+            echo "the_three_records_of_a_run_disagree" >&2
+            echo "A run is in one of the three sources and not the others. The board above" >&2
+            echo "says which runs and which way each disagreement runs." >&2
+            exit 1
+          fi
