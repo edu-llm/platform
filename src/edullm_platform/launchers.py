@@ -5,10 +5,11 @@ OLMo-core image handles being one rank of several -- it initialises the process 
 the model with FSDP and writes one checkpoint shard per rank -- and it does not start the
 other processes. Nothing on this side does either. So a multi-GPU submission whose command
 names no launcher trains on one device, bills for all of them, and exits zero: on
-``gpu-4xa10g`` at $5.672/hour over the twelve hours its workload allows that is $68 for a
-quarter of the work, and ``gpu-8xh100`` is four times worse again. There is no error anywhere,
-and until this module existed the only statement of the rule was a comment in
-``config/workload-catalog.yaml`` and a sentence in a form field's description.
+``gpu-4xa10g`` at $5.672/hour over the twenty-four hours ``olmo-core-train`` allows that is
+$136 for a quarter of the work, and the same command on ``gpu-8xh100`` is $1,321 for an
+eighth of it. There is no error anywhere, and until this module existed the only statement of
+the rule was a comment in ``config/workload-catalog.yaml`` and a sentence in a form field's
+description.
 
 **The device count is read from ``CONTAINER_SHAPES`` and never from the profile's name.**
 ``gpu-4xa10g`` reads like four devices and ``gpu-8xh100`` like eight, which makes deriving the

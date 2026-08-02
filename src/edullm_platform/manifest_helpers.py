@@ -34,7 +34,10 @@ IMAGE_DIGEST_REGEX = re.compile(IMAGE_DIGEST_PATTERN)
 REPRESENTATIVE_MANIFEST_COSTS: Final = {
     "cpu-routine.yaml": Decimal("2.86"),
     "gpu-routine.yaml": Decimal("5.67"),
-    "gpu-exception.yaml": Decimal("73.74"),
+    # Was 73.74, which was thirteen hours of gpu-4xa10g against a routine runtime ceiling of
+    # twelve. config/policy.yaml sets that ceiling to 24 now, so the fixture that exists to
+    # be an exception on runtime alone had to move to twenty-five hours to go on being one.
+    "gpu-exception.yaml": Decimal("141.80"),
     "olmo-branch-routine.yaml": Decimal("6.04"),
     "sagemaker-routine.yaml": Decimal("1.52"),
     "multiseed-routine.yaml": Decimal("20.12"),

@@ -7,18 +7,25 @@ workflow then names that gate through ``needs``, never through ``inputs`` — Gi
 either, and the wrong one lets a submitter choose their own approval path.
 
 The form collects what a person genuinely chooses and derives the rest. A workload profile
-already fixes the compute profile, the runtime bound, the attempt bound and the checkpoint
-contract, so asking for them again invites a submitter to contradict the catalog. They stay
-available as explicit overrides, because a sweep that needs longer than its profile's
-default is ordinary — and an override is visible to the approver in a way a silently
-different default would not be.
+fixes the runtime bound, the attempt bound and the checkpoint contract, so asking for those
+again invites a submitter to contradict the catalog. They stay available as explicit
+overrides, because a sweep that needs longer than its profile's default is ordinary — and
+an override is visible to the approver in a way a silently different default would not be.
+
+The machine is the exception, and it is asked for outright. It was an override too, on the
+strength of a ``compute_profile`` the workload profile declared, and that arrangement was
+incoherent from both ends: the form's value won whenever it was supplied, nothing refused a
+disagreement between the two, and a name like ``olmo-core-train-1gpu`` therefore promised a
+placement the dropdown beside it was already outranking. The catalog carries policy presets
+now and declares no machine, so there is nothing to derive the field from and no default
+that resolves to anything.
 
 The image is the same question in its sharpest form. It used to be a required
 seventy-one-character field that had to agree with the declared commit and was compared with
 nothing, so a submission could name commit A beside an image built from commit B and be
 faultless on every field. It is derived from the commit now, by
 :mod:`edullm_platform.image_resolution`, out of what the resolve job read back from the
-registry — and what survives is an override with the same visibility as the other six.
+registry — and what survives is an override with the same visibility as the other five.
 """
 
 from __future__ import annotations
@@ -103,10 +110,16 @@ class SubmissionInputs(ContractModel):
     """The ``workflow_dispatch`` form.
 
     Fifteen properties against a ceiling of twenty-five, so the count is a usability
-    question rather than a platform constraint. Eight are required and seven are overrides a
-    submitter can leave alone. The newest of the seven is the image digest, which stopped
-    being required when it started being derived, and which was the hardest of the eight to
-    fill in by some distance.
+    question rather than a platform constraint. Nine are required and six are overrides a
+    submitter can leave alone. The newest of the six is the image digest, which stopped
+    being required when it started being derived, and which was the hardest of them to fill
+    in by some distance.
+
+    ``compute_profile`` went the other way and is the ninth required field. It was an
+    override that defaulted to the workload profile's own declaration, and that declaration
+    was a fiction: this value won whenever it was supplied and nothing refused a
+    disagreement between the two. The catalog no longer declares one, so there is nothing to
+    fall back to and the field is asked for rather than defaulted.
     """
 
     repository: str = Field(min_length=1)
@@ -134,7 +147,7 @@ class SubmissionInputs(ContractModel):
     command: Annotated[tuple[str, ...], BeforeValidator(require_ordered_sequence)] = Field(
         min_length=1, strict=False
     )
-    compute_profile: str | None = Field(default=None, min_length=1)
+    compute_profile: str = Field(min_length=1)
     maximum_runtime_hours: PositiveStrictDecimal | None = Field(default=None, gt=0)
     maximum_attempts: int | None = Field(default=None, ge=1)
     fanout_size: int | None = Field(default=None, ge=2)
@@ -405,7 +418,7 @@ def compile_submission(
         team=inputs.team,
         wandb_project=inputs.wandb_project,
         workload_profile=workload.name,
-        compute_profile=inputs.compute_profile or workload.compute_profile,
+        compute_profile=inputs.compute_profile,
         maximum_runtime_hours=(
             inputs.maximum_runtime_hours
             if inputs.maximum_runtime_hours is not None

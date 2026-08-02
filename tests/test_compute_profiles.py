@@ -42,7 +42,11 @@ PRESERVED_PROFILE_RATES = {
 PRESERVED_MANIFEST_COSTS = {
     "cpu-routine.yaml": Decimal("2.86"),
     "gpu-routine.yaml": Decimal("5.67"),
-    "gpu-exception.yaml": Decimal("73.74"),
+    # Was 73.74. The fixture exists to be an exception on runtime alone and nothing else, so
+    # when routine_maximum_runtime_hours went from 12 to 24 its bound went from thirteen
+    # hours to twenty-five and its ceiling with it. The other two are unmoved, which is what
+    # this table is for: a rate or a bound that drifted would show up as a third change here.
+    "gpu-exception.yaml": Decimal("141.80"),
 }
 
 EXPECTED_PROFILE_RATES = {

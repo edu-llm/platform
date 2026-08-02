@@ -12,14 +12,23 @@ command:
   - configs/extended-smoke.yaml
 team: data-prep
 wandb_project: olmo-core-extended
-workload_profile: olmo-core-train-4gpu
+workload_profile: olmo-core-train
 compute_profile: gpu-4xa10g
-# POLICY EXCEPTION: maximum_runtime_hours=13 exceeds the routine ceiling of 12 hours.
+# POLICY EXCEPTION: maximum_runtime_hours=25 exceeds the routine ceiling of 24 hours.
 # Attempts (1) remain within routine bounds; all references are registered and immutable.
-# Workload profile olmo-core-train-4gpu declares 1 hour in the catalog; Phase 0 does not
-# enforce manifest-to-catalog conformance because any run over the 12-hour policy ceiling
-# necessarily exceeds these smoke profiles. This divergence is intentional.
-maximum_runtime_hours: "13"
+# Workload profile olmo-core-train declares 24 hours in the catalog; Phase 0 does not
+# enforce manifest-to-catalog conformance because any run over the policy ceiling
+# necessarily exceeds the profile it names. This divergence is intentional.
+#
+# MOVED FROM 13 WITH THE CEILING, BECAUSE THE FIXTURE'S JOB IS THE MARGIN AND NOT THE
+# NUMBER. Thirteen was one hour over a ceiling of twelve, and config/policy.yaml now sets
+# routine_maximum_runtime_hours to 24, so thirteen became an ordinary routine submission
+# and this file stopped being the exception every test around it reads it as. One hour over
+# is what makes it an exception on runtime alone, which
+# test_gpu_exception_has_full_registration_and_only_runtime_violation requires of it. The
+# reviewed cost moves with the bound, from $73.74 to $141.80, and stays under the $500
+# routine cost ceiling so that runtime is still the only bound it crosses.
+maximum_runtime_hours: "25"
 maximum_attempts: 1
 checkpoint:
   interval_minutes: 30

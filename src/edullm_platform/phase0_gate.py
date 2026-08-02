@@ -356,10 +356,13 @@ def check_pilots(inventory: OrganizationInventory) -> GateCheck:
 
 
 def check_workload_coverage(catalog: WorkloadCatalog) -> GateCheck:
-    profile_by_name = {profile.name: profile for profile in catalog.compute_profiles}
-    accelerators = {
-        profile_by_name[workload.compute_profile].accelerator for workload in catalog.workloads
-    }
+    # READ OFF THE COMPUTE PROFILES, BECAUSE A WORKLOAD PROFILE NO LONGER NAMES ONE. This
+    # went through WorkloadProfile.compute_profile, which the submission form overrode on
+    # every submission and which is gone. What the check establishes is unchanged: this
+    # platform prices both a CPU shape and a GPU shape, so both kinds of work have somewhere
+    # to be run. A catalog with only one of the two would offer a submission form on which
+    # the whole of the other kind is unpickable.
+    accelerators = {profile.accelerator for profile in catalog.compute_profiles}
     if accelerators != {"cpu", "gpu"}:
         missing: list[str] = []
         if "cpu" not in accelerators:
@@ -374,11 +377,11 @@ def check_workload_coverage(catalog: WorkloadCatalog) -> GateCheck:
         return fail_check(
             "inventory_workload_coverage",
             reason,
-            "Representative CPU and GPU workloads must both be explicit in the workload catalog.",
+            "Representative CPU and GPU compute profiles must both be priced in the catalog.",
         )
     return ok_check(
         "inventory_workload_coverage",
-        "Workload catalog includes explicit representative CPU and GPU workloads.",
+        "Workload catalog prices explicit representative CPU and GPU compute profiles.",
     )
 
 

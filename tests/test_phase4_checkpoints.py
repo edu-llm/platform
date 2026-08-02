@@ -623,12 +623,13 @@ def test_a_listing_that_arrives_in_pages_is_read_to_the_end() -> None:
 
     ListObjectsV2 answers at most a thousand keys and reports the rest through
     ``IsTruncated``. Thirteen objects per checkpoint puts that boundary at seventy-six of
-    them, which the twelve-hour bound on ``olmo-core-train-1gpu`` reaches at a nine-minute
-    save interval. It is not the oldest checkpoints that go missing either: S3 orders keys
-    lexicographically, so ``step1000/`` sorts before ``step2000/`` sorts before ``step200/``
-    and the cut falls in an arbitrary place in the step sequence. Here the first page holds
-    step 1000, so a reader that stopped there answers with a real checkpoint at a plausible
-    step and is wrong by a thousand steps rather than visibly empty.
+    them, which the twenty-four-hour bound on ``olmo-core-train`` reaches at a
+    nineteen-minute save interval. It is not the oldest checkpoints that go missing either:
+    S3 orders keys lexicographically, so ``step1000/`` sorts before ``step2000/`` sorts
+    before ``step200/`` and the cut falls in an arbitrary place in the step sequence. Here
+    the first page holds step 1000, so a reader that stopped there answers with a real
+    checkpoint at a plausible step and is wrong by a thousand steps rather than visibly
+    empty.
     """
     store = FakeStore()
     for step in (200, 1000, 2000):

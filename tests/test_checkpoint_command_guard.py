@@ -40,10 +40,12 @@ from edullm_platform.checkpoint_commands import (
 from edullm_platform.contracts.workload import CheckpointContract
 from edullm_platform.errors import SubmissionRefusedError
 
-#: The two workloads that carry a contract today, read as contracts rather than as names so
-#: that a third profile promising checkpoints needs nothing added here.
-CONTRACTED = "olmo-core-train-1gpu"
-UNCONTRACTED = "olmo-core-check-gpu"
+#: One workload carries a contract today and the checks do not, read as contracts rather
+#: than as names so that a second profile promising checkpoints needs nothing added here.
+#: These were ``olmo-core-train-1gpu`` and ``olmo-core-check-gpu``, and each collapsed into
+#: the entry beside it when the catalog stopped letting a preset name a machine.
+CONTRACTED = "olmo-core-train"
+UNCONTRACTED = "olmo-core-check"
 
 
 def contract(name: str = CONTRACTED) -> CheckpointContract | None:
@@ -240,7 +242,7 @@ def test_a_command_that_names_the_variable_nowhere_is_not_told_about_quoting() -
 def test_a_workload_with_no_checkpoint_contract_is_left_alone() -> None:
     """Mutation: apply the rule to every submission.
 
-    ``olmo-core-check-gpu`` promises nothing, allows one attempt and has no interval to
+    ``olmo-core-check`` promises nothing, allows one attempt and has no interval to
     checkpoint on, so a command that writes no checkpoint is the correct outcome for it. The
     rule is about a promise, and there is no promise here to keep.
     """
@@ -371,7 +373,7 @@ def test_compiling_a_contracted_submission_with_no_save_folder_is_refused() -> N
             )
         )
 
-    assert "olmo-core-train-4gpu" in str(exc_info.value)
+    assert "olmo-core-train" in str(exc_info.value)
 
 
 def test_a_compiled_contracted_submission_that_saves_where_a_retry_looks_still_compiles() -> None:

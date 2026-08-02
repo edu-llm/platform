@@ -46,15 +46,13 @@ def catalog_payload() -> dict[str, object]:
             {
                 "name": "dolma-tokenize",
                 "repository": "dolma",
-                "compute_profile": "cpu-32vcpu",
                 "maximum_runtime_hours": "2",
                 "maximum_attempts": 1,
                 "checkpoint": None,
             },
             {
-                "name": "olmo-core-train-4gpu",
+                "name": "olmo-core-train",
                 "repository": "OLMo-core",
-                "compute_profile": "gpu-4xa10g",
                 "maximum_runtime_hours": "1",
                 "maximum_attempts": 1,
                 "checkpoint": {
@@ -167,7 +165,15 @@ def test_valid_cost_inputs_canonical_json_bytes_does_not_raise() -> None:
     assert b'"maximum_compute_cost_usd":"294.00"' in encoded
 
 
-def test_catalog_requires_cpu_and_gpu_workload_representatives() -> None:
+def test_catalog_requires_cpu_and_gpu_compute_profile_representatives() -> None:
+    """The rule that moved when a workload profile stopped naming a machine.
+
+    It used to read the accelerator of the profile each workload declared, so a catalog
+    whose every workload sat on a CPU profile was refused. There is no such join now, and
+    the property the rule was establishing is a fact about the profiles on their own: a
+    catalog pricing only one kind of accelerator offers a submission form on which the
+    whole of the other kind is unpickable.
+    """
     with pytest.raises(ValidationError) as exc_info:
         WorkloadCatalog.model_validate(
             {
@@ -183,9 +189,9 @@ def test_catalog_requires_cpu_and_gpu_workload_representatives() -> None:
                         "provisioned": False,
                     },
                     {
-                        "name": "gpu-small",
-                        "instance_type": "g5.xlarge",
-                        "accelerator": "gpu",
+                        "name": "cpu-large",
+                        "instance_type": "c7i.8xlarge",
+                        "accelerator": "cpu",
                         "nodes": 1,
                         "hourly_rate_usd": "2.00",
                         "pricing_source": "test",
@@ -197,7 +203,6 @@ def test_catalog_requires_cpu_and_gpu_workload_representatives() -> None:
                     {
                         "name": "tokenize-smoke",
                         "repository": "dolma",
-                        "compute_profile": "cpu-small",
                         "maximum_runtime_hours": "2",
                         "maximum_attempts": 1,
                         "checkpoint": None,
@@ -205,7 +210,6 @@ def test_catalog_requires_cpu_and_gpu_workload_representatives() -> None:
                     {
                         "name": "prep-smoke",
                         "repository": "dolma",
-                        "compute_profile": "cpu-small",
                         "maximum_runtime_hours": "1",
                         "maximum_attempts": 1,
                         "checkpoint": None,
@@ -216,32 +220,29 @@ def test_catalog_requires_cpu_and_gpu_workload_representatives() -> None:
     assert_validation_error(
         exc_info.value,
         error_type="value_error",
-        message_fragment="representative CPU and GPU workloads are required",
+        message_fragment="representative CPU and GPU compute profiles are required",
     )
 
 
 @pytest.mark.parametrize(
     "mutation",
     [
-        "cpu_only_workloads",
+        "cpu_only_profiles",
         "duplicate_profile_name",
         "duplicate_workload_name",
-        "unknown_compute_profile",
+        "workload_naming_a_machine",
         "retryable_without_checkpoint",
         "invalid_destination_prefix",
     ],
 )
 def test_catalog_rejects_invalid_binding_rules(mutation: str) -> None:
     payload = catalog_payload()
-    if mutation == "cpu_only_workloads":
-        workloads = list(payload["workloads"])  # type: ignore[arg-type]
-        workloads[1] = {
-            **workloads[1],
-            "compute_profile": "cpu-32vcpu",
-        }
-        payload["workloads"] = workloads
+    if mutation == "cpu_only_profiles":
+        profiles = list(payload["compute_profiles"])  # type: ignore[arg-type]
+        profiles[1] = {**profiles[1], "accelerator": "cpu"}
+        payload["compute_profiles"] = profiles
         expected_type = "value_error"
-        expected_message = "representative CPU and GPU workloads are required"
+        expected_message = "representative CPU and GPU compute profiles are required"
     elif mutation == "duplicate_profile_name":
         profiles = list(payload["compute_profiles"])  # type: ignore[arg-type]
         profiles[1] = {**profiles[1], "name": profiles[0]["name"]}
@@ -254,12 +255,17 @@ def test_catalog_rejects_invalid_binding_rules(mutation: str) -> None:
         payload["workloads"] = workloads
         expected_type = "value_error"
         expected_message = "workload names must be unique"
-    elif mutation == "unknown_compute_profile":
+    elif mutation == "workload_naming_a_machine":
+        # THE ROW THAT USED TO SAY "unknown compute profile" AND NOW SAYS THE FIELD IS GONE.
+        # A workload profile declaring a machine was the defect rather than the guard: the
+        # submission form overrode whatever it said, so the catalog's answer was read only
+        # when nobody supplied one. The contract forbids the key outright, which is what
+        # stops a well-meaning edit putting it back and having it silently ignored.
         workloads = list(payload["workloads"])  # type: ignore[arg-type]
-        workloads[0] = {**workloads[0], "compute_profile": "missing-profile"}
+        workloads[0] = {**workloads[0], "compute_profile": "cpu-32vcpu"}
         payload["workloads"] = workloads
-        expected_type = "value_error"
-        expected_message = "unknown compute profile: missing-profile"
+        expected_type = "extra_forbidden"
+        expected_message = None
     elif mutation == "retryable_without_checkpoint":
         workloads = list(payload["workloads"])  # type: ignore[arg-type]
         workloads[0] = {
@@ -295,27 +301,32 @@ def test_workload_catalog_yaml_validates_against_contract() -> None:
     # Thirteen since gpu-8xa10g, the g5.48xlarge the catalog had never priced. Same tripwire
     # role as the workload count below: a profile arriving without a deliberate edit.
     assert len(catalog.compute_profiles) == 13
-    # Seven since edullm-data-validate and olmo-eval-check-cpu, the first entries here that
-    # name a repository other than OLMo-core. The count is the tripwire for a workload
-    # appearing without a deliberate edit, so it moves with the edit and not before.
-    assert len(catalog.workloads) == 7
-    # The CPU workload Phase 3 runs. It names OLMo-core, which was the only registered
-    # repository with a published image when this was written; dolma-tokenize is the same
-    # shape against a repository that still has neither.
-    runnable_cpu = next(
-        workload for workload in catalog.workloads if workload.name == "olmo-core-check-cpu"
+    # Five since the presets collapsed. It was seven, and the two pairs that merged --
+    # olmo-core-check-cpu with olmo-core-check-gpu, and olmo-core-train-1gpu with
+    # olmo-core-train-4gpu -- differed only in a compute profile the submission form
+    # overrode. The count is the tripwire for a workload appearing without a deliberate
+    # edit, so it moves with the edit and not before.
+    assert len(catalog.workloads) == 5
+    # The check Phase 3 runs. It names OLMo-core, which was the only registered repository
+    # with a published image when this was written; dolma-tokenize is the same shape against
+    # a repository that still has neither.
+    runnable_check = next(
+        workload for workload in catalog.workloads if workload.name == "olmo-core-check"
     )
-    assert runnable_cpu.repository == "OLMo-core"
-    assert runnable_cpu.compute_profile == "cpu-32vcpu"
+    assert runnable_check.repository == "OLMo-core"
+    # THE MACHINE IS AN ARGUMENT HERE BECAUSE IT IS AN ARGUMENT ON THE FORM. This used to
+    # read the profile each workload declared and price it against that. A preset declares
+    # no machine now, so pricing one is a question about a submission rather than about the
+    # catalog, and these two are the pairings a submitter would actually make.
     profile_by_name = {profile.name: profile for profile in catalog.compute_profiles}
     cpu_workload = next(
         workload for workload in catalog.workloads if workload.name == "dolma-tokenize"
     )
     gpu_workload = next(
-        workload for workload in catalog.workloads if workload.name == "olmo-core-train-4gpu"
+        workload for workload in catalog.workloads if workload.name == "olmo-core-train"
     )
-    cpu_profile = profile_by_name[cpu_workload.compute_profile]
-    gpu_profile = profile_by_name[gpu_workload.compute_profile]
+    cpu_profile = profile_by_name["cpu-32vcpu"]
+    gpu_profile = profile_by_name["gpu-4xa10g"]
     cpu_cost = CostInputs(
         hourly_rate_usd=cpu_profile.hourly_rate_usd,
         nodes=cpu_profile.nodes,
@@ -329,9 +340,10 @@ def test_workload_catalog_yaml_validates_against_contract() -> None:
         maximum_attempts=gpu_workload.maximum_attempts,
     )
     assert cpu_cost.maximum_compute_cost_usd == Decimal("2.86")
-    # Was 5.67, which was one hour and one attempt on four A10G. Both bounds were raised to
-    # olmo-core-train-1gpu's, so this is twelve hours across two attempts at $5.672.
-    assert gpu_cost.maximum_compute_cost_usd == Decimal("136.13")
+    # Was 136.13, which was twelve hours across two attempts at $5.672.
+    # routine_maximum_runtime_hours went from 12 to 24 and this entry's bound went with it,
+    # so the ceiling a four-GPU training run can reach doubled and is still under $500.
+    assert gpu_cost.maximum_compute_cost_usd == Decimal("272.26")
 
 
 def test_catalog_rejects_duplicate_profile_name_when_every_other_field_differs() -> None:
