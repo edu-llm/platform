@@ -173,16 +173,24 @@ def test_every_environment_variable_the_guide_promises_is_one_the_container_gets
     # cases each variable belongs to.
     from tests.test_phase4_training_submission import published_reference
 
+    # A fan-out beside the two dataset cases, and for the same reason. A cell is told
+    # EDULLM_FANOUT_INDEX_PARAMETER and a single run is not, so a union built only from
+    # single runs would report the guide's fan-out section as promising something the
+    # container never gets. AWS_BATCH_JOB_ARRAY_INDEX is documented in the same table and
+    # is deliberately absent from this comparison: Batch sets it in each child, so nothing
+    # here sends it and a submit request that did would be overriding the one value the
+    # platform must not author.
     sent: set[str] = set()
     for dataset_reference in (None, published_reference("regmix-10b-v1")):
-        request = batch_submit_request(
-            manifest=manifest(),
-            target=target(),
-            run_id=RUN_ID,
-            job_definition=target().job_definition_arn,
-            dataset_reference=dataset_reference,
-        )
-        sent |= {entry["Name"] for entry in request["ContainerOverrides"]["Environment"]}
+        for fanout in (None, {"size": 4, "index_parameter": "seed"}):
+            request = batch_submit_request(
+                manifest=manifest(fanout=fanout),
+                target=target(),
+                run_id=RUN_ID,
+                job_definition=target().job_definition_arn,
+                dataset_reference=dataset_reference,
+            )
+            sent |= {entry["Name"] for entry in request["ContainerOverrides"]["Environment"]}
 
     # THE WAIVER TOKEN TRAVELS THE OTHER WAY AND IS THE ONE EXCLUSION. Every name below is
     # something the platform hands the container, and a guide naming one the container never

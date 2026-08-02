@@ -7,12 +7,12 @@ The digest is `sha256` over `canonical_json_bytes(model)`: the validated contrac
 | fixture | contract | canonical bytes | digest |
 | --- | --- | --- | --- |
 | fixtures/authorization/admin-exception.yaml | AuthorizationScenario | 648 | sha256:f7112e2f6e79a522d42557253529bf462c86b3954b095afcf8c5675c3fb4b436 |
-| fixtures/authorization/lead-self-authorization.yaml | AuthorizationScenario | 595 | sha256:f86d4d6a196dfaaa06885f3511fe12d90fce2026705f28140be7829531d608ca |
+| fixtures/authorization/lead-self-authorization.yaml | AuthorizationScenario | 595 | sha256:6be0fa9a4e2e6b737579c7d7a777783515a255cfbf9aa70a8f599fc498d24313 |
 | fixtures/authorization/member-approval.yaml | AuthorizationScenario | 648 | sha256:d3b1164d31694a31f9fd9fb97318c6567452e5d5161640da3bb2f8f6494ad765 |
 | fixtures/manifests/cpu-routine.yaml | RunManifest | 626 | sha256:44f5da44d110a82934b8876529caf2eed09ac03fc5ac0aafb5b3b87694283352 |
 | fixtures/manifests/gpu-exception.yaml | RunManifest | 628 | sha256:9f98a7b409acaebe5633a8291e1b25cb6ff98d962942779402049c95b08c1a36 |
 | fixtures/manifests/gpu-routine.yaml | RunManifest | 618 | sha256:e95cc487f936490f236b6a01e1dd526c3dcdfda2a80f12320744b6ed0ba7941a |
-| fixtures/manifests/multiseed-routine.yaml | RunManifest | 689 | sha256:c9758806493bbca6a047015e6641d92e415ccb32b9caeb5de3e7503963d09b5f |
+| fixtures/manifests/multiseed-routine.yaml | RunManifest | 672 | sha256:ee03afcb6d2d07a40c21a5de43c9edd160fa74afa74ed00d87292cadb635c49a |
 | fixtures/manifests/olmo-branch-routine.yaml | RunManifest | 634 | sha256:117f312a6453eba2851e5d875082cdf08500170b4eab2c9563695b06407a1643 |
 | fixtures/manifests/sagemaker-routine.yaml | RunManifest | 628 | sha256:21dacc0c6c5018242bc7be920fb84f7eb4a1c53b11401c5d445e01b80a6320c2 |
 

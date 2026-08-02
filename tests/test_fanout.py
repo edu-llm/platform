@@ -45,7 +45,6 @@ def shipped_thresholds() -> PolicyThresholds:
 def fanout_payload(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
         "size": 20,
-        "max_parallel": 8,
         "index_parameter": "shard_index",
     }
     payload.update(overrides)
@@ -133,7 +132,6 @@ def test_manifest_accepts_a_fanout_block() -> None:
     manifest = sweep_manifest()
     assert manifest.fanout is not None
     assert manifest.fanout.size == 20
-    assert manifest.fanout.max_parallel == 8
     assert manifest.fanout.index_parameter == "shard_index"
 
 
@@ -146,7 +144,7 @@ def test_manifest_fanout_is_optional() -> None:
 @pytest.mark.parametrize("size", [0, 1])
 def test_fanout_rejects_a_size_below_two(size: int) -> None:
     with pytest.raises(ValidationError) as exc_info:
-        sweep_manifest(fanout=fanout_payload(size=size, max_parallel=1))
+        sweep_manifest(fanout=fanout_payload(size=size))
     assert_validation_error(
         exc_info.value,
         error_type="greater_than_equal",
@@ -154,23 +152,27 @@ def test_fanout_rejects_a_size_below_two(size: int) -> None:
     )
 
 
-def test_fanout_rejects_parallelism_above_size() -> None:
+def test_a_fanout_declaring_a_parallelism_cap_is_refused_rather_than_ignored() -> None:
+    """Mutation: drop ``max_parallel`` from the model and let the key through.
+
+    The field was removed because Batch's ``arrayProperties`` takes a size and no
+    concurrency cap, so the number was recorded and never applied. What makes the removal
+    worth a test of its own is the failure mode of doing it halfway. A model that quietly
+    accepted the key would leave a submitter believing they had set a limit, which is the
+    exact belief the removal exists to end, and it would put a field back into the hashed
+    manifest that no code reads.
+
+    ``ContractModel`` forbids extra keys, so this is a refusal rather than a silent drop,
+    and a manifest recorded before the removal now fails to load instead of loading
+    without the number it was written with. No such record exists -- every intent record
+    under fixtures/evidence carries ``"fanout":null`` -- which is what made the removal
+    affordable and is checked here so that the claim is not left to a comment.
+    """
     with pytest.raises(ValidationError) as exc_info:
-        sweep_manifest(fanout=fanout_payload(size=4, max_parallel=5))
+        sweep_manifest(fanout=fanout_payload(max_parallel=8))
     assert_validation_error(
         exc_info.value,
-        error_type="value_error",
-        loc=("fanout",),
-        message_fragment="fan-out parallelism must not exceed fan-out size",
-    )
-
-
-def test_fanout_rejects_zero_parallelism() -> None:
-    with pytest.raises(ValidationError) as exc_info:
-        sweep_manifest(fanout=fanout_payload(max_parallel=0))
-    assert_validation_error(
-        exc_info.value,
-        error_type="greater_than_equal",
+        error_type="extra_forbidden",
         loc=("fanout", "max_parallel"),
     )
 
@@ -183,12 +185,6 @@ def test_fanout_rejects_an_empty_index_parameter() -> None:
         error_type="string_too_short",
         loc=("fanout", "index_parameter"),
     )
-
-
-def test_fanout_allows_parallelism_equal_to_size() -> None:
-    manifest = sweep_manifest(fanout=fanout_payload(size=4, max_parallel=4))
-    assert manifest.fanout is not None
-    assert manifest.fanout.max_parallel == manifest.fanout.size
 
 
 @pytest.mark.parametrize(
@@ -277,7 +273,6 @@ def test_the_multiseed_fixture_fans_out_over_seeds() -> None:
     assert manifest.fanout is not None
     assert manifest.fanout.index_parameter == "seed"
     assert manifest.fanout.size == 5
-    assert manifest.fanout.max_parallel == 5
 
 
 def test_the_multiseed_fixture_is_priced_across_the_whole_submission() -> None:
@@ -312,7 +307,6 @@ def test_the_multiseed_fixture_stays_within_the_routine_ceilings() -> None:
     thresholds = shipped_thresholds()
     facts = facts_for(manifest)
     assert facts.fanout_size <= thresholds.routine_maximum_fanout_size
-    assert facts.fanout_parallelism <= thresholds.routine_maximum_parallelism
     assert numeric_bound_violations(facts, thresholds) == frozenset()
     assert classify_request(
         facts, thresholds, hourly_rate_usd=rate_for(manifest)
@@ -343,9 +337,30 @@ def test_a_request_without_a_fanout_classifies_exactly_as_before() -> None:
 
 
 def test_request_facts_carry_the_fanout_shape_declared_by_the_manifest() -> None:
-    facts = facts_for(sweep_manifest(fanout=fanout_payload(size=12, max_parallel=3)))
+    facts = facts_for(sweep_manifest(fanout=fanout_payload(size=12)))
     assert facts.fanout_size == 12
-    assert facts.fanout_parallelism == 3
+
+
+def test_no_manifest_can_raise_the_parallelism_a_request_is_classified_on() -> None:
+    """The bound survives its only input, and a reader should find that written down.
+
+    ``PolicyThresholds.routine_maximum_parallelism`` and
+    ``RequestFacts.fanout_parallelism`` are both still here and ``classify_request`` still
+    compares them, but ``FanOut.max_parallel`` was the only thing that ever set the fact.
+    So every submission now classifies at one however wide it fans out, and a request that
+    used to be an exception on parallelism alone is routine.
+
+    That is a loosening of who may release a run, and it is recorded as a test rather than
+    a comment because the tidy follow-up is to delete the threshold, which is a
+    policy_version bump somebody has to decide on. Until then this is the honest
+    description of what the bound does.
+    """
+    widest = sweep_manifest(fanout=fanout_payload(size=64))
+    facts = facts_for(widest)
+
+    assert facts.fanout_size == 64
+    assert facts.fanout_parallelism == 1
+    assert facts.fanout_parallelism <= shipped_thresholds().routine_maximum_parallelism
 
 
 def test_a_sweep_is_priced_as_one_submission_so_it_cannot_hide_behind_cheap_cells() -> None:
@@ -416,35 +431,15 @@ def test_a_hundred_trivial_cells_is_an_exception_on_count_alone() -> None:
     )
 
 
-def test_parallelism_above_the_bound_is_an_exception_on_its_own() -> None:
+def test_a_fanout_at_the_count_ceiling_stays_routine() -> None:
     thresholds = shipped_thresholds()
     sweep = sweep_manifest(
-        fanout=fanout_payload(size=32, max_parallel=16),
-        maximum_runtime_hours="0.05",
-    )
-    facts = facts_for(sweep)
-
-    assert facts.fanout_size <= thresholds.routine_maximum_fanout_size
-    assert facts.estimated_cost_usd < thresholds.routine_maximum_cost_usd
-    assert numeric_bound_violations(facts, thresholds) == frozenset({"parallelism"})
-    assert classify_request(
-        facts, thresholds, hourly_rate_usd=rate_for(sweep)
-    ) is ApprovalClass.EXCEPTION
-
-
-def test_a_fanout_at_both_count_ceilings_stays_routine() -> None:
-    thresholds = shipped_thresholds()
-    sweep = sweep_manifest(
-        fanout=fanout_payload(
-            size=thresholds.routine_maximum_fanout_size,
-            max_parallel=thresholds.routine_maximum_parallelism,
-        ),
+        fanout=fanout_payload(size=thresholds.routine_maximum_fanout_size),
         maximum_runtime_hours="0.05",
     )
     facts = facts_for(sweep)
 
     assert facts.fanout_size == 64
-    assert facts.fanout_parallelism == 8
     assert numeric_bound_violations(facts, thresholds) == frozenset()
     assert classify_request(
         facts, thresholds, hourly_rate_usd=rate_for(sweep)
@@ -458,7 +453,7 @@ def test_fanout_manifest_round_trips_through_canonical_json() -> None:
 
     assert restored == manifest
     assert sha256_digest(restored) == sha256_digest(manifest)
-    assert b'"fanout":{"index_parameter":"shard_index","max_parallel":8,"size":20}' in encoded
+    assert b'"fanout":{"index_parameter":"shard_index","size":20}' in encoded
 
 
 def test_fanout_manifest_digest_is_stable_across_field_ordering() -> None:

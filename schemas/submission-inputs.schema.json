@@ -43,19 +43,6 @@
       "default": null,
       "title": "Fanout Index Parameter"
     },
-    "fanout_parallelism": {
-      "anyOf": [
-        {
-          "minimum": 1,
-          "type": "integer"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Fanout Parallelism"
-    },
     "fanout_size": {
       "anyOf": [
         {

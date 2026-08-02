@@ -114,9 +114,30 @@ Set for you. You never supply these, and a value you set yourself is one the rec
 | `EDULLM_COMMIT_SHA` | The commit that was resolved and built |
 | `EDULLM_DATASET_RELEASE` | The dataset you named |
 | `EDULLM_DATASET_ID`, `EDULLM_DATASET_VERSION`, `EDULLM_DATASET_TOKENIZER` | Which published corpus that resolves to, and what tokenised it. Absent when you picked `none` |
+| `AWS_BATCH_JOB_ARRAY_INDEX` | Which cell of a fan-out this is, counting from zero. Set by Batch, and only on a fan-out |
+| `EDULLM_FANOUT_INDEX_PARAMETER` | What that index varies, copied from what you put on the form. Only on a fan-out |
 | `WANDB_PROJECT`, `WANDB_ENTITY` | Read by the W&B client directly |
 
 The three dataset variables come from the registry entry behind the field you picked rather than from anything you typed.
+
+## Fan-out
+
+A fan-out runs your command once per cell. Give the form a `fanout_size` and a `fanout_index_parameter` naming what varies, such as `seed` or `shard`.
+
+Each cell gets its own output prefix. `EDULLM_OUTPUT_PREFIX` and `EDULLM_CHECKPOINT_DIR` already carry the `cell-<index>/` segment by the time your program starts, so a command that writes where it is told needs no change to be safe in a fan-out. A single run is unaffected and keeps the prefix it has always had.
+
+```
+teams/curriculum/runs/run_019fbce3-…/cell-0/
+teams/curriculum/runs/run_019fbce3-…/cell-1/
+```
+
+Read `AWS_BATCH_JOB_ARRAY_INDEX` to decide what this cell should do, and `EDULLM_FANOUT_INDEX_PARAMETER` to know what you said it varies.
+
+```
+bash -lc 'python train.py --seed "$AWS_BATCH_JOB_ARRAY_INDEX" --save-folder "$EDULLM_CHECKPOINT_DIR"'
+```
+
+**How many cells run at once is not something you set.** Batch takes a size for an array job and no concurrency cap, so what bounds it is how much of the queue's capacity one cell reserves. A fan-out is priced and approved as one submission at its full size.
 
 ## Looking at a run, and stopping one
 

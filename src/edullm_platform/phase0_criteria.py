@@ -453,8 +453,14 @@ def phase0_criteria(references: Sequence[FixtureReference]) -> tuple[CriterionSp
             proving_node_ids=(
                 "tests/test_fanout.py::test_a_sweep_is_priced_as_one_submission_so_it_cannot_hide_behind_cheap_cells",
                 "tests/test_fanout.py::test_a_hundred_trivial_cells_is_an_exception_on_count_alone",
-                "tests/test_fanout.py::test_parallelism_above_the_bound_is_an_exception_on_its_own",
-                "tests/test_fanout.py::test_a_fanout_at_both_count_ceilings_stays_routine",
+                # The manifest-level parallelism citation that sat here went with
+                # FanOut.max_parallel. No manifest can raise fanout_parallelism any more, so
+                # a test classifying a sweep as an exception on that bound alone cannot be
+                # written from a submission. The two test_policy.py entries below still
+                # prove the bound itself, built from RequestFacts directly, and
+                # test_no_manifest_can_raise_the_parallelism_a_request_is_classified_on
+                # records why nothing reaches it from this side.
+                "tests/test_fanout.py::test_a_fanout_at_the_count_ceiling_stays_routine",
                 "tests/test_fanout.py::test_the_multiseed_fixture_stays_within_the_routine_ceilings",
                 "tests/test_policy.py::test_numeric_bound_violations_classify_as_exception[fanout_size-65]",
                 "tests/test_policy.py::test_numeric_bound_violations_classify_as_exception[fanout_parallelism-9]",

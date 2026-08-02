@@ -2,8 +2,8 @@
 
 Phase: phase-0
 Bundle schema version: 1
-Source commit: 09313ead451c08b596ac8d6dcf8116bffec71af8
-Generated: 2026-08-02T14:32:04+00:00
+Source commit: f2cf2ffa6b8a16c64159e8424371d4a69a9d859b
+Generated: 2026-08-02T16:10:51+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 0 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase0_proof.py` at generation time.
 
@@ -18,14 +18,14 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 4432 |
-| suite tests executed | 4239 |
-| suite passed | 4237 |
-| suite failed | 2 |
+| suite tests collected | 4617 |
+| suite tests executed | 4424 |
+| suite passed | 4419 |
+| suite failed | 5 |
 | suite errored | 0 |
 | suite skipped | 0 |
-| matrix node ids executed | 255 |
-| matrix node ids passed | 255 |
+| matrix node ids executed | 254 |
+| matrix node ids passed | 254 |
 | matrix node ids failed | 0 |
 | phase criteria | 13 |
 | criteria COVERED | 12 (1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13) |
@@ -88,14 +88,14 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | --- | --- |
 | config/organization.yaml | sha256:4b3d6cbdc0c080dc01b36918401f720f9cfc87d821a6cfa61787fdc7020d80cf |
 | config/policy.yaml | sha256:de016ecbffd04402f774351a830b6409ea3eda9b1fe03da14459992eec13edf2 |
-| config/workload-catalog.yaml | sha256:e1da164224557a29f354b5a44c2ba86e69e40b408b0143768e4c98fe081d761a |
+| config/workload-catalog.yaml | sha256:105db4ff1fd4e75223b80a073433388a6f0f935915c28df03739339b91ef6447 |
 | fixtures/authorization/admin-exception.yaml | sha256:f0b40712a2afc6cbde4c99ede54e85280d33437706a2ee83509e5e17e614da63 |
-| fixtures/authorization/lead-self-authorization.yaml | sha256:4ede75bdc3b8ecfe22e958da3ee4ac3d73c6fc50d012aa10507f311cb7e2a45e |
+| fixtures/authorization/lead-self-authorization.yaml | sha256:f79215a90f97b4662ea7ca93c3ab3fe962c8404f00f1e0ee14ffdbb9162d5e62 |
 | fixtures/authorization/member-approval.yaml | sha256:71146bcb26b212ed86cc883807243280b522f2c8882d8f0d53feeb4619c6d571 |
 | fixtures/manifests/cpu-routine.yaml | sha256:d862931f6b4bcbb2eb58ac5279d619d333353c693cf79129de0020cdf40fd66d |
 | fixtures/manifests/gpu-exception.yaml | sha256:a2b15bb3ee4bbd76734b50209a507303c94c7fed5146be5d423dcb66bdf41165 |
 | fixtures/manifests/gpu-routine.yaml | sha256:9ab17092987083a2f4ffabe42f5ad1bb938e0178b6e333f7cb2d9c3aa0036de5 |
-| fixtures/manifests/multiseed-routine.yaml | sha256:34adca6624c96294b3415cf5b13d687081a7565d2dfb99561a05c4a3151d032a |
+| fixtures/manifests/multiseed-routine.yaml | sha256:c176bbf3e41e9645270e735ca3704e994a8839a1b5063ee195cefadfed69198d |
 | fixtures/manifests/olmo-branch-routine.yaml | sha256:4ca3591efed038502e454184f05e9660659c89e48eb0a9283ac0a2fffdd90c45 |
 | fixtures/manifests/sagemaker-routine.yaml | sha256:aaeda5bc0ebb3804e8b79a9f4da750e25faad8dc4c52d22c49c55ce0561abe7e |
 | schemas/batch-job-binding.schema.json | sha256:41a20845192e959dd91b32f87d57da0cf3b04e5a2177e0200f27aec2cece901c |
@@ -103,21 +103,21 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | schemas/datasets.schema.json | sha256:28c781ffa1a7df6b999fce428aa8488aec5b8d34081089205e53d5fa6e797f36 |
 | schemas/decision-record.schema.json | sha256:852ee127b92bc2a592f5da86972e32ed50e949548951bd66fed94b237b6ce821 |
 | schemas/image-exceptions.schema.json | sha256:e57e7388a87f331a31c9f1e871065306421772bf1da3a043b46f121bde1ffb17 |
-| schemas/intent-record.schema.json | sha256:39b40c1375c470efe47179c52e898562a7623c1a79f429de8f078f46cf3ddc8d |
+| schemas/intent-record.schema.json | sha256:5b0437c8e9866fbf74b11895fe27553d1902f150c6681a604b7ef32c45c6fcd2 |
 | schemas/lifecycle-event.schema.json | sha256:f747e330743b4f471021b38e161d26e24ecda8fb47ab02b08939ee298a1921ab |
 | schemas/logical-run.schema.json | sha256:898f1d6b338ea810a75c0614035a49e0812147aef7816037c97447a602d37688 |
 | schemas/organization.schema.json | sha256:37c30582f008b541fe11a1403f5311026ae908d98e8821b4ed6842c3d4365e66 |
 | schemas/policy.schema.json | sha256:e57443df3ebf18a1b1858a441f99aec2d41121a3f2110d05be30b530ff2b7f67 |
 | schemas/repositories.schema.json | sha256:ee5ef9172b9ab89aa0965cefda9d86fda855c4cd3f0eeda41ab50551327ff68e |
 | schemas/result-manifest.schema.json | sha256:5bd07bde5ac6c86323878915dd684dafa2e838fa20b53d78554074159563cb26 |
-| schemas/run-manifest.schema.json | sha256:62851f48df41a1dc270a525b44a8ef01eab660af9d5b60030d6c0a8776e196f2 |
+| schemas/run-manifest.schema.json | sha256:7f6795c9a7a246b2670bc181f19f07ef16086b233b6d14d1d8def41971b04769 |
 | schemas/scheduler-attempt.schema.json | sha256:91984a9fb1f7f9150f7799dc337807bd14b93b50908a56e0e230391546c9c4ac |
-| schemas/submission-inputs.schema.json | sha256:7d3ab10e3a517eef85701881d1aa2eafec02a89b293e79309a88a8dbaceed5d1 |
+| schemas/submission-inputs.schema.json | sha256:02585ab3655cb95c5cf574c9e4906f6709ad54973db5cf353b868cd747880fe7 |
 | schemas/workload-catalog.schema.json | sha256:2345ae1bd3a2985fa55bdb2c7b7e8bba4127c925ba43f086929f443fa32d1384 |
 
 ## Known limitations
 
-- 11 of 13 compute profiles are provisioned: cpu-32vcpu, gpu-1xa10g, gpu-1xl4, gpu-1xt4, gpu-4xa10g, gpu-4xl4, gpu-4xl40s, gpu-4xt4, gpu-8xa100, gpu-8xa10g, gpu-8xh100. Every other profile is priced and dated but carries provisioned: false, so resolve_compute_profile_for_execution refuses it. Phase 0 proves pricing and classification for all of them and that nothing can run is no longer true of the whole catalog.
+- 15 of 16 compute profiles are provisioned: cpu-32vcpu, gpu-1xa10g, gpu-1xl4, gpu-1xl40s, gpu-1xt4, gpu-4xa10g, gpu-4xl4, gpu-4xl40s, gpu-4xt4, gpu-8xa100, gpu-8xa10g, gpu-8xh100, gpu-8xl4, gpu-8xl40s, gpu-8xt4. Every other profile is priced and dated but carries provisioned: false, so resolve_compute_profile_for_execution refuses it. Phase 0 proves pricing and classification for all of them and that nothing can run is no longer true of the whole catalog.
 - Approval scope is organization. Any team lead may approve any member's routine submission. Check D1 in the negative-case matrix is deferred for this reason.
 - The secret scan applied to this bundle masks its own content digests before scanning. A 64-character hexadecimal sha256 digest and a 40-character hexadecimal commit SHA both match the generic long-credential patterns in evidence.py, so the two exact token shapes this bundle emits are replaced with placeholders and everything else is scanned unchanged. No other exemption is applied.
 - The nested verification run excludes every test module that builds a proof bundle (tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py, tests/test_phase5_proof.py), because those tests invoke a generator and would recurse. They run in the reviewer's own `uv run pytest -q`, which is the command this bundle asks the reviewer to run.

@@ -4,7 +4,7 @@ The 13 Phase 0 acceptance criteria, mapped to the tests cited for each one by no
 
 This mapping is defined once, in `src/edullm_platform/phase0_criteria.py`. The acceptance gate reads the same definition and executes the same node ids, so this matrix and `tools/validate_phase0.py` cannot disagree.
 
-Verification run: 255 tests executed, 255 passed, 0 failed, 0 errored, pytest exit code 0.
+Verification run: 254 tests executed, 254 passed, 0 failed, 0 errored, pytest exit code 0.
 
 Three statuses exist and no more. **COVERED** means one or more cited tests prove the criterion as stated against the shipped configuration and all of them pass; the gate passes it. **DEFERRED** means an explicit recorded decision not to satisfy it yet, which requires both a written reason and a written trigger describing what makes it live again; the gate passes it. **GAP** is everything else, and the gate fails it. There is no in-between status, because an in-between status is what lets a gate be green and wrong at the same time.
 
@@ -23,7 +23,7 @@ Three statuses exist and no more. **COVERED** means one or more cited tests prov
 | 9 | COVERED | 4 | 12 | Cross-team attribution fails; a submission naming a team the submitter does not belong to is rejected. Approver scope is a separate question and follows `approval_scope`. |
 | 10 | DEFERRED | 0 | 10 | Lead self-authorization succeeds only within the lead's bound team and policy. |
 | 11 | COVERED | 7 | 0 | A fan-out is priced across the whole submission, not per cell. |
-| 12 | COVERED | 9 | 0 | A fan-out whose total exceeds the routine ceiling classifies as an exception, so a costly sweep cannot be decomposed into routine single runs. |
+| 12 | COVERED | 8 | 0 | A fan-out whose total exceeds the routine ceiling classifies as an exception, so a costly sweep cannot be decomposed into routine single runs. |
 | 13 | COVERED | 7 | 0 | A fan-out mixing compute profiles, image digests, or dataset releases is rejected. |
 | D1 | DEFERRED | 0 | 6 | Wrong-team lead approver is rejected. |
 
@@ -216,7 +216,7 @@ Proving tests (22), all executed and passing:
 - `tests/test_fanout.py::test_the_fanout_block_cannot_carry_per_cell_resource_overrides[dataset_release]`
 - `tests/test_fanout.py::test_the_fanout_block_cannot_carry_per_cell_resource_overrides[overrides]`
 - `tests/test_compute_profiles.py::test_unpriced_profile_is_refused_as_unregistered`
-- `tests/test_compute_profiles.py::test_an_unprovisioned_profile_is_refused_at_execution[gpu-1xl40s]`
+- `tests/test_compute_profiles.py::test_an_unprovisioned_profile_is_refused_at_execution[gpu-1xa10g-sagemaker]`
 - `tests/test_workload.py::test_resolving_unknown_profile_reports_unregistered_profile`
 - `tests/test_phase0_gate.py::test_representative_manifests_fails_for_unregistered_compute_profile`
 - `tests/test_bindings.py::test_team_binding_rejects_s3_namespaces_outside_the_sandbox[memory-split]`
@@ -319,12 +319,11 @@ Proving tests (7), all executed and passing:
 
 **Status: COVERED**
 
-Proving tests (9), all executed and passing:
+Proving tests (8), all executed and passing:
 
 - `tests/test_fanout.py::test_a_sweep_is_priced_as_one_submission_so_it_cannot_hide_behind_cheap_cells`
 - `tests/test_fanout.py::test_a_hundred_trivial_cells_is_an_exception_on_count_alone`
-- `tests/test_fanout.py::test_parallelism_above_the_bound_is_an_exception_on_its_own`
-- `tests/test_fanout.py::test_a_fanout_at_both_count_ceilings_stays_routine`
+- `tests/test_fanout.py::test_a_fanout_at_the_count_ceiling_stays_routine`
 - `tests/test_fanout.py::test_the_multiseed_fixture_stays_within_the_routine_ceilings`
 - `tests/test_policy.py::test_numeric_bound_violations_classify_as_exception[fanout_size-65]`
 - `tests/test_policy.py::test_numeric_bound_violations_classify_as_exception[fanout_parallelism-9]`

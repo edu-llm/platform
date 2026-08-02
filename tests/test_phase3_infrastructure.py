@@ -411,7 +411,7 @@ def every_submit_request_field() -> frozenset[str]:
     reading one shape would leave the fan-out key unsearched.
     """
     single = cpu_manifest()
-    fanned = cpu_manifest(fanout={"size": 2, "max_parallel": 2, "index_parameter": "SEED"})
+    fanned = cpu_manifest(fanout={"size": 2, "index_parameter": "SEED"})
     return frozenset(
         key
         for manifest in (single, fanned)

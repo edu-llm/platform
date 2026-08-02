@@ -174,17 +174,17 @@ on:
         required: false
         type: string
         default: ""
+      # THERE WERE THREE OF THESE AND THE MIDDLE ONE WAS REMOVED, WHICH IS WORTH KNOWING
+      # BEFORE SOMEBODY ADDS IT BACK. `fanout_parallelism` asked how many cells you expected
+      # to run at once and was labelled as recorded rather than enforced. Batch's SubmitJob
+      # takes a size for an array job and no concurrency cap, so the number went into the
+      # manifest and the approver page and was never sent anywhere. A submitter who filled
+      # it in came away believing their concurrency was bounded, saw the figure again on the
+      # approval, and had nothing limiting them. What bounds how many cells run at once is
+      # the compute environment's vCPU ceiling divided by what one cell reserves, and the
+      # only way to say that is to stop offering a box that implies otherwise.
       fanout_size:
-        description: "Cells in a fan-out. Declare all three fan-out fields or none."
-        required: false
-        type: string
-        default: ""
-      # RECORDED AS YOUR INTENT, NOT APPLIED AS A LIMIT. Batch's SubmitJob takes a size for
-      # an array job and no concurrency cap, so there is nowhere to send this. What bounds
-      # how many cells run at once is the compute environment's vCPU ceiling divided by
-      # what one cell reserves.
-      fanout_parallelism:
-        description: "Cells you expect to run at once. Recorded, not enforced — Batch caps by available capacity."
+        description: "Cells in a fan-out. Declare both fan-out fields or neither."
         required: false
         type: string
         default: ""
@@ -442,7 +442,6 @@ jobs:
           FORM_MAXIMUM_RUNTIME_HOURS: ${{ inputs.maximum_runtime_hours }}
           FORM_MAXIMUM_ATTEMPTS: ${{ inputs.maximum_attempts }}
           FORM_FANOUT_SIZE: ${{ inputs.fanout_size }}
-          FORM_FANOUT_PARALLELISM: ${{ inputs.fanout_parallelism }}
           FORM_FANOUT_INDEX_PARAMETER: ${{ inputs.fanout_index_parameter }}
         run: |
           set -euo pipefail
@@ -469,7 +468,6 @@ jobs:
           WHOLE_FIELDS = (
               ("maximum_attempts", "FORM_MAXIMUM_ATTEMPTS"),
               ("fanout_size", "FORM_FANOUT_SIZE"),
-              ("fanout_parallelism", "FORM_FANOUT_PARALLELISM"),
           )
 
           form: dict[str, object] = {}

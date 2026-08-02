@@ -66,9 +66,6 @@ def manifest_fanout_size(manifest: RunManifest) -> int:
     return 1 if manifest.fanout is None else manifest.fanout.size
 
 
-def manifest_fanout_parallelism(manifest: RunManifest) -> int:
-    return 1 if manifest.fanout is None else manifest.fanout.max_parallel
-
 
 def compute_manifest_cost_inputs(
     manifest: RunManifest, catalog: WorkloadCatalog
@@ -183,7 +180,23 @@ def build_request_facts(
         maximum_runtime_hours=manifest.maximum_runtime_hours,
         maximum_attempts=manifest.maximum_attempts,
         fanout_size=manifest_fanout_size(manifest),
-        fanout_parallelism=manifest_fanout_parallelism(manifest),
+        # fanout_parallelism IS LEFT AT ITS DEFAULT OF 1 AND NO LONGER HAS A SOURCE.
+        #
+        # It used to read RunManifest.fanout.max_parallel, which was removed because Batch
+        # cannot apply a concurrency cap and the field therefore recorded a control that
+        # did not exist. Nothing else in a manifest describes concurrency, so there is
+        # nothing to put here.
+        #
+        # The consequence is deliberate and belongs to whoever owns config/policy.yaml
+        # rather than to this line. RequestFacts.fanout_parallelism and
+        # PolicyThresholds.routine_maximum_parallelism both still exist and
+        # classify_request still compares them, so the bound is live machinery that no
+        # submission can now trip. A request that was an exception on parallelism alone --
+        # thirty-two cells declaring sixteen at once -- is routine from here on. Removing
+        # the threshold would be the tidier tree and it is not this change to make. It
+        # loosens who may release a run, and the file's own rule is that a thresholds edit
+        # is a policy_version bump somebody reviews rather than a refactor that follows a
+        # field around.
     )
 
 

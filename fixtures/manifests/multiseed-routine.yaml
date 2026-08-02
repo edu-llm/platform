@@ -23,5 +23,4 @@ checkpoint:
   resume_required: false
 fanout:
   size: 5
-  max_parallel: 5
   index_parameter: seed

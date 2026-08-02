@@ -8,7 +8,7 @@ What scopes this table is where code sits today, not a record of what the phase 
 | --- | --- | --- | --- | --- | --- |
 | AdmissionDenialMatrix | edullm_platform.admission_denials | record | 1 | no | sha256:fe33252d54657119ea0f49b18d8134909df709834f70af1d1ed4fc1c10c40b11 |
 | DecisionRecord | edullm_platform.contracts.admission | record | 1 | yes | sha256:9482e02ae58fdbe3a8876cf2a10d13b2c383bcd3d724386497c52c5f278611de |
-| IntentRecord | edullm_platform.contracts.admission | record | 1 | yes | sha256:ea5ee7114ae524a14e28691db4445c53a582ee8eef65f299653034cd0db58b58 |
+| IntentRecord | edullm_platform.contracts.admission | record | 1 | yes | sha256:2526b8bcede9fbb55fb02ccec48d5f06d6aa4494a5f4db48f85950e21d4ce155 |
 | AdmissionExecution | edullm_platform.phase2_evidence | record | unversioned | no | sha256:b713e6adbbef4826795d41aa6a4c48780f973639cc1aa2413aca7b627c3b5d63 |
 | AdmissionExecutionInventory | edullm_platform.phase2_evidence | record | unversioned | no | sha256:8193d6d263e3e888b068b9aa36bcaf2dfe5b88ee7d5cbeb70f32481e3de076e1 |
 | EnvironmentInventory | edullm_platform.phase2_evidence | record | unversioned | no | sha256:a496a853cb96ec9f456ebc6fd2c62bca2cbd09221f5e63e1099b13966e9f06d0 |

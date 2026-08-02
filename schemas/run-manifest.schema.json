@@ -34,11 +34,6 @@
           "title": "Index Parameter",
           "type": "string"
         },
-        "max_parallel": {
-          "minimum": 1,
-          "title": "Max Parallel",
-          "type": "integer"
-        },
         "size": {
           "minimum": 2,
           "title": "Size",
@@ -47,7 +42,6 @@
       },
       "required": [
         "size",
-        "max_parallel",
         "index_parameter"
       ],
       "title": "FanOut",
