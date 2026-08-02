@@ -1,6 +1,14 @@
 """Report whether the stored W&B key is well formed and which entity W&B resolves it to.
 
 Prints a length, a truncated digest and the resolved entity. Never prints the key.
+
+The report is also read by something other than a person. ``nightly.yml`` publishes it as
+an artifact and ``submit-run.yml`` refuses a submission on the strength of it, because no
+identity the submit path can obtain holds the read this tool makes and
+``edullm_platform.wandb_preflight`` argues at length why none should. That is what the
+``verdict`` and ``checked_at`` fields are for: a second reader deciding "refused" by
+matching strings against ``looks_wrong``, which is a list of sentences written for a human,
+would be a second definition of the word that drifts from this one without failing.
 """
 
 from __future__ import annotations
@@ -14,7 +22,10 @@ import sys
 import urllib.error
 import urllib.request
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from typing import Any
+
+from edullm_platform.wandb_preflight import CHECKED_AT_FIELD, VERDICT_FIELD, Verdict
 
 SECRET_NAME = "sbsandbox-intern-edullm-wandb-api-key"
 
@@ -27,16 +38,26 @@ VIEWER_QUERY = '{"query":"query { viewer { username entity } }"}'
 SERVICE_ACCOUNT_PREFIX = "wandb_v1_"
 LEGACY_KEY_LENGTH = 40
 
+#: How a network failure introduces itself in the ``error`` this reports. Hoisted to a
+#: constant because the verdict below has to tell "W&B says no" from "W&B did not answer",
+#: and those two must never be separated by a string literal written twice.
+UNREACHABLE_PREFIX = "could not reach W&B"
+
 __all__ = [
+    "CHECKED_AT_FIELD",
     "LEGACY_KEY_LENGTH",
     "SECRET_NAME",
     "SERVICE_ACCOUNT_PREFIX",
+    "UNREACHABLE_PREFIX",
+    "VERDICT_FIELD",
+    "Verdict",
     "WandbCredentialError",
     "ask_wandb_who_this_is",
     "build_parser",
     "describe",
     "main",
     "read_the_secret",
+    "verdict_for",
     "what_looks_wrong",
 ]
 
@@ -121,11 +142,30 @@ def ask_wandb_who_this_is(value: str, *, timeout: int = 30) -> dict[str, Any]:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             body = json.loads(response.read().decode("utf-8", "replace"))
     except (urllib.error.URLError, ValueError) as exc:
-        return {"error": f"could not reach W&B: {exc.__class__.__name__}"}
+        return {"error": f"{UNREACHABLE_PREFIX}: {exc.__class__.__name__}"}
     viewer = (body.get("data") or {}).get("viewer")
     if not viewer:
         return {"error": "W&B does not recognise this key"}
     return {"entity": viewer.get("entity"), "username": viewer.get("username")}
+
+
+def verdict_for(answer: dict[str, Any], *, faults: Sequence[str]) -> Verdict:
+    """What W&B's answer amounts to, in the vocabulary the submit path reads.
+
+    An outage is not a refusal, and keeping them apart is the whole reason this returns
+    three values rather than a boolean. A preflight that read "could not reach W&B" as a bad
+    key would turn every W&B outage into a platform outage, and this repository has already
+    paid once for a check that could not say "I did not find out".
+
+    Faults visible without asking W&B still count as a refusal. A key with the literal word
+    ``api`` glued to the front is the fault that produced the last rotation incident, and
+    W&B refuses it -- so a shape W&B will not accept is a refusal whether or not the round
+    trip happened to confirm it.
+    """
+    error = answer.get("error")
+    if isinstance(error, str) and error.startswith(UNREACHABLE_PREFIX):
+        return Verdict.UNREACHABLE
+    return Verdict.REFUSED if faults else Verdict.ACCEPTED
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -154,6 +194,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     report: dict[str, Any] = {"secret": options.secret_name, **describe(value)}
     faults = what_looks_wrong(value)
     report["looks_wrong"] = faults
+    # When W&B was asked, not when the artifact carrying this was uploaded. The preflight
+    # ages the verdict off this field, so it has to be the moment the answer was true.
+    report[CHECKED_AT_FIELD] = datetime.now(tz=UTC).isoformat()
 
     if not options.offline:
         answer = ask_wandb_who_this_is(value.strip())
@@ -163,6 +206,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif "error" in answer:
             faults = [*faults, answer["error"]]
         report["looks_wrong"] = faults
+        report[VERDICT_FIELD] = verdict_for(answer, faults=faults)
+    # No verdict at all under --offline, rather than one derived from the shape. A shape
+    # check is not W&B's answer, and the last incident was a key of exactly the right shape
+    # that W&B refused; publishing "accepted" for it would be the preflight passing on the
+    # strength of the measurement that already failed to catch it.
 
     print(json.dumps(report, indent=2, sort_keys=True))
     return 1 if faults else 0

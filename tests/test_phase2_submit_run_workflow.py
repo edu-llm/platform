@@ -52,6 +52,11 @@ from edullm_platform.contracts.image import GitHubWorkflowRunReference
 from edullm_platform.contracts.results import output_prefix
 from edullm_platform.execution import CONTAINER_SHAPES, WANDB_ENTITY, batch_submit_request
 from edullm_platform.submission import SubmissionInputs
+from edullm_platform.wandb_preflight import (
+    NIGHTLY_VERDICT_ARTIFACT,
+    NIGHTLY_VERDICT_FILENAME,
+    NIGHTLY_WORKFLOW,
+)
 from tests.test_manifest import load_representative_manifest
 from tools.resolve_published_image import RESOLVER_ECR_ACTIONS
 
@@ -61,6 +66,17 @@ INHERIT_SENTINEL = "inherit"
 WORKFLOW_FILE = ".github/workflows/submit-run.yml"
 WORKFLOW_PATH = WORKFLOWS_ROOT / "submit-run.yml"
 BUILD_WORKFLOW_PATH = WORKFLOWS_ROOT / "build-research-image.yml"
+
+#: The other half of the preflight, and the reason it is read from here rather than only
+#: from tests/test_nightly_workflow.py. The property that matters spans the two files: this
+#: workflow refuses a submission on a verdict that one publishes, and nothing in GitHub or
+#: CloudFormation connects them. A test that only ever looked at one side would let a
+#: rename on the other turn the preflight permanently inert without failing.
+NIGHTLY_PATH = WORKFLOWS_ROOT / NIGHTLY_WORKFLOW
+NIGHTLY_WANDB_JOB = "wandb-credential"
+NIGHTLY_CHECK_STEP = "Ask W&B whether it would accept the stored key"
+NIGHTLY_UPLOAD_STEP = "Publish what W&B said, for the submission preflight to read"
+
 TRUST_POLICY_PATH = PROJECT_ROOT / "infra" / "iam" / "admission-role.yaml"
 LINEAGE_TEMPLATE_PATH = PROJECT_ROOT / "infra" / "lineage-bucket.yaml"
 
@@ -109,15 +125,14 @@ CANCELLED_STEP = "Record that a cancelled workflow stopped no compute"
 DENIALS_TOOL = "tools/verify_admission_denials.py"
 BATCH_DENIALS_TOOL = "tools/verify_batch_denials.py"
 RESOLVER_TOOL = "tools/resolve_published_image.py"
-WANDB_TOOL = "tools/verify_wandb_credential.py"
 
-#: What the W&B preflight makes AWS answer. One read, made by the tool rather than by the
-#: shell, which is why it is declared here the way the two denial matrices are -- a reader
-#: of the enumeration below would otherwise see a step that touches nothing.
-#:
-#: Read out of the tool rather than only restated, because the whole value of the
-#: enumeration is that a call cannot appear without being argued for.
-WANDB_PREFLIGHT_ACTION = "secretsmanager:GetSecretValue"
+#: The W&B preflight, and the tool it deliberately does not run. The check that reads the
+#: secret is `tools/verify_wandb_credential.py`, and it runs in nightly.yml under the one
+#: role in this account that holds `secretsmanager:GetSecretValue` and can be assumed from
+#: GitHub. This workflow reads the verdict that produces, so the preflight adds no AWS call
+#: and no permission -- which is why it contributes nothing to the enumeration below.
+WANDB_PREFLIGHT_TOOL = "tools/verify_wandb_preflight.py"
+WANDB_CREDENTIAL_TOOL = "tools/verify_wandb_credential.py"
 
 # Outputs no run body can be read for. The compile job's four come out of
 # tools/compile_submission.py, and the test below re-derives them from that tool rather
@@ -548,8 +563,11 @@ def test_the_tools_the_run_bodies_reach_for_exist_on_disk() -> None:
         DENIALS_TOOL,
         "tools/verify_approved_manifest.py",
         BATCH_DENIALS_TOOL,
-        WANDB_TOOL,
+        WANDB_PREFLIGHT_TOOL,
     ]
+    # And the one that reads the secret is not among them, which is the whole shape of the
+    # preflight rather than an omission. See its own tests below.
+    assert WANDB_CREDENTIAL_TOOL not in referenced
     for relative in referenced:
         assert (PROJECT_ROOT / relative).is_file(), relative
 
@@ -592,12 +610,16 @@ def _aws_reaching_calls() -> list[tuple[str, tuple[str, ...]]]:
     """Everything this workflow makes AWS answer, in the order the runner reaches it.
 
     A run body that calls the CLI directly contributes the call it makes. Each denial
-    matrix contributes the actions it attempts, the image resolver contributes its two
-    reads, and the W&B preflight contributes its one, because all four are made by a tool
-    rather than by a shell and a reader of this file would otherwise see the submit job
-    reach AWS twice when it reaches it a dozen times. Each matrix's own
-    ``sts:get-caller-identity`` is left out: it requires no permission and cannot be denied
-    by a policy, so it is not part of the surface this enumeration is about.
+    matrix contributes the actions it attempts and the image resolver contributes its two
+    reads, because those are made by a tool rather than by a shell and a reader of this file
+    would otherwise see the submit job reach AWS twice when it reaches it a dozen times.
+    Each matrix's own ``sts:get-caller-identity`` is left out: it requires no permission and
+    cannot be denied by a policy, so it is not part of the surface this enumeration is
+    about.
+
+    The W&B preflight contributes nothing, and that is a property rather than an oversight.
+    It reads a verdict published by nightly.yml through the ``actions: read`` this job
+    already holds for the approvals endpoint, so it reaches no AWS API at all.
     """
     calls: list[tuple[str, tuple[str, ...]]] = []
     for name, script in _run_bodies():
@@ -609,8 +631,6 @@ def _aws_reaching_calls() -> list[tuple[str, tuple[str, ...]]]:
             calls.extend(
                 (name, ("denial-probe", action)) for action in ADMISSION_BATCH_DENIED_ACTIONS
             )
-        if WANDB_TOOL in script:
-            calls.append((name, ("wandb-preflight", WANDB_PREFLIGHT_ACTION)))
         calls.extend((name, tuple(command[:3])) for command in aws_commands(script))
     return calls
 
@@ -637,12 +657,18 @@ def test_the_workflow_makes_exactly_these_aws_calls_in_exactly_this_order() -> N
             (f"submit:{BATCH_DENIALS_STEP}", ("denial-probe", action))
             for action in ADMISSION_BATCH_DENIED_ACTIONS
         ],
-        # The last read before the one call that provisions anything. Its position in this
-        # list is the property rather than its presence -- see the preflight's own tests.
-        (f"submit:{WANDB_PREFLIGHT_STEP}", ("wandb-preflight", WANDB_PREFLIGHT_ACTION)),
+        # The W&B preflight sits between the last of those and the first of these, and
+        # appears in neither, because it makes no AWS call. That is the decision this list
+        # records: the check the preflight acts on is made once a night by the one
+        # GitHub-facing role holding `secretsmanager:GetSecretValue`, and the submit path
+        # reads its answer rather than the key. infra/iam/admission-role.yaml argues it.
         (f"submit:{START_STEP}", ("aws", "stepfunctions", "start-execution")),
         (f"submit:{WAIT_STEP}", ("aws", "stepfunctions", "describe-execution")),
     ]
+    spoken = {word for _name, call in _aws_reaching_calls() for word in call}
+    assert not any("secretsmanager" in word for word in spoken), (
+        "the submit path reads the W&B verdict, never the secret behind it"
+    )
 
 
 def test_the_only_aws_a_dispatch_reaches_before_an_approval_is_a_read_and_a_refusal() -> None:
@@ -675,17 +701,15 @@ def test_both_denial_matrices_are_attempted_before_the_state_machine_is_started(
 
     assert names.index(CREDENTIALS_STEP) < names.index(DENIALS_STEP) < names.index(START_STEP)
     assert names.index(DENIALS_STEP) < names.index(BATCH_DENIALS_STEP) < names.index(START_STEP)
-    # And only one thing reaches AWS in between, which is the W&B preflight, and it is
-    # after both matrices rather than between them. What the matrices establish is what
-    # this session can do, so every dispatch that is going to spend the session should make
-    # them -- a submission refused for a bad credential must not be a dispatch that skipped
-    # a security check. Restricted to this job's own calls, because what an earlier job
-    # reached under a different role says nothing about the session in hand.
+    # And nothing at all reaches AWS in between. The W&B preflight sits there and makes no
+    # call, so the two matrices remain the last statement about this session before it is
+    # spent -- and a submission refused for a bad credential is still a dispatch that made
+    # them, which is the property that matters. Restricted to this job, because what an
+    # earlier job reached under a different role says nothing about the session in hand.
     reaching = [name for name, _call in _aws_reaching_calls() if name.startswith("submit:")]
     assert reaching.index(f"submit:{START_STEP}") == len(reaching) - 2
-    assert reaching[reaching.index(f"submit:{START_STEP}") - 1] == f"submit:{WANDB_PREFLIGHT_STEP}"
-    assert set(reaching[:-3]) == {f"submit:{DENIALS_STEP}", f"submit:{BATCH_DENIALS_STEP}"}
-    assert reaching[-3] == f"submit:{WANDB_PREFLIGHT_STEP}"
+    assert set(reaching[:-2]) == {f"submit:{DENIALS_STEP}", f"submit:{BATCH_DENIALS_STEP}"}
+    assert f"submit:{WANDB_PREFLIGHT_STEP}" not in reaching
 
 
 def test_the_write_probe_names_the_lineage_bucket_the_template_deploys() -> None:
@@ -1071,7 +1095,7 @@ def wandb_tool() -> Any:
     ``tests/test_wandb_credential_verifier.py`` and leaves ``sys.modules`` alone.
     """
     specification = importlib.util.spec_from_file_location(
-        "_submit_run_wandb_tool", PROJECT_ROOT / WANDB_TOOL
+        "_submit_run_wandb_tool", PROJECT_ROOT / WANDB_CREDENTIAL_TOOL
     )
     assert specification is not None and specification.loader is not None
     module = importlib.util.module_from_spec(specification)
@@ -1085,9 +1109,8 @@ def test_the_preflight_is_the_last_read_before_the_one_call_that_provisions() ->
     Both readings are defensible until the cost is named, which is why the placement is
     asserted rather than left to review. Earlier than the gate, every submission compiling
     refuses -- an unregistered dataset, a commit that published no image -- would first pay
-    a Secrets Manager read and a round trip to W&B, and the compile job holds no credential
-    to make the first of those with anyway. Later than ``StartExecution``, the state machine
-    has already registered a job definition and put the run on a queue, so the check happens
+    the verdict lookup for nothing. Later than ``StartExecution``, the state machine has
+    already registered a job definition and put the run on a queue, so the check happens
     with an instance coming up.
 
     The step also has no ``if:``, and that matters here more than it looks. A preflight that
@@ -1105,15 +1128,23 @@ def test_the_preflight_is_the_last_read_before_the_one_call_that_provisions() ->
         "preflight stops being the last thing a refused submission costs"
     )
     assert "if" not in preflight
-    assert preflight["env"] == {"PREFLIGHT_AWS_REGION": "${{ vars.AWS_REGION }}"}
+    # Nothing from `vars.` and nothing about a region, because there is no AWS call to aim
+    # at one. The token is the job's own, which is what `actions: read` is attached to.
+    assert preflight["env"] == {
+        "GH_TOKEN": "${{ github.token }}",
+        "PREFLIGHT_REPOSITORY": "${{ github.repository }}",
+    }
 
 
-def test_the_preflight_argues_its_position_where_the_step_is() -> None:
-    """The comment is the deliverable, because the placement is the decision.
+def test_the_preflight_argues_its_position_and_its_credential_where_the_step_is() -> None:
+    """The comment is the deliverable, because both decisions are invisible in the code.
 
     A reader who moves this step earlier makes the whole path slower for no benefit and
     nothing fails; a reader who moves it later makes it useless and nothing fails either.
-    So the argument sits beside the step rather than in a commit message.
+    And a reader who decides the obvious repair is one ``secretsmanager:GetSecretValue`` on
+    the admission role would be undoing the more important of the two decisions, on a role
+    whose entire documented property is that it holds nothing but ``states:StartExecution``.
+    So both arguments sit beside the step rather than in a commit message.
     """
     rationale = _comment_block_above(WANDB_PREFLIGHT_STEP)
 
@@ -1121,17 +1152,74 @@ def test_the_preflight_argues_its_position_where_the_step_is() -> None:
     assert "CommError" in rationale
     assert "compile job" in rationale
     assert "provisions" in rationale
+    # The grant this step declines, named, so the reader meets the argument rather than the
+    # idea. Both rejected designs are named too: the widening and the fifth OIDC role.
     assert "secretsmanager:GetSecretValue" in rationale
+    assert "admission role" in rationale
+    assert "OIDC role" in rationale
+    assert "run-approval-automatic" in rationale
+    # And what it costs, because a fail-open check whose blind spot is undocumented is a
+    # check people believe more than it deserves.
+    assert "rotation" in rationale
 
 
-def test_the_preflight_checks_the_key_the_containers_will_actually_be_given() -> None:
-    """Reads the tool and the container shapes. Mutation: point either at another secret.
+def test_the_preflight_holds_no_aws_identity_and_needs_no_new_permission() -> None:
+    """Mutation: give the step a role, a region, or the tool that reads the secret.
 
-    A preflight that validated a different secret from the one ECS injects would be a check
-    that passes while every container fails, which is worse than no check -- it would move
-    the diagnosis further away rather than closer. The workflow passes no ``--secret-name``
-    on purpose, so the tool's default is what is used and this compares that default against
-    every secret the job definitions inject.
+    This is the decision the whole track came down to. Exactly three principals hold
+    ``secretsmanager:GetSecretValue`` on the W&B secret and none of them is reachable from
+    this file, which is deliberate: ``infra/iam/admission-role.yaml`` argues it beside the
+    grant it declines. The preflight therefore has to work from what the submit job already
+    has, and what it already has is ``actions: read`` for the approvals endpoint.
+
+    So the assertion is about absence. No AWS call, no ``vars.`` reference, no second role,
+    and no widening of the permission map -- which
+    ``test_the_submit_job_gained_no_aws_capability_when_phase_three_arrived`` pins as a
+    fixed set rather than a floor.
+    """
+    submit = _job("submit")
+    script = step(submit, WANDB_PREFLIGHT_STEP)["run"]
+
+    assert aws_commands(script) == []
+    assert "${{" not in script
+    assert "vars." not in json.dumps(step(submit, WANDB_PREFLIGHT_STEP))
+    assert WANDB_PREFLIGHT_TOOL in script
+    assert WANDB_CREDENTIAL_TOOL not in script
+    assert submit["permissions"]["actions"] == "read"
+
+
+def test_the_verdict_the_preflight_reads_is_the_one_the_nightly_publishes() -> None:
+    """Reads both workflows and the module they share. Mutation: rename either side.
+
+    Two files and one artifact, connected by a name written in three places and by nothing
+    CloudFormation or GitHub will check. A rename on one side alone does not fail: the
+    preflight finds no artifact, reports that nothing was established, and lets every
+    submission through for ever -- which is the state this change exists to end, restored
+    silently. So the names come out of ``edullm_platform.wandb_preflight`` and both
+    workflows are held to them here.
+    """
+    published = step(load_workflow(NIGHTLY_PATH)["jobs"][NIGHTLY_WANDB_JOB], NIGHTLY_UPLOAD_STEP)
+    preflight = step(_job("submit"), WANDB_PREFLIGHT_STEP)
+
+    assert published["with"]["name"] == NIGHTLY_VERDICT_ARTIFACT
+    assert published["with"]["path"].endswith(NIGHTLY_VERDICT_FILENAME)
+    # if: always(), or the refusal -- the one verdict this exists to act on -- is the only
+    # one that never gets published, because the step above it exits 1 on exactly that.
+    assert published["if"] == "always()"
+    assert NIGHTLY_WORKFLOW == NIGHTLY_PATH.name
+    # And the preflight names neither, because both come out of the module rather than out
+    # of the run body. A literal here would be a fourth place to keep in step.
+    assert NIGHTLY_VERDICT_ARTIFACT not in preflight["run"]
+
+
+def test_the_check_behind_the_verdict_reads_the_key_the_containers_are_given() -> None:
+    """Reads the nightly, the tool and the container shapes.
+
+    The preflight is only worth what the check behind it is worth, and a check aimed at a
+    different secret from the one ECS injects would pass while every container failed --
+    worse than no check, because it moves the diagnosis further away. The nightly passes no
+    ``--secret-name``, so the tool default is what is used, and this holds that default
+    against every secret the job definitions inject.
 
     The injected names carry the six-character suffix Secrets Manager assigns, because
     ``ValueFrom`` is a lookup rather than a pattern, so the comparison is a prefix.
@@ -1140,27 +1228,28 @@ def test_the_preflight_checks_the_key_the_containers_will_actually_be_given() ->
     injected = {
         secret for shape in CONTAINER_SHAPES.values() for _variable, secret in shape.secrets
     }
-    script = step(_job("submit"), WANDB_PREFLIGHT_STEP)["run"]
+    nightly = step(load_workflow(NIGHTLY_PATH)["jobs"][NIGHTLY_WANDB_JOB], NIGHTLY_CHECK_STEP)
 
     assert injected, "no container shape injects a secret, so this test is measuring nothing"
     for secret in sorted(injected):
         assert secret.startswith(default), (
-            f"the preflight checks {default} and a container is given {secret}, so the "
-            "check and the container are reading two different values"
+            f"the check reports on {default} and a container is given {secret}, so the "
+            "verdict and the container are about two different values"
         )
-    assert "--secret-name" not in script
+    assert WANDB_CREDENTIAL_TOOL in nightly["run"]
+    assert "--secret-name" not in nightly["run"]
 
 
-def test_the_entity_the_preflight_expects_is_the_one_the_containers_are_told() -> None:
-    """Reads the tool and the submit request. Mutation: pass an --expect-entity here.
+def test_the_entity_the_verdict_is_about_is_the_one_the_containers_are_told() -> None:
+    """Reads the nightly, the tool and the submit request. Mutation: pass --expect-entity.
 
     The nine failures were not a missing key. The log said a key was configured and W&B
     still refused it, which is what a key belonging to another entity looks like -- so the
     check that matters is the entity W&B resolves the key to, and it has to be the entity
     the container is told to log into. The tool defaults to ``execution.WANDB_ENTITY`` and
-    this workflow passes no override, so there is one answer rather than two.
+    the nightly passes no override, so there is one answer rather than two.
     """
-    script = step(_job("submit"), WANDB_PREFLIGHT_STEP)["run"]
+    script = step(load_workflow(NIGHTLY_PATH)["jobs"][NIGHTLY_WANDB_JOB], NIGHTLY_CHECK_STEP)["run"]
     told = {
         entry["Name"]: entry["Value"]
         for entry in batch_submit_request(
@@ -1200,50 +1289,35 @@ def _run_preflight(
         env={
             "RUNNER_TEMP": str(tmp_path),
             "GITHUB_STEP_SUMMARY": str(summary),
-            "PREFLIGHT_AWS_REGION": "us-east-1",
+            "GH_TOKEN": "not-a-token",
+            "PREFLIGHT_REPOSITORY": PLATFORM_REPOSITORY,
         },
         stub_bin=stub_bin,
     )
     return result, summary.read_text(encoding="utf-8")
 
 
-#: What the tool prints when W&B accepts the stored key. The shape rather than a real
-#: answer: a length, a four character prefix, a truncated digest and the entity.
-ACCEPTED_REPORT = json.dumps(
-    {
-        "fingerprint": "0a1b2c3d",
-        "length": 49,
-        "looks_wrong": [],
-        "prefix4": "wand",
-        "secret": "sbsandbox-intern-edullm-wandb-api-key",
-        "wandb": {"entity": WANDB_ENTITY, "username": "edullm-platform"},
-    }
-)
-REFUSED_REPORT = json.dumps(
-    {
-        "fingerprint": "0a1b2c3d",
-        "length": 49,
-        "looks_wrong": ["W&B does not recognise this key"],
-        "prefix4": "wand",
-        "secret": "sbsandbox-intern-edullm-wandb-api-key",
-        "wandb": {"error": "W&B does not recognise this key"},
-    }
-)
+def _decision(outcome: str, reason: str, **rest: Any) -> str:
+    """What tools/verify_wandb_preflight.py prints, in the shape it prints it."""
+    return json.dumps({"outcome": outcome, "reason": reason, "sentence": "...", **rest})
 
 
-def test_a_key_wandb_accepts_lets_the_submission_through(tmp_path: Path) -> None:
+def test_a_verdict_that_accepted_the_key_lets_the_submission_through(tmp_path: Path) -> None:
     result, summary = _run_preflight(
-        tmp_path, uv_body=f"cat <<'JSON'\n{ACCEPTED_REPORT}\nJSON\nexit 0\n"
+        tmp_path,
+        uv_body=(
+            f"cat <<'JSON'\n{_decision('proceed', 'wandb_credential_accepted')}\nJSON\nexit 0\n"
+        ),
     )
 
     assert result.returncode == 0, result.stderr
-    assert WANDB_ENTITY in result.stdout
+    assert "wandb_credential_accepted" in result.stdout
     # An accepted key earns no summary block. The step that says where the run went writes
     # the summary, and a passing check that shouted would train people to skip reading it.
     assert summary == ""
 
 
-def test_a_key_wandb_refuses_stops_the_run_before_anything_is_allocated(
+def test_a_verdict_that_refused_the_key_stops_the_run_before_anything_is_allocated(
     tmp_path: Path,
 ) -> None:
     """Mutation: warn and continue, which is what every other reading of this did.
@@ -1253,8 +1327,13 @@ def test_a_key_wandb_refuses_stops_the_run_before_anything_is_allocated(
     it has to say that re-running will not help -- the key is set from a laptop, so a
     submitter who reads this and presses the button again learns nothing twice.
     """
+    refusal = _decision(
+        "refuse",
+        "wandb_credential_would_be_refused",
+        published={"looks_wrong": ["W&B does not recognise this key"]},
+    )
     result, summary = _run_preflight(
-        tmp_path, uv_body=f"cat <<'JSON'\n{REFUSED_REPORT}\nJSON\nexit 1\n"
+        tmp_path, uv_body=f"cat <<'JSON'\n{refusal}\nJSON\nexit 1\n"
     )
 
     assert result.returncode == 1
@@ -1265,38 +1344,57 @@ def test_a_key_wandb_refuses_stops_the_run_before_anything_is_allocated(
     # And it names the symptom it exists to pre-empt, because the reader of this summary is
     # the person who would otherwise be reading a torch traceback tomorrow.
     assert "torch distributed error" in summary
+    # And the one thing a submitter can do about a refusal they have already repaired. A
+    # measured refusal is honoured at any age, so nothing clears it but a newer measurement.
+    assert "dispatch the nightly workflow" in summary
 
 
-def test_a_secret_the_session_cannot_read_is_not_reported_as_a_bad_key(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    ("reason", "exit_code"),
+    [
+        # No run has published one yet, which is the state this lands in and stays in until
+        # the first nightly after it merges.
+        ("wandb_verdict_not_published", 2),
+        # The newest was written before the verdict field existed, or by an --offline run.
+        ("wandb_verdict_unreadable", 2),
+        # W&B was unreachable when the check ran. An outage, never a bad key.
+        ("wandb_verdict_inconclusive", 2),
+        # The newest acceptance is older than the tool treats as current.
+        ("wandb_verdict_stale", 2),
+    ],
+)
+def test_a_question_nobody_answered_is_not_reported_as_a_bad_key(
+    tmp_path: Path, reason: str, exit_code: int
 ) -> None:
     """THE CASE THIS STEP SHIPS IN, AND THE ONE MOST LIKELY TO BE GOT WRONG.
 
-    The admission role holds no ``secretsmanager:GetSecretValue``, and it is applied from a
-    laptop, so this workflow can be merged before the grant exists. Failing then would take
-    every submission down in order to add a check to them, which is the hazard *Why IAM is
-    laptop-only* in infra/README.md is entirely about.
+    This file lands before the first nightly that can publish anything at all, so on the
+    day it merges every dispatch meets the first row above. Failing then would take the
+    platform down in order to add a check to it, which is the hazard *Why IAM is
+    laptop-only* in infra/README.md is about in different clothes.
 
-    The exit status cannot separate the two answers -- the tool exits 1 for a faulty key and
-    the interpreter exits 1 for an unreadable secret -- so the report file does. The tool
-    prints its JSON only after the secret has been read, so a report that exists is a verdict
-    and a report that does not is a read that never happened.
+    The other three rows are the same judgement for the same reason. A measured refusal is
+    a finding; an outage, a report this cannot read, and a verdict nobody has renewed are
+    all the absence of one, and absence of evidence must never arrive looking like
+    evidence. The tool separates them in its exit code -- 1 for the finding and 2 for every
+    unanswered question -- so this step never has to guess from prose.
 
-    Mutation: branch on the exit status alone. Every submission is refused until somebody
-    applies an IAM stack, and the refusal says the key is bad when nobody has looked at it.
+    Mutation: branch on non-zero alone. Every submission is refused the day this merges,
+    and the refusal says the key is bad when nothing has looked at it.
     """
     result, summary = _run_preflight(
         tmp_path,
         uv_body=(
-            'echo "Traceback (most recent call last):" >&2\n'
-            'echo "tools.verify_wandb_credential.WandbCredentialError: could not read" >&2\n'
-            "exit 1\n"
+            f"cat <<'JSON'\n{_decision('not_established', reason)}\nJSON\nexit {exit_code}\n"
         ),
     )
 
     assert result.returncode == 0
     assert "wandb_preflight_not_attempted" in result.stderr
     assert "not a verdict on the key" in result.stderr
+    assert reason in result.stdout
+    # It names the grant this path deliberately does not hold, so a reader who arrives here
+    # wondering why the check is quiet meets the decision rather than an apparent bug.
     assert "secretsmanager:GetSecretValue" in result.stderr
     assert "wandb_credential_would_be_refused" not in result.stderr
     assert summary == ""
