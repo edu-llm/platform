@@ -10,7 +10,7 @@ command:
   - olmo_core.train
   - --config
   - configs/smoke.yaml
-team: modeling
+team: pre-training
 wandb_project: olmo-core-smoke
 workload_profile: olmo-core-train-4gpu
 # BACKEND NEUTRALITY: this is gpu-routine.yaml with one field changed. A SageMaker-managed

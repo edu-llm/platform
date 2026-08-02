@@ -256,23 +256,34 @@ def test_the_namespace_a_group_declares_is_the_prefix_the_platform_derives() -> 
         assert team.s3_namespace.startswith(f"{OUTPUTS_BUCKET}/teams/")
 
 
-def test_no_group_records_a_member_or_a_lead_yet() -> None:
-    """The state this change deliberately leaves alone. Mutation: fill a group in by guess.
+def test_every_research_group_records_who_is_in_it() -> None:
+    """Mutation: leave a group empty, or record the same person in it twice.
 
-    Which group a person belongs to is recorded nowhere: not in this repository, not on
-    GitHub, and not in any run record. Recording it is each group's lead confirming who is
-    in theirs, and a guess is the failure the roster's own comments describe at length,
-    because a person filed under the wrong group looks exactly like one filed correctly.
+    This test asserted the opposite until 2026-08-01. It pinned the empty state so that the
+    first assignment would have to be a reviewed edit that changed this test with it, and
+    said in its own docstring that the line removing that assertion is the line enforcement
+    begins on. The assignments came from the organization's team sheet and this is that line.
 
-    Pinned so the first assignment is a reviewed edit that has to change this test with it.
-    When it does, ``evaluate_authorization`` starts checking that submitter's claim and
-    nobody else's, so the line that removes this assertion is the line enforcement begins on.
+    Two things are checked and the second is the one that rots. Every group records a lead
+    and members, which is what makes a run attributable to somebody. And no login appears
+    twice inside one group, which the contract already refuses but which is worth stating
+    where a person editing the roster by hand will read it.
+
+    ``scratch`` is exempt from the lead half and only from that half. It is a bin rather than
+    a group, nothing is costed against it, and giving it a lead would invent an owner for
+    work nobody intends to keep.
     """
     bound = inventory().team_bindings.teams
 
     assert bound, "the roster declares no groups at all"
-    assert all(team.member_logins == () for team in bound)
-    assert all(team.lead_logins == () for team in bound)
+    for team in bound:
+        # The union, not member_logins alone. `platform` is one person who is also its lead,
+        # and requiring a member beside the lead would force an invented second name onto it.
+        assert team.lead_logins + team.member_logins != (), f"{team.team_id} records nobody"
+        if team.team_id != "scratch":
+            assert team.lead_logins != (), f"{team.team_id} records no lead"
+        seen = [login.lower() for login in team.lead_logins + team.member_logins]
+        assert len(set(seen)) == len(seen), f"{team.team_id} records somebody twice"
 
 
 def test_the_captured_groups_hold_nobody_the_roster_does_not_know() -> None:

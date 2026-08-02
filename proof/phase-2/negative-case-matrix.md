@@ -4,7 +4,7 @@ The 22 Phase 2 acceptance criteria, mapped to the tests cited for each one by no
 
 This mapping is defined once, in `src/edullm_platform/phase2_criteria.py`. The acceptance gate reads the same definition and executes the same node ids, so this matrix and `tools/validate_phase2.py` cannot disagree.
 
-Verification run: 636 tests executed, 635 passed, 1 failed, 0 errored, pytest exit code 1.
+Verification run: 641 tests executed, 640 passed, 1 failed, 0 errored, pytest exit code 1.
 
 Three statuses exist and no more. **COVERED** means one or more cited tests prove the criterion as stated against the shipped configuration and all of them pass; the gate passes it. **DEFERRED** means an explicit recorded decision not to satisfy it yet, which requires both a written reason and a written trigger describing what makes it live again; the gate passes it. **GAP** is everything else, and the gate fails it. There is no in-between status, because an in-between status is what lets a gate be green and wrong at the same time.
 
@@ -124,10 +124,10 @@ Supporting tests (6), all executed and passing, cited as evidence rather than as
 
 - `tests/test_phase2_submit_run_workflow.py::test_the_three_jobs_carry_exactly_these_permission_maps`
 - `tests/test_phase2_submit_run_workflow.py::test_the_compile_job_cannot_request_a_token_by_any_spelling`
-- `tests/test_phase2_admission.py::test_a_submission_its_approver_may_not_release_is_refused[caiiris-nzhao721-approver_lacks_lead_or_admin_role]`
-- `tests/test_phase2_admission.py::test_a_submission_its_approver_may_not_release_is_refused[caiiris-None-self_approval_not_permitted_for_member]`
+- `tests/test_phase2_admission.py::test_a_submission_its_approver_may_not_release_is_refused[GMatherne-nzhao721-approver_lacks_lead_or_admin_role]`
+- `tests/test_phase2_admission.py::test_a_submission_its_approver_may_not_release_is_refused[GMatherne-None-self_approval_not_permitted_for_member]`
 - `tests/test_phase2_admission.py::test_a_submission_its_approver_may_not_release_is_refused[not-a-member-ericrcwu001-submitter_not_in_roster]`
-- `tests/test_phase2_admission.py::test_a_submission_its_approver_may_not_release_is_refused[caiiris-not-a-member-approver_not_in_roster]`
+- `tests/test_phase2_admission.py::test_a_submission_its_approver_may_not_release_is_refused[GMatherne-not-a-member-approver_not_in_roster]`
 
 ### Check 3 — Any team lead approval succeeds while approval_scope is organization.
 

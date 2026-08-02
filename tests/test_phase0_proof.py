@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from edullm_platform.config import load_yaml
+from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.workload import WorkloadCatalog
 from edullm_platform.criteria import (
     CriteriaDefinitionError,
@@ -478,18 +479,25 @@ def shipped_checks() -> tuple[CriterionSpec, ...]:
     return recorded_checks(discover_fixtures(PROJECT_ROOT))
 
 
-def test_known_limitations_name_the_compute_provisioning_state_and_unbound_membership() -> None:
-    """The provisioning limitation narrowed when Phase 3 promoted one profile; it did not go.
+def test_known_limitations_track_the_tree_rather_than_a_remembered_state() -> None:
+    """Two limitations, one that narrowed and one that went, and both are read off the tree.
 
-    This asserted "No compute profile is provisioned" until Phase 3, and the assertion is
-    deliberately not just deleted. Eleven of the twelve are still priced entries nothing
-    backs, which is the same limitation over a smaller set, and a bundle that stopped
-    mentioning provisioning at all would read as though the question had been settled. What
-    is checked is that the prose says which profiles are provisioned and which are not --
-    the shape of the claim rather than its wording, so promoting a second one in Phase 4
-    does not fail here for the wrong reason.
+    The provisioning limitation asserted "No compute profile is provisioned" until Phase 3,
+    and the assertion is deliberately not just deleted. Eleven of the twelve are still priced
+    entries nothing backs, which is the same limitation over a smaller set, and a bundle that
+    stopped mentioning provisioning would read as though the question had been settled. What
+    is checked is that the prose says which profiles are provisioned, the shape of the claim
+    rather than its wording, so promoting another does not fail here for the wrong reason.
+
+    The membership limitation did go, on 2026-08-01, when the roster recorded its assignments
+    and Phase 0 criterion 9 stopped being deferred. Its emission in ``known_limitations`` is
+    conditional on the bindings being empty, so this is the generator reading the tree and
+    not a line anybody deleted. Asserted in both directions rather than removed, because a
+    bundle that goes on claiming nobody is bound after they are is the failure mode this
+    whole file exists to catch.
     """
     catalog = load_yaml(PROJECT_ROOT / "config" / "workload-catalog.yaml", WorkloadCatalog)
+    inventory = load_yaml(PROJECT_ROOT / "config" / "organization.yaml", OrganizationInventory)
     provisioned = [profile.name for profile in catalog.compute_profiles if profile.provisioned]
     limitations = known_limitations(PROJECT_ROOT, shipped_checks())
 
@@ -499,7 +507,14 @@ def test_known_limitations_name_the_compute_provisioning_state_and_unbound_membe
         assert any(name in item for name in provisioned for item in compute)
     else:
         assert any("No compute profile is provisioned" in item for item in compute)
-    assert any("No member is bound to a team" in item for item in limitations)
+
+    bound = any(
+        team.member_logins or team.lead_logins for team in inventory.team_bindings.teams
+    )
+    claims_nobody_is_bound = any("No member is bound to a team" in item for item in limitations)
+    assert claims_nobody_is_bound is not bound, (
+        "the bundle's membership limitation disagrees with config/organization.yaml"
+    )
 
 
 @pytest.mark.slow
@@ -529,7 +544,10 @@ def test_prose_calling_a_covered_check_a_gap_is_reported() -> None:
 @pytest.mark.parametrize(
     ("prose", "number"),
     [
-        ("Check 9 is covered by the shipped configuration.", "9"),
+        # Check 10, not 9. Criterion 9 was the deferred example here until the roster
+        # recorded its assignments and made it covered, at which point this prose stopped
+        # contradicting anything and the case silently proved nothing.
+        ("Check 10 is covered by the shipped configuration.", "10"),
         ("Criterion 1 remains deferred until sub-teams exist.", "1"),
         ("The negative-case matrix records check D1 as covered.", "D1"),
         ("Check 10 is a gap and the acceptance gate fails on it.", "10"),

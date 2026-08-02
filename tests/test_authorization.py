@@ -56,6 +56,21 @@ MEMORY_SPLIT_TEAM = "memory-split"
 CURRICULUM_TEAM = "curriculum"
 UNBOUND_TEAM = "not-a-team"
 
+#: THE TEAM THESE TESTS CLAIM WHEN THEY ARE NOT TESTING ATTRIBUTION, AND WHY IT CHANGED.
+#:
+#: These facts used to claim `memory-split` by default, which was free while every team in
+#: config/organization.yaml recorded no members: evaluate_authorization treated an unrecorded
+#: submitter as unverifiable and the claim cost nothing. Recording the roster made the claim
+#: load-bearing, and the default silently turned every test in this file into an attribution
+#: test -- `ericrcwu001` leads data-prep, not Memory, so a routine self-authorization began
+#: failing on a team the test was never about.
+#:
+#: `scratch` is the honest default because every member of the roster is in it. It is the bin
+#: the guide tells a new person to pick, so a submitter is never refused it, which leaves
+#: these tests measuring the thing they name. A test that is about attribution says so by
+#: passing claimed_team explicitly.
+SCRATCH_TEAM = "scratch"
+
 
 def load_organization_inventory() -> OrganizationInventory:
     return load_yaml(PROJECT_ROOT / "config" / "organization.yaml", OrganizationInventory)
@@ -85,7 +100,7 @@ def approval_policy_with_scope(approval_scope: ApprovalScope) -> ApprovalPolicy:
 
 def request_facts_payload(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
-        "claimed_team": MEMORY_SPLIT_TEAM,
+        "claimed_team": SCRATCH_TEAM,
         "repository_registered": True,
         "dataset_registered": True,
         "compute_profile_registered": True,
@@ -523,7 +538,7 @@ def test_flipping_approval_scope_alone_turns_a_grant_into_a_denial() -> None:
     } == {"approval_scope"}
 
     inventory = two_team_inventory()
-    request = routine_facts()
+    request = routine_facts(claimed_team=MEMORY_SPLIT_TEAM)
     under_organization_scope = evaluate_authorization(
         MEMORY_SPLIT_MEMBER,
         CURRICULUM_LEAD,
@@ -553,7 +568,7 @@ def test_team_scope_grants_when_the_approver_leads_the_submitters_team() -> None
     decision = decide(
         MEMORY_SPLIT_MEMBER,
         MEMORY_SPLIT_LEAD,
-        routine_facts(),
+        routine_facts(claimed_team=MEMORY_SPLIT_TEAM),
         policy=approval_policy_with_scope(ApprovalScope.TEAM),
         inventory=two_team_inventory(),
     )
@@ -577,11 +592,12 @@ def test_team_scope_bounds_lead_authority_but_not_admin_authority() -> None:
     inventory = two_team_inventory()
     assert inventory.teams_led_by(TEAMLESS_ADMIN) == ()
     team_scoped = approval_policy_with_scope(ApprovalScope.TEAM)
+    own_team = routine_facts(claimed_team=MEMORY_SPLIT_TEAM)
     by_admin = decide(
-        MEMORY_SPLIT_MEMBER, TEAMLESS_ADMIN, routine_facts(), policy=team_scoped, inventory=inventory
+        MEMORY_SPLIT_MEMBER, TEAMLESS_ADMIN, own_team, policy=team_scoped, inventory=inventory
     )
     by_other_lead = decide(
-        MEMORY_SPLIT_MEMBER, CURRICULUM_LEAD, routine_facts(), policy=team_scoped, inventory=inventory
+        MEMORY_SPLIT_MEMBER, CURRICULUM_LEAD, own_team, policy=team_scoped, inventory=inventory
     )
     assert by_admin.granted is True
     assert by_other_lead.granted is False
@@ -592,7 +608,7 @@ def test_team_scope_does_not_restrict_exception_approval() -> None:
     decision = decide(
         MEMORY_SPLIT_MEMBER,
         TEAMLESS_ADMIN,
-        exception_facts(),
+        exception_facts(claimed_team=MEMORY_SPLIT_TEAM),
         policy=approval_policy_with_scope(ApprovalScope.TEAM),
         inventory=two_team_inventory(),
     )
@@ -762,7 +778,7 @@ def test_team_scope_does_not_restrict_an_admin_to_teams_they_lead() -> None:
     decision = decide(
         MEMORY_SPLIT_MEMBER,
         TEAMLESS_ADMIN,
-        routine_facts(),
+        routine_facts(claimed_team=MEMORY_SPLIT_TEAM),
         policy=approval_policy_with_scope(ApprovalScope.TEAM),
         inventory=inventory,
     )
@@ -811,7 +827,7 @@ def test_team_scope_reports_absent_bindings_distinctly_from_a_team_mismatch() ->
     mismatch = decide(
         MEMORY_SPLIT_MEMBER,
         CURRICULUM_LEAD,
-        routine_facts(),
+        routine_facts(claimed_team=MEMORY_SPLIT_TEAM),
         policy=approval_policy_with_scope(ApprovalScope.TEAM),
         inventory=two_team_inventory(),
     )
@@ -821,33 +837,82 @@ def test_team_scope_reports_absent_bindings_distinctly_from_a_team_mismatch() ->
     assert mismatch.reason is AuthorizationReason.APPROVER_DOES_NOT_LEAD_SUBMITTER_TEAM
 
 
-@pytest.mark.parametrize("claimed_team", [MEMORY_SPLIT_TEAM, CURRICULUM_TEAM, UNBOUND_TEAM])
-def test_attribution_is_recorded_unverified_while_no_member_is_bound_to_a_team(
-    claimed_team: str,
-) -> None:
-    """Mutation: read membership off the catalog existing rather than off the submitter.
+@pytest.mark.parametrize("claimed_team", [CURRICULUM_TEAM, UNBOUND_TEAM])
+def test_attribution_is_enforced_against_the_shipped_roster(claimed_team: str) -> None:
+    """Mutation: check the claim against the catalog rather than against the submitter.
 
-    The shipped roster declares six teams and puts nobody in any of them, because which
-    group a person belongs to is the one fact it has never held. A claim is therefore still
-    unverifiable, including ``not-a-team``, which is not one of the six: refusing that one
-    would be checking the claim against the catalog rather than against the submitter, and
-    would deny a run for naming a group its author is not on record as being off.
+    This test used to assert the opposite. Until 2026-08-01 the roster declared its groups
+    and recorded nobody in any of them, so every claim was unverifiable and every decision
+    carried ``team_verified: false``. Recording the assignments made enforcement live, and
+    the deferral on Phase 0 criterion 9 said in its own text that the line removing that
+    assertion is the line enforcement begins on. This is that line.
+
+    Both parameters are teams ``caiiris`` is not in, and they fail for the same reason by
+    design. ``curriculum`` is a retired group name the catalog no longer declares and
+    ``not-a-team`` never existed, and neither is refused for being absent from the catalog.
+    Both are refused because the submitter is not recorded in them, which is the check the
+    roster comments describe: attribution is read off the submitter, never off the catalog.
     """
     inventory = load_organization_inventory()
     assert inventory.team_bindings.teams != (), "the shipped roster declares its groups"
-    assert all(team.member_logins == () for team in inventory.team_bindings.teams)
+    assert any(team.member_logins != () for team in inventory.team_bindings.teams)
     decision = decide(
         PLAIN_MEMBER,
         LEAD_WITHOUT_ADMIN,
         routine_facts(claimed_team=claimed_team),
         inventory=inventory,
     )
+    assert decision.granted is False
+    assert decision.reason is AuthorizationReason.SUBMITTER_NOT_IN_CLAIMED_TEAM
+    assert decision.claimed_team == claimed_team
+    assert decision.team_verified is False
+
+
+def test_a_recorded_member_claiming_their_own_group_is_verified_on_the_shipped_roster() -> None:
+    """The other half of enforcement, against the real roster rather than a synthetic one.
+
+    ``caiiris`` is recorded in Memory. Naming it is granted and the decision records the
+    attribution as verified, which is the state no shipped decision could reach before the
+    assignments landed. Without this, a change that made every claim unverifiable again
+    would leave the whole suite green, since a false ``team_verified`` was the old normal.
+    """
+    inventory = load_organization_inventory()
+    decision = decide(
+        PLAIN_MEMBER,
+        LEAD_WITHOUT_ADMIN,
+        routine_facts(claimed_team=MEMORY_SPLIT_TEAM),
+        inventory=inventory,
+    )
     assert decision.granted is True
     assert decision.reason is AuthorizationReason.ROUTINE_APPROVED_BY_LEAD_OR_ADMIN
-    assert decision.claimed_team == claimed_team
-    assert decision.team_verified is False, (
-        "with no member bound to a team the claimed team cannot be checked; the audit record "
-        "must say so rather than imply the attribution was confirmed"
+    assert decision.team_verified is True
+
+
+def test_every_recorded_member_may_claim_scratch() -> None:
+    """The property that keeps a first run from being refused the team the guide names.
+
+    ``guides/the-platform.md`` tells a new person to use ``scratch`` for their first run, in
+    those words. Enforcement is per submitter, so the moment somebody's assignment is
+    recorded, every team they claim is checked. A member recorded in their research group
+    and left out of ``scratch`` would be denied the one team they were told to pick, with a
+    refusal naming a team the documentation handed them.
+
+    Pinned as a property over the whole roster rather than a case, because the failure
+    arrives one person at a time as assignments are edited.
+    """
+    inventory = load_organization_inventory()
+    scratch = next(
+        team for team in inventory.team_bindings.teams if team.team_id == SCRATCH_TEAM
+    )
+    recorded = {
+        login
+        for team in inventory.team_bindings.teams
+        for login in team.lead_logins + team.member_logins
+    }
+    missing = sorted(login for login in recorded if not scratch.includes(login))
+    assert missing == [], (
+        f"recorded members who cannot claim scratch: {missing}. Every login in any team "
+        "binding must also be in scratch, or their first run is refused."
     )
 
 

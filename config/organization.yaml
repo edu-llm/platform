@@ -125,46 +125,158 @@ pilot_repositories:
 # gate, not about who leads input-core. A group with no lead recorded routes to nobody in
 # particular, which the approver context already states in those words, and no run is
 # delayed by it.
+# EVERY MEMBER IS ALSO IN scratch, AND LEAVING THAT OUT WOULD HAVE BROKEN EVERY FIRST RUN.
+#
+# evaluate_authorization reads `membership_is_knowable = bool(teams_for_member(submitter))`.
+# Enforcement is per submitter, so the moment a person's membership is recorded anywhere,
+# every team they claim is checked against their own roster entry and a claim they are not
+# in is denied with submitter_not_in_claimed_team.
+#
+# guides/the-platform.md tells every new person to use `scratch` for their first run, in
+# those words, because it is the bin for work nobody intends to keep and costs no research
+# group anything. So recording assignments without also recording everybody in scratch would
+# have denied the documented first run for all thirty-four people on the day the roster
+# landed -- a refusal naming a team they were told to pick.
+#
+# scratch therefore carries the whole roster and no lead. It is a bin, not a group: nobody
+# leads it, its runs are costed against nobody, and every member may claim it.
+#
+# ASSIGNMENTS COME FROM THE ARCHITECTURE TEAMS SHEET, confirmed 2026-08-01. Six research
+# groups, and three people sit on two of them, which the sheet marks and this file records
+# by listing them in both. Nothing here is inferred from who committed where.
+#
+# PRESTON LOATS WAS THE ONE NAME THIS FILE COULD NOT HOLD, AND NOW IT CAN. He is named under
+# Input/Core on the sheet and owns the Co-LMLM seed annotations, and the roster is keyed on a
+# GitHub login he had never supplied. `prestonloats` arrived on 2026-08-01 and he was invited
+# to the organization with his team assignment in the same edit that recorded him below.
+#
+# His invitation may still be pending, and that is a real state rather than a defect. The
+# roster is this platform's own record and admission reads it, so his submissions are
+# authorized from the moment this file names him. What an unaccepted invitation costs is the
+# GitHub half: a manual workflow is shown only to somebody with write access, so until he
+# accepts, the Run button is not there to press. tools/report_onboarding_readiness.py is
+# where that shows up, and it reports him rather than this file going quiet about it.
 team_bindings:
   teams:
     - team_id: platform
       github_team_slug: platform
-      lead_logins: []
+      lead_logins: [philote-dev]
+      member_logins: []
       s3_namespace: sbsandbox-intern-edullm-outputs/teams/platform
       wandb_entity: eduLLM
     - team_id: memory-split
       github_team_slug: memory-split
-      lead_logins: []
+      lead_logins: [VS-code-cloud]
+      member_logins:
+        - Adarsh-Rajesh-gitHub
+        - alphaxia2100
+        - anshulmago1
+        - caiiris
+        - claire-mao
+        - NotAnAlgorithm
+        - syz2026
+        - TejasviTyagi14
+        - William-2357
+        - yuen-kai
       s3_namespace: sbsandbox-intern-edullm-outputs/teams/memory-split
       wandb_entity: eduLLM
     - team_id: input-core
       github_team_slug: input-core
-      lead_logins: []
+      lead_logins: [philote-dev, pianomaster99]
+      member_logins:
+        - alphaxia2100
+        - alsy7009
+        - arteexu
+        - aryanjverma
+        - Avaneesh-Ramesh-07
+        - banksaj27
+        - blackbird-alt
+        - ericrcwu001
+        - prestonloats
+        - William-2357
       s3_namespace: sbsandbox-intern-edullm-outputs/teams/input-core
       wandb_entity: eduLLM
     - team_id: pre-training
       github_team_slug: pre-training
-      lead_logins: []
+      lead_logins: [alsy7009]
+      member_logins:
+        - GMatherne
+        - nzhao721
+        - VS-code-cloud
       s3_namespace: sbsandbox-intern-edullm-outputs/teams/pre-training
       wandb_entity: eduLLM
     - team_id: post-training
       github_team_slug: post-training
-      lead_logins: []
+      lead_logins: [hiyasvyas, meric233]
+      member_logins:
+        - katiehehe
+        - ninLi0
+        - NotAnAlgorithm
+        - sidvenkatayogi
+        - zsophiaaa
       s3_namespace: sbsandbox-intern-edullm-outputs/teams/post-training
       wandb_entity: eduLLM
     - team_id: data-prep
       github_team_slug: data-prep
-      lead_logins: []
+      lead_logins: [ericrcwu001]
+      member_logins:
+        - GMatherne
+        - nzhao721
       s3_namespace: sbsandbox-intern-edullm-outputs/teams/data-prep
       wandb_entity: eduLLM
     - team_id: eval-inference
       github_team_slug: eval-inference
-      lead_logins: []
+      lead_logins: [gorpyshortlegs]
+      member_logins:
+        - Avaneesh-Ramesh-07
+        - cd1313
+        - Elitelord
+        - IsabellaChen70
+        - LawrenceDong71
+        - sidvenkatayogi
       s3_namespace: sbsandbox-intern-edullm-outputs/teams/eval-inference
       wandb_entity: eduLLM
+    # No lead, and the whole roster. See the note above team_bindings: this list is what
+    # keeps a recorded member from being refused the team the guide tells them to pick.
     - team_id: scratch
       github_team_slug: scratch
       lead_logins: []
+      member_logins:
+        - Adarsh-Rajesh-gitHub
+        - alphaxia2100
+        - alsy7009
+        - anshulmago1
+        - arteexu
+        - aryanjverma
+        - Avaneesh-Ramesh-07
+        - banksaj27
+        - blackbird-alt
+        - BritishAmericqn
+        - caiiris
+        - cd1313
+        - claire-mao
+        - Elitelord
+        - ericrcwu001
+        - GMatherne
+        - gorpyshortlegs
+        - hiyasvyas
+        - IsabellaChen70
+        - katiehehe
+        - LawrenceDong71
+        - meric233
+        - NotAnAlgorithm
+        - ninLi0
+        - nzhao721
+        - philote-dev
+        - pianomaster99
+        - prestonloats
+        - sidvenkatayogi
+        - syz2026
+        - TejasviTyagi14
+        - VS-code-cloud
+        - William-2357
+        - yuen-kai
+        - zsophiaaa
       s3_namespace: sbsandbox-intern-edullm-outputs/teams/scratch
       wandb_entity: eduLLM
 # WHOSE NAME GOES ON A RUN IN WEIGHTS AND BIASES, AND WHY SIX OF THESE ARE BLANK.
@@ -192,10 +304,13 @@ team_bindings:
 # display name, and it is recorded below. Nothing was done in W&B to make that so, which is
 # the point worth keeping: the gap was in this file rather than in the team.
 #
-# SIX PEOPLE HAVE NO W&B ACCOUNT AT ALL, and a blank is the only true answer for them. The
+# SEVEN PEOPLE HAVE NO W&B ACCOUNT AT ALL, and a blank is the only true answer for them. The
 # entity holds 29 members, one of which is the platform's own service account, so 28 human
-# accounts against 34 roster entries. Benjamin Royston, Arthur Xu, Iris Cai, Yuen Kai Chow,
-# Adarsh Rajesh and Eve Feng are the six the member list does not contain under any spelling.
+# accounts against 35 roster entries. Benjamin Royston, Arthur Xu, Iris Cai, Yuen Kai Chow,
+# Adarsh Rajesh and Eve Feng are six the member list does not contain under any spelling.
+# Preston Loats is the seventh and differs in kind: he was recorded on 2026-08-01, after the
+# others, so his account was never searched for rather than searched for and absent. The
+# consequence and the remedy are the same either way.
 # Adding somebody to the W&B team is an owner action in W&B and does not follow this file, so
 # their runs log as the service account until that happens. Every one of the other 28 accounts
 # is now claimed by exactly one roster entry.
@@ -257,3 +372,14 @@ members:
   - {github_login: alphaxia2100, display_name: Andrew Xia, wandb_username: alphaai-andrew}
   - {github_login: NotAnAlgorithm, display_name: Eve Feng}
   - {github_login: blackbird-alt, display_name: Ellie Zhang, wandb_username: blackbird-alt}
+  # Recorded on 2026-08-01, after the assignments landed rather than with them. He is named
+  # under Input/Core on the architecture sheet and owns the Co-LMLM seed annotations, and the
+  # roster could not hold him because a member entry is keyed on a GitHub login and he was in
+  # no organization this file could read one from. The login arrived from Frank; the account
+  # exists and was invited to the organization with its team assignment in the same edit.
+  #
+  # No wandb_username, and blank is the honest answer rather than an unfinished one. The
+  # comment above the member list gives the reason at length: a guess that is not a real
+  # login inside the eduLLM team logs the run as the service account, which is
+  # indistinguishable from sending no name at all.
+  - {github_login: prestonloats, display_name: Preston Loats}

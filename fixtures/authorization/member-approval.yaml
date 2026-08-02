@@ -9,7 +9,7 @@ approver:
   admin: false
   team_lead: true
 request:
-  claimed_team: curriculum
+  claimed_team: memory-split
   repository_registered: true
   dataset_registered: true
   compute_profile_registered: true

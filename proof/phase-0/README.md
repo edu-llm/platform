@@ -2,8 +2,8 @@
 
 Phase: phase-0
 Bundle schema version: 1
-Source commit: 4963c568ba1e9b8de09061a4900200be6e9baeb7
-Generated: 2026-08-01T17:03:51+00:00
+Source commit: 962b7eba6ead3c27a0147eb049f3ed944df3eaf7
+Generated: 2026-08-02T04:20:58+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 0 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase0_proof.py` at generation time.
 
@@ -18,18 +18,18 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 4169 |
-| suite tests executed | 3976 |
-| suite passed | 3972 |
-| suite failed | 4 |
+| suite tests collected | 4433 |
+| suite tests executed | 4240 |
+| suite passed | 4238 |
+| suite failed | 2 |
 | suite errored | 0 |
 | suite skipped | 0 |
-| matrix node ids executed | 254 |
-| matrix node ids passed | 254 |
+| matrix node ids executed | 255 |
+| matrix node ids passed | 255 |
 | matrix node ids failed | 0 |
 | phase criteria | 13 |
-| criteria COVERED | 11 (1, 2, 3, 4, 5, 6, 7, 8, 11, 12, 13) |
-| criteria DEFERRED | 2 (9, 10) |
+| criteria COVERED | 12 (1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13) |
+| criteria DEFERRED | 1 (10) |
 | criteria GAP (each one fails the gate) | 0 |
 | related recorded deferrals | 1 (D1) |
 | fixtures with recorded digests | 9 |
@@ -86,18 +86,18 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 
 | file | digest |
 | --- | --- |
-| config/organization.yaml | sha256:46c829a902d05c07aa58a46f440b2837d90c7f2c5011c15487c68a03df6512c8 |
-| config/policy.yaml | sha256:8efa2f00527f9ad1677ed27452a2b6093a6a8c9e8190cf3e0a583b0f68787b39 |
-| config/workload-catalog.yaml | sha256:caccfdc8ecf5877119c2c39277f1a6b1bfe05e55b3f0c2a963d63e97d8479531 |
-| fixtures/authorization/admin-exception.yaml | sha256:4ad48b8ecd405d11428cf446f74d0a8aeabf904365f3fee7b599b6a7ed0b6fa0 |
-| fixtures/authorization/lead-self-authorization.yaml | sha256:0e65da633a3880b11e5f14d380d54497a2be7124da1121f34ec3d21d4b4e83d0 |
-| fixtures/authorization/member-approval.yaml | sha256:a39cbdcbec68bf2fd8067f624ee1cf08aac008757e9fdaf69d812b76ea44e2de |
+| config/organization.yaml | sha256:4b3d6cbdc0c080dc01b36918401f720f9cfc87d821a6cfa61787fdc7020d80cf |
+| config/policy.yaml | sha256:9543e8f98bcf207e9187819096c7fb6b5db3d65b1277b911ff77375f2e373414 |
+| config/workload-catalog.yaml | sha256:8a2c8c6b6880c0719d51859b53e64ec004234aeb276568d8cf4539186dbe7b97 |
+| fixtures/authorization/admin-exception.yaml | sha256:a5cf59d4ed25d02769785b6ff1f9c363474ff30f02ea8a8ae54974fbd15930ac |
+| fixtures/authorization/lead-self-authorization.yaml | sha256:4ede75bdc3b8ecfe22e958da3ee4ac3d73c6fc50d012aa10507f311cb7e2a45e |
+| fixtures/authorization/member-approval.yaml | sha256:71146bcb26b212ed86cc883807243280b522f2c8882d8f0d53feeb4619c6d571 |
 | fixtures/manifests/cpu-routine.yaml | sha256:38bb87c5171d9bb9eb6ba74172d07cd975477c96cdbf6493c17a1ca1d3628467 |
-| fixtures/manifests/gpu-exception.yaml | sha256:e604a1f06ca7dba632dfa180a3f865500f54552447ca4adf7fdde1051f4b0874 |
-| fixtures/manifests/gpu-routine.yaml | sha256:e649a5d4099a8c282d8870d36bcec6654a28156e1fc2f08703cccbccb261b8d6 |
+| fixtures/manifests/gpu-exception.yaml | sha256:c49687a49020b47f8e5de88fd736cb0dc49672df471c7d345d1d70089edb47be |
+| fixtures/manifests/gpu-routine.yaml | sha256:e83601657638685d58a590ac6a272777672ad184a39f9edc37a319c8e415fbdf |
 | fixtures/manifests/multiseed-routine.yaml | sha256:e4775ba478e52ecdb710d2d7a70cfc75177acfb3724e2b8f7d787a4f2223202d |
-| fixtures/manifests/olmo-branch-routine.yaml | sha256:4921b4616fa15393b1a7631d6a25bf63ca19b2ae4233a3a7b34a4d2305fae55c |
-| fixtures/manifests/sagemaker-routine.yaml | sha256:d5d57c6970bb5c8c618cd70bfedc9dcb3d7fef8393592d9543a6b22dd6e2af2b |
+| fixtures/manifests/olmo-branch-routine.yaml | sha256:f552e7a8e2b8abb8ec9b87da5333dc2e61ec7e24150cfa7d2c7f45dfff0fab1f |
+| fixtures/manifests/sagemaker-routine.yaml | sha256:c1cee5e54c60a700ac0ab0260b3249fbe1f37e807cf52ac381d58b5691cb0248 |
 | schemas/batch-job-binding.schema.json | sha256:41a20845192e959dd91b32f87d57da0cf3b04e5a2177e0200f27aec2cece901c |
 | schemas/checkpoint-manifest.schema.json | sha256:f51cc8c500c81cd1d286dc86c59ff5f24b09a640127034f1527494251d76a07e |
 | schemas/datasets.schema.json | sha256:28c781ffa1a7df6b999fce428aa8488aec5b8d34081089205e53d5fa6e797f36 |
@@ -117,10 +117,8 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 
 ## Known limitations
 
-- 2 of 12 compute profiles are provisioned: cpu-32vcpu, gpu-1xa10g. Every other profile is priced and dated but carries provisioned: false, so resolve_compute_profile_for_execution refuses it. Phase 0 proves pricing and classification for all of them and that nothing can run is no longer true of the whole catalog.
-- No member is bound to a team. OrganizationInventory.team_bindings.teams names 8 teams and every one of them has an empty member_logins and lead_logins, so no submitter or lead is bound to a team. Every team-scoped rule is therefore either deferred or unenforceable today. Which group a person belongs to is the one fact the roster has never held, and enforcement is per submitter, so it becomes live for each person as theirs is written down rather than for everybody at once.
+- 11 of 13 compute profiles are provisioned: cpu-32vcpu, gpu-1xa10g, gpu-1xl4, gpu-1xt4, gpu-4xa10g, gpu-4xl4, gpu-4xl40s, gpu-4xt4, gpu-8xa100, gpu-8xa10g, gpu-8xh100. Every other profile is priced and dated but carries provisioned: false, so resolve_compute_profile_for_execution refuses it. Phase 0 proves pricing and classification for all of them and that nothing can run is no longer true of the whole catalog.
 - Approval scope is organization. Any team lead may approve any member's routine submission. Check D1 in the negative-case matrix is deferred for this reason.
-- Cross-team attribution is implemented but cannot reject anything yet. Every decision records the claimed team and a team_verified flag, and a submitter naming a team they do not belong to is denied as soon as that submitter's own membership is recorded. With no member bound, every shipped decision records team_verified: false, which is the audit record's way of saying the attribution was accepted unchecked. Check 9 is deferred for this reason: no test can show a shipped rejection that the shipped configuration cannot produce.
 - The secret scan applied to this bundle masks its own content digests before scanning. A 64-character hexadecimal sha256 digest and a 40-character hexadecimal commit SHA both match the generic long-credential patterns in evidence.py, so the two exact token shapes this bundle emits are replaced with placeholders and everything else is scanned unchanged. No other exemption is applied.
 - The nested verification run excludes every test module that builds a proof bundle (tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py, tests/test_phase5_proof.py), because those tests invoke a generator and would recurse. They run in the reviewer's own `uv run pytest -q`, which is the command this bundle asks the reviewer to run.
 - This bundle describes the working tree at generation time, which may differ from the commit named above. The input digests recorded in the bundle index identify exactly what was measured.

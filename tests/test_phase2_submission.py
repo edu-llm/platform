@@ -359,15 +359,19 @@ def test_the_approver_context_names_the_lead_the_claimed_team_would_route_to() -
 def test_a_claimed_team_with_no_bound_lead_says_so_rather_than_naming_nobody() -> None:
     """Mutation: render an empty string, or omit the row, when nothing is bound.
 
-    The state every team is in today, because the bindings catalogue is empty -- so this is
-    the ordinary path rather than the edge case, and it stays ordinary for as long as the
-    bindings go unpopulated. A blank where a name belongs reads as a lookup that failed and
-    sends a reviewer to check whether the page is broken. Saying no lead is recorded says
-    the same thing about the world and nothing about the page.
-    """
-    rendered = render(compile_payload(cpu_payload(team="data-prep")))
+    This used to be the ordinary path, because every team's bindings were empty. Recording
+    the assignments on 2026-08-01 made it the edge case it was always written for, and
+    `scratch` is the one team that still reaches it. That is deliberate rather than an
+    oversight: scratch is a bin for work nobody intends to keep, giving it a lead would
+    invent an owner, and a run claiming it still has to be released by somebody.
 
-    assert "No lead is recorded for team `data-prep`" in rendered
+    A blank where a name belongs reads as a lookup that failed and sends a reviewer to check
+    whether the page is broken. Saying no lead is recorded says the same thing about the
+    world and nothing about the page.
+    """
+    rendered = render(compile_payload(cpu_payload(team="scratch")))
+
+    assert "No lead is recorded for team `scratch`" in rendered
 
 
 def test_the_context_says_any_lead_may_still_release_so_an_absence_delays_nobody() -> None:

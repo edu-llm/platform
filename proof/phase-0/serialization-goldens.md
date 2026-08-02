@@ -6,15 +6,15 @@ The digest is `sha256` over `canonical_json_bytes(model)`: the validated contrac
 
 | fixture | contract | canonical bytes | digest |
 | --- | --- | --- | --- |
-| fixtures/authorization/admin-exception.yaml | AuthorizationScenario | 646 | sha256:d8651178b3bccf203aca41453ad69fffb46f1e931042627e83990749232f9166 |
-| fixtures/authorization/lead-self-authorization.yaml | AuthorizationScenario | 593 | sha256:d7f4783cffc2ab6f14fc60e1c797fc462a705bbcd5f69fe6093b37b37f335553 |
-| fixtures/authorization/member-approval.yaml | AuthorizationScenario | 646 | sha256:36ae0b620598e58ecad16c936c6d74f5f837a1588d9aac391a3d18f4a39a32b5 |
+| fixtures/authorization/admin-exception.yaml | AuthorizationScenario | 648 | sha256:9731f7cd8b25a990147cd54ac152206a1131859816897c8cbf45dff876705c9f |
+| fixtures/authorization/lead-self-authorization.yaml | AuthorizationScenario | 595 | sha256:f86d4d6a196dfaaa06885f3511fe12d90fce2026705f28140be7829531d608ca |
+| fixtures/authorization/member-approval.yaml | AuthorizationScenario | 648 | sha256:d3b1164d31694a31f9fd9fb97318c6567452e5d5161640da3bb2f8f6494ad765 |
 | fixtures/manifests/cpu-routine.yaml | RunManifest | 630 | sha256:abddcbad40510042b36d9a482f27c2d96776125f0edcd2050635d136ffee9c13 |
-| fixtures/manifests/gpu-exception.yaml | RunManifest | 632 | sha256:e9b232825543128bc4e86d0bfe3460ea5f2e94930f89033be4c2cdd514d066ec |
-| fixtures/manifests/gpu-routine.yaml | RunManifest | 619 | sha256:006b3d8316e154e8462458d98c609d24fa20174ef503eed7f27cc726bb9f0a2f |
+| fixtures/manifests/gpu-exception.yaml | RunManifest | 633 | sha256:883f37fed958b43f808d35f094c7db35d30b186fbd7007d1ef4f5334070a298c |
+| fixtures/manifests/gpu-routine.yaml | RunManifest | 623 | sha256:93104f1cdc56c72b9130801d043c368214f7bd2ab5ae3bae30796219a6feadbd |
 | fixtures/manifests/multiseed-routine.yaml | RunManifest | 694 | sha256:108ae519bfcf00355b90b6f8faa73f83654db2e1e10a1b916863ba4d084ba87d |
-| fixtures/manifests/olmo-branch-routine.yaml | RunManifest | 637 | sha256:96a5d23d8044bde8e840743e005e6d8f796f9de19240bdffe2ceba8e7ab1b683 |
-| fixtures/manifests/sagemaker-routine.yaml | RunManifest | 629 | sha256:e94d6e83ec7c81baf5aa7f0ef910a0b5f8da0bcc41bb8dbddc55f768253d6d3b |
+| fixtures/manifests/olmo-branch-routine.yaml | RunManifest | 639 | sha256:b99191c1de896a919b31dfaadd8e89305daf22de6f46fdee1c1bb3116031d265 |
+| fixtures/manifests/sagemaker-routine.yaml | RunManifest | 633 | sha256:0dc978d125e14726c244b1dd08fb273ec1aa56cbc99c7a17c1886be0a1ec84d9 |
 
 ## How this fails
 

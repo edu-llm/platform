@@ -326,7 +326,34 @@ def phase0_criteria(references: Sequence[FixtureReference]) -> tuple[CriterionSp
                 "not belong to is rejected. Approver scope is a separate question and follows "
                 "`approval_scope`."
             ),
-            status=CriterionStatus.DEFERRED,
+            status=CriterionStatus.COVERED,
+            # WHAT MOVED THIS OFF ITS DEFERRAL, AND WHY THESE FOUR ARE THE PROVING ONES.
+            #
+            # The supporting tests below prove the rule against a synthetic two-team
+            # inventory built inside the test. They were all true while the shipped roster
+            # recorded nobody, which is exactly why they could not close this criterion: a
+            # rule that rejects nothing in the configuration that ships is a rule no reviewer
+            # can watch working.
+            #
+            # These four run against config/organization.yaml itself. The first two are the
+            # shipped denial, one for a retired group name and one for a name no catalog ever
+            # declared, and both fail for the same reason on purpose, because attribution is
+            # read off the submitter and never off the catalog. The third is the shipped
+            # grant with team_verified true, a state no decision could reach before the
+            # assignments landed.
+            #
+            # The fourth is not about attribution and belongs here anyway. Enforcement is per
+            # submitter, so recording somebody's group is what starts checking every team
+            # they name, and guides/the-platform.md tells a new person to name `scratch`.
+            # A recorded member left out of scratch would be refused their first run by the
+            # very edit that recorded them. That property has to hold for the roster to be
+            # safe to fill in, so it is proved rather than assumed.
+            proving_node_ids=(
+                "tests/test_authorization.py::test_attribution_is_enforced_against_the_shipped_roster[curriculum]",
+                "tests/test_authorization.py::test_attribution_is_enforced_against_the_shipped_roster[not-a-team]",
+                "tests/test_authorization.py::test_a_recorded_member_claiming_their_own_group_is_verified_on_the_shipped_roster",
+                "tests/test_authorization.py::test_every_recorded_member_may_claim_scratch",
+            ),
             supporting_node_ids=(
                 (
                     "tests/test_authorization.py::test_a_submitter_naming_their_own_team_is_granted_and_recorded_verified",
@@ -338,34 +365,9 @@ def phase0_criteria(references: Sequence[FixtureReference]) -> tuple[CriterionSp
                 )
                 + _per_fixture(
                     "tests/test_authorization.py"
-                    "::test_attribution_is_recorded_unverified_while_no_member_is_bound_to_a_team",
-                    ("memory-split", "curriculum", "not-a-team"),
-                )
-                + _per_fixture(
-                    "tests/test_authorization.py"
                     "::test_attribution_changes_no_classification_outcome",
                     manifests,
                 )
-            ),
-            deferral_reason=(
-                "The rule is implemented and exercised, but it rejects nothing in the shipped "
-                f"configuration. {TEAM_BINDINGS_ARE_EMPTY} and membership cannot be checked at "
-                "all. Enforcing the rule literally today would deny every submission, including "
-                "all six run-manifest fixtures, so evaluate_authorization treats empty bindings "
-                "as unverifiable rather than as failure and records team_verified: false on "
-                "every shipped decision. No test can therefore show the shipped rejection this "
-                "criterion asks for, which is why it is not COVERED. It is a deferral rather "
-                "than a gap because the thing that is missing is data, the decision to withhold "
-                "that data is recorded here and on D1, and the condition that reverses it is "
-                "written down below."
-            ),
-            deferral_trigger=(
-                "config/organization.yaml records member_logins on a team, which happens once "
-                "each group's lead confirms who is in theirs. Enforcement is per submitter and "
-                "needs no code change: the supporting tests cited here already drive the denial "
-                "against a bound member. When the first group lands, this criterion must be "
-                "re-recorded as COVERED with those citations promoted to proving tests, or "
-                "argued again."
             ),
             scope_limits=(
                 (

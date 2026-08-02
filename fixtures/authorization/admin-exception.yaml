@@ -1,7 +1,7 @@
 schema_version: 1
 scenario: admin-exception
 submitter:
-  github_login: caiiris
+  github_login: nzhao721
   admin: false
   team_lead: false
 approver:
@@ -9,7 +9,7 @@ approver:
   admin: true
   team_lead: false
 request:
-  claimed_team: modeling
+  claimed_team: data-prep
   repository_registered: true
   dataset_registered: true
   compute_profile_registered: true

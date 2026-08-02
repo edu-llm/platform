@@ -1,23 +1,23 @@
 {
   "fixtures": [
     {
-      "canonical_json_bytes": 646,
+      "canonical_json_bytes": 648,
       "contract": "AuthorizationScenario",
-      "digest": "sha256:d8651178b3bccf203aca41453ad69fffb46f1e931042627e83990749232f9166",
+      "digest": "sha256:9731f7cd8b25a990147cd54ac152206a1131859816897c8cbf45dff876705c9f",
       "fixture": "admin-exception.yaml",
       "relative_path": "fixtures/authorization/admin-exception.yaml"
     },
     {
-      "canonical_json_bytes": 593,
+      "canonical_json_bytes": 595,
       "contract": "AuthorizationScenario",
-      "digest": "sha256:d7f4783cffc2ab6f14fc60e1c797fc462a705bbcd5f69fe6093b37b37f335553",
+      "digest": "sha256:f86d4d6a196dfaaa06885f3511fe12d90fce2026705f28140be7829531d608ca",
       "fixture": "lead-self-authorization.yaml",
       "relative_path": "fixtures/authorization/lead-self-authorization.yaml"
     },
     {
-      "canonical_json_bytes": 646,
+      "canonical_json_bytes": 648,
       "contract": "AuthorizationScenario",
-      "digest": "sha256:36ae0b620598e58ecad16c936c6d74f5f837a1588d9aac391a3d18f4a39a32b5",
+      "digest": "sha256:d3b1164d31694a31f9fd9fb97318c6567452e5d5161640da3bb2f8f6494ad765",
       "fixture": "member-approval.yaml",
       "relative_path": "fixtures/authorization/member-approval.yaml"
     },
@@ -29,16 +29,16 @@
       "relative_path": "fixtures/manifests/cpu-routine.yaml"
     },
     {
-      "canonical_json_bytes": 632,
+      "canonical_json_bytes": 633,
       "contract": "RunManifest",
-      "digest": "sha256:e9b232825543128bc4e86d0bfe3460ea5f2e94930f89033be4c2cdd514d066ec",
+      "digest": "sha256:883f37fed958b43f808d35f094c7db35d30b186fbd7007d1ef4f5334070a298c",
       "fixture": "gpu-exception.yaml",
       "relative_path": "fixtures/manifests/gpu-exception.yaml"
     },
     {
-      "canonical_json_bytes": 619,
+      "canonical_json_bytes": 623,
       "contract": "RunManifest",
-      "digest": "sha256:006b3d8316e154e8462458d98c609d24fa20174ef503eed7f27cc726bb9f0a2f",
+      "digest": "sha256:93104f1cdc56c72b9130801d043c368214f7bd2ab5ae3bae30796219a6feadbd",
       "fixture": "gpu-routine.yaml",
       "relative_path": "fixtures/manifests/gpu-routine.yaml"
     },
@@ -50,16 +50,16 @@
       "relative_path": "fixtures/manifests/multiseed-routine.yaml"
     },
     {
-      "canonical_json_bytes": 637,
+      "canonical_json_bytes": 639,
       "contract": "RunManifest",
-      "digest": "sha256:96a5d23d8044bde8e840743e005e6d8f796f9de19240bdffe2ceba8e7ab1b683",
+      "digest": "sha256:b99191c1de896a919b31dfaadd8e89305daf22de6f46fdee1c1bb3116031d265",
       "fixture": "olmo-branch-routine.yaml",
       "relative_path": "fixtures/manifests/olmo-branch-routine.yaml"
     },
     {
-      "canonical_json_bytes": 629,
+      "canonical_json_bytes": 633,
       "contract": "RunManifest",
-      "digest": "sha256:e94d6e83ec7c81baf5aa7f0ef910a0b5f8da0bcc41bb8dbddc55f768253d6d3b",
+      "digest": "sha256:0dc978d125e14726c244b1dd08fb273ec1aa56cbc99c7a17c1886be0a1ec84d9",
       "fixture": "sagemaker-routine.yaml",
       "relative_path": "fixtures/manifests/sagemaker-routine.yaml"
     }

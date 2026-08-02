@@ -367,6 +367,9 @@ def test_the_roster_records_who_cannot_be_attributed_yet() -> None:
         "yuen-kai",
         "Adarsh-Rajesh-gitHub",
         "NotAnAlgorithm",
+        # Recorded on the roster after the others, so his account was never looked for rather
+        # than looked for and missing. Same consequence either way, and the same remedy.
+        "prestonloats",
     }
 
 
@@ -390,7 +393,27 @@ def test_organization_yaml_validates_against_inventory_contract() -> None:
     assert {normalize_github_login(login) for login in inventory.admins} <= member_logins
     assert {normalize_github_login(login) for login in inventory.team_leads} <= member_logins
     assert inventory.team_bindings.teams != ()
-    assert inventory.teams_led_by(inventory.team_leads[0]) == ()
+    # Every lead leads something, and every lead named on a team is a lead on the roster.
+    # This assertion read `teams_led_by(team_leads[0]) == ()` while no group recorded anyone,
+    # which encoded the empty state rather than a rule. The two directions below are the rule
+    # it was standing in for: a lead with no group routes nothing, and a group naming a lead
+    # the roster does not grant authority to is a group whose runs nobody can release.
+    roster_leads = {normalize_github_login(login) for login in inventory.team_leads}
+    for login in inventory.team_leads:
+        assert inventory.teams_led_by(login) != (), f"{login} is a team lead who leads no group"
+    bound_leads = {
+        normalize_github_login(login)
+        for team in inventory.team_bindings.teams
+        for login in team.lead_logins
+    }
+    assert bound_leads <= roster_leads
+    # Nobody is recorded on a team without also being on the roster the platform checks.
+    bound_members = {
+        normalize_github_login(login)
+        for team in inventory.team_bindings.teams
+        for login in team.lead_logins + team.member_logins
+    }
+    assert bound_members <= member_logins
 
 
 def test_the_shipped_roster_names_the_person_who_leads_the_memory_group() -> None:

@@ -184,10 +184,10 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 *_ids(
                     ADMISSION,
                     "test_a_submission_its_approver_may_not_release_is_refused",
-                    "caiiris-nzhao721-approver_lacks_lead_or_admin_role",
-                    "caiiris-None-self_approval_not_permitted_for_member",
+                    "GMatherne-nzhao721-approver_lacks_lead_or_admin_role",
+                    "GMatherne-None-self_approval_not_permitted_for_member",
                     "not-a-member-ericrcwu001-submitter_not_in_roster",
-                    "caiiris-not-a-member-approver_not_in_roster",
+                    "GMatherne-not-a-member-approver_not_in_roster",
                 ),
             ),
             gaps=(

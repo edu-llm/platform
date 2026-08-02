@@ -10,8 +10,8 @@ The three scenarios under `fixtures/authorization/`, each carrying the outcome i
 
 | scenario | submitter | approver | class | outcome | reason | matches its recorded expectation |
 | --- | --- | --- | --- | --- | --- | --- |
-| admin-exception | `caiiris` (member) | `BritishAmericqn` (admin) | exception | granted | `exception_approved_by_admin` | yes |
-| lead-self-authorization | `ericrcwu001` (lead) | — | routine | granted | `routine_self_authorized` | yes |
+| admin-exception | `nzhao721` (member) | `BritishAmericqn` (admin) | exception | granted | `exception_approved_by_admin` | yes |
+| lead-self-authorization | `VS-code-cloud` (lead) | — | routine | granted | `routine_self_authorized` | yes |
 | member-approval | `caiiris` (member) | `ericrcwu001` (lead) | routine | granted | `routine_approved_by_lead_or_admin` | yes |
 
 ## The refusals, derived by varying one actor
@@ -20,12 +20,12 @@ Built from the committed scenarios' own request facts, changing exactly one thin
 
 | case | submitter | approver | class | outcome | reason | team verified |
 | --- | --- | --- | --- | --- | --- | --- |
-| member submits, nobody approves | `caiiris` (member) | — | routine | refused | `self_approval_not_permitted_for_member` | no |
-| member submits, another member approves | `caiiris` (member) | `GMatherne` (member) | routine | refused | `approver_lacks_lead_or_admin_role` | no |
-| member submits, approver is off the roster | `caiiris` (member) | `not-a-member` (not on the roster) | routine | refused | `approver_not_in_roster` | no |
+| member submits, nobody approves | `caiiris` (member) | — | routine | refused | `self_approval_not_permitted_for_member` | yes |
+| member submits, another member approves | `caiiris` (member) | `GMatherne` (member) | routine | refused | `approver_lacks_lead_or_admin_role` | yes |
+| member submits, approver is off the roster | `caiiris` (member) | `not-a-member` (not on the roster) | routine | refused | `approver_not_in_roster` | yes |
 | submitter is off the roster | `not-a-member` (not on the roster) | `ericrcwu001` (lead) | routine | refused | `submitter_not_in_roster` | no |
-| exception, approved by a lead who is not an admin | `caiiris` (member) | `ericrcwu001` (lead) | exception | refused | `approver_lacks_admin_role` | no |
-| lead self-authorizes, attributing the run to another team | `ericrcwu001` (lead) | — | routine | granted | `routine_self_authorized` | no |
+| exception, approved by a lead who is not an admin | `caiiris` (member) | `ericrcwu001` (lead) | exception | refused | `submitter_not_in_claimed_team` | no |
+| lead self-authorizes, attributing the run to another team | `VS-code-cloud` (lead) | — | routine | refused | `submitter_not_in_claimed_team` | no |
 
 ## The last row, and why it is a deferral rather than a failure
 
