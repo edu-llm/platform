@@ -600,7 +600,7 @@ class ContainerShape:
 
 #: What every GPU profile's container carries besides its two numbers and its device count.
 #:
-#: A function rather than nine copies of the same eight lines. The seam test in
+#: A function rather than thirteen copies of the same eight lines. The seam test in
 #: tests/test_phase3_execution.py compares what this produces against each deployed template
 #: field by field, so the templates remain the authority and this is only how the identical
 #: parts are spelled once. The parts that differ per shape are the arguments, and they are
@@ -666,7 +666,7 @@ CONTAINER_SHAPES: Final[Mapping[str, ContainerShape]] = {
             ),
         ),
     ),
-    # THE NINE SHAPES BELOW, AND WHERE EVERY NUMBER IN THEM COMES FROM.
+    # THE THIRTEEN SHAPES BELOW, AND WHERE EVERY NUMBER IN THEM COMES FROM.
     #
     # vcpus and gpus are the whole instance. A GPU instance is not shared between jobs here:
     # the device is the scarce thing, an eight-GPU host running a one-GPU job has seven idle
@@ -685,13 +685,21 @@ CONTAINER_SHAPES: Final[Mapping[str, ContainerShape]] = {
     #
     #   g4dn.xlarge      16 GiB      16384 -   1024 =   15360      4 vCPU
     #   g4dn.12xlarge   192 GiB     196608 -  12288 =  184320     48 vCPU
+    #   g4dn.metal      384 GiB     393216 -  24576 =  368640     96 vCPU
     #   g5.12xlarge     192 GiB     196608 -  12288 =  184320     48 vCPU
     #   g5.48xlarge     768 GiB     786432 -  49152 =  737280    192 vCPU
     #   g6.xlarge        16 GiB      16384 -   1024 =   15360      4 vCPU
     #   g6.12xlarge     192 GiB     196608 -  12288 =  184320     48 vCPU
+    #   g6.48xlarge     768 GiB     786432 -  49152 =  737280    192 vCPU
+    #   g6e.xlarge       32 GiB      32768 -   1024 =   31744      4 vCPU
     #   g6e.12xlarge    384 GiB     393216 -  12288 =  380928     48 vCPU
+    #   g6e.48xlarge   1536 GiB    1572864 -  49152 = 1523712    192 vCPU
     #   p4d.24xlarge   1152 GiB    1179648 -  24576 = 1155072     96 vCPU
     #   p5.48xlarge    2048 GiB    2097152 -  49152 = 2048000    192 vCPU
+    #
+    # g4dn.metal and g6e.12xlarge are both 384 GiB and get different container memory, which
+    # is the rule working rather than a mistake. The allowance is per vCPU and the metal host
+    # has twice as many, so it hands back 24 GiB where the g6e hands back 12.
     #
     # shared_memory_mib is a quarter of the container's memory, extending the g5.xlarge's
     # 4 GiB of 16. It is a tmpfs and costs nothing until a DataLoader uses it, and the
@@ -700,13 +708,23 @@ CONTAINER_SHAPES: Final[Mapping[str, ContainerShape]] = {
     # bus error naming neither shared memory nor the setting that fixes it. Multi-rank
     # training makes that worse rather than better: torchrun puts one process per device on
     # one host and every one of them has its own workers moving batches through this tmpfs.
+    #
+    # gpu-8xl4 is the one shape below that does not recompute anything. g6.48xlarge is the
+    # same 192 vCPU and 768 GiB as g5.48xlarge, so it carries gpu-8xa10g's three numbers
+    # unchanged, including the 196608 of shared memory that is a quarter of the instance
+    # rather than a quarter of the container. Two identical machines reserving different
+    # amounts would be a difference a reader looks for a reason behind and finds none.
     "gpu-1xt4": _gpu_shape(vcpus=4, memory_mib=15360, gpus=1, shared_memory_mib=4096),
     "gpu-4xt4": _gpu_shape(vcpus=48, memory_mib=184320, gpus=4, shared_memory_mib=49152),
+    "gpu-8xt4": _gpu_shape(vcpus=96, memory_mib=368640, gpus=8, shared_memory_mib=92160),
     "gpu-4xa10g": _gpu_shape(vcpus=48, memory_mib=184320, gpus=4, shared_memory_mib=49152),
     "gpu-8xa10g": _gpu_shape(vcpus=192, memory_mib=737280, gpus=8, shared_memory_mib=196608),
     "gpu-1xl4": _gpu_shape(vcpus=4, memory_mib=15360, gpus=1, shared_memory_mib=4096),
     "gpu-4xl4": _gpu_shape(vcpus=48, memory_mib=184320, gpus=4, shared_memory_mib=49152),
+    "gpu-8xl4": _gpu_shape(vcpus=192, memory_mib=737280, gpus=8, shared_memory_mib=196608),
+    "gpu-1xl40s": _gpu_shape(vcpus=4, memory_mib=31744, gpus=1, shared_memory_mib=7936),
     "gpu-4xl40s": _gpu_shape(vcpus=48, memory_mib=380928, gpus=4, shared_memory_mib=95232),
+    "gpu-8xl40s": _gpu_shape(vcpus=192, memory_mib=1523712, gpus=8, shared_memory_mib=380928),
     "gpu-8xa100": _gpu_shape(vcpus=96, memory_mib=1155072, gpus=8, shared_memory_mib=288768),
     "gpu-8xh100": _gpu_shape(vcpus=192, memory_mib=2048000, gpus=8, shared_memory_mib=512000),
 }

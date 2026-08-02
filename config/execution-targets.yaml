@@ -43,7 +43,7 @@ targets:
     execution_role: sbsandbox-intern-edullm-batch-gpu-execution
     workload_role: sbsandbox-intern-edullm-batch-gpu-workload
     log_group: /aws/batch/sbsandbox-intern-edullm-gpu
-  # THE NINE ROWS BELOW SHARE THE GPU ROLE TRIO AND THE GPU LOG GROUP WITH THE ROW ABOVE,
+  # THE THIRTEEN ROWS BELOW SHARE THE GPU ROLE TRIO AND THE GPU LOG GROUP WITH THE ROW ABOVE,
   # AND THAT IS A DECISION RATHER THAN A SHORTCUT.
   #
   # The isolation the CPU and GPU rows have from each other is real: their execution roles
@@ -51,13 +51,18 @@ targets:
   # role is scoped to one log group, so merging those two groups would let either principal
   # write into the record of the other's jobs. None of that separates one GPU shape from
   # another. They run the same image, resume from the same output prefix, read the same W&B
-  # secret and are approved by the same people; a role per shape would be ten copies of one
-  # policy, and ten log groups would need ten grants added to the role that already exists.
+  # secret and are approved by the same people; a role per shape would be fourteen copies of
+  # one policy, and fourteen log groups would need fourteen grants on the role that exists.
   #
   # What follows from sharing is that infra/batch-compute-gpu-shapes.yaml creates no log
   # group. It names /aws/batch/sbsandbox-intern-edullm-gpu, which infra/batch-compute-gpu.yaml
   # creates, and CloudFormation knows nothing about that dependency because the awslogs driver
-  # takes a string. Deleting the gpu stack would leave these nine definitions logging nowhere.
+  # takes a string. Deleting the gpu stack would leave these thirteen definitions logging
+  # nowhere.
+  #
+  # The rows are in the same order the template declares the resources, grouped by card and
+  # then by device count, so a reader comparing the two files reads them down together. That
+  # is the only thing the order carries; nothing resolves by position.
   - compute_profile: gpu-1xt4
     region: us-east-1
     job_queue: sbsandbox-intern-edullm-gpu-1xt4
@@ -69,6 +74,13 @@ targets:
     region: us-east-1
     job_queue: sbsandbox-intern-edullm-gpu-4xt4
     job_definition: sbsandbox-intern-edullm-gpu-4xt4-run
+    execution_role: sbsandbox-intern-edullm-batch-gpu-execution
+    workload_role: sbsandbox-intern-edullm-batch-gpu-workload
+    log_group: /aws/batch/sbsandbox-intern-edullm-gpu
+  - compute_profile: gpu-8xt4
+    region: us-east-1
+    job_queue: sbsandbox-intern-edullm-gpu-8xt4
+    job_definition: sbsandbox-intern-edullm-gpu-8xt4-run
     execution_role: sbsandbox-intern-edullm-batch-gpu-execution
     workload_role: sbsandbox-intern-edullm-batch-gpu-workload
     log_group: /aws/batch/sbsandbox-intern-edullm-gpu
@@ -100,10 +112,31 @@ targets:
     execution_role: sbsandbox-intern-edullm-batch-gpu-execution
     workload_role: sbsandbox-intern-edullm-batch-gpu-workload
     log_group: /aws/batch/sbsandbox-intern-edullm-gpu
+  - compute_profile: gpu-8xl4
+    region: us-east-1
+    job_queue: sbsandbox-intern-edullm-gpu-8xl4
+    job_definition: sbsandbox-intern-edullm-gpu-8xl4-run
+    execution_role: sbsandbox-intern-edullm-batch-gpu-execution
+    workload_role: sbsandbox-intern-edullm-batch-gpu-workload
+    log_group: /aws/batch/sbsandbox-intern-edullm-gpu
+  - compute_profile: gpu-1xl40s
+    region: us-east-1
+    job_queue: sbsandbox-intern-edullm-gpu-1xl40s
+    job_definition: sbsandbox-intern-edullm-gpu-1xl40s-run
+    execution_role: sbsandbox-intern-edullm-batch-gpu-execution
+    workload_role: sbsandbox-intern-edullm-batch-gpu-workload
+    log_group: /aws/batch/sbsandbox-intern-edullm-gpu
   - compute_profile: gpu-4xl40s
     region: us-east-1
     job_queue: sbsandbox-intern-edullm-gpu-4xl40s
     job_definition: sbsandbox-intern-edullm-gpu-4xl40s-run
+    execution_role: sbsandbox-intern-edullm-batch-gpu-execution
+    workload_role: sbsandbox-intern-edullm-batch-gpu-workload
+    log_group: /aws/batch/sbsandbox-intern-edullm-gpu
+  - compute_profile: gpu-8xl40s
+    region: us-east-1
+    job_queue: sbsandbox-intern-edullm-gpu-8xl40s
+    job_definition: sbsandbox-intern-edullm-gpu-8xl40s-run
     execution_role: sbsandbox-intern-edullm-batch-gpu-execution
     workload_role: sbsandbox-intern-edullm-batch-gpu-workload
     log_group: /aws/batch/sbsandbox-intern-edullm-gpu

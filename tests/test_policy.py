@@ -282,14 +282,17 @@ def test_the_ceiling_sits_between_the_dearest_routine_shape_and_the_cheapest_gat
     assert rates["gpu-8xa10g"] < EXCEPTION_RATE_CEILING_USD_PER_HOUR
     assert rates["gpu-8xa100"] > EXCEPTION_RATE_CEILING_USD_PER_HOUR
     assert rates["gpu-8xh100"] > EXCEPTION_RATE_CEILING_USD_PER_HOUR
-    # No other provisioned profile is above it, so the gate catches exactly the two shapes it
-    # was added for and every routine GPU shape stays with a team lead.
+    # gpu-8xl40s joined the two the gate was added for, and it is the first shape to reach
+    # the gate by being priced above the line rather than by being one of the two P shapes
+    # the line was drawn around. That is the rate doing what a list of names could not, and
+    # it is why the ceiling is a rate. Every other provisioned GPU shape stays routine.
+    assert rates["gpu-8xl40s"] > EXCEPTION_RATE_CEILING_USD_PER_HOUR
     above = {
         profile.name
         for profile in load_workload_catalog().compute_profiles
         if profile.provisioned and profile.hourly_rate_usd > EXCEPTION_RATE_CEILING_USD_PER_HOUR
     }
-    assert above == {"gpu-8xa100", "gpu-8xh100"}
+    assert above == {"gpu-8xa100", "gpu-8xh100", "gpu-8xl40s"}
 
 
 def test_request_facts_describe_a_single_cell_when_no_fanout_is_declared() -> None:

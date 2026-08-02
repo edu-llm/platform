@@ -11,8 +11,8 @@ compute_profiles:
     # a second without deploying an environment for it is a contradiction between two files
     # rather than a flag, and a test refuses it.
     provisioned: true
-  # THE NINE PROFILES BELOW THAT NOW SAY provisioned: true WERE PROMOTED TOGETHER, AND THE
-  # PROMOTION IS FOUR EDITS PER PROFILE RATHER THAN THIS FLAG.
+  # THE FOURTEEN PROFILES BELOW THAT NOW SAY provisioned: true WERE PROMOTED IN TWO ROUNDS,
+  # AND EACH PROMOTION IS FOUR EDITS PER PROFILE RATHER THAN THIS FLAG.
   #
   # A compute environment, a queue and a job definition in
   # infra/batch-compute-gpu-shapes.yaml; a row in config/execution-targets.yaml; an entry in
@@ -29,10 +29,26 @@ compute_profiles:
   # into produces a job that waits in RUNNABLE forever with no error anywhere, which is why
   # the two four-subnet environments are a measurement rather than a copy of their neighbours.
   #
-  # gpu-1xl40s and gpu-1xa10g-sagemaker stay unprovisioned. The first is a single L40S nobody
-  # asked for -- the four-GPU g6e is the shape that makes an L40S worth having -- and the
-  # second is a SageMaker training instance, which is a different service with a different
-  # submission path and no Batch queue to give it.
+  # THE FOUR TYPES PROMOTED ON 2026-08-02 WERE MEASURED THE SAME WAY, AT availability-zone
+  # granularity, AND TWO OF THEM PART FROM THEIR NEIGHBOURS. g4dn.metal and g6.48xlarge are
+  # offered in us-east-1a, 1b, 1c, 1d and 1f, so their environments list five subnets.
+  # g6e.48xlarge and g6e.xlarge are offered in 1a, 1b, 1c and 1d only, so theirs list four.
+  # Nine environments now list five and four list four. gpu-1xl40s is the one a copy would
+  # have got wrong, because g6.xlarge sits beside it at the same size and is offered in 1f.
+  #
+  # gpu-1xl40s IS NOW PROVISIONED, AND THE SENTENCE THAT STOOD HERE SAID IT WAS "a single
+  # L40S nobody asked for". Two pieces of work have since asked for it and neither can use
+  # anything else this account can start. grpo-tutor runs vLLM 0.11.2 on one H100 on a single
+  # node, which its own README states, and 48 GB is the largest single card EC2 sells. The P7
+  # tutor recipe annotates per_device_batch: 8 as fitting about 44 GB with gradient
+  # checkpointing, which no 24 GB card holds, so gpu-1xl40s is the only single-GPU profile
+  # here that runs that recipe unchanged. P7's alternative was per_device_batch 2 with
+  # grad_accum 16, which holds the effective batch at 32 but moves the micro-batch boundaries
+  # and therefore the dropout draw, so it is a deviation somebody has to declare and defend
+  # rather than a free substitution. Provisioning the shape takes that choice away from both.
+  #
+  # gpu-1xa10g-sagemaker stays unprovisioned. It is a SageMaker training instance, which is a
+  # different service with a different submission path and no Batch queue to give it.
   - name: gpu-1xt4
     instance_type: g4dn.xlarge
     accelerator: gpu
@@ -48,6 +64,19 @@ compute_profiles:
     hourly_rate_usd: "3.9120"
     pricing_source: "AWS Price List API get-products AmazonEC2 g4dn.12xlarge us-east-1 Linux/Shared/NA/Used"
     pricing_observed_at: "2026-07-25"
+    provisioned: true
+  - name: gpu-8xt4
+    instance_type: g4dn.metal
+    accelerator: gpu
+    nodes: 1
+    hourly_rate_usd: "7.8240"
+    pricing_source: "AWS Price List API get-products AmazonEC2 g4dn.metal us-east-1 Linux/Shared/NA/Used"
+    pricing_observed_at: "2026-08-02"
+    # g4dn.metal rather than a g4dn.24xlarge, because there is no such type. The T4 family
+    # stops at twelve vCPU per four devices and then goes straight to the bare-metal host, so
+    # eight T4 costs 96 vCPU and 384 GiB whether a job wants them or not. That is 128 GB of
+    # device memory for $7.824/hour, which is the cheapest eight-device shape here and the
+    # only one under half the price of gpu-8xa10g.
     provisioned: true
   - name: gpu-1xa10g
     instance_type: g5.xlarge
@@ -104,14 +133,29 @@ compute_profiles:
     pricing_source: "AWS Price List API get-products AmazonEC2 g6.12xlarge us-east-1 Linux/Shared/NA/Used"
     pricing_observed_at: "2026-07-25"
     provisioned: true
+  - name: gpu-8xl4
+    instance_type: g6.48xlarge
+    accelerator: gpu
+    nodes: 1
+    hourly_rate_usd: "13.3504"
+    pricing_source: "AWS Price List API get-products AmazonEC2 g6.48xlarge us-east-1 Linux/Shared/NA/Used"
+    pricing_observed_at: "2026-08-02"
+    # The same machine as gpu-8xa10g on every axis a job can ask for, at a lower price. Both
+    # are 192 vCPU, 768 GiB of host memory, eight devices and 192 GB of device memory, and
+    # this one is $13.350 against $16.288. That makes it the cheaper of the two whenever a
+    # job is bound by device memory, and it is the same relation gpu-4xl4 already has to
+    # gpu-4xa10g one row up.
+    provisioned: true
   - name: gpu-1xl40s
     instance_type: g6e.xlarge
     accelerator: gpu
     nodes: 1
     hourly_rate_usd: "1.8610"
     pricing_source: "AWS Price List API get-products AmazonEC2 g6e.xlarge us-east-1 Linux/Shared/NA/Used"
+    # Re-read on 2026-08-02 while provisioning the shape and unchanged, so the date the rate
+    # was first observed is the date that stands.
     pricing_observed_at: "2026-07-25"
-    provisioned: false
+    provisioned: true
   - name: gpu-4xl40s
     instance_type: g6e.12xlarge
     accelerator: gpu
@@ -119,6 +163,23 @@ compute_profiles:
     hourly_rate_usd: "10.4926"
     pricing_source: "AWS Price List API get-products AmazonEC2 g6e.12xlarge us-east-1 Linux/Shared/NA/Used"
     pricing_observed_at: "2026-07-25"
+    provisioned: true
+  # gpu-8xl40s IS THE THIRD PROVISIONED PROFILE THAT NEEDS AN ADMIN, AND THE TWO BELOW IT ARE
+  # THE OTHERS. See the note above gpu-8xa100 for what the rate does at the gate.
+  #
+  # It earns its place on the gap it fills rather than on the grid being symmetric. Eight
+  # L40S is 384 GB of device memory, between the 192 GB of the eight-A10G and eight-L4 nodes
+  # and the 640 GB of the eight-A100 node, and nothing else in this file occupies that range.
+  # A model that does not fit in 192 GB has had to reach for a p4d and its admin approval and
+  # its separate quota pool; this is the same reach without the P pool. It is also the only
+  # G-pool shape whose rate crosses the ceiling, at $30.131 against gpu-8xa10g's $16.288.
+  - name: gpu-8xl40s
+    instance_type: g6e.48xlarge
+    accelerator: gpu
+    nodes: 1
+    hourly_rate_usd: "30.1312"
+    pricing_source: "AWS Price List API get-products AmazonEC2 g6e.48xlarge us-east-1 Linux/Shared/NA/Used"
+    pricing_observed_at: "2026-08-02"
     provisioned: true
   # THE TWO BELOW ARE PROVISIONED AND STILL NEED AN ADMIN. The hourly_rate_usd on each is
   # above EXCEPTION_RATE_CEILING_USD_PER_HOUR in
@@ -129,6 +190,13 @@ compute_profiles:
   # So hourly_rate_usd here is no longer only a cost estimate. It is read by the gate, and
   # editing one of these numbers downward past $20 would move a shape from admin approval to
   # team-lead approval with nothing else changing.
+  #
+  # NEITHER OF THESE TWO CARDS HAS A ONE-CARD OR FOUR-CARD FORM ON EC2, WHICH IS WHY THE GRID
+  # ABOVE HAS SIX FAMILIES AND ONLY FOUR OF THEM ARE COMPLETE. A100 is sold as p4d.24xlarge
+  # and H100 as p5.48xlarge, both eight-device instances, so a gpu-1xa100 or gpu-4xh100
+  # cannot be built here however much a researcher who ran one card elsewhere wants it. The
+  # substitute for a single A100 or H100 is gpu-1xl40s, which is 48 GB against 80 GB and the
+  # largest single card this account can start.
   - name: gpu-8xa100
     instance_type: p4d.24xlarge
     accelerator: gpu

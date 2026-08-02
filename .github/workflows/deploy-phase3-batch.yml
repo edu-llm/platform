@@ -170,17 +170,104 @@ jobs:
       # document -- is the one worth catching before three stacks have already changed. What
       # covers the rest is tests/test_phase3_infrastructure.py against the committed files,
       # and the verification step against the deployed account.
-      - name: Validate CloudFormation templates
+      #
+      # EVERY TEMPLATE IS UPLOADED AND VALIDATED BY URL, BECAUSE ONE OF THEM NO LONGER FITS.
+      #
+      # CloudFormation caps a template carried in the request body at 51,200 bytes, and the
+      # cap is not a deploy-time one a rollback recovers from: ValidateTemplate,
+      # CreateChangeSet and CreateStack all refuse the call outright with "Member must have
+      # length less than or equal to 51200". Measured on 2026-08-02,
+      # infra/batch-compute-gpu-shapes.yaml is 68,715 bytes -- thirteen GPU shapes and the
+      # vCPU arithmetic explaining them -- so the line that used to validate it inline could
+      # not have run, and the next push to main would have failed here.
+      #
+      # A template read out of S3 is capped at 1 MB instead. `deploy` reaches that cap with
+      # --s3-bucket and uploads the file itself. `validate-template` has no such flag: it
+      # takes --template-url or --template-body and nothing else, so the object has to be in
+      # the bucket before the validation rather than as a side effect of the deploy. That is
+      # why the upload lives in this step and not in the deploy steps below.
+      #
+      # ALL SEVEN RATHER THAN THE ONE OVER THE LINE. infra/admission-state-machine.yaml is
+      # 49,632 bytes, which is 1,568 from the same cliff -- one paragraph of the kind of
+      # comment this repository writes everywhere. Two of seven at or over is not an
+      # exception, and a workflow where six templates take one path and the seventh takes
+      # another is a trap for whoever adds the eighth. Uniformity costs six more PutObject
+      # calls of a few kilobytes each per deploy, and tests/test_phase3_batch_deployment_workflow.py
+      # holds the list to being all of them rather than a chosen few.
+      #
+      # THE KEY LAYOUT, WHICH CARRIES TWO NAMING SCHEMES BECAUSE TWO THINGS WRITE HERE.
+      # cloudformation-templates/ is the third top-level name in the artifacts bucket,
+      # beside admission-validator/ and lifecycle-recorder/, and it says what it holds.
+      # Directly under it, one object per template named for the file, which is what the
+      # --template-url lines below read and what a person opens when a validation fails.
+      # Under cloudformation-templates/checksummed/, the objects `deploy --s3-bucket`
+      # writes: the CLI names those for the checksum of the file rather than for the file,
+      # and skips the upload when that key already exists. They sit in a prefix of their own
+      # so a page of hex names is not read as damage to the readable half.
+      #
+      # THE BUCKET IS VERSIONED AND NOTHING EXPIRES ANYTHING IN IT. The readable half gains
+      # a version per template per deploy, about 200 KB in all, and the checksummed half
+      # gains a key the first time a given template body is deployed and nothing after. That
+      # is noise beside the Lambda zips already here, and it buys something: the version at
+      # a readable key is the exact bytes some validation passed on. If it ever stops being
+      # noise the answer is a lifecycle rule on the prefix in infra/artifacts-bucket.yaml,
+      # and s3:PutLifecycleConfiguration is already granted.
+      #
+      # NO IAM CHANGE WAS NEEDED FOR ANY OF THIS. infra/iam/infra-deployer-role.yaml grants
+      # s3:PutObject and s3:GetObject on sbsandbox-intern-edullm-artifacts/*, in the inline
+      # policy named deploy-phase2-admission-stacks, for the release procedure in the Phase 2
+      # workflow. IAM evaluates the inline policies of a role together, so a grant named for
+      # Phase 2 is in reach from a step in Phase 3. It is the same role and the same session.
+      #
+      # Path-style URLs, not virtual-hosted. That is the form the CLI itself builds when
+      # --s3-bucket hands a TemplateURL to CloudFormation, so both halves of this workflow
+      # address the same object the same way.
+      - name: Upload and validate the CloudFormation templates
         if: inputs.describe_run == ''
         run: |
           set -euo pipefail
-          aws cloudformation validate-template --template-body file://infra/outputs-bucket.yaml
-          aws cloudformation validate-template --template-body file://infra/batch-network.yaml
-          aws cloudformation validate-template --template-body file://infra/batch-compute.yaml
-          aws cloudformation validate-template --template-body file://infra/batch-compute-gpu.yaml
-          aws cloudformation validate-template --template-body file://infra/batch-compute-gpu-shapes.yaml
-          aws cloudformation validate-template --template-body file://infra/batch-events.yaml
-          aws cloudformation validate-template --template-body file://infra/admission-state-machine.yaml
+          aws s3api put-object \
+            --bucket sbsandbox-intern-edullm-artifacts \
+            --key cloudformation-templates/outputs-bucket.yaml \
+            --body infra/outputs-bucket.yaml
+          aws cloudformation validate-template \
+            --template-url https://s3.${AWS_REGION}.amazonaws.com/sbsandbox-intern-edullm-artifacts/cloudformation-templates/outputs-bucket.yaml
+          aws s3api put-object \
+            --bucket sbsandbox-intern-edullm-artifacts \
+            --key cloudformation-templates/batch-network.yaml \
+            --body infra/batch-network.yaml
+          aws cloudformation validate-template \
+            --template-url https://s3.${AWS_REGION}.amazonaws.com/sbsandbox-intern-edullm-artifacts/cloudformation-templates/batch-network.yaml
+          aws s3api put-object \
+            --bucket sbsandbox-intern-edullm-artifacts \
+            --key cloudformation-templates/batch-compute.yaml \
+            --body infra/batch-compute.yaml
+          aws cloudformation validate-template \
+            --template-url https://s3.${AWS_REGION}.amazonaws.com/sbsandbox-intern-edullm-artifacts/cloudformation-templates/batch-compute.yaml
+          aws s3api put-object \
+            --bucket sbsandbox-intern-edullm-artifacts \
+            --key cloudformation-templates/batch-compute-gpu.yaml \
+            --body infra/batch-compute-gpu.yaml
+          aws cloudformation validate-template \
+            --template-url https://s3.${AWS_REGION}.amazonaws.com/sbsandbox-intern-edullm-artifacts/cloudformation-templates/batch-compute-gpu.yaml
+          aws s3api put-object \
+            --bucket sbsandbox-intern-edullm-artifacts \
+            --key cloudformation-templates/batch-compute-gpu-shapes.yaml \
+            --body infra/batch-compute-gpu-shapes.yaml
+          aws cloudformation validate-template \
+            --template-url https://s3.${AWS_REGION}.amazonaws.com/sbsandbox-intern-edullm-artifacts/cloudformation-templates/batch-compute-gpu-shapes.yaml
+          aws s3api put-object \
+            --bucket sbsandbox-intern-edullm-artifacts \
+            --key cloudformation-templates/batch-events.yaml \
+            --body infra/batch-events.yaml
+          aws cloudformation validate-template \
+            --template-url https://s3.${AWS_REGION}.amazonaws.com/sbsandbox-intern-edullm-artifacts/cloudformation-templates/batch-events.yaml
+          aws s3api put-object \
+            --bucket sbsandbox-intern-edullm-artifacts \
+            --key cloudformation-templates/admission-state-machine.yaml \
+            --body infra/admission-state-machine.yaml
+          aws cloudformation validate-template \
+            --template-url https://s3.${AWS_REGION}.amazonaws.com/sbsandbox-intern-edullm-artifacts/cloudformation-templates/admission-state-machine.yaml
 
       # No --capabilities on any deploy here, for the reason the Phase 2 workflow states and
       # checks: CloudFormation demands CAPABILITY_IAM or CAPABILITY_NAMED_IAM only for
@@ -191,6 +278,11 @@ jobs:
       # Withholding the acknowledgement is worth more than it costs: a template that grew an
       # IAM resource fails at InsufficientCapabilities, naming the reason, instead of at an
       # AccessDenied several minutes into a rollback.
+      #
+      # --s3-bucket on all seven, for the reason set out at length above the validation step:
+      # one of these templates is past the 51,200-byte inline limit and a second is 1,568
+      # bytes short of it. The CLI uploads the file and passes a TemplateURL, keyed by the
+      # checksum of the file, so an unchanged template writes no object at all.
       #
       # THE ORDER OF THE NEXT FIVE STEPS IS THE ONLY THING THAT ENFORCES IT, for three of
       # the four dependencies. infra/batch-compute.yaml imports the network stack's exported
@@ -203,6 +295,8 @@ jobs:
           aws cloudformation deploy \
             --stack-name sbsandbox-intern-edullm-phase3-outputs \
             --template-file infra/outputs-bucket.yaml \
+            --s3-bucket sbsandbox-intern-edullm-artifacts \
+            --s3-prefix cloudformation-templates/checksummed \
             --no-fail-on-empty-changeset
 
       - name: Deploy Phase 3 network stack
@@ -212,6 +306,8 @@ jobs:
           aws cloudformation deploy \
             --stack-name sbsandbox-intern-edullm-phase3-network \
             --template-file infra/batch-network.yaml \
+            --s3-bucket sbsandbox-intern-edullm-artifacts \
+            --s3-prefix cloudformation-templates/checksummed \
             --no-fail-on-empty-changeset
 
       # After the network, because the compute environment imports its subnets and security
@@ -225,6 +321,8 @@ jobs:
           aws cloudformation deploy \
             --stack-name sbsandbox-intern-edullm-phase3-batch \
             --template-file infra/batch-compute.yaml \
+            --s3-bucket sbsandbox-intern-edullm-artifacts \
+            --s3-prefix cloudformation-templates/checksummed \
             --no-fail-on-empty-changeset
 
       # The GPU sibling, deployed here rather than from a workflow of its own, and the
@@ -244,18 +342,20 @@ jobs:
           aws cloudformation deploy \
             --stack-name sbsandbox-intern-edullm-phase4-gpu \
             --template-file infra/batch-compute-gpu.yaml \
+            --s3-bucket sbsandbox-intern-edullm-artifacts \
+            --s3-prefix cloudformation-templates/checksummed \
             --no-fail-on-empty-changeset
 
-      # THE OTHER NINE GPU SHAPES, IN A SECOND STACK RATHER THAN IN THE ONE ABOVE. That
+      # THE OTHER THIRTEEN GPU SHAPES, IN A SECOND STACK RATHER THAN IN THE ONE ABOVE. That
       # stack had running training jobs when these were added, and an update to it replaces
       # nothing by itself but does put a live compute environment through a change nobody
-      # needed. A separate stack also means the nine can be rolled back without touching
+      # needed. A separate stack also means the thirteen can be rolled back without touching
       # the shape researchers are already using.
       #
       # After the stack above rather than beside it, because this template creates no log
       # group. It names /aws/batch/sbsandbox-intern-edullm-gpu, which that one creates, and
       # the awslogs driver takes a string so CloudFormation enforces nothing. Deployed first
-      # into an account without that stack, these nine definitions would register cleanly
+      # into an account without that stack, these thirteen definitions would register cleanly
       # and log nowhere.
       - name: Deploy the remaining GPU shapes stack
         if: inputs.describe_run == ''
@@ -264,6 +364,8 @@ jobs:
           aws cloudformation deploy \
             --stack-name sbsandbox-intern-edullm-phase4-gpu-shapes \
             --template-file infra/batch-compute-gpu-shapes.yaml \
+            --s3-bucket sbsandbox-intern-edullm-artifacts \
+            --s3-prefix cloudformation-templates/checksummed \
             --no-fail-on-empty-changeset
 
       # After every compute stack, because the EventBridge rule's pattern names the job queue
@@ -276,6 +378,8 @@ jobs:
           aws cloudformation deploy \
             --stack-name sbsandbox-intern-edullm-phase3-events \
             --template-file infra/batch-events.yaml \
+            --s3-bucket sbsandbox-intern-edullm-artifacts \
+            --s3-prefix cloudformation-templates/checksummed \
             --no-fail-on-empty-changeset
 
       # Last, and it is the Phase 2 stack under its Phase 2 name. The amended state machine
@@ -289,6 +393,8 @@ jobs:
           aws cloudformation deploy \
             --stack-name sbsandbox-intern-edullm-phase2-admission \
             --template-file infra/admission-state-machine.yaml \
+            --s3-bucket sbsandbox-intern-edullm-artifacts \
+            --s3-prefix cloudformation-templates/checksummed \
             --no-fail-on-empty-changeset
 
       # WHAT THIS STEP CANNOT PROVE, said here so the green tick is read correctly. A
@@ -548,20 +654,29 @@ jobs:
           print("PHASE3_BATCH_VERIFICATION_PASSED")
           PY
 
-      # THE NINE SHAPES, IN A STEP OF THEIR OWN AND NOT ADDED TO THE ONE ABOVE. That step
+      # THE THIRTEEN SHAPES, IN A STEP OF THEIR OWN AND NOT ADDED TO THE ONE ABOVE. That step
       # names one environment, one queue and one definition per axis and compares each
-      # against a written-out expectation; nine more of each would be twenty-seven more
-      # files and twenty-seven more literals, and the interesting property is the same for
+      # against a written-out expectation; thirteen more of each would be thirty-nine more
+      # files and thirty-nine more literals, and the interesting property is the same for
       # all of them. So this loops and the expectation is the loop body.
       #
       # imageType is the check worth having here, for the reason the step above records at
       # length: an environment left on the default AMI carries no NVIDIA driver, so an
       # instance launches, takes the job and runs it on the CPU at GPU prices with nothing
-      # erroring anywhere. Nine environments is nine chances to get that wrong.
+      # erroring anywhere. Thirteen environments is thirteen chances to get that wrong.
       #
       # requestsAGpu and gpuCount together, because the count is what a shape is. A
       # g5.48xlarge definition asking for one GPU deploys, runs, bills for eight devices and
       # uses one, and every other line of this check passes.
+      #
+      # subnetCount is deliberately not read here, unlike in the step above. Four of these
+      # thirteen place into four subnets rather than five, because g6e.xlarge, g6e.12xlarge,
+      # g6e.48xlarge and p4d.24xlarge are not offered in us-east-1f, so one expected count in
+      # this loop body would be wrong for four shapes and a per-shape count is a fourth field
+      # in the list below that nothing would check the correctness of. The measurement lives
+      # in infra/batch-compute-gpu-shapes.yaml beside the subnet lists it produced, and no
+      # test in this repository compares the two. Re-measure with
+      # describe-instance-type-offerings before promoting a fourteenth.
       #
       # No apostrophe in this body. tests/test_phase3_batch_deployment_workflow.py parses
       # these scripts with shlex, and one unbalanced quote makes the whole script
@@ -572,7 +687,7 @@ jobs:
           set -euo pipefail
           shapes_json="${RUNNER_TEMP}/phase4-gpu-shapes.json"
           : > "${shapes_json}"
-          for shape in gpu-1xt4:4:1 gpu-4xt4:48:4 gpu-4xa10g:48:4 gpu-8xa10g:192:8 gpu-1xl4:4:1 gpu-4xl4:48:4 gpu-4xl40s:48:4 gpu-8xa100:96:8 gpu-8xh100:192:8; do
+          for shape in gpu-1xt4:4:1 gpu-4xt4:48:4 gpu-8xt4:96:8 gpu-4xa10g:48:4 gpu-8xa10g:192:8 gpu-1xl4:4:1 gpu-4xl4:48:4 gpu-8xl4:192:8 gpu-1xl40s:4:1 gpu-4xl40s:48:4 gpu-8xl40s:192:8 gpu-8xa100:96:8 gpu-8xh100:192:8; do
             profile="${shape%%:*}"
             rest="${shape#*:}"
             vcpus="${rest%%:*}"

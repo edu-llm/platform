@@ -53,14 +53,17 @@ EXPECTED_PROFILE_RATES = {
     "cpu-32vcpu": ("c7i.8xlarge", Decimal("1.428")),
     "gpu-1xt4": ("g4dn.xlarge", Decimal("0.5260")),
     "gpu-4xt4": ("g4dn.12xlarge", Decimal("3.9120")),
+    "gpu-8xt4": ("g4dn.metal", Decimal("7.8240")),
     "gpu-1xa10g": ("g5.xlarge", Decimal("1.0060")),
     "gpu-1xa10g-sagemaker": ("g5.2xlarge", Decimal("1.5150")),
     "gpu-4xa10g": ("g5.12xlarge", Decimal("5.672")),
     "gpu-8xa10g": ("g5.48xlarge", Decimal("16.2880")),
     "gpu-1xl4": ("g6.xlarge", Decimal("0.8048")),
     "gpu-4xl4": ("g6.12xlarge", Decimal("4.6016")),
+    "gpu-8xl4": ("g6.48xlarge", Decimal("13.3504")),
     "gpu-1xl40s": ("g6e.xlarge", Decimal("1.8610")),
     "gpu-4xl40s": ("g6e.12xlarge", Decimal("10.4926")),
+    "gpu-8xl40s": ("g6e.48xlarge", Decimal("30.1312")),
     "gpu-8xa100": ("p4d.24xlarge", Decimal("21.9576")),
     "gpu-8xh100": ("p5.48xlarge", Decimal("55.0400")),
 }
@@ -156,14 +159,14 @@ def test_shipped_catalog_instance_types_are_unique() -> None:
 
 
 def test_only_the_deliberately_promoted_profiles_are_provisioned() -> None:
-    """Eleven are promoted, on purpose, and the list is the assertion.
+    """Fifteen are promoted, on purpose, and the list is the assertion.
 
-    This test said no profile was provisioned, then one, then two, and now names eleven.
-    Each change was a deliberate edit made after the infrastructure existed, which is the
-    whole point of writing the names out: it is the tripwire for flipping a flag before
-    deploying anything to back it. The catalog would then claim capacity that does not
-    exist, and every submission naming that profile would reach Batch and sit in RUNNABLE
-    forever rather than being refused at admission.
+    This test said no profile was provisioned, then one, then two, then eleven, and now
+    names fifteen. Each change was a deliberate edit made after the infrastructure existed,
+    which is the whole point of writing the names out: it is the tripwire for flipping a
+    flag before deploying anything to back it. The catalog would then claim capacity that
+    does not exist, and every submission naming that profile would reach Batch and sit in
+    RUNNABLE forever rather than being refused at admission.
 
     Whether a promoted profile is actually backed is a separate question, asserted against
     config/execution-targets.yaml in tests/test_phase3_execution.py. This one is only about
@@ -173,12 +176,16 @@ def test_only_the_deliberately_promoted_profiles_are_provisioned() -> None:
         "cpu-32vcpu",
         "gpu-1xt4",
         "gpu-4xt4",
+        "gpu-8xt4",
         "gpu-1xa10g",
         "gpu-4xa10g",
         "gpu-8xa10g",
         "gpu-1xl4",
         "gpu-4xl4",
+        "gpu-8xl4",
+        "gpu-1xl40s",
         "gpu-4xl40s",
+        "gpu-8xl40s",
         "gpu-8xa100",
         "gpu-8xh100",
     ]
@@ -268,13 +275,16 @@ def test_unpriced_profile_is_refused_as_unregistered() -> None:
         resolve_compute_profile_for_execution(shipped_catalog(), "gpu-1024xh200")
 
 
-#: The profile the pair of coverage tests below moves, and the last single-GPU shape left
-#: unprovisioned. It has to be a profile the shipped catalog does not require evidence for,
-#: because what these tests separate is "required and covered" from "required and not", and
-#: the records are derived from the shipped catalog rather than written out.
-UNPROVISIONED_LEVER = "gpu-1xl40s"
+#: The profile the pair of coverage tests below moves, and now the only unprovisioned one
+#: left. It has to be a profile the shipped catalog does not require evidence for, because
+#: what these tests separate is "required and covered" from "required and not", and the
+#: records are derived from the shipped catalog rather than written out. It moved here from
+#: gpu-1xl40s when that shape was promoted, and there is nothing to move it to next, so
+#: promoting or removing this one means building a profile in the test instead of naming a
+#: shipped one.
+UNPROVISIONED_LEVER = "gpu-1xa10g-sagemaker"
 
-#: The two pools' applied values, read on 2026-08-01 and matching
+#: The two pools' applied values, read on 2026-08-01 and again on 2026-08-02, matching
 #: fixtures/evidence/service-quotas.sanitized.json.
 APPLIED_VCPUS = {"L-1216C47A": 1152.0, "L-DB2E81BA": 768.0, "L-417A185B": 768.0}
 
@@ -296,7 +306,7 @@ def catalog_with_provisioned_lever() -> WorkloadCatalog:
 def representative_quota_records() -> tuple[QuotaRecord, ...]:
     """One record per profile the shipped catalog requires evidence for, derived not written.
 
-    This was three records written out by hand while three profiles needed them. Eleven do
+    This was three records written out by hand while three profiles needed them. Fifteen do
     now, and copying the shipped list into a literal would make the pair of tests below agree
     with each other by construction rather than say anything.
 
@@ -330,7 +340,6 @@ def test_priced_but_unreferenced_profiles_do_not_demand_capacity_evidence() -> N
         profile.name for profile in profiles_requiring_capacity_evidence(shipped_catalog())
     }
     assert UNPROVISIONED_LEVER not in required
-    assert "gpu-1xa10g-sagemaker" not in required
     assert required == {
         profile.name for profile in SHIPPED_PROFILES if profile.provisioned
     }

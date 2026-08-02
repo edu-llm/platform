@@ -94,6 +94,7 @@ on:
           - cpu-32vcpu
           - gpu-1xa10g
           - gpu-1xl4
+          - gpu-1xl40s
           - gpu-1xt4
           - gpu-4xa10g
           - gpu-4xl4
@@ -102,6 +103,9 @@ on:
           - gpu-8xa100
           - gpu-8xa10g
           - gpu-8xh100
+          - gpu-8xl4
+          - gpu-8xl40s
+          - gpu-8xt4
       dataset_release:
         description: "Which corpus this run reads. Pick none if it reads nothing."
         required: true

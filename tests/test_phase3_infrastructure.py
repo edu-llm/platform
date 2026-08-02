@@ -108,18 +108,22 @@ GPU_COMPUTE_ENVIRONMENT_NAME = "sbsandbox-intern-edullm-gpu"
 GPU_JOB_QUEUE_NAME = "sbsandbox-intern-edullm-gpu"
 GPU_JOB_DEFINITION_NAME = "sbsandbox-intern-edullm-gpu-run"
 
-#: The nine profiles infra/batch-compute-gpu-shapes.yaml backs, in the order the template
+#: The thirteen profiles infra/batch-compute-gpu-shapes.yaml backs, in the order the template
 #: declares them. Every seam below that used to compare against a pair of names now compares
 #: against the CPU name, the original GPU name and these, so promoting a shape is one edit
 #: here rather than a number to increment in each test.
 GPU_SHAPE_PROFILES = (
     "gpu-1xt4",
     "gpu-4xt4",
+    "gpu-8xt4",
     "gpu-4xa10g",
     "gpu-8xa10g",
     "gpu-1xl4",
     "gpu-4xl4",
+    "gpu-8xl4",
+    "gpu-1xl40s",
     "gpu-4xl40s",
+    "gpu-8xl40s",
     "gpu-8xa100",
     "gpu-8xh100",
 )
@@ -347,9 +351,10 @@ def names_across_compute_templates(resource_type: str, key: str) -> set[str]:
     """One named property from ``resource_type``, gathered across every compute template.
 
     Every resource of the type in each template rather than the one, which was the same thing
-    until infra/batch-compute-gpu-shapes.yaml declared nine of each. Reading only the first
-    would leave eight queues out of every comparison below, and the comparisons are what stop
-    a queue existing with no event rule matching it and no role permitted to submit to it.
+    until infra/batch-compute-gpu-shapes.yaml declared thirteen of each. Reading only the
+    first would leave twelve queues out of every comparison below, and the comparisons are
+    what stop a queue existing with no event rule matching it and no role permitted to submit
+    to it.
     """
     return {
         resource["Properties"][key]
@@ -949,9 +954,9 @@ def test_execution_targets_config_names_exactly_what_the_templates_create() -> N
         binding = bindings[profile]
         execution_role = role_named(roles, execution_name)
         workload_role = role_named(roles, workload_name)
-        # Named rather than positional, because one template now carries nine queues and nine
-        # definitions and the profile is what picks the pair out of it. Reading the first of
-        # each would compare every shape against gpu-1xt4's names and pass for one of them.
+        # Named rather than positional, because one template now carries thirteen queues and
+        # thirteen definitions and the profile is what picks the pair out of it. Reading the
+        # first of each would compare every shape against gpu-1xt4's names and pass for one.
         queues = {
             resource["Properties"]["JobQueueName"]
             for resource in resources_of_type(compute, "AWS::Batch::JobQueue").values()
@@ -990,10 +995,11 @@ def test_execution_targets_config_names_exactly_what_the_templates_create() -> N
     # role would hand the training container the wrong output scope and let either principal
     # write into the record of the other's jobs.
     #
-    # The ten GPU targets share that trio with each other, and that is a decision recorded in
-    # config/execution-targets.yaml: they run the same image, resume from the same output
-    # prefix and read the same W&B secret, so a role per shape would be ten copies of one
-    # policy and ten log groups would need ten grants added to the role that already exists.
+    # The fourteen GPU targets share that trio with each other, and that is a decision
+    # recorded in config/execution-targets.yaml: they run the same image, resume from the same
+    # output prefix and read the same W&B secret, so a role per shape would be fourteen copies
+    # of one policy and fourteen log groups would need fourteen grants on the role that
+    # already exists.
     for field in ("execution_role", "workload_role", "log_group"):
         cpu_side = bindings["cpu-32vcpu"][field]
         gpu_side = {
@@ -2210,16 +2216,16 @@ def test_every_log_group_a_job_writes_to_is_created_by_some_template() -> None:
     """No stack may send logs to a group only another stack happens to create.
 
     The awslogs driver takes the group as a plain string, so CloudFormation sees no
-    dependency between the stack that names a group and the stack that creates it. Nine GPU
-    job definitions in batch-compute-gpu-shapes.yaml log to a group created in
-    batch-compute-gpu.yaml, and deleting the older stack would leave all nine writing
+    dependency between the stack that names a group and the stack that creates it. Thirteen
+    GPU job definitions in batch-compute-gpu-shapes.yaml log to a group created in
+    batch-compute-gpu.yaml, and deleting the older stack would leave all thirteen writing
     nowhere. Nothing about that failure is visible at deploy time: jobs keep running, and the
     logs simply stop, which is the worst moment to discover it because the reason a run failed
     is exactly what the group was holding.
 
     The coupling is allowed and was chosen deliberately, since these shapes run the same image
-    under the same approvals and a group per shape would mean nine more grants on a role that
-    already exists. What is not allowed is the coupling being invisible, so this reads both
+    under the same approvals and a group per shape would mean thirteen more grants on a role
+    that already exists. What is not allowed is the coupling being invisible, so this reads both
     sides out of the templates rather than trusting the comment that records it.
     """
     templates = {

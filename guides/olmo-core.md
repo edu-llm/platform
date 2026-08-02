@@ -144,17 +144,35 @@ That is the whole thing. It opens the corpus you picked, reads it at the width t
 
 **A retry only fires for a lost machine.** Batch starts a second attempt with the same run id, so the same `$EDULLM_CHECKPOINT_DIR`, and `Trainer.fit()` resumes on its own. A crash in your own code exits instead, because the same traceback twice costs the budget twice.
 
+## One big card
+
+Three single-GPU profiles exist and they differ only in how much fits on the card.
+
+| Compute profile | Device | Memory | Cost |
+| --- | --- | --- | --- |
+| `gpu-1xt4` | 1 × T4 | 16 GB | $0.53/hr |
+| `gpu-1xl4` | 1 × L4 | 24 GB | $0.80/hr |
+| `gpu-1xa10g` | 1 × A10G | 24 GB | $1.01/hr |
+| `gpu-1xl40s` | 1 × L40S | 48 GB | $1.86/hr |
+
+`gpu-1xl40s` is the largest single card this account can start, and it is the answer when a recipe you were given fits on one A100 or one H100 elsewhere. Neither of those is sold by AWS as a one-card or four-card instance, only as eight-card `p4d.24xlarge` and `p5.48xlarge`, so there is no `gpu-1xa100` to ask for and there never will be. 48 GB against 80 GB is the trade, and it is usually cheaper than reshaping the recipe.
+
 ## Multi-GPU jobs
 
-| Compute profile | Devices | Cost |
-| --- | --- | --- |
-| `gpu-4xt4` | 4 × T4 | $3.91/hr |
-| `gpu-4xl4` | 4 × L4 | $4.60/hr |
-| `gpu-4xa10g` | 4 × A10G | $5.67/hr |
-| `gpu-4xl40s` | 4 × L40S | $10.49/hr |
-| `gpu-8xa10g` | 8 × A10G | $16.29/hr |
-| `gpu-8xa100` | 8 × A100 | $21.96/hr |
-| `gpu-8xh100` | 8 × H100 | $55.04/hr |
+| Compute profile | Devices | Memory | Cost |
+| --- | --- | --- | --- |
+| `gpu-4xt4` | 4 × T4 | 64 GB | $3.91/hr |
+| `gpu-4xl4` | 4 × L4 | 96 GB | $4.60/hr |
+| `gpu-4xa10g` | 4 × A10G | 96 GB | $5.67/hr |
+| `gpu-8xt4` | 8 × T4 | 128 GB | $7.82/hr |
+| `gpu-4xl40s` | 4 × L40S | 192 GB | $10.49/hr |
+| `gpu-8xl4` | 8 × L4 | 192 GB | $13.35/hr |
+| `gpu-8xa10g` | 8 × A10G | 192 GB | $16.29/hr |
+| `gpu-8xa100` | 8 × A100 | 640 GB | $21.96/hr |
+| `gpu-8xl40s` | 8 × L40S | 384 GB | $30.13/hr |
+| `gpu-8xh100` | 8 × H100 | 640 GB | $55.04/hr |
+
+Memory is the total across the devices, and it is the column to read first because it decides whether the job runs at all. Anything at or above `gpu-8xa100` needs an admin rather than a team lead, since the platform sends every profile over $20/hr that way whatever the run costs in total.
 
 **Your command must start one process per device.** Nothing wraps what you type, so the launcher goes in the command:
 
