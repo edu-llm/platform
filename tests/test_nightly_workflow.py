@@ -67,22 +67,25 @@ RECONCILE_JOB = "checkpoint-reconciliation"
 WANDB_JOB = "wandb-credential"
 RELEASE_JOB = "deployed-lambda-release"
 STACKS_JOB = "deployed-stack-templates"
+BOARD_JOB = "visibility-board"
 
 RECONCILE_TOOL = "tools/find_runs_that_saved_nothing.py"
 WANDB_TOOL = "tools/verify_wandb_credential.py"
 RELEASE_TOOL = "tools/verify_deployed_lambdas.py"
 STACKS_TOOL = "tools/verify_deployed_stacks.py"
+BOARD_TOOL = "tools/visibility_board.py"
 
 RECONCILE_STEP = "Reconcile what those runs actually wrote"
 WANDB_STEP = "Ask W&B whether it would accept the stored key"
 RELEASE_STEP = "Compare what AWS is running against what was released"
 STACKS_STEP = "Compare each deployed stack against the template main declares"
+BOARD_STEP = "Join what W&B, the account and the outputs bucket each say"
 GUARD_STEP = "Check the nightly reader role is deployed"
 
 #: Every job here that takes a credential. Each one is held to the same guard, the same
-#: role and the same refusal to be informational, so the list is what a fifth such job has
+#: role and the same refusal to be informational, so the list is what a sixth such job has
 #: to join rather than a set of tests it has to remember to be added to.
-CREDENTIALED_JOBS = (RECONCILE_JOB, WANDB_JOB, RELEASE_JOB, STACKS_JOB)
+CREDENTIALED_JOBS = (RECONCILE_JOB, WANDB_JOB, RELEASE_JOB, STACKS_JOB, BOARD_JOB)
 
 #: The two functions the release check reads, and the templates that name them to
 #: CloudFormation. Read from the templates rather than spelled here, because the IAM grant
@@ -568,6 +571,116 @@ def test_the_stack_check_never_prints_an_account_id(workflow: dict[str, Any]) ->
     assert not ACCOUNT_LITERAL.search(source)
 
 
+def board_step(workflow: dict[str, Any]) -> str:
+    return step(workflow["jobs"][BOARD_JOB], BOARD_STEP)["run"]
+
+
+def test_the_nightly_joins_the_three_records_of_a_run(workflow: dict[str, Any]) -> None:
+    """Mutation: keep the job and drop the step, or point it at one of the sources alone.
+
+    Each of the three systems already has something that reads it. What nothing did was join
+    them, and the join is the whole check: a run present in W&B and absent from the bucket is
+    invisible to every tool that reads one system, because each of them is looking at a
+    complete and correct account of its own third.
+    """
+    body = scripts(workflow, BOARD_JOB)
+
+    assert BOARD_TOOL in body
+    assert "--output" in body, "the board is captured so it can be read after the failure"
+    assert "uv run --frozen python" in body
+
+
+def run_board(workflow: dict[str, Any], tmp_path: Path, *, exit_code: int) -> Any:
+    summary = tmp_path / "summary.md"
+    summary.touch()
+    stub = stub_tool(tmp_path, exit_code=exit_code, report="# The visibility board")
+    return run_step_script(
+        board_step(workflow),
+        cwd=tmp_path,
+        env={"GITHUB_STEP_SUMMARY": str(summary)},
+        stub_bin=stub.parent,
+    )
+
+
+def test_a_run_only_one_of_the_three_sources_knows_about_fails_the_nightly(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """THE ONE THAT MATTERS. Mutation: print the board and exit zero.
+
+    There is no alerting on this platform, so the red cross is the entire signal, and a job
+    that writes three tables into the step summary and then succeeds is a job nobody opens.
+    The board exits 1 when a run is in one source and not the others, and this asserts the
+    step carries that through.
+    """
+    finished = run_board(workflow, tmp_path, exit_code=1)
+
+    assert finished.returncode != 0, finished.stdout
+    assert "the_three_records_of_a_run_disagree" in finished.stderr
+
+
+def test_a_board_that_could_not_read_a_source_is_not_read_as_a_clean_one(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """Mutation: treat any non-zero exit as the same finding.
+
+    The board exits 2 when a source was not read, which is the state it is in today: the
+    reader role holds no tagging action, so the account side is a named gap rather than an
+    answer. Somebody who reads that as a disagreement goes looking for a submitter who did
+    nothing, on a morning whose only finding is an IAM stack nobody has applied.
+    """
+    finished = run_board(workflow, tmp_path, exit_code=2)
+
+    assert finished.returncode != 0
+    assert "visibility_board_incomplete" in finished.stderr
+    assert "the_three_records_of_a_run_disagree" not in finished.stderr
+
+
+def test_three_sources_that_agree_pass(workflow: dict[str, Any], tmp_path: Path) -> None:
+    """The other side, so the step cannot pass this file by failing unconditionally."""
+    finished = run_board(workflow, tmp_path, exit_code=0)
+
+    assert finished.returncode == 0, finished.stderr
+
+
+def test_the_board_reaches_the_log_and_not_only_the_step_summary(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """Mutation: write the tables to the step summary alone.
+
+    Same argument the reconciliation is held to. The summary is a second page to open, and
+    the person triaging a red cross is already looking at the log.
+    """
+    summary = tmp_path / "summary.md"
+    summary.touch()
+    stub = stub_tool(tmp_path, exit_code=1, report="run_019fbe0c logged nowhere")
+
+    finished = run_step_script(
+        board_step(workflow),
+        cwd=tmp_path,
+        env={"GITHUB_STEP_SUMMARY": str(summary)},
+        stub_bin=stub.parent,
+    )
+
+    assert "run_019fbe0c logged nowhere" in finished.stdout
+    assert "run_019fbe0c logged nowhere" in summary.read_text(encoding="utf-8")
+
+
+def test_the_board_never_prints_an_account_id(workflow: dict[str, Any]) -> None:
+    """Mutation: render the resource ARN the tagging API hands back.
+
+    Every ARN carries the account id, and so does the ARN in any denial the CLI reports. This
+    job writes to a scheduled log and a step summary in a public repository, and every
+    committed capture here masks that number. Asserted beside the job as well as in the tool's
+    own tests, for the reason the two sibling jobs are: the log this job writes is what makes
+    it matter.
+    """
+    assert BOARD_TOOL in scripts(workflow, BOARD_JOB)
+    source = (PROJECT_ROOT / BOARD_TOOL).read_text(encoding="utf-8")
+
+    assert "carries the account id" in source
+    assert not ACCOUNT_LITERAL.search(source)
+
+
 @pytest.mark.parametrize(
     ("job_id", "step_name"),
     [
@@ -575,6 +688,7 @@ def test_the_stack_check_never_prints_an_account_id(workflow: dict[str, Any]) ->
         (WANDB_JOB, WANDB_STEP),
         (RELEASE_JOB, RELEASE_STEP),
         (STACKS_JOB, STACKS_STEP),
+        (BOARD_JOB, BOARD_STEP),
     ],
 )
 def test_nothing_in_any_of_these_jobs_is_allowed_to_be_informational(
