@@ -177,7 +177,7 @@ jobs:
       # cap is not a deploy-time one a rollback recovers from: ValidateTemplate,
       # CreateChangeSet and CreateStack all refuse the call outright with "Member must have
       # length less than or equal to 51200". Measured on 2026-08-02,
-      # infra/batch-compute-gpu-shapes.yaml is 68,568 bytes -- thirteen GPU shapes and the
+      # infra/batch-compute-gpu-shapes.yaml is 68,715 bytes -- thirteen GPU shapes and the
       # vCPU arithmetic explaining them -- so the line that used to validate it inline could
       # not have run, and the next push to main would have failed here.
       #

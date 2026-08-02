@@ -289,7 +289,7 @@ def test_no_template_is_passed_inline_and_none_is_near_the_limit_that_replaced_i
     """Mutation: put the one template that fits back on ``--template-body``.
 
     That is the arrangement this workflow had until 2026-08-02, and it was already broken:
-    ``infra/batch-compute-gpu-shapes.yaml`` had grown to 68,568 bytes against a 51,200-byte
+    ``infra/batch-compute-gpu-shapes.yaml`` had grown to 68,715 bytes against a 51,200-byte
     inline limit, so the validation step could not have run. The limit is enforced on the
     request, not on the stack, so nothing rolls back and nothing partially applies -- the
     workflow simply cannot proceed until this file changes.
