@@ -64,9 +64,15 @@ SECOND_PUSH = datetime(2026, 7, 26, 18, 30, tzinfo=UTC)
 #: repository and has no registration, so a submission naming it is now denied outright and
 #: cannot stand in for an ordinary one. ``DOLMA_WORKLOAD`` is kept below for the tests that
 #: are about the catalog rather than about a submission that compiles.
-CPU_WORKLOAD = "olmo-core-check-cpu"
+CPU_WORKLOAD = "olmo-core-check"
 DOLMA_WORKLOAD = "dolma-tokenize"
-OLMO_WORKLOAD = "olmo-core-train-4gpu"
+OLMO_WORKLOAD = "olmo-core-train"
+#: The machine each payload below names. A workload profile stopped declaring one and the
+#: form field stopped being optional, so every payload here has to pick, exactly as a
+#: submitter does. ``CPU_PROFILE`` is the only CPU shape with a queue behind it, and
+#: ``OLMO_PROFILE`` is the four-GPU shape the training payload's four-rank command needs.
+CPU_PROFILE = "cpu-32vcpu"
+OLMO_PROFILE = "gpu-4xa10g"
 REGISTERED_DATASET = "dolma-2026-07"
 UNREGISTERED_DATASET = "dolma-2026-99"
 UNREGISTERED_COMPUTE_PROFILE = "cpu-1024vcpu"
@@ -113,9 +119,13 @@ EXCEEDED_CEILINGS: tuple[tuple[str, dict[str, object], str], ...] = (
         "worst-case cost $1361.28 exceeds the routine ceiling of",
     ),
     (
+        # Twenty-five, because routine_maximum_runtime_hours went from 12 to 24 and thirteen
+        # became an ordinary routine submission. One hour over is still what keeps this row
+        # about runtime: at $5.672 an hour across two attempts, twenty-five hours is $283.60
+        # and leaves the cost ceiling unreached.
         "runtime",
-        {"maximum_runtime_hours": "13"},
-        "runtime bound of 13h exceeds the routine ceiling of 12h",
+        {"maximum_runtime_hours": "25"},
+        "runtime bound of 25h exceeds the routine ceiling of 24h",
     ),
     (
         "attempts",
@@ -125,8 +135,8 @@ EXCEEDED_CEILINGS: tuple[tuple[str, dict[str, object], str], ...] = (
     (
         "fan-out size",
         # The half hour is what keeps this row about fan-out size. Sixty-five cells at the
-        # workload's own twelve hours and two attempts is $8,848, so the summary would name
-        # the cost ceiling as well and the row would stop isolating the one it is for.
+        # workload's own twenty-four hours and two attempts is $17,697, so the summary would
+        # name the cost ceiling as well and the row would stop isolating the one it is for.
         {
             "maximum_runtime_hours": "0.5",
             "fanout_size": 65,
@@ -210,19 +220,24 @@ def cpu_payload(**overrides: object) -> dict[str, object]:
         "wandb_project": "olmo-core-tokenize",
         "experiment": "dolma-tokenization",
         "command": ["python", "-m", "olmo_core.data.tokenize"],
+        "compute_profile": CPU_PROFILE,
     }
     payload.update(overrides)
     return payload
 
 
-#: What a submission on the four-GPU training workload has to say to compile at all, and
-#: every word of it is load-bearing rather than illustrative.
+#: What a submission on the training workload has to say to compile at all, and every word
+#: of it is load-bearing rather than illustrative.
 #:
-#: ``olmo-core-train-4gpu`` inherits ``gpu-4xa10g`` and carries a checkpoint contract, so two
-#: command rules apply to it. ``python -m olmo_core.train`` on four devices trains on one of
-#: them and bills for four, so the launcher and its rank count are required; and a profile
-#: that promises checkpoints has to be pointed at ``EDULLM_CHECKPOINT_DIR``, or a retry the
-#: contract paid for resumes from nothing.
+#: ``olmo-core-train`` is submitted here on ``gpu-4xa10g`` and carries a checkpoint contract,
+#: so two command rules apply to it. ``python -m olmo_core.train`` on four devices trains on
+#: one of them and bills for four, so the launcher and its rank count are required; and a
+#: profile that promises checkpoints has to be pointed at ``EDULLM_CHECKPOINT_DIR``, or a
+#: retry the contract paid for resumes from nothing.
+#:
+#: The machine is the payload's rather than the workload's, which is the change this module
+#: absorbed. It used to be inherited, and the two rules above are checked against whatever
+#: the manifest resolved to, so naming it here exercises the same path a submitter takes.
 #:
 #: The ``bash -lc`` wrapper is required by the second of those and by nothing else here. The
 #: container execs the command, so an unwrapped ``$EDULLM_CHECKPOINT_DIR`` reaches OLMo-core
@@ -242,7 +257,7 @@ OLMO_COMMAND = (
 
 
 def olmo_payload(**overrides: object) -> dict[str, object]:
-    """A submission on the four-GPU workload, which is the one with command rules attached."""
+    """A four-GPU submission on the training workload, the one with command rules attached."""
     return cpu_payload(
         **{
             "repository": "OLMo-core",
@@ -250,6 +265,7 @@ def olmo_payload(**overrides: object) -> dict[str, object]:
             "team": "modeling",
             "wandb_project": "olmo-core-extended",
             "command": list(OLMO_COMMAND),
+            "compute_profile": OLMO_PROFILE,
             **overrides,
         }
     )
@@ -546,25 +562,29 @@ def test_the_workload_profile_supplies_what_the_form_did_not_ask_for(
     payload_factory: Callable[[], dict[str, object]],
     workload_name: str,
 ) -> None:
-    compiled = compile_payload(payload_factory())
+    """The three things a preset still fixes, and the one it stopped claiming.
+
+    ``compute_profile`` was in this list and is asserted below instead, against the form.
+    A workload profile no longer declares one, so there is nothing here for the manifest
+    to have taken from it, and the assertion that used to compare the two would now be
+    comparing the form's answer against itself.
+    """
+    payload = payload_factory()
+    compiled = compile_payload(payload)
     workload = workload_profile(workload_name)
     manifest = compiled.manifest
 
     assert manifest.workload_profile == workload.name
-    assert manifest.compute_profile == workload.compute_profile
     assert manifest.maximum_runtime_hours == workload.maximum_runtime_hours
     assert manifest.maximum_attempts == workload.maximum_attempts
     assert manifest.checkpoint == workload.checkpoint
+    assert manifest.compute_profile == payload["compute_profile"]
+    assert "compute_profile" not in WorkloadProfile.model_fields
 
 
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        # A four-GPU shape rather than the one-GPU one this used to name. The override still
-        # differs from the workload's own profile, which is all the case needs, and the
-        # payload's command starts four processes -- so a single-GPU shape here would be
-        # refused for oversubscribing one device and the row would stop being about overrides.
-        ("compute_profile", "gpu-4xt4"),
         ("maximum_runtime_hours", Decimal(3)),
         # One, not two. The workload's default was one attempt and became two when the
         # four-GPU entry's bounds were raised to the single-GPU entry's, so two would now
@@ -578,6 +598,13 @@ def test_an_explicit_override_wins_over_the_profile_default(
     field: str,
     value: object,
 ) -> None:
+    """The two bounds a preset still declares, each overridden away from its default.
+
+    ``compute_profile`` was a third row here and is not an override any more. There is no
+    profile default for it to win over, so what it demonstrated -- that a supplied value
+    beats the catalog's -- has nothing left to beat. That it reaches the manifest at all is
+    asserted in the test above.
+    """
     workload = workload_profile(OLMO_WORKLOAD)
     assert getattr(workload, field) != value, (
         "an override that matched the default would prove nothing about which one was used"
@@ -948,7 +975,7 @@ def test_the_order_of_the_form_fields_does_not_change_the_manifest_digest() -> N
     [
         (cpu_payload(), ApprovalClass.ROUTINE, ApprovalEnvironment.LEAD),
         (
-            olmo_payload(maximum_runtime_hours="13"),
+            olmo_payload(maximum_runtime_hours="25"),
             ApprovalClass.EXCEPTION,
             ApprovalEnvironment.ADMIN,
         ),
@@ -1036,11 +1063,13 @@ def test_an_exception_says_in_words_which_routine_ceiling_it_exceeded(
 
 
 def test_an_exception_over_two_ceilings_names_both_of_them() -> None:
-    compiled = compile_payload(olmo_payload(maximum_runtime_hours="13", maximum_attempts=3))
+    # Twenty-five hours and three attempts is $425.40 on gpu-4xa10g, so the cost ceiling is
+    # still unreached and exactly two bullets are expected rather than three.
+    compiled = compile_payload(olmo_payload(maximum_runtime_hours="25", maximum_attempts=3))
     bullets = exception_bullets(render(compiled))
 
     assert len(bullets) == 2
-    assert any("runtime bound of 13h" in bullet for bullet in bullets)
+    assert any("runtime bound of 25h" in bullet for bullet in bullets)
     assert any("attempt bound of 3" in bullet for bullet in bullets)
 
 

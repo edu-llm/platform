@@ -1,6 +1,6 @@
 {
   "additionalProperties": false,
-  "description": "The ``workflow_dispatch`` form.\n\nFifteen properties against a ceiling of twenty-five, so the count is a usability\nquestion rather than a platform constraint. Eight are required and seven are overrides a\nsubmitter can leave alone. The newest of the seven is the image digest, which stopped\nbeing required when it started being derived, and which was the hardest of the eight to\nfill in by some distance.",
+  "description": "The ``workflow_dispatch`` form.\n\nFifteen properties against a ceiling of twenty-five, so the count is a usability\nquestion rather than a platform constraint. Nine are required and six are overrides a\nsubmitter can leave alone. The newest of the six is the image digest, which stopped\nbeing required when it started being derived, and which was the hardest of them to fill\nin by some distance.\n\n``compute_profile`` went the other way and is the ninth required field. It was an\noverride that defaulted to the workload profile's own declaration, and that declaration\nwas a fiction: this value won whenever it was supplied and nothing refused a\ndisagreement between the two. The catalog no longer declares one, so there is nothing to\nfall back to and the field is asked for rather than defaulted.",
   "properties": {
     "command": {
       "items": {
@@ -16,17 +16,9 @@
       "type": "string"
     },
     "compute_profile": {
-      "anyOf": [
-        {
-          "minLength": 1,
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Compute Profile"
+      "minLength": 1,
+      "title": "Compute Profile",
+      "type": "string"
     },
     "dataset_release": {
       "minLength": 1,
@@ -146,7 +138,8 @@
     "team",
     "experiment",
     "wandb_project",
-    "command"
+    "command",
+    "compute_profile"
   ],
   "title": "SubmissionInputs",
   "type": "object"

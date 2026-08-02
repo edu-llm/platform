@@ -87,6 +87,7 @@
     },
     "WorkloadProfile": {
       "additionalProperties": false,
+      "description": "A policy preset, which is a repository, two bounds and a checkpoint contract.\n\nIT NAMED A MACHINE AND THE NAMING WAS A FICTION, WHICH IS WHY THE FIELD IS GONE.\n``compute_profile`` sat here and ``SubmissionInputs.compute_profile`` overrode it\nunconditionally, so what a run landed on was whatever the form said and this value was\nread only when the form left the field empty. Nothing refused a disagreement between\nthe two, and nothing ever could: an override that is refused when it differs is not an\noverride. So a researcher reading ``olmo-core-train-1gpu`` believed the name bound the\nrun to one A10G while the dropdown beside it outranked the name in silence.\n\nRemoving the field rather than enforcing it is the choice that follows from who owns\nthe answer. The machine is the submitter's decision, made per run and priced per run;\nwhat a workload can honestly fix is the contract the codebase keeps -- how long it may\ntake, how many attempts it may have, and whether an interrupted attempt has somewhere\nto resume from. Two entries differing only in a machine were therefore two spellings of\none policy, and the catalog now carries one of each.\n\n:class:`~edullm_platform.contracts.manifest.RunManifest` is unaffected and keeps its\nown ``compute_profile``. It records what a run was submitted with, which is a different\nquestion from what a preset declares, and its serialized shape is content addressed.",
       "properties": {
         "checkpoint": {
           "anyOf": [
@@ -97,11 +98,6 @@
               "type": "null"
             }
           ]
-        },
-        "compute_profile": {
-          "minLength": 1,
-          "title": "Compute Profile",
-          "type": "string"
         },
         "maximum_attempts": {
           "minimum": 1,
@@ -127,7 +123,6 @@
       "required": [
         "name",
         "repository",
-        "compute_profile",
         "maximum_runtime_hours",
         "maximum_attempts",
         "checkpoint"

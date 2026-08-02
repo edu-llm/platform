@@ -527,8 +527,8 @@ def _listing(store: CheckpointStore, *, bucket: str, key: str) -> list[Mapping[s
     the step sequence rather than after it. A truncated listing therefore hides an
     arbitrary subset, and which step this module reports a resume would load becomes a
     function of how many objects the run happened to write. Thirteen objects per
-    checkpoint puts the boundary at seventy-six of them, which the twelve-hour bound on
-    ``olmo-core-train-1gpu`` reaches at a nine-minute save interval.
+    checkpoint puts the boundary at seventy-six of them, which the twenty-four-hour bound on
+    ``olmo-core-train`` reaches at a nineteen-minute save interval.
     """
     contents: list[Mapping[str, Any]] = []
     arguments: dict[str, Any] = {"Bucket": bucket, "Prefix": key}

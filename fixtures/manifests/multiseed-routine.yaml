@@ -13,7 +13,7 @@ command:
   - --seed
 team: memory-split
 wandb_project: olmo-core-memory-split
-workload_profile: olmo-core-train-4gpu
+workload_profile: olmo-core-train
 compute_profile: gpu-1xa10g
 maximum_runtime_hours: "4"
 maximum_attempts: 1

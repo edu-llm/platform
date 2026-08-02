@@ -21,11 +21,16 @@ command:
   - s3://sbsandbox-intern-edullm-datasets/dolma-2026-07/tokenized/
 team: data-prep
 wandb_project: olmo-core-tokenize
-# The CPU workload Phase 3 actually runs, so the two fields agree the way compile_submission
+# The CPU check Phase 3 actually runs, so the two fields agree the way compile_submission
 # now requires of a real submission. Its registered runtime bound is one hour; this manifest
 # overrides nothing, and the reviewed cost in REPRESENTATIVE_MANIFEST_COSTS is two hours of
 # c7i.8xlarge, which is the bound this fixture declares rather than the profile's default.
-workload_profile: olmo-core-check-cpu
+#
+# Renamed from olmo-core-check-cpu when the catalog stopped letting a workload profile name
+# a machine. A stored lineage record keeps whichever name it was submitted under, because
+# its digest covers its own bytes; a fixture is not a record of a run and is held to the
+# catalog by tests/test_manifest.py, so it is renamed rather than left behind.
+workload_profile: olmo-core-check
 compute_profile: cpu-32vcpu
 maximum_runtime_hours: "2"
 maximum_attempts: 1

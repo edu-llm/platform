@@ -436,7 +436,12 @@ def dispatch_form(
         "repository": "OLMo-core",
         "commit_sha": commit_sha,
         "image_digest": TRAINING_IMAGE_DIGEST,
-        "workload_profile": "olmo-core-check-gpu",
+        "workload_profile": "olmo-core-check",
+        # Named here since the workload profile stopped declaring one and the form field
+        # stopped being optional. This is the shape the capability run proved and the shape
+        # olmo-core-check-gpu used to fix by name, which is why the entry could lose its
+        # suffix without this submission changing where it lands.
+        "compute_profile": "gpu-1xa10g",
         "dataset_release": "dolma-2026-07",
         "team": "platform",
         "wandb_project": "edullm-platform-smoke",

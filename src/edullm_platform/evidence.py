@@ -432,12 +432,21 @@ def quota_capacity_issues(
 def profiles_requiring_capacity_evidence(
     catalog: WorkloadCatalog,
 ) -> tuple[ComputeProfile, ...]:
-    representative_profiles = {workload.compute_profile for workload in catalog.workloads}
-    return tuple(
-        profile
-        for profile in catalog.compute_profiles
-        if profile.provisioned or profile.name in representative_profiles
-    )
+    """Every profile a submission can actually land on, which is now the provisioned set.
+
+    THE SECOND HALF OF THIS UNION IS GONE AND IT WAS ALREADY EMPTY. It read the compute
+    profile each workload declared, so that a profile a catalog entry pointed at needed
+    capacity evidence whether or not it was provisioned. A workload profile no longer names
+    a machine, so there are no such profiles to add, and every one the old union found was
+    provisioned as well.
+
+    Provisioned is the honest condition on its own. A profile with a compute environment,
+    a queue and a job definition is one the submission form offers, and a profile the form
+    offers is one a run can be started on; anything the catalog merely prices cannot be
+    reached, so demanding a quota record for it would demand evidence about capacity nobody
+    can consume.
+    """
+    return tuple(profile for profile in catalog.compute_profiles if profile.provisioned)
 
 
 def ec2_quota_coverage_issues(

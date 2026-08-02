@@ -93,9 +93,10 @@ def test_every_guide_the_readme_sends_a_reader_to_exists() -> None:
 def test_every_workload_the_guide_names_is_one_the_form_offers(olmo_core_guide: str) -> None:
     """Mutation: rename a workload and leave the guide saying the old one.
 
-    The guide tells a first-time reader to pick ``olmo-core-check-cpu`` and tells a
-    researcher to pick ``olmo-core-train-1gpu``. Both are names, and names have moved on
-    this platform once already -- every workload ended in ``-smoke`` until recently.
+    The guide tells a first-time reader to pick ``olmo-core-check`` and a researcher to pick
+    ``olmo-core-train``. Both are names, and names have moved on this platform twice: every
+    workload ended in ``-smoke``, and then every one of these ended in the machine it was
+    believed to fix.
     """
     catalog = load_yaml(PROJECT_ROOT / "config" / "workload-catalog.yaml", WorkloadCatalog)
     registered = {workload.name for workload in catalog.workloads}
@@ -367,7 +368,7 @@ def test_the_save_interval_is_named_against_the_contract_the_workload_declares(
         for workload in catalog.workloads
         if workload.checkpoint is not None
     }
-    declared = contracts["olmo-core-train-1gpu"].interval_minutes
+    declared = contracts["olmo-core-train"].interval_minutes
 
     paragraphs = [block for block in olmo_core_guide.split("\n\n") if "--save-interval" in block]
 
@@ -376,7 +377,7 @@ def test_the_save_interval_is_named_against_the_contract_the_workload_declares(
         "decides how much work a lost machine throws away"
     )
     assert any(str(declared) in block for block in paragraphs), (
-        f"olmo-core-train-1gpu declares a checkpoint every {declared} minutes and no "
+        f"olmo-core-train declares a checkpoint every {declared} minutes and no "
         "paragraph naming --save-interval cites that number, so the advice and the "
         "contract it rests on can drift apart without anything saying so"
     )

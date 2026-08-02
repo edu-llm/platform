@@ -309,7 +309,11 @@ def test_policy_yaml_validates_against_contract() -> None:
     # the whole reason a decision record carries the version.
     assert policy.policy_version == "v2"
     assert policy.thresholds.routine_maximum_cost_usd == Decimal(500)
-    assert policy.thresholds.routine_maximum_runtime_hours == Decimal(12)
+    # Twenty-four since the runtime ceiling was measured against real work rather than
+    # picked. Twelve made an exception of every sweep between sixteen and twenty hours, so
+    # the exception path was carrying ordinary runs. The cost ceiling did not move with it
+    # and is what still bounds the expensive shapes.
+    assert policy.thresholds.routine_maximum_runtime_hours == Decimal(24)
     assert policy.thresholds.routine_maximum_attempts == 2
     assert policy.thresholds.routine_maximum_fanout_size == 64
     assert policy.thresholds.routine_maximum_parallelism == 8

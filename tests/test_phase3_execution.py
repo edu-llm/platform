@@ -1018,10 +1018,10 @@ G5_XLARGE = (4, 15360)
 def test_the_cpu_check_reserves_an_eighth_of_a_machine_rather_than_all_of_one() -> None:
     """Mutation: put 32 vCPU and 61440 MiB back, or reduce only one of the two.
 
-    olmo-core-check-cpu is the run guides/the-platform.md sends a new researcher to first, and
-    it prints an interpreter version in under a second. Reserving a whole c7i.8xlarge for it
-    made the CPU queue four wide, so a group onboarding together waited hours for seconds of
-    work.
+    olmo-core-check on cpu-32vcpu is the run guides/the-platform.md sends a new researcher to
+    first, and it prints an interpreter version in under a second. Reserving a whole
+    c7i.8xlarge for it made the CPU queue four wide, so a group onboarding together waited
+    hours for seconds of work.
 
     Reducing only vCPU does not fix it and looks like it has. Batch places on vCPU and
     memory at once, so a 4 vCPU container still holding 60 GiB is still one job per

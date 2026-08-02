@@ -135,24 +135,27 @@ def test_pilots_fails_for_single_pilot_repository() -> None:
 
 
 def test_workload_coverage_fails_without_gpu_representative() -> None:
+    """Mutation: price only CPU shapes and let the gate call the catalog covered.
+
+    THE MUTATION MOVED WHEN A WORKLOAD PROFILE STOPPED NAMING A MACHINE. It used to move
+    every GPU-backed workload onto a CPU profile, which is a shape the catalog can no
+    longer express: a preset declares a repository, two bounds and a checkpoint contract,
+    and the accelerator is a fact about the compute profiles alone. So every GPU profile is
+    turned into a CPU one instead, which is the same catalog from the gate's point of view
+    and is what a submitter would meet as a form offering no GPU at all.
+
+    Every profile rather than one at a fixed index, for the reason the earlier version of
+    this test recorded: an index silently stopped naming the GPU entry once, and a
+    differently ordered catalog would have made this pass while checking nothing.
+    """
     inputs = loaded_inputs()
-    # Every GPU workload is moved onto a CPU profile, rather than one at a fixed index.
-    # Phase 3 added a third workload and the index silently stopped naming the GPU one,
-    # which left this test asserting that a catalog with a GPU representative has no GPU
-    # representative -- it failed loudly, but a differently ordered catalog would have
-    # made it pass while checking nothing.
-    gpu_profiles = {
-        profile.name
-        for profile in inputs.catalog.compute_profiles
+    profiles = [
+        profile.model_copy(update={"accelerator": "cpu"})
         if profile.accelerator == "gpu"
-    }
-    workloads = [
-        workload.model_copy(update={"compute_profile": "cpu-32vcpu"})
-        if workload.compute_profile in gpu_profiles
-        else workload
-        for workload in inputs.catalog.workloads
+        else profile
+        for profile in inputs.catalog.compute_profiles
     ]
-    catalog = inputs.catalog.model_copy(update={"workloads": tuple(workloads)})
+    catalog = inputs.catalog.model_copy(update={"compute_profiles": tuple(profiles)})
     result = evaluate_phase0(replace(inputs, catalog=catalog))
     check = get_check(result, "inventory_workload_coverage")
     assert check.passed is False

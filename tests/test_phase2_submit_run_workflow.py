@@ -53,9 +53,6 @@ from edullm_platform.submission import SubmissionInputs
 from tests.test_manifest import load_representative_manifest
 from tools.resolve_published_image import RESOLVER_ECR_ACTIONS
 
-#: How a dropdown spells 'leave this empty'. A choice option cannot be blank.
-INHERIT_SENTINEL = "inherit"
-
 WORKFLOW_FILE = ".github/workflows/submit-run.yml"
 WORKFLOW_PATH = WORKFLOWS_ROOT / "submit-run.yml"
 BUILD_WORKFLOW_PATH = WORKFLOWS_ROOT / "build-research-image.yml"
@@ -224,29 +221,27 @@ def test_no_optional_field_defaults_to_a_value_somebody_could_have_meant() -> No
     different default is not. A default that names something real puts a choice in front of
     an approver that nobody made.
 
-    This used to require the default be exactly empty, and that was the right invariant
-    written too literally. A ``choice`` input cannot offer a blank option, so an override
-    rendered as a dropdown has to spell absence as a word. ``inherit`` is that word, and it
-    is only safe because the workflow translates it back to nothing before assembling the
-    form -- which is asserted separately, because a sentinel that reached admission would be
-    the name of a compute profile nothing has registered.
+    THE EXACTLY-EMPTY RULE IS BACK, AND ONLY BECAUSE THE ONE EXCEPTION TO IT LEFT. It was
+    relaxed to allow a word, because a ``choice`` input cannot offer a blank option and
+    ``compute_profile`` was an override rendered as a dropdown. That field is required now,
+    since the workload profile it took its default from no longer declares a machine, so no
+    optional field on this form is a dropdown and none of them needs a word for absence.
+    Requiring the strict form again is what stops one being reintroduced quietly.
     """
     declared = _load()["on"]["workflow_dispatch"]["inputs"]
     optional = [
         name for name, field in SubmissionInputs.model_fields.items() if not field.is_required()
     ]
 
-    # Seven since ``image_digest`` stopped being required: a run's image is derived from
-    # the commit it declares, and what survives is an override for a deliberate pin.
-    assert len(optional) == 7
+    # Six since ``compute_profile`` became required. It was seven while a run's machine was
+    # an override on a declaration that the form outranked anyway.
+    assert len(optional) == 6
     for name in optional:
-        default = declared[name]["default"]
-        assert default in ("", INHERIT_SENTINEL), name
-        if default == INHERIT_SENTINEL:
-            assert declared[name]["type"] == "choice", (
-                f"{name} spells absence as a word without being a dropdown, which is the "
-                "one situation that needs no sentinel at all"
-            )
+        assert declared[name]["default"] == "", name
+        assert declared[name]["type"] == "string", (
+            f"{name} is optional and a dropdown, which is the one shape that cannot leave "
+            "its default blank and so needs a word for absence"
+        )
 
 
 def test_the_three_jobs_carry_exactly_these_permission_maps() -> None:
@@ -1183,7 +1178,10 @@ FORM_ENVIRONMENT = {
     "FORM_WANDB_PROJECT": "dolma-tokenize",
     "FORM_EXPERIMENT": "dolma-tokenization",
     "FORM_COMMAND": "python -m dolma.tokenize --note 'two words'",
-    "FORM_COMPUTE_PROFILE": "",
+    # Filled in, because the field is required now. It was empty here while a blank
+    # compute profile meant "take the workload profile's", and a workload profile no longer
+    # has one to take.
+    "FORM_COMPUTE_PROFILE": "cpu-32vcpu",
     "FORM_MAXIMUM_RUNTIME_HOURS": "",
     "FORM_MAXIMUM_ATTEMPTS": "",
     "FORM_FANOUT_SIZE": "",
@@ -1243,6 +1241,7 @@ def test_the_assembled_form_is_a_document_the_contract_accepts(tmp_path: Path) -
         # record written before it.
         "experiment",
         "command",
+        "compute_profile",
     }
 
 
@@ -1271,7 +1270,6 @@ def test_the_assembled_form_carries_the_overrides_in_the_types_the_contract_dema
     # is not the value the approver read.
     result, payload = _run_form_assembly(
         tmp_path,
-        FORM_COMPUTE_PROFILE="cpu-32vcpu",
         FORM_MAXIMUM_RUNTIME_HOURS="0.5",
         FORM_MAXIMUM_ATTEMPTS="2",
         FORM_FANOUT_SIZE="4",

@@ -16,8 +16,8 @@ request:
   immutable_revision: true
   immutable_image: true
   image_scan_reviewed: true
-  estimated_cost_usd: "73.74"
-  maximum_runtime_hours: "13"
+  estimated_cost_usd: "141.80"
+  maximum_runtime_hours: "25"
   maximum_attempts: 1
   fanout_size: 1
   fanout_parallelism: 1

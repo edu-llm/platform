@@ -9,9 +9,14 @@ name: Submit a run
 #
 # The form below is SubmissionInputs field for field. Fifteen properties against a
 # workflow_dispatch ceiling of twenty-five, so the length is a usability question rather
-# than a platform constraint. Eight are required; seven are overrides that take a
-# registered default when left empty -- six from the workload profile, and the image digest
-# from whatever the declared commit published.
+# than a platform constraint. Nine are required and six may be left empty. Three of the six
+# take a registered default when they are -- the two bounds from the workload profile and
+# the image digest from whatever the declared commit published -- and the other three are
+# the fan-out triple, which is absent altogether unless all three are given.
+#
+# compute_profile is the ninth required field and was one of seven overrides. It is
+# required because the workload profile stopped declaring a machine, so there is no
+# registered default for it to fall back to and no honest way to leave it blank.
 on:
   workflow_dispatch:
     inputs:
@@ -36,34 +41,67 @@ on:
         type: string
         default: ""
       workload_profile:
-        description: "What kind of run this is. Start with olmo-core-check-cpu."
+        description: "What kind of run this is. Start with olmo-core-check."
         required: true
         type: choice
         options:
           # The dataset validator, and the first entry here that is not OLMo-core. Reads a
           # published corpus and checks each shard against the bounds its family declares.
           - edullm-data-validate
-          - olmo-core-check-cpu
-          - olmo-core-check-gpu
-          - olmo-core-train-1gpu
-          # Offerable now that gpu-4xa10g is provisioned, and the only entry here whose
-          # command has to be written differently from every other one. Nothing on this
-          # platform wraps the command; whatever is typed below is what the container
-          # execs. So a four-GPU run needs torch.distributed.run in the text or it is one
-          # rank on one of four devices at four devices' price.
+          # One check entry where there were two. It named no machine even before the
+          # catalog stopped letting entries name one, so whether a check runs on a CPU or a
+          # GPU is the compute_profile field below and nothing here.
+          - olmo-core-check
+          # One training entry where there were two, and the one whose command has to be
+          # written to match the machine picked below. Nothing on this platform wraps the
+          # command; whatever is typed is what the container execs. So a run on any
+          # multi-GPU profile needs torch.distributed.run in the text or it is one rank on
+          # one device at the whole machine's price.
           #
           # That used to report success, which is what made it worth a comment here rather
           # than a rule somewhere. It is now refused by
           # edullm_platform.launchers.require_a_process_for_every_device while compiling,
-          # so the sentence a submitter needs reaches them in the refusal rather than in a
-          # dropdown comment nobody reads. This stays because a reader deciding whether to
-          # offer a tenth workload needs to know the rule exists.
-          - olmo-core-train-4gpu
+          # against the profile the submission names, so the sentence a submitter needs
+          # reaches them in the refusal rather than in a dropdown comment nobody reads. This
+          # stays because a reader deciding whether to offer a sixth workload needs to know
+          # the rule exists.
+          - olmo-core-train
           # The evaluation harness against its `mock` provider. A check of the path rather
-          # than an eval: the published image leaves torch and vllm out, so there is no GPU
-          # eval entry here until one of them is in it. config/workload-catalog.yaml carries
-          # the reason.
-          - olmo-eval-check-cpu
+          # than an eval: the published image leaves torch and vllm out, so no eval here
+          # gains anything from a GPU until one of them is in it.
+          # config/workload-catalog.yaml carries the reason.
+          - olmo-eval-check
+      # REQUIRED, AND BESIDE THE WORKLOAD BECAUSE THE TWO ARE ONE DECISION MADE TWICE.
+      # This was an optional override defaulting to `inherit`, on the belief that the
+      # workload profile carried the answer. It did not: the value here won whenever it was
+      # filled in, nothing refused a disagreement between the two, and a submitter who left
+      # it alone got whichever machine a catalog entry happened to name. The catalog no
+      # longer names one, so there is nothing left to inherit from and the sentinel is gone
+      # rather than left to resolve to nothing.
+      #
+      # Asking is the change. A machine is the most expensive field on this form by some
+      # distance -- $0.526 an hour against $55.04, a hundredfold -- and it is the one a
+      # submitter is best placed to answer, because they know what they are about to run.
+      # Sorted, because tests/test_submission_form_options.py compares this list against
+      # the provisioned profiles in config/workload-catalog.yaml sorted. Every one of them
+      # has a queue and a job definition; picking one costs the wait for a machine and not
+      # a refusal after approval.
+      compute_profile:
+        description: "Which machine this run gets. Start with cpu-32vcpu."
+        required: true
+        type: choice
+        options:
+          - cpu-32vcpu
+          - gpu-1xa10g
+          - gpu-1xl4
+          - gpu-1xt4
+          - gpu-4xa10g
+          - gpu-4xl4
+          - gpu-4xl40s
+          - gpu-4xt4
+          - gpu-8xa100
+          - gpu-8xa10g
+          - gpu-8xh100
       dataset_release:
         description: "Which corpus this run reads. Pick none if it reads nothing."
         required: true
@@ -122,28 +160,6 @@ on:
         # what RunManifest.command requires: a first element naming a program rather than a
         # whole command line. A default that could not compile would be worse than none.
         default: "python -c 'import sys; print(\"edullm ready\", sys.version)'"
-      compute_profile:
-        description: "Leave as inherit."
-        required: false
-        type: choice
-        default: inherit
-        # Sorted, because tests/test_submission_form_options.py compares this list against
-        # the provisioned profiles in config/workload-catalog.yaml sorted. Every one of them
-        # has a queue and a job definition; picking one costs the wait for a machine and not
-        # a refusal after approval.
-        options:
-          - inherit
-          - cpu-32vcpu
-          - gpu-1xa10g
-          - gpu-1xl4
-          - gpu-1xt4
-          - gpu-4xa10g
-          - gpu-4xl4
-          - gpu-4xl40s
-          - gpu-4xt4
-          - gpu-8xa100
-          - gpu-8xa10g
-          - gpu-8xh100
       maximum_runtime_hours:
         description: "Override the runtime bound, in hours."
         required: false
@@ -453,16 +469,16 @@ jobs:
           )
 
           form: dict[str, object] = {}
-          # INHERIT IS NOT A VALUE, IT IS THE ABSENCE OF ONE. A choice input cannot offer a
-          # blank option, so the override dropdowns spell "take the registered default" as
-          # "inherit" and it is translated back here. Left untranslated it reaches admission
-          # as the name of a compute profile nothing has ever registered, and the refusal
-          # names the profile rather than the form.
-          INHERIT = "inherit"
-
+          # NO SENTINEL, BECAUSE NO DROPDOWN SPELLS ABSENCE ANY MORE. A `choice` input
+          # cannot offer a blank option, so while compute_profile was an override it had to
+          # spell "take the registered default" as the word `inherit`, and this loop
+          # translated it back to nothing. The catalog no longer declares a machine for it
+          # to fall back to, so the field is required and every option on it is a real
+          # profile. A sentinel left in place would now default to a value that resolves to
+          # nothing at all, which is the one thing worse than asking.
           for field, variable in TEXT_FIELDS:
               text = os.environ.get(variable, "").strip()
-              if text and text != INHERIT:
+              if text:
                   form[field] = text
           for field, variable in WHOLE_FIELDS:
               text = os.environ.get(variable, "").strip()

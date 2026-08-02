@@ -54,12 +54,15 @@ def form(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
         "repository": "OLMo-core",
         "commit_sha": COMMIT_SHA,
-        "workload_profile": "olmo-core-check-cpu",
+        "workload_profile": "olmo-core-check",
         "dataset_release": "dolma-2026-07",
         "team": "data-prep",
         "wandb_project": "olmo-core-tokenize",
         "experiment": "dolma-tokenization",
         "command": ["python", "-m", "olmo_core.data.tokenize"],
+        # Required since the workload profile stopped declaring one. Every form a submitter
+        # fills in now names a machine, so every form here does too.
+        "compute_profile": "cpu-32vcpu",
     }
     payload.update(overrides)
     return payload
@@ -194,7 +197,7 @@ def test_a_repository_nothing_registers_is_refused_and_nothing_is_written(
 
     ``edullm-data`` is registered and has no workload profile, and
     ``tokenizer-flores-validation`` is neither. Both compile against
-    ``olmo-core-check-cpu`` today into the same refusal -- that the profile belongs to
+    ``olmo-core-check`` today into the same refusal -- that the profile belongs to
     ``OLMo-core`` -- which is true and is about the wrong field for the second one. The
     compile job loads ``config/repositories.yaml`` already, so it can say which of the two
     a submitter is looking at before a reviewer is asked either way.
@@ -211,7 +214,7 @@ def test_a_repository_nothing_registers_is_refused_and_nothing_is_written(
     assert compiled == {}
     reported = capsys.readouterr().err
     assert "config/repositories.yaml" in reported
-    assert "olmo-core-check-cpu" not in reported
+    assert "olmo-core-check" not in reported
 
 
 def test_the_unregistered_repository_refusal_leaves_no_approver_context_to_read(
@@ -266,7 +269,7 @@ def test_a_registered_repository_with_no_workload_is_refused_for_the_workload(
 
     assert exit_code == EXIT_REFUSED
     reported = capsys.readouterr().err
-    assert "olmo-core-check-cpu" in reported
+    assert "olmo-core-check" in reported
     assert "config/repositories.yaml" not in reported
 
 

@@ -206,8 +206,8 @@ Resources:
         # An eighth of a c7i.8xlarge on both axes. This reserved the whole machine until
         # 2026-08-01 -- 32 vCPU and 60 GiB, against the instance's 32 and 64, the gap being
         # the ECS agent and the host rather than rounding. The workload that runs against
-        # this definition is olmo-core-check-cpu, the run guides/the-platform.md tells a new
-        # researcher to submit first, and it is a Python one-liner that prints an
+        # this definition is olmo-core-check on cpu-32vcpu, the run guides/the-platform.md
+        # tells a new researcher to submit first, and it is a Python one-liner that prints an
         # interpreter version. The four completed check jobs in this queue ran for between
         # 216 and 841 milliseconds. Reserving a machine for that capped the queue at
         # MaxvCpus / 32, which is four at a time, so a group onboarding on one morning

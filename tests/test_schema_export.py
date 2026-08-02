@@ -60,7 +60,6 @@ COMPUTE_PROFILE_PAYLOAD: dict[str, object] = {
 WORKLOAD_PROFILE_PAYLOAD: dict[str, object] = {
     "name": "smoke",
     "repository": "dolma",
-    "compute_profile": "cpu-test",
     "maximum_runtime_hours": "1",
     "maximum_attempts": 1,
     "checkpoint": None,
