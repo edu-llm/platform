@@ -99,7 +99,9 @@ A branch outside those names fails later, at submission, with `commit <sha> has 
 | Digest | Printed in the build's step summary. Leave `image_digest` blank and it is resolved from your commit |
 | Re-running a build | Resumes onto the existing image rather than failing |
 
-**A green build is not the last step, and this one has already cost an afternoon.** The registry scans every image it accepts, and a submission naming an image whose scan has not finished is refused. On a recent build the scan completed about seven minutes after the push. Watch for it under **Vulnerabilities** on the package in the registry, or simply give it ten minutes.
+**A green build is not the last step, and this one has already cost an afternoon.** The registry scans every image it accepts, and a submission naming an image whose scan has not finished is refused. Measured across the fourteen most recent images, the scan finished a median of about one minute forty seconds after the push, and the slowest of them took 5m41s. Watch for it under **Vulnerabilities** on the package in the registry, and give it two minutes rather than ten.
+
+The scan is the short part of the wait. From pushing a commit to having a submittable image is eight to eleven minutes: six to eight of build for a 4.4 to 4.6 GB image, about a minute of gate jobs, then the scan. One measured example, run `30755029486`, started 15:44:27Z, image pushed 15:53:08Z, scan complete 15:54:45Z, 10m18s end to end.
 
 If you submit inside that window the refusal reads `image_scan_findings_unreviewed`, which says your image carries vulnerabilities nobody has signed off. That is usually not what happened — the scan had not finished, and the platform reported the wrong reason. Wait a few minutes and resubmit the same commit; nothing else about the submission needs changing.
 
@@ -168,7 +170,7 @@ Three single-GPU profiles exist and they differ only in how much fits on the car
 | `gpu-4xl40s` | 4 × L40S | 192 GB | $10.49/hr |
 | `gpu-8xl4` | 8 × L4 | 192 GB | $13.35/hr |
 | `gpu-8xa10g` | 8 × A10G | 192 GB | $16.29/hr |
-| `gpu-8xa100` | 8 × A100 | 640 GB | $21.96/hr |
+| `gpu-8xa100` | 8 × A100 | 320 GB | $21.96/hr |
 | `gpu-8xl40s` | 8 × L40S | 384 GB | $30.13/hr |
 | `gpu-8xh100` | 8 × H100 | 640 GB | $55.04/hr |
 

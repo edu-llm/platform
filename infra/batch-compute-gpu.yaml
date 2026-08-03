@@ -241,6 +241,15 @@ Resources:
         # what devices it could see without depending on any of the above. That run answered
         # it: NVIDIA A10G, 23028 MiB, driver 580.159.03.
         #
+        # THAT DRIVER NUMBER WAS READ OFF AN A10G AND IS CARRIED TO EVERY OTHER SHAPE ON
+        # INFERENCE, WHICH IS WORTH SAYING WHERE THE NUMBER IS USED. It is what the CUDA 12.8
+        # base is pinned against, and the inference is a reasonable one -- the GPU AMI is
+        # shared across shapes, so a p5 should report the same driver as the g5 this was
+        # measured on. Nobody has run nvidia-smi on a p5 to confirm it, and a CUDA-against-
+        # driver mismatch is not the kind of thing that fails at build time: it surfaces
+        # inside a container that has already been scheduled, on a card that is already
+        # being billed.
+        #
         # Its findings are recorded as reviewed in config/image-exceptions.yaml, and that
         # entry is worth reading rather than assuming, because what it accepts changed when
         # the image did.
