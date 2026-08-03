@@ -8,9 +8,9 @@ This tripwire is worth more in Phase 3 than it was in Phase 1, for a reason part
 
 | role | template | canonical bytes | digest |
 | --- | --- | --- | --- |
-| sbsandbox-intern-edullm-batch-execution | infra/iam/batch-roles.yaml | 1928 | sha256:5b227479ed9b6e496f607118ba2d2421242ae1f1b0391e04c4bf848ed0084fe6 |
+| sbsandbox-intern-edullm-batch-execution | infra/iam/batch-roles.yaml | 2031 | sha256:bbbcbda85c852be157a87465ccc06ff64fef34c2402d8d062879e176d58d4711 |
 | sbsandbox-intern-edullm-batch-workload | infra/iam/batch-roles.yaml | 1151 | sha256:c8db5c5373fe66028d398ff1d0c4650db78203516cf10d761e8f937c2eed4ea6 |
-| sbsandbox-intern-edullm-batch-instance | infra/iam/batch-roles.yaml | 2154 | sha256:88049bffcecccb53af25e138488f9bdfec172948339f2db446e2f557e8de9173 |
+| sbsandbox-intern-edullm-batch-instance | infra/iam/batch-roles.yaml | 2257 | sha256:9dae40efaac240d89dc328e79323c0f1b98edc79747af8a7d30abbc46c046216 |
 | sbsandbox-intern-edullm-lifecycle-lambda | infra/iam/lifecycle-lambda-role.yaml | 2004 | sha256:60c744aa4376c4d015989fb2c2a1896e1daf196bc4f44dc2133448d32879ad7e |
 
 ## How this fails

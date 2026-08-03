@@ -37,12 +37,14 @@
 # The join is a fact about a corpus that does exist and whose tokenizer no workload can
 # construct, so it changes on its own when OLMo-core grows one.
 #
-# WHY FIFTEEN ENTRIES AND WHY SIX OF THEM REACH THE FORM. Every entry here is a promise the
+# WHY SIXTEEN ENTRIES AND WHY EIGHT OF THEM REACH THE FORM. Every entry here is a promise the
 # corpus can be resolved; a dropdown option is the stronger promise that a run picking it
-# works. The six dolma2 corpora carry both. The other nine carry only the first, and for three
-# separate reasons -- a tokenizer nothing can build, a version its owner has superseded, or a
-# family a run must not train on. All three gaps are computed rather than listed, so this
-# comment cannot drift out of agreement with the file.
+# works. The six dolma2 corpora carry both, and so do fineweb-edu-1b at v6 on smollm2-bpe and
+# formal-proof-premises-500m at v2 on the vendored Qwen2.5 tokenizer. The other eight carry
+# only the first, and for three separate reasons -- a tokenizer nothing can build or none
+# declared at all, a version its owner has superseded, or a family a run must not train on.
+# All three gaps are computed rather than listed, so this comment cannot drift out of
+# agreement with the file.
 #
 # NOT EVERY REGISTERED DATASET IS A CORPUS, WHICH IS NEW AND IS THE MOST IMPORTANT LINE HERE.
 # This list now carries two tokenizers, a verbatim vendor mirror and two sft conversation
@@ -93,6 +95,14 @@
 # here, so the two entries agree by construction and a reader comparing them is looking at one
 # manifest twice.
 #
+# tokenizer/qwen25-vendored IS THE ONE TOKENIZER THIS FILE NAMES AND DOES NOT CARRY. It is
+# published and sealed, on 2026-08-02, and formal-proof-premises-500m-v2 below names it in its
+# `tokenizer` field, but there is no entry of its own for it the way there is for
+# tokenizer/dolma2-bpe and tokenizer/smollm2-bpe. Nothing requires one -- the `tokenizer` field
+# is a string rather than a reference into this list, and admission resolves the corpus without
+# it -- so this is an asymmetry rather than a gap, and registering it would be an addition
+# somebody chooses rather than a repair.
+#
 # Every entry below was confirmed against the account on 2026-08-02, and each digest was read
 # from two places written by two different passes, the group's `manifest_sha256` in
 # dataset.json and the `manifest_sha256` map in the corpus's own _VALIDATED.json seal. All
@@ -123,18 +133,25 @@
 # basis nobody has established, which is a fact about the corpus and not a defect in the
 # record.
 #
-# NINE ARE REGISTERED HERE AND NOT OFFERED ON THE FORM, AND THAT IS DELIBERATE.
-# Four are refused by family, above. lean4-mathlib-bytes and math-memory-full depend on
-# `tokenizer/bytes-utf8`, and OLMo-core has no byte tokenizer. TokenizerConfig offers dolma2,
-# dolma2_sigdig, gpt_neox_olmo_dolma_v1_5, gpt2 and from_hf, and nothing under olmo_core/data/
-# mentions bytes or utf8, measured on 2026-08-02 against the checkout the training image builds
-# from. fineweb-edu-1b v2 and v6 depend on `tokenizer/smollm2-bpe`, which is the different case
-# and the one that will resolve first. It has an exact OLMo-core equivalent, because its own
-# dataset.json names HuggingFaceTB/SmolLM2-135M as its source and from_hf reproduces that
-# tokenizer, so the gap is a line nobody has added rather than a feature nobody has. A run
-# picking either of those tokenizer cases today reaches a container that cannot construct a
-# model for the tokens it just resolved and exits 69. v2 would stay off the form regardless,
-# being retired.
+# EIGHT ARE REGISTERED HERE AND NOT OFFERED ON THE FORM, AND THAT IS DELIBERATE.
+# Three are refused by family, above: the two tokenizers and the verbatim vendor mirror.
+# math-sft-60m and pedagogy70-normal30 are in a trainable family and declare no tokenizer at
+# all, honestly, because they are pre-tokenization conversation text, and `None` is not a key
+# in the TOKENIZERS map, so the same join that answers the question above answers this one.
+# lean4-mathlib-bytes and math-memory-full depend on `tokenizer/bytes-utf8`, and OLMo-core has
+# no byte tokenizer. TokenizerConfig offers dolma2, dolma2_sigdig, gpt_neox_olmo_dolma_v1_5,
+# gpt2 and from_hf, and nothing under olmo_core/data/ mentions bytes or utf8, measured on
+# 2026-08-02 against the checkout the training image builds from. A run picking either of
+# those two today reaches a container that cannot construct a model for the tokens it just
+# resolved and exits 69. The eighth is fineweb-edu-1b at v2, held off by `retired` alone.
+#
+# fineweb-edu-1b AT v6 USED TO BE ON THIS LIST AND IS THE WORKED EXAMPLE OF AN EXCLUSION
+# RETIRING ITSELF. It depends on `tokenizer/smollm2-bpe`, which always had an exact OLMo-core
+# equivalent -- its own dataset.json names HuggingFaceTB/SmolLM2-135M as its source and
+# from_hf reproduces that tokenizer -- so the gap was a line nobody had added rather than a
+# feature nobody had. Somebody added it, the join started offering v6 without anybody editing
+# this comment, and v2 stayed off because `retired` is a separate answer to a separate
+# question.
 #
 # The tokenizer cases stay registered because this file answers "may a submission name this",
 # and the honest answer is yes: they are real sealed corpora, admission can resolve them, and a
@@ -173,6 +190,30 @@ published:
     version: v6
     manifest_sha256: "047d001de3d08d443f99f1b12a7c998dc06bdef57a914e26f7feeaf4601be2ca"
     tokenizer: tokenizer/smollm2-bpe
+  # THE ONE ENTRY HERE THAT IS OFFERED ON A TOKENIZER NOTHING COULD BUILD UNTIL TODAY, which
+  # is the case the paragraph above says resolves itself: `tokenizer/qwen25-vendored` names
+  # `https://huggingface.co/Qwen/Qwen2.5-0.5B` as its source in its own dataset.json, so the
+  # line added to tools' TOKENIZERS map alongside this entry is a fact read out of the bucket
+  # rather than a tokenizer invented for it. 494,862,336 train tokens and 11,862,016 val over
+  # twelve objects and 2,026,897,408 bytes, packed at sequence length 16,384, with each source
+  # kept in its own object-key slice.
+  #
+  # ITS SHARDS ARE uint32 AND THAT IS NOT THE USUAL CASE. Qwen2.5's vocabulary is 151,936 and
+  # this corpus's ids reach 151,664, so they could not have been written any narrower. Read at
+  # OLMo-core's uint16 default, every four-byte id becomes two two-byte ones, all of them in
+  # range for that embedding -- so the symptom is a loss curve rather than an exception.
+  # tokens/manifest.json declares the dtype on every entry and the reader takes it from there.
+  #
+  # Its licence is the honest-unknown case above, and its own limitations block records that
+  # ATP/TPTP traces carry most of the token mass, so a single number over the whole corpus is
+  # mostly measuring two of its six sources. That is a fact about the corpus which this entry
+  # can carry and cannot enforce.
+  - reference_id: formal-proof-premises-500m-v2
+    uri: "s3://edullm-data/pretrain/formal-proof-premises-500m/v2/"
+    dataset_id: pretrain/formal-proof-premises-500m
+    version: v2
+    manifest_sha256: "3adad2a090b62cb3815952b56254c9965afa1a082a4ab61028012727330d843b"
+    tokenizer: tokenizer/qwen25-vendored
   - reference_id: lean4-mathlib-bytes-v3
     uri: "s3://edullm-data/pretrain/lean4-mathlib-bytes/v3/"
     dataset_id: pretrain/lean4-mathlib-bytes

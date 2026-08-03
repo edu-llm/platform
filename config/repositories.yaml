@@ -47,3 +47,15 @@ repositories:
     base_image_digest: sha256:ebef3c171eeef0298e4eb2e4be843105edf3b8b0ac45e0b43acee358e8046867
     dockerfile_path: .edullm/Dockerfile
     build_context: .
+  # edullm-alt-cl: math front-load + shared end anneal on OLMo2-370M, then identical math
+  # SFT and a GSM8K/MATH ladder. Same python base as OLMo-core / edullm-data: the image
+  # installs CUDA torch from pip and needs a C compiler for torch.compile, both of which
+  # live in `.edullm/Dockerfile` rather than in a second CUDA base to review and re-pin.
+  - repository: edullm-alt-cl
+    github_repository_id: 1319807085
+    default_branch: main
+    ecr_repository: sbsandbox-intern-edullm-alt-cl
+    base_image_repository: docker.io/library/python
+    base_image_digest: sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+    dockerfile_path: .edullm/Dockerfile
+    build_context: .

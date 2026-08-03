@@ -174,10 +174,11 @@ compute_profiles:
   # THE OTHERS. See the note above gpu-8xa100 for what the rate does at the gate.
   #
   # It earns its place on the gap it fills rather than on the grid being symmetric. Eight
-  # L40S is 384 GB of device memory, between the 192 GB of the eight-A10G and eight-L4 nodes
-  # and the 640 GB of the eight-A100 node, and nothing else in this file occupies that range.
-  # A model that does not fit in 192 GB has had to reach for a p4d and its admin approval and
-  # its separate quota pool; this is the same reach without the P pool. It is also the only
+  # L40S is 384 GB of device memory, more than the 320 GB of the eight-A100 node and short of
+  # the 640 GB of the eight-H100, and nothing else in this file occupies that range. A model
+  # that does not fit in the 192 GB of the eight-A10G and eight-L4 nodes has had to reach for
+  # a p4d and its admin approval and its separate quota pool; this reaches past what a p4d
+  # holds and does it without the P pool. It is also the only
   # G-pool shape whose rate crosses the ceiling, at $30.131 against gpu-8xa10g's $16.288.
   - name: gpu-8xl40s
     instance_type: g6e.48xlarge
@@ -436,5 +437,27 @@ workloads:
       #
       # This value is the root the derived per-run prefix hangs under, not the path anything
       # writes to. The path is output_prefix(team, run_id) + "checkpoints/".
+      destination_prefix: "s3://sbsandbox-intern-edullm-outputs/teams/"
+      resume_required: true
+  # edullm-alt-cl: the math front-load / anneal experiment. A registration with no workload
+  # is a dropdown that cannot be submitted for, so these two presets are what make the
+  # repository usable rather than merely named. Same shape as olmo-core-check / olmo-core-train:
+  # bounds and checkpoint live here; the machine is the form's compute_profile field.
+  #
+  # The check is a dry-run of the treatment arm -- plan JSON only, no fit -- so pick
+  # cpu-32vcpu. Training matches OLMo-core's 24h / 2-attempt ceiling; pick gpu-1xa10g /
+  # gpu-4xa10g / gpu-8xa10g (or gpu-8xa100 with admin approval) to match the command's
+  # --nproc-per-node.
+  - name: edullm-alt-cl-check
+    repository: edullm-alt-cl
+    maximum_runtime_hours: "1"
+    maximum_attempts: 1
+    checkpoint: null
+  - name: edullm-alt-cl-train
+    repository: edullm-alt-cl
+    maximum_runtime_hours: "24"
+    maximum_attempts: 2
+    checkpoint:
+      interval_minutes: 30
       destination_prefix: "s3://sbsandbox-intern-edullm-outputs/teams/"
       resume_required: true

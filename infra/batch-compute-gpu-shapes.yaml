@@ -1263,10 +1263,10 @@ Resources:
   # -------------------------------------------------------------------------------------
   # gpu-8xl40s, eight L40S on g6e.48xlarge, $30.131/hour. The only G-pool shape whose rate is
   # above policy's exception ceiling, so it needs an admin per submission exactly as the two
-  # P shapes below do while drawing on a different quota. 384 GB of device memory sits
-  # between the 192 GB of gpu-8xa10g and gpu-8xl4 and the 640 GB of gpu-8xa100, which is the
-  # range nothing else here covers and the reason this shape exists rather than the grid
-  # being tidy. FOUR SUBNETS: g6e.48xlarge is not offered in us-east-1f.
+  # P shapes below do while drawing on a different quota. 384 GB of device memory is more than
+  # the 320 GB of gpu-8xa100 and short of the 640 GB of gpu-8xh100, which is the range nothing
+  # else here covers and the reason this shape exists rather than the grid being tidy. FOUR
+  # SUBNETS: g6e.48xlarge is not offered in us-east-1f.
   # -------------------------------------------------------------------------------------
   Gpu8xL40sComputeEnvironment:
     Type: AWS::Batch::ComputeEnvironment
@@ -1474,7 +1474,7 @@ Resources:
           - Type: VCPU
             Value: "96"
           - Type: MEMORY
-            Value: "1155072"
+            Value: "1118208"
           - Type: GPU
             Value: "8"
         Secrets:
@@ -1491,7 +1491,7 @@ Resources:
           - Name: EDULLM_OUTPUT_PREFIX
             Value: s3://sbsandbox-intern-edullm-outputs/no-submission-supplied-a-prefix/
         LinuxParameters:
-          SharedMemorySize: 288768
+          SharedMemorySize: 279552
         LogConfiguration:
           LogDriver: awslogs
           Options:
@@ -1589,7 +1589,7 @@ Resources:
           - Type: VCPU
             Value: "192"
           - Type: MEMORY
-            Value: "2048000"
+            Value: "1982464"
           - Type: GPU
             Value: "8"
         Secrets:
@@ -1606,7 +1606,7 @@ Resources:
           - Name: EDULLM_OUTPUT_PREFIX
             Value: s3://sbsandbox-intern-edullm-outputs/no-submission-supplied-a-prefix/
         LinuxParameters:
-          SharedMemorySize: 512000
+          SharedMemorySize: 495616
         LogConfiguration:
           LogDriver: awslogs
           Options:
@@ -1722,8 +1722,15 @@ Resources:
         ResourceRequirements:
           - Type: VCPU
             Value: "16"
+          # 253952 is the 31/32 a p5.4xlarge registers of its advertised 262144, measured the
+          # same way the p4d and the p5.48xlarge were, less 4096 for the ECS agent and the
+          # host. This read 258048 until it was corrected, which is the advertised figure less
+          # the allowance and 4096 over the ceiling, so every job submitted here would have
+          # been refused statically with MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT and the
+          # queue would simply never have scaled. See the reserve table in
+          # src/edullm_platform/execution.py, which has to carry the same number.
           - Type: MEMORY
-            Value: "258048"
+            Value: "249856"
           - Type: GPU
             Value: "1"
         Secrets:
@@ -1740,7 +1747,7 @@ Resources:
           - Name: EDULLM_OUTPUT_PREFIX
             Value: s3://sbsandbox-intern-edullm-outputs/no-submission-supplied-a-prefix/
         LinuxParameters:
-          SharedMemorySize: 64512
+          SharedMemorySize: 62464
         LogConfiguration:
           LogDriver: awslogs
           Options:

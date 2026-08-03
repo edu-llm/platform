@@ -93,21 +93,45 @@ TRAINING_STEPS: Final = 20
 #: rather than to infer. An invented eos id is the quiet kind of wrong this whole map exists
 #: to refuse.
 #:
-#: TWO ENTRIES NOW, AND THE ARGUMENT ABOVE SURVIVES FOR ONE OF THEM AND NOT THE OTHER. The
-#: paragraph beginning "ONE ENTRY, NOT TWO" is still exactly right about `tokenizer/bytes-utf8`
-#: and was wrong to be read as covering `tokenizer/smollm2-bpe`, which is the reading that
-#: kept `pretrain/fineweb-edu-1b` unusable and sent the diagnosis to `edullm-data` to fix
-#: manifests that were never broken. bytes-utf8 has no OLMo-core equivalent to name.
-#: smollm2-bpe has an exact one: `s3://edullm-data/tokenizer/smollm2-bpe/v1/dataset.json`
+#: THREE ENTRIES NOW, AND THE ARGUMENT ABOVE SURVIVES FOR ONE OF THEM AND NOT THE OTHER TWO.
+#: The paragraph beginning "ONE ENTRY, NOT TWO" is still exactly right about
+#: `tokenizer/bytes-utf8` and was wrong to be read as covering the two entries beside it. The
+#: symmetry is the trap: every tokenizer missing from this map fails the same way, so a reader
+#: who diagnosed one concluded the same about the rest, and that reading is what kept
+#: `pretrain/fineweb-edu-1b` unusable and sent the diagnosis to `edullm-data` to fix manifests
+#: that were never broken. Only some of them are missing upstream features.
+#: `tokenizer/bytes-utf8` still is. The other two are not, and each names an exact OLMo-core
+#: equivalent rather than one recognised from its name.
+#:
+#: `tokenizer/smollm2-bpe` has one: `s3://edullm-data/tokenizer/smollm2-bpe/v1/dataset.json`
 #: names `HuggingFaceTB/SmolLM2-135M` as its source in those words, and `TokenizerConfig.from_hf`
 #: reproduces it. Called for real before this line was written, it reports vocab_size 49,152.
 #:
-#: THIS MAP MUST NOT LEAD OLMo-core's, AND TODAY IT WOULD. The container's own copy lives at
-#: `OLMo-core/.edullm/train_on_corpus.py`, and the entry there is on branch
-#: `edullm/smollm2-tokenizer` rather than on main. A submission naming a commit that lacks it
-#: resolves the corpus, reaches the container, and exits 69. So this line is correct and its
-#: ordering is not optional: the OLMo-core branch merges to main first, and this ships after.
-#: Landing them the other way round offers a corpus every image refuses.
+#: `tokenizer/qwen25-vendored` has one too --
+#: `s3://edullm-data/tokenizer/qwen25-vendored/v1/dataset.json` names
+#: `https://huggingface.co/Qwen/Qwen2.5-0.5B` in `sources[].uri`, so the identifier below is
+#: read out of the published tokenizer rather than recognised from its name, and `from_hf`
+#: reproduces it.
+#:
+#: CALLED FOR REAL BEFORE THIS LINE WAS WRITTEN, against the checkout at OLMO_CORE_CHECKOUT on
+#: 2026-08-02, it reports vocab_size 151,936, eos_token_id 151,643, pad_token_id 151,643 and
+#: bos_token_id 151,643. `from_hf` takes those off the Hub's config.json rather than off
+#: anything in the bucket, so what had to be established is that the vendored copy and the Hub
+#: agree about ids, and it was checked rather than assumed: the vendored `tokenizer.json`
+#: holds 151,643 model entries plus 22 added tokens reaching 151,664, every one of those id
+#: assignments is identical to the Hub's, and the merge list matches once the two
+#: serialisations of it are normalised. The files are not byte identical -- upstream now
+#: writes merges as pairs rather than space-joined strings and spells the ByteLevel decoder's
+#: defaults explicitly -- and neither difference moves an id. Its `tokenizer_config.json`
+#: names `<|endoftext|>` as both eos and pad, which its own added_tokens put at 151,643, so
+#: the bucket and the Hub state the same eos independently.
+#:
+#: 151,936 IS LARGER THAN THE 151,665 IDS THAT EXIST, which is Qwen's own padding rather than
+#: a mismatch, and it matters in the safe direction: every id the corpus can hold is inside
+#: the embedding. It also puts this corpus past uint16, so unlike dolma2's 100,278 its ids
+#: could not have been written narrower -- which changes nothing about the hazard this map
+#: exists for, because a uint32 shard read at OLMo-core's default still decodes into ids this
+#: vocabulary accepts. The dtype comes from the manifest and is never inferred.
 #:
 #: WHAT THIS ENTRY COSTS THAT THE DOLMA2 ONE DOES NOT. `from_hf` fetches the tokenizer's
 #: config from the HuggingFace Hub when the config is built, so a corpus resolved through it
@@ -116,13 +140,25 @@ TRAINING_STEPS: Final = 20
 #: a real dependency rather than a real risk -- but a Hub outage can now refuse a run that
 #: dolma2 would have started, and that is worth knowing before it happens.
 #:
-#: AND THE HAZARD THIS MAP EXISTS FOR APPLIES HERE TOO, AT A DIFFERENT NUMBER. SmolLM2's 49,152
-#: fits in uint16 exactly as dolma2's 100,278 does, so a fineweb shard read without the
+#: AND THE HAZARD THIS MAP EXISTS FOR APPLIES TO SmolLM2 TOO, AT A DIFFERENT NUMBER. SmolLM2's
+#: 49,152 fits in uint16 exactly as dolma2's 100,278 does, so a fineweb shard read without the
 #: manifest's explicit dtype would be decoded two bytes at a time into in-range ids and a loss
 #: curve that is merely bad. The dtype comes from the manifest and is never inferred, which is
 #: what makes adding this safe.
+#:
+#: THIS MAP MUST NOT LEAD OLMo-core's, AND WITH BOTH OF THESE LINES IT DOES. The container's
+#: own copy lives at `OLMo-core/.edullm/train_on_corpus.py`, and on that repository's
+#: `origin/main` -- commit d663baeb, fetched 2026-08-02 -- it holds `tokenizer/dolma2-bpe`
+#: alone; the smollm2 entry exists there only on branch `edullm/smollm2-tokenizer`. So until a
+#: matching line lands on that main, a submitter picking the corpus either entry unlocks
+#: resolves it, reaches the container, and is refused at the tokenizer lookup with
+#: THIS_IMAGE_HAS_NO_CONFIG_FOR_THAT_TOKENIZER and exit 69. That refusal is loud, immediate
+#: and names the tokenizer, so it costs minutes rather than a GPU day -- but it is a refusal,
+#: and the ordering is not optional: the OLMo-core change lands first and this ships after.
+#: Landing them the other way round offers a corpus every image refuses.
 TOKENIZERS: Final[dict[str, str]] = {
     "tokenizer/dolma2-bpe": "TokenizerConfig.dolma2()",
+    "tokenizer/qwen25-vendored": 'TokenizerConfig.from_hf("Qwen/Qwen2.5-0.5B")',
     "tokenizer/smollm2-bpe": 'TokenizerConfig.from_hf("HuggingFaceTB/SmolLM2-135M")',
 }
 

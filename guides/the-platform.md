@@ -94,6 +94,7 @@ A waiver lands in the run's manifest and the approving lead is told which check 
 | `dataset_release` | Train tokens | Objects |
 | --- | --- | --- |
 | `math-frontload-100m-v1` | 0.1B | 3 |
+| `formal-proof-premises-500m-v2` | 0.5B | 12 |
 | `fineweb-edu-1b-v6` | 1.0B | 4 |
 | `refhq-regmix-5p5b-v2` | 5.5B | 24 |
 | `regmix-10b-v1` | 10.0B | 41 |
@@ -101,7 +102,11 @@ A waiver lands in the run's manifest and the approving lead is told which check 
 | `olmo-127b-v1` | 126.5B | 474 |
 | `olmo-150b-dolma2-v1` | 157.2B | 6,851 |
 
-All are frozen and nothing you run can write to them. All but one use the dolma2 tokenizer; `fineweb-edu-1b-v6` uses SmolLM2, which the training image builds by fetching it from the HuggingFace Hub at start-up. That is the only corpus here whose first minute depends on something outside AWS, so a Hub outage refuses a run the others would have started.
+All are frozen and nothing you run can write to them. Six of them use the dolma2 tokenizer, which the training image has built in. The other two do not: `fineweb-edu-1b-v6` uses SmolLM2 and `formal-proof-premises-500m-v2` uses a vendored Qwen2.5, and the image builds both by fetching them from the HuggingFace Hub at start-up. Those are the two corpora here whose first minute depends on something outside AWS, so a Hub outage refuses a run the other six would have started.
+
+**Those same two need the image to know their tokenizer, and today it does not.** This list is what the platform can name; building the model happens in OLMo-core, whose own tokenizer map on `main` still holds dolma2 alone. Until a matching line lands there for each, picking either reaches a container that refuses at the tokenizer lookup and exits 69 — before it trains, and saying which tokenizer it did not recognise, so it costs you minutes rather than a GPU day. The six dolma2 corpora are unaffected.
+
+Two more things about `formal-proof-premises-500m-v2` are worth knowing before you report a number from it. Its shards are `uint32` rather than the usual `uint16`, which the loader must take from the manifest and never infer; and ATP/TPTP traces carry most of its token mass, so a single loss over the whole corpus is mostly measuring two of its six sources.
 
 **More corpora are published than are offered here, and the reason is never the corpus.** `lean4-mathlib-bytes-v3` and `math-memory-full-v1` are sealed, frozen and readable, and they are tokenized with raw UTF-8 bytes, which OLMo-core has no tokenizer for. They stay in the registry and off this list until it does, because a run that resolved one would reach a container that cannot build a model for the tokens it just read. `fineweb-edu-1b-v6` was in that state until somebody wrote the one line naming its tokenizer, which is the difference between a missing upstream feature and a job nobody had done.
 
