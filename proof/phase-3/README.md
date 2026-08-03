@@ -2,8 +2,8 @@
 
 Phase: phase-3
 Bundle schema version: 1
-Source commit: 21bf77f9aa8b725b00acdef53471e8ab83c3f145
-Generated: 2026-08-03T04:59:21+00:00
+Source commit: 2c61e6b30cc0a2412bae0bd78503b4a61a50e6ac
+Generated: 2026-08-03T14:00:47+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 3 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase3_proof.py` at generation time. It is not done, and the Result table below says by how much.
 
@@ -31,13 +31,13 @@ What is not done is captures rather than mechanism, which is a change in this bu
 | --- | --- |
 | suite tests collected | 4691 |
 | suite tests executed | 4498 |
-| suite passed | 4495 |
-| suite failed | 3 |
+| suite passed | 4498 |
+| suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
 | matrix node ids executed | 483 |
-| matrix node ids passed | 481 |
-| matrix node ids failed | 2 |
+| matrix node ids passed | 483 |
+| matrix node ids failed | 0 |
 | phase criteria | 19 |
 | criteria COVERED | 13 (1, 2, 3, 4, 8, 9, 15, 16, 17, 19, 20, 21, 22) |
 | criteria DEFERRED | 0 |
@@ -77,9 +77,9 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | config/image-exceptions.yaml | sha256:8b1e3e6ac779215e0c521b91a2889b5e2404139678752534ac1bfb0f34751716 |
 | config/workload-catalog.yaml | sha256:6f51d8d55bccbd10eeb3a81d8ad9e1ed01750b1dc5014eeb2cde4d5bff680df6 |
 | fixtures/evidence/phase-3/account-measurements.sanitized.json | sha256:02a7cafae966f04037c13f4e2a57b958a7b5e2c435c46a0eba4a6839d4a4c127 |
-| infra/admission-state-machine.yaml | sha256:0aa031367d1b6122af13c4deddc66c90dbac8cf6b991ad86bd039044c56ea9fd |
+| infra/admission-state-machine.yaml | sha256:c94e70cf4789fd34824c99c80ee33be3d4417c062f305de719a33cfb8339431f |
 | infra/batch-compute.yaml | sha256:4dbdc472f0bf8282e13292449a8c5577038c9b17884471f8e1004b00dc036b18 |
-| infra/batch-events.yaml | sha256:69aeba2ed7157476622ec3d0aedac29405679aaf249df9eab2079ec9b2a9e15c |
+| infra/batch-events.yaml | sha256:dbd7a00bc41bc1fe21d0fe5626c7dd56378cdc69f9b347e320f1e96ffc1079b1 |
 | infra/batch-network.yaml | sha256:758e977fe9c6c0e32c0c5476db98b587b08ce21c7607a210e1b86d4602e8cee3 |
 | infra/iam/admission-service-roles.yaml | sha256:0dd336c579739f71ee8ae69f4e2268db22150785633ebff577837f7f93711cbd |
 | infra/iam/batch-roles.yaml | sha256:cbee530cfd52dac3103866cc0c7e8ae9d8f753383703f6e62780090d30e08a1a |
