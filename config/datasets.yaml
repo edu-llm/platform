@@ -37,11 +37,12 @@
 # The join is a fact about a corpus that does exist and whose tokenizer no workload can
 # construct, so it changes on its own when OLMo-core grows one.
 #
-# WHY NINE ENTRIES AND WHY FIVE OF THEM REACH THE FORM. Every entry here is a promise the
+# WHY TEN ENTRIES AND WHY SIX OF THEM REACH THE FORM. Every entry here is a promise the
 # corpus can be resolved; a dropdown option is the stronger promise that a run picking it
-# works. The five dolma2 corpora carry both. The other four carry only the first, because
-# nothing here can build the tokenizer they were tokenized with, and that gap is computed
-# rather than listed. See the join at the end of this comment.
+# works. The five dolma2 corpora carry both, and so does formal-proof-premises-500m on the
+# vendored Qwen2.5 tokenizer. The other four carry only the first, because nothing here can
+# build the tokenizer they were tokenized with, and that gap is computed rather than listed.
+# See the join at the end of this comment.
 #
 # pretrain/fineweb-edu-1b is carried at v2 AND v6, the one corpus in this file registered
 # twice. Both are published, sealed and frozen, and the registry's job is to carry what
@@ -66,8 +67,9 @@
 # at once, so that day costs a red test naming the decision rather than a superseded corpus
 # sitting on the form.
 #
-# THE TOKENIZERS ARE NOT REGISTRABLE, AND NOT BECAUSE THEY ARE UNREADABLE. All three are
-# published, sealed and openable. A tokenizer declares no partitions, so the reader hands back
+# THE TOKENIZERS ARE NOT REGISTRABLE, AND NOT BECAUSE THEY ARE UNREADABLE. All four are
+# published, sealed and openable -- tokenizer/qwen25-vendored is the newest, sealed on
+# 2026-08-02, and it is named below by the corpus it encoded rather than carried as an entry. A tokenizer declares no partitions, so the reader hands back
 # every object rather than a trainable split, and its group carries no dtype, which a
 # NumpyFSLDatasetConfig turns into OLMo-core's uint16 default and then memmaps tokenizer.json
 # as if it were tokens. The run trains and the loss moves. A tokenizer is an input to a
@@ -144,6 +146,30 @@ published:
     version: v6
     manifest_sha256: "047d001de3d08d443f99f1b12a7c998dc06bdef57a914e26f7feeaf4601be2ca"
     tokenizer: tokenizer/smollm2-bpe
+  # THE ONE ENTRY HERE THAT IS OFFERED ON A TOKENIZER NOTHING COULD BUILD UNTIL TODAY, which
+  # is the case the paragraph above says resolves itself: `tokenizer/qwen25-vendored` names
+  # `https://huggingface.co/Qwen/Qwen2.5-0.5B` as its source in its own dataset.json, so the
+  # line added to tools' TOKENIZERS map alongside this entry is a fact read out of the bucket
+  # rather than a tokenizer invented for it. 494,862,336 train tokens and 11,862,016 val over
+  # twelve objects and 2,026,897,408 bytes, packed at sequence length 16,384, with each source
+  # kept in its own object-key slice.
+  #
+  # ITS SHARDS ARE uint32 AND THAT IS NOT THE USUAL CASE. Qwen2.5's vocabulary is 151,936 and
+  # this corpus's ids reach 151,664, so they could not have been written any narrower. Read at
+  # OLMo-core's uint16 default, every four-byte id becomes two two-byte ones, all of them in
+  # range for that embedding -- so the symptom is a loss curve rather than an exception.
+  # tokens/manifest.json declares the dtype on every entry and the reader takes it from there.
+  #
+  # Its licence is the honest-unknown case above, and its own limitations block records that
+  # ATP/TPTP traces carry most of the token mass, so a single number over the whole corpus is
+  # mostly measuring two of its six sources. That is a fact about the corpus which this entry
+  # can carry and cannot enforce.
+  - reference_id: formal-proof-premises-500m-v2
+    uri: "s3://edullm-data/pretrain/formal-proof-premises-500m/v2/"
+    dataset_id: pretrain/formal-proof-premises-500m
+    version: v2
+    manifest_sha256: "3adad2a090b62cb3815952b56254c9965afa1a082a4ab61028012727330d843b"
+    tokenizer: tokenizer/qwen25-vendored
   - reference_id: lean4-mathlib-bytes-v3
     uri: "s3://edullm-data/pretrain/lean4-mathlib-bytes/v3/"
     dataset_id: pretrain/lean4-mathlib-bytes
