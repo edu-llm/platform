@@ -964,7 +964,7 @@ Resources:
           - Type: VCPU
             Value: "96"
           - Type: MEMORY
-            Value: "1155072"
+            Value: "1118208"
           - Type: GPU
             Value: "8"
         Secrets:
@@ -981,7 +981,7 @@ Resources:
           - Name: EDULLM_OUTPUT_PREFIX
             Value: s3://sbsandbox-intern-edullm-outputs/no-submission-supplied-a-prefix/
         LinuxParameters:
-          SharedMemorySize: 288768
+          SharedMemorySize: 279552
         LogConfiguration:
           LogDriver: awslogs
           Options:
@@ -1076,7 +1076,7 @@ Resources:
           - Type: VCPU
             Value: "192"
           - Type: MEMORY
-            Value: "2048000"
+            Value: "1982464"
           - Type: GPU
             Value: "8"
         Secrets:
@@ -1093,7 +1093,7 @@ Resources:
           - Name: EDULLM_OUTPUT_PREFIX
             Value: s3://sbsandbox-intern-edullm-outputs/no-submission-supplied-a-prefix/
         LinuxParameters:
-          SharedMemorySize: 512000
+          SharedMemorySize: 495616
         LogConfiguration:
           LogDriver: awslogs
           Options:
