@@ -477,15 +477,18 @@ Proving tests (1), all executed and passing:
 
 - `tests/test_phase3_run_evidence.py::test_the_networking_the_compute_environment_uses_is_recorded`
 
-Supporting tests (7), all executed and passing, cited as evidence rather than as proof:
+Supporting tests (10), all executed and passing, cited as evidence rather than as proof:
 
 - `tests/test_phase3_account_measurements.py::test_the_capture_is_committed_and_inside_its_freshness_window`
 - `tests/test_phase3_account_measurements.py::test_the_vpc_quota_has_room_for_a_vpc_we_own`
 - `tests/test_phase3_account_measurements.py::test_the_subnet_list_excludes_any_zone_that_does_not_offer_the_instance_type`
 - `tests/test_phase3_account_measurements.py::test_the_capture_records_how_it_was_measured`
 - `tests/test_phase3_infrastructure.py::test_the_vpc_is_created_unconditionally_because_the_quota_landed`
-- `tests/test_phase3_infrastructure.py::test_the_subnets_exclude_the_zone_that_cannot_hold_the_instance_type`
-- `tests/test_phase3_infrastructure.py::test_the_compute_environment_places_into_exactly_the_subnets_the_network_exports`
+- `tests/test_phase3_infrastructure.py::test_the_network_declares_one_subnet_per_zone_and_no_zone_twice`
+- `tests/test_phase3_infrastructure.py::test_the_zone_the_cpu_shape_cannot_use_is_declared_but_not_imported_by_it`
+- `tests/test_phase3_infrastructure.py::test_only_a_shape_offered_in_that_zone_imports_the_us_east_1e_subnet`
+- `tests/test_phase3_infrastructure.py::test_every_environment_that_may_take_the_sixth_zone_actually_takes_it`
+- `tests/test_phase3_infrastructure.py::test_the_compute_environment_places_into_every_exported_subnet_its_shape_can_use`
 
 ### Check 22 — The image-scan decision has been answered.
 

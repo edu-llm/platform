@@ -27,6 +27,12 @@ Description: The VPC, public subnets and security group the CPU compute environm
 # limiting: the zone list is a us-east-1 fact -- c7i.8xlarge is offered in 1a, 1b, 1c, 1d
 # and 1f and not in 1e -- and a template that looked portable would carry a subnet list
 # that is wrong everywhere else.
+#
+# THE ZONE LIST IS PER INSTANCE TYPE, NOT PER NETWORK, WHICH IS WHAT THE SIXTH SUBNET IS
+# ABOUT. This file exports subnets; each compute environment imports the ones its own shape
+# is offered in. Those were the same five zones for every backed shape until p5 arrived, and
+# treating "the zones c7i.8xlarge is offered in" as "the zones this VPC has" is a conflation
+# that costs nothing right up until it silently narrows a scarce pool.
 
 Resources:
   BatchVpc:
@@ -63,13 +69,35 @@ Resources:
   # this phase did not make, and it is recorded here so the next reader knows the
   # option was seen rather than missed.
   #
-  # Five subnets and not six. c7i.8xlarge is offered in us-east-1a, 1b, 1c, 1d and 1f, and
-  # NOT in us-east-1e. A subnet in 1e handed to the compute environment is a subnet Batch
-  # will consider and can never place into, and Batch does not fail a job it cannot place
-  # -- it waits. The symptom is a job sitting in RUNNABLE with no error and no statusReason
-  # worth reading, which is the hardest failure in this phase to diagnose and the cheapest
-  # to prevent. tests/test_phase3_infrastructure.py asserts 1e is absent from this file and
-  # that infra/batch-compute.yaml imports exactly the subnets declared here.
+  # Six subnets, and which of them a compute environment may import is a property of that
+  # environment's instance type rather than of this file.
+  #
+  # THE ORIGINAL RULE, WHICH STILL HOLDS AND IS STILL THE THING TO GET RIGHT. c7i.8xlarge is
+  # offered in us-east-1a, 1b, 1c, 1d and 1f and NOT in us-east-1e. A subnet in 1e handed to
+  # the CPU compute environment is a subnet Batch will consider and can never place into, and
+  # Batch does not fail a job it cannot place -- it waits. The symptom is a job sitting in
+  # RUNNABLE with no error and no statusReason worth reading, which is the hardest failure in
+  # this phase to diagnose and the cheapest to prevent. infra/batch-compute.yaml therefore
+  # still imports exactly five, and tests/test_phase3_infrastructure.py still asserts that.
+  #
+  # WHAT CHANGED ON 2026-08-03, AND THE MEASUREMENT BEHIND IT. p5.48xlarge and p5.4xlarge are
+  # offered in all six zones including us-east-1e; every other shape this repository backs --
+  # c7i.8xlarge, g4dn, g5, g6, g6e.12xlarge, p4d.24xlarge -- is offered in at most five, and
+  # g6e.12xlarge and p4d.24xlarge in only four. So for the two H100 profiles, and only for
+  # them, the absent 1e subnet was not a guard against an unplaceable zone. It was a sixth of
+  # the on-demand pool that could not be asked for.
+  #
+  # That distinction stopped being academic the same day. An on-demand p5.48xlarge could not
+  # be obtained in any of the five zones the gpu-8xh100 environment could reach: every launch
+  # attempt returned InsufficientInstanceCapacity, and the environment retried across all five
+  # for half an hour without placing one. p5 capacity is scarce enough that a zone is worth
+  # having, and 1e is the zone with the least competition for exactly the reason it is missing
+  # here -- almost nothing else is offered in it.
+  #
+  # An unusable zone is a job that waits forever, so this subnet must never be imported by an
+  # environment whose instance type is not offered in 1e. That is the failure this comment
+  # spent five subnets warning about, and adding a sixth does not retire the warning; it moves
+  # it from "which subnets exist" to "which subnets each environment imports".
   SubnetUsEast1a:
     Type: AWS::EC2::Subnet
     Properties:
@@ -130,6 +158,24 @@ Resources:
         - Key: Name
           Value: sbsandbox-intern-edullm-batch-us-east-1f
 
+  # The p5-only zone. Its name says so, because the tag is what somebody reads in the console
+  # when they are wondering why a compute environment has five subnets and the VPC has six.
+  #
+  # 10.20.80.0/20 is the next free block: the five above take 10.20.0.0 through 10.20.79.255
+  # of a 10.20.0.0/16, so this neither overlaps them nor leaves a hole, and the /16 has room
+  # for eleven more.
+  SubnetUsEast1e:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: BatchVpc
+      AvailabilityZone: us-east-1e
+      CidrBlock: 10.20.80.0/20
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: sbsandbox-intern-edullm-batch-us-east-1e-p5-only
+
   BatchInternetGateway:
     Type: AWS::EC2::InternetGateway
     Properties:
@@ -145,9 +191,9 @@ Resources:
       InternetGatewayId:
         Ref: BatchInternetGateway
 
-  # One route table shared by all five subnets. They are identical -- the same default
-  # route to the same gateway -- so five tables would be five places to make the same edit
-  # and four places to get it wrong.
+  # One route table shared by all six subnets. They are identical -- the same default
+  # route to the same gateway -- so six tables would be six places to make the same edit
+  # and five places to get it wrong.
   BatchRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
@@ -210,6 +256,19 @@ Resources:
         Ref: BatchRouteTable
       SubnetId:
         Ref: SubnetUsEast1f
+
+  # The same table as the other five. A p5 host in 1e reaches ECR, S3 and CloudWatch Logs by
+  # the same default route, and an unassociated subnet gets the VPC's main route table, which
+  # has no path to the internet -- so the instance would launch, join nothing and pull
+  # nothing. That is the "job that waits" symptom again, reached by a different route, and it
+  # would be indistinguishable from the capacity shortage this subnet exists to relieve.
+  RouteTableAssociationUsEast1e:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: BatchRouteTable
+      SubnetId:
+        Ref: SubnetUsEast1e
 
   # No ingress rule of any kind, and none may be added without a reason written beside it.
   # A Batch container host is reached by nothing: the ECS agent opens outbound connections
@@ -305,3 +364,11 @@ Outputs:
       Ref: SubnetUsEast1f
     Export:
       Name: sbsandbox-intern-edullm-batch-subnet-us-east-1f
+  # Exported like the rest, and importable by fewer stacks than the rest. An export is not a
+  # recommendation: only a compute environment whose instance type EC2 offers in us-east-1e
+  # may name this, which today is the two H100 profiles and nothing else.
+  SubnetIdUsEast1e:
+    Value:
+      Ref: SubnetUsEast1e
+    Export:
+      Name: sbsandbox-intern-edullm-batch-subnet-us-east-1e

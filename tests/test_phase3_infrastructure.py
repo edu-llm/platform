@@ -179,6 +179,19 @@ IMAGE_PULLING_ROLES = (
 INSTANCE_CAPABLE_ZONES = ("us-east-1a", "us-east-1b", "us-east-1c", "us-east-1d", "us-east-1f")
 ZONE_WITHOUT_THE_INSTANCE_TYPE = "us-east-1e"
 
+#: Every zone the network stack declares a subnet in, which since 2026-08-03 is one more than
+#: the CPU environment may use. The two lists were the same until p5 was backed, and the tests
+#: below keep them apart on purpose: this one is what the VPC has, the one above is what
+#: c7i.8xlarge can be placed into.
+DECLARED_ZONES = (*INSTANCE_CAPABLE_ZONES, ZONE_WITHOUT_THE_INSTANCE_TYPE)
+
+#: The compute environments whose instance type EC2 offers in us-east-1e, read against the
+#: account on 2026-08-03. p5.48xlarge and p5.4xlarge are offered in all six zones; c7i.8xlarge,
+#: g4dn, g5 and g6 in five; g6e.12xlarge and p4d.24xlarge in four. Only an environment named
+#: here may import the 1e subnet, and an environment that imports it without being named here
+#: is a job that waits in RUNNABLE forever with no error anywhere.
+ZONE_1E_CAPABLE_INSTANCE_TYPES = frozenset({"p5.48xlarge", "p5.4xlarge"})
+
 CONDITIONAL_WRITE_PARAMETERS = {"ChecksumAlgorithm": "SHA256", "IfNoneMatch": "*"}
 
 #: The keys a submit request carries. Named here so the SubmitToBatch test can assert that
@@ -721,20 +734,114 @@ def test_the_launch_template_leaves_batch_the_settings_batch_owns() -> None:
 # --------------------------------------------------------------------------------------
 
 
-def test_the_subnets_exclude_the_zone_that_cannot_hold_the_instance_type() -> None:
-    """Mutation: add a us-east-1e subnet, or drop one of the other five.
+def test_the_network_declares_one_subnet_per_zone_and_no_zone_twice() -> None:
+    """Mutation: drop a subnet, or declare two in one zone.
 
-    c7i.8xlarge is not offered in us-east-1e. A subnet there is one Batch will consider and
-    can never place into, and Batch does not fail a job it cannot place -- it waits. The
-    symptom is a job in ``RUNNABLE`` with no error, which is the hardest failure in this
-    phase to diagnose and the cheapest to prevent.
+    This used to assert that us-east-1e was absent, and that assertion was correct for as
+    long as every backed shape stopped at five zones. p5.48xlarge and p5.4xlarge are offered
+    in all six, so 1e stopped being a zone nothing could use and became a sixth of a scarce
+    on-demand pool that no environment could ask for.
+
+    What the old test was protecting has not gone away -- it has moved one file over. A
+    subnet Batch will consider and can never place into still produces a job in ``RUNNABLE``
+    with no error, and the two tests below are now what prevent it: the CPU environment is
+    held to the five zones c7i.8xlarge is offered in, and the 1e subnet is importable only by
+    an environment whose instance type EC2 offers there.
     """
     subnets = resources_of_type(NETWORK_PATH, "AWS::EC2::Subnet")
     zones = [resource["Properties"]["AvailabilityZone"] for resource in subnets.values()]
 
-    assert sorted(zones) == sorted(INSTANCE_CAPABLE_ZONES)
-    assert ZONE_WITHOUT_THE_INSTANCE_TYPE not in zones
-    assert len(set(zones)) == len(zones), "two subnets in one zone is not five zones"
+    assert sorted(zones) == sorted(DECLARED_ZONES)
+    assert len(set(zones)) == len(zones), "two subnets in one zone is not six zones"
+
+
+def test_the_zone_the_cpu_shape_cannot_use_is_declared_but_not_imported_by_it() -> None:
+    """Mutation: add the 1e import to infra/batch-compute.yaml, which deploys clean.
+
+    This is the assertion that replaces the old "1e is absent" one, and it is the half that
+    was load-bearing. Declaring the subnet is harmless; handing it to an environment running
+    a shape EC2 does not offer in that zone is the silent failure, because Batch does not
+    fail a job it cannot place -- it waits, with no error and no statusReason worth reading.
+
+    Asserted against the CPU environment by name rather than against every environment,
+    because the GPU shapes file is where an environment legitimately may import it and the
+    test below is what governs that.
+    """
+    cpu = properties_of(COMPUTE_PATH, "AWS::Batch::ComputeEnvironment")["ComputeResources"]
+    imported = [entry["Fn::ImportValue"] for entry in cpu["Subnets"]]
+
+    assert not any(name.endswith(ZONE_WITHOUT_THE_INSTANCE_TYPE) for name in imported), (
+        "c7i.8xlarge is not offered in us-east-1e, so this import is a zone Batch will "
+        "consider and can never place into"
+    )
+    assert len(imported) == len(INSTANCE_CAPABLE_ZONES)
+
+
+def test_only_a_shape_offered_in_that_zone_imports_the_us_east_1e_subnet() -> None:
+    """Reads every compute template. Mutation: paste the p5 subnet list onto another shape.
+
+    The 1e subnet exists for p5 and for nothing else. Copying a working six-subnet list onto
+    the next environment somebody adds is the easiest possible mistake to make and the
+    hardest to see afterwards: the deploy succeeds, the environment reports healthy, and the
+    only symptom is that some fraction of that shape's jobs wait forever because Batch chose
+    a zone the instance type is not sold in.
+
+    ``ZONE_1E_CAPABLE_INSTANCE_TYPES`` is a measurement rather than a policy, so backing a
+    shape that is offered in 1e means adding it there in the same change as the subnet, which
+    is a line a reviewer reads rather than a deploy that quietly works.
+    """
+    offenders: list[str] = []
+    for path in COMPUTE_PATHS:
+        for resource in resources_of_type(path, "AWS::Batch::ComputeEnvironment").values():
+            properties = resource["Properties"]
+            compute = properties["ComputeResources"]
+            imports = [entry["Fn::ImportValue"] for entry in compute["Subnets"]]
+            if not any(name.endswith(ZONE_WITHOUT_THE_INSTANCE_TYPE) for name in imports):
+                continue
+            unsupported = set(compute["InstanceTypes"]) - ZONE_1E_CAPABLE_INSTANCE_TYPES
+            if unsupported:
+                offenders.append(
+                    f"{path.name}: {properties['ComputeEnvironmentName']} imports the "
+                    f"us-east-1e subnet with {sorted(unsupported)}, which EC2 does not offer "
+                    "there"
+                )
+
+    assert not offenders, "; ".join(offenders)
+
+
+def test_every_environment_that_may_take_the_sixth_zone_actually_takes_it() -> None:
+    """Mutation: drop the 1e import, leaving the subnet declared and used by nothing.
+
+    The test above is a prohibition and passes vacuously if no environment imports the 1e
+    subnet at all, which is exactly the state this change was made to leave behind. This is
+    the matching obligation, so the subnet cannot be quietly stranded: it was added because
+    on-demand p5 could not be obtained in any of the other five zones, and a declared subnet
+    nothing places into buys none of that back.
+
+    Driven off the instance type rather than off a list of environment names, so backing a
+    third p5 shape gets the sixth zone by construction instead of by somebody remembering.
+    """
+    every_zone = sorted(
+        f"sbsandbox-intern-edullm-batch-subnet-{zone}" for zone in DECLARED_ZONES
+    )
+    checked = 0
+    for resource in resources_of_type(GPU_SHAPES_PATH, "AWS::Batch::ComputeEnvironment").values():
+        properties = resource["Properties"]
+        compute = properties["ComputeResources"]
+        if not set(compute["InstanceTypes"]) <= ZONE_1E_CAPABLE_INSTANCE_TYPES:
+            continue
+        checked += 1
+        imported = sorted(entry["Fn::ImportValue"] for entry in compute["Subnets"])
+        assert imported == every_zone, (
+            f"{properties['ComputeEnvironmentName']} runs "
+            f"{compute['InstanceTypes']}, which EC2 offers in all six zones, so all six "
+            "belong here"
+        )
+
+    assert checked == 2, (
+        "expected gpu-8xh100 and gpu-1xh100 to be the p5 environments; a change to that set "
+        "is a change to which environments may import the us-east-1e subnet"
+    )
 
 
 def test_the_vpc_is_created_unconditionally_because_the_quota_landed() -> None:
@@ -844,20 +951,31 @@ def test_every_security_group_description_uses_only_characters_ec2_accepts() -> 
 # --------------------------------------------------------------------------------------
 
 
-def test_the_compute_environment_places_into_exactly_the_subnets_the_network_exports() -> None:
-    """Reads BOTH files. Mutation: export a sixth subnet, or import one that is not exported.
+def test_the_compute_environment_places_into_every_exported_subnet_its_shape_can_use() -> None:
+    """Reads BOTH files. Mutation: drop a subnet from the import list, or import an unexport.
 
     The two templates are separate stacks and the only thing joining them is an export name
     spelled identically in both. An import of an export that does not exist fails the
     deploy, which is the safe half; the unsafe half is a network stack that exports a subnet
-    the compute environment never uses, which deploys clean and quietly halves the zones
+    the compute environment never uses, which deploys clean and quietly narrows the zones
     Batch can place into.
+
+    This compared the two lists for equality until 2026-08-03, when the network stack gained
+    a us-east-1e subnet that only p5 may use. Equality would now force the CPU environment to
+    import a zone c7i.8xlarge is not offered in, which is the opposite failure and a worse
+    one. So the comparison is against the exports this shape *can* use, and the narrowing it
+    was written to catch is still caught: dropping 1a from the import list still fails here.
     """
     subnets = resources_of_type(NETWORK_PATH, "AWS::EC2::Subnet")
     exported = {
         output["Export"]["Name"]: output["Value"]["Ref"]
         for output in load_template(NETWORK_PATH)["Outputs"].values()
         if "Export" in output and "-subnet-" in output["Export"]["Name"]
+    }
+    usable = {
+        name: logical_id
+        for name, logical_id in exported.items()
+        if subnets[logical_id]["Properties"]["AvailabilityZone"] in INSTANCE_CAPABLE_ZONES
     }
     imported = [
         entry["Fn::ImportValue"]
@@ -866,11 +984,16 @@ def test_the_compute_environment_places_into_exactly_the_subnets_the_network_exp
         ]["Subnets"]
     ]
 
-    assert sorted(imported) == sorted(exported)
-    assert len(imported) == len(set(imported)) == len(subnets)
+    assert sorted(imported) == sorted(usable)
+    assert len(imported) == len(set(imported)) == len(INSTANCE_CAPABLE_ZONES)
+    # Every export is either usable by this shape or accounted for as one that is not, so an
+    # export nothing imports cannot hide behind the filter above.
     for export_name, logical_id in exported.items():
         zone = subnets[logical_id]["Properties"]["AvailabilityZone"]
-        assert zone in INSTANCE_CAPABLE_ZONES, f"{export_name} is in {zone}"
+        if export_name in usable:
+            assert zone in INSTANCE_CAPABLE_ZONES, f"{export_name} is in {zone}"
+        else:
+            assert zone == ZONE_WITHOUT_THE_INSTANCE_TYPE, f"{export_name} is in {zone}"
 
 
 def test_the_compute_environment_uses_the_security_group_the_network_stack_exports() -> None:

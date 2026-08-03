@@ -981,8 +981,11 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
                 *_ids(MEASUREMENTS, "test_the_subnet_list_excludes_any_zone_that_does_not_offer_the_instance_type"),
                 *_ids(MEASUREMENTS, "test_the_capture_records_how_it_was_measured"),
                 *_ids(INFRA, "test_the_vpc_is_created_unconditionally_because_the_quota_landed"),
-                *_ids(INFRA, "test_the_subnets_exclude_the_zone_that_cannot_hold_the_instance_type"),
-                *_ids(INFRA, "test_the_compute_environment_places_into_exactly_the_subnets_the_network_exports"),
+                *_ids(INFRA, "test_the_network_declares_one_subnet_per_zone_and_no_zone_twice"),
+                *_ids(INFRA, "test_the_zone_the_cpu_shape_cannot_use_is_declared_but_not_imported_by_it"),
+                *_ids(INFRA, "test_only_a_shape_offered_in_that_zone_imports_the_us_east_1e_subnet"),
+                *_ids(INFRA, "test_every_environment_that_may_take_the_sixth_zone_actually_takes_it"),
+                *_ids(INFRA, "test_the_compute_environment_places_into_every_exported_subnet_its_shape_can_use"),
             ),
             scope_limits=(
                 (
