@@ -92,8 +92,54 @@ TRAINING_STEPS: Final = 20
 #: `tokenizer/bytes-utf8` does about that is something to read out of its own tokenizer.json
 #: rather than to infer. An invented eos id is the quiet kind of wrong this whole map exists
 #: to refuse.
+#:
+#: TWO ENTRIES NOW, AND THE SECOND IS NOT THE bytes-utf8 CASE THE PARAGRAPH ABOVE DESCRIBES.
+#: The symmetry is the trap: every tokenizer missing from this map fails the same way, so a
+#: reader who diagnosed one concluded the same about the rest. Only some of them are missing
+#: upstream features. `tokenizer/bytes-utf8` still is. `tokenizer/qwen25-vendored` is not --
+#: `s3://edullm-data/tokenizer/qwen25-vendored/v1/dataset.json` names
+#: `https://huggingface.co/Qwen/Qwen2.5-0.5B` in `sources[].uri`, so the identifier below is
+#: read out of the published tokenizer rather than recognised from its name, and `from_hf`
+#: reproduces it.
+#:
+#: CALLED FOR REAL BEFORE THIS LINE WAS WRITTEN, against the checkout at OLMO_CORE_CHECKOUT on
+#: 2026-08-02, it reports vocab_size 151,936, eos_token_id 151,643, pad_token_id 151,643 and
+#: bos_token_id 151,643. `from_hf` takes those off the Hub's config.json rather than off
+#: anything in the bucket, so what had to be established is that the vendored copy and the Hub
+#: agree about ids, and it was checked rather than assumed: the vendored `tokenizer.json`
+#: holds 151,643 model entries plus 22 added tokens reaching 151,664, every one of those id
+#: assignments is identical to the Hub's, and the merge list matches once the two
+#: serialisations of it are normalised. The files are not byte identical -- upstream now
+#: writes merges as pairs rather than space-joined strings and spells the ByteLevel decoder's
+#: defaults explicitly -- and neither difference moves an id. Its `tokenizer_config.json`
+#: names `<|endoftext|>` as both eos and pad, which its own added_tokens put at 151,643, so
+#: the bucket and the Hub state the same eos independently.
+#:
+#: 151,936 IS LARGER THAN THE 151,665 IDS THAT EXIST, which is Qwen's own padding rather than
+#: a mismatch, and it matters in the safe direction: every id the corpus can hold is inside
+#: the embedding. It also puts this corpus past uint16, so unlike dolma2's 100,278 its ids
+#: could not have been written narrower -- which changes nothing about the hazard this map
+#: exists for, because a uint32 shard read at OLMo-core's default still decodes into ids this
+#: vocabulary accepts. The dtype comes from the manifest and is never inferred.
+#:
+#: WHAT THIS ENTRY COSTS THAT THE DOLMA2 ONE DOES NOT. `from_hf` fetches the tokenizer's
+#: config from the HuggingFace Hub when the config is built, so a corpus resolved through it
+#: needs network egress at container runtime that a dolma2 corpus does not. Batch hosts sit in
+#: public subnets with allow-all egress and the payload is a few hundred kilobytes, so this is
+#: a real dependency rather than a real risk -- but a Hub outage can now refuse a run that
+#: dolma2 would have started, and that is worth knowing before it happens.
+#:
+#: THIS MAP MUST NOT LEAD OLMo-core's, AND WITH THIS LINE IT DOES. The container's own copy
+#: lives at `OLMo-core/.edullm/train_on_corpus.py`, and on that repository's `origin/main` --
+#: commit d663baeb, fetched 2026-08-02 -- it holds `tokenizer/dolma2-bpe` alone. So until a
+#: matching line lands there, a submitter picking the corpus this entry unlocks resolves it,
+#: reaches the container, and is refused at the tokenizer lookup with
+#: THIS_IMAGE_HAS_NO_CONFIG_FOR_THAT_TOKENIZER and exit 69. That refusal is loud, immediate
+#: and names the tokenizer, so it costs minutes rather than a GPU day -- but it is a refusal,
+#: and the ordering is not optional: the OLMo-core change lands first and this ships after.
 TOKENIZERS: Final[dict[str, str]] = {
     "tokenizer/dolma2-bpe": "TokenizerConfig.dolma2()",
+    "tokenizer/qwen25-vendored": 'TokenizerConfig.from_hf("Qwen/Qwen2.5-0.5B")',
 }
 
 #: A prefix belonging to a team that does not exist, which is the point. The workload role

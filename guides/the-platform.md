@@ -91,13 +91,18 @@ A waiver lands in the run's manifest and the approving lead is told which check 
 
 | `dataset_release` | Train tokens | Objects |
 | --- | --- | --- |
+| `formal-proof-premises-500m-v2` | 0.5B | 12 |
 | `refhq-regmix-5p5b-v2` | 5.5B | 24 |
 | `regmix-10b-v1` | 10.0B | 41 |
 | `olmo-original-30b-v1` | 31.3B | 120 |
 | `olmo-127b-v1` | 126.5B | 474 |
 | `olmo-150b-dolma2-v1` | 157.2B | 6,851 |
 
-All use the dolma2 tokenizer, all are frozen, and nothing you run can write to them.
+All are frozen and nothing you run can write to them. The five large ones use the dolma2 tokenizer, which the training image has built in. `formal-proof-premises-500m-v2` uses a vendored Qwen2.5 tokenizer that the image fetches from the HuggingFace Hub at start-up instead, so it is the one corpus here whose first minute depends on something outside AWS.
+
+**That last corpus needs the image to know its tokenizer, and today it does not.** This list is what the platform can name; building the model happens in OLMo-core, whose own tokenizer map on `main` still holds dolma2 alone. Until a matching line lands there, picking `formal-proof-premises-500m-v2` reaches a container that refuses at the tokenizer lookup and exits 69 — before it trains, and saying which tokenizer it did not recognise, so it costs you minutes rather than a GPU day. The five dolma2 corpora are unaffected.
+
+Two more things about it are worth knowing before you report a number from it. Its shards are `uint32` rather than the usual `uint16`, which the loader must take from the manifest and never infer; and ATP/TPTP traces carry most of its token mass, so a single loss over the whole corpus is mostly measuring two of its six sources.
 
 **Size costs nothing up front.** Shards are memory-mapped from S3 as the loader reaches them, so a 157B corpus starts as quickly as a 5B one and reads only what your step count needs. Pick by what you are training, not by what you can afford to download.
 
