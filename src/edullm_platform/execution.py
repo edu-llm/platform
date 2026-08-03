@@ -683,6 +683,21 @@ CONTAINER_SHAPES: Final[Mapping[str, ContainerShape]] = {
     # and that is the safe direction, because the kernel's own reserve grows far slower than
     # linearly while this allowance does.
     #
+    # THE BASELINE THAT ALLOWANCE IS SUBTRACTED FROM IS NOT THE NUMBER EC2 ADVERTISES. A
+    # host registers 31/32 of its advertised memory and never more, so the ceiling a job is
+    # placed against is already 3.125% below the figure in the left-hand column. Subtracting
+    # the agent's allowance from the advertised figure therefore reserves nothing at all
+    # unless that allowance is itself larger than 1/32 of the instance -- and whether it is
+    # depends on memory per vCPU, because the allowance is counted per vCPU and the ceiling
+    # is counted per byte. The two are equal at exactly 8 GiB per vCPU. Below it the G family
+    # clears the ceiling with room to spare; above it the subtraction lands over the ceiling
+    # and the job can never be placed. The P family is the whole of what sits above.
+    #
+    # So the allowance is subtracted from 31/32 of the instance rather than from all of it,
+    # which is the same reservation the rule always meant to make, taken from the number the
+    # host actually registers. Only the two P shapes move; every G value below is what it
+    # already was, because on those the advertised figure and the ceiling never crossed.
+    #
     #   g4dn.xlarge      16 GiB      16384 -   1024 =   15360      4 vCPU
     #   g4dn.12xlarge   192 GiB     196608 -  12288 =  184320     48 vCPU
     #   g5.12xlarge     192 GiB     196608 -  12288 =  184320     48 vCPU
@@ -690,8 +705,43 @@ CONTAINER_SHAPES: Final[Mapping[str, ContainerShape]] = {
     #   g6.xlarge        16 GiB      16384 -   1024 =   15360      4 vCPU
     #   g6.12xlarge     192 GiB     196608 -  12288 =  184320     48 vCPU
     #   g6e.12xlarge    384 GiB     393216 -  12288 =  380928     48 vCPU
-    #   p4d.24xlarge   1152 GiB    1179648 -  24576 = 1155072     96 vCPU
-    #   p5.48xlarge    2048 GiB    2097152 -  49152 = 2048000    192 vCPU
+    #
+    # and the two P shapes, whose middle column is the 31/32 ceiling rather than the whole
+    # of the advertised memory beside it:
+    #
+    #   p4d.24xlarge   1152 GiB    1142784 -  24576 = 1118208     96 vCPU
+    #   p5.48xlarge    2048 GiB    2031616 -  49152 = 1982464    192 vCPU
+    #
+    # g6e.12xlarge sits exactly on its ceiling, at 8 GiB per vCPU on the nose, and is
+    # placeable with nothing to spare. It is correct and it is also the row to look at first
+    # if this ever comes back, because it is the one where a reservation that grew by a
+    # single MiB would put it where the P family was.
+    #
+    # WHERE 31/32 CAME FROM, BECAUSE THE LAST NUMBER IN THIS COLUMN WAS ARRIVED AT BY
+    # REASONING AND WAS WRONG. Batch decides placement statically -- it answers
+    # MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT without launching anything, which is why the
+    # symptom is a queue that never scales and why no instance has to exist to ask it. Each
+    # shape was bisected by submitting one job per candidate value and reading whether that
+    # reason appeared. One job per candidate and not several, because only the job at the
+    # head of a queue is evaluated: a sweep submitted into one queue answers for its first
+    # entry and leaves the rest indistinguishable from jobs waiting their turn, which is a
+    # convincing way to measure nothing. Each candidate therefore got a queue of its own
+    # against the real compute environment, and the whole measurement launched no instance
+    # and cost nothing.
+    #
+    # p4d.24xlarge was placeable at 1142784 and not at 1144832; p5.48xlarge at 2031616 and
+    # not at 2035712. Both lower bounds are 31/32 of that instance's advertised memory
+    # exactly, which is what makes this a ratio rather than two separate constants. A
+    # p5.4xlarge measured the same way answered 253952 against an advertised 262144, which is
+    # the same ratio a third time and is worth having written down before that shape is
+    # provisioned.
+    #
+    # No p4d.24xlarge was read directly: EC2 had no on-demand capacity for one in any of the
+    # four availability zones the compute environment spans, throughout. That is worth
+    # separating from the fault, because it is the observation a reader is most likely to
+    # mistake for it. The two coincide and are unrelated -- a capacity shortage makes a job
+    # wait, and this made it unplaceable, which Batch says in as many words and says whether
+    # or not any capacity exists.
     #
     # shared_memory_mib is a quarter of the container's memory, extending the g5.xlarge's
     # 4 GiB of 16. It is a tmpfs and costs nothing until a DataLoader uses it, and the
@@ -707,8 +757,8 @@ CONTAINER_SHAPES: Final[Mapping[str, ContainerShape]] = {
     "gpu-1xl4": _gpu_shape(vcpus=4, memory_mib=15360, gpus=1, shared_memory_mib=4096),
     "gpu-4xl4": _gpu_shape(vcpus=48, memory_mib=184320, gpus=4, shared_memory_mib=49152),
     "gpu-4xl40s": _gpu_shape(vcpus=48, memory_mib=380928, gpus=4, shared_memory_mib=95232),
-    "gpu-8xa100": _gpu_shape(vcpus=96, memory_mib=1155072, gpus=8, shared_memory_mib=288768),
-    "gpu-8xh100": _gpu_shape(vcpus=192, memory_mib=2048000, gpus=8, shared_memory_mib=512000),
+    "gpu-8xa100": _gpu_shape(vcpus=96, memory_mib=1118208, gpus=8, shared_memory_mib=279552),
+    "gpu-8xh100": _gpu_shape(vcpus=192, memory_mib=1982464, gpus=8, shared_memory_mib=495616),
 }
 
 
