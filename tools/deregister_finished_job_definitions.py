@@ -65,7 +65,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from edullm_platform.execution import SANDBOX_RESOURCE_PREFIX
+from edullm_platform.contracts.execution import SANDBOX_RESOURCE_PREFIX
 
 #: The lineage prefix whose presence means a run reached a terminal state.
 #:
@@ -269,7 +269,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     arguments = parser.parse_args(argv)
 
-    import boto3
+    import boto3  # type: ignore[import-not-found]  # in the runtime, not in pyproject
 
     session = boto3.Session(profile_name=arguments.profile, region_name=arguments.region)
     batch = session.client("batch")
