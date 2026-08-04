@@ -140,6 +140,41 @@ def test_the_distribution_is_not_the_console_script() -> None:
     assert DISTRIBUTION != "edullm"
 
 
+def test_what_a_researcher_is_told_to_type_is_what_the_code_spells() -> None:
+    """Mutation: hand-write the install line into the guide, or let the URL drift.
+
+    The two places addressed to somebody who has not installed this yet. Held to the
+    *unpinned* line on purpose: it is the one that is true after every release, and pinning
+    the documentation to a version would put the guide and the README into the set of files
+    a bump has to rewrite, which is a coupling that has already gone wrong three times.
+    Re-running the unpinned line is the upgrade, which is the property being documented.
+    """
+    unpinned = install_command(repository=PLATFORM_REPOSITORY)
+
+    for path in (PROJECT_ROOT / "README.md", PROJECT_ROOT / "guides" / "the-platform.md"):
+        assert unpinned in path.read_text(encoding="utf-8"), (
+            f"{path.name} does not carry the install line, so the only instruction a "
+            "newcomer has is either absent or a second copy that can rot"
+        )
+
+
+def test_the_guide_says_what_check_costs_and_that_it_reaches_nothing() -> None:
+    """Mutation: document ``check`` as a validator and leave out that it is free.
+
+    Whether it is worth running half a dozen times while editing is the whole of why the
+    verb is shaped this way, and a reader who assumes it calls GitHub runs it once. The
+    same property is what makes it work on a cluster login node with no egress.
+    """
+    guide = (PROJECT_ROOT / "guides" / "the-platform.md").read_text(encoding="utf-8")
+
+    section = guide.split("## From a terminal", 1)
+    assert len(section) == 2, "the platform guide no longer tells anybody the CLI exists"
+    body = section[1].split("\n## Keeping", 1)[0]
+
+    assert "no egress" in body
+    assert "edullm check" in body
+
+
 def test_nothing_recommends_the_upgrade_command_that_does_not_work() -> None:
     """Mutation: write "then run uv tool upgrade" into a guide.
 

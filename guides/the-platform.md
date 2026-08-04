@@ -1,6 +1,6 @@
 # Using the platform
 
-Everything true whichever repository you work in. For what to actually run, see [training a model](olmo-core.md), [running an evaluation](olmo-eval-full.md) or [validating a corpus](edullm-data.md).
+Everything true whichever repository you work in. For what to actually run, see [training a model](olmo-core.md), [running an evaluation](olmo-eval-full.md) or [validating a corpus](edullm-data.md). If you would rather not open a browser at all, skip to [from a terminal](#from-a-terminal).
 
 ## Your first run
 
@@ -167,3 +167,55 @@ You get the status, why it is not running if it is not, the exit code, and the C
 **Pressing cancel on Submit a run is not this.** That stops the workflow and leaves the job running. Come here with the run id instead.
 
 The reason you give is recorded, so the run's history says it was cancelled rather than that it failed. Anything already written stays, checkpoints included — so stopping a run to fix its command does not throw away the hours it already did.
+
+## From a terminal
+
+The same loop without the Actions UI. One binary:
+
+```
+uv tool install --force git+https://github.com/edu-llm/platform
+```
+
+You need [uv](https://docs.astral.sh/uv/) and a `gh` that is logged in — `gh auth login`. Nothing else. `edullm` drives `git` and `gh` rather than holding a credential of its own, so it can do what you can do and nothing more, and there is still no AWS account anywhere in this.
+
+Then, from a checkout of the repository you work in:
+
+```
+edullm check --experiment onboarding --dataset none --team scratch
+```
+
+**`check` is the half that happens on your laptop, and it is the one to lean on.** It writes a first `.edullm/run.yaml` if the repository has none, then prices what you are about to submit and lists every refusal — the same refusals admission makes, decided against the reviewed configuration your install carries. It opens no connection and answers in about a fifth of a second, so it is a thing to run while you are still editing rather than once at the end. It works on a login node with no egress.
+
+```
+worst case
+  $0.526/hour x 1 node x 24h x 2 attempts x 1 cell = $25.25
+  This is the ceiling, not an estimate. It is also what routes the run, so lowering
+  --hours is what moves a short run under the automatic bound.
+
+approval
+  routine -> run-approval-lead
+
+no refusals. edullm submit will dispatch this.
+```
+
+| Verb | What it does |
+| --- | --- |
+| `edullm check` | Prices a submission here and lists every refusal. Dispatches nothing |
+| `edullm submit` | Dispatches it, then waits and prints the run id and where it is parked |
+| `edullm status` | Your recent runs. Give it a run id for one of them |
+| `edullm logs <run-id>` | The last lines that run printed |
+| `edullm cancel <run-id> --reason ...` | Stops it. The reason is required, and is recorded |
+
+The flags are the fields the form asks for, and `check` and `submit` take the same ones. What is a property of the code — the command, the workload profile, a suggested machine — lives in `.edullm/run.yaml` and travels with it in git; what a run costs today is typed on the command line, because one commit run by two people belongs to two teams.
+
+`status`, `logs` and `cancel` reach AWS, and the only identity allowed to read a Batch job lives in `cancel-run.yml` — so those three dispatch that workflow and wait for a runner. Tens of seconds, not a moment. `check` and `submit` do not.
+
+## Keeping edullm current
+
+Run the install line again. `--force` makes it idempotent, so the one line installs, upgrades and repairs.
+
+**Do not reach for `uv tool upgrade`.** For a tool installed from git it answers `Nothing to upgrade` whatever state your install is in — with `--reinstall` too — so the obvious command tells you that you are current when you are months behind.
+
+The reviewed configuration travels inside the install, which is what stops a config change bricking every `edullm` in the field, and means an old install is checking against an old copy. `edullm submit` asks for the current release before it dispatches and says so if yours is not it. It never refuses on that: a release is cut most days, so being a little behind is the normal state, and admission re-derives every verdict from inside AWS regardless.
+
+`edullm --version` prints the version and the commit it was built from. That is the pair worth quoting when a refusal looks wrong.

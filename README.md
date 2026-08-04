@@ -16,6 +16,8 @@ Then the guide for what you are actually doing:
 | [Running an evaluation](guides/olmo-eval-full.md) | olmo-eval-full — scoring a model against a task suite |
 | [Validating a corpus](guides/edullm-data.md) | edullm-data — checking and publishing a dataset |
 
+Nothing above needs anything installed. If you would rather work in a terminal than in the Actions UI, `uv tool install --force git+https://github.com/edu-llm/platform` puts the `edullm` command on your path — it prices a submission offline before it sends it, and submits, follows and stops runs. [From a terminal](guides/the-platform.md#from-a-terminal) is the whole of it.
+
 ## What it does
 
 You get CPU and GPU machines from a single T4 up to eight H100s, without touching AWS. Picking a workload profile fixes the machine, the time limit, the retry limit and the checkpointing together, so there is one decision rather than four.
