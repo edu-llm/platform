@@ -78,6 +78,15 @@ NIGHTLY_UPLOAD_STEP = "Publish what W&B said, for the submission preflight to re
 TRUST_POLICY_PATH = PROJECT_ROOT / "infra" / "iam" / "admission-role.yaml"
 LINEAGE_TEMPLATE_PATH = PROJECT_ROOT / "infra" / "lineage-bucket.yaml"
 
+#: The gate a dispatch from a branch is routed to, and deliberately not a member of
+#: :class:`~edullm_platform.contracts.admission.ApprovalEnvironment`. That enum is the set of
+#: gates the compile step may classify a submission into, and this is not one of them: no
+#: policy decision ever selects it, the ref does. Adding it there would make it selectable
+#: from a classification and would put it in the admission role's trust enumeration, which
+#: is the one place it must never appear -- the preview role exists precisely so that a
+#: branch reaches something other than admission.
+PREVIEW_ENVIRONMENT = "run-approval-preview"
+
 CHECKOUT_ACTION = "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
 CREDENTIALS_ACTION = (
     "aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c"
@@ -392,14 +401,38 @@ def test_the_deny_probe_holds_a_token_and_deliberately_names_no_environment() ->
 
 
 def test_the_submit_job_takes_its_gate_from_needs_and_never_from_the_form() -> None:
-    # GitHub is equally happy with either source. Reading it from the form would let a
-    # submitter route an exception to the lead gate by typing a name into a text box.
+    """Mutation: resolve the gate from the dispatch inputs instead of from `needs`.
+
+    GitHub is equally happy with either source. Reading it from the form would let a
+    submitter route an exception to the lead gate by typing a name into a text box.
+
+    THE REF IS THE SECOND SOURCE AND IT IS NOT A THIRD WAY TO PICK A GATE. On a branch the
+    expression resolves to the preview environment instead of the computed one, which is
+    what makes a change to this file testable before it is merged. Two properties keep that
+    from being a route around the classification, and both are asserted below: the only
+    literal name in the expression is the preview one, so no classified gate can be reached
+    by hardcoding; and `github.ref` is not a dispatch input, so the submission form cannot
+    reach it. The third property is not in this file -- the preview role may place a job on
+    the cheapest CPU queue and nothing else -- and `tests/test_run_preview_role.py` holds it.
+    """
     environment = _job("submit")["environment"]
 
     assert isinstance(environment, dict)
-    assert list(_references(environment["name"])) == ["needs.compile.outputs.environment"]
+    assert sorted(_references(environment["name"])) == [
+        "github.ref",
+        "needs.compile.outputs.environment",
+    ]
     assert "inputs" not in environment["name"]
     assert "github.event" not in environment["name"]
+    # The branch the classified path is kept on, spelled exactly. A comparison against
+    # anything else -- a prefix, a `!=` against some other ref -- would send a dispatch
+    # from `main` down the preview path.
+    assert "github.ref == 'refs/heads/main'" in environment["name"]
+    assert PREVIEW_ENVIRONMENT not in set(ApprovalEnvironment)
+    assert re.findall(r"'([^']*)'", environment["name"]) == [
+        "refs/heads/main",
+        PREVIEW_ENVIRONMENT,
+    ]
 
 
 def test_the_two_gate_names_are_the_ones_the_contract_and_the_trust_policy_share() -> None:
@@ -518,11 +551,46 @@ def test_the_submit_job_assumes_the_admission_role_and_masks_the_account_id() ->
 
     assert credentials["id"] == "credentials"
     assert credentials["with"] == {
-        "role-to-assume": "${{ vars.AWS_ADMISSION_ROLE_ARN }}",
+        "role-to-assume": (
+            "${{ github.ref == 'refs/heads/main' && vars.AWS_ADMISSION_ROLE_ARN "
+            "|| vars.AWS_RUN_PREVIEW_ROLE_ARN }}"
+        ),
         "aws-region": "${{ vars.AWS_REGION }}",
         "role-duration-seconds": 900,
         "mask-aws-account-id": True,
     }
+
+
+def test_the_role_and_the_gate_are_chosen_by_the_same_condition() -> None:
+    """Mutation: change one of the two ref conditions and not the other.
+
+    The environment decides which subject GitHub mints and the trust policy of each role
+    accepts exactly one of them, so the two expressions have to agree character for
+    character. They are twenty lines apart in the same job and neither refers to the other,
+    which is the shape of every silent trust break `infra/README.md` catalogues: the run
+    reaches `configure-aws-credentials`, STS refuses the web identity, and nothing in the
+    failure names the environment as the reason.
+    """
+    submit = _job("submit")
+    condition = "github.ref == 'refs/heads/main'"
+    gate = submit["environment"]["name"]
+    role = step(submit, CREDENTIALS_STEP)["with"]["role-to-assume"]
+
+    assert gate.count(condition) == 1
+    assert role.count(condition) == 1
+
+    # Same order on both sides. Inverting one of the two compiles, reads almost the same,
+    # and pairs the production gate with the preview role -- which fails at STS with a
+    # message about a web identity rather than about the swap.
+    for expression, on_main, on_a_branch in (
+        (gate, "needs.compile.outputs.environment", PREVIEW_ENVIRONMENT),
+        (role, "vars.AWS_ADMISSION_ROLE_ARN", "vars.AWS_RUN_PREVIEW_ROLE_ARN"),
+    ):
+        chosen_on_main, chosen_on_a_branch = expression.split("&&", 1)[1].split("||", 1)
+        assert on_main in chosen_on_main, expression
+        assert on_a_branch not in chosen_on_main, expression
+        assert on_a_branch in chosen_on_a_branch, expression
+        assert on_main not in chosen_on_a_branch, expression
 
 
 def test_the_manifest_is_recomputed_before_the_job_holds_any_credentials() -> None:
@@ -837,12 +905,18 @@ def test_the_resolve_job_assumes_the_read_only_image_role_through_the_reviewed_a
     ``tests/test_phase5_infrastructure.py`` asserts as an exact set rather than a superset
     -- a trust policy cannot tell one job in this file from another, so whatever that role
     holds, every job here can assume.
+
+    The preview role is the second arm of the same expression and is held to the same
+    standard by ``tests/test_run_preview_role.py``: the two describes and nothing else.
     """
     resolve = _job("resolve")
     credentials = step(resolve, RESOLVE_CREDENTIALS_STEP)
 
     assert credentials["uses"] == CREDENTIALS_ACTION
-    assert credentials["with"]["role-to-assume"] == "${{ vars.AWS_IMAGE_RESOLVER_ROLE_ARN }}"
+    assert credentials["with"]["role-to-assume"] == (
+        "${{ github.ref == 'refs/heads/main' && vars.AWS_IMAGE_RESOLVER_ROLE_ARN "
+        "|| vars.AWS_RUN_PREVIEW_ROLE_ARN }}"
+    )
     assert credentials["with"]["aws-region"] == "${{ vars.AWS_REGION }}"
     assert credentials["with"]["mask-aws-account-id"] is True
     assumed = {
@@ -851,7 +925,50 @@ def test_the_resolve_job_assumes_the_read_only_image_role_through_the_reviewed_a
         for reference in _references(text)
         if reference.startswith("vars.")
     }
-    assert assumed == {"vars.AWS_IMAGE_RESOLVER_ROLE_ARN", "vars.AWS_REGION"}
+    assert assumed == {
+        "vars.AWS_IMAGE_RESOLVER_ROLE_ARN",
+        "vars.AWS_RUN_PREVIEW_ROLE_ARN",
+        "vars.AWS_REGION",
+    }
+
+
+def test_a_main_dispatch_still_resolves_under_the_image_resolver_and_nothing_else() -> None:
+    """The half of the split that must not have moved.
+
+    A branch dispatch is new behavior and can be wrong in a way somebody notices. A `main`
+    dispatch is the production path, and the failure mode of getting this wrong is that
+    every submission on `main` starts assuming a role scoped to one CPU queue -- which
+    would not fail here, it would fail in the account, on the run somebody was waiting for.
+    So the condition is asserted as an equality against the literal `main` ref rather than
+    as "there is a condition", and the arm it selects is asserted to be the ARN this job
+    named before the split.
+    """
+    expression = step(_job("resolve"), RESOLVE_CREDENTIALS_STEP)["with"]["role-to-assume"]
+    condition, arms = expression.removeprefix("${{ ").removesuffix(" }}").split(" && ", 1)
+    on_main, off_main = arms.split(" || ", 1)
+
+    assert condition == "github.ref == 'refs/heads/main'"
+    assert on_main == "vars.AWS_IMAGE_RESOLVER_ROLE_ARN"
+    assert off_main == "vars.AWS_RUN_PREVIEW_ROLE_ARN"
+    # And the job still declares no environment on either arm. An environment key would
+    # replace this job's ref subject with an environment one, which the image resolver's
+    # trust policy does not accept -- so adding one breaks `main` rather than the branch.
+    assert "environment" not in _job("resolve")
+
+
+def test_the_resolve_split_and_the_submit_split_agree_on_what_a_preview_is() -> None:
+    """Mutation: split one of the two on a different condition.
+
+    Two jobs now choose a role by ref and they have to mean the same thing by it. If the
+    submit job treated a ref as preview and the resolve job did not, a dispatch would
+    resolve under a production credential and then submit under a preview one -- and the
+    mismatch would appear as a job that cannot assume its role, halfway through.
+    """
+    resolve = step(_job("resolve"), RESOLVE_CREDENTIALS_STEP)["with"]["role-to-assume"]
+    submit = step(_job("submit"), CREDENTIALS_STEP)["with"]["role-to-assume"]
+
+    assert resolve.count("github.ref == 'refs/heads/main'") == 1
+    assert submit.count("github.ref == 'refs/heads/main'") == 1
 
 
 def test_the_resolve_job_argues_for_the_credential_it_holds_where_it_holds_it() -> None:
@@ -1001,10 +1118,17 @@ def test_the_submit_job_gained_no_aws_capability_when_phase_three_arrived() -> N
     the admission role is assumed with, and ``actions: read`` for the approvals endpoint.
 
     ``id-token: write`` is the one that matters, and it is not an AWS capability by itself:
-    what a token can reach is decided by the trust policies that accept it, and the only
-    role that accepts one from this file is the admission role. So the way this job could
-    gain AWS reach is a wider role rather than a wider permission map -- which is what the
-    two denial matrices, attempted from the real session, are for.
+    what a token can reach is decided by the trust policies that accept it, and two roles
+    accept one from this job. So the way this job could gain AWS reach is a wider role
+    rather than a wider permission map -- which is what the two denial matrices, attempted
+    from the real session, are for.
+
+    ``AWS_RUN_PREVIEW_ROLE_ARN`` IS THE SECOND, AND IT IS REACHABLE ONLY OFF ``main``. Its
+    trust names the ``run-approval-preview`` environment, which the expression above this
+    step selects only when ``github.ref`` is not ``refs/heads/main``, and its whole grant is
+    ``batch:SubmitJob`` on the cheapest CPU queue. So the reach this job gained is strictly
+    less than the reach it already had, on a ref where it previously had none at all. A
+    third variable here is a third role and is not that; it has to be argued for on its own.
     """
     submit = _job("submit")
 
@@ -1013,8 +1137,8 @@ def test_the_submit_job_gained_no_aws_capability_when_phase_three_arrived() -> N
         "id-token": "write",
         "actions": "read",
     }
-    # Nothing here may name a second role, and every ARN is composed from the assumed
-    # identity, so a new AWS target would have to arrive as a new repository variable.
+    # Every ARN is composed from the assumed identity, so a new AWS target would have to
+    # arrive as a new repository variable -- which is what this set is watching for.
     assumed = {
         text
         for text in _strings(submit)
@@ -1022,7 +1146,11 @@ def test_the_submit_job_gained_no_aws_capability_when_phase_three_arrived() -> N
         if reference.startswith("vars.")
         for text in [reference]
     }
-    assert assumed == {"vars.AWS_ADMISSION_ROLE_ARN", "vars.AWS_REGION"}
+    assert assumed == {
+        "vars.AWS_ADMISSION_ROLE_ARN",
+        "vars.AWS_RUN_PREVIEW_ROLE_ARN",
+        "vars.AWS_REGION",
+    }
 
 
 def test_the_batch_matrix_attempts_every_action_phase_three_makes_meaningful() -> None:

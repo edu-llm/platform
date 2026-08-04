@@ -1,0 +1,219 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: GitHub Actions role that lets a submission dispatched from a platform branch reach the cheapest CPU queue, so a change to this repository can be exercised before it is merged.
+
+Resources:
+  RunPreviewRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sbsandbox-intern-edullm-run-preview
+      PermissionsBoundary:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/InternSandboxBoundary
+      MaxSessionDuration: 3600
+      # WHY THIS ROLE EXISTS. Every other role trusted to a workflow in this repository pins
+      # its subject to `refs/heads/main`: the deployer, the image resolver, the run canceller
+      # and the nightly reader all carry `:ref:refs/heads/main`, and the admission role
+      # carries the three `main`-only approval environments instead. The consequence is that
+      # `submit-run.yml` dispatched from a branch dies in its second job, at the credential
+      # step, before anything is compiled and before any gate is reached. A change to the
+      # submission path could therefore not be exercised at all until it was on `main`, which
+      # is the one place a mistake in it is expensive.
+      #
+      # THE SUBJECT IS AN ENVIRONMENT AND THE REF IS FREE, WHICH IS THE INVERSE OF EVERY
+      # OTHER ROLE HERE AND IS THE POINT. A ref condition is what this role must not have:
+      # being assumable from a branch is the entire reason it exists. What replaces it is the
+      # `run-approval-preview` environment, enumerated as a single literal for exactly the
+      # reason `infra/iam/admission-role.yaml` enumerates its three. GitHub puts
+      # `:environment:<name>` in the subject only for a job that declared `environment:` and
+      # cleared its protection rules, and a `StringLike` on `...:environment:*` would accept
+      # the subject minted for any environment a workflow author invented -- auto-created on
+      # first use, with no protection rules and no diff anybody reviewed.
+      #
+      # `run-approval-preview` has no required reviewers, which is a smaller concession than
+      # it reads as and the same one `run-approval-automatic` already carries. The property
+      # the enumeration protects is that the subject cannot be minted by a workflow edit
+      # alone; the environment has to exist, and creating one is an admin action in the
+      # repository settings. What is given up is the reviewer, and the ceiling below is what
+      # makes that affordable.
+      #
+      # `job_workflow_ref` IS `StringLike` HERE AND `StringEquals` EVERYWHERE ELSE, AND ONLY
+      # THE REF PART IS WILD. The file is still pinned: only `submit-run.yml` in this
+      # repository can present a matching claim, so this role is unreachable from any other
+      # workflow, exactly as the admission role is. Pinning the ref as well would defeat the
+      # role. What that costs is that any branch may present the claim -- which is what
+      # "preview" means, and why the permission below is one queue rather than sixteen.
+      #
+      # A trust policy cannot distinguish jobs within a workflow, so every job in
+      # `submit-run.yml` that declares this environment can assume this role. That is
+      # acceptable only because of the ceiling below, which is why
+      # `tests/test_run_preview_role.py` asserts the action set exactly rather than
+      # approximately.
+      #
+      # The sub prefix carries owner and repository ids because this organization issues
+      # immutable subject claims, verified the same way the deployer role's was:
+      # `gh api repos/edu-llm/platform/actions/oidc/customization/sub` reports
+      # sub_claim_prefix repo:edu-llm@306859726/platform@1311508598.
+      #
+      # TWO STATEMENTS BECAUSE THE PREVIEW PATH MINTS TWO SUBJECT SHAPES, AND THEY CANNOT BE
+      # ONE. The submit job declares `environment: run-approval-preview` and so is issued an
+      # environment subject. The resolve job must not declare an environment at all -- on
+      # `main` it assumes the image resolver, whose trust is pinned to
+      # `:ref:refs/heads/main`, and an environment key would replace that subject and break
+      # the path this role exists to preview. So the resolve job is issued a ref subject on
+      # every branch, and a ref subject is what the second statement below accepts. One
+      # statement cannot hold both: `StringEquals` on the environment literal and
+      # `StringLike` on the ref pattern would be ANDed against the same `sub` and match
+      # nothing.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated:
+                Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:repository_owner_id: "306859726"
+                token.actions.githubusercontent.com:repository_id: "1311508598"
+                token.actions.githubusercontent.com:sub: repo:edu-llm@306859726/platform@1311508598:environment:run-approval-preview
+              StringLike:
+                token.actions.githubusercontent.com:job_workflow_ref: edu-llm/platform/.github/workflows/submit-run.yml@*
+          # THE REF STATEMENT, AND `main` IS SUBTRACTED FROM IT BY NAME. This accepts the
+          # subject GitHub mints for a job in `submit-run.yml` that declares no environment,
+          # which is the resolve job and today only the resolve job. The `StringNotEquals` is
+          # the load-bearing half: without it a dispatch from `main` could pick this role up
+          # out of a job that is supposed to be holding the image resolver, and `main` is the
+          # one ref where this role must be unreachable, because on `main` the production
+          # path is the path. `refs/heads/*` and not `refs/*`, so a tag cannot present it
+          # either.
+          #
+          # What this concedes is that any job in `submit-run.yml` holding `id-token: write`
+          # can assume this role from a branch, where the environment statement above would
+          # have required the job to declare the environment. That concedes nothing new: the
+          # `run-approval-preview` environment has no required reviewers, so anybody who can
+          # dispatch this workflow from a branch can already reach this role through the
+          # submit job. The ceiling below is what both statements rest on, and it is the same
+          # ceiling for each.
+          - Effect: Allow
+            Principal:
+              Federated:
+                Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:repository_owner_id: "306859726"
+                token.actions.githubusercontent.com:repository_id: "1311508598"
+              StringNotEquals:
+                token.actions.githubusercontent.com:sub: repo:edu-llm@306859726/platform@1311508598:ref:refs/heads/main
+              StringLike:
+                token.actions.githubusercontent.com:sub: repo:edu-llm@306859726/platform@1311508598:ref:refs/heads/*
+                token.actions.githubusercontent.com:job_workflow_ref: edu-llm/platform/.github/workflows/submit-run.yml@*
+      # Inline rather than a customer managed policy. InternSandboxBoundary denies
+      # iam:CreatePolicyVersion on every policy, so a managed policy could be created once
+      # and never amended; the first permission change would fail the stack update. Inline
+      # policies go through iam:PutRolePolicy, which the boundary permits on this name.
+      Policies:
+        - PolicyName: place-a-preview-job-on-the-cpu-queue-only
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # ONE QUEUE, AND IT IS THE CHEAPEST ONE. `sbsandbox-intern-edullm-cpu` is the
+              # only CPU target in `config/execution-targets.yaml`; the other fifteen rows
+              # are GPU and none of them is reachable from here. The admission states role in
+              # `infra/iam/admission-service-roles.yaml` enumerates all sixteen queues, and
+              # the difference between that list and this one is the whole ceiling on a
+              # preview: a branch may burn CPU minutes and may not burn an H100 hour.
+              #
+              # Two ARNs and two resource types plus a revision wildcard, because SubmitJob
+              # authorizes against both the queue it lands in and the job definition it
+              # instantiates, and RegisterJobDefinition mints a new revision on every deploy.
+              # Granting one without the other is refused, and the denial names only the
+              # missing half. The reasoning is the states role's and is not restated there.
+              #
+              # THIS ROLE SUBMITS DIRECTLY AND DOES NOT GO THROUGH ADMISSION, WHICH IS A REAL
+              # DIFFERENCE FROM THE PRODUCTION PATH AND HAS TO BE READ AS ONE. Every other
+              # principal reaches Batch through the admission state machine, which validates
+              # the manifest, records a decision and writes lineage;
+              # `infra/iam/infra-deployer-role.yaml` states the invariant in those words. A
+              # preview job has none of that. What follows is that a preview job is not an
+              # admitted run and must never be read as one: it carries no lineage record, so
+              # it cannot be mistaken for a run that passed a gate -- it is visibly absent
+              # from the store rather than forged into it.
+              #
+              # THAT SAME ABSENCE COLLIDES WITH THE MISMATCH LIST, WHICH IS NOT BUILT YET. A
+              # mismatch is defined as a launch by a roster principal with no lineage record,
+              # which is precisely what every job this role places will be -- so the list
+              # would fill with entries that are all correct behavior, and a monitoring
+              # surface full of correct behavior is one nobody reads. This role name has to
+              # be excluded from that filter by name when it is written, and counted and
+              # reported separately rather than dropped. The preview section of
+              # `infra/README.md` carries the requirement in full, including why it is
+              # recorded there and not in `config/organization.yaml` beside the join table it
+              # belongs to. The fix is not to give preview jobs a lineage record: "no lineage
+              # record" staying true is what keeps a preview result uncitable.
+              #
+              # The narrower alternative was considered and does not work. Giving this role
+              # `states:StartExecution` on the admission state machine, which is what
+              # `infra/iam/admission-role.yaml` holds, would put a preview back inside
+              # admission and would also hand it every queue the state machine can reach,
+              # because StartExecution takes the profile from its input and no IAM condition
+              # can see inside it. That is the opposite of a ceiling. Submitting directly is
+              # what makes "cannot place a GPU job" a property of the trust policy rather
+              # than a property of a document somebody read.
+              #
+              # Deliberately absent, and each for its own reason: `batch:TerminateJob` and
+              # `batch:CancelJob`, because stopping a run is its own path with its own
+              # principal and `infra/iam/run-canceller-role.yaml` is where it lives;
+              # `states:` of any kind, per the paragraph above; every `s3:` action, so a
+              # preview cannot write into the lineage or outputs buckets and cannot leave
+              # anything behind that a reader would have to date; `iam:PassRole`, because the
+              # job definition already carries its roles and this role never names one; and
+              # `secretsmanager:`, so a preview never reaches the W&B key.
+              - Effect: Allow
+                Action: batch:SubmitJob
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-cpu
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-cpu-run
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-cpu-run:*
+              # THE SAME TWO READS THE IMAGE RESOLVER HOLDS, COPIED RATHER THAN SHARED, AND
+              # THE COPY IS THE POINT. `submit-run.yml` dies in its resolve job on a branch
+              # without these: the job asks ECR which image the declared commit published,
+              # and a dispatch that cannot ask gets no further than a red credential step --
+              # so a preview that could submit but could not resolve was a preview of
+              # nothing. The alternative was to add this role's subject to
+              # `infra/iam/image-resolver-role.yaml`. That was refused on the ground that
+              # widening a production credential is worse than scoping a new one: the image
+              # resolver's blast radius already covers everything it reaches on `main`, and
+              # adding a branch subject to it would extend that reach to every branch
+              # permanently, where this role's reach is bounded by its own trust policy and
+              # stays bounded.
+              #
+              # Action for action and resource for resource identical to the image
+              # resolver's grant, deliberately: the whole value of the preview path is that a
+              # branch dispatch exercises what `main` will do, and a narrower grant here
+              # would mean a resolve that succeeds on a branch and fails on `main`, or the
+              # reverse. `tests/test_run_preview_role.py` asserts the two grants match rather
+              # than asserting a literal list twice.
+              #
+              # Still absent from this pair, and for the reason
+              # `infra/iam/image-resolver-role.yaml` gives at greater length:
+              # `ecr:GetAuthorizationToken` and `ecr:BatchGetImage`, so this role may read
+              # what an image is and may not pull one.
+              - Effect: Allow
+                Action:
+                  - ecr:DescribeImages
+                  - ecr:DescribeImageScanFindings
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-*
+
+Outputs:
+  RoleName:
+    Value:
+      Ref: RunPreviewRole
+  RoleArn:
+    Value:
+      Fn::GetAtt:
+        - RunPreviewRole
+        - Arn
