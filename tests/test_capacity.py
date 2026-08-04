@@ -138,46 +138,18 @@ def test_the_answers_are_the_two_the_file_declares(entries: list[dict[str, objec
     } == SHAPES_THAT_DO_NOT_PLACE
 
 
-def test_a_substitute_is_a_shape_that_places_and_can_be_run(
-    entries: list[dict[str, object]], catalog: WorkloadCatalog
-) -> None:
-    """Mutation: point a scarce shape at another scarce shape, or at an unprovisioned one.
-
-    An offer that cannot itself be placed is worse than no offer, because the submitter takes
-    it and waits in RUNNABLE anyway, having been told by the platform that this one starts in
-    minutes.
-    """
-    by_name = {profile.name: profile for profile in catalog.compute_profiles}
-    places_reliably = {
-        str(entry["profile"]) for entry in entries if entry["places"] == "reliably"
-    }
-
-    for entry in entries:
-        substitute = entry.get("offer_instead")
-        if substitute is None:
-            continue
-        assert substitute in places_reliably, entry["profile"]
-        assert by_name[str(substitute)].provisioned, entry["profile"]
-
-
-def test_only_a_shape_that_does_not_place_offers_a_substitute(
-    entries: list[dict[str, object]],
-) -> None:
-    for entry in entries:
-        if entry["places"] == "reliably":
-            assert "offer_instead" not in entry, entry["profile"]
-
-
 def test_every_gpu_shape_in_the_catalog_is_one_this_module_can_size(
     catalog: WorkloadCatalog,
 ) -> None:
     """Mutation: promote a shape on a family ``ACCELERATORS`` does not carry.
 
-    The check below is only as good as its ability to size both sides of an offer, and the
-    way a size table fails is by going stale rather than by being wrong on the day it is
-    written. Asking it of every GPU profile rather than only of the ones an offer names
-    means a new family is a failure here, where the message says what to add, instead of
-    surfacing later as a substitution nobody could measure.
+    This outlived the substitution comparison it was written to support, and it is kept
+    because what it actually holds is the catalog against itself: a profile whose name says
+    ``a10g`` while its instance type is a T4 fails here, in either direction, and so does a
+    new family nobody added a size for. Neither has anything to do with substitution.
+
+    Asking it of every GPU profile rather than only of the ones some other check happens to
+    name is the reason it still means something now that nothing names any.
     """
     gpu = [profile for profile in catalog.compute_profiles if profile.accelerator == "gpu"]
 
@@ -188,56 +160,41 @@ def test_every_gpu_shape_in_the_catalog_is_one_this_module_can_size(
         assert memory_gib >= 1
 
 
-def test_a_substitute_is_at_least_the_machine_it_replaces(
-    entries: list[dict[str, object]], catalog: WorkloadCatalog
-) -> None:
-    """AN OFFER THAT PLACES AND DOES NOT FIT IS THE DEFECT THIS TABLE EXISTS TO PREVENT, AND
-    NOTHING SAW IT. Mutation: point ``gpu-4xa10g`` at ``gpu-1xt4``.
+def test_no_shape_offers_a_substitute_at_all(entries: list[dict[str, object]]) -> None:
+    """THIS TABLE OFFERS NOTHING, AND THAT IS THE POSITION RATHER THAN AN EMPTY COLUMN.
 
-    That mutation was invisible. ``gpu-1xt4`` places reliably and is provisioned, which is
-    everything the test above asks of a substitute, so a submitter asking for four 24 GB
-    A10Gs could be offered a single 16 GB T4 -- a quarter of the devices and two thirds of
-    the memory on each -- and the whole suite stayed green. The two package tests notice,
-    because they digest the tree and fire on a comment; they carry nothing about whether
-    the offer fits.
+    What stood here compared an offer against the machine it replaced, in device count and
+    in device memory, because the defect it was written for was invisible: ``gpu-4xa10g``
+    could be pointed at ``gpu-1xt4`` -- a quarter of the devices and two thirds of the memory
+    on each -- and the whole suite stayed green, since a substitute only had to place and be
+    provisioned.
 
-    What makes an offer honest is written in ``config/capacity.yaml`` and was asserted
-    nowhere. ``gpu-4xl4`` is offered for ``gpu-4xa10g`` because it is the "same device
-    memory, same device count, less money"; ``gpu-8xl40s`` is offered for ``gpu-8xa100`` at
-    "384 GB against 320 GB". And ``gpu-1xh100`` deliberately offers nothing, because the
-    largest single card in the catalog is the 48 GB L40S and the file records what happened
-    the last time somebody offered it anyway: "a changed recipe, which is a deviation the
-    researcher has to declare and defend rather than a substitution the platform may make
-    for them".
+    Then #185 re-measured every pool and withdrew both recorded offers, because both pointed
+    at machines this account has never obtained, and stated the rule that survives them: a
+    third of the device memory removed is a changed recipe the submitter declares rather than
+    a substitution the platform makes for them. With nothing left to compare, that check
+    reported exactly that -- "no shape offers a substitute, so this comparison proves
+    nothing" -- which is a guard doing its job and a check that can no longer fail for its
+    own reason.
 
-    So the rule is that an offer may cost more and may be a different device, and may not
-    be a smaller machine in either dimension. Both are checked, because a shape can shrink
-    in either one alone: eight 24 GB cards for eight 48 GB cards holds the count and halves
-    the memory, and one 48 GB card for four of them holds the memory and drops three
-    devices.
+    So the rule is asserted directly instead. Every entry is checked rather than only the
+    ones that place, which is what the predecessor of this line did: a substitute
+    reintroduced on an unplaceable shape was the one case it could not see, and after
+    :mod:`edullm_platform.placement` stopped reading the field, it is also the case that
+    would be silently ignored rather than acted on. Reintroducing substitution is a change to
+    :func:`~edullm_platform.placement.placement_warning` and to this line together, which is
+    the point: it should not be possible to do it by editing a config file alone.
     """
-    by_name = {profile.name: profile for profile in catalog.compute_profiles}
-    offers = [
-        (str(entry["profile"]), str(entry["offer_instead"]))
-        for entry in entries
-        if entry.get("offer_instead") is not None
-    ]
+    offering = sorted(
+        str(entry["profile"]) for entry in entries if entry.get("offer_instead") is not None
+    )
 
-    assert offers, "no shape offers a substitute, so this comparison proves nothing"
-    for scarce_name, substitute_name in offers:
-        scarce_devices, scarce_memory = accelerator(by_name[scarce_name])
-        offer_devices, offer_memory = accelerator(by_name[substitute_name])
-
-        assert offer_memory >= scarce_memory, (
-            f"{scarce_name} is offered {substitute_name}, which carries {offer_memory} GiB "
-            f"a device against {scarce_memory} GiB. A smaller card is a changed recipe the "
-            "researcher has to declare, not a substitution this platform may make for them"
-        )
-        assert offer_devices >= scarce_devices, (
-            f"{scarce_name} is offered {substitute_name}, which has {offer_devices} devices "
-            f"against {scarce_devices}. Fewer devices changes how the work shards, so it is "
-            "a different run rather than the same run on another machine"
-        )
+    assert not offering, (
+        "config/capacity.yaml offers a substitute for " + ", ".join(offering) + ". Both "
+        "recorded offers were withdrawn on 2026-08-04 because they named machines this "
+        "account has never obtained, and nothing reads the field any more, so an entry here "
+        "changes no behaviour and reads as a promise the submission path does not keep"
+    )
 
 
 #: Where a reader would live. Tests are excluded on purpose: this module reading the file
