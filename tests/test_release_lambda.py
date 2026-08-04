@@ -29,6 +29,7 @@ from release_lambda import (
     ReleaseError,
     _substitute,
     main,
+    recorded_digest,
 )
 
 
@@ -152,6 +153,119 @@ def test_a_dry_run_uploads_nothing_and_edits_nothing(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr("release_lambda.verify", refuse)
 
     assert main(["--dry-run"]) == 0
+
+
+def test_a_function_whose_digest_has_not_moved_is_not_uploaded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """THE CLAIM THE MODULE DOCSTRING USED TO MAKE WITHOUT DOING IT.
+    Mutation: upload every selected function regardless of its recorded digest.
+
+    Releasing both is the default because working out which functions a change under
+    `src/edullm_platform` reaches is not something a person should be doing at the point of
+    release. That is only free if an unchanged function costs nothing — otherwise the
+    default stores byte-identical bytes under a fresh version id and puts a Lambda nobody
+    touched through a stack update, which is what `--function validator` was passed by hand
+    to avoid on 2026-08-04.
+    """
+    unchanged = {name: recorded_digest(function) for name, function in FUNCTIONS.items()}
+    assert all(digest is not None for digest in unchanged.values()), (
+        "both release records carry a sha256; without one there is nothing to compare"
+    )
+
+    monkeypatch.setattr(
+        "release_lambda.build", lambda function, destination: recorded_digest(function)
+    )
+
+    def refuse(*_: object, **__: object) -> None:
+        raise AssertionError("an unchanged function was uploaded or recorded")
+
+    monkeypatch.setattr("release_lambda.upload", refuse)
+    monkeypatch.setattr("release_lambda.record", refuse)
+    monkeypatch.setattr("release_lambda.verify", lambda selected: None)
+
+    assert main([]) == 0
+
+
+def test_force_uploads_a_function_whose_digest_has_not_moved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The one repair the digest comparison cannot see.
+
+    A record can be right about the bytes while the object its version id names is not in
+    the bucket — deleted, or written before the bucket was versioned. Skipping on a digest
+    match alone would make that state unfixable with this tool, so the skip has an override
+    and the override has to be asked for.
+    """
+    uploaded: list[str] = []
+
+    def note(function: Function, *_: object, **__: object) -> str:
+        uploaded.append(function.name)
+        return "v1"
+
+    monkeypatch.setattr(
+        "release_lambda.build", lambda function, destination: recorded_digest(function)
+    )
+    monkeypatch.setattr("release_lambda.upload", note)
+    monkeypatch.setattr("release_lambda.record", lambda *a, **k: None)
+    monkeypatch.setattr("release_lambda.verify", lambda selected: None)
+
+    assert main(["--force"]) == 0
+    assert sorted(uploaded) == sorted(function.name for function in FUNCTIONS.values())
+
+
+def test_only_the_function_that_moved_is_uploaded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mutation: skip everything, or nothing, rather than deciding per function.
+
+    The mixed case is the ordinary one now that each builder names the config its own
+    handler reads: a catalog edit moves the validator and leaves the recorder exactly where
+    it was.
+    """
+    moved = FUNCTIONS["validator"]
+    uploaded: list[str] = []
+    recorded: list[str] = []
+
+    def build(function: Function, destination: Path) -> str:
+        return "c" * 64 if function is moved else str(recorded_digest(function))
+
+    def note_upload(function: Function, *_: object, **__: object) -> str:
+        uploaded.append(function.name)
+        return "v2"
+
+    monkeypatch.setattr("release_lambda.build", build)
+    monkeypatch.setattr("release_lambda.upload", note_upload)
+    monkeypatch.setattr(
+        "release_lambda.record", lambda function, **_: recorded.append(function.name)
+    )
+    monkeypatch.setattr("release_lambda.verify", lambda selected: None)
+
+    assert main([]) == 0
+    assert uploaded == [moved.name]
+    assert recorded == [moved.name]
+
+
+def test_a_record_that_cannot_be_read_does_not_skip_the_upload(tmp_path: Path) -> None:
+    """The safe answer to "is this already released?" when the record is unreadable is no.
+
+    Refusing outright would be worse than uploading: a release record somebody broke would
+    become a release nobody could cut, which is the state this whole tool exists to keep
+    people out of. Reporting the broken file is tools/verify_deployed_lambdas.py's job.
+    """
+    broken = tmp_path / "record.yaml"
+    broken.write_text("sha256: [not, a, digest]\n", encoding="utf-8")
+    absent = tmp_path / "gone.yaml"
+
+    for path in (broken, absent):
+        unreadable = Function(
+            name="a function whose record cannot be read",
+            builder="tools/build_admission_lambda.py",
+            s3_key="admission-validator/admission-validator.zip",
+            template=path,
+            release_record=path,
+            tripwire="tests/test_phase2_lambda_package.py",
+        )
+
+        assert recorded_digest(unreadable) is None
 
 
 def test_every_function_names_a_template_and_a_record_that_exist() -> None:
