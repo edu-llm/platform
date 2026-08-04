@@ -160,6 +160,85 @@ def scripts(workflow: dict[str, Any], job_id: str) -> str:
     return "\n".join(item["run"] for item in workflow["jobs"][job_id]["steps"] if "run" in item)
 
 
+def load_tool(name: str) -> Any:
+    """Import a module out of ``tools/``, which is not a package and not on the path."""
+    tool = PROJECT_ROOT / "tools" / f"{name}.py"
+    specification = importlib.util.spec_from_file_location(name, tool)
+    assert specification is not None and specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+    sys.modules[specification.name] = module
+    specification.loader.exec_module(module)
+    return module
+
+
+# ----------------------------------------------------------------------------------------
+# Which lineage prefixes the scheduled tools read, and which ones the role can reach
+#
+# THE THREE FUNCTIONS BELOW EXIST BECAUSE THIS FACT WAS WRITTEN DOWN TWICE AND COMPARED
+# NOWHERE. `tools/report_run_costs.py` declared LINEAGE_PREFIXES = ("intent", "attempt") and
+# `infra/iam/nightly-reader-role.yaml` granted intent/ and result/, and the visibility board
+# -- the one caller of `sync_bucket` that runs on the schedule, under that role -- was
+# refused on attempt/ every night from the moment it shipped. Deriving both sides is what
+# makes the disagreement a red review instead of a line in a step summary nobody reads.
+# ----------------------------------------------------------------------------------------
+
+
+def reconciliation_prefixes(workflow: dict[str, Any]) -> set[str]:
+    """The lineage prefixes the checkpoint reconciliation's own step syncs."""
+    fetch = step(workflow["jobs"][RECONCILE_JOB], "Fetch the intent records")
+    assert fetch["env"]["LINEAGE_BUCKET"] == LINEAGE_BUCKET
+    return {
+        line.split("s3://${LINEAGE_BUCKET}/")[1].split()[0].strip('"').rstrip("/")
+        for line in fetch["run"].splitlines()
+        if "s3://${LINEAGE_BUCKET}/" in line
+    }
+
+
+def synced_lineage_prefixes(workflow: dict[str, Any]) -> set[str]:
+    """Every lineage prefix something running under this role syncs, from both readers.
+
+    The union rather than either one. The reconciliation joins intent to result and the
+    board joins intent to attempt, so the grant has to cover three prefixes and neither
+    reader on its own says which three.
+    """
+    board = set(load_tool("report_run_costs").LINEAGE_PREFIXES)
+    assert board, "report_run_costs.LINEAGE_PREFIXES is empty, so this check compares nothing"
+    reconciliation = reconciliation_prefixes(workflow)
+    assert reconciliation, "the reconciliation step syncs nothing, so this check compares nothing"
+    return board | reconciliation
+
+
+def fetchable_lineage_prefixes(role: dict[str, Any]) -> set[str]:
+    """The prefixes the role holds ``s3:GetObject`` on, read off the object ARNs."""
+    marker = f":s3:::{LINEAGE_BUCKET}/"
+    return {
+        reachable.split(marker, 1)[1].rsplit("/*", 1)[0]
+        for statement in statements(role)
+        if "s3:GetObject" in statement_actions(statement)
+        for reachable in statement_resources(statement)
+        if marker in reachable
+    }
+
+
+def listable_lineage_prefixes(role: dict[str, Any]) -> set[str]:
+    """The prefixes the role may enumerate, read off the ``s3:prefix`` condition.
+
+    A separate function from the one above rather than a second return value, because the
+    whole hazard is that these two are written in different places and can disagree.
+    """
+    bucket = f"arn:${{AWS::Partition}}:s3:::{LINEAGE_BUCKET}"
+    values: set[str] = set()
+    for statement in statements(role):
+        if "s3:ListBucket" not in statement_actions(statement):
+            continue
+        if statement_resources(statement) != [bucket]:
+            continue
+        condition = statement["Condition"]["StringLike"]["s3:prefix"]
+        entries = condition if isinstance(condition, list) else [condition]
+        values |= {entry.rsplit("/*", 1)[0] for entry in entries}
+    return values
+
+
 # ----------------------------------------------------------------------------------------
 # The checks are invoked at all
 # ----------------------------------------------------------------------------------------
@@ -213,17 +292,15 @@ def test_the_reconciliation_fetches_only_the_prefixes_the_role_can_list(
     read out of the bucket exactly as before. What the old scope bought was a report that
     could not tell a run which finished and saved nothing from one that died at
     `wandb.init()`, and it spent fourteen of those against the one that mattered.
+
+    THE LISTING SIDE IS NO LONGER PINNED TO THIS JOB'S TWO PREFIXES. It was, and that is how
+    the board's `attempt/` grant stayed missing: an equality against `intent/*, result/*`
+    reads as strict and silently forbids a second reader from being granted what it needs.
+    What this job requires is that everything it syncs is listable, which is what is asserted
+    here; that the grant covers every scheduled reader and nothing beyond them is
+    `test_the_role_can_list_and_fetch_every_prefix_the_scheduled_tools_sync`.
     """
-    reconciliation = workflow["jobs"][RECONCILE_JOB]
-    fetch = step(reconciliation, "Fetch the intent records")
-
-    assert fetch["env"]["LINEAGE_BUCKET"] == LINEAGE_BUCKET
-
-    synced = {
-        line.split("s3://${LINEAGE_BUCKET}/")[1].split()[0].strip('"').rstrip("/")
-        for line in fetch["run"].splitlines()
-        if "s3://${LINEAGE_BUCKET}/" in line
-    }
+    synced = reconciliation_prefixes(workflow)
 
     assert synced == {"intent", "result"}
 
@@ -234,7 +311,7 @@ def test_the_reconciliation_fetches_only_the_prefixes_the_role_can_list(
     ]
 
     assert len(listable) == 1
-    assert listable[0]["Condition"] == {"StringLike": {"s3:prefix": ["intent/*", "result/*"]}}
+    assert synced <= listable_lineage_prefixes(role)
 
 
 def test_a_result_sync_that_is_refused_leaves_no_half_read_tree(
@@ -1013,12 +1090,7 @@ def test_the_template_grant_names_the_stacks_the_drift_check_compares() -> None:
     The expected names come out of the tool's own table rather than being written here, so a
     stack added to one and not the other fails at review instead of as a denial at 05:00.
     """
-    tool = PROJECT_ROOT / "tools" / "verify_deployed_stacks.py"
-    specification = importlib.util.spec_from_file_location("verify_deployed_stacks", tool)
-    assert specification is not None and specification.loader is not None
-    module = importlib.util.module_from_spec(specification)
-    sys.modules[specification.name] = module
-    specification.loader.exec_module(module)
+    module = load_tool("verify_deployed_stacks")
 
     role_properties = next(iter(iam_roles(load_template(ROLE_PATH))))
     granted = {
@@ -1032,6 +1104,7 @@ def test_the_template_grant_names_the_stacks_the_drift_check_compares() -> None:
 
 
 def test_the_role_reads_the_two_buckets_the_reconciliation_asks_about(
+    workflow: dict[str, Any],
     role: dict[str, Any],
 ) -> None:
     """Mutation: drop the outputs read, on the ground that the report only counts objects.
@@ -1052,22 +1125,33 @@ def test_the_role_reads_the_two_buckets_the_reconciliation_asks_about(
         if ":s3:::" in reachable
     }
 
-    assert reach == {
+    expected = {
         f"arn:${{AWS::Partition}}:s3:::{LINEAGE_BUCKET}": {
             "s3:ListBucket",
             "s3:GetBucketLocation",
         },
-        f"arn:${{AWS::Partition}}:s3:::{LINEAGE_BUCKET}/intent/*": {"s3:GetObject"},
-        f"arn:${{AWS::Partition}}:s3:::{LINEAGE_BUCKET}/result/*": {"s3:GetObject"},
         f"arn:${{AWS::Partition}}:s3:::{OUTPUTS_BUCKET}": {
             "s3:ListBucket",
             "s3:GetBucketLocation",
         },
         f"arn:${{AWS::Partition}}:s3:::{OUTPUTS_BUCKET}/teams/*/runs/*": {"s3:GetObject"},
     }
+    # The lineage object ARNs are built from what the scheduled tools sync rather than
+    # listed here. Listing them is what let the grant and the readers disagree: this
+    # assertion is exact, so a literal here would have had to be edited in step with the
+    # policy and would have gone on agreeing with it while both disagreed with the tools.
+    expected |= {
+        f"arn:${{AWS::Partition}}:s3:::{LINEAGE_BUCKET}/{prefix}/*": {"s3:GetObject"}
+        for prefix in synced_lineage_prefixes(workflow)
+    }
+
+    assert reach == expected
 
 
-def test_listing_is_confined_to_the_prefixes_each_check_reads(role: dict[str, Any]) -> None:
+def test_listing_is_confined_to_the_prefixes_each_check_reads(
+    workflow: dict[str, Any],
+    role: dict[str, Any],
+) -> None:
     """Mutation: drop the prefix condition, because listing is bucket-level anyway.
 
     That is the point: s3:ListBucket cannot be scoped by an object ARN, so without the
@@ -1084,10 +1168,64 @@ def test_listing_is_confined_to_the_prefixes_each_check_reads(role: dict[str, An
         if "s3:ListBucket" in str(statement["Action"])
     }
 
-    assert conditions == {
-        LINEAGE_BUCKET: ["intent/*", "result/*"],
-        OUTPUTS_BUCKET: "teams/*/runs/*",
+    assert set(conditions) == {LINEAGE_BUCKET, OUTPUTS_BUCKET}
+    assert conditions[OUTPUTS_BUCKET] == "teams/*/runs/*"
+    assert set(conditions[LINEAGE_BUCKET]) == {
+        f"{prefix}/*" for prefix in synced_lineage_prefixes(workflow)
     }
+
+
+def test_the_role_can_list_and_fetch_every_prefix_the_scheduled_tools_sync(
+    workflow: dict[str, Any],
+    role: dict[str, Any],
+) -> None:
+    """Mutation: grant a prefix a scheduled tool syncs on GetObject and not on ListBucket.
+
+    THIS IS THE CHECK THAT DID NOT EXIST, AND ITS ABSENCE COST EVERY COST FIGURE ON THE
+    BOARD. `tools/report_run_costs.py` declared LINEAGE_PREFIXES = ("intent", "attempt") and
+    this role granted `intent/` and `result/`. Both files were internally consistent, both
+    were pinned by tests, and nothing read one against the other, so
+    `tools/visibility_board.py` -- the only caller of `sync_bucket` that runs on the
+    schedule, under this role -- was refused on `attempt/` on every night it ran. It did not
+    lose the attempt records alone: `sync_bucket` raises on a refused prefix rather than
+    skipping it, so the whole cost mapping came back None and every run rendered as "not
+    costed".
+
+    BOTH HALVES, BECAUSE ONLY ONE OF THEM FAILS VISIBLY. `aws s3 sync` lists before it
+    fetches, so a prefix granted on GetObject and missing from the `s3:prefix` condition
+    reads as granted in the policy document and is refused at the first call, with no object
+    fetched. Asserting the two halves are equal is what catches the half-grant; asserting
+    each covers the tools is what catches the missing grant.
+
+    NEITHER SIDE IS ALLOWED TO BE EMPTY. A check whose expected set is derived can pass by
+    deriving nothing -- a renamed constant, a restructured statement, a bucket constant that
+    stopped matching -- and this repository has found four of those today. Each helper
+    asserts it read something, so a parse that silently stops working fails here rather than
+    reporting agreement between two empty sets.
+    """
+    required = synced_lineage_prefixes(workflow)
+    fetchable = fetchable_lineage_prefixes(role)
+    listable = listable_lineage_prefixes(role)
+
+    assert fetchable, "no s3:GetObject statement on the lineage bucket parsed out of the role"
+    assert listable, "no s3:prefix condition on the lineage bucket parsed out of the role"
+
+    assert required <= listable, (
+        f"the scheduled tools sync {sorted(required - listable)} which the role cannot list. "
+        "aws s3 sync lists first, so this is an access denial on the first call rather than "
+        "a partial read. Add the prefix to ListLineageRecords in "
+        "infra/iam/nightly-reader-role.yaml and apply the stack from a laptop."
+    )
+    assert required <= fetchable, (
+        f"the scheduled tools sync {sorted(required - fetchable)} which the role cannot "
+        "fetch. Add a ReadRecords statement to infra/iam/nightly-reader-role.yaml and apply "
+        "the stack from a laptop."
+    )
+    assert fetchable == listable, (
+        f"the role can fetch {sorted(fetchable)} and list {sorted(listable)}. A prefix in one "
+        "and not the other is granted on paper and refused in practice, which is the shape "
+        "that reads as fine in a policy review."
+    )
 
 
 def test_the_lambda_grant_names_the_functions_the_templates_declare(
