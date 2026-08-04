@@ -43,14 +43,19 @@ from edullm_platform.contracts.execution import ExecutionTargetCatalog
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE_PATH = PROJECT_ROOT / "infra" / "iam" / "run-preview-role.yaml"
 ADMISSION_TEMPLATE_PATH = PROJECT_ROOT / "infra" / "iam" / "admission-role.yaml"
+IMAGE_RESOLVER_TEMPLATE_PATH = PROJECT_ROOT / "infra" / "iam" / "image-resolver-role.yaml"
 EXECUTION_TARGETS_PATH = PROJECT_ROOT / "config" / "execution-targets.yaml"
+README_PATH = PROJECT_ROOT / "infra" / "README.md"
 
 ROLE_NAME = "sbsandbox-intern-edullm-run-preview"
 PREVIEW_ENVIRONMENT = "run-approval-preview"
-PREVIEW_SUBJECT = (
-    f"repo:edu-llm@306859726/platform@1311508598:environment:{PREVIEW_ENVIRONMENT}"
-)
+SUBJECT_PREFIX = "repo:edu-llm@306859726/platform@1311508598"
+PREVIEW_SUBJECT = f"{SUBJECT_PREFIX}:environment:{PREVIEW_ENVIRONMENT}"
+BRANCH_SUBJECT = f"{SUBJECT_PREFIX}:ref:refs/heads/*"
+MAIN_SUBJECT = f"{SUBJECT_PREFIX}:ref:refs/heads/main"
 CPU_QUEUE = "sbsandbox-intern-edullm-cpu"
+SUB = "token.actions.githubusercontent.com:sub"
+WORKFLOW_REF = "token.actions.githubusercontent.com:job_workflow_ref"
 
 
 def _role() -> dict[str, Any]:
@@ -59,19 +64,90 @@ def _role() -> dict[str, Any]:
     return roles[0]
 
 
-def _trust_condition() -> dict[str, Any]:
+def _trust_statements() -> list[dict[str, Any]]:
+    """The two, and exactly the two.
+
+    TWO RATHER THAN ONE, AND THE COUNT IS ASSERTED BECAUSE A THIRD IS ANOTHER WAY IN. The
+    preview path mints two subject shapes and no single statement can accept both: the
+    submit job declares ``environment: run-approval-preview`` and is issued an environment
+    subject, and the resolve job must declare no environment at all -- on ``main`` it
+    assumes the image resolver, whose trust is pinned to ``:ref:refs/heads/main``, so an
+    environment key there would break the production path this role exists to preview.
+    ``StringEquals`` on the environment literal and ``StringLike`` on the ref pattern would
+    be ANDed against the same ``sub`` and match nothing, so they are separated.
+    """
     statements = _role()["AssumeRolePolicyDocument"]["Statement"]
-    assert len(statements) == 1, (
-        "one trust statement. A second is another way in, and every test below reads the "
-        "first one only."
+    assert len(statements) == 2, (
+        "two trust statements, the environment subject and the branch ref subject. A third "
+        "is another way in and no test below would read it."
     )
-    return dict(statements[0]["Condition"])
+    return [dict(statement) for statement in statements]
+
+
+def _environment_condition() -> dict[str, Any]:
+    """The statement the submit job's session comes through."""
+    matching = [
+        dict(statement["Condition"])
+        for statement in _trust_statements()
+        if statement["Condition"].get("StringEquals", {}).get(SUB) == PREVIEW_SUBJECT
+    ]
+    assert len(matching) == 1, "exactly one statement accepts the environment subject"
+    return matching[0]
+
+
+def _ref_condition() -> dict[str, Any]:
+    """The statement the resolve job's session comes through."""
+    matching = [
+        dict(statement["Condition"])
+        for statement in _trust_statements()
+        if SUB in statement["Condition"].get("StringLike", {})
+    ]
+    assert len(matching) == 1, "exactly one statement accepts a ref subject"
+    return matching[0]
 
 
 def _statements() -> list[dict[str, Any]]:
     policies = _role()["Policies"]
     assert len(policies) == 1
     return list(policies[0]["PolicyDocument"]["Statement"])
+
+
+REQUIREMENT_HEADING = "### A requirement for the mismatch filter, which is not built yet"
+
+
+def _recorded_requirement() -> str:
+    """That section of `infra/README.md`, and only that section.
+
+    Sliced rather than read whole because the file legitimately discusses role-name
+    wildcards elsewhere, and a substring check against the whole thing would report the
+    requirement as widened when it had not been -- or, worse, pass because some unrelated
+    paragraph happened to contain the role name.
+
+    IN `infra/README.md` AND NOT IN `config/organization.yaml`, WHERE THE JOIN TABLE GOES.
+    The whole `config/` directory is copied into the admission Lambda zip and both released
+    zips are byte-identical by construction, so any edit under `config/` -- including a
+    comment -- moves both digests and reddens
+    ``test_the_released_zip_is_the_one_this_tree_builds`` until somebody rebuilds and
+    releases from a laptop. Recording a note there would have required an AWS deploy.
+    """
+    text = README_PATH.read_text(encoding="utf-8")
+    heading = text.find(REQUIREMENT_HEADING)
+    assert heading != -1, (
+        "infra/README.md no longer records the mismatch-filter requirement. It is the only "
+        "record that the preview role has to be excluded by name, and the filter it "
+        "describes is not built yet, so nothing else would catch its loss."
+    )
+    return text[heading:]
+
+
+def _statement_for(service: str) -> dict[str, Any]:
+    matching = [
+        statement
+        for statement in _statements()
+        if all(action.startswith(f"{service}:") for action in statement_actions(statement))
+    ]
+    assert len(matching) == 1, f"one statement grants {service}, and the tests read that one"
+    return matching[0]
 
 
 def test_the_role_is_bounded_and_federated_the_way_every_other_oidc_role_here_is() -> None:
@@ -98,12 +174,44 @@ def test_the_trust_names_one_environment_as_a_literal_and_never_a_pattern() -> N
     repository ids in the prefix are what stop a fork of this repository presenting a
     matching claim.
     """
-    condition = _trust_condition()
+    condition = _environment_condition()
 
-    assert condition["StringEquals"]["token.actions.githubusercontent.com:sub"] == PREVIEW_SUBJECT
-    assert "sub" not in {
-        key.rsplit(":", 1)[1] for key in condition.get("StringLike", {})
-    }, "the subject moved into StringLike, which accepts environments nobody created"
+    assert condition["StringEquals"][SUB] == PREVIEW_SUBJECT
+    assert SUB not in condition.get("StringLike", {}), (
+        "the environment subject moved into StringLike, which accepts environments nobody "
+        "created"
+    )
+    # And no statement anywhere in this template names an environment loosely. The ref
+    # statement is allowed a wild subject and is pinned by the test below; what neither is
+    # allowed is a pattern that would match `:environment:` followed by anything.
+    for statement in _trust_statements():
+        for pattern in statement["Condition"].get("StringLike", {}).values():
+            assert ":environment:" not in pattern, pattern
+
+
+def test_the_branch_statement_accepts_any_branch_except_main_by_name() -> None:
+    """Mutation: drop the StringNotEquals, or widen `refs/heads/*` to `refs/*`.
+
+    The resolve job declares no environment, so on a branch it is issued a ref subject and
+    this statement is what accepts it. The subtraction of `main` is the load-bearing half.
+    Without it a dispatch from `main` could pick this role up out of the job that is
+    supposed to be holding the image resolver, and `main` is the one ref where that must be
+    impossible, because on `main` the production path is the path -- the failure would not
+    be a red job here, it would be a production submission silently scoped to one CPU queue.
+
+    `refs/heads/*` rather than `refs/*` so a tag cannot present the claim either. A `*` in
+    an IAM condition matches `/`, so the branch pattern already covers `feature/x`.
+    """
+    condition = _ref_condition()
+
+    assert condition["StringLike"][SUB] == BRANCH_SUBJECT
+    assert condition["StringNotEquals"][SUB] == MAIN_SUBJECT
+    assert BRANCH_SUBJECT.startswith(f"{SUBJECT_PREFIX}:ref:refs/heads/")
+    assert BRANCH_SUBJECT.count("*") == 1 and BRANCH_SUBJECT.endswith("*")
+    # The subtraction has to name the same prefix it subtracts from, or it subtracts
+    # nothing: a StringNotEquals against a string the StringLike could never match is a
+    # condition that is always true.
+    assert MAIN_SUBJECT == BRANCH_SUBJECT.removesuffix("*") + "main"
 
 
 def test_the_workflow_file_is_pinned_and_only_the_ref_is_wild() -> None:
@@ -114,18 +222,21 @@ def test_the_workflow_file_is_pinned_and_only_the_ref_is_wild() -> None:
     `run-approval-preview` and assume this role. The file is pinned with a `StringLike`
     whose only wild segment is after the `@`, which is the ref, which is the one thing this
     role exists to leave free.
-    """
-    condition = _trust_condition()
-    workflow_ref = condition["StringLike"]["token.actions.githubusercontent.com:job_workflow_ref"]
 
-    assert workflow_ref == "edu-llm/platform/.github/workflows/submit-run.yml@*"
-    assert workflow_ref.count("*") == 1
-    assert workflow_ref.split("@")[0].endswith("/submit-run.yml")
-    # The two ids are what a fork cannot present, and they stay under StringEquals.
-    equals = condition["StringEquals"]
-    assert equals["token.actions.githubusercontent.com:repository_owner_id"] == "306859726"
-    assert equals["token.actions.githubusercontent.com:repository_id"] == "1311508598"
-    assert equals["token.actions.githubusercontent.com:aud"] == "sts.amazonaws.com"
+    Asserted of both statements rather than of one. They are two ways into the same role,
+    so a pin missing from either is a pin missing.
+    """
+    for condition in (_environment_condition(), _ref_condition()):
+        workflow_ref = condition["StringLike"][WORKFLOW_REF]
+
+        assert workflow_ref == "edu-llm/platform/.github/workflows/submit-run.yml@*"
+        assert workflow_ref.count("*") == 1
+        assert workflow_ref.split("@")[0].endswith("/submit-run.yml")
+        # The two ids are what a fork cannot present, and they stay under StringEquals.
+        equals = condition["StringEquals"]
+        assert equals["token.actions.githubusercontent.com:repository_owner_id"] == "306859726"
+        assert equals["token.actions.githubusercontent.com:repository_id"] == "1311508598"
+        assert equals["token.actions.githubusercontent.com:aud"] == "sts.amazonaws.com"
 
 
 def test_the_preview_environment_is_not_one_of_the_admission_gates() -> None:
@@ -144,30 +255,81 @@ def test_the_preview_environment_is_not_one_of_the_admission_gates() -> None:
     admission_subjects = set(
         walk_strings(admission_role["AssumeRolePolicyDocument"]["Statement"][0]["Condition"])
     )
-    preview_subjects = set(walk_strings(_trust_condition()))
+    preview_subjects = {
+        value
+        for statement in _trust_statements()
+        for value in walk_strings(statement["Condition"])
+    }
 
     assert PREVIEW_ENVIRONMENT not in set(ApprovalEnvironment)
     assert PREVIEW_SUBJECT in preview_subjects
     assert PREVIEW_SUBJECT not in admission_subjects
     for gate in ApprovalEnvironment:
-        accepted = f"repo:edu-llm@306859726/platform@1311508598:environment:{gate.value}"
+        accepted = f"{SUBJECT_PREFIX}:environment:{gate.value}"
         assert accepted in admission_subjects, gate
         assert accepted not in preview_subjects, gate
+    # The branch statement is a pattern, so disjointness has to be checked against what it
+    # matches rather than against what it says. An environment subject has `:environment:`
+    # where this has `:ref:refs/heads/`, so no gate can satisfy it -- asserted rather than
+    # asserted-by-inspection, because the two enumerations drifting is the whole worry.
+    branch_prefix = BRANCH_SUBJECT.removesuffix("*")
+    for gate in ApprovalEnvironment:
+        assert not f"{SUBJECT_PREFIX}:environment:{gate.value}".startswith(branch_prefix), gate
 
 
-def test_the_role_may_submit_a_job_and_do_nothing_else_at_all() -> None:
-    """Mutation: add a second action, or a second statement.
+def test_the_role_may_submit_a_job_and_read_an_image_and_do_nothing_else_at_all() -> None:
+    """Mutation: add a third action, or a third statement.
 
     Asserted exactly rather than approximately, for the reason
     `infra/iam/image-resolver-role.yaml` gives about its own two reads: a role whose trust
     condition is looser than every other role here is affordable only while its grant is
     this small, so the grant is the thing that has to fail on a change.
+
+    THREE ACTIONS RATHER THAN ONE, AND THE TWO THAT ARRIVED ARE READS. `submit-run.yml`
+    dies in its resolve job on a branch without them -- the job asks ECR which image the
+    declared commit published -- so a role that could submit but could not resolve was a
+    preview of nothing.
     """
     statements = _statements()
 
-    assert len(statements) == 1
-    assert statements[0]["Effect"] == "Allow"
-    assert statement_actions(statements[0]) == ["batch:SubmitJob"]
+    assert len(statements) == 2
+    assert [statement["Effect"] for statement in statements] == ["Allow", "Allow"]
+    assert statement_actions(_statement_for("batch")) == ["batch:SubmitJob"]
+    assert statement_actions(_statement_for("ecr")) == [
+        "ecr:DescribeImages",
+        "ecr:DescribeImageScanFindings",
+    ]
+
+
+def test_the_two_reads_are_the_image_resolvers_two_reads_and_not_a_wider_pair() -> None:
+    """Mutation: grant `ecr:*`, or point the resolve reads at every repository.
+
+    Read off the production template rather than written twice, because the property is a
+    relationship between the two: a branch dispatch exists to exercise what `main` will do,
+    so a grant that differs here means a resolve that succeeds on a branch and fails on
+    `main`, or the reverse -- and either way the preview stops predicting the thing it was
+    built to predict.
+
+    That makes this test cut both ways on purpose. It fails if this role widens, and it
+    also fails if the image resolver narrows without this role following, which is the
+    direction nobody would think to check.
+    """
+    resolver_role = next(iter(iam_roles(load_template(IMAGE_RESOLVER_TEMPLATE_PATH))))
+    resolver_statements = resolver_role["Policies"][0]["PolicyDocument"]["Statement"]
+    resolver_ecr = [
+        statement
+        for statement in resolver_statements
+        if all(action.startswith("ecr:") for action in statement_actions(statement))
+    ]
+    assert len(resolver_ecr) == 1, "the image resolver's ECR grant is one statement"
+    preview_ecr = _statement_for("ecr")
+
+    assert statement_actions(preview_ecr) == statement_actions(resolver_ecr[0])
+    assert statement_resources(preview_ecr) == statement_resources(resolver_ecr[0])
+    # Neither of them may pull. Describing an image is reading a manifest; the two absent
+    # actions are what turn that into bytes on a disk.
+    for action in statement_actions(preview_ecr):
+        assert action.startswith("ecr:Describe"), action
 
 
 def test_the_role_reaches_the_cheapest_cpu_queue_and_no_other_queue_in_the_account() -> None:
@@ -190,7 +352,7 @@ def test_the_role_reaches_the_cheapest_cpu_queue_and_no_other_queue_in_the_accou
         for target in catalog.targets
         if not target.compute_profile.startswith("cpu-")
     }
-    reachable = statement_resources(_statements()[0])
+    reachable = statement_resources(_statement_for("batch"))
 
     assert cpu_queues == {CPU_QUEUE}, (
         "config/execution-targets.yaml no longer backs exactly one CPU profile, so "
@@ -205,6 +367,47 @@ def test_the_role_reaches_the_cheapest_cpu_queue_and_no_other_queue_in_the_accou
     ]
     for queue in gpu_queues:
         assert not [arn for arn in reachable if queue in arn], queue
+
+
+def test_the_mismatch_exclusion_is_recorded_against_this_role_by_name_and_not_a_pattern() -> None:
+    """The filter does not exist yet, so what is pinned here is the requirement for it.
+
+    A mismatch is a launch by a roster principal with no lineage record, and every job this
+    role places is exactly that by construction -- so the list would fill with entries that
+    are all correct behavior, which is how a monitoring surface becomes one nobody reads.
+    Nothing computes that list today: it is described in the system overview, the twenty-row
+    join table it needs is not in `config/organization.yaml`, and no tool reads CloudTrail
+    against lineage. So the requirement is recorded in `infra/README.md` instead, for the
+    reason ``_recorded_requirement`` gives.
+
+    WHAT THIS TEST IS FOR, GIVEN THERE IS NO FILTER TO TEST. It fails if the recorded
+    requirement stops naming this role -- which is what a rename of the role would do
+    silently, leaving a note that reads fine and excludes nothing. And it fails if the
+    requirement is ever restated as a pattern, because a pattern would swallow the next role
+    that happened to match it. When the filter is built, the test that pins its exclusion
+    replaces this one rather than joining it.
+    """
+    note = _recorded_requirement()
+    role_name = _role()["RoleName"]
+
+    assert role_name == ROLE_NAME
+    assert role_name in note, (
+        "infra/README.md no longer records the mismatch exclusion against this role by "
+        "name, so a filter built from it would not exclude anything"
+    )
+    # Named, never matched. Only the role name with a wildcard glued to it is checked, and
+    # deliberately not a list of bad patterns: the requirement text names several as
+    # prohibitions -- "not `*-run-preview`" -- so a scan for those cannot tell a rule from
+    # a violation of it. This one is the realistic widening and appears nowhere in the prose.
+    assert f"{role_name}*" not in note
+    # The three constraints, each stated so that dropping one is visible here. The second is
+    # the one most easily lost, because a silent exclusion still looks like a working filter.
+    assert "never a pattern" in note.lower()
+    assert "preview launches, excluded" in note
+    assert "test that fails if the exclusion widens" in note.lower()
+    # And the property the exclusion exists to protect, which decides the shape of the fix:
+    # excluding the role rather than giving preview jobs a lineage record.
+    assert "no lineage record" in note
 
 
 def test_nothing_in_the_template_reaches_a_service_this_role_has_no_business_in() -> None:
@@ -222,11 +425,17 @@ def test_nothing_in_the_template_reaches_a_service_this_role_has_no_business_in(
     granted = {action for statement in _statements() for action in statement_actions(statement)}
     services = {action.split(":", 1)[0] for action in granted}
 
-    assert services == {"batch"}
-    for forbidden in ("states:", "s3:", "iam:", "secretsmanager:", "ecr:", "sts:", "logs:"):
+    assert services == {"batch", "ecr"}
+    for forbidden in ("states:", "s3:", "iam:", "secretsmanager:", "sts:", "logs:"):
         assert not [action for action in granted if action.startswith(forbidden)], forbidden
-    # TerminateJob and CancelJob belong to the run canceller and its own principal.
-    assert granted == {"batch:SubmitJob"}
+    # TerminateJob and CancelJob belong to the run canceller and its own principal. The two
+    # ECR actions are reads and are enumerated here too, so that `ecr:` widening to a pull
+    # or to a write fails this test as well as the pair of tests above it.
+    assert granted == {
+        "batch:SubmitJob",
+        "ecr:DescribeImages",
+        "ecr:DescribeImageScanFindings",
+    }
     # The two ids in the trust policy are nine and ten digits; an account id is twelve.
     assert not [
         value for value in walk_strings(load_template(TEMPLATE_PATH)) if ACCOUNT_LITERAL.search(value)

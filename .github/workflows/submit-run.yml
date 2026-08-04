@@ -335,10 +335,26 @@ jobs:
           fi
           uv sync --locked
 
+      # SPLIT BY REF, AND THE JOB IS NOT SPLIT WITH IT. On `main` this expression is
+      # `vars.AWS_IMAGE_RESOLVER_ROLE_ARN` and everything below is what it was; from a branch
+      # it is the preview role, which carries the same two describes on the same repositories
+      # for the reason `infra/iam/run-preview-role.yaml` gives beside them.
+      #
+      # A second resolve job was the other way to do this and was refused. GitHub Actions has
+      # no YAML anchors, so a second job means a second copy of these steps -- and the copy
+      # is the thing a branch dispatch would then be exercising, which defeats the point of
+      # previewing at all: a change to this job would go untested by the very path built to
+      # test it. One job, one credential expression, and the ref chooses the role.
+      #
+      # NO `environment:` KEY HERE, ON EITHER PATH, AND THAT IS DELIBERATE. Declaring one
+      # would replace this job's ref subject with an environment subject and break `main`,
+      # where the image resolver's trust is pinned to `:ref:refs/heads/main`. The preview
+      # role therefore carries a second trust statement that accepts the ref subject from any
+      # branch except `main`, which is where that statement's `StringNotEquals` comes from.
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
         with:
-          role-to-assume: ${{ vars.AWS_IMAGE_RESOLVER_ROLE_ARN }}
+          role-to-assume: ${{ github.ref == 'refs/heads/main' && vars.AWS_IMAGE_RESOLVER_ROLE_ARN || vars.AWS_RUN_PREVIEW_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
           # Two describes. The role's maximum is an hour and this has no use for one, so it
           # asks for the shortest session STS issues.

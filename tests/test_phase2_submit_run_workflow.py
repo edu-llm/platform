@@ -905,12 +905,18 @@ def test_the_resolve_job_assumes_the_read_only_image_role_through_the_reviewed_a
     ``tests/test_phase5_infrastructure.py`` asserts as an exact set rather than a superset
     -- a trust policy cannot tell one job in this file from another, so whatever that role
     holds, every job here can assume.
+
+    The preview role is the second arm of the same expression and is held to the same
+    standard by ``tests/test_run_preview_role.py``: the two describes and nothing else.
     """
     resolve = _job("resolve")
     credentials = step(resolve, RESOLVE_CREDENTIALS_STEP)
 
     assert credentials["uses"] == CREDENTIALS_ACTION
-    assert credentials["with"]["role-to-assume"] == "${{ vars.AWS_IMAGE_RESOLVER_ROLE_ARN }}"
+    assert credentials["with"]["role-to-assume"] == (
+        "${{ github.ref == 'refs/heads/main' && vars.AWS_IMAGE_RESOLVER_ROLE_ARN "
+        "|| vars.AWS_RUN_PREVIEW_ROLE_ARN }}"
+    )
     assert credentials["with"]["aws-region"] == "${{ vars.AWS_REGION }}"
     assert credentials["with"]["mask-aws-account-id"] is True
     assumed = {
@@ -919,7 +925,50 @@ def test_the_resolve_job_assumes_the_read_only_image_role_through_the_reviewed_a
         for reference in _references(text)
         if reference.startswith("vars.")
     }
-    assert assumed == {"vars.AWS_IMAGE_RESOLVER_ROLE_ARN", "vars.AWS_REGION"}
+    assert assumed == {
+        "vars.AWS_IMAGE_RESOLVER_ROLE_ARN",
+        "vars.AWS_RUN_PREVIEW_ROLE_ARN",
+        "vars.AWS_REGION",
+    }
+
+
+def test_a_main_dispatch_still_resolves_under_the_image_resolver_and_nothing_else() -> None:
+    """The half of the split that must not have moved.
+
+    A branch dispatch is new behavior and can be wrong in a way somebody notices. A `main`
+    dispatch is the production path, and the failure mode of getting this wrong is that
+    every submission on `main` starts assuming a role scoped to one CPU queue -- which
+    would not fail here, it would fail in the account, on the run somebody was waiting for.
+    So the condition is asserted as an equality against the literal `main` ref rather than
+    as "there is a condition", and the arm it selects is asserted to be the ARN this job
+    named before the split.
+    """
+    expression = step(_job("resolve"), RESOLVE_CREDENTIALS_STEP)["with"]["role-to-assume"]
+    condition, arms = expression.removeprefix("${{ ").removesuffix(" }}").split(" && ", 1)
+    on_main, off_main = arms.split(" || ", 1)
+
+    assert condition == "github.ref == 'refs/heads/main'"
+    assert on_main == "vars.AWS_IMAGE_RESOLVER_ROLE_ARN"
+    assert off_main == "vars.AWS_RUN_PREVIEW_ROLE_ARN"
+    # And the job still declares no environment on either arm. An environment key would
+    # replace this job's ref subject with an environment one, which the image resolver's
+    # trust policy does not accept -- so adding one breaks `main` rather than the branch.
+    assert "environment" not in _job("resolve")
+
+
+def test_the_resolve_split_and_the_submit_split_agree_on_what_a_preview_is() -> None:
+    """Mutation: split one of the two on a different condition.
+
+    Two jobs now choose a role by ref and they have to mean the same thing by it. If the
+    submit job treated a ref as preview and the resolve job did not, a dispatch would
+    resolve under a production credential and then submit under a preview one -- and the
+    mismatch would appear as a job that cannot assume its role, halfway through.
+    """
+    resolve = step(_job("resolve"), RESOLVE_CREDENTIALS_STEP)["with"]["role-to-assume"]
+    submit = step(_job("submit"), CREDENTIALS_STEP)["with"]["role-to-assume"]
+
+    assert resolve.count("github.ref == 'refs/heads/main'") == 1
+    assert submit.count("github.ref == 'refs/heads/main'") == 1
 
 
 def test_the_resolve_job_argues_for_the_credential_it_holds_where_it_holds_it() -> None:
