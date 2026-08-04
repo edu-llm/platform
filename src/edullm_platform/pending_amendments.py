@@ -64,50 +64,6 @@ __all__ = [
 
 DEPLOYER_ROLE_NAME: Final = "sbsandbox-intern-edullm-infra-deployer"
 
-#: The five compute profiles ``infra/iam/admission-service-roles.yaml`` names and the
-#: deployed admission states role does not reach, in the order the drift comparison sorts
-#: them. Read off the capture rather than chosen: these are the profiles a submission cannot
-#: currently be placed on, and the list is here so the record below can be checked against
-#: the account by a reader who is not going to re-derive fifteen ARNs by hand.
-UNREACHABLE_COMPUTE_PROFILES: Final = (
-    "gpu-1xh100",
-    "gpu-1xl40s",
-    "gpu-8xl4",
-    "gpu-8xl40s",
-    "gpu-8xt4",
-)
-
-#: The ARN form the drift comparison folds an account's identifiers into before reporting.
-#: Spelled here rather than substituted, because the finding this record must equal is
-#: written in the redacted form and comparing against a real account id would make the
-#: record fail on the day somebody captures from a second account.
-_REDACTED_BATCH_ARN: Final = "arn:<partition>:batch:<region>:<account>"
-
-
-def _missing_queue_resources() -> str:
-    """The exact ``detail`` the comparison reports for both narrowed resource lists.
-
-    Built rather than pasted. The two statements report an identical string -- SubmitJob and
-    TagResource name the same resources, which is the property the template argues for at
-    length -- and a fifteen-ARN literal written out twice is two chances to introduce a typo
-    that would make this record stop explaining the finding it exists for.
-    """
-    resources = sorted(
-        [
-            f"{_REDACTED_BATCH_ARN}:job-definition/sbsandbox-intern-edullm-{profile}-run{suffix}"
-            for profile in UNREACHABLE_COMPUTE_PROFILES
-            for suffix in ("", ":*")
-        ]
-        + [
-            f"{_REDACTED_BATCH_ARN}:job-queue/sbsandbox-intern-edullm-{profile}"
-            for profile in UNREACHABLE_COMPUTE_PROFILES
-        ]
-    )
-    return "the template declares resources the deployed role does not: " + ", ".join(resources)
-
-
-MISSING_QUEUE_RESOURCES: Final = _missing_queue_resources()
-
 
 class PendingAmendmentError(ValueError):
     """A recorded pending amendment is not something a reader could act on."""
@@ -176,72 +132,38 @@ def pending_amendments() -> tuple[PendingAmendment, ...]:
     """Every committed template amendment the account has not caught up with yet."""
     # Empty, which is the state this registry is meant to spend most of its life in. An
     # entry lives here only between a template amendment being committed and the laptop
-    # deploy that realises it. Three have been removed so far: the Phase 2 deployer
+    # deploy that realises it. Four have been removed so far: the Phase 2 deployer
     # amendment and the Phase 3 one -- a third job_workflow_ref for deploy-phase3-batch.yml
     # and the deploy-phase3-batch-stacks inline policy -- both on 2026-07-27 when
-    # sbsandbox-intern-edullm-infra-deployer-iam was applied, and the
+    # sbsandbox-intern-edullm-infra-deployer-iam was applied; the
     # sbsandbox-intern-edullm-batch-workload `read-the-dataset-airlock` policy on
     # 2026-08-04 when sbsandbox-intern-edullm-phase3-batch-iam was applied and the
-    # re-capture reported no findings on any of the four Phase 3 roles.
+    # re-capture reported no findings on any of the four Phase 3 roles; and the
+    # sbsandbox-intern-edullm-admission-states queue enumeration later the same day.
     #
     # Removal rather than exemption is the rule. The findings are compared for equality,
     # so a record left here after its deploy fails rather than lingering, and nothing in
     # this module offers a way to keep one that no longer describes a difference.
     #
-    # THE ONE ENTRY BELOW IS NOT THE ORDINARY CASE THIS MODULE WAS BUILT FOR, AND A READER
-    # SHOULD NOT FILE IT AS ONE. Every other record here has described a template amendment
-    # waiting on somebody to find a laptop. This one describes a template that IAM refuses
-    # to accept: the deploy has been attempted and it failed on a service limit, so no
-    # amount of redeploying clears it. What clears it is a change to the template, and
-    # `cleared_by` says which change and why the obvious one is wrong.
-    amendments: tuple[PendingAmendment, ...] = (
-        PendingAmendment(
-            role_name="sbsandbox-intern-edullm-admission-states",
-            reason=(
-                "infra/iam/admission-service-roles.yaml enumerates sixteen job queues on "
-                "both batch:SubmitJob and batch:TagResource; the deployed role carries "
-                "eleven. The five absent from the account are gpu-1xh100, gpu-1xl40s, "
-                "gpu-8xl4, gpu-8xl40s and gpu-8xt4, and a submission naming any of them "
-                "fails at the submit state with a 403 rather than being refused at "
-                "admission. This is not a deploy nobody has run. It was run on 2026-08-02 "
-                "and CloudFormation rolled it back: rendered with the account's own "
-                "partition, region and id, run-admission-workflow is 10599 bytes and IAM "
-                "caps the aggregate of a role's inline policies at 10240, so the update "
-                "failed with ServiceLimitExceeded and the stack has sat in "
-                "UPDATE_ROLLBACK_COMPLETE since. Re-running the same deploy reproduces the "
-                "same rollback."
-            ),
-            cleared_by=(
-                "getting run-admission-workflow under 10240 bytes and deploying it, then "
-                "re-running tools/capture_phase3_evidence.py --target phase2-roles and "
-                "deleting this record. Splitting the document into two inline policies "
-                "does not work and is the first thing anybody will try: the IAM quota is "
-                "on the aggregate of every inline policy on the role, not on each one. A "
-                "customer managed policy is ruled out where the template says so -- "
-                "InternSandboxBoundary denies iam:CreatePolicyVersion, so it could be "
-                "created once and never amended. What is left is spending fewer bytes on "
-                "the same reach, and the template's own argument for the RegisterJobDefinition "
-                "scope shows the way: an IAM wildcard matches ':' like any other character, "
-                "so the paired `-run` and `-run:*` entries collapse to one `-run*` entry "
-                "each. That is 32 ARNs across the two statements and roughly 3000 bytes, "
-                "against the 359 needed. It widens each job-definition scope from two exact "
-                "names to one prefix, which is a real if small widening and is a judgement "
-                "for whoever owns that template rather than for whoever next reads this."
-            ),
-            findings=(
-                RoleDriftFinding(
-                    direction=DriftDirection.NARROWER,
-                    element="inline policy 'run-admission-workflow' statement 3 resources",
-                    detail=MISSING_QUEUE_RESOURCES,
-                ),
-                RoleDriftFinding(
-                    direction=DriftDirection.NARROWER,
-                    element="inline policy 'run-admission-workflow' statement 4 resources",
-                    detail=MISSING_QUEUE_RESOURCES,
-                ),
-            ),
-        ),
-    )
+    # THE FOURTH REMOVAL IS WORTH READING BEFORE THE NEXT RECORD IS WRITTEN, BECAUSE IT WAS
+    # NOT THE ORDINARY CASE THIS MODULE WAS BUILT FOR. The other three described a template
+    # amendment waiting on somebody to find a laptop. That one described a template IAM
+    # refused to store: rendered with the account's own partition, region and id,
+    # run-admission-workflow came to 10599 bytes against a 10240 cap on the aggregate of a
+    # role's inline policies, so the 2026-08-02 deploy failed with ServiceLimitExceeded,
+    # the stack sat in UPDATE_ROLLBACK_COMPLETE, and re-running the deploy reproduced the
+    # rollback. Five advertised compute profiles were unsubmittable for two days. What
+    # cleared it was a change to the template -- collapsing each paired `-run` and `-run:*`
+    # job-definition ARN into one `-run*`, which an IAM wildcard covers because it matches
+    # ':' like any other character -- and the deploy of 2026-08-04, after which the
+    # re-capture reported no findings on any of the three Phase 2 roles.
+    #
+    # A record whose `cleared_by` needs a code change rather than a deploy is a legitimate
+    # use of this registry and reads exactly like the ordinary one from every consumer's
+    # side, so say which it is in the text. The lasting fix for that particular gap is not
+    # here: tests/test_phase2_infrastructure.py now measures the rendered policy against
+    # IAM's cap, so a document the account will refuse fails before anybody deploys it.
+    amendments: tuple[PendingAmendment, ...] = ()
     declared = declared_role_templates()
     for amendment in amendments:
         if amendment.role_name not in declared:

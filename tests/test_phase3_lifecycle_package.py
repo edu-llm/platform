@@ -21,14 +21,20 @@ underneath it.
 
 Mirrors ``tests/test_phase2_lambda_package.py`` deliberately: same three assertions, same
 release-record shape, same slow marker on the one that builds. What it does not mirror is
-that file's checks on wheel platform and packaged configuration, which are properties of
-``build_package`` itself and are already asserted once. Asserting them twice would make a
-change to the shared builder fail in two places and be understood in neither.
+that file's checks on the wheel platform and on where configuration lands, which are
+properties of ``build_package`` itself and are already asserted once. Asserting them twice
+would make a change to the shared builder fail in two places and be understood in neither.
+
+The one packaging check that is this function's own is the last one here: that its archive
+carries no configuration whatsoever. That is not a property of the builder -- the builder
+packages whatever it is handed -- it is a property of this handler, and it is what makes a
+roster or catalog edit cost this function nothing.
 """
 
 from __future__ import annotations
 
 import sys
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +56,7 @@ from tools.build_admission_lambda import build_package
 from tools.build_lifecycle_lambda import (
     ARTIFACT_KEY,
     HANDLER_ENTRY_POINT,
+    RECORDER_CONFIG,
     RECORDER_ENTRYPOINT,
 )
 
@@ -81,7 +88,9 @@ def recorder_function() -> dict[str, Any]:
 @pytest.fixture(scope="module")
 def package(tmp_path_factory: pytest.TempPathFactory) -> dict[str, object]:
     output = tmp_path_factory.mktemp("lifecycle") / "lifecycle-recorder.zip"
-    return build_package(PROJECT_ROOT, output, entrypoint=RECORDER_ENTRYPOINT)
+    return build_package(
+        PROJECT_ROOT, output, entrypoint=RECORDER_ENTRYPOINT, configuration=RECORDER_CONFIG
+    )
 
 
 def test_the_template_and_the_record_name_the_same_object() -> None:
@@ -134,3 +143,29 @@ def test_the_released_zip_is_the_one_this_tree_builds(package: dict[str, object]
         "Release it with the procedure in infra/README.md and update "
         "infra/lifecycle-recorder-release.yaml in the same commit."
     )
+
+
+@pytest.mark.slow
+def test_the_recorder_zip_carries_no_configuration_at_all(package: dict[str, object]) -> None:
+    """Mutation: pass the validator's config list to this builder.
+
+    THE PROPERTY THAT MAKES A ROSTER EDIT FREE FOR THIS FUNCTION. Read off the built
+    archive rather than off the declared list, because it is the archive that is uploaded:
+    what this asserts is that no byte of ``config/`` is inside the object whose digest the
+    test above compares, so no edit under ``config/`` can move it.
+
+    Until 2026-08-04 every file under ``config/`` was in here. The recorder opens none of
+    them -- it projects a Batch state-change event and writes a lifecycle record -- so the
+    entire cost was a red required check on changes eight team leads had just been given
+    approval to make, clearable only by somebody holding AWS credentials.
+    """
+    with zipfile.ZipFile(str(package["path"])) as archive:
+        configuration = [
+            name for name in archive.namelist() if name.startswith("edullm_platform/config/")
+        ]
+
+    assert configuration == [], (
+        f"the recorder reads no configuration and its zip carries {configuration}, so every "
+        "edit to one of those files moves this function's release digest for nothing"
+    )
+    assert package["configuration"] == []

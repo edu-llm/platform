@@ -94,9 +94,10 @@ thresholds:
   # because there is no size that would be small enough to write down.
   #
   # EDITING THIS FILE CHANGES NOTHING IN THE ACCOUNT UNTIL THE VALIDATOR IS RE-RELEASED.
-  # tools/build_admission_lambda.py packages config/*.yaml into the admission validator's
-  # zip, so the deployed rule is whatever was in the zip at release time and not what is on
-  # main. Phase 4 paid for that once already: a GPU submission was refused with
+  # policy.yaml is one of the seven files tools/build_admission_lambda.py names in
+  # ADMISSION_CONFIG and packages into the admission validator's zip, so the deployed rule
+  # is whatever was in the zip at release time and not what is on main. It is no longer two
+  # releases: the lifecycle recorder reads no configuration and its builder packages none. Phase 4 paid for that once already: a GPU submission was refused with
   # unprovisioned_compute_profile because the deployed zip held a catalog in which the
   # profile was not yet promoted. Follow the release procedure in infra/README.md after
   # this merges, or the runs this was written for keep waiting for a lead.

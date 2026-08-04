@@ -29,6 +29,17 @@ The configuration is copied to `edullm_platform/config/`, which is where
 :func:`edullm_platform.admission_handler.config_directory` looks when
 ``EDULLM_CONFIG_DIR`` is unset. That placement is what makes the decision record's
 ``policy_version`` a fact about what was deployed rather than a claim by the caller.
+
+**Which configuration is named, not globbed, and the caller says which.** This copied
+`config/*.yaml` until 2026-08-04, and the cost was paid by everybody except the two
+functions: a change to any file under `config/` moved both release digests, so
+`test_the_released_zip_is_the_one_this_tree_builds` went red on a comment block and on one
+appended roster line, and only somebody with AWS credentials could clear it. The lifecycle
+recorder reads no configuration at all and was carrying every byte of it.
+
+Globbing is also the weaker check. A renamed config file left the glob perfectly happy and
+produced a zip the handler would fail against at run time; a named set fails the build,
+here, with the missing filename in the message.
 """
 
 from __future__ import annotations
@@ -42,10 +53,11 @@ import sys
 import tempfile
 import tomllib
 import zipfile
-from collections.abc import Iterable, Sequence
+from collections.abc import Collection, Iterable, Sequence
 from pathlib import Path
 
 __all__ = [
+    "ADMISSION_CONFIG",
     "ADMISSION_ENTRYPOINT",
     "DEFAULT_PYTHON_PLATFORM",
     "DEFAULT_PYTHON_VERSION",
@@ -68,6 +80,27 @@ DEFAULT_PYTHON_VERSION = "3.12"
 #: the lifecycle recorder's builder passes its own, and a default that silently applied
 #: to both would package one function's dependencies into the other.
 ADMISSION_ENTRYPOINT = "edullm_platform.admission_handler"
+
+#: Every file under ``config/`` the admission validator opens at run time, and nothing
+#: else. Measured rather than assembled from memory: a CPython audit hook on the ``open``
+#: event, which fires below pathlib and yaml alike, recorded exactly these seven across the
+#: handler's accept, refuse and error branches. ``tests/test_lambda_package_closure.py``
+#: holds the list to what the packaged modules name, in both directions, so a handler that
+#: starts reading an eighth fails there rather than in production on a missing file.
+#:
+#: ``capacity.yaml`` is the one deliberately absent. Nothing either handler carries names
+#: it, so shipping it only bought the digest churn this list exists to stop.
+ADMISSION_CONFIG = frozenset(
+    {
+        "datasets.yaml",
+        "execution-targets.yaml",
+        "image-exceptions.yaml",
+        "organization.yaml",
+        "policy.yaml",
+        "repositories.yaml",
+        "workload-catalog.yaml",
+    }
+)
 
 #: The package, and the configuration it reads at runtime.
 PACKAGE_DIRECTORY = Path("src") / "edullm_platform"
@@ -248,26 +281,57 @@ def _write_deterministic_zip(staging: Path, output: Path) -> int:
     return len(members)
 
 
+def _resolve_configuration(config_source: Path, configuration: Collection[str]) -> list[Path]:
+    """The declared config files, or a refusal naming the ones that are not there.
+
+    A missing name is refused rather than skipped, which is the half the previous glob got
+    wrong. ``config/*.yaml`` shipped whatever happened to be present, so renaming
+    ``policy.yaml`` produced a zip that built, uploaded and deployed cleanly, and then
+    failed on its first invocation reading a file that no longer existed. The build is the
+    cheapest place to find that out.
+    """
+    resolved = [config_source / name for name in sorted(configuration)]
+    absent = [path.name for path in resolved if not path.is_file()]
+    if absent:
+        raise LambdaPackageError(
+            f"{config_source} does not hold {', '.join(absent)}, which this handler is "
+            "declared to read; a zip built without it would deploy and then fail at the "
+            "first invocation on a file that is not there"
+        )
+    return resolved
+
+
 def build_package(
     project_root: Path,
     output: Path,
     *,
     entrypoint: str = ADMISSION_ENTRYPOINT,
+    configuration: Collection[str] = ADMISSION_CONFIG,
     python_platform: str = DEFAULT_PYTHON_PLATFORM,
     python_version: str = DEFAULT_PYTHON_VERSION,
 ) -> dict[str, object]:
     """Assemble the deployment zip and describe what went into it.
 
-    ``entrypoint`` decides what gets packaged, which is the property that keeps the release
-    digest attached to this function rather than to the whole repository. Before it, the zip
-    carried all 66 modules under ``src/edullm_platform`` and the digest moved for any change
-    to any of them -- four times in one session, each on a module the validator never
-    imports. Each move is a rebuild, an upload, a template edit, and a bundle regeneration
-    that now takes over half an hour.
+    ``entrypoint`` decides which modules get packaged and ``configuration`` decides which
+    config files do. Together they are what keeps the release digest attached to this
+    function rather than to the whole repository.
+
+    Before ``entrypoint``, the zip carried all 66 modules under ``src/edullm_platform`` and
+    the digest moved for any change to any of them -- four times in one session, each on a
+    module the validator never imports. Before ``configuration``, it carried every
+    ``config/*.yaml``, and the digest moved for any change to any of those too, including a
+    comment and a single appended roster line. Each move is a rebuild, an upload, a template
+    edit, and a bundle regeneration that now takes over half an hour -- and a red required
+    check that only somebody holding AWS credentials can clear.
 
     ``infra/admission-validator-release.yaml`` named this fix before it was made: *if the
     tax becomes the thing that hurts, the fix is to package less rather than to check less*.
     The check is unchanged -- the digest still has to match a zip built from this tree.
+
+    Both defaults are the admission validator's, because that is the caller this module is
+    named for. The lifecycle recorder passes its own pair, and passes them together: an
+    entrypoint without its configuration would ship one function's files under the other's
+    key, which is the coupling this parameter exists to break.
     """
     package_source = project_root / PACKAGE_DIRECTORY
     config_source = project_root / CONFIG_DIRECTORY
@@ -275,12 +339,7 @@ def build_package(
         if not required.is_dir():
             raise LambdaPackageError(f"{required} is not a directory")
 
-    configuration = sorted(config_source.glob("*.yaml"))
-    if not configuration:
-        raise LambdaPackageError(
-            f"{config_source} holds no .yaml files, so the packaged handler would read "
-            "its policy from nowhere and every decision record would be unattributable"
-        )
+    resolved_configuration = _resolve_configuration(config_source, configuration)
 
     with tempfile.TemporaryDirectory() as directory:
         staging = Path(directory)
@@ -292,10 +351,11 @@ def build_package(
         )
         modules = reachable_modules(project_root, entrypoint)
         _copy_reachable(package_source, staging / "edullm_platform", modules)
-        packaged_config = staging / PACKAGED_CONFIG_PREFIX
-        packaged_config.mkdir(parents=True, exist_ok=True)
-        for source in configuration:
-            shutil.copy2(source, packaged_config / source.name)
+        if resolved_configuration:
+            packaged_config = staging / PACKAGED_CONFIG_PREFIX
+            packaged_config.mkdir(parents=True, exist_ok=True)
+            for source in resolved_configuration:
+                shutil.copy2(source, packaged_config / source.name)
         entries = _write_deterministic_zip(staging, output)
 
     payload = output.read_bytes()
@@ -306,7 +366,7 @@ def build_package(
         "entries": entries,
         "python_platform": python_platform,
         "python_version": python_version,
-        "configuration": [source.name for source in configuration],
+        "configuration": [source.name for source in resolved_configuration],
         "entrypoint": entrypoint,
         # Recorded so a release can be read for what it carries as well as what it
         # hashes to. A number that jumps is a handler that started importing something.

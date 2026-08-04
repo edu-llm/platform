@@ -1,13 +1,17 @@
 # What is actually deployed as the admission validator, recorded beside the template that
 # names it.
 #
-# THE GAP THIS CLOSES COST A LIVE RUN. tools/build_admission_lambda.py copies config/*.yaml
-# into the zip, so the validator reads the catalog it was reviewed against rather than
-# whatever is in a bucket when it runs. That is the right property. Its consequence is that
-# config/workload-catalog.yaml and config/execution-targets.yaml are part of this
-# function's release -- and editing them changes nothing in the account until somebody
-# rebuilds the zip, uploads it, and edits S3ObjectVersion in
-# infra/admission-state-machine.yaml.
+# THE GAP THIS CLOSES COST A LIVE RUN. tools/build_admission_lambda.py copies the seven
+# files it names in ADMISSION_CONFIG into the zip, so the validator reads the catalog it was
+# reviewed against rather than whatever is in a bucket when it runs. That is the right
+# property. Its consequence is that config/workload-catalog.yaml and
+# config/execution-targets.yaml are part of this function's release -- and editing them
+# changes nothing in the account until somebody rebuilds the zip, uploads it, and edits
+# S3ObjectVersion in infra/admission-state-machine.yaml.
+#
+# It copied config/*.yaml until 2026-08-04, which put files this function never opens into
+# that sentence as well. Narrowing it to the measured seven is what the "package less" note
+# below asked for, applied a second time -- to the configuration rather than the modules.
 #
 # Phase 4 walked into it. The GPU compute environment, queue, job definition and roles were
 # deployed and VALID, both config files agreed, the suite was green, and the first GPU
@@ -136,8 +140,8 @@ schema_version: 1
 #: compared: a version id edited in one place and not the other is a template pointing at
 #: a zip nobody recorded, or a record describing a zip nobody deployed.
 s3_key: admission-validator/admission-validator.zip
-s3_object_version: jg3MYTiuJAg6xw8j0qIkcNsjwSVUYBZx
+s3_object_version: TPmo8NeJBp4EP_Vs82xveP0SAEBlj2YE
 
 #: sha256 of the uploaded zip, as tools/build_admission_lambda.py reports it. This is the
 #: field that ties the release to a tree rather than to a moment.
-sha256: 5fa118668a2725d5c1a7fa7cde1815bd96f2c30e6139f5b69e4182de90c2df60
+sha256: 347b0b7561d3ef7d235c5582e44875b36c74cbcb904174d7f91b067f603d72f3

@@ -28,6 +28,7 @@ import pytest
 import yaml
 
 from tools.build_admission_lambda import (
+    ADMISSION_CONFIG,
     DEFAULT_PYTHON_PLATFORM,
     DEFAULT_PYTHON_VERSION,
     LambdaPackageError,
@@ -105,22 +106,21 @@ def test_the_configuration_lands_where_the_handler_looks_for_it(names: list[str]
     # The handler resolves config relative to its own __file__, so the files it loads have
     # to sit inside the package rather than at the root of the archive.
     #
-    # execution-targets.yaml is named here as well as the four the handler has always read,
-    # because it is the file that decides whether an accepted manifest has anywhere to run.
-    # It reached the zip on its own -- the builder copies config/*.yaml -- so nothing here
-    # ever asserted it, and a change to the glob or to the file's name would have produced
-    # a validator that refuses every submission with no execution target while both
-    # committed config files said otherwise.
+    # Equality rather than containment, which it was until 2026-08-04. Containment could
+    # only ever report a file that had gone missing, and the failure that actually cost
+    # something was the opposite one: the builder globbed config/*.yaml, so every file in
+    # that directory rode along whether the validator read it or not, and each one put its
+    # own edits into this function's release digest. The set below is what
+    # tests/test_lambda_package_closure.py holds against the modules this zip carries, so a
+    # file added here that no packaged module names fails there by name.
     packaged = {name.removeprefix(PACKAGED_CONFIG_PREFIX) for name in names
                 if name.startswith(PACKAGED_CONFIG_PREFIX)}
 
-    assert {
-        "policy.yaml",
-        "organization.yaml",
-        "workload-catalog.yaml",
-        "datasets.yaml",
-        "execution-targets.yaml",
-    } <= packaged
+    assert packaged == set(ADMISSION_CONFIG)
+    assert "capacity.yaml" not in packaged, (
+        "nothing the validator carries reads the capacity report, so shipping it only "
+        "moves this function's release digest when somebody edits it"
+    )
 
 
 @pytest.mark.slow
@@ -216,14 +216,26 @@ def test_the_released_zip_is_the_one_this_tree_builds(package: dict[str, object]
     )
 
 
-@pytest.mark.slow
-def test_a_missing_configuration_directory_is_refused_rather_than_packaged_empty(
+def test_a_declared_configuration_file_that_is_not_there_refuses_the_build(
     tmp_path: Path,
 ) -> None:
-    # A zip with no policy in it deploys and runs, and every decision it makes cites a
-    # policy version that came from nowhere. Failing the build is the cheaper outcome.
+    """Mutation: rename a file under config/ and release without touching the builder.
+
+    A zip with no policy in it deploys and runs, and every decision it makes cites a policy
+    version that came from nowhere. Failing the build is the cheaper outcome.
+
+    This is stronger than the check it replaced, and the strengthening is the point of
+    naming the files rather than globbing them. The old build took ``config/*.yaml`` and
+    refused only when the directory was empty, so renaming ``policy.yaml`` produced a zip
+    that built, uploaded, deployed and then failed on its first invocation. Now the missing
+    name is in the build's own error, before anything is uploaded.
+
+    Not marked slow, and deliberately: the refusal happens before ``uv pip install`` is
+    reached, so this one costs nothing and runs on every ``-m "not slow"`` pass.
+    """
     (tmp_path / "src" / "edullm_platform").mkdir(parents=True)
     (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "policy.yaml").write_text("policy_version: v1\n", encoding="utf-8")
 
-    with pytest.raises(LambdaPackageError, match="no .yaml files"):
+    with pytest.raises(LambdaPackageError, match="organization.yaml"):
         build_package(tmp_path, tmp_path / "out.zip")

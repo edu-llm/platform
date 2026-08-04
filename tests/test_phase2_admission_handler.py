@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,7 @@ from edullm_platform.admission_handler import (
     AdmissionEventError,
     handler,
 )
+from tools.build_admission_lambda import ADMISSION_CONFIG
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 STATE_MACHINE_PATH = PROJECT_ROOT / "infra" / "admission-state-machine.yaml"
@@ -194,6 +196,43 @@ def test_the_handler_admits_a_routine_submission_a_lead_released(
     assert result["accepted"] is True
     assert result["reason"] == "accepted"
     assert result["run_id"] == ACCEPTED_EVENT["run_id"]
+
+
+def test_the_handler_admits_the_same_submission_with_only_the_packaged_config_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: drop a file from ``ADMISSION_CONFIG`` that the handler reads.
+
+    THE SUFFICIENCY HALF OF THE NARROWING, RUN RATHER THAN REASONED ABOUT. Every other
+    check on the packaged config set is static -- the builder declares a list, and
+    ``tests/test_lambda_package_closure.py`` compares it against the filenames the packaged
+    modules name. Static analysis can say the list is consistent with the source; it cannot
+    say the function starts.
+
+    So this stages exactly what the zip carries into an empty directory, points
+    ``EDULLM_CONFIG_DIR`` at it, and admits a real submission through the real handler.
+    Anything the validator needs and the builder does not package is a FileNotFoundError
+    here, on a laptop, instead of on whichever invocation first reached the read.
+
+    Deliberately not built from ``config/`` by exclusion. The directory starts empty and
+    receives only the declared names, so a file the handler reads and the builder forgot
+    cannot be present by accident -- which is precisely how the old glob hid the question.
+    """
+    staged = tmp_path / "config"
+    staged.mkdir()
+    for name in sorted(ADMISSION_CONFIG):
+        shutil.copyfile(PROJECT_ROOT / "config" / name, staged / name)
+    monkeypatch.setenv("EDULLM_CONFIG_DIR", str(staged))
+
+    result = handler(ACCEPTED_EVENT, InvocationContext())
+
+    assert sorted(path.name for path in staged.iterdir()) == sorted(ADMISSION_CONFIG)
+    assert result["accepted"] is True
+    assert result["reason"] == "accepted"
+    # Reaching an execution target means execution-targets.yaml was read as well as merely
+    # present, which is the file the narrowing was most likely to get wrong: the handler
+    # loads it last and a submission refused earlier would never touch it.
+    assert result["execution"]["submit_request"]["JobQueue"]
 
 
 def test_the_records_are_mappings_rather_than_strings(_packaged_config: None) -> None:

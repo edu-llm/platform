@@ -2,8 +2,8 @@
 
 Phase: phase-2
 Bundle schema version: 1
-Source commit: 21bf77f9aa8b725b00acdef53471e8ab83c3f145
-Generated: 2026-08-03T05:04:15+00:00
+Source commit: 4544c7945b069b750dac3ca83f153ad72fdf716e
+Generated: 2026-08-04T19:42:49+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 2 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase2_proof.py` at generation time. It is not done, and the Result table below says by how much.
 
@@ -44,15 +44,15 @@ This run evaluated 22 acceptance criteria: thirteen criteria are covered, one cr
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 4691 |
-| suite tests executed | 4498 |
-| suite passed | 4495 |
-| suite failed | 3 |
+| suite tests collected | 4815 |
+| suite tests executed | 4622 |
+| suite passed | 4622 |
+| suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
-| matrix node ids executed | 661 |
-| matrix node ids passed | 660 |
-| matrix node ids failed | 1 |
+| matrix node ids executed | 668 |
+| matrix node ids passed | 668 |
+| matrix node ids failed | 0 |
 | phase criteria | 22 |
 | criteria COVERED | 13 (1, 5, 8, 9, 10, 13, 15, 16, 17, 18, 20, 21, 22) |
 | criteria DEFERRED | 1 (4) |
@@ -89,8 +89,8 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | --- | --- |
 | .github/workflows/deploy-phase2-admission.yml | sha256:b2f22ae639f6485e2ca00a36e1a56caa28b25c13e99d5a7858323c75789a960a |
 | .github/workflows/submit-run.yml | sha256:b20848efc0aa5100d96b70007a0b280ddfea46cce9e1c4f741071e06b6dfcaaa |
-| config/organization.yaml | sha256:4b3d6cbdc0c080dc01b36918401f720f9cfc87d821a6cfa61787fdc7020d80cf |
-| config/policy.yaml | sha256:5ba9029052c35c3b9d45323f80bcdc44019d6752da3191a13e44b9dac6a59ff2 |
+| config/organization.yaml | sha256:93dbb74ea3f44c5b1bf9d00d505acfa888a6e78bf456550d0202989571d9c56a |
+| config/policy.yaml | sha256:093eb2bc7e52c1e452538928f3579bde26e6dd425018516b1211268c944247ad |
 | fixtures/authorization/admin-exception.yaml | sha256:c49db36e999df3cefd9d3e95127fe947479d121ca6b6b450839e9f0c8ae8144f |
 | fixtures/authorization/lead-self-authorization.yaml | sha256:4879d23dffb1ae9c3d81cdb35e382a1636b0642f75b7cc2afe0f8a54cebc562b |
 | fixtures/authorization/member-approval.yaml | sha256:d6da4e22145165f4233c7c150789d2eea7fb9a7d8cf8546e72812bb971bd4dc4 |
@@ -110,10 +110,13 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | fixtures/evidence/phase-2/lineage/records/intent/run_019fa46a-5478-70ea-aab6-28de23c41f7f.json | sha256:89ad215366a6c1e6177e24a04de4db99f0687529175d9bccae39ef3dfadd4ba1 |
 | fixtures/evidence/phase-2/lineage/records/intent/run_019fa471-0173-7050-a41b-22ca01969b52.json | sha256:e1e6f323427445671f554e4af5d23ea7a2020b578d926d6e934d3144604be0ba |
 | fixtures/evidence/phase-2/lineage/records/intent/run_019fa4c0-390d-7081-b539-08d9ff6b58be.json | sha256:be35e6f2797c899e1a5b44544ed64d053b125f6d17cb47fb0cc6932f2fd976a5 |
-| infra/admission-state-machine.yaml | sha256:0aa031367d1b6122af13c4deddc66c90dbac8cf6b991ad86bd039044c56ea9fd |
+| fixtures/evidence/phase-2/roles/sbsandbox-intern-edullm-admission-lambda.sanitized.json | sha256:79efca9fc776a71276c5c2651f5fec6e5d6b5af6198e51aff6ec04f22d84b394 |
+| fixtures/evidence/phase-2/roles/sbsandbox-intern-edullm-admission-states.sanitized.json | sha256:7f5b2b17699b500aa4c81858713e023dc32c0c1b03cf17072fc767d4970bcf72 |
+| fixtures/evidence/phase-2/roles/sbsandbox-intern-edullm-admission.sanitized.json | sha256:793fc202cad5109496a22cea9edc5ae32ac2da7c06e5cc04e38ca46e02e259f3 |
+| infra/admission-state-machine.yaml | sha256:f9ea3eb422945be7fded597d1d17b578ed32ff1601c4ba9fd22af4a73a1fda15 |
 | infra/iam/admission-role.yaml | sha256:88e95f2909742310afaee41e0a695ceaff3fafe8a4dc3320033b6e76f71fcd79 |
-| infra/iam/admission-service-roles.yaml | sha256:0dd336c579739f71ee8ae69f4e2268db22150785633ebff577837f7f93711cbd |
-| infra/iam/infra-deployer-role.yaml | sha256:596abb25126c0f10d734cbecd01bec08495cac63b19a81ab46870318504774ac |
+| infra/iam/admission-service-roles.yaml | sha256:3839b24f7500d43c9a6606909131c79c103d8ce8dcbdbc6e77ceae94cbc4f14b |
+| infra/iam/infra-deployer-role.yaml | sha256:b85b7f14c7a3b11da5f408bdaa7c60b42c7d8c81dbd2fa97953cb38d0c115a47 |
 | infra/lineage-bucket.yaml | sha256:9bad0303f92659a47caa1fe57f1bf10c77a3b11a11a9f58f21b1c341befd761d |
 
 ## Known limitations
