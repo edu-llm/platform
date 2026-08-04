@@ -244,6 +244,26 @@ All five count the suite the same way and each excludes all five generator test 
 from its own verification run, so adding a generator moves a cell in every bundle. Any
 bundle recording four generator modules was written before Phase 5 had one and is stale.
 
+Counting the suite the same way is also why there is a sixth command, and it is the one to
+reach for when a change moves a digest and every bundle has to be rebuilt:
+
+```bash
+uv run python tools/build_all_proofs.py
+```
+
+Each generator verifies the tree by running the whole suite in a child pytest, and
+`run_full_suite` keeps that answer against the tree it measured so a second generator in the
+same process reuses it rather than measuring again. That memory is process-local on purpose,
+so five commands are five processes and the cache never fires: five separate invocations ran
+the whole suite five times over. One invocation runs it once and each phase's own targeted
+run after it. The five per-phase commands are unchanged and are still the right ones for a
+single bundle.
+
+Nothing about a bundle's contents changes — this calls the same `build_bundle` with the same
+arguments — except that the five now record one `generated_at` rather than five a few minutes
+apart, because they now rest on one verification. Give the five commands and this one the
+same `--generated-at` and an `--output-root`, and the bundles they write compare equal.
+
 Phase 4 has an acceptance gate and no generator, so there is no `proof/phase-4/`. Its
 evidence is committed under `fixtures/evidence/phase-4/` and read by the tests the gate
 cites.
