@@ -1331,6 +1331,15 @@ def test_every_ceiling_is_a_whole_number_of_the_instances_it_would_buy() -> None
     the one that will not be checked against the others. The vCPU counts come from
     ``INSTANCE_EVIDENCE``, which the capacity capture already keeps true against
     ``describe-instance-types``, so this cannot pass by agreeing with a second guess.
+
+    THIS USED TO ASSERT ``len(instance_types) == 1`` AND THAT WAS A SECOND CLAIM SMUGGLED INTO
+    A CEILING TEST. The one-type rule belonged to infra/batch-compute-gpu.yaml, which argued
+    it on the premise that capacity was not short; when that stopped being true of the P pool
+    on 2026-08-04 the rule had to go there, and a test named for whole instances was the wrong
+    place to be enforcing it. What this test is actually for survives intact and gets stricter:
+    every type an environment may launch has to divide its ceiling, because Batch may choose
+    any of them and a remainder under either one is capacity no job can occupy. A mixed-vCPU
+    pair now fails here, which is the check the old assertion was standing in for.
     """
     ceilings = {
         resource["Properties"]["ComputeEnvironmentName"]: resource["Properties"]["ComputeResources"]
@@ -1342,13 +1351,12 @@ def test_every_ceiling_is_a_whole_number_of_the_instances_it_would_buy() -> None
 
     assert len(ceilings) == 16
     for name, resources in ceilings.items():
-        instance_types = resources["InstanceTypes"]
-        assert len(instance_types) == 1, f"{name} lists more than one instance type"
-        instance_vcpus = INSTANCE_EVIDENCE[instance_types[0]]["required_vcpus"]
-        assert resources["MaxvCpus"] % instance_vcpus == 0, (
-            f"{name} ceilings {resources['MaxvCpus']} vCPU of {instance_types[0]}, which is "
-            f"{resources['MaxvCpus'] % instance_vcpus} vCPU short of a whole instance"
-        )
+        for instance_type in resources["InstanceTypes"]:
+            instance_vcpus = INSTANCE_EVIDENCE[instance_type]["required_vcpus"]
+            assert resources["MaxvCpus"] % instance_vcpus == 0, (
+                f"{name} ceilings {resources['MaxvCpus']} vCPU of {instance_type}, which is "
+                f"{resources['MaxvCpus'] % instance_vcpus} vCPU short of a whole instance"
+            )
 
 
 @pytest.mark.parametrize("compute_profile", PROMOTED_PROFILES)
