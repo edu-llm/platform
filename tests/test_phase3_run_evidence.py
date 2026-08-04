@@ -31,12 +31,14 @@ from __future__ import annotations
 
 import json
 import shutil
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 import pytest
 
+from edullm_platform import phase1_capture
 from edullm_platform.evidence import (
     AWS_ACCOUNT_ID_PATTERN,
     CAPTURE_SUFFIX,
@@ -45,7 +47,13 @@ from edullm_platform.evidence import (
     redact_content_digests,
     scan_for_secrets,
 )
-from edullm_platform.phase1_capture import CaptureVerdict, read_committed_role_captures
+from edullm_platform.pending_amendments import PendingAmendment
+from edullm_platform.phase1_capture import (
+    CaptureVerdict,
+    CommittedRoleCapture,
+    only_a_pending_deploy_stands_in_the_way,
+    read_committed_role_captures,
+)
 from edullm_platform.phase3_capture import (
     PHASE3_CAPTURE_DIR,
     RUNS_SUBDIR,
@@ -604,6 +612,14 @@ FORMERLY_UNDECLARED_WORKLOAD_POLICY: Final = "dataset-validator"
 WORKLOAD_ROLE: Final = "sbsandbox-intern-edullm-batch-workload"
 
 
+def phase3_captures() -> tuple[CommittedRoleCapture, ...]:
+    return read_committed_role_captures(
+        PROJECT_ROOT,
+        capture_dir=CAPTURES / "roles",
+        role_templates=PHASE3_ROLE_TEMPLATES,
+    )
+
+
 def test_every_deployed_role_matches_the_template_that_declares_it() -> None:
     """The deployed half of criteria 13 and 14, which no template test can supply.
 
@@ -617,26 +633,63 @@ def test_every_deployed_role_matches_the_template_that_declares_it() -> None:
     There is no exemption any more. This module carried one for four days and it is gone,
     which is the outcome an exemption is supposed to have.
 
+    **A RECORDED PENDING AMENDMENT SKIPS AND EVERYTHING ELSE STILL FAILS, WHICH IS NOT AN
+    EXEMPTION RETURNING.** Two of these four roles are amended from a laptop, so a template
+    change and the deploy that realises it are two acts with a window between them, and
+    inside that window the account is genuinely behind the template. This assertion used to
+    read that state as a role widened in a console -- the same red, the same message -- so
+    a merge that was waiting on somebody's SSO session was indistinguishable from a security
+    finding, and `infra/README.md` records the consequence in the words "a rename merged on
+    its own leaves `main` broken until somebody with SSO credentials is available".
+
+    :mod:`edullm_platform.pending_amendments` already draws the distinction and
+    :attr:`~edullm_platform.phase1_capture.CaptureVerdict.PENDING_DEPLOY` already names it;
+    what was missing was any consumer here. `tests/test_phase1_deployed_roles.py` consults
+    the registry for its own two roles and this module did not for its four, so the state
+    was load-bearing in one phase and inert in the other. It is the same shape today's
+    `PendingRelease` settled for the two Lambdas: a recorded, explained wait becomes a
+    labelled skip, and unexplained skew still fails.
+
+    The skip is bounded by
+    :func:`~edullm_platform.phase1_capture.only_a_pending_deploy_stands_in_the_way`, which
+    returns nothing at all if any *other* capture has also stopped holding -- expired,
+    unreadable, or drifted for a reason nobody wrote down. So a second problem arriving
+    while an amendment is open takes the ordinary path, which is the loud one, and an
+    expiry can never disappear into a message about a deploy. The record is compared to the
+    findings for equality in both directions besides, so it cannot outlive the deploy it is
+    waiting for: the moment the account stops differing in exactly the recorded way, this
+    goes back to failing.
+
+    **SKIPPING HERE DOES NOT CERTIFY THE PHASE, AND THAT IS WHY IT IS ALLOWED TO SKIP.** The
+    objection to standing down is that criteria resting on these captures are not true while
+    the account is behind the template, and it is right. It is also already answered one
+    layer up:
+    :meth:`~edullm_platform.criteria_runner.SelectionOutcome.failed` is every cited node id
+    not observed *passing*, and
+    :func:`~edullm_platform.criteria_runner._passing_node_ids` excludes any case carrying a
+    ``<skipped>`` element from the JUnit report. A skipped citation is therefore a ``gap``
+    and the phase gate exits 1, exactly as a failure would. So the suite stops calling a
+    recorded deploy window a defect, and the gate goes on refusing to certify it --
+    which is the split the two readings of this assertion were each half of.
+
     EVERY ROLE IS REPORTED, NOT THE FIRST ONE THAT FAILS, and the difference showed up the
     moment two roles were out at once. This looped and asserted per capture, so a second
     role falling behind its template arrived as no new information: the message named
     whichever role sorted first and the other one simply stopped being visible, which is
     how a pre-existing failure gets absorbed by a new change rather than surviving it.
     Collected and asserted once instead, so the failure lists every role and its detail.
-
-    ``PENDING_DEPLOY`` is not accepted here and that is deliberate. A recorded amendment
-    (:mod:`edullm_platform.pending_amendments`) says a difference is expected and says what
-    would end it; it does not make the account hold the template, and the criteria resting
-    on these captures are not certified until it does. What the verdict buys is that this
-    failure can tell an undeployed amendment from a role widened in a console, which the
-    detail below carries.
+    That survives the skip above it: the two answer different questions, and a run where
+    some other capture has also stopped holding gets the full list rather than the skip.
     """
-    captures = read_committed_role_captures(
-        PROJECT_ROOT,
-        capture_dir=CAPTURES / "roles",
-        role_templates=PHASE3_ROLE_TEMPLATES,
-    )
+    captures = phase3_captures()
     assert len(captures) == len(PHASE3_ROLE_TEMPLATES)
+
+    waiting = only_a_pending_deploy_stands_in_the_way(captures)
+    if waiting:
+        pytest.skip(
+            "waiting on a laptop deploy, not on a fix in this tree:\n  "
+            + "\n  ".join(_what_the_deploy_would_clear(capture) for capture in waiting)
+        )
 
     not_holding = [
         (capture.role_name, capture.verdict.value, capture.detail)
@@ -649,6 +702,164 @@ def test_every_deployed_role_matches_the_template_that_declares_it() -> None:
     assert not not_holding, "\n".join(
         f"{role_name} [{verdict}]: {detail}" for role_name, verdict, detail in not_holding
     )
+
+
+def _what_the_deploy_would_clear(capture: CommittedRoleCapture) -> str:
+    """The role, why it differs, and the command that ends it -- in the skip message.
+
+    A skip nobody can act on is worse than the failure it replaced, because a failure at
+    least says which assertion. ``detail`` is where the capture reader already assembles the
+    record's ``reason`` and ``cleared_by`` around the findings, so it is quoted rather than
+    reassembled here -- a second copy would be the one that goes stale.
+    """
+    return f"{capture.role_name} ({capture.template_path}): {capture.detail}"
+
+
+#: The Phase 3 role whose capture the two cases below edit. Any of the four would do; this
+#: one is the role `infra/README.md` uses as its own worked example of an amendment landing
+#: before the deploy that realises it.
+AMENDED_ROLE: Final = "sbsandbox-intern-edullm-lifecycle-lambda"
+
+
+def _phase3_payload(role_name: str) -> dict[str, Any]:
+    path = CAPTURES / "roles" / f"{role_name}{CAPTURE_SUFFIX}"
+    payload: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    return payload
+
+
+def _captures_with_one_role_rewritten(
+    directory: Path,
+    role_name: str,
+    rewrite: Callable[[dict[str, Any]], None],
+) -> tuple[CommittedRoleCapture, ...]:
+    """The four committed captures again, with one of them edited before they are read."""
+    for name, _template in PHASE3_ROLE_TEMPLATES:
+        payload = _phase3_payload(name)
+        if name == role_name:
+            rewrite(payload)
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / f"{name}{CAPTURE_SUFFIX}").write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    return read_committed_role_captures(
+        PROJECT_ROOT, capture_dir=directory, role_templates=PHASE3_ROLE_TEMPLATES
+    )
+
+
+def _drop_an_inline_policy(payload: dict[str, Any]) -> None:
+    """Make the deployed role narrower than its template, which is what a pending deploy is."""
+    payload["inline_policies"] = []
+
+
+def test_an_undeployed_amendment_is_the_only_thing_the_skip_stands_down_for(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: soften the skip above into `if any capture is not OK`.
+
+    That spelling passes every day the registry is empty, which is most days, and on the day
+    it matters it turns an expired capture or a role widened in a console into a green skip
+    about a deploy nobody has run. The registry being empty is exactly why this case builds
+    its own captures and its own record: a case that proves a guard has to run in the state
+    the guard exists for, and that state is not the ordinary one.
+
+    Both directions are checked against the same edited capture, which is what makes the
+    pair worth more than either half. With the amendment recorded the guard offers the
+    capture up and the suite skips; with the record removed -- the difference itself
+    unchanged -- the guard offers nothing and the suite fails. So what the skip turns on is
+    the record, and not the fact that something differs.
+    """
+    captures = _captures_with_one_role_rewritten(tmp_path, AMENDED_ROLE, _drop_an_inline_policy)
+    edited = next(capture for capture in captures if capture.role_name == AMENDED_ROLE)
+
+    # Unexplained, because nothing is recorded: the ordinary, loud path.
+    assert edited.verdict is CaptureVerdict.DRIFTED
+    assert only_a_pending_deploy_stands_in_the_way(captures) == ()
+
+    assert edited.report is not None
+    amendment = PendingAmendment(
+        role_name=AMENDED_ROLE,
+        reason="the template gained an inline policy the account has not been given yet.",
+        cleared_by=(
+            "deploying sbsandbox-intern-edullm-phase3-lifecycle-iam from a laptop and "
+            "re-running tools/capture_phase3_evidence.py --target roles."
+        ),
+        findings=edited.report.findings,
+    )
+    monkeypatch.setattr(
+        phase1_capture, "pending_for", lambda name: amendment if name == AMENDED_ROLE else None
+    )
+
+    explained = _captures_with_one_role_rewritten(tmp_path, AMENDED_ROLE, _drop_an_inline_policy)
+    waiting = only_a_pending_deploy_stands_in_the_way(explained)
+
+    assert [capture.role_name for capture in waiting] == [AMENDED_ROLE]
+    assert [capture.verdict for capture in waiting] == [CaptureVerdict.PENDING_DEPLOY]
+    # The skip has to hand a reader the deploy, or it is worse than the failure it replaced.
+    message = _what_the_deploy_would_clear(waiting[0])
+    assert amendment.reason in message
+    assert amendment.cleared_by in message
+
+
+def test_a_second_problem_beside_a_recorded_amendment_still_fails_loudly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: make the skip per-role instead of all-or-nothing.
+
+    A per-role skip is the natural way to write this and it is the one that hides things. An
+    amendment is outstanding for weeks at a time, and anything that goes wrong with one of
+    the other three roles in that window -- a capture expiring, a role widened in a console
+    -- would arrive while the suite was already standing down and would be skipped past
+    under a message about somebody's laptop.
+    """
+    stale = (datetime.now(tz=UTC) - FRESHNESS_WINDOW * 2).isoformat().replace("+00:00", "Z")
+    other = next(
+        name for name, _template in PHASE3_ROLE_TEMPLATES if name != AMENDED_ROLE
+    )
+
+    def spoil_two(payload: dict[str, Any]) -> None:
+        _drop_an_inline_policy(payload)
+
+    captures = _captures_with_one_role_rewritten(tmp_path, AMENDED_ROLE, spoil_two)
+    edited = next(capture for capture in captures if capture.role_name == AMENDED_ROLE)
+    assert edited.report is not None
+    monkeypatch.setattr(
+        phase1_capture,
+        "pending_for",
+        lambda name: (
+            PendingAmendment(
+                role_name=AMENDED_ROLE,
+                reason="recorded, and outstanding.",
+                cleared_by="deploying the stack from a laptop.",
+                findings=edited.report.findings if edited.report else (),
+            )
+            if name == AMENDED_ROLE
+            else None
+        ),
+    )
+
+    # The amendment alone stands the suite down, which is the state the second problem
+    # arrives into.
+    assert only_a_pending_deploy_stands_in_the_way(
+        _captures_with_one_role_rewritten(tmp_path, AMENDED_ROLE, spoil_two)
+    )
+
+    # Now age a different role's capture past its window. Nothing about a laptop deploy
+    # explains an expiry, so the whole guard has to fall back to the loud path.
+    aged = _phase3_payload(other)
+    aged["observed_at"] = stale
+    (tmp_path / f"{other}{CAPTURE_SUFFIX}").write_text(
+        json.dumps(aged, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    with_both = read_committed_role_captures(
+        PROJECT_ROOT, capture_dir=tmp_path, role_templates=PHASE3_ROLE_TEMPLATES
+    )
+
+    verdicts = {capture.role_name: capture.verdict for capture in with_both}
+    assert verdicts[AMENDED_ROLE] is CaptureVerdict.PENDING_DEPLOY
+    assert verdicts[other] is CaptureLoadVerdict.STALE
+    assert only_a_pending_deploy_stands_in_the_way(with_both) == ()
 
 
 def test_the_shared_workload_role_has_not_been_handed_the_dataset_grant_again() -> None:
