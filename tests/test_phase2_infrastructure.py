@@ -103,6 +103,18 @@ AES256_ENCRYPTION = {
 }
 CONDITIONAL_WRITE_PARAMETERS = {"ChecksumAlgorithm": "SHA256", "IfNoneMatch": "*"}
 
+#: IAM's quota on the *aggregate* of one role's inline policies, which is the detail that
+#: makes the obvious workaround useless: splitting a document in two spends the same bytes.
+IAM_INLINE_POLICY_LIMIT = 10240
+#: What the pseudo-parameters resolve to in the account these stacks are applied to. The
+#: quota is charged against the rendered document, so the measurement has to render it.
+DEPLOYED_PARTITION = "aws"
+DEPLOYED_REGION = "us-east-1"
+#: Assembled rather than written out, because tests/test_evidence.py scans the tracked tree
+#: for twelve-digit runs and a literal one here would read as a leaked account id. Every
+#: account id is exactly twelve digits, and the width is all this measurement needs.
+DEPLOYED_ACCOUNT = "0" * 12
+
 
 def role_named(path: object, name: str) -> dict[str, Any]:
     assert isinstance(path, type(ADMISSION_ROLE_PATH))
@@ -144,6 +156,42 @@ def arn_segments(arn: str) -> list[str]:
         .replace("${AWS::AccountId}", "ACCOUNT")
     )
     return normalized.split(":", 5)
+
+
+def rendered_inline_policies(role: dict[str, Any]) -> list[tuple[str, str]]:
+    """Each inline policy of a role as the JSON IAM measures, rendered for this account.
+
+    The pseudo-parameters are substituted because IAM never sees them: CloudFormation
+    resolves ``${AWS::AccountId}`` before ``PutRolePolicy`` is called, and the twelve digits
+    it becomes are twelve bytes against the quota. A measurement over the template's own
+    text would report a policy 47 bytes per ARN smaller than the one being submitted.
+
+    Serialized compact, which is what the size limit is counted in -- IAM does not charge
+    for the whitespace CloudFormation strips.
+    """
+
+    def rendered(value: object) -> object:
+        if isinstance(value, dict):
+            if list(value) == ["Fn::Sub"]:
+                substituted = value["Fn::Sub"]
+                assert isinstance(substituted, str), f"unexpected Fn::Sub shape: {value}"
+                return (
+                    substituted.replace("${AWS::Partition}", DEPLOYED_PARTITION)
+                    .replace("${AWS::Region}", DEPLOYED_REGION)
+                    .replace("${AWS::AccountId}", DEPLOYED_ACCOUNT)
+                )
+            return {key: rendered(nested) for key, nested in value.items()}
+        if isinstance(value, list):
+            return [rendered(nested) for nested in value]
+        return value
+
+    return [
+        (
+            policy["PolicyName"],
+            json.dumps(rendered(policy["PolicyDocument"]), separators=(",", ":")),
+        )
+        for policy in role["Policies"]
+    ]
 
 
 def state_machine_definition() -> dict[str, Any]:
@@ -857,6 +905,41 @@ def test_every_phase2_role_carries_the_permissions_boundary_and_a_capped_session
         assert role["PermissionsBoundary"] == BOUNDARY
         assert role["MaxSessionDuration"] <= 3600
         assert role["Policies"]
+
+
+def test_every_phase2_inline_policy_fits_inside_the_size_iam_will_accept() -> None:
+    """THE CHECK WHOSE ABSENCE LET A TEMPLATE IAM REFUSES TO STORE SIT ON MAIN FOR TWO DAYS.
+    Mutation: add a seventeenth compute profile without spending the bytes for it.
+
+    Every other test in this module asks whether the policy says the right thing. None
+    asked whether IAM would accept it, and on 2026-08-02 the answer became no: the
+    sixteenth profile took run-admission-workflow to 10599 rendered bytes against a 10240
+    cap, the deploy failed with ServiceLimitExceeded, CloudFormation rolled the stack back,
+    and five advertised compute profiles were unsubmittable until 2026-08-04. The suite was
+    green throughout, because a document can be correct and still be one IAM will not store.
+
+    Aggregated per role rather than per policy, which is the shape of the actual quota and
+    the reason the first workaround anybody reaches for does not work: two inline policies
+    of 6000 bytes fail exactly where one of 12000 does.
+    """
+    for path in (ADMISSION_ROLE_PATH, SERVICE_ROLES_PATH):
+        for role in iam_roles(load_template(path)):
+            policies = rendered_inline_policies(role)
+            assert policies, f"{role['RoleName']} carries no inline policy to measure"
+            for name, document in policies:
+                # A renderer that quietly stopped substituting would under-measure every
+                # ARN by 47 bytes and report a policy that fits when it does not.
+                assert "${AWS::" not in document, (
+                    f"{role['RoleName']} / {name} still holds a pseudo-parameter, so what "
+                    "is measured below is the template rather than the policy IAM stores"
+                )
+            total = sum(len(document) for _name, document in policies)
+            assert total <= IAM_INLINE_POLICY_LIMIT, (
+                f"{role['RoleName']} renders to {total} bytes of inline policy against "
+                f"IAM's {IAM_INLINE_POLICY_LIMIT} aggregate cap, so deploying "
+                f"{path.relative_to(PROJECT_ROOT)} fails with ServiceLimitExceeded and "
+                "rolls the stack back with the account left on the previous grant"
+            )
 
 
 def test_no_phase2_template_uses_a_managed_policy_it_could_never_amend() -> None:

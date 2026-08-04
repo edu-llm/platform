@@ -894,10 +894,10 @@ the template and the release record by hand in a reviewed pull request, so the p
 rule above protects — the deploy sits on the far side of a diff somebody read — is
 unchanged. What moved is only which machine holds the credential.
 
-Both functions are released together, because one config edit is two releases:
-`build_package` copies `config/*.yaml` into whatever zip it builds and
-`tools/build_lifecycle_lambda.py` calls the same function, so editing a catalog moves the
-lifecycle recorder's digest even though nothing the recorder does reads a catalog.
+Both functions are released together whenever a change reaches both, which since
+2026-08-04 means a change to `src/edullm_platform` rather than a change under `config/`.
+Each builder now names the config files its own handler reads: the validator's seven, and
+none at all for the recorder. A catalog edit is the validator's release alone.
 
 The step lives inside an existing deploy workflow rather than in a `release-lambda.yml` of
 its own, and that is the trust policy talking rather than a preference. The deployer role
@@ -911,13 +911,18 @@ lands red on the tripwire, the release is dispatched from `main`, and a second s
 request carries the two values. That is a worse sequence than releasing from the branch and
 is the right trade only while the laptop path is unavailable.
 
-**The configuration is inside the zip, so editing `config/` is a release.**
-`tools/build_admission_lambda.py` copies `config/*.yaml` to `edullm_platform/config/`,
-because the validator has to read the catalog it was reviewed against rather than whatever
-happens to be in a bucket when it runs. That is the right property and it has a
-consequence worth stating plainly: a change to `config/workload-catalog.yaml` or
-`config/execution-targets.yaml` changes nothing in the account until this procedure is
-run.
+**The configuration the validator reads is inside the zip, so editing one of those files is
+a release.** `tools/build_admission_lambda.py` copies the seven files named in
+`ADMISSION_CONFIG` to `edullm_platform/config/`, because the validator has to read the
+catalog it was reviewed against rather than whatever happens to be in a bucket when it
+runs. That is the right property and it has a consequence worth stating plainly: a change
+to `config/workload-catalog.yaml` or `config/execution-targets.yaml` changes nothing in the
+account until this procedure is run.
+
+The seven are `datasets.yaml`, `execution-targets.yaml`, `image-exceptions.yaml`,
+`organization.yaml`, `policy.yaml`, `repositories.yaml` and `workload-catalog.yaml`.
+`config/capacity.yaml` and everything under `config/reports/` are not packaged and are not
+a release — nothing either function carries reads them.
 
 Phase 4 paid for this. The GPU compute environment, queue, job definition and roles were
 deployed and `VALID`, both config files agreed, every test was green — and the first GPU
@@ -930,14 +935,20 @@ So the rule is: **promoting a compute profile, or changing anything else under `
 that admission reads, is a validator release.** Rebuild, upload, edit `S3ObjectVersion`,
 and let CI deploy — before submitting anything that depends on the change.
 
-**And it is two releases, not one.** `build_package` in `tools/build_admission_lambda.py`
-copies `config/*.yaml` into whatever zip it is building, and
-`tools/build_lifecycle_lambda.py` calls that same function — so a change to a config file
-moves the lifecycle recorder's digest as well, even though nothing the recorder does reads
-the catalog. Renaming the four workload profiles found this: the validator release was
-expected and planned for, the recorder's was not, and its tripwire is what said so. Both
-release procedures below have to be run for one edit to `config/`, and the table at the top
-of this section lists the two functions precisely so the second is not forgotten.
+**It used to be two releases, and since 2026-08-04 it is one.** `build_package` copied
+`config/*.yaml` into whatever zip it was building and `tools/build_lifecycle_lambda.py`
+called that same function, so a change to a config file moved the lifecycle recorder's
+digest too, even though nothing the recorder does reads one. Renaming the four workload
+profiles found it: the validator release was expected and planned for, the recorder's was
+not, and its tripwire is what said so.
+
+That is fixed at the source rather than by remembering. Each builder names the files its
+own handler reads, so a config edit is the validator's release and the recorder's digest
+does not move. What forced it was CODEOWNERS: eight team leads hold approval on
+`/config/**` so that profile, workload, roster and dataset changes can move without the
+owner, and a lead approving one still left a red required check that only somebody with AWS
+credentials could clear. Two of those four files still require a validator release; none of
+them requires a recorder release any more.
 
 The deployer role needs `s3:ListBucketVersions` on the artifacts bucket for this to work,
 and that is not obvious: Lambda fetches the versioned code object as the deploying
@@ -967,9 +978,11 @@ CI deploy. Same reason as the validator: without the version pinned, a new zip u
 same key leaves the resource's properties byte-identical, the change set comes back empty,
 and `deploy --no-fail-on-empty-changeset` reports success while the old code keeps running.
 
-Both functions package the same `src/edullm_platform` tree, so a contract change reaches
-both and both need releasing. `tools/build_lifecycle_lambda.py` prints the `sha256` of what
-it built for exactly this reason: if neither digest moved, there is nothing to release.
+Both functions package parts of the same `src/edullm_platform` tree, so a contract change
+may reach both and both then need releasing — but only the modules each entry point
+actually imports are carried, so many changes reach one and not the other.
+`tools/build_lifecycle_lambda.py` prints the `sha256` of what it built for exactly this
+reason: if neither digest moved, there is nothing to release.
 
 ## Rotating the W&B API key
 

@@ -34,7 +34,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from edullm_platform.evidence import CAPTURE_SUFFIX, CaptureLoadVerdict, scan_for_secrets
-from edullm_platform.pending_amendments import UNREACHABLE_COMPUTE_PROFILES, pending_for
+from edullm_platform.pending_amendments import PendingAmendment, pending_for
 from edullm_platform.phase1_capture import (
     CaptureVerdict,
     CommittedRoleCapture,
@@ -146,6 +146,25 @@ def test_every_committed_phase_2_capture_matches_the_template_that_declares_it()
         ), capture.detail
 
 
+def queues_a_pending_amendment_excuses(pending: PendingAmendment | None) -> set[str]:
+    """The queues a recorded amendment says the account has not received the grant for.
+
+    Read out of the record's own findings rather than from a list beside it, which is what
+    this was until the 2026-08-04 deploy. The list named five profiles and had to be kept in
+    step by hand with the findings two files away; deleting the amendment left it behind,
+    still asserting that five profiles were unreachable on a day the account reached all
+    sixteen. Derived, it cannot say anything the record does not.
+    """
+    if pending is None:
+        return set()
+    return {
+        arn.rstrip(",").rsplit("/", 1)[-1]
+        for finding in pending.findings
+        for arn in finding.detail.split()
+        if ":job-queue/" in arn
+    }
+
+
 def test_the_deployed_states_role_may_submit_to_every_queue_the_templates_create() -> None:
     """THE CHECK WHOSE ABSENCE LET FIVE COMPUTE PROFILES GO UNSUBMITTABLE FOR TWO DAYS.
     Mutation: promote a compute profile and deploy the queue without deploying the role.
@@ -167,12 +186,7 @@ def test_the_deployed_states_role_may_submit_to_every_queue_the_templates_create
     """
     created = queues_the_templates_create()
     deployed = queues_the_deployed_role_may_submit_to()
-    pending = pending_for(STATES_ROLE)
-    expected_gap = (
-        set()
-        if pending is None
-        else {f"sbsandbox-intern-edullm-{profile}" for profile in UNREACHABLE_COMPUTE_PROFILES}
-    )
+    expected_gap = queues_a_pending_amendment_excuses(pending_for(STATES_ROLE))
 
     assert created, "no compute template declares a queue, so the comparison would be vacuous"
     assert created - deployed == expected_gap

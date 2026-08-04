@@ -23,8 +23,11 @@
 # should be deleted. A list that only grows stops describing anything.
 #
 # Not read by either Lambda. This file is under `config/reports/` rather than in `config/`
-# because `tools/build_admission_lambda.py` copies `config/*.yaml` into both zips, and
-# acknowledging a run should not cost a rebuild, an upload and two release records.
+# because `tools/build_admission_lambda.py` used to copy `config/*.yaml` into both zips,
+# and acknowledging a run should not cost a rebuild, an upload and two release records.
+# Each builder now names the files its own handler reads, so a file in `config/` that
+# neither reads costs nothing either -- but the subdirectory still says what this is, and
+# `tests/test_lambda_package_closure.py` is now what keeps an unread file out of a zip.
 schema_version: 1
 
 acknowledgements:

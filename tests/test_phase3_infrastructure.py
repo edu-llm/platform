@@ -1206,8 +1206,11 @@ def test_the_job_definition_the_states_role_may_submit_is_the_one_that_is_regist
 
     ``SubmitJob`` authorizes against the queue and the job definition together, so a rename
     on one side denies every submission -- which fails closed and still costs a live run to
-    diagnose. Both ARN forms are required because RegisterJobDefinition mints a revision on
-    every deploy and the revision is part of the ARN.
+    diagnose. Each name is granted with a trailing wildcard because RegisterJobDefinition
+    mints a revision on every deploy and the revision is part of the ARN; an IAM wildcard
+    matches ``:`` like any other character, so one ``-run*`` covers the bare definition and
+    every revision of it. That used to be spelled as two ARNs each, and the pair is what
+    took the rendered policy over IAM's 10240-byte cap on 2026-08-02.
 
     **A third name the templates do not create, and it is the point of this phase.** An
     accepted run registers a definition of its own so that the digest its manifest declared
@@ -1225,17 +1228,16 @@ def test_the_job_definition_the_states_role_may_submit_is_the_one_that_is_regist
         for name in (named_after(arn, "job-definition") for arn in states_role_submit_arns())
         if name is not None
     }
-    revisions = [arn for arn in states_role_submit_arns() if arn.endswith(":*")]
-
     assert registered == {
         JOB_DEFINITION_NAME,
         GPU_JOB_DEFINITION_NAME,
         *GPU_SHAPE_JOB_DEFINITION_NAMES,
     }
-    assert from_the_role == registered | {PER_RUN_JOB_DEFINITION_NAME}
-    assert len(revisions) == len(from_the_role), (
+    assert from_the_role == {f"{name}*" for name in registered} | {PER_RUN_JOB_DEFINITION_NAME}
+    assert all(name.endswith("*") for name in from_the_role), (
         "a grant on the bare definition name authorizes nothing once a second revision "
-        "exists, so every definition this role may submit to needs both ARN forms"
+        "exists, so every definition this role may submit to is named with a trailing "
+        "wildcard -- which covers the revision because an IAM wildcard matches ':'"
     )
 
 

@@ -5,6 +5,15 @@ moved for any change to any of them -- four times in one session, each on a modu
 handler imports. Each move costs a rebuild, an upload, a template edit and a bundle
 regeneration that now takes over half an hour.
 
+It also used to hold every file under ``config/``, with the same consequence and a worse
+audience. Eight team leads hold CODEOWNERS approval on ``/config/**`` so that profiles,
+workloads, roster and dataset changes can move without the owner -- and every one of those
+changes moved both release digests and left
+``test_the_released_zip_is_the_one_this_tree_builds`` red, which only somebody with AWS
+credentials could clear. A lead could approve a change they could not land. So the
+configuration is now named per handler too, and the two tests below hold each list to what
+that handler's modules actually name.
+
 ``infra/admission-validator-release.yaml`` named the fix before it was made -- *package
 less, rather than check less* -- and warned against the wrong version of it: deciding
 reachability by reading imports and hoping the reading is right. So the build does not
@@ -31,16 +40,26 @@ from pathlib import Path
 import pytest
 
 from tools.build_admission_lambda import (
+    ADMISSION_CONFIG,
     ADMISSION_ENTRYPOINT,
     PACKAGE_DIRECTORY,
     reachable_modules,
 )
-from tools.build_lifecycle_lambda import RECORDER_ENTRYPOINT
+from tools.build_lifecycle_lambda import RECORDER_CONFIG, RECORDER_ENTRYPOINT
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_ROOT = PROJECT_ROOT / PACKAGE_DIRECTORY
+CONFIG_ROOT = PROJECT_ROOT / "config"
 
 ENTRYPOINTS = (ADMISSION_ENTRYPOINT, RECORDER_ENTRYPOINT)
+
+#: What each builder declares it packages, beside the entrypoint it packages it for. The
+#: pairing is the thing under test: an entrypoint whose modules read a file its own builder
+#: does not carry is a function that fails on the invocation that takes that branch.
+PACKAGED_CONFIG = (
+    (ADMISSION_ENTRYPOINT, ADMISSION_CONFIG),
+    (RECORDER_ENTRYPOINT, RECORDER_CONFIG),
+)
 
 
 def module_name_of(relative: Path) -> str:
@@ -83,6 +102,84 @@ def platform_imports(source: Path) -> set[str]:
             found.add(node.module)
             found.update(f"{node.module}.{alias.name}" for alias in node.names)
     return found
+
+
+def config_filenames_named_by(entrypoint: str) -> set[str]:
+    """Every ``config/`` filename written as a literal in the modules this zip carries.
+
+    Static rather than runtime, and for the same reason the import closure above is: the
+    audit-hook measurement that produced these lists sees a file being opened only on a
+    branch something ran. A config read inside a rarely taken branch -- an exception path,
+    a feature nothing exercises yet -- is invisible to it, and would be missing from the
+    zip until the invocation that took that branch, in production.
+
+    Filtered to names that exist under ``config/``, because a handler naming a ``.yaml``
+    is not necessarily naming configuration. ``manifest_helpers.py`` is in the validator's
+    packaged set and names six fixture files; those live under ``fixtures/``, are read by
+    tests rather than by the function, and are nothing this builder should ship.
+    """
+    on_disk = {path.name for path in CONFIG_ROOT.glob("*.yaml")}
+    named: set[str] = set()
+    for member in reachable_modules(PROJECT_ROOT, entrypoint):
+        for node in ast.walk(ast.parse((PACKAGE_ROOT / member).read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Constant) and node.value in on_disk:
+                named.add(node.value)
+    return named
+
+
+@pytest.mark.parametrize(("entrypoint", "declared"), PACKAGED_CONFIG)
+def test_every_config_file_a_handler_names_is_one_its_builder_packages(
+    entrypoint: str, declared: frozenset[str]
+) -> None:
+    """THE TEST THIS NARROWING IS ONLY SAFE BECAUSE OF.
+    Mutation: read a new file from ``config/`` in a handler and do not add it to the list.
+
+    Packaging less is the fix; packaging less than a handler reads is a function that
+    deploys, passes every test here, and then raises FileNotFoundError on the invocation
+    that reaches the read. That is strictly worse than the churn being fixed, because the
+    churn was loud and this would not be.
+
+    So the builders' lists are not trusted. This walks every module each zip carries, takes
+    every string literal that names a file under ``config/``, and requires the builder to
+    be carrying it.
+    """
+    missing = sorted(config_filenames_named_by(entrypoint) - set(declared))
+
+    assert missing == [], (
+        f"{entrypoint} reads {missing} from config/ and its builder does not package them, "
+        "so the deployed function would fail on the first invocation that reads one"
+    )
+
+
+@pytest.mark.parametrize(("entrypoint", "declared"), PACKAGED_CONFIG)
+def test_no_builder_packages_config_its_handler_never_names(
+    entrypoint: str, declared: frozenset[str]
+) -> None:
+    """Mutation: leave a config file in the list after the handler stops reading it.
+
+    The other direction, and the one that decays quietly. A list that only ever grows ends
+    up back at ``config/*.yaml`` one entry at a time, and every stale entry puts a file
+    nobody reads back into the release digest -- which is the whole failure being fixed
+    here, arriving slowly instead of all at once.
+    """
+    unread = sorted(set(declared) - config_filenames_named_by(entrypoint))
+
+    assert unread == [], (
+        f"{entrypoint}'s builder packages {unread} and no module it carries names them, so "
+        "editing one of those files moves this function's release digest for nothing"
+    )
+
+
+def test_the_two_handlers_do_not_carry_the_same_configuration() -> None:
+    """Mutation: give the recorder the validator's config list.
+
+    The recorder reads nothing under ``config/``, which is what makes it fully immune to a
+    roster or catalog edit. Handing it the validator's list would restore the coupling in
+    the least visible way available: its zip would build, deploy and run correctly, and its
+    release digest would move every time somebody edited a policy it never opens.
+    """
+    assert RECORDER_CONFIG == frozenset()
+    assert ADMISSION_CONFIG > RECORDER_CONFIG
 
 
 @pytest.mark.parametrize("entrypoint", ENTRYPOINTS)
