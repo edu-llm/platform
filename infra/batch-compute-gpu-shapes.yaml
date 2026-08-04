@@ -35,10 +35,18 @@ Description: Fourteen GPU compute environments, their job queues and their diges
 # is 768 vCPU and covers p4d and p5. They are separate pools, so the P shapes below cannot
 # starve the G shapes however busy they are.
 #
-# The rule the numbers follow is eight concurrent jobs on a single-GPU shape, two on a
+# The rule the G pool follows is eight concurrent jobs on a single-GPU shape, two on a
 # four-GPU shape, one on an eight-GPU shape. Concurrency is worth most where a job is cheap
 # and a researcher is iterating, and worth least where one job already occupies a whole large
 # host.
+#
+# THE P POOL NO LONGER FOLLOWS THE LAST CLAUSE, AND SAYING SO HERE IS CHEAPER THAN LEAVING
+# THE TABLE BELOW TO CONTRADICT IT. Both eight-GPU P shapes are now ceilinged at the whole P
+# quota rather than at one instance, so gpu-8xh100 admits four concurrent jobs and gpu-8xa100
+# eight. What the clause was buying on those two was spend rather than placement, and the two
+# paragraphs beginning gpu-8xh100 MOVED FROM 192 TO 768 are why a ceiling is the wrong place
+# to buy it. It still holds in the G pool, where the reason for it is the reason above and
+# not a price: one job already has the host.
 #
 #   G and VT pool                                          vCPU     concurrent jobs
 #     gpu-1xa10g   g5.xlarge      other stack, unchanged     128          32
@@ -58,10 +66,10 @@ Description: Fourteen GPU compute environments, their job queues and their diges
 #
 #   P pool
 #     gpu-1xh100   p5.4xlarge                                128           8
-#     gpu-8xa100   p4d.24xlarge                               96           1
+#     gpu-8xa100   p4d.24xlarge                              768           8
 #     gpu-8xh100   p5.48xlarge                               768           4
 #                                                           ----
-#                                                            992  of 768
+#                                                           1664  of 768
 #
 # THE G SUM WAS 720 OF 768 WITH 48 SPARE AND IS NOW 1232, WHICH IS ARITHMETIC AND NOT A
 # DECISION TO SPEND MORE. An eight-device environment cannot place even one job unless its
@@ -98,6 +106,25 @@ Description: Fourteen GPU compute environments, their job queues and their diges
 # from outside and which the 1800 second cancel on each queue is the only thing that ends.
 # Four concurrent p5.48xlarge is $220/hour, against an account that spent $3,965 in the whole
 # of July, and that figure is now the approval gate's to refuse rather than this field's.
+#
+# gpu-8xa100 MOVED FROM 96 TO 768 ON 2026-08-03, AND THAT IS THE PARAGRAPH ABOVE FINISHING
+# ITS SWEEP RATHER THAN A SECOND POSITION. Every clause of it was already true of this shape.
+# p4d.24xlarge is above EXCEPTION_RATE_CEILING_USD_PER_HOUR, so an admin reads the figure
+# before anything starts. A ceiling of one instance refused nothing at submission, because
+# Batch parks the second job in RUNNABLE under
+# MISCONFIGURATION:COMPUTE_ENVIRONMENT_MAX_RESOURCE, which the submitter cannot read and
+# which only the 1800 second cancel ends. 96 survived because that change was scoped to the
+# shape somebody was looking at, and two researchers serialized against what it left behind.
+# Eight p4d.24xlarge is 768 vCPU at $21.9576/hour, so $175.66/hour saturated, and MinvCpus is
+# 0 so an idle environment bills none of it. L-417A185B is 768 vCPU, so the ceiling now
+# equals what the account can start instead of claiming an eighth of it.
+#
+# THE P SUM MOVES FROM 992 TO 1664 OF 768, WHICH IS THE ARITHMETIC THE G POOL ALREADY DOES
+# ABOVE AND NOT A DECISION TO SPEND MORE. Each ceiling is what its shape may take when it is
+# the only one running, and no combination of them is a budget anybody draws down; the quota
+# is what refuses an instance. Holding the P sum under 768 would mean deciding in advance
+# which of the three P shapes may use the pool, and this field cannot make that decision:
+# it caps everybody together, as the next paragraph says, and reserves nothing for anybody.
 #
 # WHAT A CEILING DOES NOT DO. It caps everybody together and nobody individually, so one
 # person submitting eight jobs on a single-GPU shape still starves the others; it just takes
@@ -1408,7 +1435,11 @@ Resources:
         Type: EC2
         AllocationStrategy: BEST_FIT_PROGRESSIVE
         MinvCpus: 0
-        MaxvCpus: 96
+        # Eight p4d.24xlarge, which is the whole P quota and was one until 2026-08-03. The
+        # header records why a ceiling is the wrong place to hold spend down, and why this
+        # shape kept the old number for a day after the same argument had already moved its
+        # sibling.
+        MaxvCpus: 768
         InstanceTypes:
           - p4d.24xlarge
         InstanceRole:
