@@ -88,6 +88,7 @@ __all__ = [
     "CompiledSubmission",
     "SubmissionInputs",
     "compile_submission",
+    "exceeded_routine_bounds",
     "render_approver_context",
     "require_registered_repository",
     "require_submitter_on_the_roster",
@@ -541,14 +542,20 @@ def compile_submission(
     )
 
 
-def _exceeded_bounds(submission: CompiledSubmission, policy: ApprovalPolicy) -> tuple[str, ...]:
-    """Which routine ceilings this submission is over, said in words.
+def exceeded_routine_bounds(facts: RequestFacts, policy: ApprovalPolicy) -> tuple[str, ...]:
+    """Which routine ceilings this request is over, said in words.
 
     A cost figure on its own invites a rubber stamp. Which bound was exceeded is the single
     most decision-relevant thing an approver can be told, so it is stated rather than left
     to be inferred from a table of numbers.
+
+    Takes the facts rather than a :class:`CompiledSubmission`, and is named rather than
+    underscored, because ``edullm check`` prints the same sentences before the submission
+    is dispatched and has no compiled submission to give it -- the image digest is the one
+    field a laptop cannot resolve. Two spellings of "which bound did this cross" would
+    disagree the first time a threshold moved, and the reader who would find out is an
+    approver reading a run the CLI described differently.
     """
-    facts = submission.facts
     limits = policy.thresholds
     exceeded: list[str] = []
     if facts.estimated_cost_usd > limits.routine_maximum_cost_usd:
@@ -726,7 +733,7 @@ def render_approver_context(
     ]
 
     if submission.approval_class is ApprovalClass.EXCEPTION:
-        exceeded = _exceeded_bounds(submission, policy)
+        exceeded = exceeded_routine_bounds(submission.facts, policy)
         lines.append("## Why this is an exception")
         lines.append("")
         if exceeded:
