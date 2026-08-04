@@ -51,9 +51,10 @@ decides the answer. A run recorded as a success is read exactly as before, which
 whole point, since a success that saved nothing is the failure nothing else reports.
 
 **Without the result records it behaves as it did.** They are a separate prefix in the
-lineage bucket and the nightly reader role does not hold it yet, so when no ``result/`` tree
-is present every contracted run is judged, as before. Nothing is silently let through by a
-sync that did not happen.
+lineage bucket, and the nightly reader role does hold it, so the scheduled run has them and
+the degradation is for a laptop pointed at a tree that has none. When no ``result/`` tree is
+present every contracted run is judged, as before. Nothing is silently let through by a sync
+that did not happen.
 
 **ONE RUN IN THE ACCOUNT CANNOT BE REPAIRED, AND A PERMANENTLY RED JOB REPORTS NOTHING.**
 ``run_019fbce3-ce4b-7067-b8c7-c2cf25e6b667`` is finished, its prefix is empty, and no

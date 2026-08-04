@@ -59,17 +59,23 @@ name: Nightly (the checks that are not about one change)
 # bring it with it, and each of those jobs says so by name rather than failing at the
 # credential step with an empty role.
 #
-# THAT ROLE DOES NOT YET HOLD EVERYTHING THE EIGHTH JOB READS, AND IT IS RED UNTIL IT DOES.
-# The visibility board reads what the account is running out of the resource tags every
-# submission sets, which needs tag:GetResources, and the role holds no tagging action and no
-# batch: action at all. There is no substitute for it. Enumerating the queues needs
-# batch:ListJobs and batch:DescribeJobs, which that template omits deliberately, and the
-# lineage records say what this platform submitted rather than what the account is running.
-# So the job reports the statement it needs, quoted, and exits 2 rather than pretending the
-# account agrees with W&B.
-# That is a red job with one available action rather than a permanently red one, which is the
-# distinction tools/find_runs_that_saved_nothing.py draws when it argues for its
-# acknowledgement list. The other two thirds of the board still report every night.
+# THAT ROLE DID NOT HOLD EVERYTHING THE EIGHTH JOB READS, AND THE JOB WAS RED FROM THE NIGHT
+# IT SHIPPED UNTIL 2026-08-04. Two grants were missing and either one alone was enough. The
+# visibility board reads what the account is running out of the resource tags every
+# submission sets, which needs tag:GetResources; and it prices those runs from the lineage
+# store's attempt/ prefix, which the role granted on neither the fetch nor the listing while
+# tools/report_run_costs.py synced it. Both are granted now, in one deploy, and the job
+# reports a verdict rather than a gap.
+#
+# Neither had a substitute. Enumerating the queues needs batch:ListJobs and
+# batch:DescribeJobs, which that template omits deliberately, and the lineage records say
+# what this platform submitted rather than what the account is running. The durations are
+# only in the attempt records, and sync_bucket raises on a refused prefix rather than
+# skipping it, so that refusal cost the whole cost mapping and not the attempt half of it.
+#
+# The board still exits 2 and this job still goes red if a source cannot be read, because a
+# grant can lapse and a credential can. What changed is that a gap is now a finding about
+# the account rather than the expected shape of an ordinary night.
 #
 # The contract rules the gates enforce are covered by the test suite in ci.yml, which is
 # what blocks a merge. Nothing here is a required check and nothing here should become

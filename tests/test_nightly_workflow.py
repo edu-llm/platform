@@ -319,11 +319,13 @@ def test_a_result_sync_that_is_refused_leaves_no_half_read_tree(
 ) -> None:
     """Mutation: drop the `rm -rf`, or soften the sync to `|| true`.
 
-    The nightly reader role does not hold `result/` until the stack is applied from a laptop,
-    so a denial is the expected answer for now and the job has to survive it. What it must
-    not do is carry on with a partial tree. A run whose result did not sync reads as one that
-    never finished, and a report that stopped asking about the runs that did would be the
-    silent failure this whole check exists to find, pointed at itself.
+    The nightly reader role holds `result/` and has since the stack was applied, so a denial
+    here is a lapsed credential or a drifted role rather than the ordinary case -- and the
+    job still has to survive it, because a denial that has become unexpected is not a denial
+    that has become impossible. What it must not do is carry on with a partial tree. A run
+    whose result did not sync reads as one that never finished, and a report that stopped
+    asking about the runs that did would be the silent failure this whole check exists to
+    find, pointed at itself.
     """
     fetch = step(workflow["jobs"][RECONCILE_JOB], "Fetch the intent records")["run"]
 
@@ -799,10 +801,11 @@ def test_a_board_that_could_not_read_a_source_is_not_read_as_a_clean_one(
 ) -> None:
     """Mutation: treat any non-zero exit as the same finding.
 
-    The board exits 2 when a source was not read, which is the state it is in today: the
-    reader role holds no tagging action, so the account side is a named gap rather than an
-    answer. Somebody who reads that as a disagreement goes looking for a submitter who did
-    nothing, on a morning whose only finding is an IAM stack nobody has applied.
+    The board exits 2 when a source was not read, and 1 when the sources it read disagree.
+    The two send a reader to different places: a disagreement is a run to go and open, and a
+    gap is a grant or a credential to go and fix. Somebody who reads a gap as a disagreement
+    goes looking for a submitter who did nothing, on a morning whose only finding is that
+    nobody could look.
     """
     finished = run_board(workflow, tmp_path, exit_code=2)
 
@@ -974,11 +977,20 @@ def test_the_role_can_read_and_cannot_write(role: dict[str, Any]) -> None:
         "lambda:GetFunctionConfiguration",
         "cloudformation:GetTemplate",
         "cloudformation:ListStacks",
+        "tag:GetResources",
     }
     for action in granted:
         assert not any(fragment in action for fragment in MUTATING_ACTION_FRAGMENTS), action
-        assert action.startswith(("s3:", "secretsmanager:", "lambda:", "cloudformation:")), action
+        assert action.startswith(
+            ("s3:", "secretsmanager:", "lambda:", "cloudformation:", "tag:")
+        ), action
         assert "*" not in action, action
+
+    # The adjacent actions on the tagging grant, and the reason it is a read rather than a
+    # way for the board to decide what appears on its own report. `tag:` is a service prefix
+    # rather than the tagging action on another service, so these two are the whole pair.
+    assert "tag:TagResources" not in granted
+    assert "tag:UntagResources" not in granted
 
     # The sharpest instance of the rule this test is for. A release check that could deploy
     # could answer its own finding by making the account match the record, which is the
@@ -1019,19 +1031,30 @@ def test_no_grant_reaches_a_whole_bucket_or_every_secret(role: dict[str, Any]) -
     harmless here: the lineage store holds every run's records and Secrets Manager holds
     everybody's credentials, so an unscoped read is an exfiltration path with a schedule.
 
-    ONE STATEMENT IS EXEMPT AND IT IS NAMED RATHER THAN PATTERN-MATCHED, so a second one
-    cannot arrive by widening a resource to `*` and calling it precedent.
-    `cloudformation:ListStacks` has no resource type -- the request names no stack, so a
-    policy naming one denies the call -- and it is the action that stops the drift check
-    being confined to the stacks it already knows about. What it discloses is stack names,
+    TWO STATEMENTS ARE EXEMPT AND BOTH ARE NAMED RATHER THAN PATTERN-MATCHED, so a third
+    cannot arrive by widening a resource to `*` and calling these two precedent. The
+    assertion runs the other way round as well -- exactly these Sids hold a wildcard and no
+    others -- because an exemption list that is only a filter grows silently.
+
+    `cloudformation:ListStacks` has no resource type: the request names no stack, so a
+    policy naming one denies the call, and it is the action that stops the drift check being
+    confined to the stacks it already knows about. What it discloses is stack names,
     statuses and timestamps, and no template, parameter or output.
+
+    `tag:GetResources` is the same shape and is the wider disclosure of the two, since it
+    answers with the ARNs and tags of resources in this region. It is what makes the account
+    side of `tools/visibility_board.py` readable at all, and there is no narrower substitute:
+    the alternative is `batch:ListJobs`, which this role omits deliberately.
     """
     unscopable = {
+        "FindStacksNothingInTheRepositoryAccountsFor",
+        "FindEveryResourceThisPlatformTagged",
+    }
+    assert {
         statement["Sid"]
         for statement in statements(role)
-        if statement["Action"] == "cloudformation:ListStacks"
-    }
-    assert unscopable == {"FindStacksNothingInTheRepositoryAccountsFor"}
+        if "*" in statement_resources(statement)
+    } == unscopable
 
     resources = [
         rendered
@@ -1056,24 +1079,27 @@ def test_no_grant_reaches_a_whole_bucket_or_every_secret(role: dict[str, Any]) -
     )
 
 
-def test_the_unscopable_listing_is_confined_to_the_region_this_platform_deploys_in(
-    role: dict[str, Any],
+@pytest.mark.parametrize("action", ["cloudformation:ListStacks", "tag:GetResources"])
+def test_each_unscopable_grant_is_confined_to_the_region_this_platform_deploys_in(
+    role: dict[str, Any], action: str
 ) -> None:
     """Mutation: drop the condition, since the action cannot be scoped anyway.
 
-    It is the only narrowing the action admits and it is a small one, which is a reason to
+    It is the only narrowing either action admits and it is a small one, which is a reason to
     write down what it buys rather than a reason to leave it off. The region lock permits
-    us-east-1 and us-east-2 and everything this platform has is in the first, so a listing of
-    the second is a read nothing here asks for.
+    us-east-1 and us-east-2 and everything this platform has is in the first, so a read of
+    the second is one nothing here asks for.
+
+    Both grants rather than one, because the tagging read is the wider of the two and
+    arrived second. A condition that covers the older statement and not the newer is the
+    ordinary way a rule like this stops applying.
     """
-    listing = [
-        statement
-        for statement in statements(role)
-        if statement["Action"] == "cloudformation:ListStacks"
+    found = [
+        statement for statement in statements(role) if statement["Action"] == action
     ]
 
-    assert len(listing) == 1
-    assert listing[0]["Condition"] == {
+    assert len(found) == 1
+    assert found[0]["Condition"] == {
         "StringEquals": {"aws:RequestedRegion": {"Fn::Sub": "${AWS::Region}"}}
     }
 

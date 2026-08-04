@@ -150,10 +150,14 @@ def test_a_month_heading_over_the_limit_says_so_in_the_first_sentence() -> None:
 def test_an_unreadable_lineage_degrades_the_split_rather_than_the_section() -> None:
     """Mutation: render an empty team list when the records could not be read.
 
-    An empty split and a refused one look identical on the page and mean opposite things.
-    The reader role does not hold the ``attempt/`` prefix, so the refusal is the ordinary
-    case here rather than a hypothetical, and a morning report that showed every team at zero
-    would be read as a quiet night.
+    An empty split and a refused one look identical on the page and mean opposite things,
+    and a morning report that showed every team at zero would be read as a quiet night.
+
+    The refusal was the ordinary case while the reader role held no ``attempt/`` prefix. It
+    holds it now, and this tool never ran under that role anyway -- nothing in
+    ``.github/workflows/`` invokes it, so it runs from a laptop on a session that can read
+    the whole bucket. The distinction is kept because a credential can lapse on any of them,
+    and because the two sentences on the page still mean opposite things.
     """
     projection = project(AUGUST_DAYS, today=date(2026, 8, 4), limit_usd=LIMIT)
 
