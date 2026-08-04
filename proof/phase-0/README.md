@@ -2,8 +2,8 @@
 
 Phase: phase-0
 Bundle schema version: 1
-Source commit: 648f74ee40c5f1470043aa707f2d3718f60687e3
-Generated: 2026-08-04T21:44:19+00:00
+Source commit: b73cdd73bcc73964de71ebfa8d527da469d1ba6a
+Generated: 2026-08-04T23:45:05+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 0 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase0_proof.py` at generation time.
 
@@ -18,9 +18,9 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 4822 |
-| suite tests executed | 4629 |
-| suite passed | 4629 |
+| suite tests collected | 5040 |
+| suite tests executed | 4847 |
+| suite passed | 4847 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
@@ -33,7 +33,7 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 | criteria GAP (each one fails the gate) | 0 |
 | related recorded deferrals | 1 (D1) |
 | fixtures with recorded digests | 9 |
-| contract models inventoried | 145 |
+| contract models inventoried | 149 |
 | JSON Schema files exported | 16 |
 
 ## Contract versions
@@ -63,6 +63,7 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 | RunManifest | 1 |
 | SchedulerAttempt | 1 |
 | SourceIdentity | 1 |
+| TwoRunComparison | 1 |
 
 Repository-configuration contracts are versioned by their exported JSON Schema rather than by a field. See `schema-compatibility.md`.
 
@@ -89,7 +90,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | --- | --- |
 | config/organization.yaml | sha256:93dbb74ea3f44c5b1bf9d00d505acfa888a6e78bf456550d0202989571d9c56a |
 | config/policy.yaml | sha256:093eb2bc7e52c1e452538928f3579bde26e6dd425018516b1211268c944247ad |
-| config/workload-catalog.yaml | sha256:5dd227b89dab79b3c6bab77e74d9514b8a22b9d97849411534710d180b17bf28 |
+| config/workload-catalog.yaml | sha256:e3a5fd4ab03d74866a9d7c5307a14e36639d30aea3553205d569a06989ae7e9a |
 | fixtures/authorization/admin-exception.yaml | sha256:c49db36e999df3cefd9d3e95127fe947479d121ca6b6b450839e9f0c8ae8144f |
 | fixtures/authorization/lead-self-authorization.yaml | sha256:4879d23dffb1ae9c3d81cdb35e382a1636b0642f75b7cc2afe0f8a54cebc562b |
 | fixtures/authorization/member-approval.yaml | sha256:d6da4e22145165f4233c7c150789d2eea7fb9a7d8cf8546e72812bb971bd4dc4 |

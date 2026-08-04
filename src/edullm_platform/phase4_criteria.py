@@ -148,14 +148,23 @@ CONFIGURATION_CAPTURES_EXPIRE: Final = (
 A_REFUSAL_RATHER_THAN_A_POLICY: Final = (
     "This used to be asserted from the deployed policy document, which says what a grant "
     "is rather than what happened when something reached for it. It is now a refusal a "
-    "container actually received: a run whose program probed four prefixes it must not "
-    "reach and recorded what S3 said. All four came back AccessDenied.\n\n"
-    "The distinction that makes it worth anything is AccessDenied against NoSuchKey. The "
-    "second means the role was permitted to look and found nothing, which is exactly what a "
-    "role granting everything returns from an empty prefix -- so a probe recording 'the "
-    "call failed' would establish no isolation at all. The prefix probed belongs to a team "
-    "nobody has bound, so there is certainly nothing there and the two answers stay "
-    "distinguishable.\n\n"
+    "container actually received: a run whose program probed prefixes it must not reach "
+    "and recorded what S3 said. Every probe came back AccessDenied.\n\n"
+    "TWO OF THE FOUR PROBES THAT ONCE RAN HAVE BEEN DELETED, AND THE REASON IS THE SAME "
+    "REASON THIS CRITERION'S STATEMENT WAS REWRITTEN. They aimed at a cross-team boundary "
+    "the role no longer has: infra/iam/batch-gpu-roles.yaml grants PutObject and GetObject "
+    "unconditioned on teams/*/runs/*, which the probe key matched. So the write probe would "
+    "have come back allowed and failed the run after the GPU was paid for, and the read "
+    "probe would have come back NoSuchKey and passed while establishing nothing. Measured "
+    "against the deployed role on 2026-08-04: both were allowed. A check that cannot fail "
+    "is worse than an absent one, because a criterion cites it.\n\n"
+    "The distinction that makes the remaining two worth anything is AccessDenied against "
+    "NoSuchKey. The second means the role was permitted to look and found nothing, which is "
+    "exactly what a role granting everything returns from an empty prefix -- so a probe "
+    "recording 'the call failed' would establish no isolation at all. Neither of the two "
+    "that remain can be answered that way: listing the outputs bucket from its root is "
+    "outside the StringLike condition on the ListBucket grant, and the lineage bucket "
+    "appears in no Resource on the role at all.\n\n"
     "A container is the only principal that can produce this. The workload role's trust "
     "policy names the Batch and ECS task services, so no human can assume it and be "
     "refused. iam:SimulatePrincipalPolicy is not a substitute: it reported ten EC2 actions "
@@ -490,7 +499,12 @@ def phase4_criteria() -> tuple[CriterionSpec, ...]:
                 *_ids(RUN_EVIDENCE, "test_the_role_permits_exactly_the_prefix_shape_the_platform_derives"),
                 *_ids(RUN_EVIDENCE, "test_a_grant_on_another_bucket_does_not_widen_what_the_outputs_reach_reports"),
                 *_ids(RUN_EVIDENCE, "test_the_prefix_the_container_was_given_is_the_one_the_platform_derives"),
-                *_ids(SUBMISSION, "test_all_four_probes_are_asserted_rather_than_merely_recorded"),
+                *_ids(SUBMISSION, "test_both_probes_are_asserted_rather_than_merely_recorded"),
+                *_ids(SUBMISSION, "test_the_gate_over_the_probes_fails_the_run_when_a_boundary_is_wrong"),
+                *_ids(
+                    SUBMISSION,
+                    "test_every_probe_that_remains_names_something_the_deployed_template_refuses",
+                ),
             ),
             scope_limits=(
                 A_REFUSAL_RATHER_THAN_A_POLICY,

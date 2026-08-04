@@ -1,6 +1,6 @@
 # Phase 0 schema compatibility report
 
-145 contract models. The structural digest is `sha256` over the model's JSON schema with sorted keys, so it changes when a field is added, removed, retyped, or reconstrained, and does not change when unrelated code moves. Comparing this table between phases answers whether a schema changed.
+149 contract models. The structural digest is `sha256` over the model's JSON schema with sorted keys, so it changes when a field is added, removed, retyped, or reconstrained, and does not change when unrelated code moves. Comparing this table between phases answers whether a schema changed.
 
 This is the complete inventory: every contract model in the repository is below, whichever phase wrote it and whichever module it has since moved to. The three phase bundles carry a scoped view of the same digests and none of them carries a digest that is not here. `tests/test_schema_compatibility.py` recomputes every row of every one of those tables against the tree and fails when one stops describing it.
 
@@ -53,7 +53,7 @@ The kind column separates a `record`, which some payload is validated against, f
 
 ## Runtime records
 
-107 models are not exported to `schemas/`. These are produced while work runs or while a decision is made: lineage, results, datasets, authorization outcomes, operational evidence, and gate results. They carry a `schema_version` field where they are persisted, and they are deliberately not published as repository configuration, because no human authors them by hand.
+111 models are not exported to `schemas/`. These are produced while work runs or while a decision is made: lineage, results, datasets, authorization outcomes, operational evidence, and gate results. They carry a `schema_version` field where they are persisted, and they are deliberately not published as repository configuration, because no human authors them by hand.
 
 | model | module | kind | schema_version | structural digest |
 | --- | --- | --- | --- | --- |
@@ -164,6 +164,10 @@ The kind column separates a `record`, which some payload is validated against, f
 | RoleDriftFinding | edullm_platform.role_drift | record | unversioned | sha256:4572586fb60d4c8b381ac0680119aa19c5b3009343767fb6d3c1b301a35cb5d0 |
 | RoleDriftReport | edullm_platform.role_drift | record | unversioned | sha256:f0e5b2e3ec53486f5dfa7a880c32d594f002bba71f1b1ff71285673a6cf5fe27 |
 | TemplateRole | edullm_platform.role_drift | record | unversioned | sha256:5e12a30b611a50e621b89faa4c18987f91b429d710bd748f4342fae2821a8e9a |
+| ComparedField | edullm_platform.run_comparison | record | unversioned | sha256:25693216d0652deffbf2bf769ad65433205dc1d93170d61d77c86878efb0dda9 |
+| RecordField | edullm_platform.run_comparison | record | unversioned | sha256:85ed7e23a9932d370881ca8c98bf0226dde5f926d00f5fd32ac84f1091d7136f |
+| RecordedRun | edullm_platform.run_comparison | record | unversioned | sha256:33c8621f4396a4f96fb63fd05689875253b4f2133180ab57006aee9b80e97630 |
+| TwoRunComparison | edullm_platform.run_comparison | record | 1 | sha256:21c6f5f6b912413dff9be800aff13c9b13d39c9a8e168255dbc58648b33fd4db |
 
 ## Exported JSON Schema files
 
@@ -217,3 +221,4 @@ Regenerate with `uv run python tools/export_schemas.py`. Verify a file by hand w
 | RunManifest | 1 |
 | SchedulerAttempt | 1 |
 | SourceIdentity | 1 |
+| TwoRunComparison | 1 |
