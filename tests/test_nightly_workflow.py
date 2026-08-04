@@ -161,7 +161,27 @@ def scripts(workflow: dict[str, Any], job_id: str) -> str:
 
 
 def load_tool(name: str) -> Any:
-    """Import a module out of ``tools/``, which is not a package and not on the path."""
+    """Import a module out of ``tools/``, which is not a package and not on the path.
+
+    RETURNS THE MODULE ALREADY IMPORTED, IF THERE IS ONE, AND THAT IS THE WHOLE POINT.
+    Loading a second time builds a second module object and binding it into ``sys.modules``
+    leaves two live copies of the same file, which is silent until something patches one and
+    calls the other. ``tests/test_visibility_board.py`` puts ``tools/`` on the path and does
+    ``from visibility_board import read_tagged_resources`` at import, so its functions close
+    over the first copy's globals; its tests then ``import visibility_board`` inside the test
+    body, which reads ``sys.modules`` and hands back whichever copy was bound last. When this
+    file happened to run first, ``monkeypatch.setattr(visibility_board, "aws", ...)`` patched
+    a copy nothing called, the stub did not take, and five board tests shelled out to the
+    real `aws` -- failing with `NoCredentials` on a runner and passing alone on a laptop.
+    That is an ordering-dependent red that says nothing about the change under review.
+
+    The entry is still registered when this function is the one doing the loading, because
+    ``@dataclass`` reads ``sys.modules[cls.__module__]`` while the class body is executing and
+    raises `AttributeError` on `None` without it.
+    """
+    cached = sys.modules.get(name)
+    if cached is not None:
+        return cached
     tool = PROJECT_ROOT / "tools" / f"{name}.py"
     specification = importlib.util.spec_from_file_location(name, tool)
     assert specification is not None and specification.loader is not None
