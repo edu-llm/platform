@@ -35,49 +35,68 @@ Description: Fourteen GPU compute environments, their job queues and their diges
 # is 768 vCPU and covers p4d and p5. They are separate pools, so the P shapes below cannot
 # starve the G shapes however busy they are.
 #
-# The rule the G pool follows is eight concurrent jobs on a single-GPU shape, two on a
-# four-GPU shape, one on an eight-GPU shape. Concurrency is worth most where a job is cheap
+# The rule the G pool follows is twenty-four concurrent jobs on a single-GPU shape, six on a
+# four-GPU shape, three on an eight-GPU shape. Concurrency is worth most where a job is cheap
 # and a researcher is iterating, and worth least where one job already occupies a whole large
-# host.
+# host, so the three terms keep the 8:2:1 ratio they were first written in.
 #
-# THE P POOL NO LONGER FOLLOWS THE LAST CLAUSE, AND SAYING SO HERE IS CHEAPER THAN LEAVING
-# THE TABLE BELOW TO CONTRADICT IT. Both eight-GPU P shapes are now ceilinged at the whole P
-# quota rather than at one instance, so gpu-8xh100 admits four concurrent jobs and gpu-8xa100
-# eight. What the clause was buying on those two was spend rather than placement, and the two
-# paragraphs beginning gpu-8xh100 MOVED FROM 192 TO 768 are why a ceiling is the wrong place
-# to buy it. It still holds in the G pool, where the reason for it is the reason above and
-# not a price: one job already has the host.
+# EVERY G CEILING AND gpu-1xh100 WERE TRIPLED ON 2026-08-03, WHICH IS THAT RATIO KEPT AND ITS
+# SCALE MOVED. The rule read eight, two and one until then, and one is what a four-GPU or
+# eight-GPU shape gave the second researcher to arrive: nothing, until the first finished.
+# That is the same failure the two paragraphs beginning gpu-8xh100 MOVED FROM 192 TO 768
+# describe on the P side, and the argument there is not repeated per shape here. A ceiling
+# below the work refuses nothing at submission. Batch parks the job in RUNNABLE under
+# MISCONFIGURATION:COMPUTE_ENVIRONMENT_MAX_RESOURCE, which is a state the submitter cannot
+# read from outside and which only the 1800 second cancel on each queue ends, so what a low
+# number produces is a wait with no stated cause rather than a refusal anybody can act on.
+# Spend is decided at the approval gate, where a person reads the rate of the shape that was
+# priced; a ceiling is not where to buy it.
+#
+# THE P POOL DOES NOT FOLLOW THE LAST CLAUSE AT ALL, AND SAYING SO HERE IS CHEAPER THAN
+# LEAVING THE TABLE BELOW TO CONTRADICT IT. Both eight-GPU P shapes are ceilinged at the
+# whole P quota rather than at three instances, so gpu-8xh100 admits four concurrent jobs and
+# gpu-8xa100 eight: on those two the quota runs out before the rule does. gpu-1xh100 takes
+# the single-GPU term unchanged at twenty-four.
+#
+# EVERY CEILING BELOW IS A WHOLE NUMBER OF INSTANCES, WHICH IS A CONSTRAINT AND NOT A
+# TIDINESS. Batch cannot place a job into a remainder smaller than one container, so a
+# ceiling that is not a multiple of the instance type's vCPU count buys nothing with the
+# remainder, and on an eight-GPU shape the remainder is most of a host: 500 on g5.48xlarge is
+# two instances and 116 vCPU that can never hold anything. Each number below was computed
+# from the vCPU count describe-instance-types reports for its type rather than by multiplying
+# the old ceiling and accepting what came out.
 #
 #   G and VT pool                                          vCPU     concurrent jobs
-#     gpu-1xa10g   g5.xlarge      other stack, unchanged     128          32
-#     gpu-1xt4     g4dn.xlarge                                32           8
-#     gpu-1xl4     g6.xlarge                                  32           8
-#     gpu-1xl40s   g6e.xlarge                                 32           8
-#     gpu-4xt4     g4dn.12xlarge                              96           2
-#     gpu-4xa10g   g5.12xlarge                                96           2
-#     gpu-4xl4     g6.12xlarge                                96           2
-#     gpu-4xl40s   g6e.12xlarge                               48           1
-#     gpu-8xt4     g4dn.metal                                 96           1
-#     gpu-8xa10g   g5.48xlarge                               192           1
-#     gpu-8xl4     g6.48xlarge                               192           1
-#     gpu-8xl40s   g6e.48xlarge                              192           1
+#     gpu-1xa10g   g5.xlarge      other stack                384          96
+#     gpu-1xt4     g4dn.xlarge                                96          24
+#     gpu-1xl4     g6.xlarge                                  96          24
+#     gpu-1xl40s   g6e.xlarge                                 96          24
+#     gpu-4xt4     g4dn.12xlarge                             288           6
+#     gpu-4xa10g   g5.12xlarge                               288           6
+#     gpu-4xl4     g6.12xlarge                               288           6
+#     gpu-4xl40s   g6e.12xlarge                              144           3
+#     gpu-8xt4     g4dn.metal                                288           3
+#     gpu-8xa10g   g5.48xlarge                               576           3
+#     gpu-8xl4     g6.48xlarge                               576           3
+#     gpu-8xl40s   g6e.48xlarge                              576           3
 #                                                           ----
-#                                                           1232  of 768
+#                                                           3696  of 768
 #
 #   P pool
-#     gpu-1xh100   p5.4xlarge                                128           8
+#     gpu-1xh100   p5.4xlarge                                384          24
 #     gpu-8xa100   p4d.24xlarge                              768           8
 #     gpu-8xh100   p5.48xlarge                               768           4
 #                                                           ----
-#                                                           1664  of 768
+#                                                           1920  of 768
 #
-# THE G SUM WAS 720 OF 768 WITH 48 SPARE AND IS NOW 1232, WHICH IS ARITHMETIC AND NOT A
-# DECISION TO SPEND MORE. An eight-device environment cannot place even one job unless its
-# ceiling is the whole instance, so gpu-8xl4 and gpu-8xl40s need 192 each and gpu-8xt4 needs
-# 96 before anything runs at all. One job each across all twelve G environments is 1004 vCPU,
-# so the discipline of keeping the sum under the quota stopped being available the moment
-# three eight-device G shapes existed. Holding to it would have meant taking concurrency away
-# from shapes researchers already use, to buy a number that was never what bound.
+# THE G SUM WAS 720 OF 768 WITH 48 SPARE, THEN 1232, AND IS NOW 3696, WHICH IS ARITHMETIC AND
+# NOT A DECISION TO SPEND MORE. An eight-device environment cannot place even one job unless
+# its ceiling is the whole instance, so gpu-8xl4 and gpu-8xl40s needed 192 each and gpu-8xt4
+# needed 96 before anything ran at all. One job each across all twelve G environments is 1004
+# vCPU, so the discipline of keeping the sum under the quota stopped being available the
+# moment three eight-device G shapes existed, and 1232 was already 464 above the quota before
+# anything here was tripled. Holding to it would have meant taking concurrency away from
+# shapes researchers already use, to buy a number that was never what bound.
 #
 # WHAT BINDS IS THE QUOTA AND NOT THE SUM. A quota is regional and account-wide and is not
 # this stack's to spend, so anything else in this account that is a G or VT instance draws on
@@ -88,12 +107,32 @@ Description: Fourteen GPU compute environments, their job queues and their diges
 # reason rather than under none of the three these queues name has not been measured here, so
 # an exhausted pool is the first thing to check when a G job sits and nothing says why.
 #
-# gpu-4xl40s is the one deviation from the rule and the reason is price. g6e.12xlarge is
-# $10.493/hour, twice any other four-GPU G shape, so a second concurrent job would be the
-# most expensive thing in this pool. gpu-1xl40s does not take the same deviation even though
-# g6e.xlarge is $1.861/hour and more than twice any other single-GPU G shape, because eight
-# of them is $14.89/hour and that is still under what one gpu-8xa10g job costs. gpu-1xa10g's
-# 128 is inherited rather than chosen here.
+# SO WHAT TRIPLING THE G CEILINGS BUYS IS WHICH ENVIRONMENT MAY CLAIM THE SHARED POOL, AND
+# NOT A LARGER POOL. This is the honest description of the change and it belongs beside the
+# table rather than in a commit message. The G pool cannot exceed 768 vCPU however these
+# twelve environments are configured, so the account can start exactly what it could start
+# before: four g5.48xlarge, or a hundred and ninety-two g6.xlarge, or some mixture summing to
+# 768. What changed is that a ceiling no longer refuses a job while the quota it draws on
+# sits unclaimed -- gpu-8xa10g's own 192 refused its second job with 576 vCPU of G quota
+# free, and gpu-4xl40s's 48 refused its second with 720 free. The cost of that is that the
+# twelve environments now contend for the pool rather than being pre-divided by this file,
+# and pre-division was never a fair split anyway: it reserved nothing for anybody, because a
+# ceiling caps everybody together, and it went unused whenever the shape it was holding
+# capacity for was idle.
+#
+# gpu-4xl40s WAS THE ONE DEVIATION FROM THE RULE, THE REASON WAS PRICE, AND THE PRICE HAS NOT
+# CHANGED. g6e.12xlarge is $10.493/hour, twice any other four-GPU G shape, so its second and
+# third concurrent jobs are the most expensive thing in this pool and three at once is
+# $31.48/hour. It sat at 48, one instance, on that reasoning while the rule said two. It is
+# 144 rather than the 288 the other three four-GPU shapes carry because the deviation is kept
+# as the ratio it always was -- half of them -- rather than as a number frozen in place while
+# everything around it moved. Each of those three jobs is still priced and released one at a
+# time at $10.493, which is where the deviation is actually paid for.
+#
+# gpu-1xl40s does not take the same deviation even though g6e.xlarge is $1.861/hour and more
+# than twice any other single-GPU G shape, because twenty-four of them is $44.66/hour and
+# that is still under what three gpu-8xa10g jobs cost. gpu-1xa10g's ceiling is set in
+# infra/batch-compute-gpu.yaml and was tripled there on the same day and for this reason.
 #
 # gpu-8xh100 MOVED FROM 192 TO 768, AND THE OLD NUMBER WAS A SPEND CONTROL WEARING A CAPACITY
 # SETTING'S CLOTHES. 192 is one p5.48xlarge and the P quota is four of them, so the ceiling
@@ -119,16 +158,19 @@ Description: Fourteen GPU compute environments, their job queues and their diges
 # 0 so an idle environment bills none of it. L-417A185B is 768 vCPU, so the ceiling now
 # equals what the account can start instead of claiming an eighth of it.
 #
-# THE P SUM MOVES FROM 992 TO 1664 OF 768, WHICH IS THE ARITHMETIC THE G POOL ALREADY DOES
-# ABOVE AND NOT A DECISION TO SPEND MORE. Each ceiling is what its shape may take when it is
+# THE P SUM MOVED FROM 992 TO 1664 AND IS NOW 1920 OF 768, THE LAST STEP BEING gpu-1xh100
+# GOING 128 TO 384 WITH THE G SHAPES. IT IS THE ARITHMETIC THE G POOL ALREADY DOES ABOVE AND
+# NOT A DECISION TO SPEND MORE. Each ceiling is what its shape may take when it is
 # the only one running, and no combination of them is a budget anybody draws down; the quota
 # is what refuses an instance. Holding the P sum under 768 would mean deciding in advance
 # which of the three P shapes may use the pool, and this field cannot make that decision:
 # it caps everybody together, as the next paragraph says, and reserves nothing for anybody.
 #
 # WHAT A CEILING DOES NOT DO. It caps everybody together and nobody individually, so one
-# person submitting eight jobs on a single-GPU shape still starves the others; it just takes
-# longer. Batch fair-share queues are the control for that and are a separate decision.
+# person submitting twenty-four jobs on a single-GPU shape still starves the others; it just
+# takes longer, and tripling the number lengthened the queue one person can occupy alone by
+# the same factor. Batch fair-share queues are the control for that and are a separate
+# decision.
 #
 # SUBNETS ARE MEASURED PER INSTANCE TYPE AND ARE NOT A PROPERTY OF THE FAMILY.
 # describe-instance-type-offerings on 2026-08-01 reports g4dn.xlarge, g4dn.12xlarge,
@@ -186,7 +228,7 @@ Resources:
         Type: EC2
         AllocationStrategy: BEST_FIT_PROGRESSIVE
         MinvCpus: 0
-        MaxvCpus: 32
+        MaxvCpus: 96
         InstanceTypes:
           - g4dn.xlarge
         InstanceRole:
@@ -297,7 +339,7 @@ Resources:
         Type: EC2
         AllocationStrategy: BEST_FIT_PROGRESSIVE
         MinvCpus: 0
-        MaxvCpus: 96
+        MaxvCpus: 288
         InstanceTypes:
           - g4dn.12xlarge
         InstanceRole:
@@ -394,7 +436,8 @@ Resources:
   # -------------------------------------------------------------------------------------
   # gpu-8xt4, eight T4 on g4dn.metal, $7.824/hour. The T4 family has no 24xlarge, so eight
   # devices means the bare-metal host and its whole 96 vCPU, which is why this environment's
-  # ceiling is 96 rather than the 192 the other two eight-device G shapes carry.
+  # ceiling is 288 rather than the 576 the other two eight-device G shapes carry. Both are
+  # three instances; the host is half the size.
   # -------------------------------------------------------------------------------------
   Gpu8xT4ComputeEnvironment:
     Type: AWS::Batch::ComputeEnvironment
@@ -410,7 +453,7 @@ Resources:
         Type: EC2
         AllocationStrategy: BEST_FIT_PROGRESSIVE
         MinvCpus: 0
-        MaxvCpus: 96
+        MaxvCpus: 288
         InstanceTypes:
           - g4dn.metal
         InstanceRole:
@@ -521,7 +564,7 @@ Resources:
         Type: EC2
         AllocationStrategy: BEST_FIT_PROGRESSIVE
         MinvCpus: 0
-        MaxvCpus: 96
+        MaxvCpus: 288
         InstanceTypes:
           - g5.12xlarge
         InstanceRole:
@@ -633,7 +676,7 @@ Resources:
         Type: EC2
         AllocationStrategy: BEST_FIT_PROGRESSIVE
         MinvCpus: 0
-        MaxvCpus: 192
+        MaxvCpus: 576
         InstanceTypes:
           - g5.48xlarge
         InstanceRole:
@@ -744,7 +787,7 @@ Resources:
         Type: EC2
         AllocationStrategy: BEST_FIT_PROGRESSIVE
         MinvCpus: 0
-        MaxvCpus: 32
+        MaxvCpus: 96
         InstanceTypes:
           - g6.xlarge
         InstanceRole:
@@ -855,7 +898,7 @@ Resources:
         Type: EC2
         AllocationStrategy: BEST_FIT_PROGRESSIVE
         MinvCpus: 0
-        MaxvCpus: 96
+        MaxvCpus: 288
         InstanceTypes:
           - g6.12xlarge
         InstanceRole:
@@ -968,7 +1011,7 @@ Resources:
         Type: EC2
         AllocationStrategy: BEST_FIT_PROGRESSIVE
         MinvCpus: 0
-        MaxvCpus: 192
+        MaxvCpus: 576
         InstanceTypes:
           - g6.48xlarge
         InstanceRole:
@@ -1083,7 +1126,7 @@ Resources:
         Type: EC2
         AllocationStrategy: BEST_FIT_PROGRESSIVE
         MinvCpus: 0
-        MaxvCpus: 32
+        MaxvCpus: 96
         InstanceTypes:
           - g6e.xlarge
         InstanceRole:
@@ -1194,7 +1237,7 @@ Resources:
         Type: EC2
         AllocationStrategy: BEST_FIT_PROGRESSIVE
         MinvCpus: 0
-        MaxvCpus: 48
+        MaxvCpus: 144
         InstanceTypes:
           - g6e.12xlarge
         InstanceRole:
@@ -1309,7 +1352,7 @@ Resources:
         Type: EC2
         AllocationStrategy: BEST_FIT_PROGRESSIVE
         MinvCpus: 0
-        MaxvCpus: 192
+        MaxvCpus: 576
         InstanceTypes:
           - g6e.48xlarge
         InstanceRole:
@@ -1684,10 +1727,11 @@ Resources:
         Type: EC2
         AllocationStrategy: BEST_FIT_PROGRESSIVE
         MinvCpus: 0
-        # Eight concurrent p5.4xlarge at 16 vCPU each, which is the header's rule for a
-        # single-GPU shape applied unchanged. It is also a sixth of the P quota, so eight of
-        # these and one p5.48xlarge can run at once without the pool refusing either.
-        MaxvCpus: 128
+        # Twenty-four concurrent p5.4xlarge at 16 vCPU each, which is the header's rule for
+        # a single-GPU shape applied unchanged, and 128 -- eight of them -- until the rule
+        # itself was tripled on 2026-08-03. It is half the P quota, so twenty-four of these
+        # and two p5.48xlarge can run at once without the pool refusing either.
+        MaxvCpus: 384
         InstanceTypes:
           - p5.4xlarge
         InstanceRole:

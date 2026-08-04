@@ -58,6 +58,7 @@ from edullm_platform.contracts.workload import (
     UnregisteredComputeProfileError,
     WorkloadCatalog,
 )
+from edullm_platform.evidence import INSTANCE_EVIDENCE
 from edullm_platform.execution import (
     CONTAINER_SHAPES,
     FANOUT_INDEX_VARIABLE,
@@ -1254,7 +1255,7 @@ def test_the_cpu_check_reserves_an_eighth_of_a_machine_rather_than_all_of_one() 
     assert shape.vcpus == 4
     assert shape.memory_mib == 7680
     assert instance_vcpus // shape.vcpus == instance_memory_mib // shape.memory_mib == 8
-    assert ceiling["MaxvCpus"] // shape.vcpus == 32
+    assert ceiling["MaxvCpus"] // shape.vcpus == 96
 
 
 def test_the_gpu_shape_still_takes_a_whole_g5_because_the_device_is_the_scarce_thing() -> None:
@@ -1263,7 +1264,7 @@ def test_the_gpu_shape_still_takes_a_whole_g5_because_the_device_is_the_scarce_t
     It would change nothing and cost the shape's honesty. A g5.xlarge carries one A10G, a
     container without a GPU entry gets no device at all, and Batch has no way to give two
     jobs a share of one card. So the four vCPU are already the whole machine's four, the
-    queue is already 128 / 4 wide, and a smaller reservation would only let Batch place a
+    queue is already 384 / 4 wide, and a smaller reservation would only let Batch place a
     second job on an instance whose one device is taken.
     """
     shape = CONTAINER_SHAPES["gpu-1xa10g"]
@@ -1273,7 +1274,41 @@ def test_the_gpu_shape_still_takes_a_whole_g5_because_the_device_is_the_scarce_t
     ]
 
     assert (shape.vcpus, shape.memory_mib, shape.gpus) == (instance_vcpus, instance_memory_mib, 1)
-    assert ceiling["MaxvCpus"] // shape.vcpus == 32
+    assert ceiling["MaxvCpus"] // shape.vcpus == 96
+
+
+def test_every_ceiling_is_a_whole_number_of_the_instances_it_would_buy() -> None:
+    """Mutation: set any ``MaxvCpus`` to a number that is not a multiple of its vCPU count.
+
+    A remainder smaller than one instance is capacity no job can ever occupy, because Batch
+    scales by launching whole instances and every definition here reserves at least one.
+    The waste is invisible and grows with the shape: 500 on a g5.48xlarge reads as more than
+    two instances and buys exactly two, stranding 116 vCPU inside a ceiling somebody chose
+    deliberately.
+
+    Asserted across all three templates rather than the two above, because the sixteen
+    environments were last moved together by one factor and the next edit to one of them is
+    the one that will not be checked against the others. The vCPU counts come from
+    ``INSTANCE_EVIDENCE``, which the capacity capture already keeps true against
+    ``describe-instance-types``, so this cannot pass by agreeing with a second guess.
+    """
+    ceilings = {
+        resource["Properties"]["ComputeEnvironmentName"]: resource["Properties"]["ComputeResources"]
+        for path in COMPUTE_TEMPLATE_PATHS
+        for resource in load_template(path)["Resources"].values()
+        if isinstance(resource, dict)
+        and resource.get("Type") == "AWS::Batch::ComputeEnvironment"
+    }
+
+    assert len(ceilings) == 16
+    for name, resources in ceilings.items():
+        instance_types = resources["InstanceTypes"]
+        assert len(instance_types) == 1, f"{name} lists more than one instance type"
+        instance_vcpus = INSTANCE_EVIDENCE[instance_types[0]]["required_vcpus"]
+        assert resources["MaxvCpus"] % instance_vcpus == 0, (
+            f"{name} ceilings {resources['MaxvCpus']} vCPU of {instance_types[0]}, which is "
+            f"{resources['MaxvCpus'] % instance_vcpus} vCPU short of a whole instance"
+        )
 
 
 @pytest.mark.parametrize("compute_profile", PROMOTED_PROFILES)

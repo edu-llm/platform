@@ -59,30 +59,48 @@ Resources:
         # while it waits. tests pin it, and the live claim is read back from DesiredvCpus
         # once the queue is quiet.
         MinvCpus: 0
-        # RAISED FROM SIXTEEN ON 2026-07-31, WHICH IS THE DELIBERATE EDIT THE PREVIOUS
-        # COMMENT ASKED FOR. It read: "sized so a single-node phase cannot accidentally
-        # become a cluster. Raising it is a deliberate edit with a number attached." The
-        # constraint did its job and the thing it was protecting is over -- write access
-        # went from three people to thirty-five, and four concurrent GPU jobs is a queue
-        # rather than a limit at that size.
+        # RAISED FROM SIXTEEN ON 2026-07-31 AND FROM 128 ON 2026-08-03, BOTH BEING THE
+        # DELIBERATE EDIT THE ORIGINAL COMMENT ASKED FOR. It read: "sized so a single-node
+        # phase cannot accidentally become a cluster. Raising it is a deliberate edit with a
+        # number attached." The constraint did its job and the thing it was protecting is
+        # over -- write access went from three people to thirty-five, and four concurrent
+        # GPU jobs is a queue rather than a limit at that size.
         #
-        # 128 is thirty-two g5.xlarge. The arithmetic worth having in front of you: saturated
-        # it is $32.19/hr, a full day of saturation is $772, and the whole account spent
-        # $3,965 in July. It claims a sixth of the 768 vCPU the account is entitled to for
-        # on-demand G and VT instances, so it is a share of a shared sandbox rather than all
-        # of it.
+        # 384 is ninety-six g5.xlarge, and it moved with every other G ceiling on the same
+        # day: infra/batch-compute-gpu-shapes.yaml carries the argument for the sweep, the
+        # table of what each shape now admits, and the reason a whole number of instances is
+        # required rather than preferred. This shape is gpu-1xa10g in that table. Its rule
+        # for a single-GPU shape is twenty-four concurrent jobs, and this environment is four
+        # times that because its ceiling was already four times the single-GPU norm before
+        # the sweep -- 128 against 32 -- and the sweep multiplied what was there rather than
+        # levelling it.
+        #
+        # The arithmetic worth having in front of you: saturated it is $96.58/hr, a full day
+        # of saturation is $2,318, and the whole account spent $3,965 in July. That is the
+        # figure to be uncomfortable about, and the approval gate is where it gets refused.
+        # A submitter asking for one g5.xlarge is priced and released at $1.006/hr whatever
+        # this field says, so ninety-six concurrent jobs is ninety-six decisions rather than
+        # one, and this number is not the thing standing between the account and $2,318.
+        #
+        # ON PAPER IT CLAIMS HALF THE 768 vCPU THE ACCOUNT IS ENTITLED TO FOR ON-DEMAND G AND
+        # VT INSTANCES, AND IN PRACTICE IT CLAIMS NOTHING. That quota is regional and
+        # account-wide and is the only thing that refuses an instance; the twelve
+        # environments in the shapes stack draw on the same 768 and their ceilings now sum to
+        # 3696. Raising this one changes which environment may claim the shared pool, not the
+        # total the account can start.
         #
         # Nothing bills while idle. MinvCpus is zero above and the environment sits at
         # DesiredvCpus zero between runs, so this ceiling costs nothing until somebody is
         # actually using it, which is why raising it in advance is cheaper than raising it
-        # during the first week that four slots bite.
+        # during the first week that the old slots bite.
         #
         # WHAT THIS DOES NOT DO, and the reason it is not the whole answer. A ceiling caps
-        # everybody together and nobody individually, so one person submitting twenty jobs
-        # still starves the other thirty-four -- it just takes longer. Batch fair-share
-        # queues are the control for that, and they are a separate decision rather than a
-        # bigger number here.
-        MaxvCpus: 128
+        # everybody together and nobody individually, so one person submitting ninety-six
+        # jobs still starves the other thirty-four -- it just takes longer, and this edit
+        # tripled how long one person can hold the queue alone. Batch fair-share queues are
+        # the control for that, and they are a separate decision rather than a bigger number
+        # here.
+        MaxvCpus: 384
         # ONE INSTANCE TYPE, AND THE PHASE PLAN ASKED FOR SEVERAL. §3.2 wants "multiple
         # instance types for scheduler options", on the reasoning that gives the scheduler
         # somewhere to go when capacity is short. That reasoning does not apply here and the

@@ -76,11 +76,29 @@ Resources:
         # workload ever needs it. It is not a trade to make by accident here, so
         # tests/test_phase3_infrastructure.py pins it at 0.
         MinvCpus: 0
-        # Four c7i.8xlarge at 32 vCPU each. The account's Standard on-demand vCPU quota is
-        # 1152, so this ceiling is ours rather than AWS's: it is the most this environment
-        # can spend at once, and it is set where a fan-out of a few cells fits and a runaway
-        # does not. Raising it is a deliberate edit with a cost attached.
-        MaxvCpus: 128
+        # Twelve c7i.8xlarge at 32 vCPU each, and four of them until 2026-08-03. The
+        # account's Standard on-demand vCPU quota is L-1216C47A, read live as 1152, so this
+        # ceiling is ours rather than AWS's and the old one claimed exactly a ninth of what
+        # the account may start.
+        #
+        # WHAT A NINTH COST, MEASURED RATHER THAN IMAGINED. Three edullm-reservoir-build
+        # tasks saturated all 128 vCPU on the night of 2026-08-03 and a dataset-validator job
+        # waited roughly forty-five minutes behind them. Nothing was wrong and nothing said
+        # anything: Batch parks a job it cannot place in RUNNABLE, and when the cause is this
+        # field the reason is MISCONFIGURATION:COMPUTE_ENVIRONMENT_MAX_RESOURCE, which the
+        # submitter cannot read from outside and which the 1800 second cancel on the queue
+        # below is the only thing that ends. A ceiling under the work refuses nothing at
+        # submission; it converts a refusal into a wait with no stated cause.
+        #
+        # SO IT WAS A SPEND CONTROL WEARING A CAPACITY SETTING'S CLOTHES, which is the
+        # argument infra/batch-compute-gpu-shapes.yaml makes at length for the GPU shapes and
+        # which moved every one of them by the same factor on the same day. Spend is decided
+        # at the approval gate, where a person reads the estimated rate for the shape the
+        # submitter chose. Saturated, 384 vCPU is $17.14/hour and a full day of saturation is
+        # $411, against an account that spent $3,965 in the whole of July -- and MinvCpus is
+        # zero above, so an idle environment bills none of it. 384 is a third of the quota
+        # rather than a ninth, and the quota is still what refuses an instance.
+        MaxvCpus: 384
         # DesiredvCpus is deliberately absent. Batch owns it -- it moves every time the
         # scheduler scales -- so a value here would be a value CloudFormation tries to
         # restore on the next deploy, fighting the scheduler and reporting drift forever.
@@ -210,15 +228,17 @@ Resources:
         # tells a new researcher to submit first, and it is a Python one-liner that prints an
         # interpreter version. The four completed check jobs in this queue ran for between
         # 216 and 841 milliseconds. Reserving a machine for that capped the queue at
-        # MaxvCpus / 32, which is four at a time, so a group onboarding on one morning
-        # waited up to an hour each for a job that takes under a second.
+        # MaxvCpus / 32, which was four at a time against the ceiling of 128 in force then,
+        # so a group onboarding on one morning waited up to an hour each for a job that
+        # takes under a second.
         #
         # BOTH NUMBERS HAD TO MOVE, AND MEMORY WAS THE BINDING ONE. Batch packs on vCPU and
         # memory together, so 4 vCPU beside 61440 MiB would still have placed one job per
         # instance: vCPU would have allowed thirty-two concurrent and memory four. 61440 / 8
         # is 7680, which holds the container to the host's own ratio of 1920 MiB of
         # allocatable memory per vCPU, so eight containers fill an instance on both axes and
-        # neither dimension strands the other. 128 / 4 and 4 instances x 8 both give 32.
+        # neither dimension strands the other. 384 / 4 and 12 instances x 8 both give 96, and
+        # they gave 32 apiece while the ceiling above was 128.
         #
         # 7680 MiB is not a measurement of the check, which peaks near 15 MiB. It is the
         # largest reservation that still fits eight to a machine, and the headroom is
