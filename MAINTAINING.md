@@ -116,6 +116,15 @@ path is enough; ruff reads a file it is handed:
 uv run ruff check src/edullm_platform/some_ignored_file.py
 ```
 
+**If `mypy` reports errors here that CI does not, delete `.mypy_cache` before believing
+them.** The cache records where each module was resolved from, and it survives deleting
+`.venv` and re-syncing — so a virtualenv built once on the wrong interpreter goes on
+producing that interpreter's answers afterwards. It shows up as `boto3` being reported as
+installed-but-untyped, on the two `# type: ignore[import-not-found]` comments that are
+correct when it is genuinely absent, and it has cost time twice. Building the environment on
+a uv-managed CPython rather than a conda base avoids causing it: `uv venv --python 3.13
+--managed-python`.
+
 Regenerate the published schemas after changing any contract. The output is
 byte-reproducible, so a second run should produce no diff:
 
