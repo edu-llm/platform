@@ -195,17 +195,42 @@ def reconciliation_prefixes(workflow: dict[str, Any]) -> set[str]:
 
 
 def synced_lineage_prefixes(workflow: dict[str, Any]) -> set[str]:
-    """Every lineage prefix something running under this role syncs, from both readers.
+    """Every lineage prefix something running under this role must be able to read.
 
     The union rather than either one. The reconciliation joins intent to result and the
-    board joins intent to attempt, so the grant has to cover three prefixes and neither
-    reader on its own says which three.
+    board joins intent to attempt to result, so the grant has to cover three prefixes and
+    neither reader on its own says which three.
+
+    READ OFF THE BOARD RATHER THAN OFF THE COST REPORT, WHICH IS A WIDENING OF THIS CHECK
+    AND NOT A RESTATEMENT OF IT. It read ``report_run_costs.LINEAGE_PREFIXES``, which is the
+    set that report needs, and the board is the thing that actually runs under this role --
+    so a prefix the board syncs and the cost report does not was invisible here. The board's
+    own constant is the honest source, and it is the union of the cost report's two with
+    whatever else the board cannot run without.
     """
-    board = set(load_tool("report_run_costs").LINEAGE_PREFIXES)
-    assert board, "report_run_costs.LINEAGE_PREFIXES is empty, so this check compares nothing"
+    board = set(load_tool("visibility_board").REQUIRED_LINEAGE_PREFIXES)
+    assert board, "the board's required prefix set is empty, so this check compares nothing"
+    assert set(load_tool("report_run_costs").LINEAGE_PREFIXES) <= board, (
+        "the board syncs the cost report's prefixes through the same call, so its required "
+        "set has to contain them"
+    )
     reconciliation = reconciliation_prefixes(workflow)
     assert reconciliation, "the reconciliation step syncs nothing, so this check compares nothing"
     return board | reconciliation
+
+
+def degrading_lineage_prefixes() -> set[str]:
+    """Prefixes a scheduled reader asks for and survives being refused.
+
+    ``binding/`` is the second account-side source and the role does not hold it yet, so the
+    board reports a narrower horizon and carries on. It is separated from the required set
+    because the two need opposite assertions: a required prefix that is not granted is a
+    denial at 05:00, and a degrading one that *is* granted is somebody having applied the
+    statement the board prints, which must not fail a check written before they did.
+    """
+    degrading = set(load_tool("visibility_board").DEGRADING_LINEAGE_PREFIXES)
+    assert degrading, "the board declares no degrading prefix, so this check compares nothing"
+    return degrading
 
 
 def fetchable_lineage_prefixes(role: dict[str, Any]) -> set[str]:
@@ -1163,15 +1188,34 @@ def test_the_role_reads_the_two_buckets_the_reconciliation_asks_about(
         f"arn:${{AWS::Partition}}:s3:::{OUTPUTS_BUCKET}/teams/*/runs/*": {"s3:GetObject"},
     }
     # The lineage object ARNs are built from what the scheduled tools sync rather than
-    # listed here. Listing them is what let the grant and the readers disagree: this
-    # assertion is exact, so a literal here would have had to be edited in step with the
-    # policy and would have gone on agreeing with it while both disagreed with the tools.
+    # listed here. Listing them is what let the grant and the readers disagree: a literal
+    # here would have had to be edited in step with the policy and would have gone on
+    # agreeing with it while both disagreed with the tools.
+    required = synced_lineage_prefixes(workflow)
     expected |= {
         f"arn:${{AWS::Partition}}:s3:::{LINEAGE_BUCKET}/{prefix}/*": {"s3:GetObject"}
-        for prefix in synced_lineage_prefixes(workflow)
+        for prefix in required
+    }
+    # EXACT ON THE BUCKETS AND ON EVERY REQUIRED PREFIX, AND NOT ON A DEGRADING ONE. The
+    # board asks for `binding/` and survives the refusal, so the account side is narrower
+    # tonight and whole the morning after somebody applies the statement the board prints.
+    # An equality over the whole set would have made that application fail this check, which
+    # would mean a test written before the grant landed voting against it.
+    allowed = expected | {
+        f"arn:${{AWS::Partition}}:s3:::{LINEAGE_BUCKET}/{prefix}/*": {"s3:GetObject"}
+        for prefix in degrading_lineage_prefixes()
     }
 
-    assert reach == expected
+    assert set(expected) <= set(reach), (
+        f"the role cannot fetch {sorted(set(expected) - set(reach))}, which a scheduled "
+        "tool syncs and cannot run without"
+    )
+    assert set(reach) <= set(allowed), (
+        f"the role can fetch {sorted(set(reach) - set(allowed))}, which nothing scheduled "
+        "reads. This role describes the account and every grant on it is argued for beside "
+        "the statement; a prefix nothing reads is a read nobody asked for."
+    )
+    assert all(reach[reachable] == allowed[reachable] for reachable in reach)
 
 
 def test_listing_is_confined_to_the_prefixes_each_check_reads(
@@ -1196,9 +1240,12 @@ def test_listing_is_confined_to_the_prefixes_each_check_reads(
 
     assert set(conditions) == {LINEAGE_BUCKET, OUTPUTS_BUCKET}
     assert conditions[OUTPUTS_BUCKET] == "teams/*/runs/*"
-    assert set(conditions[LINEAGE_BUCKET]) == {
-        f"{prefix}/*" for prefix in synced_lineage_prefixes(workflow)
-    }
+    required = {f"{prefix}/*" for prefix in synced_lineage_prefixes(workflow)}
+    permitted = required | {f"{prefix}/*" for prefix in degrading_lineage_prefixes()}
+    # Bounded on both sides rather than compared for equality, for the reason the fetch
+    # check above gives: the board asks for a prefix it survives being refused, so the
+    # condition is allowed to grow to it and to nothing else.
+    assert required <= set(conditions[LINEAGE_BUCKET]) <= permitted
 
 
 def test_the_role_can_list_and_fetch_every_prefix_the_scheduled_tools_sync(
