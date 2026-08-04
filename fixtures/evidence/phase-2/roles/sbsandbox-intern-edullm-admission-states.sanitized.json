@@ -1,0 +1,261 @@
+{
+  "attached_managed_policies": [],
+  "environment": "sandbox",
+  "inline_policies": [
+    {
+      "policy_name": "run-admission-workflow",
+      "policy_version": "2012-10-17",
+      "statements": [
+        {
+          "action_match": {
+            "actions": [
+              "lambda:InvokeFunction"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:lambda:us-east-1:<aws-account-id>:function:sbsandbox-intern-edullm-admission-validator",
+              "arn:aws:lambda:us-east-1:<aws-account-id>:function:sbsandbox-intern-edullm-admission-validator:*"
+            ]
+          },
+          "sid": null
+        },
+        {
+          "action_match": {
+            "actions": [
+              "s3:PutObject"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:s3:::sbsandbox-intern-edullm-lineage/*"
+            ]
+          },
+          "sid": null
+        },
+        {
+          "action_match": {
+            "actions": [
+              "batch:SubmitJob"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-queue/sbsandbox-intern-edullm-cpu",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-cpu-run",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-cpu-run:*",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-queue/sbsandbox-intern-edullm-gpu",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-run",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-run:*",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-queue/sbsandbox-intern-edullm-gpu-1xt4",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-1xt4-run",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-1xt4-run:*",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-queue/sbsandbox-intern-edullm-gpu-4xt4",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-4xt4-run",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-4xt4-run:*",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-queue/sbsandbox-intern-edullm-gpu-4xa10g",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-4xa10g-run",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-4xa10g-run:*",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-queue/sbsandbox-intern-edullm-gpu-8xa10g",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-8xa10g-run",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-8xa10g-run:*",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-queue/sbsandbox-intern-edullm-gpu-1xl4",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-1xl4-run",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-1xl4-run:*",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-queue/sbsandbox-intern-edullm-gpu-4xl4",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-4xl4-run",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-4xl4-run:*",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-queue/sbsandbox-intern-edullm-gpu-4xl40s",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-4xl40s-run",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-4xl40s-run:*",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-queue/sbsandbox-intern-edullm-gpu-8xa100",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-8xa100-run",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-8xa100-run:*",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-queue/sbsandbox-intern-edullm-gpu-8xh100",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-8xh100-run",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-8xh100-run:*",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-run_*",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-run_*:*"
+            ]
+          },
+          "sid": null
+        },
+        {
+          "action_match": {
+            "actions": [
+              "batch:TagResource"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-queue/sbsandbox-intern-edullm-cpu",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-cpu-run",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-cpu-run:*",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-queue/sbsandbox-intern-edullm-gpu",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-run",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-run:*",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-queue/sbsandbox-intern-edullm-gpu-1xt4",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-1xt4-run",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-1xt4-run:*",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-queue/sbsandbox-intern-edullm-gpu-4xt4",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-4xt4-run",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-4xt4-run:*",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-queue/sbsandbox-intern-edullm-gpu-4xa10g",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-4xa10g-run",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-4xa10g-run:*",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-queue/sbsandbox-intern-edullm-gpu-8xa10g",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-8xa10g-run",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-8xa10g-run:*",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-queue/sbsandbox-intern-edullm-gpu-1xl4",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-1xl4-run",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-1xl4-run:*",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-queue/sbsandbox-intern-edullm-gpu-4xl4",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-4xl4-run",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-4xl4-run:*",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-queue/sbsandbox-intern-edullm-gpu-4xl40s",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-4xl40s-run",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-4xl40s-run:*",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-queue/sbsandbox-intern-edullm-gpu-8xa100",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-8xa100-run",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-8xa100-run:*",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-queue/sbsandbox-intern-edullm-gpu-8xh100",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-8xh100-run",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-gpu-8xh100-run:*",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-run_*",
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-run_*:*"
+            ]
+          },
+          "sid": null
+        },
+        {
+          "action_match": {
+            "actions": [
+              "batch:RegisterJobDefinition"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:batch:us-east-1:<aws-account-id>:job-definition/sbsandbox-intern-edullm-run_*"
+            ]
+          },
+          "sid": null
+        },
+        {
+          "action_match": {
+            "actions": [
+              "iam:PassRole"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:iam::<aws-account-id>:role/sbsandbox-intern-edullm-batch-execution",
+              "arn:aws:iam::<aws-account-id>:role/sbsandbox-intern-edullm-batch-workload",
+              "arn:aws:iam::<aws-account-id>:role/sbsandbox-intern-edullm-batch-gpu-execution",
+              "arn:aws:iam::<aws-account-id>:role/sbsandbox-intern-edullm-batch-gpu-workload"
+            ]
+          },
+          "sid": null
+        },
+        {
+          "action_match": {
+            "actions": [
+              "ecr:DescribeImageScanFindings"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:ecr:us-east-1:<aws-account-id>:repository/sbsandbox-intern-edullm-olmo-core",
+              "arn:aws:ecr:us-east-1:<aws-account-id>:repository/sbsandbox-intern-edullm-data",
+              "arn:aws:ecr:us-east-1:<aws-account-id>:repository/sbsandbox-intern-edullm-olmo-eval-full",
+              "arn:aws:ecr:us-east-1:<aws-account-id>:repository/sbsandbox-intern-edullm-alt-cl"
+            ]
+          },
+          "sid": null
+        },
+        {
+          "action_match": {
+            "actions": [
+              "logs:CreateLogDelivery",
+              "logs:GetLogDelivery",
+              "logs:UpdateLogDelivery",
+              "logs:DeleteLogDelivery",
+              "logs:ListLogDeliveries",
+              "logs:PutResourcePolicy",
+              "logs:DescribeResourcePolicies",
+              "logs:DescribeLogGroups",
+              "logs:CreateLogStream",
+              "logs:PutLogEvents"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "*"
+            ]
+          },
+          "sid": null
+        }
+      ]
+    }
+  ],
+  "max_session_duration_seconds": 3600,
+  "observed_at": "2026-08-04T19:12:28Z",
+  "permissions_boundary_policy_name": "InternSandboxBoundary",
+  "role_name": "sbsandbox-intern-edullm-admission-states",
+  "source": "aws",
+  "status": "ok",
+  "trust_policy_version": "2012-10-17",
+  "trust_statements": [
+    {
+      "action_match": {
+        "actions": [
+          "sts:AssumeRole"
+        ],
+        "element": "Action"
+      },
+      "conditions": [],
+      "effect": "Allow",
+      "principal_match": {
+        "element": "Principal",
+        "principals": [
+          {
+            "identifier": "states.amazonaws.com",
+            "principal_type": "Service"
+          }
+        ]
+      },
+      "sid": null
+    }
+  ]
+}
