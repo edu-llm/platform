@@ -1,0 +1,22 @@
+# The monthly number the spend projection is held against.
+#
+# THIS FILE IS IN THE WRONG PLACE AND IS HERE ON PURPOSE. Every other setting this platform
+# reads lives under config/, which was being edited by somebody else when this was written,
+# so the limit landed beside its only reader instead. It should move to
+# config/reports/spend.yaml, next to config/reports/checkpoint-acknowledgements.yaml, which
+# is where the other file a report reads and nothing else reads already lives. Moving it is
+# a one-line change to SPEND_LIMITS_PATH in tools/report_spend.py.
+#
+# WHY 5000. The account carries three AWS Budgets and none of them carries an action, so
+# none of them stops anything and the number is a matter of which one the team means. They
+# are: sbsandbox-monthly-spend at $5,000, intern-sandbox-monthly at $20,000, and
+# mcat-dev-monthly at $100, which belongs to a different project sharing the account and
+# alarms on the whole account's spend rather than on that project's. $5,000 is the tightest
+# of the two that describe this account, so it is the one that gives the earliest warning,
+# which is what the projection is for. Raise it to 20000 if the intern budget is the real
+# ceiling; the effect is only on when this reads as over.
+#
+# It is not read from the AWS Budgets API on purpose. A budget is editable by anybody in the
+# account with no review and no record, and the point of a limit in a repository is that
+# changing it is a pull request somebody can see.
+monthly_limit_usd: 5000
