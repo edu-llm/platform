@@ -50,8 +50,10 @@ from edullm_platform.cli.actions import (
     SUBMIT_WORKFLOW,
     GithubUnreachableError,
     PlatformActions,
+    RunFacts,
     elapsed_said,
     read_report_sections,
+    read_run_facts,
     read_submission_runs,
 )
 from edullm_platform.cli.configuration import (
@@ -72,6 +74,7 @@ from edullm_platform.cli.presentation import (
     plain_decimal,
     render_preflight,
     render_refusals,
+    render_run_facts,
     render_run_listing,
 )
 from edullm_platform.cli.scaffold import scaffold_spec
@@ -624,6 +627,12 @@ def _status(
     if refusal is not None:
         print(render_refusals([refusal]), end="", file=err)
         return EXIT_REFUSED
+
+    facts = read_run_facts(actions, arguments.run_id)
+    print(render_run_facts(facts), end="", file=out)
+    if not facts.needs_a_dispatch:
+        return EXIT_OK
+    print(file=out)
     return _drive_the_run_report(
         actions,
         run_id=arguments.run_id,
@@ -643,12 +652,22 @@ def _logs(
         print(render_refusals([refusal]), end="", file=err)
         return EXIT_REFUSED
     actions = PlatformActions(runner, repository=arguments.platform_repository)
+    facts = read_run_facts(actions, arguments.run_id)
+    if not facts.needs_a_dispatch:
+        # A run that never reached AWS printed nothing there. Dispatching would spend a
+        # runner to be told that, and what came back would read as an empty log rather than
+        # as a run that has not started, which are different facts.
+        print(f"{facts.run_id} has printed nothing yet.", file=out)
+        print(file=out)
+        print(_because(facts), end="", file=out)
+        return EXIT_OK
     return _drive_the_run_report(
         actions,
         run_id=arguments.run_id,
         stop=False,
         reason=None,
         headings=("The last lines this run printed",),
+        because=facts.because,
         out=out,
         err=err,
     )
@@ -662,15 +681,56 @@ def _cancel(
         print(render_refusals([refusal]), end="", file=err)
         return EXIT_REFUSED
     actions = PlatformActions(runner, repository=arguments.platform_repository)
+    facts = read_run_facts(actions, arguments.run_id)
+    if not facts.needs_a_dispatch:
+        # THE ONE PLACE THIS SHORTCUT COULD DO HARM, WHICH IS WHY ``Admitted`` HAS THREE
+        # VALUES. Refusing to stop a job that is in fact running would be far worse than a
+        # wasted runner, so ``NO`` is returned only where the admission job demonstrably did
+        # not run. An admission job that failed at an unknown point reads UNSURE and
+        # dispatches, which is what this verb did before the fast path existed.
+        #
+        # REFUSED RATHER THAN OK, THOUGH NOTHING IS RUNNING. A run parked at a gate is not
+        # stopped by having no Batch job: a lead can still release it, and it will start.
+        # Exiting 0 would tell a script the run was seen to and leave it live.
+        print(
+            render_refusals(
+                [
+                    Refusal(
+                        code="nothing_admitted_to_stop",
+                        detail=(
+                            f"{facts.run_id} has no Batch job, because {facts.because} "
+                            "Stopping the submission itself is a GitHub operation rather "
+                            "than an AWS one: "
+                            + (
+                                f"gh run cancel {facts.submission.workflow_run_id} --repo "
+                                f"{actions.repository}"
+                                if facts.submission is not None
+                                else "cancel the workflow run on its own page"
+                            )
+                            + ". Left alone, an approval would still start it."
+                        ),
+                    )
+                ]
+            ),
+            end="",
+            file=out,
+        )
+        return EXIT_REFUSED
     return _drive_the_run_report(
         actions,
         run_id=arguments.run_id,
         stop=True,
         reason=arguments.reason,
         headings=("Run stopped", arguments.run_id),
+        because=facts.because,
         out=out,
         err=err,
     )
+
+
+def _because(facts: RunFacts) -> str:
+    """The one-line explanation, wrapped the way every other paragraph here is."""
+    return "\n".join(textwrap.wrap(facts.because, width=78)) + "\n"
 
 
 def _drive_the_run_report(
@@ -680,6 +740,7 @@ def _drive_the_run_report(
     stop: bool,
     reason: str | None,
     headings: Sequence[str],
+    because: str | None = None,
     out: TextIO,
     err: TextIO,
 ) -> int:
@@ -699,10 +760,20 @@ def _drive_the_run_report(
     if reason is not None:
         fields["reason"] = reason
     dispatched_at = datetime.now(UTC)
+    # SAID BEFORE THE WAIT RATHER THAN AFTER IT. Tens of seconds a reader understands is a
+    # different experience from tens of seconds they do not, and this is the only place the
+    # binary makes anybody wait. The sentence names the cause -- a credential that lives in
+    # one workflow file and nowhere else -- because the alternative reads as slowness.
+    #
+    # ``because`` is what the fast path could not settle, for the verbs that do not print
+    # the whole of what it found. Without it a reader who has watched status answer three
+    # runs instantly has no way to tell why this one is different.
+    if because:
+        print(because, file=err)
     print(
-        f"asking the platform about {run_id}. This dispatches {CANCEL_WORKFLOW}, which "
-        "holds the only identity that may read a Batch job, so it takes a runner rather "
-        "than a moment.",
+        f"asking AWS about {run_id}. This dispatches {CANCEL_WORKFLOW}, which holds the "
+        "only identity that may read a Batch job, so it waits for a runner: tens of "
+        "seconds, not a moment.",
         file=err,
     )
     actions.dispatch(CANCEL_WORKFLOW, fields)

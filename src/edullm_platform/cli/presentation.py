@@ -33,6 +33,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from decimal import Decimal
 
+from edullm_platform.cli.actions import RunFacts, elapsed_said
 from edullm_platform.cli.preflight import DEFERRED_TO_SUBMIT, Preflight, Refusal
 from edullm_platform.contracts.base import serialize_decimal
 from edullm_platform.contracts.policy import ApprovalClass, ApprovalPolicy
@@ -43,6 +44,7 @@ __all__ = [
     "plain_decimal",
     "render_preflight",
     "render_refusals",
+    "render_run_facts",
     "render_run_listing",
 ]
 
@@ -79,6 +81,57 @@ def render_refusals(refusals: Sequence[Refusal]) -> str:
         lines.extend(f"  {line}" for line in _wrap(refusal.detail))
         lines.append("")
     return "\n".join(lines).rstrip("\n") + "\n"
+
+
+def render_run_facts(facts: RunFacts) -> str:
+    """What GitHub alone could establish about one run, and what it cost, which is nothing.
+
+    ENDS BY SAYING WHICH WAY IT WENT, ALWAYS. A reader who is about to wait needs to know
+    they are about to wait and why, and a reader who is not needs to know the answer is
+    complete rather than truncated -- "nothing was dispatched to answer this" is the same
+    reassurance ``render_refusals`` puts on its first line, for the same reason.
+    """
+    submission = facts.submission
+    lines: list[str] = []
+    if submission is not None:
+        heading = [submission.short_run_id, submission.state, elapsed_said(submission.created_at)]
+        lines += [
+            "  ".join(heading),
+            "",
+            *(_row("experiment", facts.experiment) if facts.experiment else []),
+            *(_row("team", facts.team) if facts.team else []),
+            *(_row("cells", str(submission.cells)) if submission.cells else []),
+        ]
+        if facts.gate is not None:
+            lines += _row("waiting on", facts.gate)
+        if facts.reviewers:
+            lines += _row("reviewers", ", ".join(facts.reviewers))
+        if facts.you_can_release:
+            # The line this whole endpoint is worth reading for. A lead who learns in their
+            # own terminal that a run is waiting on them specifically has a reason to run
+            # status at all, where "waiting for a lead" is a fact about somebody else.
+            lines += _row("you", "can release this. Approve it on the run page.")
+        if facts.approver is not None:
+            released = facts.approver
+            if facts.approved_at is not None:
+                released += f", {elapsed_said(facts.approved_at)} ago"
+            lines += _row("released by", released)
+        if submission.url:
+            lines += _row("run page", submission.url)
+        lines.append("")
+
+    lines += _wrap(facts.because)
+    lines.append("")
+    lines.append(
+        "nothing was dispatched to answer this."
+        if not facts.needs_a_dispatch
+        else "reading that from AWS needs a runner, which is the wait below."
+    )
+    return "\n".join(lines) + "\n"
+
+
+def _row(label: str, value: str) -> list[str]:
+    return [f"  {label:<{LABEL_WIDTH}}{value}"]
 
 
 def render_run_listing(rows: Iterable[tuple[str, str, str, str]]) -> str:
@@ -271,6 +324,13 @@ def plain_decimal(value: Decimal) -> str:
 
 
 def _wrap(text: str, width: int = 76) -> list[str]:
+    """Wrapped at spaces and at nothing else, because these paragraphs carry names.
+
+    ``textwrap`` breaks on hyphens by default, and almost everything this prints is
+    hyphenated -- ``cancel-run.yml``, ``run-approval-lead``, ``gpu-4xa10g``, a dataset
+    release, a filesystem path. Broken across two lines any of them stops being the string
+    it names, and a reader copying it out gets something that does not exist.
+    """
     from textwrap import wrap
 
-    return wrap(text, width=width) or [text]
+    return wrap(text, width=width, break_on_hyphens=False, break_long_words=False) or [text]

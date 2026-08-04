@@ -21,10 +21,25 @@ log *is* readable. That is what ``status``, ``logs`` and ``cancel`` read.
 **WHAT THAT COSTS, SAID RATHER THAN LEFT TO BE FOUND OUT.** Asking what a Batch job is
 doing means dispatching a workflow and waiting for a runner, which is tens of seconds
 rather than the instant a transcript implies. The alternative is a credential on every
-researcher's laptop, which is the thing this design exists to avoid. Where an answer can be
-had from GitHub alone it is: ``status`` with no run id reads the caller's own submission
-workflow runs and needs no dispatch at all, which is the state people check most often --
-whether a lead has tapped yet.
+researcher's laptop, which is the thing this design exists to avoid.
+
+**THE LINE BETWEEN THE TWO IS TEMPORAL, NOT TOPICAL, AND IT IS WHERE ``submit-run.yml``
+ENDS.** That workflow resolves a commit, compiles a manifest, parks at an approval gate,
+starts the admission execution and waits for its decision -- and then it finishes. The Batch
+job it caused runs for hours afterwards with nothing on GitHub watching. So everything up to
+and including admission is already on GitHub and costs an API call, and everything after it
+is inside AWS and costs a runner. ``read_run_facts`` below draws exactly that line: it finds
+the submission, asks whether admission happened, and answers from GitHub whenever the answer
+is on GitHub. Only a run that reached AWS makes anybody wait.
+
+**AND IT IS DRAWN FROM THE JOBS RATHER THAN FROM THE RUN'S CONCLUSION**, because the
+conclusion is ambiguous in the one direction that matters. ``submit-run.yml`` writes where
+the run went *after* the admission execution returns, so a workflow that concluded
+``failure`` may have a Batch job running regardless -- and a ``cancel`` that believed the
+conclusion would refuse to stop it. The admission job's own conclusion is not ambiguous
+about whether it started: absent or skipped is certainly-not-admitted, success is
+certainly-admitted, and its failure is the honest ``uncertain`` that falls through to a
+dispatch, which is what happened before any of this existed.
 """
 
 from __future__ import annotations
@@ -32,8 +47,9 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Final
@@ -41,13 +57,17 @@ from typing import Any, Final
 from edullm_platform.cli.workspace import CommandResult, CommandRunner
 
 __all__ = [
+    "ADMISSION_JOB",
     "CANCEL_WORKFLOW",
     "PLATFORM_REPOSITORY",
     "SUBMIT_WORKFLOW",
+    "Admitted",
     "GithubUnreachableError",
     "PlatformActions",
+    "RunFacts",
     "SubmissionRun",
     "elapsed_said",
+    "read_run_facts",
 ]
 
 #: The repository holding both workflows. Restated here rather than imported from
@@ -64,6 +84,20 @@ CANCEL_WORKFLOW: Final = "cancel-run.yml"
 #: gate, so it is readable while a run is still waiting for somebody to tap -- which is the
 #: whole reason ``status`` can name a run id during the wait.
 COMPILED_SUBMISSION_ARTIFACT: Final = "compiled-submission"
+
+#: ``submit-run.yml``'s admission job, by the display name the jobs endpoint answers with.
+#: Matched by name because the REST API exposes no job key, which makes this a copy of a
+#: string in a workflow file; ``tests/test_cli_actions.py`` reads that file and compares,
+#: the same seam-test arrangement ``PLATFORM_REPOSITORY`` gets.
+ADMISSION_JOB: Final = "Submit the approved manifest to admission"
+
+#: How many recent dispatches to look through when joining a run id to its workflow run.
+#: There is no index: dispatch inputs are not exposed by the runs API, and the run id does
+#: not exist yet when ``run-name`` is evaluated, so the join is by reading each candidate's
+#: compiled manifest, newest first, stopping at the first match. Bounded because the cost is
+#: one artifact download per miss; a run older than this window is not found and falls
+#: through to a dispatch, which is what every run did before this existed.
+SUBMISSION_SEARCH_DEPTH: Final = 30
 
 
 class GithubUnreachableError(RuntimeError):
@@ -244,6 +278,38 @@ class PlatformActions:
                 return None
         return document if isinstance(document, dict) else None
 
+    def jobs(self, workflow_run_id: int) -> tuple[dict[str, Any], ...]:
+        """Every job of one workflow run, with the per-job conclusion the run's hides."""
+        answered = self._api(f"repos/{self._repository}/actions/runs/{workflow_run_id}/jobs")
+        listed = answered.get("jobs")
+        if not isinstance(listed, list):
+            return ()
+        return tuple(job for job in listed if isinstance(job, dict))
+
+    def pending_deployments(self, workflow_run_id: int) -> tuple[dict[str, Any], ...]:
+        """Which gate a run is parked at, who may release it, and whether you are one.
+
+        Readable by anyone with read access to the repository -- GitHub's own documentation
+        says so on this endpoint -- which is what makes it usable from a binary holding
+        nothing but ``gh``. It is also the one place ``current_user_can_approve`` is
+        answered, so a lead can be told the run is waiting on *them* rather than on the
+        abstraction "a lead".
+        """
+        return self._api_list(
+            f"repos/{self._repository}/actions/runs/{workflow_run_id}/pending_deployments"
+        )
+
+    def approvals(self, workflow_run_id: int) -> tuple[dict[str, Any], ...]:
+        """Who released a gate and when, which is the question an audit asks in a terminal.
+
+        The same endpoint ``submit-run.yml``'s admission job reads to learn whose
+        authorization to evaluate, so this is not a second source for the fact -- it is the
+        same source, read by a reader instead of by a workflow.
+        """
+        return self._api_list(
+            f"repos/{self._repository}/actions/runs/{workflow_run_id}/approvals"
+        )
+
     def job_log(self, workflow_run_id: int) -> str:
         """The whole log of a finished run, which is where the step summary's bytes are."""
         result = self._runner(
@@ -279,16 +345,35 @@ class PlatformActions:
         )
 
     def _api(self, path: str) -> dict[str, Any]:
+        document = self._read(path)
+        if not isinstance(document, dict):
+            raise GithubUnreachableError(f"gh api {path} answered with a {type(document).__name__}")
+        return document
+
+    def _api_list(self, path: str) -> tuple[dict[str, Any], ...]:
+        """An endpoint whose body is a bare array, which several of these are.
+
+        Answers empty rather than raising where ``gh`` refuses the call. Both of the
+        endpoints read through here are supplementary -- they say who may release a run and
+        who did -- and a token that cannot see them should cost a reader those two lines
+        rather than the whole answer.
+        """
+        try:
+            document = self._read(path)
+        except GithubUnreachableError:
+            return ()
+        if not isinstance(document, list):
+            return ()
+        return tuple(item for item in document if isinstance(item, dict))
+
+    def _read(self, path: str) -> Any:
         result = self._runner(("gh", "api", path))
         if not result.ok:
             raise GithubUnreachableError(f"gh api {path} answered: {_said(result)}")
         try:
-            document = json.loads(result.stdout)
+            return json.loads(result.stdout)
         except json.JSONDecodeError as exc:
             raise GithubUnreachableError(f"gh api {path} answered with something that is not JSON") from exc
-        if not isinstance(document, dict):
-            raise GithubUnreachableError(f"gh api {path} answered with a {type(document).__name__}")
-        return document
 
 
 def read_submission_runs(
@@ -320,6 +405,210 @@ def read_submission_runs(
             )
         )
     return tuple(found)
+
+
+class Admitted(StrEnum):
+    """Whether a run reached AWS, which is the only question that decides a dispatch.
+
+    Three values rather than two because the honest answer is sometimes neither. ``NO`` and
+    ``YES`` are both certainties read from the admission job's own conclusion; ``UNSURE`` is
+    everything else -- a workflow run this could not find, an admission job that failed at
+    an unknown point, a jobs endpoint that would not answer -- and it behaves exactly as the
+    binary behaved before any of this existed, by dispatching.
+    """
+
+    NO = "no"
+    YES = "yes"
+    UNSURE = "unsure"
+
+
+@dataclass(frozen=True)
+class RunFacts:
+    """Everything about one run that GitHub can answer without starting a runner."""
+
+    run_id: str
+    admitted: Admitted
+    #: One line naming what was established and how, printed whichever way this went.
+    because: str
+    submission: SubmissionRun | None = None
+    #: From ``pending_deployments``, and only ever populated while a run is parked.
+    gate: str | None = None
+    reviewers: tuple[str, ...] = ()
+    you_can_release: bool = False
+    #: From ``approvals``, once somebody has.
+    approver: str | None = None
+    approved_at: datetime | None = None
+    experiment: str | None = None
+    team: str | None = None
+
+    @property
+    def needs_a_dispatch(self) -> bool:
+        return self.admitted is not Admitted.NO
+
+
+def read_run_facts(
+    actions: PlatformActions,
+    run_id: str,
+    *,
+    depth: int = SUBMISSION_SEARCH_DEPTH,
+) -> RunFacts:
+    """Everything GitHub knows about one run, and whether AWS has to be asked as well.
+
+    THE ORDER IS THE CHEAP QUESTION FIRST. Find the submission, read its jobs, and stop the
+    moment the answer is certain. A run parked at a gate, refused while compiling, or still
+    being compiled has no Batch job for anybody to describe, so those three end here -- and
+    they are a large share of what gets asked, because they are what people check in the
+    minutes after submitting, over and over, while they wait for a lead.
+    """
+    found = find_submission(actions, run_id, depth=depth)
+    if found is None:
+        return RunFacts(
+            run_id=run_id,
+            admitted=Admitted.UNSURE,
+            because=(
+                f"no dispatch of {SUBMIT_WORKFLOW} in the last {depth} carries this run id. "
+                "GitHub keeps workflow runs and their artifacts for a bounded window, so an "
+                "older run is not findable here and has to be asked for directly."
+            ),
+        )
+    submission, compiled = found
+    jobs = {str(job.get("name")): job for job in actions.jobs(submission.workflow_run_id)}
+    admission = jobs.get(ADMISSION_JOB)
+    conclusion = admission.get("conclusion") if admission is not None else None
+    facts = RunFacts(
+        run_id=run_id,
+        admitted=Admitted.UNSURE,
+        because="",
+        submission=submission,
+        experiment=_string(compiled, "experiment"),
+        team=_string(compiled, "team"),
+    )
+
+    if submission.state == "PENDING_APPROVAL":
+        return _parked(actions, facts)
+    if admission is None or conclusion == "skipped":
+        return replace(
+            facts,
+            admitted=Admitted.NO,
+            because=(
+                f"{SUBMIT_WORKFLOW} finished without running its admission job, so nothing "
+                "was ever sent to AWS. What refused it is on the run page."
+            ),
+        )
+    if conclusion == "success":
+        return _released(actions, replace(facts, admitted=Admitted.YES, because=""))
+    if conclusion is None:
+        return replace(
+            facts,
+            admitted=Admitted.UNSURE,
+            because=(
+                "the admission job is still running. It may already have started the run, "
+                "so what AWS thinks is the only reliable answer."
+            ),
+        )
+    return replace(
+        facts,
+        admitted=Admitted.UNSURE,
+        because=(
+            f"the admission job ended {conclusion}, which does not say whether it got as "
+            "far as starting the run -- it writes where a run went only after admission "
+            "answers. Asking AWS is the only way to be sure."
+        ),
+    )
+
+
+def _parked(actions: PlatformActions, facts: RunFacts) -> RunFacts:
+    """A run waiting on a person, described down to which person and whether it is you."""
+    deployments = actions.pending_deployments(facts.submission.workflow_run_id)  # type: ignore[union-attr]
+    gate: str | None = None
+    reviewers: list[str] = []
+    yours = False
+    for deployment in deployments:
+        environment = deployment.get("environment")
+        if isinstance(environment, dict) and isinstance(environment.get("name"), str):
+            gate = environment["name"]
+        yours = yours or deployment.get("current_user_can_approve") is True
+        for entry in deployment.get("reviewers") or []:
+            reviewer = entry.get("reviewer") if isinstance(entry, dict) else None
+            named = reviewer.get("login") or reviewer.get("name") if isinstance(reviewer, dict) else None
+            if isinstance(named, str) and named not in reviewers:
+                reviewers.append(named)
+    return replace(
+        facts,
+        admitted=Admitted.NO,
+        because=(
+            "this run is parked at an approval gate, which is before anything reaches AWS. "
+            "There is no Batch job to describe yet."
+        ),
+        gate=gate,
+        reviewers=tuple(reviewers),
+        you_can_release=yours,
+    )
+
+
+def _released(actions: PlatformActions, facts: RunFacts) -> RunFacts:
+    """An admitted run, with the gate's release attributed where there was one to release."""
+    approver, approved_at = None, None
+    for approval in actions.approvals(facts.submission.workflow_run_id):  # type: ignore[union-attr]
+        if approval.get("state") != "approved":
+            continue
+        user = approval.get("user")
+        if isinstance(user, dict) and isinstance(user.get("login"), str):
+            approver = user["login"]
+        approved_at = _instant(approval.get("comment_created_at")) or approved_at
+    return replace(
+        facts,
+        because=(
+            "this run was admitted, so what it is doing now is inside AWS. Only "
+            f"{CANCEL_WORKFLOW} holds an identity that may read a Batch job."
+        ),
+        approver=approver,
+        approved_at=approved_at,
+    )
+
+
+def find_submission(
+    actions: PlatformActions,
+    run_id: str,
+    *,
+    depth: int = SUBMISSION_SEARCH_DEPTH,
+) -> tuple[SubmissionRun, dict[str, Any]] | None:
+    """Join a platform run id back to the dispatch that minted it, newest first.
+
+    THERE IS NO INDEX AND THERE CANNOT EASILY BE ONE. A workflow run does not expose the
+    inputs it was dispatched with, and ``run-name`` -- the one field that would show on the
+    runs list -- is evaluated before the compile job exists, so it cannot carry an id that
+    job has not minted yet. What is left is to read each candidate's compiled manifest,
+    which is one artifact download per candidate examined.
+
+    That is why this stops at the first match rather than reading them all. A run somebody
+    is asking about is nearly always one of the last few, so the usual cost is one or two
+    downloads; the pathological cost is ``depth`` of them, and the answer then is that the
+    run was not found and the caller pays for a dispatch as they always did.
+    """
+    for run in actions.workflow_runs(SUBMIT_WORKFLOW, limit=depth):
+        identifier = run.get("id")
+        created = _instant(run.get("created_at"))
+        if not isinstance(identifier, int) or created is None:
+            continue
+        compiled = actions.compiled_submission(identifier)
+        if compiled is None or _string(compiled, "run_id") != run_id:
+            continue
+        manifest = compiled.get("manifest")
+        fanout = manifest.get("fanout") if isinstance(manifest, dict) else None
+        return (
+            SubmissionRun(
+                workflow_run_id=identifier,
+                state=submission_state(run),
+                created_at=created,
+                url=str(run.get("html_url") or ""),
+                run_id=run_id,
+                experiment=_string(compiled, "experiment"),
+                cells=fanout.get("size") if isinstance(fanout, dict) else None,
+            ),
+            compiled,
+        )
+    return None
 
 
 def submission_state(run: Mapping[str, Any]) -> str:
