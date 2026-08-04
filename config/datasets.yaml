@@ -206,6 +206,20 @@ published:
     version: v1
     manifest_sha256: "7257157825e59319697a270f76a7fde2f8e3f93cea15596671b10dc4e287c210"
     tokenizer: tokenizer/gigatoken-superbpe
+  # Plan B Phase-0 equal-token ~2B path-check corpora (100M). Equal tokens/lang subsampled
+  # from the UniMax 20B arms. Digests from live promote 2026-08-04.
+  - reference_id: fineweb2-phase0-equal-bpe-2b-v1
+    uri: "s3://edullm-data/pretrain/fineweb2-phase0-equal-bpe-2b/v1/"
+    dataset_id: pretrain/fineweb2-phase0-equal-bpe-2b
+    version: v1
+    manifest_sha256: "d0700b75c2559c66d759ee8cace02a40bea3c33de692a07b6925b9e751e7350e"
+    tokenizer: tokenizer/gigatoken-bpe
+  - reference_id: fineweb2-phase0-equal-superbpe-2b-v1
+    uri: "s3://edullm-data/pretrain/fineweb2-phase0-equal-superbpe-2b/v1/"
+    dataset_id: pretrain/fineweb2-phase0-equal-superbpe-2b
+    version: v1
+    manifest_sha256: "1e0ce0c008a0baa2c866e09c7ccf866eaeb6f0e01441501c374e945f6a85a9dc"
+    tokenizer: tokenizer/gigatoken-superbpe
   # THE ONE ENTRY HERE THAT IS OFFERED ON A TOKENIZER NOTHING COULD BUILD UNTIL TODAY, which
   # is the case the paragraph above says resolves itself: `tokenizer/qwen25-vendored` names
   # `https://huggingface.co/Qwen/Qwen2.5-0.5B` as its source in its own dataset.json, so the
