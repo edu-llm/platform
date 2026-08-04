@@ -158,6 +158,14 @@ TRAINING_STEPS: Final = 20
 #: Landing them the other way round offers a corpus every image refuses.
 TOKENIZERS: Final[dict[str, str]] = {
     "tokenizer/dolma2-bpe": "TokenizerConfig.dolma2()",
+    "tokenizer/gigatoken-bpe": (
+        "TokenizerConfig(vocab_size=100000, eos_token_id=99999, pad_token_id=99999, "
+        'identifier="s3://edullm-data/tokenizer/gigatoken-bpe/v1/files/tokenizer.json")'
+    ),
+    "tokenizer/gigatoken-superbpe": (
+        "TokenizerConfig(vocab_size=100000, eos_token_id=99999, pad_token_id=99999, "
+        'identifier="s3://edullm-data/tokenizer/gigatoken-superbpe/v1/files/tokenizer.json")'
+    ),
     "tokenizer/qwen25-vendored": 'TokenizerConfig.from_hf("Qwen/Qwen2.5-0.5B")',
     "tokenizer/smollm2-bpe": 'TokenizerConfig.from_hf("HuggingFaceTB/SmolLM2-135M")',
 }

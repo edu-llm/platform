@@ -190,6 +190,22 @@ published:
     version: v6
     manifest_sha256: "047d001de3d08d443f99f1b12a7c998dc06bdef57a914e26f7feeaf4601be2ca"
     tokenizer: tokenizer/smollm2-bpe
+  # Plan B UniMax 20B equal-byte token corpora (BPE / SuperBPE). Digests read live from
+  # dataset.json group + _VALIDATED.json on 2026-08-04. Offered on the form only after
+  # tokenizer/gigatoken-* land in tools.TOKENIZERS and OLMo-core's train_on_corpus map.
+  # ~21.02B / ~18.87B train tokens; shards are uint32 .u32le.bin (vocab 100k).
+  - reference_id: fineweb2-unimax-bpe-20b-v1
+    uri: "s3://edullm-data/pretrain/fineweb2-unimax-bpe-20b/v1/"
+    dataset_id: pretrain/fineweb2-unimax-bpe-20b
+    version: v1
+    manifest_sha256: "5f2889e8cd3c9101f2e0481d58450c27cbe98925224186a005f9ca79896abb0e"
+    tokenizer: tokenizer/gigatoken-bpe
+  - reference_id: fineweb2-unimax-superbpe-20b-v1
+    uri: "s3://edullm-data/pretrain/fineweb2-unimax-superbpe-20b/v1/"
+    dataset_id: pretrain/fineweb2-unimax-superbpe-20b
+    version: v1
+    manifest_sha256: "7257157825e59319697a270f76a7fde2f8e3f93cea15596671b10dc4e287c210"
+    tokenizer: tokenizer/gigatoken-superbpe
   # THE ONE ENTRY HERE THAT IS OFFERED ON A TOKENIZER NOTHING COULD BUILD UNTIL TODAY, which
   # is the case the paragraph above says resolves itself: `tokenizer/qwen25-vendored` names
   # `https://huggingface.co/Qwen/Qwen2.5-0.5B` as its source in its own dataset.json, so the
@@ -308,4 +324,19 @@ published:
     dataset_id: tokenizer/smollm2-bpe
     version: v1
     manifest_sha256: "354a65ca1bd51076f972205fe1fbb8f261c6a022787be84f3bbae4aa13d3c529"
+    tokenizer: null
+  # Plan A scale gigatoken pair. Unreachable as a corpus by family; registered so the two
+  # fineweb2-unimax-*-20b corpora can pin them by digest and admission can resolve lineage.
+  # Digests read live 2026-08-04 from files/ group + seal.
+  - reference_id: gigatoken-bpe-v1
+    uri: "s3://edullm-data/tokenizer/gigatoken-bpe/v1/"
+    dataset_id: tokenizer/gigatoken-bpe
+    version: v1
+    manifest_sha256: "5e4b1e06caf52cf0d066436ea20779891f20ab20da684586d7907db3c25ee3db"
+    tokenizer: null
+  - reference_id: gigatoken-superbpe-v1
+    uri: "s3://edullm-data/tokenizer/gigatoken-superbpe/v1/"
+    dataset_id: tokenizer/gigatoken-superbpe
+    version: v1
+    manifest_sha256: "4a5662af770e218c0ebd3cb576492a4115729ea828750826bf9df6d7adb95096"
     tokenizer: null
