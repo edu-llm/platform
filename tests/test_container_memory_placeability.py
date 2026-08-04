@@ -15,18 +15,32 @@ is a queue that never scales, which is indistinguishable at a glance from a capa
 shortage -- and the two coincided on p4d, which is most of why it went unread for as long
 as it did.
 
-A HOST REGISTERS 31/32 OF ITS ADVERTISED MEMORY AND NEVER MORE. That ratio was measured
-rather than reasoned: each shape was bisected by submitting one job per candidate value
-into a queue of its own and reading whether the refusal appeared. p4d.24xlarge was
-placeable at 1142784 and not 1144832, p5.48xlarge at 2031616 and not 2035712, and
-p5.4xlarge answered 253952 against an advertised 262144. All three are 31/32 exactly,
-which is what makes this one ratio rather than three constants.
+31/32 IS NOT A LAW, AND THIS FILE USED TO SAY IT WAS. That ratio was inferred from probe
+jobs against two P shapes, and the account's own ECS registrations contradict it: the
+fraction a host registers runs from 0.93622 on g6.xlarge to 0.97380 on g5.48xlarge. Reading
+high is the direction that ships an unplaceable container, and the ratio reads high for five
+of the nine instance types that have now been measured -- so this file certified two shapes
+that could never be placed. ``gpu-1xl4`` asked 15360 of a g6.xlarge that registers 15339, and
+``gpu-1xl40s`` asked 31744 of a g6e.xlarge that registers 31611.
 
-The advertised column below is EC2's published figure for the instance type and is the one
-fact here that this repository cannot derive from itself. It is duplicated from the table
-in ``src/edullm_platform/execution.py``, deliberately: a test that read its expectation out
-of the module it is testing would agree with any value that module carried, which is the
-whole of how both failures above survived review.
+g5.xlarge and g6.xlarge are the pair that settles it. Both advertise 16384 MiB, both
+registered under AMI ami-011db5ae81cc0f370, and they register 15759 and 15339. No function of
+the advertised figure returns two answers for one input, so a ceiling derived from the spec
+sheet cannot be right for both, and the real figure has to be read off the host.
+
+WHERE THE REGISTERED COLUMN COMES FROM, AND WHY IT COSTS NOTHING. Every ECS container
+instance calls ``RegisterContainerInstance`` as it joins a Batch compute environment, and
+that call carries ``totalResources.MEMORY`` -- the exact number placement is decided against.
+CloudTrail keeps ninety days of them::
+
+    aws cloudtrail lookup-events \\
+      --lookup-attributes AttributeKey=EventName,AttributeValue=RegisterContainerInstance
+
+The ceiling for every instance type this account has ever started is therefore already
+recorded, and reading it launches nothing and bills nothing. Both tables below are facts
+about the world rather than values derived from the module under test: a test that read its
+expectation out of ``execution.py`` would agree with any value that module carried, which is
+the whole of how each of these failures survived review.
 """
 
 from __future__ import annotations
@@ -41,24 +55,48 @@ from edullm_platform.execution import CONTAINER_SHAPES
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-#: The fraction of its advertised memory a host registers with ECS, measured per the
-#: module docstring. A job is placed against this and never against the figure EC2 prints.
-REGISTERED_FRACTION = (31, 32)
+#: The fraction of its advertised memory a host is ASSUMED to register when this account has
+#: never started one, kept only as the fallback below. It is an estimate and the module
+#: docstring records that three measured types come in under it.
+ESTIMATED_REGISTERED_FRACTION = (31, 32)
 
 #: What ECS reserves for the agent and the host, as the ratio infra/batch-compute.yaml
-#: settled on. Counted per vCPU, which is why whether it fits under the ceiling depends on
-#: an instance's memory per vCPU rather than on its size.
+#: settled on. Counted per vCPU, so on a four-vCPU host it is a flat 1 GiB -- which is the
+#: whole reason the two small G shapes broke: their hosts withhold more than that.
 AGENT_ALLOWANCE_MIB_PER_4_VCPU = 1024
 
-#: The memory-per-vCPU at which the agent's allowance and the 1/32 the host withholds are
-#: the same number. Below it the subtraction clears the ceiling; above it the subtraction
-#: lands over the ceiling and the container can never be placed. The P family is the whole
-#: of what sits above, which is why the P family is the whole of what has ever broken.
-CROSSOVER_MIB_PER_VCPU = 8 * 1024
+#: The smallest fraction of its host's registration any container here claims. Set by
+#: gpu-1xl4, where a flat 1 GiB allowance is 6.7% of a 15 GiB host. A shape under this is
+#: leaving most of a machine it is billing for unused.
+MINIMUM_CLAIMED_FRACTION = 0.93
+
+#: WHAT AN INSTANCE ACTUALLY REGISTERED WITH ECS, in MiB, read from this account's
+#: ``RegisterContainerInstance`` calls in CloudTrail on 2026-08-04 -- see the module
+#: docstring for the query. This is the number Batch decides placement against, and it is the
+#: one fact here that neither this repository nor EC2's spec sheet can supply.
+#:
+#: Every value is stable across every registration observed for that type (257 calls, nine
+#: types, two AMIs), so these are the type's figure rather than one machine's. Add a row the
+#: first time an instance of a new type comes up; do not guess one.
+REGISTERED_MEMORY_MIB = {
+    "c7i.8xlarge": 63226,
+    "g4dn.xlarge": 15759,
+    "g5.xlarge": 15759,
+    "g5.12xlarge": 191142,
+    "g5.48xlarge": 765828,
+    "g6.xlarge": 15339,
+    "g6e.xlarge": 31611,
+    "g6e.12xlarge": 381654,
+    "p4d.24xlarge": 1148706,
+}
 
 #: EC2's advertised memory per instance type, in MiB. Not derived from anything in this
-#: repository -- see the module docstring for why that matters.
+#: repository, and used here only to estimate a ceiling for the types above have not covered.
 ADVERTISED_MEMORY_MIB = {
+    # The CPU shape's host. No GPU profile runs here and gpu_profiles() excludes cpu-32vcpu,
+    # so this row exists for one reason: c7i.8xlarge is a ninth measured registration, and it
+    # is one of the five that comes in under what 31/32 promises.
+    "c7i.8xlarge": 64 * 1024,
     "g4dn.xlarge": 16 * 1024,
     "g4dn.12xlarge": 192 * 1024,
     "g4dn.metal": 384 * 1024,
@@ -93,7 +131,17 @@ def gpu_profiles() -> list[str]:
 
 
 def registered_ceiling_mib(instance_type: str) -> int:
-    numerator, denominator = REGISTERED_FRACTION
+    """The most memory a container on this instance type can ask for and still be placed.
+
+    The host's own registration where one has been read, and 31/32 of the advertised figure
+    where none has. The fallback is flagged rather than hidden because it is what was wrong
+    before: it is an estimate, it reads high on five of the nine types since measured, and a
+    shape resting on it has not been checked against anything real.
+    """
+    measured = REGISTERED_MEMORY_MIB.get(instance_type)
+    if measured is not None:
+        return measured
+    numerator, denominator = ESTIMATED_REGISTERED_FRACTION
     return ADVERTISED_MEMORY_MIB[instance_type] * numerator // denominator
 
 
@@ -101,10 +149,11 @@ def registered_ceiling_mib(instance_type: str) -> int:
 def test_a_gpu_container_asks_for_no_more_than_its_host_registers(profile: str) -> None:
     """THE ONE THAT MATTERS. Mutation: take the allowance off the advertised figure.
 
-    That mutation is not hypothetical -- it is the state this repository shipped, twice,
-    and it is what an uncommitted revert of the correction would restore. It reads as an
-    obvious simplification, because the advertised figure is the number written on the
-    instance, and it is wrong for every shape above 8 GiB per vCPU.
+    That mutation is not hypothetical -- it is the state this repository shipped four times,
+    and it is what an uncommitted revert of any of the corrections would restore. It reads as
+    an obvious simplification, because the advertised figure is the number written on the
+    instance, and it is wrong wherever the host withholds more than the allowance covers:
+    every P shape, and the two small G shapes whose hosts withhold over a gibibyte.
 
     Parametrised per profile so a failure names the shape rather than the batch, and so a
     shape added later is checked by arriving rather than by somebody remembering.
@@ -122,7 +171,7 @@ def test_a_gpu_container_asks_for_no_more_than_its_host_registers(profile: str) 
 
 
 @pytest.mark.parametrize("profile", gpu_profiles())
-def test_every_gpu_container_is_its_instance_less_the_agents_allowance(profile: str) -> None:
+def test_a_gpu_container_claims_almost_all_of_what_its_host_registers(profile: str) -> None:
     """Mutation: pick a memory figure that is merely under the ceiling.
 
     The test above is the safety property and this is the intent, and they are different
@@ -130,23 +179,24 @@ def test_every_gpu_container_is_its_instance_less_the_agents_allowance(profile: 
     by asking for half the machine and would waste the other half on every run, which
     nothing else here would notice.
 
-    One rule covers both families rather than two, and the branch is the crossover rather
-    than the letter of the instance name. Below 8 GiB per vCPU the allowance is taken off
-    the advertised figure; at or above it, off the ceiling. Writing it as ``p`` versus ``g``
-    would be a rule about names that happens to hold, and the next P-shaped G instance
-    would break it.
+    A FRACTION RATHER THAN AN EQUALITY, BECAUSE THE SUBTRACTION IS NO LONGER ONE RULE. This
+    was ``memory == base - allowance`` with a branch on memory per vCPU, and it could be,
+    while the ceiling was a formula both sides of the branch shared. It cannot be now: nine
+    instance types are held to their own registration and six to an estimate, and the shapes
+    resting on the estimate were sized before their hosts were measured -- p4d.24xlarge
+    registers 30498 MiB more than gpu-8xa100 asks for. Those are working, deployed job
+    definitions and raising them to close a gap is a template release that buys a couple of
+    percent, so what is asserted is the floor rather than the equality.
     """
     shape = CONTAINER_SHAPES[profile]
     instance_type = instance_types()[profile]
-    advertised = ADVERTISED_MEMORY_MIB[instance_type]
-    allowance = AGENT_ALLOWANCE_MIB_PER_4_VCPU * (shape.vcpus // 4)
+    ceiling = registered_ceiling_mib(instance_type)
 
-    per_vcpu = advertised // shape.vcpus
-    base = advertised if per_vcpu <= CROSSOVER_MIB_PER_VCPU else registered_ceiling_mib(
-        instance_type
+    assert shape.memory_mib >= ceiling * MINIMUM_CLAIMED_FRACTION, (
+        f"{profile} asks for {shape.memory_mib} MiB of an {instance_type} that registers "
+        f"{ceiling}, leaving {ceiling - shape.memory_mib} unclaimed on a machine the run "
+        f"pays for whole."
     )
-
-    assert shape.memory_mib == base - allowance
 
 
 @pytest.mark.parametrize(
@@ -155,9 +205,11 @@ def test_every_gpu_container_is_its_instance_less_the_agents_allowance(profile: 
         ("gpu-8xa100", 1155072),
         ("gpu-1xh100", 258048),
         ("gpu-8xh100", 2048000),
+        ("gpu-1xl4", 15360),
+        ("gpu-1xl40s", 31744),
     ],
 )
-def test_the_three_values_the_p_family_shipped_are_refused_by_this_rule(
+def test_the_five_values_that_shipped_unplaceable_are_refused_by_this_rule(
     profile: str, shipped_value: int
 ) -> None:
     """The regression, named by its numbers rather than described.
@@ -165,12 +217,14 @@ def test_the_three_values_the_p_family_shipped_are_refused_by_this_rule(
     A test that only checks today's values passes the moment somebody restores yesterday's,
     provided they restore them consistently -- which is precisely what happened, because
     the table and the templates were reverted together and the seam test compares them to
-    each other. These three integers are what a revert puts back, so this fails on the
+    each other. These five integers are what a revert puts back, so this fails on the
     revert itself rather than on some consequence of it.
 
-    ``gpu-8xa100`` is the one that cost something: a 140 GB training run was submitted to a
+    ``gpu-8xa100`` is the one that cost the most: a 140 GB training run was submitted to a
     queue that could never place it, and a run that never starts writes no checkpoint to
-    resume from.
+    resume from. ``gpu-1xl4`` is the one that shows the symptom most plainly -- a g6.xlarge
+    came up for run_019fcda8 on 2026-08-04, registered 15339 MiB, could not take a container
+    asking 15360, and billed until the environment scaled it back down.
     """
     instance_type = instance_types()[profile]
 
@@ -197,27 +251,60 @@ def test_every_gpu_shape_has_an_advertised_figure_to_be_checked_against() -> Non
     )
 
 
-def test_the_shapes_sitting_exactly_on_their_ceiling_are_the_three_this_expects() -> None:
-    """The rows to look at first if this ever comes back.
+def test_the_shapes_checked_against_an_estimate_are_the_seven_this_expects() -> None:
+    """WHICH SHAPES ARE NOT ACTUALLY CHECKED, held as a set so the set has to shrink.
 
-    Three shapes have zero headroom, and that is the arithmetic landing on its boundary
-    rather than a mistake: all three g6e types are 8 GiB per vCPU on the nose, so the
-    allowance and the 1/32 are the same number and the two subtractions coincide. They are
-    placeable with nothing left over, which is where the P family sat before it was
-    measured.
+    A shape whose instance type has never come up here is measured against 31/32 of its
+    advertised memory, and 31/32 is the assumption that put two shapes over their ceiling.
+    So these seven are certified by nothing. gpu-8xl40s is the one to look at first: it sits
+    exactly on the estimate for g6e.48xlarge, so it has no headroom against a number that has
+    been wrong by as much as 533 MiB elsewhere.
 
-    Held to exactly three so that a reservation growing by a single MiB, or a fourth
-    instance type arriving at the crossover, is reported here rather than discovered as a
-    queue that stopped scaling.
+    Named rather than counted so that promoting a shape onto a new instance type fails here,
+    and so that reading a registration out of CloudTrail once the first instance of a type
+    comes up is a deletion from this set rather than something nobody thinks to do.
     """
-    on_the_boundary = {
+    on_an_estimate = {
         profile
         for profile in gpu_profiles()
-        if CONTAINER_SHAPES[profile].memory_mib
-        == registered_ceiling_mib(instance_types()[profile])
+        if instance_types()[profile] not in REGISTERED_MEMORY_MIB
     }
 
-    assert on_the_boundary == {"gpu-1xl40s", "gpu-4xl40s", "gpu-8xl40s"}
+    assert on_an_estimate == {
+        "gpu-4xt4",  # g4dn.12xlarge
+        "gpu-8xt4",  # g4dn.metal
+        "gpu-4xl4",  # g6.12xlarge
+        "gpu-8xl4",  # g6.48xlarge
+        "gpu-8xl40s",  # g6e.48xlarge
+        "gpu-1xh100",  # p5.4xlarge
+        "gpu-8xh100",  # p5.48xlarge
+    }
+
+
+def test_no_measured_host_registers_as_much_as_the_estimate_promises() -> None:
+    """Why the fallback above is a liability rather than a conservative default.
+
+    31/32 was adopted as a floor -- "a host registers 31/32 of its advertised memory and
+    never more". Against the nine types since measured it is not a floor: it reads high on
+    five of them, by 533 MiB on g6.xlarge, and reading high is what ships a container that
+    cannot be placed. This pins the disagreement so that anybody tempted to trust the
+    estimate on an eighth instance type sees the size of the error first.
+    """
+    numerator, denominator = ESTIMATED_REGISTERED_FRACTION
+    overstated = {
+        instance_type: ADVERTISED_MEMORY_MIB[instance_type] * numerator // denominator
+        - registered
+        for instance_type, registered in REGISTERED_MEMORY_MIB.items()
+        if ADVERTISED_MEMORY_MIB[instance_type] * numerator // denominator > registered
+    }
+
+    assert overstated == {
+        "c7i.8xlarge": 262,
+        "g4dn.xlarge": 113,
+        "g5.xlarge": 113,
+        "g6.xlarge": 533,
+        "g6e.xlarge": 133,
+    }
 
 
 #: The eight shapes whose ``/dev/shm`` is a quarter of the whole instance rather than a

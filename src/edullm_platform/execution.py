@@ -873,14 +873,27 @@ CONTAINER_SHAPES: Final[Mapping[str, ContainerShape]] = {
     # registers rather than from the number EC2 advertises. Those are not the same figure,
     # and the difference between them is the whole of what follows.
     #
-    # A HOST REGISTERS 31/32 OF ITS ADVERTISED MEMORY AND NEVER MORE, so the ceiling a job is
-    # placed against is already 3.125% below the figure in the left-hand column. Subtracting
-    # the agent's allowance from the advertised figure therefore reserves nothing at all
-    # unless that allowance is itself larger than 1/32 of the instance -- and whether it is
-    # depends on memory per vCPU, because the allowance is counted per vCPU and the ceiling
-    # is counted per byte. The two are equal at exactly 8 GiB per vCPU. Below it the G family
-    # clears the ceiling with room to spare; above it the subtraction lands over the ceiling
-    # and the job can never be placed. The P family is the whole of what sits above.
+    # A HOST REGISTERS LESS THAN ITS ADVERTISED MEMORY, AND HOW MUCH LESS IS A PROPERTY OF THE
+    # INSTANCE TYPE RATHER THAN A RATIO. This comment said "31/32 and never more" and used that
+    # as the ceiling for the P family while leaving the G family measured against the advertised
+    # figure. The ratio was inferred from two P shapes. The account's own ECS registrations say
+    # it does not hold: the fraction a host registers runs from 0.93622 on g6.xlarge to 0.97380
+    # on g5.48xlarge, so 31/32 is conservative on the large shapes and OVER-STATES what the
+    # small G shapes register -- which is the direction that ships an unplaceable container.
+    #
+    # g5.xlarge and g6.xlarge are the pair that settles it. Both advertise 16384 MiB, both
+    # registered under the same AMI, and they register 15759 and 15339. No function of the
+    # advertised figure produces two different answers for one input, so the ceiling has to be
+    # read off the host rather than derived from the machine's spec sheet.
+    #
+    # WHERE THE REGISTERED FIGURES COME FROM, AND WHY THEY COST NOTHING TO GET. Every ECS
+    # container instance calls RegisterContainerInstance when it joins a Batch compute
+    # environment, and that call carries totalResources.MEMORY -- the exact number a job is
+    # placed against. CloudTrail keeps ninety days of them, so the ceiling for every instance
+    # type this account has ever started is already recorded and is read with
+    # `aws cloudtrail lookup-events --lookup-attributes
+    # AttributeKey=EventName,AttributeValue=RegisterContainerInstance`. No probe job, no
+    # bisection, and no instance launched to find out.
     #
     # WHAT AN UNPLACEABLE CONTAINER LOOKS LIKE, WHICH IS NOT WHAT THIS COMMENT ONCE SAID.
     # Batch decides placement statically. It answers MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT
@@ -891,64 +904,64 @@ CONTAINER_SHAPES: Final[Mapping[str, ContainerShape]] = {
     # the job the whole time, in as many words, and is there whether or not any capacity
     # exists.
     #
-    # So the allowance is subtracted from 31/32 of the instance rather than from all of it,
-    # which is the same reservation the rule always meant to make, taken from the number the
-    # host actually registers. Only the P shapes move; every G value below is what it
-    # already was, because on those the advertised figure and the ceiling never crossed.
+    # THE ONE RULE IS container <= registered, AND IT IS AN INEQUALITY RATHER THAN A FORMULA.
+    # A shape whose host has been measured is held to that host's own figure; a shape whose
+    # host has never come up here is held to 31/32 of the advertised figure, which is what the
+    # estimate was before and is now labelled as one. Where a value already sits under its
+    # ceiling it is left alone: those are deployed job definitions with runs behind them, and
+    # moving a working number to make a column tidy is a template release that buys nothing.
     #
-    #   g4dn.xlarge      16 GiB      16384 -   1024 =   15360      4 vCPU
-    #   g4dn.12xlarge   192 GiB     196608 -  12288 =  184320     48 vCPU
-    #   g4dn.metal      384 GiB     393216 -  24576 =  368640     96 vCPU
-    #   g5.12xlarge     192 GiB     196608 -  12288 =  184320     48 vCPU
-    #   g5.48xlarge     768 GiB     786432 -  49152 =  737280    192 vCPU
-    #   g6.xlarge        16 GiB      16384 -   1024 =   15360      4 vCPU
-    #   g6.12xlarge     192 GiB     196608 -  12288 =  184320     48 vCPU
-    #   g6.48xlarge     768 GiB     786432 -  49152 =  737280    192 vCPU
-    #   g6e.xlarge       32 GiB      32768 -   1024 =   31744      4 vCPU
-    #   g6e.12xlarge    384 GiB     393216 -  12288 =  380928     48 vCPU
-    #   g6e.48xlarge   1536 GiB    1572864 -  49152 = 1523712    192 vCPU
+    #                    advertised   registered   container   vCPU   registered is
+    #   g4dn.xlarge           16384        15759       15360      4   measured
+    #   g4dn.12xlarge        196608       190464      184320     48   31/32 estimate
+    #   g4dn.metal           393216       380928      368640     96   31/32 estimate
+    #   g5.xlarge             16384        15759       15360      4   measured
+    #   g5.12xlarge          196608       191142      184320     48   measured
+    #   g5.48xlarge          786432       765828      737280    192   measured
+    #   g6.xlarge             16384        15339       14315      4   measured
+    #   g6.12xlarge          196608       190464      184320     48   31/32 estimate
+    #   g6.48xlarge          786432       761856      737280    192   31/32 estimate
+    #   g6e.xlarge            32768        31611       30587      4   measured
+    #   g6e.12xlarge         393216       381654      380928     48   measured
+    #   g6e.48xlarge        1572864      1523712     1523712    192   31/32 estimate
+    #   p4d.24xlarge        1179648      1148706     1118208     96   measured
+    #   p5.4xlarge           262144       253952      249856     16   31/32 estimate
+    #   p5.48xlarge         2097152      2031616     1982464    192   31/32 estimate
     #
-    # and the three P shapes, whose middle column is the 31/32 ceiling rather than the whole
-    # of the advertised memory beside it:
+    # The two corrected rows, g6.xlarge and g6e.xlarge, are set at registered less the agent's
+    # allowance, which is the reservation the rule always meant to make taken from the number
+    # the host actually publishes. They are 14315 and 30587 rather than round figures because
+    # the host's figure is not round either.
     #
-    #   p4d.24xlarge   1152 GiB    1142784 -  24576 = 1118208     96 vCPU
-    #   p5.4xlarge      256 GiB     253952 -   4096 =  249856     16 vCPU
-    #   p5.48xlarge    2048 GiB    2031616 -  49152 = 1982464    192 vCPU
+    # THE TWO ROWS THAT DID NOT, AND WHAT THEY COST. g6.xlarge asked 15360 of a host that
+    # registers 15339 and g6e.xlarge asked 31744 of one that registers 31611. Both are the
+    # G-family branch of the old rule, which took the allowance off the ADVERTISED figure on
+    # the reasoning that below 8 GiB per vCPU a 1 GiB allowance is larger than anything the
+    # host withholds. It is larger than the 625 MiB g4dn.xlarge and g5.xlarge withhold, and it
+    # is smaller than the 1045 and 1157 these two withhold, so the subtraction landed 21 and
+    # 133 MiB over the ceiling. gpu-1xl4 is the one that was paid for: a g6.xlarge came up for
+    # run_019fcda8 on 2026-08-04, registered 15339, could not take the container, and was
+    # billed until the compute environment scaled it back down.
     #
-    # THE THREE g6e ROWS SIT EXACTLY ON THEIR CEILING, which is the arithmetic above landing
-    # on its boundary rather than a mistake. All three are 8 GiB per vCPU on the nose, so the
-    # allowance and the 1/32 are the same number, and 31744, 380928 and 1523712 are each both
-    # the container's memory and the most the host will ever register. They are placeable and
-    # they are placeable with nothing left over, which is where the P family sat before it was
-    # measured. They are grandfathered rather than endorsed, and they are the rows to look at
-    # first if this ever comes back, because a reservation that grew by a single MiB would put
-    # them where the P family was.
+    # AN ESTIMATED ROW IS NOT A SAFE ROW, AND THE SEVEN OF THEM ARE WHERE THIS COMES BACK.
+    # 31/32 is 0.96875 and the measured fractions run 0.93622 to 0.97380, so the estimate is
+    # on the wrong side of five of the nine types that have been measured. The two above are
+    # the ones whose margin the estimate ate; g6e.12xlarge clears its real ceiling by 726 MiB
+    # and would not survive a slightly hungrier host. Read a shape's registration out of
+    # CloudTrail the first time one of its instances comes up, rather than waiting for the
+    # queue that will not scale.
     #
-    # WHERE 31/32 CAME FROM, BECAUSE THE NUMBERS IT REPLACED WERE ARRIVED AT BY REASONING AND
-    # WERE WRONG. Each shape was bisected by submitting one job per candidate value and
-    # reading whether MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT appeared. One job per
-    # candidate and not several, because only the job at the head of a queue is evaluated: a
-    # sweep submitted into one queue answers for its first entry and leaves the rest
-    # indistinguishable from jobs waiting their turn, which is a convincing way to measure
-    # nothing. Each candidate therefore got a queue of its own against the real compute
-    # environment, and the whole measurement launched no instance and cost nothing.
-    #
-    # p4d.24xlarge was placeable at 1142784 and not at 1144832; p5.48xlarge at 2031616 and
-    # not at 2035712; p5.4xlarge answered 253952 against an advertised 262144. All three
-    # lower bounds are 31/32 of that instance's advertised memory exactly, which is what makes
-    # this a ratio rather than three separate constants.
-    #
-    # No p4d.24xlarge was read directly: EC2 had no on-demand capacity for one in any of the
-    # four availability zones the compute environment spans, throughout. That is worth
-    # separating from the fault, because it is the observation a reader is most likely to
-    # mistake for it. The two coincide and are unrelated -- a capacity shortage makes a job
-    # wait, and this made it unplaceable, which Batch says statically and says whether or not
-    # any capacity exists.
+    # SCARCITY IS A DIFFERENT PROBLEM WITH THE SAME LOOK, and config/capacity.yaml is where it
+    # is recorded. gpu-8xa100 and gpu-8xh100 do not place reliably because EC2 has no P
+    # capacity to sell in the zones these environments span, and that is true of shapes whose
+    # memory is correct. A capacity shortage makes a job wait; a memory figure over the ceiling
+    # makes it unplaceable, which Batch says statically and says whether or not any capacity
+    # exists. The remedy for the first is a different shape or a Capacity Block and the remedy
+    # for the second is this table, so reading one as the other costs an afternoon either way.
     #
     # g4dn.metal and g6e.12xlarge are both 384 GiB and get different container memory, which
     # is the rule working rather than a mistake. The allowance is per vCPU and the metal host
-    # has twice as many, so it hands back 24 GiB of the advertised figure where the g6e hands
-    # back 12 -- which is also why the metal lands under its ceiling and the g6e lands on it.
+    # has twice as many, so it hands back 24 GiB where the g6e hands back 12.
     #
     # shared_memory_mib is a quarter of the container's memory, extending the g5.xlarge's
     # 4 GiB of 16. It is a tmpfs and costs nothing until a DataLoader uses it, and the
@@ -968,10 +981,10 @@ CONTAINER_SHAPES: Final[Mapping[str, ContainerShape]] = {
     "gpu-8xt4": _gpu_shape(vcpus=96, memory_mib=368640, gpus=8, shared_memory_mib=92160),
     "gpu-4xa10g": _gpu_shape(vcpus=48, memory_mib=184320, gpus=4, shared_memory_mib=49152),
     "gpu-8xa10g": _gpu_shape(vcpus=192, memory_mib=737280, gpus=8, shared_memory_mib=196608),
-    "gpu-1xl4": _gpu_shape(vcpus=4, memory_mib=15360, gpus=1, shared_memory_mib=4096),
+    "gpu-1xl4": _gpu_shape(vcpus=4, memory_mib=14315, gpus=1, shared_memory_mib=4096),
     "gpu-4xl4": _gpu_shape(vcpus=48, memory_mib=184320, gpus=4, shared_memory_mib=49152),
     "gpu-8xl4": _gpu_shape(vcpus=192, memory_mib=737280, gpus=8, shared_memory_mib=196608),
-    "gpu-1xl40s": _gpu_shape(vcpus=4, memory_mib=31744, gpus=1, shared_memory_mib=7936),
+    "gpu-1xl40s": _gpu_shape(vcpus=4, memory_mib=30587, gpus=1, shared_memory_mib=7646),
     "gpu-4xl40s": _gpu_shape(vcpus=48, memory_mib=380928, gpus=4, shared_memory_mib=95232),
     "gpu-8xl40s": _gpu_shape(vcpus=192, memory_mib=1523712, gpus=8, shared_memory_mib=380928),
     "gpu-8xa100": _gpu_shape(vcpus=96, memory_mib=1118208, gpus=8, shared_memory_mib=279552),
