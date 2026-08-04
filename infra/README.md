@@ -668,9 +668,10 @@ identity at all. Widening an existing role's condition to a list was the smaller
 worse change: the admission role can start an execution and the canceller can stop any job on
 either queue, and either would then sit behind a scheduled workflow nobody watches dispatch.
 
-The role reads and writes nothing: the `intent/` and `result/` prefixes of the lineage store,
-the runs' own output under `teams/*/runs/*`, the one W&B secret, and the deployed code digest
-of the two admission functions. Both listings carry a prefix condition, because
+The role reads and writes nothing: the `intent/`, `result/` and `attempt/` prefixes of the
+lineage store, the runs' own output under `teams/*/runs/*`, the one W&B secret, and the
+deployed code digest of the two admission functions. Both listings carry a prefix condition,
+because
 `s3:ListBucket` cannot be scoped by an object ARN and without one it enumerates the whole
 bucket. `tests/test_nightly_workflow.py` asserts the granted action set exactly, so an action
 added later is argued for in a test rather than merely not forbidden.
@@ -738,6 +739,58 @@ this file is entirely about.
 This one was applied from a branch rather than from `main`, which *Which tree you deploy from*
 above otherwise forbids. A scheduled job cannot be merged and then granted its read, because
 between the two it fails; the exception and its cost are recorded there.
+
+#### Amended 2026-08-04 to make the `visibility-board` job capable of passing
+
+Three statements, in one deploy, closing the two independent reasons that job had failed on
+**every night since it shipped**. Either one alone produced a `SourceGap`, and a single gap is
+`EXIT_UNUSABLE` and a red job, so fixing one of them would have changed nothing anybody could
+see. Applied from `main` at its tip, which is what *Which tree you deploy from* requires and
+what the 2026-08-01 amendment above had to make an exception to.
+
+**`s3:GetObject` on `attempt/*`, and `attempt/*` added to the `ListLineageRecords` prefix
+condition.** Two statements for one prefix, and the second is the one easy to leave off:
+`s3:ListBucket` cannot be scoped by an object ARN, so the prefix condition is the whole
+narrowing, and `aws s3 sync` lists before it fetches. A read granted on the object ARN and
+missing from the listing condition reads as granted in a policy review and is refused at the
+first call, with no object fetched.
+
+The gap was two files stating one fact with nothing comparing them. `LINEAGE_PREFIXES` in
+`tools/report_run_costs.py` is `("intent", "attempt")` and this policy granted `intent/` and
+`result/`, so `tools/visibility_board.py` — the one caller of `sync_bucket` that runs on the
+schedule, under this role — was refused on its second prefix every night. It did not lose the
+attempt records alone: `sync_bucket` raises on a refused prefix rather than skipping it, so
+the whole cost mapping came back `None` and every run on the board rendered as `not costed`.
+The attempt records are the only place a run's measured duration exists, so nothing
+substitutes for them. `tests/test_nightly_workflow.py` now derives the required prefix set
+from the workflow and from that constant and asserts the fetchable and listable sets are
+equal, rather than restating either, so this pair cannot drift apart again without a red
+review.
+
+**`tag:GetResources` on `Resource: "*"`, region-conditioned.** The second wildcard resource in
+this policy and forced for the same reason as the first: the action names no resource in the
+request, so a policy naming one denies the call outright, and `aws:RequestedRegion` is the
+only narrowing it admits. It is the wider disclosure of the two, answering with the ARNs and
+tags of resources in this region, and it is what makes the account side of the visibility
+board readable at all — without it every run in the account is trivially absent from the
+account side, which the board reports as unanswered rather than reporting wrongly. There is
+no substitute: enumerating the queues needs `batch:ListJobs` and `batch:DescribeJobs`, which
+this role omits deliberately, and the lineage records say what this platform submitted rather
+than what the account ran, which is the exact difference the board exists to report.
+
+The statement is written character-for-character as `tools/visibility_board.py`'s
+`MISSING_TAG_GRANT` quotes it, because that tool prints it into its own report as the thing to
+paste when the read is refused. Two spellings would mean whoever pastes the report at 05:00
+changes the role into something no test covers; `tests/test_visibility_board.py` compares the
+two as parsed YAML and fails when they diverge. `tag:TagResources` and `tag:UntagResources`
+are absent, so a board that decides what the account ran by reading tags cannot write the tag
+that puts a run on its own report.
+
+This also satisfies the `tag:GetResources` half of Task 6 of the instruments plan, which
+wanted the same action on the same principal with the same region condition. That task's
+`cloudtrail:LookupEvents` grant is **not** included: nothing in the tree reads launch events
+yet, and it is a read of the account's whole management event history, which is wider than
+anything else this role holds and should arrive with the tool that needs it.
 
 ### A hazard that has expired, and the one it does not take with it
 

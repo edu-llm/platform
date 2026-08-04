@@ -25,9 +25,10 @@ A resume loads another run's checkpoint and carries that run's id in its config,
 that took the first id it found would credit the wrong run with having logged and quietly
 clear a real finding.
 
-The IAM statement the board needs and the role does not hold is asserted here as well, because
-the value of quoting a statement in a report is that somebody can apply it, and a statement
-that does not parse is prose.
+The IAM statement the account side is read under is asserted here as well, against the report
+that quotes it and against the template that grants it. The value of quoting a statement in a
+report is that somebody can apply it, so a statement that does not parse is prose and two
+spellings of one statement are a role and a report drifting apart.
 """
 
 from __future__ import annotations
@@ -770,7 +771,7 @@ def test_the_board_never_prints_an_account_id() -> None:
 
 
 # ----------------------------------------------------------------------------------------
-# The grant the role does not hold
+# The grant the account side is read under, written down in two places
 # ----------------------------------------------------------------------------------------
 
 
@@ -812,19 +813,33 @@ def test_the_statement_reaches_the_report_rather_than_only_the_source() -> None:
     assert "which runs logged nothing" in report
 
 
-def test_the_nightly_reader_role_still_does_not_hold_that_grant() -> None:
-    """Mutation: leave the gap reported after somebody has closed it.
+def test_the_nightly_reader_role_holds_the_statement_this_report_quotes() -> None:
+    """Mutation: change one of the two spellings of the grant and leave the other.
 
-    A report that goes on asking for a grant the account already has sends every reader to
-    apply a stack that is already applied. This is the assertion that fails on the morning
-    after the IAM change lands, which is when the degradation path and the sentence describing
-    it both stop being true and have to be removed.
+    This test used to assert the opposite. It was the tripwire for the morning the IAM
+    change landed, which was 2026-08-04, and inverting it is what that morning was for: the
+    role now holds ``tag:GetResources`` and the account side is read rather than reported as
+    a gap.
+
+    WHAT REPLACES IT IS NOT NOTHING, BECAUSE THE STATEMENT IS STILL WRITTEN DOWN TWICE. The
+    report prints ``MISSING_TAG_GRANT`` as the thing to paste when the read is refused, and
+    the template carries the statement the read actually happens under. A refusal now means
+    the deployed role drifted or the credential lapsed, and the first of those is repaired by
+    pasting the report's version -- so the two have to be the same string, or whoever pastes
+    it changes the role into something no test covers. Compared as parsed YAML rather than as
+    text, since indentation differs between a quoted block and a template and neither
+    spelling is more correct.
     """
-    granted = {
-        action
+    quoted = yaml.safe_load(MISSING_TAG_GRANT)[0]
+    statements = [
+        statement
         for properties in load_template(ROLE_PATH)["Resources"].values()
         for policy in properties["Properties"]["Policies"]
         for statement in policy["PolicyDocument"]["Statement"]
+    ]
+    granted = {
+        action
+        for statement in statements
         for action in (
             statement["Action"]
             if isinstance(statement["Action"], list)
@@ -832,10 +847,15 @@ def test_the_nightly_reader_role_still_does_not_hold_that_grant() -> None:
         )
     }
 
-    assert "tag:GetResources" not in granted, (
-        "the role now holds the tagging read, so the account source is no longer a gap. "
-        "Remove MISSING_TAG_GRANT and the degradation path in tools/visibility_board.py, and "
-        "delete this test with them."
+    assert "tag:GetResources" in granted, (
+        "the role no longer holds the tagging read, so the account side of this board is "
+        "unreadable and every night is an exit 2. Re-apply "
+        "infra/iam/nightly-reader-role.yaml from a laptop."
+    )
+    assert [statement for statement in statements if statement == quoted] == [quoted], (
+        "the template's tagging statement is not the one the report quotes. Whoever pastes "
+        "MISSING_TAG_GRANT out of a 05:00 report would change the role to something no test "
+        "covers."
     )
     assert not any(action.startswith("batch:") for action in granted), (
         "there is still no substitute read, which is what makes the tagging grant the "

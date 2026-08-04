@@ -69,13 +69,16 @@ to every key any team has written anywhere in the bucket, which is a decision ab
 account rather than a decision about a report, so this board is scoped to what the grant
 already allows and says so instead.
 
-**THE ACCOUNT SIDE NEEDS A GRANT THE NIGHTLY READER ROLE DOES NOT HOLD.**
-``infra/iam/nightly-reader-role.yaml`` grants s3, secretsmanager, lambda and cloudformation
-reads and deliberately no ``batch:`` action and no tagging action, so
-``tag:GetResources`` is refused and so is every substitute for it. That is an IAM change
-this tool does not make and cannot make, so the refusal is caught, reported as a named gap
-with the statement that would fix it, and carried into the exit code. The other two sources
-still report, because two thirds of a board is worth more than a traceback.
+**THE ACCOUNT SIDE NEEDS A GRANT, AND THE ROLE NOW HOLDS IT.**
+``infra/iam/nightly-reader-role.yaml`` grants ``tag:GetResources``, region-conditioned and
+with no adjacent write, which is what makes the account side readable at all. It did not
+until 2026-08-04, and this board exited 2 on every night before that, because there is no
+substitute read: the role holds no ``batch:`` action deliberately, and the lineage records
+say what this platform submitted rather than what the account ran. The refusal is still
+caught rather than allowed to escape, since a grant can lapse and a credential can, and a
+board that tracebacks reports nothing at all where a degraded one still reports two thirds.
+What changed is what a refusal means -- it is now drift or a credential rather than the
+expected answer, and it is worth looking at.
 
 Exit codes follow this repository's convention. 0 says every source was read and the three
 agree. 1 says they disagree, and the reader's next move is to go and look at a run. 2 says a
@@ -225,11 +228,14 @@ ERROR_CODE: Final = re.compile(r"An error occurred \(([A-Za-z]+)\)")
 #: entirely different places.
 ACCESS_DENIED_CODES: Final = frozenset({"AccessDenied", "AccessDeniedException"})
 
-#: The exact statement the nightly reader role needs before the account side of this board can
-#: be read at all. Quoted in the report rather than described, so that whoever applies it is
-#: pasting a reviewed string rather than reconstructing one from prose. ``tag:GetResources``
-#: takes no resource type, so a policy naming a resource denies the call and ``"*"`` is forced
-#: rather than chosen; the region condition is the only narrowing the action admits.
+#: The exact statement the account side of this board is read under, and the one to paste back
+#: if it ever goes missing. ``infra/iam/nightly-reader-role.yaml`` carries it
+#: character-for-character and ``tests/test_visibility_board.py`` holds the two together, so
+#: this is a quotation of the live grant rather than a request for one. It stays quoted in the
+#: report because a refusal now means the role drifted or the credential lapsed, and the first
+#: of those is repaired by applying exactly this. ``tag:GetResources`` takes no resource type,
+#: so a policy naming a resource denies the call and ``"*"`` is forced rather than chosen; the
+#: region condition is the only narrowing the action admits.
 MISSING_TAG_GRANT: Final = """\
               - Sid: FindEveryResourceThisPlatformTagged
                 Effect: Allow
@@ -1290,14 +1296,17 @@ def _collect(options: argparse.Namespace) -> Board:
                 detail=(
                     f"{error}. "
                     + (
-                        "The nightly reader role holds no tagging action and no `batch:` "
-                        "action, so this is the expected answer until the statement below is "
-                        "added to `infra/iam/nightly-reader-role.yaml` and the stack is "
-                        "applied from a laptop as `infra/README.md` describes. There is no "
-                        "substitute read. Enumerating the queues would need `batch:ListJobs` "
-                        "and `batch:DescribeJobs`, which that role omits deliberately, and "
-                        "the lineage records say what this platform submitted rather than "
-                        "what the account is running."
+                        "The nightly reader role is granted the statement below, so a "
+                        "denial is a finding rather than the expected answer: either the "
+                        "deployed role has drifted from "
+                        "`infra/iam/nightly-reader-role.yaml` or the credential is not the "
+                        "one this job means to be using. Compare the two with "
+                        "`tools/verify_deployed_stacks.py`, and re-apply the stack from a "
+                        "laptop as `infra/README.md` describes if they disagree. There is "
+                        "no substitute read while it holds. Enumerating the queues would "
+                        "need `batch:ListJobs` and `batch:DescribeJobs`, which that role "
+                        "omits deliberately, and the lineage records say what this platform "
+                        "submitted rather than what the account is running."
                         if denied
                         else "That is a statement about the call rather than about the grant."
                     )

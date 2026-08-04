@@ -276,6 +276,39 @@ Resources:
                   StringEquals:
                     aws:RequestedRegion:
                       Fn::Sub: ${AWS::Region}
+              # WHAT THE ACCOUNT ACTUALLY RAN, WHICH IS THE ONLY SOURCE THAT KNOWS.
+              # tools/visibility_board.py joins three records of a run, and this is the one
+              # that says a run existed at all in the account. Without it every run in the
+              # account is trivially absent from the account side, so the board reported the
+              # comparison as unanswered rather than reporting it wrongly -- which is right,
+              # and which also meant the job exited 2 and went red on every night it has run.
+              # There is no substitute. Enumerating the queues would need batch:ListJobs and
+              # batch:DescribeJobs, which this role omits for the reason given below, and the
+              # lineage records say what this platform submitted rather than what the account
+              # is running, which is precisely the difference the board exists to report.
+              #
+              # THE SECOND WILDCARD RESOURCE, AND FORCED FOR THE SAME REASON AS THE FIRST.
+              # tag:GetResources names no resource in the request, so a policy naming one
+              # denies the call outright and "*" is not a choice. The region condition is the
+              # only narrowing the action admits. What it discloses is the ARNs and tags of
+              # resources in this region, which in a shared sandbox is wider than the rest of
+              # this policy; it is paid knowingly, and it is read-only in the strictest sense
+              # -- the adjacent tag:TagResources and tag:UntagResources are absent, so this
+              # cannot relabel a resource into or out of its own report.
+              #
+              # Written character-for-character as tools/visibility_board.py:MISSING_TAG_GRANT
+              # quotes it. That tool prints the statement into its own report as the thing to
+              # paste, so a second spelling here would mean whoever pastes the report changes
+              # the role into something no test covers. tests/test_visibility_board.py holds
+              # the two together.
+              - Sid: FindEveryResourceThisPlatformTagged
+                Effect: Allow
+                Action: tag:GetResources
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion:
+                      Fn::Sub: ${AWS::Region}
               # DELIBERATELY ABSENT, and each for its own reason rather than as a list.
               #
               # Every write. This role exists to describe the account and a check that can
@@ -324,9 +357,16 @@ Resources:
               # the summary is a derived description rather than the deployed template, and
               # the drift check reads a stack's status out of the listing it already makes.
               #
-              # Every batch:, states: and logs: action. Neither check asks what is running,
-              # and a scheduled workflow that could reach the queues or the state machine
-              # would be a way to touch a run without anybody dispatching anything.
+              # tag:TagResources and tag:UntagResources, which are the adjacent actions on
+              # the grant above and the same rule as everywhere else in this policy. The
+              # board decides what the account ran by reading tags; a check able to write one
+              # could add or remove the tag that puts a run on its own report.
+              #
+              # Every batch:, states: and logs: action. The board asks what the account ran
+              # and answers it from the tagging API, which reports an ARN and its tags and
+              # nothing about a job's state or its logs. Reaching the queues or the state
+              # machine would be a way to touch a run without anybody dispatching anything,
+              # and it is a wider grant than the question needs.
 
 Outputs:
   RoleName:
