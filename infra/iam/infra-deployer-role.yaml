@@ -403,22 +403,13 @@ Resources:
               #   - DescribeLaunchTemplateVersions: AWS::Batch::ComputeEnvironment's
               #     Create, Update and Delete, whether or not a launch template is named.
               #
-              # ec2:DescribeLaunchTemplates joined them on 2026-08-04, and it is the
-              # neighbour of the line above rather than a duplicate of it. The two are
-              # different actions on different resource shapes and the handlers that call
-              # them are different handlers: Versions is what the Batch compute environment
-              # handler reads, and Templates is what AWS::EC2::LaunchTemplate's own Read,
-              # List and Delete call. infra/batch-compute-gpu-shapes.yaml declares one such
-              # resource -- the 500 GiB root volume the two eight-device P shapes needed --
-              # so the deploy that creates it reads the template back and could not.
-              #
-              # It was measured with the same probe and the same two controls on 2026-08-04:
-              # granted on one launch-template ARN and simulated against that same ARN it
-              # answered implicitDeny, so it has no resource type and belongs here rather
-              # than in the scoped statement its five write siblings share below --
-              # which answered `allowed` under the identical probe. cloudformation:
-              # ValidateTemplate answered implicitDeny and cloudformation:DescribeStacks
-              # answered allowed on every invocation.
+              # ec2:DescribeLaunchTemplates joined them on 2026-08-04 and is the neighbour
+              # of the line above rather than a duplicate: Versions is what the Batch
+              # compute environment handler reads, Templates is what
+              # AWS::EC2::LaunchTemplate's own Read, List and Delete call. Measured the same
+              # way -- implicitDeny granted on one launch-template ARN and simulated against
+              # it, so no resource type -- while its five write siblings answered `allowed`
+              # under the identical probe and are scoped below.
               #
               # Read-only, and that bounds it: this statement reveals the shape of the
               # shared account's networking and changes none of it. The actions that change
@@ -532,58 +523,29 @@ Resources:
                   - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group-rule/*
                   - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:subnet/*
                   - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:vpc/*
-              # THE LAUNCH TEMPLATE LIFECYCLE, ADDED 2026-08-04, AND THE SECOND EC2 SCOPE IN
-              # THIS POLICY THAT CANNOT CARRY THE PROJECT PREFIX.
-              #
-              # WHAT NEEDED IT. Until now no compute environment in this account had a
-              # launch template -- all sixteen returned launchTemplate: None -- so every GPU
-              # instance booted with the ECS AL2023 AMI's own 30 GiB root volume. A job
-              # staging a 37.2 GiB corpus to local disk cannot run on that at all, and
+              # THE LAUNCH TEMPLATE LIFECYCLE, ADDED 2026-08-04. No compute environment here
+              # had one until then, so every GPU instance booted the ECS AL2023 AMI's 30 GiB
+              # root and a job staging a 37.2 GiB corpus could not run at all.
               # infra/batch-compute-gpu-shapes.yaml now declares an AWS::EC2::LaunchTemplate
-              # giving the two eight-device P shapes 500 GiB instead. That template is
-              # CI-deployed, so the deploy role is what creates it.
+              # giving the two eight-device P shapes 500 GiB, and that stack is CI-deployed.
               #
-              # THE FIVE ACTIONS ARE THE HANDLER'S OWN LIST AND NOT A GUESS. Read from the
-              # registry on 2026-08-04 with cloudformation describe-type --type-name
-              # AWS::EC2::LaunchTemplate: create needs CreateLaunchTemplate and CreateTags,
-              # update needs CreateLaunchTemplateVersion, CreateTags and DeleteTags, delete
-              # needs DeleteLaunchTemplate, DeleteTags and DescribeLaunchTemplates, and read
-              # and list need DescribeLaunchTemplates. The describe is unscoped above
-              # because it has no resource type; these five are here because they do.
+              # The five are the handler's own list, read from the registry with
+              # cloudformation describe-type rather than inferred, and each measured
+              # `allowed` granted on one launch-template ARN and simulated against it, so
+              # each is scopable. DescribeLaunchTemplates measured implicitDeny and is
+              # unscoped above with the other reads. Both controls behaved throughout.
               #
-              # ec2:CreateTags AND ec2:DeleteTags ARE GRANTED TWICE IN THIS POLICY ON PURPOSE.
-              # They already appear in the network statement above, scoped to the six network
-              # ARNs, and IAM authorizes a tagging call against the resource being tagged --
-              # so that grant cannot cover a launch template and widening its Resource list
-              # to reach one would also hand every network verb in it a launch-template ARN
-              # it has no use for. Two narrow statements say what each one is for; one wide
-              # statement would say neither.
+              # CreateTags and DeleteTags appear twice in this policy on purpose: IAM
+              # authorizes a tagging call against the resource being tagged, so the network
+              # statement's copy cannot reach a launch template, and widening its resource
+              # list to reach one would hand every network verb there an ARN it cannot use.
               #
-              # WHY THE ARN IS launch-template/* AND WHAT THAT COSTS. A launch template is
-              # addressed by an ID EC2 assigns at creation -- lt-0a1b... -- exactly as a VPC
-              # or a subnet is, so there is no name for IAM to match on and this is the
-              # narrowest ARN that exists. It is the same exemption the paragraph above
-              # argues for the network resources, with the same bound: three named workflow
-              # files on main, CloudFormation making the calls against a reviewed template,
-              # and CloudTrail recording each one. It is a smaller exposure than that
-              # paragraph's, because a launch template holds no data and detaching one from a
-              # compute environment nobody else in this account has does not stop anything
-              # running -- but it is the same shape of grant and it should be narrowed by the
-              # same aws:ResourceTag condition when that is finally measured.
-              #
-              # MEASURED RATHER THAN ASSUMED, with the probe this policy uses everywhere:
-              # each granted on one launch-template ARN and simulated against that same ARN
-              # answered `allowed`, so all five support resource-level permissions and an
-              # unscoped grant would be wider than anything needs. Both controls behaved on
-              # every invocation -- cloudformation:ValidateTemplate implicitDeny,
-              # cloudformation:DescribeStacks allowed.
-              #
-              # ec2:ModifyLaunchTemplate IS ABSENT AND IS THE ONE A READER WILL REACH FOR. It
-              # sets a launch template's default version and appears in no handler list the
-              # registry reports, because CloudFormation manages versions by creating them
-              # and the compute environments name a concrete version number rather than
-              # $Default. ec2:RunInstances stays absent here as it is everywhere else in this
-              # role: this grant describes an instance and never starts one.
+              # launch-template/* is the exemption the paragraph above argues for the network
+              # types, wants the same aws:ResourceTag narrowing, and is smaller in reach: EC2
+              # assigns the ID at creation so there is no name to match on, and a launch
+              # template holds no data. ec2:ModifyLaunchTemplate is the one a reader will
+              # reach for and is in no handler list -- it sets a default version, and these
+              # environments name a concrete one. ec2:RunInstances stays absent.
               - Effect: Allow
                 Action:
                   - ec2:CreateLaunchTemplate
