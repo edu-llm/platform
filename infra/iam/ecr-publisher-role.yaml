@@ -46,6 +46,7 @@ Resources:
                   - "1315813778"  # edullm-data
                   - "1310135166"  # olmo-eval-full
                   - "1319807085"  # edullm-alt-cl
+                  - "1311508598"  # open-instruct-scored-rewards
               StringLike:
                 # Belt and braces with the id above rather than a substitute for it. The id
                 # is immutable and the path is not, so a repository renamed after this was
@@ -57,6 +58,7 @@ Resources:
                   - repo:edu-llm@306859726/edullm-data@1315813778:ref:refs/heads/*
                   - repo:edu-llm@306859726/olmo-eval-full@1310135166:ref:refs/heads/*
                   - repo:edu-llm@306859726/edullm-alt-cl@1319807085:ref:refs/heads/*
+                  - repo:edu-llm@306859726/open-instruct-scored-rewards@1311508598:ref:refs/heads/*
       # Inline rather than a customer managed policy. InternSandboxBoundary denies
       # iam:CreatePolicyVersion on every policy, so a managed policy could be created once
       # and never amended; the first permission change would fail the stack update. Inline
@@ -89,6 +91,7 @@ Resources:
                   - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-data
                   - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-olmo-eval-full
                   - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-alt-cl
+                  - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-open-instruct-scored-rewards
 
 Outputs:
   RoleName:

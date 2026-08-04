@@ -59,3 +59,16 @@ repositories:
     base_image_digest: sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
     dockerfile_path: .edullm/Dockerfile
     build_context: .
+  # open-instruct-scored-rewards: GRPO with a hidden-state reward model, which OLMo-core
+  # cannot run: the trainer is open-instruct's grpo_fast.py and the reward is a Ridge
+  # head on a frozen OLMo-2-7B-Instruct's activations, loaded as a reward plugin inside
+  # the vLLM actor. The image also differs in kind rather than in degree - it carries
+  # vLLM and DeepSpeed, which no registered image does.
+  - repository: open-instruct-scored-rewards
+    github_repository_id: 1311508598
+    default_branch: main
+    ecr_repository: sbsandbox-intern-edullm-open-instruct-scored-rewards
+    base_image_repository: docker.io/library/python
+    base_image_digest: sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+    dockerfile_path: .edullm/Dockerfile
+    build_context: .
