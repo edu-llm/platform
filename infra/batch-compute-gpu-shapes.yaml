@@ -45,10 +45,25 @@ Description: Fourteen GPU compute environments, their job queues and their diges
 # one. The eight-GPU row's "one" was never a spend control -- see the gpu-8xh100 note below,
 # which is the same argument reached first: spend is the approval gate's to refuse, and
 # p4d.24xlarge at $21.958/hour is above policy's exception ceiling, so every one of these
-# three needs an admin per submission whatever this field says. What the old 96 did do was
-# make the second concurrent A100 run wait in RUNNABLE under
-# MISCONFIGURATION:COMPUTE_ENVIRONMENT_MAX_RESOURCE, which a submitter cannot read from
-# outside and which each queue's 1800 second cancel is the only thing that ends.
+# three needs an admin per submission whatever this field says. What the old 96 did was make
+# the second concurrent A100 run wait in RUNNABLE behind the first, for as long as the first
+# took.
+#
+# THAT WAIT IS UNBOUNDED, AND THE 1800 SECOND CANCEL DOES NOT END IT. This was measured on
+# 2026-08-04 rather than reasoned about, because the note here previously claimed the cancel
+# was what ended such a wait, and the queue disagrees. Two jobs sat RUNNABLE behind a running
+# one at 6.35 hours and 1.01 hours old, both with a null statusReason, neither cancelled.
+# JobStateTimeLimitActions match on statusReason, and a job waiting its turn behind a job
+# that holds the whole ceiling has none: Batch sets
+# MISCONFIGURATION:COMPUTE_ENVIRONMENT_MAX_RESOURCE when the ceiling cannot fit the job at
+# all, not when it is merely occupied. The same queue's FAILED list shows the actions do fire
+# when a reason is set -- three runs carry "Canceled by JobStateTimeLimit action due to
+# reason: MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT" from the container-memory fault -- so
+# the actions work and this was never one of their cases.
+#
+# So the failure the old ceiling produced was a queue that looked healthy while a run waited
+# behind another for hours, which is quieter than a cancel and worth more than the cancel
+# would have been as a reason to raise it.
 #
 # 288 IS THREE WHOLE INSTANCES AND THAT IS THE ONLY ARITHMETIC THAT PLACES A JOB HERE. An
 # eight-device environment cannot place even one job unless its ceiling is a whole multiple of
@@ -109,9 +124,18 @@ Description: Fourteen GPU compute environments, their job queues and their diges
 # is decided at the approval gate, where a person reads the figure and anything above
 # EXCEPTION_RATE_CEILING_USD_PER_HOUR in src/edullm_platform/contracts/policy.py needs an
 # admin whatever the total, and both P shapes are above it. And a ceiling below the work
-# refuses nothing at submission, because Batch parks the job in RUNNABLE under
-# MISCONFIGURATION:COMPUTE_ENVIRONMENT_MAX_RESOURCE, which is a state a submitter cannot read
-# from outside and which the 1800 second cancel on each queue is the only thing that ends.
+# refuses nothing at submission: the job waits in RUNNABLE, which is a state a submitter
+# cannot read from outside.
+#
+# THIS PARAGRAPH USED TO END "and which the 1800 second cancel on each queue is the only
+# thing that ends", AND THAT WAS WRONG IN THE DIRECTION THAT MATTERS. The wait is unbounded.
+# A ceiling that cannot fit a job at all does get
+# MISCONFIGURATION:COMPUTE_ENVIRONMENT_MAX_RESOURCE and is cancelled at 1800 seconds; a
+# ceiling merely occupied by another job sets no statusReason, and the cancel actions match
+# on statusReason. The gpu-8xa100 note above has the measurement. Both readings argue for
+# raising a ceiling below the work, so nothing decided on this paragraph changes -- but a
+# reader reaching for the cancel as the backstop that bounds a queue will not find one.
+#
 # Four concurrent p5.48xlarge is $220/hour, against an account that spent $3,965 in the whole
 # of July, and that figure is now the approval gate's to refuse rather than this field's.
 #
