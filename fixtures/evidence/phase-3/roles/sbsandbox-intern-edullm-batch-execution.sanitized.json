@@ -40,7 +40,8 @@
               "arn:aws:ecr:us-east-1:<aws-account-id>:repository/sbsandbox-intern-edullm-olmo-core",
               "arn:aws:ecr:us-east-1:<aws-account-id>:repository/sbsandbox-intern-edullm-data",
               "arn:aws:ecr:us-east-1:<aws-account-id>:repository/sbsandbox-intern-edullm-olmo-eval-full",
-              "arn:aws:ecr:us-east-1:<aws-account-id>:repository/sbsandbox-intern-edullm-alt-cl"
+              "arn:aws:ecr:us-east-1:<aws-account-id>:repository/sbsandbox-intern-edullm-alt-cl",
+              "arn:aws:ecr:us-east-1:<aws-account-id>:repository/sbsandbox-intern-edullm-open-instruct-scored-rewards"
             ]
           },
           "sid": null
@@ -84,7 +85,7 @@
     }
   ],
   "max_session_duration_seconds": 3600,
-  "observed_at": "2026-08-04T19:02:22Z",
+  "observed_at": "2026-08-04T22:22:19Z",
   "permissions_boundary_policy_name": "InternSandboxBoundary",
   "role_name": "sbsandbox-intern-edullm-batch-execution",
   "source": "aws",

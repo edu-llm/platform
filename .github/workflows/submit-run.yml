@@ -31,6 +31,7 @@ on:
           - edullm-data
           - OLMo-core
           - olmo-eval-full
+          - open-instruct-scored-rewards
       commit_sha:
         description: "Branch, tag or commit. Use main for a first run."
         required: true
@@ -73,6 +74,13 @@ on:
           # gains anything from a GPU until one of them is in it.
           # config/workload-catalog.yaml carries the reason.
           - olmo-eval-check
+          - open-instruct-scored-rewards-check
+          # The GRPO run itself, and the only entry on this list carrying a checkpoint
+          # contract besides the two train entries above. Picking it obliges the command to
+          # expand $EDULLM_CHECKPOINT_DIR, which for this repository means passing it as
+          # CKPT_ROOT; config/workload-catalog.yaml says why the refusal is what makes the
+          # second attempt worth having.
+          - open-instruct-scored-rewards-train
       # REQUIRED, AND BESIDE THE WORKLOAD BECAUSE THE TWO ARE ONE DECISION MADE TWICE.
       # This was an optional override defaulting to `inherit`, on the belief that the
       # workload profile carried the answer. It did not: the value here won whenever it was

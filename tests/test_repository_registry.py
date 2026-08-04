@@ -109,7 +109,12 @@ def test_the_registry_and_the_pilot_list_are_asked_different_questions() -> None
     # grows every time a repository is registered, because the pilot list is a statement
     # about a programme's scope and is not amended by an onboarding.
     assert pilots - registered == {"dolma"}
-    assert registered - pilots == {"edullm-alt-cl", "edullm-data", "olmo-eval-full"}
+    assert registered - pilots == {
+        "edullm-alt-cl",
+        "edullm-data",
+        "olmo-eval-full",
+        "open-instruct-scored-rewards",
+    }
 
     derivation = manifest_helpers.build_request_facts
     assert "repositories.is_registered(manifest.repository)" in inspect.getsource(derivation)

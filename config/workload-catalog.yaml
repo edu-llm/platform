@@ -528,3 +528,60 @@ workloads:
       interval_minutes: 30
       destination_prefix: "s3://sbsandbox-intern-edullm-outputs/teams/"
       resume_required: true
+  # open-instruct-scored-rewards-check: the first workload profile for
+  # open-instruct-scored-rewards, written with the registration because a repository
+  # with no entry here reaches no dropdown and no run can name it. GRPO with a
+  # hidden-state reward model, which OLMo-core cannot run: the trainer is
+  # open-instruct's grpo_fast.py and the reward is a Ridge head on a frozen
+  # OLMo-2-7B-Instruct's activations, loaded as a reward plugin inside the vLLM actor.
+  # The image also differs in kind rather than in degree -- it carries vLLM, DeepSpeed
+  # and a pip-installed nvcc, which no registered image does.
+  #
+  # The bounds are this tool's defaults and not a measurement: one hour, one attempt and
+  # no checkpoint contract is the shape of every repository's first entry, and it is
+  # right for a check and wrong for anything that trains. The machine is the submission
+  # form's compute_profile field and is deliberately not named here.
+  - name: open-instruct-scored-rewards-check
+    repository: open-instruct-scored-rewards
+    maximum_runtime_hours: "1"
+    maximum_attempts: 1
+    checkpoint: null
+  # The entry the repository was actually registered for. The check above proves the image
+  # starts; this is the GRPO run, and without it the registration would offer a researcher
+  # a dropdown whose only option is a one-hour smoke test of somebody else's work.
+  #
+  # TWENTY-FOUR HOURS FOR THE SAME REASON olmo-core-train CARRIES IT: it is
+  # routine_maximum_runtime_hours in config/policy.yaml, so this is the longest run that
+  # still routes to a lead rather than making every submission an exception. It is a
+  # ceiling and not an estimate -- nobody has run this workload here yet, and the first
+  # submission is the measurement.
+  #
+  # TWO ATTEMPTS, AND THE THING THAT MAKES IT SAFE IS A REFUSAL RATHER THAN A PROMISE.
+  # grpo_fast.py resumes on its own when --checkpoint_state_dir holds state: it reads
+  # optimization_steps_done and continues from the step after, which the repository
+  # observed on a preemptable partition when a run was taken and requeued. What that
+  # depends on is the submitted command passing the directory, and the repository's
+  # scripts/train.sh disables checkpointing entirely when its CKPT_ROOT is unset -- which
+  # is the default. So a retry under this entry is worth having only because
+  # require_a_save_folder_a_retry_can_find refuses a submission naming this profile whose
+  # command does not expand $EDULLM_CHECKPOINT_DIR. The command has to read
+  #
+  #   CKPT_ROOT="$EDULLM_CHECKPOINT_DIR"
+  #
+  # and the refusal is what keeps the second attempt from silently repeating the first at
+  # full price.
+  #
+  # interval_minutes IS THE ONE FIELD HERE THAT DOES NOT DESCRIBE THIS WORKLOAD. Thirty
+  # matches its two neighbours, and this trainer checkpoints on a step count rather than a
+  # clock -- --checkpoint_state_freq is in optimizer steps. Nothing reads the field to
+  # enforce an interval, so the mismatch costs nothing today, and saying so is cheaper than
+  # a reader inferring that thirty minutes was measured against a GRPO step time nobody has
+  # measured.
+  - name: open-instruct-scored-rewards-train
+    repository: open-instruct-scored-rewards
+    maximum_runtime_hours: "24"
+    maximum_attempts: 2
+    checkpoint:
+      interval_minutes: 30
+      destination_prefix: "s3://sbsandbox-intern-edullm-outputs/teams/"
+      resume_required: true
