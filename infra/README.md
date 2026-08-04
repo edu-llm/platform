@@ -792,6 +792,30 @@ wanted the same action on the same principal with the same region condition. Tha
 yet, and it is a read of the account's whole management event history, which is wider than
 anything else this role holds and should arrive with the tool that needs it.
 
+The change set was read before it was executed, as *Deploying one IAM stack* above requires.
+One entry: `Modify` on `NightlyReaderRole`, scope `Properties`, target `Policies`,
+`Replacement: False` and `RequiresRecreation: Never`. No replacement and no deletion, which is
+what the read is for — an IAM role replaced rather than modified gets a new ARN and every
+`role-to-assume` pointing at it stops resolving.
+
+Simulated after applying, the way every amendment above is, because reading the template back
+proves the template and simulating proves the grant. `s3:ListBucket` on the lineage bucket is
+`allowed` with `s3:prefix` of `attempt/` and `implicitDeny` with no prefix supplied, so the
+condition is still doing its work rather than having been widened; `s3:GetObject` is `allowed`
+on an `attempt/` key. `tag:GetResources` is `allowed` in `us-east-1` and `implicitDeny` in
+`us-east-2`. The adjacent actions are the ones worth simulating rather than unrelated ones:
+`s3:PutObject` and `s3:DeleteObject` on the attempt prefix are each an `implicitDeny`, and so
+are `tag:TagResources`, `tag:UntagResources` and `batch:ListJobs` — the last confirming there
+is still no substitute read for the tagging grant.
+
+**Proved end to end rather than by simulation alone.** `nightly.yml` was dispatched by hand
+against this commit. The `visibility-board` job had emitted two gaps on every night since it
+shipped and now emits none: it reports 78 runs in the account with no W&B run and prices
+`$60.47` of that from the attempt records, where every run previously read `not costed`. Both
+figures are unobtainable without these grants, so each one is its own proof. The job still
+exits 1 — that is `EXIT_DISAGREES`, the three records genuinely disagreeing, which is a run to
+go and open rather than a grant to go and apply, and no IAM change closes it.
+
 ### A hazard that has expired, and the one it does not take with it
 
 Until `2026-07-31T07:21:51Z` this section would have had to carry a live warning: the deployed
