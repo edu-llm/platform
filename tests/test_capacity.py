@@ -26,15 +26,31 @@ CATALOG_PATH = PROJECT_ROOT / "config" / "workload-catalog.yaml"
 
 PLACEMENT_ANSWERS = frozenset({"reliably", "unreliably"})
 
-#: The four shapes this account has waited on. Named here as well as in the file so that a
-#: scarce shape quietly becoming reliable is a test edit rather than a silent one: the
-#: substitution is the only behaviour a researcher sees, and it disappears without a sound.
-#: The count is also load-bearing in prose -- the submission path describes four -- and
+#: The shapes this account cannot obtain. Named here as well as in the file so that a scarce
+#: shape quietly becoming reliable is a test edit rather than a silent one: the substitution
+#: is the only behaviour a researcher sees, and it disappears without a sound.
 #: gpu-1xa10g-sagemaker is deliberately not among them, because what stops that one is the
 #: absence of a Batch queue rather than the absence of a machine.
+#:
+#: FOUR NAMES BECAME TEN ON 2026-08-04 AND THE SIX THAT JOINED HAD NEVER BEEN MEASURED. The
+#: old set was the shapes the account had happened to wait on; every other shape was recorded
+#: as reliable because nothing had tried it, which is a default nobody chose. A probe against
+#: every pool -- ``create-fleet --type instant``, which costs nothing when a pool is empty
+#: because nothing launches -- put the whole g6e family, both multi-card g6 sizes and both
+#: multi-card g5 sizes on this list.
+#:
+#: THE COUNT IS LOAD-BEARING IN A SECOND WAY NOW. Ten of fifteen priced shapes do not place,
+#: so this set being long is the finding rather than an accident of bookkeeping, and shrinking
+#: it back is a claim that wants the same probe behind it.
 SHAPES_THAT_DO_NOT_PLACE = frozenset(
     {
         "gpu-4xa10g",
+        "gpu-8xa10g",
+        "gpu-4xl4",
+        "gpu-8xl4",
+        "gpu-1xl40s",
+        "gpu-4xl40s",
+        "gpu-8xl40s",
         "gpu-1xh100",
         "gpu-8xa100",
         "gpu-8xh100",
