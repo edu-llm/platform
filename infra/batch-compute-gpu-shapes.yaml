@@ -40,6 +40,22 @@ Description: Fourteen GPU compute environments, their job queues and their diges
 # and a researcher is iterating, and worth least where one job already occupies a whole large
 # host.
 #
+# gpu-8xa100 AND gpu-8xh100 ARE BOTH DEVIATIONS FROM THE EIGHT-GPU ROW NOW, FOR THE SAME
+# REASON. gpu-8xa100 moved from 96 to 288, which is three concurrent p4d.24xlarge rather than
+# one. The eight-GPU row's "one" was never a spend control -- see the gpu-8xh100 note below,
+# which is the same argument reached first: spend is the approval gate's to refuse, and
+# p4d.24xlarge at $21.958/hour is above policy's exception ceiling, so every one of these
+# three needs an admin per submission whatever this field says. What the old 96 did do was
+# make the second concurrent A100 run wait in RUNNABLE under
+# MISCONFIGURATION:COMPUTE_ENVIRONMENT_MAX_RESOURCE, which a submitter cannot read from
+# outside and which each queue's 1800 second cancel is the only thing that ends.
+#
+# 288 IS THREE WHOLE INSTANCES AND THAT IS THE ONLY ARITHMETIC THAT PLACES A JOB HERE. An
+# eight-device environment cannot place even one job unless its ceiling is a whole multiple of
+# the instance, because a gpu-8xa100 container reserves the host's whole 96 vCPU. 288 is 3 x
+# 96 exactly; 200 would be two instances and a stranded 8 vCPU that nothing can ever use.
+# Three concurrent p4d.24xlarge is $65.87/hour.
+#
 #   G and VT pool                                          vCPU     concurrent jobs
 #     gpu-1xa10g   g5.xlarge      other stack, unchanged     128          32
 #     gpu-1xt4     g4dn.xlarge                                32           8
@@ -58,10 +74,10 @@ Description: Fourteen GPU compute environments, their job queues and their diges
 #
 #   P pool
 #     gpu-1xh100   p5.4xlarge                                128           8
-#     gpu-8xa100   p4d.24xlarge                               96           1
+#     gpu-8xa100   p4d.24xlarge                              288           3
 #     gpu-8xh100   p5.48xlarge                               768           4
 #                                                           ----
-#                                                            992  of 768
+#                                                           1184  of 768
 #
 # THE G SUM WAS 720 OF 768 WITH 48 SPARE AND IS NOW 1232, WHICH IS ARITHMETIC AND NOT A
 # DECISION TO SPEND MORE. An eight-device environment cannot place even one job unless its
@@ -1380,6 +1396,13 @@ Resources:
   # admin per submission because that rate is above policy's exception ceiling. FOUR SUBNETS:
   # p4d.24xlarge is not offered in us-east-1f.
   #
+  # MaxvCpus IS 288, WHICH IS THREE OF THIS INSTANCE AND NOT A THIRD OF THE P QUOTA. The
+  # header's MaxvCpus note has the reasoning; what matters at this field is that the value has
+  # to stay a whole multiple of 96, because a container here reserves the host's whole 96 vCPU
+  # and a remainder is capacity no job can be placed into. Raising this raises how many run at
+  # once and changes nothing about what one job gets: the shape is CONTAINER_SHAPES in
+  # src/edullm_platform/execution.py, and its 96 is the instance rather than a ceiling.
+  #
 # A100 HAS NO ONE-CARD OR FOUR-CARD FORM ON EC2 AND H100 HAS A ONE-CARD FORM, WHICH IS WHY
 # THIS FAMILY HAS ONE ENVIRONMENT AND THE ONE BELOW NOW HAS TWO. p4d.24xlarge is an
 # eight-device instance with nothing smaller to name in InstanceTypes, so a gpu-1xa100 or
@@ -1408,7 +1431,7 @@ Resources:
         Type: EC2
         AllocationStrategy: BEST_FIT_PROGRESSIVE
         MinvCpus: 0
-        MaxvCpus: 96
+        MaxvCpus: 288
         InstanceTypes:
           - p4d.24xlarge
         InstanceRole:
