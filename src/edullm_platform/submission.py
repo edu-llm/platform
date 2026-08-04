@@ -83,6 +83,7 @@ from edullm_platform.manifest_helpers import (
     build_request_facts,
     compute_manifest_cost_inputs,
 )
+from edullm_platform.precision import require_bfloat16_only_where_the_hardware_has_it
 
 __all__ = [
     "CompiledSubmission",
@@ -459,6 +460,24 @@ def compile_submission(
         command=manifest.command,
         workload_profile=manifest.workload_profile,
         checkpoint=manifest.checkpoint,
+    )
+
+    # THE THIRD RULE ABOUT THE TEXT OF A COMMAND, AND THE ONE WHOSE COST LANDS ON THE DEVICE
+    # RATHER THAN IN THE RECORD. The two above refuse a command that would waste a machine or
+    # lose its state; this refuses one the machine cannot run at all, because bfloat16 is
+    # absent from Turing's silicon and the only shape above four cards this account can
+    # obtain is eight T4s. It is beside them for the reason they are beside each other: all
+    # three need the manifest's resolved compute profile, and reading them in one place is
+    # what stops a fourth being added somewhere else.
+    #
+    # It takes the catalog, which the two above do not, because the answer comes from the
+    # instance type the catalog declares rather than from the profile's name. That is the
+    # whole of why this rule survives a shape being added: config/workload-catalog.yaml is
+    # the only place the set of shapes is written down.
+    require_bfloat16_only_where_the_hardware_has_it(
+        command=manifest.command,
+        compute_profile=manifest.compute_profile,
+        catalog=catalog,
     )
 
     try:

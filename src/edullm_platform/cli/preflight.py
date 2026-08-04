@@ -14,6 +14,7 @@ is the dataset registered, and a corpus      ``contracts.dataset_registry.Datase
 is the compute profile real and provisioned  ``contracts.workload.resolve_compute_profile_for_execution``
 does the command start one process per card  ``launchers.require_a_process_for_every_device``
 does it save where a retry will look         ``checkpoint_commands.require_a_save_folder_a_retry_can_find``
+can the card run the dtype it asks for       ``precision.require_bfloat16_only_where_the_hardware_has_it``
 is the command startable and still quoted    ``contracts.manifest.RunManifest``
 what does it cost, and who releases it       ``manifest_helpers`` and ``contracts.policy``
 what does policy deny outright               ``admission.denied_outright_conditions``
@@ -66,12 +67,14 @@ from edullm_platform.contracts.workload import (
     ComputeProfile,
     ComputeProfileResolutionError,
     CostInputs,
+    WorkloadCatalog,
     WorkloadProfile,
     resolve_compute_profile_for_execution,
 )
 from edullm_platform.errors import SubmissionRefusedError
 from edullm_platform.launchers import require_a_process_for_every_device
 from edullm_platform.manifest_helpers import build_request_facts, compute_manifest_cost_inputs
+from edullm_platform.precision import require_bfloat16_only_where_the_hardware_has_it
 from edullm_platform.submission import (
     exceeded_routine_bounds,
     require_registered_repository,
@@ -243,7 +246,7 @@ def run_preflight(
             dataset=configuration.datasets.reference_for(request.dataset_release),
         )
 
-    refusals.extend(_check_command(manifest))
+    refusals.extend(_check_command(manifest, configuration.catalog))
 
     cost = compute_manifest_cost_inputs(manifest, configuration.catalog)
     facts = build_request_facts(
@@ -743,12 +746,18 @@ def _build_manifest(
     return manifest, []
 
 
-def _check_command(manifest: RunManifest) -> list[Refusal]:
-    """The two rules about the text of a command, asked against the resolved profile.
+def _check_command(manifest: RunManifest, catalog: WorkloadCatalog) -> list[Refusal]:
+    """The three rules about the text of a command, asked against the resolved profile.
 
     Against the resolved profile rather than the workload's, because ``--compute`` is what
     the run lands on and a device count read off anything else would clear a command that
-    trains on one card and bills for four.
+    trains on one card and bills for four. The third rule reads the same field for the same
+    reason, one step further along: the instance type behind the resolved profile is what
+    decides whether the devices have bfloat16.
+
+    The catalog is passed rather than closed over because that is where the shapes are, and
+    the bfloat16 rule is derived from the instance type each profile declares there so that a
+    shape added to that file is covered without an edit anywhere else.
     """
     refusals: list[Refusal] = []
     try:
@@ -765,6 +774,14 @@ def _check_command(manifest: RunManifest) -> list[Refusal]:
         )
     except SubmissionRefusedError as exc:
         refusals.append(Refusal(code="checkpoint_path_not_in_command", detail=str(exc)))
+    try:
+        require_bfloat16_only_where_the_hardware_has_it(
+            command=manifest.command,
+            compute_profile=manifest.compute_profile,
+            catalog=catalog,
+        )
+    except SubmissionRefusedError as exc:
+        refusals.append(Refusal(code="bfloat16_not_in_the_hardware", detail=str(exc)))
     return refusals
 
 

@@ -216,6 +216,31 @@ bash -lc 'EDULLM_CHECKPOINT_CHECK=waived python .edullm/train_on_corpus.py "$EDU
 
 Same convention as the launcher waiver, deliberately the same spelling. What it does not do is make a retry work: a waived run that loses its machine starts from nothing.
 
+## The bfloat16 refusal
+
+**The T4 shapes — `gpu-1xt4`, `gpu-4xt4`, `gpu-8xt4` — have no bfloat16.** T4 is a Turing card, which is the one NVIDIA generation with tensor cores and without the format. Every other card in the table above is Ampere, Ada or Hopper and has it.
+
+This matters more than it reads, because `gpu-8xt4` is currently the only shape above four cards this account can get. Scarcity pushes multi-card work onto exactly the machine that cannot run the format multi-card work usually wants.
+
+**A command that asks for bfloat16 on one of those three is refused when it compiles**, before a lead is asked. The refusal names the shape, the card and the words of your command it matched:
+
+```
+train_module.dp_config.param_dtype=bfloat16   # refused on gpu-8xt4
+--dtype bfloat16   --torch_dtype bfloat16   --mixed_precision bf16   --bf16
+```
+
+**It reads your command text and nothing else, and the gap is large enough to state plainly.** `.edullm/train_on_corpus.py` builds its data-parallel config with `param_dtype=DType.bfloat16` and offers no flag for it, so the getting-started command at the top of this guide **is a bfloat16 run that carries no bfloat16 token** — and this check will not refuse it on a T4. The same is true of a dtype set in a config file inside the image or read from a shell variable.
+
+So treat the refusal as a backstop rather than a guarantee. If you are picking a T4 shape, the question to ask is what your program does, not what your command says:
+
+| If your run | On a T4 shape |
+| --- | --- |
+| Passes a bfloat16 flag on the command line | Refused at submission |
+| Runs `train_on_corpus.py`, or anything else that sets bfloat16 in code | **Accepted, and it will fail on the device** |
+| Uses fp16 with loss scaling, or fp32 | Fine — this is what a T4 is for |
+
+There is no waiver. The other two checks have one because the waived run still works; a waived bfloat16 run on a T4 does not.
+
 ## Required configuration
 
 `.edullm/train_on_corpus.py` already sets all of these. You need them if you run the OLMo-core example directly or write your own program.

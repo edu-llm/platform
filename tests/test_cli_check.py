@@ -165,6 +165,47 @@ def test_four_cards_and_a_command_that_starts_one_process_is_refused_by_name(
     assert "torch.distributed.run" in out
 
 
+def test_bfloat16_on_the_only_eight_card_shape_that_places_is_refused_by_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refusal a submitter meets by taking the one multi-card shape this account can get.
+
+    ``config/capacity.yaml`` records ``gpu-8xt4`` as the only shape above four cards that
+    places, and its T4s are Turing and have no bfloat16. So the shape somebody is pushed
+    toward by scarcity is the one their recipe cannot run on, and until this refusal existed
+    the whole path -- classification, a lead's approval, admission, placement -- ran before
+    anything said so.
+
+    Mutation: refuse in ``compile_submission`` only. This verb exists so that a refusal is
+    met before the queue rather than after the gate, and a rule the CLI does not ask is a
+    rule a submitter meets in a GitHub Actions log with the approval already spent.
+    """
+    root, runner = checkout(
+        tmp_path,
+        compute="gpu-8xt4",
+        command=(
+            "bash -lc 'python -m torch.distributed.run --nproc-per-node=8 --standalone "
+            '.edullm/train_on_corpus.py "$EDULLM_RUN_ID" '
+            '--save-folder "$EDULLM_CHECKPOINT_DIR" '
+            "train_module.dp_config.param_dtype=bfloat16'"
+        ),
+    )
+
+    code, out, _ = invoke(
+        ["check", "--dataset", "regmix-10b-v1", "--experiment", "an-experiment"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_REFUSED
+    assert "refused  bfloat16_not_in_the_hardware" in out
+    assert "Turing" in out
+    # The shape it may not place on is a separate sentence and a warning rather than a
+    # refusal, and gpu-8xt4 places, so nothing here should be mentioning placement at all.
+    assert "may not place" not in out
+
+
 def test_a_fanout_is_told_that_no_size_of_one_releases_itself(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

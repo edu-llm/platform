@@ -555,6 +555,41 @@ def test_the_guides_print_the_way_through_the_launcher_check_verbatim(
         )
 
 
+def test_the_guide_names_every_shape_whose_card_has_no_bfloat16(olmo_core_guide: str) -> None:
+    """Mutation: promote a shape on another Turing family and leave the guide listing three.
+
+    A researcher picks a shape from the table above this section, and the one thing that
+    table cannot show is which cards lack a number format. Read out of the catalog and the
+    capability map rather than from a list here, so that a fourth shape without bfloat16 is a
+    red test rather than a fourth way to find out from a refusal -- or, worse, from a job
+    that dies on the device because the dtype was set in code and nothing refused it.
+    """
+    from edullm_platform.precision import gpu_of
+
+    section = olmo_core_guide.split("## The bfloat16 refusal", 1)
+    assert len(section) == 2, "the guide no longer has a section about the bfloat16 refusal"
+    body = section[1].split("\n## ", 1)[0]
+
+    catalog = load_yaml(PROJECT_ROOT / "config" / "workload-catalog.yaml", WorkloadCatalog)
+    without = {
+        profile.name
+        for profile in catalog.compute_profiles
+        if profile.provisioned
+        and (gpu := gpu_of(profile)) is not None
+        and not gpu.architecture.supports_bfloat16
+    }
+    # The same non-vacuity guard tests/test_bfloat16_guard.py makes, restated here because
+    # this assertion would otherwise pass against an empty set and prove nothing.
+    assert without, "no provisioned shape lacks bfloat16, so this test asserts nothing"
+
+    unnamed = {name for name in without if f"`{name}`" not in body}
+
+    assert unnamed == set(), (
+        f"the guide's bfloat16 section does not name {sorted(unnamed)}, so somebody who "
+        "picks one of them has no way to know its card cannot run the format"
+    )
+
+
 def test_the_guide_does_not_promise_a_size_that_costs_a_download(platform_guide: str) -> None:
     """The largest corpus is 630 GB on a machine with far less disk.
 
