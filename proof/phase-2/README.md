@@ -2,8 +2,8 @@
 
 Phase: phase-2
 Bundle schema version: 1
-Source commit: 4544c7945b069b750dac3ca83f153ad72fdf716e
-Generated: 2026-08-04T19:42:49+00:00
+Source commit: 648f74ee40c5f1470043aa707f2d3718f60687e3
+Generated: 2026-08-04T21:51:47+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 2 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase2_proof.py` at generation time. It is not done, and the Result table below says by how much.
 
@@ -44,9 +44,9 @@ This run evaluated 22 acceptance criteria: thirteen criteria are covered, one cr
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 4815 |
-| suite tests executed | 4622 |
-| suite passed | 4622 |
+| suite tests collected | 4822 |
+| suite tests executed | 4629 |
+| suite passed | 4629 |
 | suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
@@ -88,7 +88,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | file | digest |
 | --- | --- |
 | .github/workflows/deploy-phase2-admission.yml | sha256:b2f22ae639f6485e2ca00a36e1a56caa28b25c13e99d5a7858323c75789a960a |
-| .github/workflows/submit-run.yml | sha256:b20848efc0aa5100d96b70007a0b280ddfea46cce9e1c4f741071e06b6dfcaaa |
+| .github/workflows/submit-run.yml | sha256:521512798bf193cdd950023e8f00bf08d79e1b03e315d11ba66b8b73d39fceca |
 | config/organization.yaml | sha256:93dbb74ea3f44c5b1bf9d00d505acfa888a6e78bf456550d0202989571d9c56a |
 | config/policy.yaml | sha256:093eb2bc7e52c1e452538928f3579bde26e6dd425018516b1211268c944247ad |
 | fixtures/authorization/admin-exception.yaml | sha256:c49db36e999df3cefd9d3e95127fe947479d121ca6b6b450839e9f0c8ae8144f |
@@ -113,7 +113,7 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | fixtures/evidence/phase-2/roles/sbsandbox-intern-edullm-admission-lambda.sanitized.json | sha256:79efca9fc776a71276c5c2651f5fec6e5d6b5af6198e51aff6ec04f22d84b394 |
 | fixtures/evidence/phase-2/roles/sbsandbox-intern-edullm-admission-states.sanitized.json | sha256:7f5b2b17699b500aa4c81858713e023dc32c0c1b03cf17072fc767d4970bcf72 |
 | fixtures/evidence/phase-2/roles/sbsandbox-intern-edullm-admission.sanitized.json | sha256:793fc202cad5109496a22cea9edc5ae32ac2da7c06e5cc04e38ca46e02e259f3 |
-| infra/admission-state-machine.yaml | sha256:f9ea3eb422945be7fded597d1d17b578ed32ff1601c4ba9fd22af4a73a1fda15 |
+| infra/admission-state-machine.yaml | sha256:4f2ef573209d2fccc8a12c49fdbd2f2af3ba61ba571e52d8175273a522129b46 |
 | infra/iam/admission-role.yaml | sha256:88e95f2909742310afaee41e0a695ceaff3fafe8a4dc3320033b6e76f71fcd79 |
 | infra/iam/admission-service-roles.yaml | sha256:3839b24f7500d43c9a6606909131c79c103d8ce8dcbdbc6e77ceae94cbc4f14b |
 | infra/iam/infra-deployer-role.yaml | sha256:b85b7f14c7a3b11da5f408bdaa7c60b42c7d8c81dbd2fa97953cb38d0c115a47 |

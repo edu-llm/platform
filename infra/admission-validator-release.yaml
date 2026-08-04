@@ -164,8 +164,8 @@ schema_version: 1
 #: compared: a version id edited in one place and not the other is a template pointing at
 #: a zip nobody recorded, or a record describing a zip nobody deployed.
 s3_key: admission-validator/admission-validator.zip
-s3_object_version: RM5oUf3SoXJBtDRl3XiODEOSKLdWxECZ
+s3_object_version: ZwZiPXALCUFw6_7S50HNc9Gze1MNSu24
 
 #: sha256 of the uploaded zip, as tools/build_admission_lambda.py reports it. This is the
 #: field that ties the release to a tree rather than to a moment.
-sha256: d02adc7738217af87e47d9877050d23cba8cc14a8b1c8349bb665700961fbafe
+sha256: 3b9e171166883e7ea0a7e51a8348b8a430cb20382c5c6e2c2ebe785d7a73a68f

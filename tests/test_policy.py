@@ -295,12 +295,18 @@ def test_the_ceiling_sits_between_the_dearest_routine_shape_and_the_cheapest_gat
     # the line was drawn around. That is the rate doing what a list of names could not, and
     # it is why the ceiling is a rate. Every other provisioned GPU shape stays routine.
     assert rates["gpu-8xl40s"] > EXCEPTION_RATE_CEILING_USD_PER_HOUR
+    # The three rate assertions above read the catalog's prices and hold whatever the
+    # provisioned flag says, which is the point of asserting them separately from the set
+    # below. gpu-8xh100 was demoted on 2026-08-04 for a capacity shortage and is still priced
+    # at $55.04, so it is still on the wrong side of the line and would still need an admin
+    # the moment it is offerable again. The set is filtered by the flag because it is about
+    # what a submitter can currently reach.
     above = {
         profile.name
         for profile in load_workload_catalog().compute_profiles
         if profile.provisioned and profile.hourly_rate_usd > EXCEPTION_RATE_CEILING_USD_PER_HOUR
     }
-    assert above == {"gpu-8xa100", "gpu-8xh100", "gpu-8xl40s"}
+    assert above == {"gpu-8xa100", "gpu-8xl40s"}
 
 
 # --------------------------------------------------------------------------------------

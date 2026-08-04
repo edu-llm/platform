@@ -161,14 +161,23 @@ def test_shipped_catalog_instance_types_are_unique() -> None:
 
 
 def test_only_the_deliberately_promoted_profiles_are_provisioned() -> None:
-    """Fifteen are promoted, on purpose, and the list is the assertion.
+    """Fourteen are promoted, on purpose, and the list is the assertion.
 
-    This test said no profile was provisioned, then one, then two, then eleven, and now
-    names fifteen. Each change was a deliberate edit made after the infrastructure existed,
-    which is the whole point of writing the names out: it is the tripwire for flipping a
-    flag before deploying anything to back it. The catalog would then claim capacity that
-    does not exist, and every submission naming that profile would reach Batch and sit in
-    RUNNABLE forever rather than being refused at admission.
+    This test said no profile was provisioned, then one, then two, then eleven, then sixteen,
+    and now names fourteen. Each change was a deliberate edit made after the infrastructure
+    existed, which is the whole point of writing the names out: it is the tripwire for
+    flipping a flag before deploying anything to back it. The catalog would then claim
+    capacity that does not exist, and every submission naming that profile would reach Batch
+    and sit in RUNNABLE forever rather than being refused at admission.
+
+    THE COUNT WENT DOWN FOR THE FIRST TIME ON 2026-08-04, AND THE FAILURE ABOVE IS EXACTLY
+    THE ONE THAT HAPPENED. gpu-1xh100 and gpu-8xh100 were promoted with a compute
+    environment, a queue and a job definition all present and all healthy, which is
+    everything this tripwire checks for. What no flag records is whether EC2 will sell the
+    account the instance: 6,815 launch attempts for p5.48xlarge and 2,530 for p5.4xlarge, all
+    InsufficientInstanceCapacity, and zero instance-hours of either type in the billing
+    record since the account existed. So a promotion can satisfy every seam in this
+    repository and still produce the RUNNABLE-forever outcome the docstring above names.
 
     Whether a promoted profile is actually backed is a separate question, asserted against
     config/execution-targets.yaml in tests/test_phase3_execution.py. This one is only about
@@ -188,9 +197,7 @@ def test_only_the_deliberately_promoted_profiles_are_provisioned() -> None:
         "gpu-1xl40s",
         "gpu-4xl40s",
         "gpu-8xl40s",
-        "gpu-1xh100",
         "gpu-8xa100",
-        "gpu-8xh100",
     ]
 
 
@@ -233,9 +240,16 @@ def test_an_eight_gpu_p_shape_is_an_exception_at_its_smallest_run(name: str) -> 
     One hour, one attempt: routine on cost, on runtime, on attempts, on fanout. The profile
     is what makes it an exception, and before the rate reached classification a team lead
     could have released a p5.48xlarge this way.
+
+    THE ``provisioned`` ASSERTION THAT STOOD HERE HAS BEEN DROPPED, AND THE CLASSIFICATION
+    ONE IS THE WHOLE POINT OF THE TEST. gpu-8xh100 was demoted on 2026-08-04 because the
+    account cannot obtain a p5, and its rate is unchanged at $55.04. What must not drift is
+    that the rate still forces EXCEPTION: a shape coming back onto the form must come back
+    behind an admin rather than arriving as routine because nobody re-checked. Asking
+    whether it is offerable today would couple this test to a capacity shortage and lose
+    exactly that guarantee while the shortage lasts.
     """
     profile = next(profile for profile in SHIPPED_PROFILES if profile.name == name)
-    assert profile.provisioned
     facts = facts_for_profile(profile, maximum_runtime_hours=Decimal(1), maximum_attempts=1)
     assert facts.estimated_cost_usd <= shipped_policy().thresholds.routine_maximum_cost_usd
     assert (
@@ -262,9 +276,15 @@ def test_the_single_card_p_shape_is_routine_at_a_working_days_run() -> None:
     Mutation: raise this rate past EXCEPTION_RATE_CEILING_USD_PER_HOUR. The shape still
     runs and still costs the same, and every single-card H100 run goes back through an
     admin, which is the friction the profile was added to remove.
+
+    THE ``provisioned`` ASSERTION HERE HAS BEEN DROPPED FOR THE REASON GIVEN ABOVE
+    ``test_an_eight_gpu_p_shape_is_an_exception_at_its_smallest_run``. gpu-1xh100 came off
+    the form on 2026-08-04 with its price untouched, and the classification this test pins
+    is what it must still classify as when it goes back on. The paragraph above about a
+    working day on one card against an hour on eight describes an offer nobody can currently
+    take; it is left standing because it is the argument for having the profile at all.
     """
     profile = next(profile for profile in SHIPPED_PROFILES if profile.name == "gpu-1xh100")
-    assert profile.provisioned
     facts = facts_for_profile(profile, maximum_runtime_hours=Decimal(8), maximum_attempts=1)
     assert facts.estimated_cost_usd == Decimal("55.04")
     assert facts.estimated_cost_usd <= shipped_policy().thresholds.routine_maximum_cost_usd

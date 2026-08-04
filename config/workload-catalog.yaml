@@ -11,8 +11,12 @@ compute_profiles:
     # a second without deploying an environment for it is a contradiction between two files
     # rather than a flag, and a test refuses it.
     provisioned: true
-  # THE FIFTEEN PROFILES BELOW THAT NOW SAY provisioned: true WERE PROMOTED IN THREE ROUNDS,
+  # THE THIRTEEN PROFILES BELOW THAT NOW SAY provisioned: true WERE PROMOTED IN THREE ROUNDS,
   # AND EACH PROMOTION IS FOUR EDITS PER PROFILE RATHER THAN THIS FLAG.
+  #
+  # It read fifteen until 2026-08-04, when gpu-1xh100 and gpu-8xh100 went the other way for
+  # the first time. A demotion is the same four edits and is not a rarer event than a
+  # promotion, only a newer one; the long note above gpu-1xh100 is where the reason lives.
   #
   # A compute environment, a queue and a job definition in
   # infra/batch-compute-gpu-shapes.yaml; a row in config/execution-targets.yaml; an entry in
@@ -54,7 +58,10 @@ compute_profiles:
   # only option.
   #
   # gpu-1xa10g-sagemaker stays unprovisioned. It is a SageMaker training instance, which is a
-  # different service with a different submission path and no Batch queue to give it.
+  # different service with a different submission path and no Batch queue to give it. It was
+  # the only unprovisioned entry until the two H100 shapes joined it, and the two reasons are
+  # not the same one: this shape has nothing built for it, and those two have everything built
+  # for them and no instance to run it on.
   - name: gpu-1xt4
     instance_type: g4dn.xlarge
     accelerator: gpu
@@ -188,7 +195,12 @@ compute_profiles:
     pricing_source: "AWS Price List API get-products AmazonEC2 g6e.48xlarge us-east-1 Linux/Shared/NA/Used"
     pricing_observed_at: "2026-08-02"
     provisioned: true
-  # THE TWO BELOW ARE PROVISIONED AND STILL NEED AN ADMIN. The hourly_rate_usd on each is
+  # TWO OF THE THREE BELOW ARE ABOVE THE RATE CEILING AND ONLY gpu-8xa100 IS STILL OFFERABLE.
+  # This read "the two below are provisioned and still need an admin", which described
+  # gpu-8xa100 and gpu-8xh100 when they were the last two entries. gpu-1xh100 was added
+  # between them at $6.88, under the ceiling rather than over it, and both H100 shapes are now
+  # unprovisioned. What the sentence was really about is the rate rule, which is unchanged:
+  # gpu-8xa100 and gpu-8xh100 carry an hourly_rate_usd
   # above EXCEPTION_RATE_CEILING_USD_PER_HOUR in
   # src/edullm_platform/contracts/policy.py, so classify_request returns EXCEPTION for any
   # request naming them whatever its total cost and runtime are. That file records why the
@@ -217,6 +229,40 @@ compute_profiles:
   # ceiling. That is the point of it rather than a side effect: three pieces of work asked
   # for one H100 by name and each was choosing between an eight-card node at $55.04 needing
   # an admin every time, or a 48 GB card and a changed recipe.
+  #
+  # BOTH H100 SHAPES WENT BACK TO provisioned: false ON 2026-08-04, AND THE INFRASTRUCTURE
+  # THEY NAME IS STILL DEPLOYED AND STILL HEALTHY. That combination is new here and is the
+  # reason this paragraph is long. Every other unprovisioned entry in this file is a shape
+  # nothing was ever built for. These two have a compute environment, a queue and a job
+  # definition, all VALID, and EC2 will not sell the account an instance to put under them.
+  #
+  # WHAT WAS MEASURED. p5.48xlarge: 6,815 launch attempts over nine hours, every one
+  # InsufficientInstanceCapacity, across all five zones the environment could reach at the
+  # time. p5.4xlarge: 2,530 the same way. A fresh probe on 2026-08-04 failed a hundred more
+  # in nine minutes. Cost Explorer for 2026-06-01 to 2026-08-05 reports p4d.24xlarge at 22.3
+  # instance-hours and $218, and p5.48xlarge and p5.4xlarge at zero hours and zero dollars.
+  # Not "scarce": the account has never once held either instance type.
+  #
+  # WHY THE FLAG RATHER THAN LEAVING THEM OFFERABLE. A shape that cannot be placed produces a
+  # job that waits in RUNNABLE with no error a submitter can see, and the safety net that was
+  # supposed to end that wait cannot fire. Each queue carries a 1800 second cancel under
+  # CAPACITY:INSUFFICIENT_INSTANCE_CAPACITY, but Batch matches those rules on the job's
+  # statusReason and leaves it null for this failure -- the capacity error exists only in the
+  # autoscaling group's activity history, which no job field reflects. Read directly off a
+  # RUNNABLE p5 job on 2026-08-04: status RUNNABLE, statusReason null, past the threshold,
+  # not cancelled. The three reason values Batch accepts were tested against UpdateJobQueue
+  # one at a time and there is no catch-all; every other candidate returns "Invalid job
+  # reason". So the wait is unbounded, and the only place left to refuse it is the form.
+  #
+  # WHAT TAKES THEM BACK. One p5 of either size actually launching in this account. The
+  # infrastructure is unchanged and untouched by this edit, so the promotion is this flag,
+  # the execution target in config/execution-targets.yaml, the dropdown in
+  # .github/workflows/submit-run.yml and the two lists in the tests that enumerate them --
+  # the same four edits their first promotion made, in reverse.
+  #
+  # WHERE TO SEND SOMEBODY MEANWHILE. gpu-8xa100 is eight 80 GB cards, is the shape that
+  # demonstrably runs, and is the substitution to offer anybody who was reaching for
+  # gpu-8xh100. For one card, gpu-1xl40s is 48 GB and draws on the G pool.
   - name: gpu-1xh100
     instance_type: p5.4xlarge
     accelerator: gpu
@@ -224,7 +270,7 @@ compute_profiles:
     hourly_rate_usd: "6.8800"
     pricing_source: "AWS Price List API get-products AmazonEC2 p5.4xlarge us-east-1 Linux/Shared/NA/Used"
     pricing_observed_at: "2026-08-02"
-    provisioned: true
+    provisioned: false
   - name: gpu-8xa100
     instance_type: p4d.24xlarge
     accelerator: gpu
@@ -233,6 +279,9 @@ compute_profiles:
     pricing_source: "AWS Price List API get-products AmazonEC2 p4d.24xlarge us-east-1 Linux/Shared/NA/Used"
     pricing_observed_at: "2026-07-25"
     provisioned: true
+  # Unprovisioned for the reason written out above gpu-1xh100, which is one shortage and not
+  # two: both shapes are p5, and the pool that will not sell a p5.48xlarge is the pool that
+  # will not sell a p5.4xlarge.
   - name: gpu-8xh100
     instance_type: p5.48xlarge
     accelerator: gpu
@@ -240,7 +289,7 @@ compute_profiles:
     hourly_rate_usd: "55.0400"
     pricing_source: "AWS Price List API get-products AmazonEC2 p5.48xlarge us-east-1 Linux/Shared/NA/Used"
     pricing_observed_at: "2026-07-25"
-    provisioned: true
+    provisioned: false
 workloads:
   # THESE NINE WERE RENAMED, IN TWO WAVES, AND RECORDS WRITTEN BEFORE EITHER WAVE STILL
   # CARRY THE OLD NAMES.
