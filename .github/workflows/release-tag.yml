@@ -72,12 +72,25 @@ jobs:
         id: version
         run: |
           set -euo pipefail
+          # UNCONDITIONALLY, AND BEFORE THE BRANCH, BECAUSE THE ANNOTATED TAG IN THE NEXT
+          # STEP NEEDS A TAGGER TOO. A runner has no configured identity and its hostname
+          # has no domain, so git's auto-detected address is bogus and `git tag -a` --
+          # which asks for the identity in strict mode, exactly as `git commit` does --
+          # dies with "unable to auto-detect email address". Setting this only inside the
+          # bump branch would leave the no-bump path, which is the path the *first*
+          # release takes, failing at the one step that cannot be retried by hand.
+          # Local config, so it survives into the next step through .git/config.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           version="$(python3 tools/next_version.py)"
           if git rev-parse --verify --quiet "refs/tags/v${version}" >/dev/null; then
             version="$(python3 tools/next_version.py --bump)"
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add pyproject.toml
+            # uv.lock too, and it is not housekeeping: the lock records the root
+            # distribution's own version, `uv sync --locked` refuses when that disagrees
+            # with pyproject.toml, and that is the first step of every CI job. This commit
+            # goes to main with no pull request in front of it, so a bump that moved only
+            # one of the two would leave main red for whoever opened the next one.
+            git add pyproject.toml uv.lock
             git commit -m "Release v${version}"
             git push origin HEAD:main
             echo "bumped=true" >> "${GITHUB_OUTPUT}"
