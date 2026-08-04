@@ -6,9 +6,7 @@ the tree it describes by running the whole suite in a child pytest, and
 tree it was measured on so the second generator in a session reuses the first one's run.
 That memory is process-local, deliberately -- ``proof_bundle.py`` says why -- and five
 command lines are five processes, so the cache had nothing to share and every generator
-measured the same unchanged tree again. Measured: about 2m37s per full-suite child on an
-idle machine, five times, for a regeneration that has to happen whenever a config change
-moves a digest.
+measured the same unchanged tree again.
 
 Giving them one process is the whole of the fix. Nothing about what a bundle contains
 changes: this calls the same ``build_bundle`` each generator's own command calls, with the
@@ -16,6 +14,17 @@ same arguments, and the only thing the five now share is the one verification th
 each independently asking for. One collection child and one full-suite child serve all
 five; the targeted selection run stays per-phase, because each phase selects a different
 set of node ids and that is a different question.
+
+MEASURED, 2026-08-04, ON ONE MACHINE, AND THE RESIDUAL IS THE INTERESTING HALF. Five
+separate invocations took 1,464s; this one took 697s, writing the same 57 files byte for
+byte. Solving for the parts puts the shared collection and full-suite child at about 192s,
+so removing four of them is the whole of the 767s saved.
+
+What is left is not another multiplier. About 505s of the 697s is the five per-phase
+targeted runs, and those are five different questions -- each selects that phase's cited
+node ids and its own modules -- so there is no second run to share. Collapsing them into
+one selection and splitting the result would change what each bundle reports its targeted
+run executed, which is a claim rather than a timing, and is not a trade this file makes.
 
 **The five individual commands still work and are still the documented ones for a single
 phase.** This is an addition, not a replacement. A phase whose bundle alone needs

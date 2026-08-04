@@ -294,6 +294,11 @@ the whole suite five times over. One invocation runs it once and each phase's ow
 run after it. The five per-phase commands are unchanged and are still the right ones for a
 single bundle.
 
+Measured on 2026-08-04: 1,464s for the five commands against 697s for this one, writing the
+same 57 files byte for byte. Most of what remains is the five per-phase targeted runs at
+about 505s between them, and those are five different selections rather than one repeated,
+so there is no second multiplier left to remove.
+
 Nothing about a bundle's contents changes — this calls the same `build_bundle` with the same
 arguments — except that the five now record one `generated_at` rather than five a few minutes
 apart, because they now rest on one verification. Give the five commands and this one the
