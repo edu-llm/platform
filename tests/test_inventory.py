@@ -344,10 +344,17 @@ def test_the_roster_records_who_cannot_be_attributed_yet() -> None:
     as the service account, which is indistinguishable from having sent no attribution.
 
     So a login is recorded here only when its owner was read out of the `eduLLM` team's own
-    member list. Six people are not in that list under any spelling, and a blank is the only
+    member list. Five people are not in that list under any spelling, and a blank is the only
     true answer for them: a plausible guess produces exactly the silent failure this contract
     exists to avoid, and it is harder to notice than the blank because the run looks
     attributed.
+
+    `NotAnAlgorithm` was the sixth and is no longer here. The entity gained `eve-alpha` under
+    the display name `eve` on 2026-08-04, a first-name prefix of `Eve Feng` rather than an
+    equality, which is precisely the match this contract refuses on its own -- and the owner
+    confirmed it the same day, which is the one thing that admits a near-match. The five that
+    remain are the ones the member list holds under no spelling at all, so no confirmation is
+    available to them and only a new W&B account would move this set.
 
     Named rather than counted, so that recording one is an edit here as well. Adding somebody
     to the W&B team is an owner action in W&B and nothing in this repository can do it.
@@ -366,10 +373,6 @@ def test_the_roster_records_who_cannot_be_attributed_yet() -> None:
         "caiiris",
         "yuen-kai",
         "Adarsh-Rajesh-gitHub",
-        "NotAnAlgorithm",
-        # Recorded on the roster after the others, so his account was never looked for rather
-        # than looked for and missing. Same consequence either way, and the same remedy.
-        "prestonloats",
     }
 
 

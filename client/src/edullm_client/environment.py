@@ -66,7 +66,15 @@ REQUIRED_VARIABLES: Final[tuple[str, ...]] = (
 #: Sent only when there is something to say, and absent rather than empty when there is not.
 #: The platform appends each of these conditionally, because an empty value reads as an
 #: attribution or a resolution that was attempted and failed rather than one never made.
+#:
+#: ``WANDB_RUN_ID`` is here for a different reason than the rest, and it is the reason
+#: ``ResultManifest.exit_code`` is optional: every submission compiled today carries one
+#: unconditionally, but a container captured before the variable existed does not, and
+#: those captures are records rather than fixtures -- adding the name to one would be
+#: writing down something the container never held. Required would make the whole
+#: captured history unreadable by the client that describes it.
 OPTIONAL_VARIABLES: Final[tuple[str, ...]] = (
+    "WANDB_RUN_ID",
     "WANDB_RUN_GROUP",
     "WANDB_USERNAME",
     "EDULLM_DATASET_ID",
@@ -110,6 +118,13 @@ class RunEnvironment:
     reads and a container cannot see. ``wandb_username`` below is the nearest thing the
     container is given and is not the same fact, since it is a W&B account name and most of
     the roster has none.
+
+    ``wandb_run_id`` is a fifth and is the one identifier that is usually a copy of
+    another. It equals ``run_id`` on a single run, which is the whole point -- it is what
+    joins a platform run to its W&B run -- and it is deliberately still its own field,
+    because on a fan-out cell it carries a ``-cell-<index>`` suffix that ``run_id`` does
+    not. Reading ``run_id`` where a W&B run is meant is therefore correct on every single
+    run and wrong on every cell.
     """
 
     run_id: str
@@ -130,6 +145,16 @@ class RunEnvironment:
     #: run reports while the other exists for a library's convenience.
     wandb_project: str
     wandb_entity: str
+    #: The W&B run this container reports as, which is the platform's own ``run_id`` on a
+    #: single run and ``<run_id>-cell-<index>`` on a fan-out cell. Read from
+    #: ``WANDB_RUN_ID`` rather than derived from :attr:`run_id`, because deriving it would
+    #: make this field agree with the platform on a single run and disagree with the
+    #: container on every cell -- the fan-out suffix is appended by a shell at container
+    #: start, since the cell index does not exist when the submission is compiled.
+    #:
+    #: None only on a container captured before the platform set the variable. Every
+    #: submission compiled today carries one.
+    wandb_run_id: str | None = None
     #: The grouping key the submission form calls ``experiment``. Absent on a run admitted
     #: before the field existed, which is why this is optional rather than required. Every
     #: submission compiled today carries one.
@@ -171,6 +196,7 @@ class RunEnvironment:
             "EDULLM_WANDB_PROJECT": self.wandb_project,
             "WANDB_PROJECT": self.wandb_project,
             "WANDB_ENTITY": self.wandb_entity,
+            "WANDB_RUN_ID": self.wandb_run_id,
             "WANDB_RUN_GROUP": self.experiment,
             "WANDB_USERNAME": self.wandb_username,
             "EDULLM_DATASET_ID": self.dataset_id,
@@ -218,6 +244,7 @@ def run_environment(environ: Mapping[str, str] | None = None) -> RunEnvironment:
         # other exists because the client library reads that name unasked.
         wandb_project=source["EDULLM_WANDB_PROJECT"],
         wandb_entity=source["WANDB_ENTITY"],
+        wandb_run_id=optional("WANDB_RUN_ID"),
         experiment=optional("WANDB_RUN_GROUP"),
         wandb_username=optional("WANDB_USERNAME"),
         dataset_id=optional("EDULLM_DATASET_ID"),

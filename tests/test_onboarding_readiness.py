@@ -598,7 +598,7 @@ def test_the_report_says_nobody_is_here_rather_than_printing_an_empty_document()
 
 
 def test_the_shipped_roster_reports_the_people_nothing_can_attribute() -> None:
-    """Six people have no W&B account, and the report is where that is said out loud.
+    """Five people have no recorded W&B account, and the report says that out loud.
 
     The roster leaves them blank deliberately, because a guessed login produces a run that
     logs as the service account and looks exactly like a correctly attributed one. What was
@@ -609,8 +609,12 @@ def test_the_shipped_roster_reports_the_people_nothing_can_attribute() -> None:
     `aryanjverma` used to be the example here and is now the counter-example. He submitted
     both of the runs Phase 5 rests on, the roster called him unattributable, and the `eduLLM`
     entity had held `aryan-jaden-verma` under an exact display-name match all along. Asserted
-    from the roster rather than against a name written twice, so that recording one of the six
+    from the roster rather than against a name written twice, so that recording one of the five
     moves this test without editing it.
+
+    Six until 2026-08-04, when the owner confirmed that `eve-alpha` is `NotAnAlgorithm`. The
+    five that remain are held by the `eduLLM` entity under no spelling, so nothing but a new
+    account moves them.
     """
     shipped = load_yaml(PROJECT_ROOT / "config" / "organization.yaml", OrganizationInventory)
     logins = [member.github_login for member in shipped.members]
@@ -635,7 +639,7 @@ def test_the_shipped_roster_reports_the_people_nothing_can_attribute() -> None:
         member.github_login for member in shipped.members if member.wandb_username is None
     ]
 
-    assert len(unattributable) == 7
+    assert len(unattributable) == 5
     for login in unattributable:
         entry = person(people, login)
         # A superset rather than equality: BritishAmericqn is an admin, and the synthesized
@@ -643,7 +647,7 @@ def test_the_shipped_roster_reports_the_people_nothing_can_attribute() -> None:
         # third step that has nothing to do with attribution.
         # W&B alone now. STEP_TEAM used to appear beside it because no group recorded
         # anybody, so every person was missing a research team as well as an account.
-        # Recording the assignments closed that half for all thirty-four, which leaves this
+        # Recording the assignments closed that half for all thirty-five, which leaves this
         # test measuring only the gap it was named for.
         assert STEP_WANDB in missing_names(entry)
         assert STEP_TEAM not in missing_names(entry)

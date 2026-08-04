@@ -1856,6 +1856,16 @@ def test_the_workload_role_writes_only_under_a_runs_prefix_of_the_outputs_bucket
     that ``contracts/results.py::output_prefix`` is the single author of -- which is what
     makes tightening this later an IAM change rather than a migration of keys already
     written into lineage records nothing rewrites.
+
+    THE LISTING HALF IS ABOUT THIS BUCKET AND NOT ABOUT LISTING, which it did not have to
+    distinguish until the role could list a second one. It counted every ``s3:ListBucket``
+    statement on the role and required exactly one, which was the same assertion for as long
+    as the outputs bucket was the only bucket in reach. It stopped being the same assertion
+    when ``read-the-dataset-airlock`` was added, and the difference is what the condition is
+    for: the outputs bucket is partitioned by team, so the prefix *is* the partition, while
+    the two airlock buckets have no team dimension to scope by. The same narrowing was made
+    for the same reason in ``tests/test_phase5_team_isolation.py``; the airlock's own listing
+    is asserted in ``tests/test_workload_dataset_reach.py`` rather than left implied.
     """
     role = role_named(BATCH_ROLES_PATH, WORKLOAD_ROLE_NAME)
     statements = [
@@ -1876,7 +1886,12 @@ def test_the_workload_role_writes_only_under_a_runs_prefix_of_the_outputs_bucket
     # Listing is a bucket-level action that no object ARN can scope, so the prefix condition
     # is the only thing keeping it below the same layout.
     listing = [
-        statement for statement in statements if "s3:ListBucket" in statement_actions(statement)
+        statement
+        for statement in statements
+        if "s3:ListBucket" in statement_actions(statement)
+        and any(
+            arn.endswith(f":{OUTPUTS_BUCKET}") for arn in resource_arns(statement["Resource"])
+        )
     ]
     assert len(listing) == 1
     assert listing[0]["Condition"]["StringLike"]["s3:prefix"] == "teams/*/runs/*"

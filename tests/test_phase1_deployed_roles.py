@@ -433,11 +433,27 @@ def test_a_capture_matching_a_pending_amendment_says_what_would_end_it(
     # Only meaningful while an amendment is outstanding, and it must not silently become
     # meaningless: a reader who meets this verdict needs the two things the record carries
     # rather than a bare "does not match", which is what the verdict replaced.
+    #
+    # SCOPED TO THE ROLES THESE CAPTURES COVER, AND IT WAS NOT UNTIL AN AMENDMENT LANDED
+    # OUTSIDE THEM. `PENDING_AMENDMENTS` spans all three registries -- that is the whole
+    # point of `declared_role_templates` merging them -- while this fixture reads Phase 1's
+    # two roles. Held against the unscoped registry, this compared a list of Phase 1
+    # captures against a list that may name a Phase 3 role, so the first amendment recorded
+    # for one failed here with nothing wrong. It could only ever have held while the
+    # registry was empty or happened to contain Phase 1 roles alone, which is what it did
+    # contain when it was written.
+    #
+    # Sorted on both sides rather than compared in registry order. Nothing resolves an
+    # amendment by position, and coupling this to the order somebody wrote them in would
+    # fail on a reordering that grants nothing.
+    examined = {capture.role_name for capture in captures}
     pending = [capture for capture in captures if capture.verdict is CaptureVerdict.PENDING_DEPLOY]
 
-    assert [capture.role_name for capture in pending] == [
-        amendment.role_name for amendment in PENDING_AMENDMENTS
-    ]
+    assert sorted(capture.role_name for capture in pending) == sorted(
+        amendment.role_name
+        for amendment in PENDING_AMENDMENTS
+        if amendment.role_name in examined
+    )
     for capture in pending:
         amendment = pending_for(capture.role_name)
         assert amendment is not None

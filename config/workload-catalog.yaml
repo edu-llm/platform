@@ -319,7 +319,25 @@ workloads:
   # overridden by the form on every submission, so it refused nothing; what it did was read
   # as a promise that a validator could not be started on a p5.48xlarge. It can, it always
   # could, and the only thing standing between a submitter and that mistake is the hourly
-  # rate on the approver's summary. Pick cpu-32vcpu.
+  # rate on the approver's summary.
+  #
+  # PICK cpu-32vcpu, AND THE REASON IS AN IAM GRANT RATHER THAN THE PRICE. Only the CPU
+  # workload role, sbsandbox-intern-edullm-batch-workload, can read edullm-landing --
+  # where the candidate shards this program checks arrive. Every GPU target in
+  # config/execution-targets.yaml runs as sbsandbox-intern-edullm-batch-gpu-workload, which
+  # reads the sealed edullm-data and not the landing zone, so a validator sent to a GPU
+  # queue starts, pulls its image and fails with AccessDenied on its first read at between
+  # $0.53 and $55.04 an hour. infra/iam/batch-gpu-roles.yaml records why that asymmetry is
+  # kept rather than widened away.
+  #
+  # THIS LINE USED TO BE A TRAP AND THE TRAP WAS THE OTHER WAY ROUND, WHICH IS WORTH
+  # KNOWING BEFORE TRUSTING IT AGAIN. It said "Pick cpu-32vcpu" while cpu-32vcpu was
+  # precisely the profile that could not read either bucket: the CPU workload role held
+  # s3:PutObject and s3:ListBucket on the outputs bucket and no s3:GetObject anywhere, so
+  # this entry was admitted, approved, placed and then denied. The grant that closed it is
+  # the `read-the-dataset-airlock` inline policy in infra/iam/batch-roles.yaml, and it
+  # needs a deploy of sbsandbox-intern-edullm-batch-iam from a laptop before this sentence
+  # is true of the account rather than only of the templates.
   #
   # One hour and one attempt. The validator is a read: it writes a report and holds no state
   # worth resuming, so a lost machine costs the read again rather than the work, and
