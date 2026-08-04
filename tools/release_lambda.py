@@ -24,9 +24,22 @@ digest alone.
 ``--function all`` remains the default anyway, and the reason has changed rather than gone.
 A change under `src/edullm_platform` still reaches whichever functions import the module,
 which is not something a person should be working out at the point of release. Building
-both is cheap and deterministic: a function whose bytes did not move rebuilds to the
-recorded digest and needs no edit, so releasing both never costs a release that was not
-needed.
+both is cheap and deterministic, so the tool can work out which moved and act only on that
+one.
+
+**IT NOW ACTS ONLY ON THAT ONE, WHICH IS WHAT THIS PARAGRAPH USED TO CLAIM WITHOUT DOING.**
+It said releasing both "never costs a release that was not needed", on the strength of the
+build being deterministic — but the digest was never compared against anything and every
+selected function was uploaded regardless. The default therefore stored byte-identical bytes
+under a fresh version id and put a function nobody had changed through a stack update, which
+is precisely the cost `--function validator` was passed by hand to avoid on 2026-08-04.
+
+So a function whose freshly built digest already matches its release record is skipped:
+nothing uploaded, neither file edited. That is what `infra/README.md` has always told people
+to do by eye — *if the sha256 it reports has not moved, there is nothing to release and the
+template does not need editing* — and doing it by eye is the step that gets skipped at four
+in the morning. `--force` uploads anyway, for the one case the comparison cannot see: a
+record that is right about the bytes while the object it names is not in the bucket.
 
 This uploads, which is a laptop step for the reason `infra/README.md` gives — an S3 write is
 not applying a stack. It does not deploy. CI does that when the edited template reaches
@@ -44,6 +57,8 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+
+import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -129,6 +144,24 @@ def build(function: Function, destination: Path) -> str:
     return digest
 
 
+def recorded_digest(function: Function) -> str | None:
+    """The digest this function's release record says is deployed, if it says one.
+
+    ``None`` rather than a refusal when the file cannot be read or carries no usable
+    ``sha256``, because the only thing this answer decides is whether an upload can be
+    skipped -- and the safe answer to "is this already released?" when the record cannot be
+    read is no. A broken record is a real problem and it is
+    ``tools/verify_deployed_lambdas.py`` that reports it as one; refusing here would turn it
+    into a release that cannot be cut.
+    """
+    try:
+        loaded = yaml.safe_load(function.release_record.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return None
+    digest = loaded.get("sha256") if isinstance(loaded, dict) else None
+    return digest if isinstance(digest, str) and len(digest) == 64 else None
+
+
 def upload(function: Function, source: Path, *, profile: str | None, region: str) -> str:
     version = _run(
         [
@@ -198,8 +231,12 @@ def verify(selected: Sequence[Function]) -> None:
     )
     if answer.returncode != 0:
         raise ReleaseError(
-            "the release tripwire is still red after the edits, so the deployed zip and "
-            "this tree still disagree. Nothing was committed."
+            "the release tripwire is red, so the deployed zip and this tree still "
+            "disagree. Nothing was committed. Read the failure above rather than assuming "
+            "the upload is at fault: since the register in "
+            "edullm_platform.pending_amendments gained pending releases, one way for this "
+            "to be red after a successful release is a recorded entry that the release "
+            "just cleared and nobody has deleted."
         )
 
 
@@ -209,7 +246,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--function",
         choices=[*FUNCTIONS, "all"],
         default="all",
-        help="which to release; both by default, because a config edit moves both digests",
+        help=(
+            "which to release; both by default, because a change under src/edullm_platform "
+            "reaches whichever functions import it. One whose digest has not moved is "
+            "skipped, so the default costs nothing beyond a build"
+        ),
     )
     parser.add_argument("--profile", default="sbsandbox")
     parser.add_argument("--region", default="us-east-1")
@@ -217,6 +258,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="build and report the digests without uploading or editing anything",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "upload even when the built digest already matches the release record. For a "
+            "record that is right about the bytes while the object it names is not in the "
+            "bucket, which the digest comparison cannot see"
+        ),
     )
     return parser
 
@@ -230,10 +280,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
 
     try:
+        # Built before anything is decided, because the digest is the decision. Every
+        # selected function is built even when only one has moved: the build is
+        # deterministic and cheap, and it is the only way to find out which one that is.
         built: list[tuple[Function, Path, str]] = []
         for function in selected:
             destination = Path("/tmp") / Path(function.s3_key).name
             digest = build(function, destination)
+            if not options.force and digest == recorded_digest(function):
+                print(
+                    f"unchanged {function.name}: {digest[:12]} is already what "
+                    f"{function.release_record.name} records, so nothing is uploaded and "
+                    "neither file is edited"
+                )
+                continue
             built.append((function, destination, digest))
             print(f"built   {function.name}: {digest[:12]}")
 
@@ -254,6 +314,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"recorded {function.name} in {function.release_record.name} and "
                   f"{function.template.name}")
 
+        # Run even when nothing moved. "Is the tree the account is running the tree I have?"
+        # is the question somebody running this tool is asking, and an answer of "nothing
+        # needed doing" is only worth something if it was checked rather than assumed.
         verify(selected)
     except ReleaseError as error:
         print(f"error: {error}", file=sys.stderr)
@@ -263,8 +326,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         return EXIT_UNUSABLE
 
     print()
+    if not uploaded:
+        print("Nothing to release: every function selected already builds to the digest its")
+        print("record names, and the tripwires agree. No file was edited, so there is")
+        print("nothing to commit.")
+        return 0
     print("Released. Nothing is deployed yet: commit the edited templates and let CI apply")
     print("them, which is what keeps the deploy on the far side of a review.")
+    print()
+    print("If a pending release is recorded for one of these in")
+    print("edullm_platform.pending_amendments.pending_releases(), delete it in the same")
+    print("commit: the difference it describes has just stopped existing, and the register")
+    print("fails on a record that has outlived the release it was waiting for.")
     return 0
 
 

@@ -27,6 +27,7 @@ from typing import Any
 import pytest
 import yaml
 
+from edullm_platform.pending_amendments import compare_release
 from tools.build_admission_lambda import (
     ADMISSION_CONFIG,
     DEFAULT_PYTHON_PLATFORM,
@@ -204,15 +205,38 @@ def test_the_released_zip_is_the_one_this_tree_builds(package: dict[str, object]
     unchanged tree rebuilds to the recorded digest and needs no edit. It fails only when
     the packaged bytes have moved and the record has not, which is exactly the window in
     which the account is running something this tree did not describe.
+
+    **IT USED TO BE UNCLEARABLE BEFORE THE MERGE THAT CAUSED IT, WHICH IS A DIFFERENT
+    PROBLEM FROM BEING RIGHT.** The zip cannot be uploaded until the change is on `main`,
+    because `deploy-phase2-admission.yml` runs from nowhere else; and the change could not
+    merge green while this was red. So every change to a packaged module -- a contract
+    field, a config line, a reworded comment -- was landed by an administrator merging past
+    the required checks. A bypass taken that often is not read, and it is the same bypass
+    that would let a genuinely broken change through.
+
+    So a *recorded* pending release now skips this, on the terms
+    :mod:`edullm_platform.pending_amendments` sets for an undeployed IAM amendment: the
+    record names the function, both digests and the command, it stops fitting the moment
+    either digest moves, and it lapses after
+    :data:`~edullm_platform.pending_amendments.RELEASE_WINDOW`. Nothing else skips it. A
+    digest that has moved with no record behind it fails exactly as it did before, which is
+    the whole value of the check -- it is the only thing that sees a config edit nobody
+    released, and `infra/admission-validator-release.yaml` records what that cost.
     """
     recorded = release_record()
+    comparison = compare_release(
+        "validator", built=str(package["sha256"]), released=str(recorded["sha256"])
+    )
 
-    assert package["sha256"] == recorded["sha256"], (
+    if comparison.waiting:
+        pytest.skip(comparison.detail)
+
+    assert comparison.holds, (
         "the zip this tree builds is not the zip that was released. Something the package "
         "carries has changed -- the handler, a contract it imports, or a file under "
         "config/ -- and the deployed validator is still running the previous bytes. "
         "Release it with the procedure in infra/README.md and update "
-        "infra/admission-validator-release.yaml in the same commit."
+        f"infra/admission-validator-release.yaml in the same commit.\n\n{comparison.detail}"
     )
 
 

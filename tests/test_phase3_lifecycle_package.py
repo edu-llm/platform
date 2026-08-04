@@ -41,6 +41,8 @@ from typing import Any
 import pytest
 import yaml
 
+from edullm_platform.pending_amendments import compare_release
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 RELEASE_RECORD_PATH = PROJECT_ROOT / "infra" / "lifecycle-recorder-release.yaml"
 EVENTS_TEMPLATE_PATH = PROJECT_ROOT / "infra" / "batch-events.yaml"
@@ -133,15 +135,30 @@ def test_the_released_zip_is_the_one_this_tree_builds(package: dict[str, object]
     unchanged tree rebuilds to the recorded digest and needs no edit. It fails only when
     the packaged bytes have moved and the record has not, which is exactly the window in
     which the account is writing lineage this tree did not describe.
+
+    Mirrors its Phase 2 sibling in consulting
+    :func:`~edullm_platform.pending_amendments.compare_release`, and for the same reason:
+    the zip is uploaded from `main` and the change reaches `main` by merging past this. The
+    recorder is the function where the escape hatch has to be *most* grudging, because its
+    drift is the quiet one -- a stale validator refuses a submission and somebody reads the
+    refusal, while a stale recorder writes lineage that looks exactly like correct lineage
+    into immutable records. So the terms are the register's, unchanged: a record that names
+    both digests, stops fitting when either moves, and lapses.
     """
     recorded = release_record()
+    comparison = compare_release(
+        "recorder", built=str(package["sha256"]), released=str(recorded["sha256"])
+    )
 
-    assert package["sha256"] == recorded["sha256"], (
+    if comparison.waiting:
+        pytest.skip(comparison.detail)
+
+    assert comparison.holds, (
         "the zip this tree builds is not the zip that was released. Something the package "
         "carries has changed -- the handler, the projection, or a contract either imports "
         "-- and the deployed recorder is still writing lineage with the previous bytes. "
         "Release it with the procedure in infra/README.md and update "
-        "infra/lifecycle-recorder-release.yaml in the same commit."
+        f"infra/lifecycle-recorder-release.yaml in the same commit.\n\n{comparison.detail}"
     )
 
 

@@ -932,10 +932,18 @@ uv run python tools/release_lambda.py --dry-run  # digests only, uploads nothing
 ```
 
 It builds, uploads, writes the version id and digest into both the release record and the
-template, and then runs the tripwire test with its exit code read directly. It releases both
-functions by default, because a config edit moves both digests. It uploads every zip before
-editing any file, because a record naming a zip that failed to upload is worse than no
-record — the tripwire would then pass against a lie.
+template, and then runs the tripwire test with its exit code read directly. It uploads every
+zip before editing any file, because a record naming a zip that failed to upload is worse
+than no record — the tripwire would then pass against a lie.
+
+It selects both functions by default, because working out which ones a change under
+`src/edullm_platform` reaches is not something to be doing at the point of release. That is
+free because **a function whose freshly built digest already matches its release record is
+skipped** — nothing uploaded, neither file edited. Without that skip the default would store
+byte-identical bytes under a fresh version id and put a Lambda nobody changed through a
+stack update, which is why `--function validator` was passed by hand on 2026-08-04. Pass
+`--force` to upload anyway, which is the repair for a record that is right about the bytes
+while the object its version id names is not in the bucket.
 
 That tool exists because the manual version failed on 2026-08-01: a release was cut,
 recorded and pushed in one `&&` chain where a `pytest | tail` in the middle succeeded as a
@@ -983,10 +991,37 @@ cannot assume the role until the policy names it — and amending the policy nee
 access the step exists to replace. A new file is a door that only opens from inside.
 
 One consequence to know before relying on it: the workflow can only run from `main`, so a
-pull request that changes packaged bytes cannot be released before it merges. Such a branch
-lands red on the tripwire, the release is dispatched from `main`, and a second small pull
-request carries the two values. That is a worse sequence than releasing from the branch and
-is the right trade only while the laptop path is unavailable.
+pull request that changes packaged bytes cannot be released before it merges. The release is
+dispatched from `main` and a second small pull request carries the two values. That is a
+worse sequence than releasing from the branch and is the right trade only while the laptop
+path is unavailable.
+
+**That sequence used to require an administrator, and no longer does.** The branch landed red
+on the tripwire — it had to, since the zip could not be uploaded until the change was on
+`main` and the change could not merge green while the tripwire was red — so every change to a
+packaged module went in by merging past a required check. That happened twice on 2026-08-04
+alone. A bypass taken routinely is a bypass nobody reads, and it is the same one that would
+let a genuinely broken change through.
+
+So `edullm_platform.pending_amendments` now carries a **pending release** beside the pending
+IAM amendment it was written for, on the same terms. Record one in `pending_releases()`
+naming the function, the digest this tree builds, the digest the release record still shows
+as deployed, today's date, why the bytes moved, and the command that clears it. The tripwire
+then skips with all of that printed, instead of failing.
+
+It is narrow on purpose, and none of this weakens the release records themselves — they go on
+tying a digest to a real S3 object version and describing what is deployed:
+
+- a digest mismatch with **nothing recorded** still fails, loudly, exactly as before;
+- the record stops fitting the moment **either** digest moves, so a second packaged edit
+  arriving mid-review, or a release somebody else cut, fails rather than riding along;
+- it lapses after seven days, checked by a test that needs no build and so runs on every
+  `-m "not slow"` pass — a release nobody cut becomes visible rather than permanent;
+- the release that clears it makes the entry fail, so the commit carrying the two values
+  deletes it.
+
+The failing tripwire prints the two digests to paste into an entry, so the escape hatch is
+found by the person who needs it rather than looked up.
 
 **The configuration the validator reads is inside the zip, so editing one of those files is
 a release.** `tools/build_admission_lambda.py` copies the seven files named in
