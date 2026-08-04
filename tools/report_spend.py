@@ -264,9 +264,17 @@ def spend_section(
 
     The account total is required and the per-team split is not, which is the asymmetry the
     whole function is arranged around. Cost Explorer answering is what makes this a spend
-    report at all, so a refusal there is a :class:`ReportInputError` the caller reports. The
-    lineage records live in a prefix the nightly reader role does not hold, so a refusal
-    there is ordinary and degrades to a section with no split rather than to no section.
+    report at all, so a refusal there is a :class:`ReportInputError` the caller reports. A
+    refusal on the lineage records degrades to a section with no split rather than to no
+    section, because a total with no breakdown is still the number somebody asked for.
+
+    THAT DEGRADATION IS NOT LICENCE FOR THE REFUSAL. This said the lineage records lived in
+    a prefix the nightly reader role did not hold, which was true of that role and never
+    true of this tool: nothing in ``.github/workflows/`` runs this, so it runs from a laptop
+    on an SSO session that can read the whole bucket. The role's gap was real and belonged
+    to ``tools/visibility_board.py``, which does run on the schedule; it has since been
+    closed. A refusal reaching this path now means the credential or the bucket, not the
+    grant, and it is worth looking at rather than shrugging at.
     """
     limits = load_yaml(limits_path, SpendLimits)
     days = daily_costs(today=today, profile=profile, region=region)

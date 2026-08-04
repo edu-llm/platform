@@ -1353,10 +1353,15 @@ def _collect(options: argparse.Namespace) -> Board:
                     source="the lineage records",
                     reason="run_costs_not_read",
                     detail=(
-                        f"{_masked(str(error))}. The message says which prefix. `attempt/` is "
-                        "the expected one, because the reader role holds `intent/` and "
-                        "`result/` and not that, and the attempt records are where the "
-                        "measured durations are. Unlogged spend is reported as a count of "
+                        f"{_masked(str(error))}. The message says which prefix, and every "
+                        "prefix `tools/report_run_costs.py:LINEAGE_PREFIXES` names is one "
+                        "the nightly reader role is granted, so this is a finding rather "
+                        "than the expected answer. `attempt/` was the expected answer until "
+                        "the grant was added: the role held `intent/` and `result/` while "
+                        "the board synced `intent/` and `attempt/`, and it was refused every "
+                        "night. Nothing is priced without it -- the whole cost mapping is "
+                        "dropped rather than the attempt half, because `sync_bucket` raises "
+                        "on a refused prefix -- so unlogged spend is reported as a count of "
                         "runs with no money against it, and every other finding is "
                         "unaffected."
                     ),

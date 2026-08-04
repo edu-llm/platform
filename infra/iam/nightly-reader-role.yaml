@@ -58,16 +58,38 @@ Resources:
             Version: "2012-10-17"
             Statement:
               # The intent records, which are how the reconciliation learns which runs were
-              # submitted under a profile carrying a checkpoint contract, and the result
-              # records, which say how each of them ended. Object-level and confined to two
-              # prefixes: the same bucket holds decision, binding and attempt records, and
-              # this check reads none of them.
+              # submitted under a profile carrying a checkpoint contract; the result records,
+              # which say how each of them ended; and the attempt records, which are the only
+              # place a run's measured duration exists. Object-level and confined to three
+              # prefixes: the same bucket holds decision, binding, events and
+              # submission-failure records, and nothing scheduled here reads any of them.
               #
               # The result grant decides whether a run's prefix is held against the build,
               # not what the prefix says. A run recorded as failed has already reported its
               # failure and an empty prefix under it is the expected shape; a run recorded as
               # a success that saved nothing is the case this check exists for, and it is
               # still read from the bucket rather than believed from the record.
+              #
+              # WHY THE ATTEMPT GRANT IS HERE, AND WHAT ITS ABSENCE COST. The visibility
+              # board syncs the prefixes in ``tools/report_run_costs.py:LINEAGE_PREFIXES``,
+              # which are ``intent`` and ``attempt``, and this policy granted ``intent`` and
+              # ``result``. Two files stated the same fact and nothing compared them, so the
+              # board was refused on its first ``ListObjectsV2`` under ``attempt/`` on every
+              # night it has ever run. ``sync_bucket`` raises on a refused prefix rather than
+              # skipping it, so the refusal did not cost the attempt records alone -- it cost
+              # the whole cost mapping, and every run on the board read "not costed".
+              #
+              # Nothing substitutes for it. ``edullm_platform.run_costs.run_costs`` skips any
+              # run with no attempt record, and ``_attempt_seconds`` is the only source of a
+              # duration, so with this prefix unreadable there is no cost figure, no
+              # per-team split and no total. The records themselves are timings and job
+              # identifiers, which is the same class of fact the intent records already
+              # carry, so this widens what the role can see by a prefix rather than by a
+              # kind of thing.
+              #
+              # ``tests/test_nightly_workflow.py`` now derives the required prefix set from
+              # the workflow and from that constant instead of restating it, so this list
+              # and the tools cannot drift apart again without a red review.
               - Sid: ReadIntentRecords
                 Effect: Allow
                 Action: s3:GetObject
@@ -78,9 +100,20 @@ Resources:
                 Action: s3:GetObject
                 Resource:
                   Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-lineage/result/*
+              - Sid: ReadAttemptRecords
+                Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-lineage/attempt/*
               # Listing is a bucket-level action, so it cannot be scoped by an object ARN and
               # the prefix condition is the narrowing. Granted because the check has to
-              # enumerate both trees; it is handed no list of run ids.
+              # enumerate each tree; it is handed no list of run ids.
+              #
+              # EVERY PREFIX FETCHED ABOVE HAS TO APPEAR HERE TOO, and the failure of
+              # forgetting is not a partial read. ``aws s3 sync`` lists before it fetches, so
+              # a GetObject grant whose prefix is missing from this condition reads as
+              # granted in the policy document and is refused at the first call, before a
+              # single object is fetched. That is exactly how ``attempt/`` failed.
               - Sid: ListLineageRecords
                 Effect: Allow
                 Action:
@@ -93,6 +126,7 @@ Resources:
                     s3:prefix:
                       - intent/*
                       - result/*
+                      - attempt/*
               # What a run wrote. GetObject rather than a listing alone because deciding
               # whether a checkpoint would load means reading it: HeadObject is authorized as
               # s3:GetObject, and a `_SUCCESS` marker has to be fetched to be compared
@@ -249,11 +283,13 @@ Resources:
               # property of this role worth holding to a test, and
               # tests/test_nightly_workflow.py does.
               #
-              # s3:GetObject on the rest of the lineage store. The reconciliation asks which
-              # runs promised a checkpoint, which the intent record answers on its own. The
-              # result records would tell it how each run ended, and that is a second
-              # question this check deliberately does not ask: the whole point is that a run
-              # recorded as a success can have saved nothing.
+              # s3:GetObject on the rest of the lineage store, which is now decision/,
+              # binding/, events/ and submission-failure/ rather than "everything but
+              # intent". Nothing scheduled in nightly.yml reads any of the four: the
+              # reconciliation joins intent to result, and the board joins intent to attempt.
+              # This paragraph claimed the result records were withheld long after they were
+              # granted, which is the drift the derived check below now makes impossible to
+              # repeat silently.
               #
               # s3:DeleteObject, for the reason the GPU workload role omits it. Checkpoints
               # are kept because nothing on this platform can remove one, and a nightly job
