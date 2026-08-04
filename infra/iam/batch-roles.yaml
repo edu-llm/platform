@@ -237,12 +237,20 @@ Resources:
               # grant here would let the command write directly into the record of what it
               # printed, which is a different thing from printing.
               #
-              # No s3:GetObject either, so this role cannot read the dataset bucket the
-              # dolma fixture's command names. That is correct for the workload Phase 3
-              # runs -- a CPU smoke against a published image that reads nothing. The GPU
-              # workload role is where a training run's read of that bucket is granted, in
-              # infra/iam/batch-gpu-roles.yaml, because that is the role a training
-              # container actually runs as; this one stays without it.
+              # No s3:GetObject on the outputs bucket, which is the one absence in this
+              # paragraph that survives. Only a training job reads its own output back, to
+              # resume from a checkpoint it wrote, and that is the GPU workload role's
+              # grant in infra/iam/batch-gpu-roles.yaml. A CPU container writes its results
+              # and does not re-read them.
+              #
+              # THIS PARAGRAPH USED TO END "and no s3:GetObject anywhere", AND THAT SENTENCE
+              # OUTLIVED THE FACT IT DESCRIBED. It read: this role cannot reach the dataset
+              # bucket, which is correct for the workload Phase 3 runs -- a CPU smoke
+              # against a published image that reads nothing. It was true of the workloads
+              # that existed when it was written and stopped being true the day
+              # config/workload-catalog.yaml gained edullm-data-validate, whose whole job is
+              # reading shards. The read this role now holds is the second inline policy
+              # below, deliberately not folded into this one.
               #
               # AND THIS STATEMENT WAS FALSE FOR FOUR DAYS, WHICH IS THE MORE USEFUL HALF
               # OF THE RECORD. Between 2026-07-28 and 2026-08-01 this role carried a second
@@ -270,6 +278,145 @@ Resources:
               # should know that this role's history includes a grant no template ever
               # declared, and that reading the template is therefore not the same as reading
               # the account.
+        # ------------------------------------------------------------------------------
+        # READ ON THE DATASET AIRLOCK, WHICH IS THE POLICY THIS ROLE NEEDED IN ORDER FOR
+        # ITS OWN CATALOG ENTRY TO BE RUNNABLE.
+        #
+        # A SECOND INLINE POLICY RATHER THAN A STATEMENT IN THE ONE ABOVE, and the reason
+        # is not tidiness. `write-team-outputs-only` says what it does and would stop being
+        # true; the deploy of a new policy is a PutRolePolicy that leaves the existing
+        # document untouched, so the drift between this template and the account is one
+        # finding naming one policy rather than a diff inside the grant every CPU job
+        # already depends on. It is also the shape that makes this removable in one act if
+        # the reasoning below is ever wrong.
+        #
+        # THIS IS NOT `dataset-validator` COMING BACK, and a reader who has just read the
+        # paragraphs above is right to check. That policy was attached outside
+        # CloudFormation, held s3:PutObject, s3:PutObjectTagging and s3:AbortMultipartUpload
+        # on edullm-data, and existed so somebody else's promotion pipeline could write the
+        # sealed library from our shared role. This one is declared here, holds no write of
+        # any kind, and exists so that a workload THIS catalog offers can read its input.
+        # The write path still belongs to sbsandbox-intern-edullm-dataset-validator, which
+        # is the role edullm-data's own bucket policy exempts and which no execution target
+        # names -- see infra/iam/dataset-validator-role.yaml.
+        #
+        # WHAT WAS BROKEN. config/workload-catalog.yaml offers `edullm-data-validate`, whose
+        # program reads candidate shards out of edullm-landing and the published copies they
+        # are checked against out of edullm-data. Every provisioned CPU target in
+        # config/execution-targets.yaml runs its container as this role, and this role held
+        # no s3:GetObject at all -- so that workload was admitted, approved, placed, and
+        # then died with AccessDenied on its first read, having spent an approver's
+        # attention and a c7i.8xlarge. The catalog entry's own comment sent submitters at
+        # exactly that profile.
+        #
+        # THE SPLIT WITH THE GPU WORKLOAD ROLE, WHICH WAS ACCIDENTAL ON ONE BUCKET AND IS
+        # DELIBERATE ON THE OTHER. This is the part worth reading before changing either
+        # file.
+        #
+        # On edullm-data the two roles now agree, and the difference that stood before was
+        # an accident of dates rather than a decision. The GPU role was granted the sealed
+        # library in Phase 4 because a training run reads a corpus; this role was left
+        # without it because the only CPU workload then in the catalog read nothing. Neither
+        # fact is about CPU versus GPU. The submission form's compute_profile overrides
+        # whatever a catalog entry says and is the only thing that decides placement, so a
+        # dataset-reading workload can be sent to either queue -- which made the split a
+        # grant that depended on a dropdown. Both roles now hold s3:GetObject on
+        # edullm-data/* and an unconditioned list of the bucket, spelled the same way.
+        #
+        # On edullm-landing they do not, and that one is a decision. The landing zone is the
+        # candidate side of somebody else's airlock: nothing in config/datasets.yaml lives
+        # there, no registered dataset can name it, and the only workload that reads it is
+        # the validator. So the GPU role is left without it rather than widened to match,
+        # and the cost of that is concrete and has to be said where a submitter will meet
+        # it: a validator placed on a GPU profile fails on its first read exactly the way
+        # this whole policy exists to stop happening on the CPU one. That is why
+        # config/workload-catalog.yaml's entry now says the profile is load-bearing rather
+        # than advice, and why guides/edullm-data.md says the same.
+        #
+        # WHY IT IS ON THE SHARED ROLE AT ALL, WHICH IS THE OBJECTION THE FOUR-DAY INCIDENT
+        # ABOVE SHOULD RAISE. This is the role every CPU container on every team runs as, so
+        # this grants every CPU job read on both buckets and not only the validator. There
+        # is no narrower place to put it: Batch fixes a container's roles when a job
+        # definition is registered and has no per-job role override at submit time, so a
+        # role for the validator alone is also a job definition for the validator alone,
+        # and then an execution target and a queue -- the same structure the team-scoping
+        # argument above declines to build, for the same reason. What bounds the exposure
+        # instead is that this is read-only over two buckets whose contents every group here
+        # is meant to be able to read, and that the write side stayed where it was moved to.
+        - PolicyName: read-the-dataset-airlock
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # Both sides of the airlock, in one statement because they are one claim: a
+              # validator that could read only the published copy could not read the
+              # candidate it is checking, and one that could read only the candidate could
+              # not check it against anything.
+              #
+              # Read-only and asymmetric on purpose, the same way the GPU role's grant on
+              # edullm-data is. edullm-data's bucket policy would refuse a write from this
+              # role anyway; granting only GetObject means the refusal is also true one
+              # layer earlier, where it can be read off a role diff rather than inferred
+              # from a bucket policy in somebody else's stack. edullm-landing has no bucket
+              # policy at all -- GetBucketPolicy returned NoSuchBucketPolicy on 2026-07-31
+              # and again on 2026-08-01 -- so on that side this template is the whole of
+              # what stands between a CPU container and the candidate datasets, which is
+              # the reason no write appears here rather than an argument for adding one.
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:s3:::edullm-data/*
+                  - Fn::Sub: arn:${AWS::Partition}:s3:::edullm-landing/*
+              # Unconditioned, unlike the outputs listing above, and the difference is the
+              # same one infra/iam/batch-gpu-roles.yaml draws. The outputs bucket is
+              # partitioned by team and the prefix condition is what stops one team
+              # enumerating another's runs. Neither of these buckets has a team dimension:
+              # one is a published catalogue every group is meant to read, and the other is
+              # a staging zone whose whole content is what the validator has to walk. A
+              # prefix condition here would only stop the validator discovering what is
+              # pending, which is what it does when `--prefix` is omitted.
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:s3:::edullm-data
+                  - Fn::Sub: arn:${AWS::Partition}:s3:::edullm-landing
+              # DELIBERATELY ABSENT, each for its own reason, and the first two are the ones
+              # a reader comparing this against the dataset owner's own role will notice.
+              #
+              # s3:GetObjectAttributes and s3:GetBucketLocation. Both are on
+              # sbsandbox-intern-edullm-dataset-validator, because that role promotes: it
+              # copies objects and checks the copies, which is what wants an attribute read
+              # without a download. Reading a shard and checking it against the bounds its
+              # family declares needs neither, so neither is granted on the strength of
+              # appearing next door. If a validation run turns out to need one, that is a
+              # measurement and a one-line change, and the argument for it will be better
+              # than this paragraph guessing.
+              #
+              # Every write and every delete, on both buckets. s3:PutObject on
+              # edullm-landing is the one that would look reasonable: it is what writes the
+              # `_REJECTED.json` sentinel, and a validator that cannot write back cannot
+              # report that it refused. That is the dataset owner's validator's job and not
+              # a submitted job's -- a refusal written by a container nobody reviewed is a
+              # refusal the pipeline's operator would act on. guides/edullm-data.md says to
+              # leave `--promote` off for the same reason from the submitter's side.
+              #
+              # AND ABSENT RATHER THAN DENIED, WHICH WAS A CLOSE CALL ON THIS ROLE
+              # SPECIFICALLY. An explicit Deny here would have made the four-day
+              # `dataset-validator` attachment above inert instead of merely detected, since
+              # a Deny in one policy beats an Allow in another on the same principal, and
+              # this is the one role in this repository where that has actually happened.
+              # It is still not written, for the reason every other absence in these
+              # templates is an absence: IAM is deny-by-default, so a Deny adds nothing to
+              # what is not granted, and the one Deny this repository does carry
+              # (infra/iam/batch-gpu-roles.yaml, on .metadata.json) exists because IAM
+              # resource matching has no negation and an Allow could not express it. There
+              # is no such gap here. What catches a re-attachment is the same thing that
+              # caught the first one -- the capture compared in
+              # tests/test_phase3_run_evidence.py -- and that mechanism reports the policy
+              # rather than silently defeating it.
+              #
+              # Any reach into a third bucket. This policy is named for an airlock and holds
+              # exactly its two buckets; a grant on anything else belongs in the policy above
+              # or in a role of its own.
 
   # ------------------------------------------------------------------------------------
   # Instance role: what the EC2 container host runs as

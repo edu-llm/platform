@@ -616,6 +616,20 @@ def test_every_deployed_role_matches_the_template_that_declares_it() -> None:
 
     There is no exemption any more. This module carried one for four days and it is gone,
     which is the outcome an exemption is supposed to have.
+
+    EVERY ROLE IS REPORTED, NOT THE FIRST ONE THAT FAILS, and the difference showed up the
+    moment two roles were out at once. This looped and asserted per capture, so a second
+    role falling behind its template arrived as no new information: the message named
+    whichever role sorted first and the other one simply stopped being visible, which is
+    how a pre-existing failure gets absorbed by a new change rather than surviving it.
+    Collected and asserted once instead, so the failure lists every role and its detail.
+
+    ``PENDING_DEPLOY`` is not accepted here and that is deliberate. A recorded amendment
+    (:mod:`edullm_platform.pending_amendments`) says a difference is expected and says what
+    would end it; it does not make the account hold the template, and the criteria resting
+    on these captures are not certified until it does. What the verdict buys is that this
+    failure can tell an undeployed amendment from a role widened in a console, which the
+    detail below carries.
     """
     captures = read_committed_role_captures(
         PROJECT_ROOT,
@@ -623,10 +637,18 @@ def test_every_deployed_role_matches_the_template_that_declares_it() -> None:
         role_templates=PHASE3_ROLE_TEMPLATES,
     )
     assert len(captures) == len(PHASE3_ROLE_TEMPLATES)
-    for capture in captures:
-        assert capture.verdict is CaptureVerdict.OK, (capture.role_name, capture.detail)
-        assert capture.report is not None
-        assert capture.report.matches
+
+    not_holding = [
+        (capture.role_name, capture.verdict.value, capture.detail)
+        for capture in captures
+        if capture.verdict is not CaptureVerdict.OK
+        or capture.report is None
+        or not capture.report.matches
+    ]
+
+    assert not not_holding, "\n".join(
+        f"{role_name} [{verdict}]: {detail}" for role_name, verdict, detail in not_holding
+    )
 
 
 def test_the_shared_workload_role_has_not_been_handed_the_dataset_grant_again() -> None:
