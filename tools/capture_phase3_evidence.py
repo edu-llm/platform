@@ -74,7 +74,7 @@ from edullm_platform.ec2_authorization import (
 )
 from edullm_platform.evidence import CAPTURE_SUFFIX
 from edullm_platform.phase1_evidence import OidcSessionEvidence
-from edullm_platform.phase2_evidence import AdmissionExecution
+from edullm_platform.phase2_evidence import PHASE2_ROLE_TEMPLATES, AdmissionExecution
 
 #: The reader's own name for the file this tool writes. Imported rather than restated,
 #: because the writer spelled "compute-environment.sanitized.json" as a literal in two
@@ -1499,6 +1499,36 @@ def capture_dataset_validator_target(arguments: argparse.Namespace) -> int:
     )
 
 
+def capture_phase2_roles_target(arguments: argparse.Namespace) -> int:
+    """The three roles the admission gate runs as, compared to the templates declaring them.
+
+    A TARGET HERE RATHER THAN IN ``tools/capture_phase2_evidence.py``, and the reason is the
+    one written above ``capture_roles``. This file is where the role-capture machinery lives
+    -- ``account_and_partition``, ``capture_role``, ``capture_one_registry`` -- and all of it
+    was already parameterised by registry so that a second caller costs an argument rather
+    than a copy. ``--target dataset-validator`` is the standing precedent: a registry that is
+    not Phase 3's four, captured by this tool because this is where the comparison is. The
+    Phase 2 tool reads GitHub settings and lineage objects through its own scaffolding and
+    has no role machinery at all, so putting this there would mean copying ninety lines to
+    avoid an oddly-named command, which is the second mechanism this is meant not to be.
+
+    WHAT THIS EXISTS TO CATCH, STATED PLAINLY, because it is not the drift the other targets
+    usually find. ``infra/iam/admission-service-roles.yaml`` enumerates every job queue a
+    submission may name -- deliberately, at length, instead of matching a prefix -- and the
+    argument for enumerating is that promoting a compute profile becomes a visible edit that
+    CI can check. ``tests/test_phase3_infrastructure.py`` does check it, in both directions,
+    against the queues the templates create. What no test could check is whether the account
+    ever received that edit, and on 2026-08-02 it did not: the stack update failed on the IAM
+    inline-policy size limit and rolled back, and the enumeration stayed at eleven of sixteen
+    while every template-reading test went on passing.
+
+    Exit 0 when every role matches its template, 1 when one does not.
+    """
+    return capture_one_registry(
+        arguments, target_name="phase2-roles", role_templates=PHASE2_ROLE_TEMPLATES
+    )
+
+
 def capture_compute_environment_target(arguments: argparse.Namespace) -> int:
     """The compute environment on its own, with no run to hang it off.
 
@@ -1654,6 +1684,7 @@ CAPTURE_TARGETS: Final[dict[str, Callable[[argparse.Namespace], int]]] = {
     "account": capture_account_target,
     "compute-environment": capture_compute_environment_target,
     "dataset-validator": capture_dataset_validator_target,
+    "phase2-roles": capture_phase2_roles_target,
     "roles": capture_roles_target,
     "run": capture_run_target,
 }

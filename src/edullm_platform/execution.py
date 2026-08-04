@@ -134,10 +134,23 @@ FANOUT_INDEX_VARIABLE: Final = "AWS_BATCH_JOB_ARRAY_INDEX"
 #: also break the one relationship between the two variables that the guide's copied line
 #: and ``checkpoint_commands.py`` both rest on. The second export reads the first, so the
 #: two stay defined the same way they are for a single run.
+#:
+#: ``WANDB_RUN_ID`` IS RE-EXPORTED FOR THE SAME REASON AND WOULD FAIL THE SAME WAY. The
+#: submit request sets it to the platform run id so that a platform run can be joined to
+#: its W&B run, and ``ArrayProperties`` fans that single value out unchanged -- so forty
+#: cells would call ``wandb.init()`` with one id. W&B treats the id as the run's identity,
+#: so those forty do not collide loudly; they resume into one run, each overwriting the
+#: last one's history, and the result is a single run whose curves are forty experiments
+#: interleaved. That reads as a training instability rather than as a platform defect,
+#: which is precisely the failure the output prefix half of this prologue exists to
+#: prevent. The suffix matches the prefix's ``cell-<index>`` so the two identifiers name
+#: the same cell, and ``run_<uuid7>-cell-<n>`` is still a legal W&B name.
 FANOUT_PROLOGUE: Final = (
     'export EDULLM_OUTPUT_PREFIX="${EDULLM_OUTPUT_PREFIX}'
     f'cell-${{{FANOUT_INDEX_VARIABLE}}}/"; '
     'export EDULLM_CHECKPOINT_DIR="${EDULLM_OUTPUT_PREFIX}checkpoints/"; '
+    'export WANDB_RUN_ID="${WANDB_RUN_ID}'
+    f'-cell-${{{FANOUT_INDEX_VARIABLE}}}"; '
     "exec "
 )
 
@@ -381,6 +394,35 @@ def batch_submit_request(
                 # lands where the submission said it would.
                 {"Name": "WANDB_PROJECT", "Value": manifest.wandb_project},
                 {"Name": "WANDB_ENTITY", "Value": WANDB_ENTITY},
+                # THE PLATFORM'S RUN ID IS THE W&B RUN ID, WHICH IS THE ONLY THING THAT
+                # MAKES THE TWO SYSTEMS JOINABLE AT ALL.
+                #
+                # Without this the client mints its own id and nothing anywhere records the
+                # pair, so a platform run and its W&B run are two facts about one job that
+                # cannot be put side by side. Every question of the form "what happened to
+                # this run before it started reporting" is then an argument rather than a
+                # query -- most sharply, how many runs fail between admission and
+                # wandb.init(), which is unanswerable while the join does not exist. A run
+                # that never calls init leaves no W&B run to find, and with the id fixed in
+                # advance that absence is itself the measurement.
+                #
+                # The platform run id is a legal W&B name as it stands: it is
+                # run_<uuid7> and WANDB_NAME_PATTERN admits letters, digits, dot,
+                # underscore and hyphen, so it needs no transformation and no second
+                # identifier to be invented.
+                #
+                # Unconditional, unlike WANDB_USERNAME and WANDB_RUN_GROUP below. Those are
+                # appended only when there is something to say because an empty value reads
+                # as an attribution that failed; a run id always exists, because the run
+                # cannot be submitted without one.
+                #
+                # A FAN-OUT MUST NOT SEND THIS UNCHANGED, AND CANNOT FIX IT HERE. See
+                # FANOUT_PROLOGUE: ArrayProperties hands every cell one environment block,
+                # so N cells would call wandb.init() with one id and collapse into a single
+                # W&B run -- the same collision the output prefix had, by the same road. The
+                # index does not exist until Batch starts the child, so the cell suffix is
+                # appended in the prologue where a shell is running.
+                {"Name": "WANDB_RUN_ID", "Value": run_id},
                 # W&B's own name again, for the same reason the entity is: the client reads
                 # WANDB_RUN_GROUP without being asked. A prefixed EDULLM_PROJECT would need
                 # every workload to forward it, and one that forgot would produce ungrouped

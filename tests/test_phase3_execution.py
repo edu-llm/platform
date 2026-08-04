@@ -661,6 +661,41 @@ def test_a_cell_checkpoints_under_its_own_prefix_rather_than_the_runs() -> None:
     )
 
 
+def test_a_cell_reports_as_its_own_wandb_run_rather_than_all_forty_as_one() -> None:
+    """Mutation: set WANDB_RUN_ID in the submit request and leave the prologue alone.
+
+    The third variable that a single environment block fanned out unchanged would ruin,
+    and the one that fails least visibly. W&B treats the run id as the run's identity, so
+    forty cells initialising with one id do not collide with an error -- they resume into
+    a single run, each overwriting the history the last one wrote. What a reader then sees
+    is one run whose curves are forty experiments interleaved, which reads as a training
+    instability rather than as a platform defect, and the forty real runs do not exist
+    anywhere to be compared against.
+
+    The suffix matches the output prefix's, so a cell's W&B run and a cell's checkpoint
+    directory name the same cell. Two indices rather than one, because a derivation
+    ignoring the index would satisfy any single-cell assertion.
+    """
+    request = request_for(fanout=CURRICULUM_MATRIX, command=["printenv", "WANDB_RUN_ID"])
+
+    assert start_the_container_command(request, array_index="0") == f"{RUN_ID}-cell-0"
+    assert start_the_container_command(request, array_index="39") == f"{RUN_ID}-cell-39"
+
+
+def test_a_single_run_reports_as_the_run_id_the_platform_minted() -> None:
+    """Mutation: suffix every run rather than only a cell, since the derivation exists.
+
+    The join between a platform run and its W&B run is only worth having if it is the
+    identity function on an ordinary run. A run id that arrived in W&B with a suffix
+    nothing else carries would have to be un-suffixed by every reader, and a reader that
+    forgot would find no run and conclude the run never reported.
+    """
+    request = request_for(command=["printenv", "WANDB_RUN_ID"])
+
+    assert container_environment(request)["WANDB_RUN_ID"] == RUN_ID
+    assert start_the_container_command(request, array_index="0") == RUN_ID
+
+
 def test_a_single_run_keeps_the_command_and_the_prefix_it_has_always_had() -> None:
     """Mutation: give every run a cell segment, since the derivation is already written.
 
@@ -819,7 +854,7 @@ def test_the_submitted_target_is_the_resolved_one_and_not_anything_from_the_mani
     assert request["JobDefinition"] == resolved.job_definition_arn
 
 
-def test_the_container_environment_is_exactly_these_eight_variables() -> None:
+def test_the_container_environment_is_exactly_these_ten_variables() -> None:
     """Mutation: add, drop or rename a variable the container reads.
 
     Nothing else in the repository pins this list, which was measured rather than assumed:
@@ -863,6 +898,11 @@ def test_the_container_environment_is_exactly_these_eight_variables() -> None:
         # research repository forwards the prefixed one.
         "WANDB_PROJECT",
         "WANDB_ENTITY",
+        # The platform run id under W&B's own name, which is what lets a run here be joined
+        # to a run there at all. Unconditional, unlike the two W&B names appended below,
+        # because a run id always exists. A fan-out cell rewrites it in FANOUT_PROLOGUE so
+        # that N cells do not resume into one W&B run.
+        "WANDB_RUN_ID",
     ]
 
 

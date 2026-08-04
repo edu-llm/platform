@@ -1,4 +1,4 @@
-"""Registering a repository, held to the shape the four files it touches already have.
+"""Registering a repository, held to the shape the five files it touches already have.
 
 REGISTRATION WAS NEVER ONE FILE, AND THAT IS WHAT THE TOOL UNDER TEST IS FOR. An entry in
 ``config/repositories.yaml`` on its own lands a red pull request. The ECR template must
@@ -7,6 +7,14 @@ repository id, the subject pattern and the destination ARN. Six tests across two
 read those pairings in both directions, and each of them fails on a half-registration --
 which is the failure ``edullm-data`` actually shipped, inert for a day behind an AssumeRole
 denial that reads like a broken role ARN.
+
+**THE OTHER FAILURE ``edullm-data`` SHIPPED WAS QUIETER AND LASTED LONGER.** A registration
+with no entry in ``config/workload-catalog.yaml`` never reaches the submission form's
+``repository`` dropdown, so nothing can ever be submitted for it -- and nothing went red,
+because the test that should have caught it compared the dropdown against the registered
+repositories *that have a workload profile*, a filter that removed the broken case from
+both sides. The tool writes the catalog entry and the two dropdown options now, so the
+registration it produces is submittable rather than merely publishable.
 
 So the tests here are mostly about the whole change rather than about the tool's internals.
 :func:`test_a_registration_satisfies_every_invariant_the_suite_asserts_about_these_files`
@@ -53,6 +61,8 @@ WORKFLOW_FILE = "register-repository.yml"
 
 TOUCHED = (
     "config/repositories.yaml",
+    "config/workload-catalog.yaml",
+    ".github/workflows/submit-run.yml",
     "infra/ecr-repositories.yaml",
     "infra/iam/ecr-publisher-role.yaml",
 )
@@ -258,6 +268,159 @@ def test_the_comment_above_the_entry_carries_the_reason_that_was_given(
     # Wrapped without breaking on hyphens, so a repository name stays greppable in the
     # comment that identifies it.
     assert "OLMo-core" in text.split("- repository: olmo-mixer")[0].rsplit("olmo-mixer:", 1)[-1]
+
+
+def test_the_registration_is_submittable_and_not_merely_publishable(
+    tree: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """THE HALF THAT USED TO BE LEFT UNDONE AND WENT UNNOTICED. Mutation: write the registry,
+    the template and the publisher role, and stop.
+
+    A registration with no entry in ``config/workload-catalog.yaml`` is absent from the
+    submission form's ``repository`` dropdown, so no run can name it. That is invisible from
+    the three infrastructure files -- the image builds, the scan runs, the digest is
+    resolvable -- and it is the state ``edullm-data`` was registered in.
+
+    Both dropdowns are read back in full rather than searched, because
+    ``tests/test_submission_form_options.py`` holds each to a sorted registry: the
+    ``repository`` list case-insensitively and the ``workload_profile`` list plainly. An
+    option appended to the end of either is a green tool and a red suite.
+    """
+    record = run(tree, capsys).record
+
+    catalog = loaded(tree, "config/workload-catalog.yaml")
+    added = next(item for item in catalog["workloads"] if item["name"] == "olmo-mixer-check")
+    assert record["workload_profile"] == "olmo-mixer-check"
+    assert added["repository"] == "olmo-mixer"
+    # Base-ten text rather than a YAML number. A bound that went through binary floating
+    # point is not the figure the approver reads off the summary.
+    assert added["maximum_runtime_hours"] == "1"
+    assert added["maximum_attempts"] == 1
+    assert added["checkpoint"] is None
+
+    inputs = yaml.safe_load(
+        (tree / ".github/workflows/submit-run.yml").read_text(encoding="utf-8")
+    )[True]["workflow_dispatch"]["inputs"]
+    repositories = list(inputs["repository"]["options"])
+    workloads = list(inputs["workload_profile"]["options"])
+
+    assert "olmo-mixer" in repositories
+    assert "olmo-mixer-check" in workloads
+    assert repositories == sorted(repositories, key=str.lower)
+    assert workloads == sorted(workloads)
+    assert repositories == sorted(
+        {entry.repository for entry in registry_of(tree).repositories}, key=str.lower
+    )
+
+
+def test_the_catalog_entry_says_which_of_its_numbers_nobody_measured(
+    tree: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: write the bounds with no comment, or with one that reads as a decision.
+
+    One hour and one attempt is the shape of a check, and it is what this tool writes
+    whatever the repository turns out to run. A reader who takes it as policy somebody set
+    for this workload has been misled by a file that is otherwise a policy document, so the
+    entry has to say that the numbers are a default and that the machine is not named here
+    at all.
+    """
+    assert run(tree, capsys).code == 0
+
+    text = (tree / "config/workload-catalog.yaml").read_text(encoding="utf-8")
+    comment = " ".join(
+        line.strip().removeprefix("#").strip()
+        for line in text.rsplit("- name: olmo-mixer-check", 1)[0].splitlines()
+        if line.strip().startswith("#")
+    )
+
+    assert "olmo-mixer-check:" in comment
+    assert "fused kernels" in comment, "the registration's reason belongs on the entry too"
+    assert "not a measurement" in comment
+    assert "compute_profile" in comment
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        ({"--workload-profile": "olmo-core-check"}, "already declares a workload profile"),
+        ({"--workload-profile": "olmo mixer check"}, "letters, digits"),
+        ({"--maximum-attempts": "2"}, "checkpoint contract"),
+        ({"--maximum-runtime-hours": "0"}, "not a valid entry"),
+    ],
+    ids=[
+        "a workload name the catalog already uses",
+        "a workload name that is not a plain scalar",
+        "a retry with nowhere to resume from",
+        "a runtime bound of zero",
+    ],
+)
+def test_a_workload_profile_that_cannot_be_written_is_refused_before_anything_is(
+    tree: Path,
+    capsys: pytest.CaptureFixture[str],
+    overrides: dict[str, str],
+    expected: str,
+) -> None:
+    """Mutation: accept two attempts with no checkpoint contract, since Batch allows it.
+
+    ``WorkloadProfile`` refuses that pairing and this tool can produce it from two flags, so
+    the refusal is raised where the flags are named. A second attempt with nowhere to resume
+    from does not fail -- it repeats the whole of the first attempt at full price and
+    succeeds, which is the expensive shape of being right.
+
+    All five files stay untouched, for the reason the registry refusals above give: a tree
+    carrying a catalog entry whose registration was never written is the half state this
+    tool exists to make unreachable, arriving from the new end of it.
+    """
+    before = {relative: (tree / relative).read_text(encoding="utf-8") for relative in TOUCHED}
+
+    result = run(tree, capsys, **overrides)
+
+    assert result.code == register_repository.EXIT_REFUSED
+    assert expected in result.stderr
+    for relative, text in before.items():
+        assert (tree / relative).read_text(encoding="utf-8") == text
+
+
+def test_a_dropdown_option_lands_in_sorted_position_rather_than_at_the_end(
+    tree: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: append the option, which is what every other insertion here does.
+
+    ``insert_after_last_list_item`` is right for the publisher role's three lists, whose
+    order carries nothing, and wrong for these two, which are compared against a sorted
+    registry. A name that sorts to the front is what tells the two apart: appending it
+    leaves a form that parses, offers the right set, and fails the equality the submission
+    form tests hold it to.
+
+    The comment above the displaced option moves with it. In this file those comments say
+    what their entry runs, so an option inserted between a comment and its subject attaches
+    the sentence to the wrong workload.
+    """
+    result = run(
+        tree,
+        capsys,
+        **{"--repository": "nn-thing", "--github-repository-id": "1300000001"},
+    )
+    assert result.code == 0, result.stderr
+
+    text = (tree / ".github/workflows/submit-run.yml").read_text(encoding="utf-8")
+    inputs = yaml.safe_load(text)[True]["workflow_dispatch"]["inputs"]
+    repositories = list(inputs["repository"]["options"])
+    workloads = list(inputs["workload_profile"]["options"])
+
+    # Both land in the middle, which is where appending and inserting differ. `nn-thing`
+    # sorts after `edullm-data` and before `OLMo-core` only under a case-insensitive key,
+    # so this also fails if the two lists are sorted by the same rule.
+    assert repositories == sorted(repositories, key=str.lower)
+    assert workloads == sorted(workloads)
+    assert repositories[repositories.index("nn-thing") + 1] == "OLMo-core"
+    assert workloads[workloads.index("nn-thing-check") + 1] == "olmo-core-check"
+
+    displaced = text.split("- olmo-core-check")[0].rsplit("- nn-thing-check", 1)[-1]
+    assert "One check entry where there were two" in displaced, (
+        "the new option was inserted between olmo-core-check and the comment explaining "
+        "what olmo-core-check is, so the sentence now introduces the wrong entry"
+    )
 
 
 # ---------------------------------------------------------------------------------------

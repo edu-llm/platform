@@ -14,12 +14,19 @@ did not describe the tree. The tripwire was correct and red, on the branch every
 So the three steps become one call that either does all of them or none, and the values are
 carried in memory rather than copied by hand.
 
-**A CATALOG EDIT IS TWO RELEASES, NOT ONE.** `build_package` copies `config/*.yaml` into
-whatever zip it builds and `tools/build_lifecycle_lambda.py` calls that same function, so a
-change to a config file moves the lifecycle recorder's digest too — even though nothing the
-recorder does reads the catalog. That surprised somebody once already, which is why
-``--function all`` is the default: releasing both is almost always what a config change
-needs, and releasing one is the case that should be spelled out.
+**A CATALOG EDIT WAS TWO RELEASES AND IS NOW ONE.** `build_package` copied `config/*.yaml`
+into whatever zip it built and `tools/build_lifecycle_lambda.py` called that same function,
+so a change to a config file moved the lifecycle recorder's digest too — even though
+nothing the recorder does reads the catalog. Since 2026-08-04 each builder names the config
+its own handler reads, and the recorder names none, so a catalog edit moves the validator's
+digest alone.
+
+``--function all`` remains the default anyway, and the reason has changed rather than gone.
+A change under `src/edullm_platform` still reaches whichever functions import the module,
+which is not something a person should be working out at the point of release. Building
+both is cheap and deterministic: a function whose bytes did not move rebuilds to the
+recorded digest and needs no edit, so releasing both never costs a release that was not
+needed.
 
 This uploads, which is a laptop step for the reason `infra/README.md` gives — an S3 write is
 not applying a stack. It does not deploy. CI does that when the edited template reaches

@@ -312,6 +312,7 @@
               "ec2:DescribeAvailabilityZones",
               "ec2:DescribeInstances",
               "ec2:DescribeInternetGateways",
+              "ec2:DescribeLaunchTemplates",
               "ec2:DescribeLaunchTemplateVersions",
               "ec2:DescribeNetworkAcls",
               "ec2:DescribeNetworkInterfaces",
@@ -380,6 +381,27 @@
               "arn:aws:ec2:us-east-1:<aws-account-id>:security-group-rule/*",
               "arn:aws:ec2:us-east-1:<aws-account-id>:subnet/*",
               "arn:aws:ec2:us-east-1:<aws-account-id>:vpc/*"
+            ]
+          },
+          "sid": null
+        },
+        {
+          "action_match": {
+            "actions": [
+              "ec2:CreateLaunchTemplate",
+              "ec2:CreateLaunchTemplateVersion",
+              "ec2:CreateTags",
+              "ec2:DeleteLaunchTemplate",
+              "ec2:DeleteTags"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:ec2:us-east-1:<aws-account-id>:launch-template/*"
             ]
           },
           "sid": null
@@ -645,7 +667,7 @@
     }
   ],
   "max_session_duration_seconds": 3600,
-  "observed_at": "2026-07-28T20:28:02Z",
+  "observed_at": "2026-08-04T18:32:41Z",
   "permissions_boundary_policy_name": "InternSandboxBoundary",
   "role_name": "sbsandbox-intern-edullm-infra-deployer",
   "source": "aws",

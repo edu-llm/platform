@@ -132,16 +132,37 @@ def pending_amendments() -> tuple[PendingAmendment, ...]:
     """Every committed template amendment the account has not caught up with yet."""
     # Empty, which is the state this registry is meant to spend most of its life in. An
     # entry lives here only between a template amendment being committed and the laptop
-    # deploy that realises it, and both of the entries this repository has held were
-    # removed on 2026-07-27 when their stack was applied and the re-capture reported no
-    # findings: the Phase 2 deployer amendment earlier in the day, and the Phase 3 one --
-    # a third job_workflow_ref for deploy-phase3-batch.yml and the
-    # deploy-phase3-batch-stacks inline policy -- when
-    # sbsandbox-intern-edullm-infra-deployer-iam was deployed from a laptop.
+    # deploy that realises it. Four have been removed so far: the Phase 2 deployer
+    # amendment and the Phase 3 one -- a third job_workflow_ref for deploy-phase3-batch.yml
+    # and the deploy-phase3-batch-stacks inline policy -- both on 2026-07-27 when
+    # sbsandbox-intern-edullm-infra-deployer-iam was applied; the
+    # sbsandbox-intern-edullm-batch-workload `read-the-dataset-airlock` policy on
+    # 2026-08-04 when sbsandbox-intern-edullm-phase3-batch-iam was applied and the
+    # re-capture reported no findings on any of the four Phase 3 roles; and the
+    # sbsandbox-intern-edullm-admission-states queue enumeration later the same day.
     #
     # Removal rather than exemption is the rule. The findings are compared for equality,
     # so a record left here after its deploy fails rather than lingering, and nothing in
     # this module offers a way to keep one that no longer describes a difference.
+    #
+    # THE FOURTH REMOVAL IS WORTH READING BEFORE THE NEXT RECORD IS WRITTEN, BECAUSE IT WAS
+    # NOT THE ORDINARY CASE THIS MODULE WAS BUILT FOR. The other three described a template
+    # amendment waiting on somebody to find a laptop. That one described a template IAM
+    # refused to store: rendered with the account's own partition, region and id,
+    # run-admission-workflow came to 10599 bytes against a 10240 cap on the aggregate of a
+    # role's inline policies, so the 2026-08-02 deploy failed with ServiceLimitExceeded,
+    # the stack sat in UPDATE_ROLLBACK_COMPLETE, and re-running the deploy reproduced the
+    # rollback. Five advertised compute profiles were unsubmittable for two days. What
+    # cleared it was a change to the template -- collapsing each paired `-run` and `-run:*`
+    # job-definition ARN into one `-run*`, which an IAM wildcard covers because it matches
+    # ':' like any other character -- and the deploy of 2026-08-04, after which the
+    # re-capture reported no findings on any of the three Phase 2 roles.
+    #
+    # A record whose `cleared_by` needs a code change rather than a deploy is a legitimate
+    # use of this registry and reads exactly like the ordinary one from every consumer's
+    # side, so say which it is in the text. The lasting fix for that particular gap is not
+    # here: tests/test_phase2_infrastructure.py now measures the rendered policy against
+    # IAM's cap, so a document the account will refuse fails before anybody deploys it.
     amendments: tuple[PendingAmendment, ...] = ()
     declared = declared_role_templates()
     for amendment in amendments:

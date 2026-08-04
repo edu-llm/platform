@@ -876,22 +876,24 @@ def test_a_verification_call_the_stub_does_not_recognize_would_be_noticed(
 
 
 # --------------------------------------------------------------------------------------
-# The thirteen-shape verification, executed against stubbed answers
+# The fourteen-shape verification, executed against stubbed answers
 # --------------------------------------------------------------------------------------
 
 #: One environment, one queue and one definition per shape, answered from the arguments
-#: rather than from a variable per shape. The step appends thirteen of each in a loop, so a
-#: stub keyed by name would be thirty-nine variables saying the same thing; this composes the
+#: rather than from a variable per shape. The step appends fourteen of each in a loop, so a
+#: stub keyed by name would be forty-two variables saying the same thing; this composes the
 #: expected answer from the profile name in the call and lets a test drift one field of it.
 #:
 #: The vCPU and GPU counts come out of the shape name, which is why the names carry them.
 #: gpu-8xa10g is 192 and 8, gpu-4xt4 is 48 and 4, and so on, matching CONTAINER_SHAPES. The
-#: two exceptions are gpu-8xt4 on the g4dn.metal host, which is 96 vCPU rather than 192, and
-#: gpu-8xa100 on p4d.24xlarge, which is also 96.
+#: exceptions are gpu-8xt4 on the g4dn.metal host, which is 96 vCPU rather than 192,
+#: gpu-8xa100 on p4d.24xlarge, which is also 96, and gpu-1xh100 on p5.4xlarge, which is one
+#: device on 16 vCPU rather than on 4.
 SHAPES_STUB = """
 profile="$(printf '%s\\n' "$@" | sed -n 's/^sbsandbox-intern-edullm-\\(gpu-[a-z0-9]*\\)\\(-run\\)*$/\\1/p' | head -n 1)"
 case "${profile}" in
   gpu-1xt4|gpu-1xl4|gpu-1xl40s) vcpus=4 ; gpus=1 ;;
+  gpu-1xh100) vcpus=16 ; gpus=1 ;;
   gpu-4xt4|gpu-4xa10g|gpu-4xl4|gpu-4xl40s) vcpus=48 ; gpus=4 ;;
   gpu-8xt4|gpu-8xa100) vcpus=96 ; gpus=8 ;;
   gpu-8xa10g|gpu-8xl4|gpu-8xl40s|gpu-8xh100) vcpus=192 ; gpus=8 ;;
@@ -939,19 +941,59 @@ def run_shapes_verification(
     )
 
 
-def test_the_thirteen_shape_verification_passes_against_the_estate_the_template_describes(
+def test_the_fourteen_shape_verification_passes_against_the_estate_the_template_describes(
     tmp_path: Path,
 ) -> None:
     """The anchor for the two drift cases below.
 
-    It also establishes that the step asks about all thirteen: the stub refuses any name
-    outside the list, so a loop that had lost a shape would still pass here, but a loop that
-    had gained a fourteenth or misspelt one exits 64.
+    It also establishes that the step asks about all fourteen: the stub refuses any name
+    outside the list, so a loop that had gained a fifteenth or misspelt one exits 64.
+
+    A loop that had LOST a shape would still pass here, which is not hypothetical -- this
+    loop carried thirteen of the fourteen shapes the stack deploys, and the missing one was
+    gpu-1xh100. ``test_the_verification_asks_about_every_shape_the_stack_deploys`` below is
+    the assertion that closes that direction, because this one structurally cannot.
     """
     result = run_shapes_verification(tmp_path)
 
     assert result.returncode == 0, result.stderr
     assert "PHASE4_GPU_SHAPE_VERIFICATION_PASSED" in result.stdout
+
+
+def test_the_verification_asks_about_every_shape_the_stack_deploys() -> None:
+    """THE ONE THAT MATTERS HERE. Mutation: leave a shape out of the loop.
+
+    Every other test in this section is written against the stub, and the stub is built
+    from the loop -- so a shape dropped from the loop is a shape the stub is never asked
+    about, and every one of them goes on passing. That is not a hypothetical shape of
+    failure. This loop carried thirteen entries while
+    ``infra/batch-compute-gpu-shapes.yaml`` declared fourteen job definitions, and the
+    absent one was ``gpu-1xh100``: the newest shape, a p5.4xlarge, and the shape that
+    shipped asking 258048 MiB of a host that registers 253952. Nothing about a deploy of it
+    was ever verified.
+
+    So the list is compared against the template rather than against itself. The template
+    is the authority for what exists, exactly as it is for ``CONTAINER_SHAPES``.
+
+    ``gpu-1xa10g`` is deliberately not expected here. It is declared in
+    ``infra/batch-compute-gpu.yaml`` and verified by the earlier
+    "Verify CPU and GPU batch execution" step, so requiring it would move a check onto the
+    stack that does not deploy it.
+    """
+    declared = set(
+        re.findall(
+            r"JobDefinitionName: sbsandbox-intern-edullm-(gpu-[a-z0-9]+)-run",
+            (WORKFLOWS_ROOT.parents[1] / "infra" / "batch-compute-gpu-shapes.yaml").read_text(),
+        )
+    )
+    script = step(only_job(workflow()), SHAPES_VERIFY_STEP)["run"]
+    verified = set(re.findall(r"\b(gpu-[a-z0-9]+):\d+:\d+", script))
+
+    assert declared, "no job definitions were parsed out of the GPU shapes template"
+    assert verified == declared, (
+        f"the deploy verifies {sorted(verified)} and the stack declares {sorted(declared)}. "
+        f"A shape the stack deploys and the loop skips is deployed and never checked."
+    )
 
 
 def test_a_shape_left_on_the_cpu_ami_fails_the_run(tmp_path: Path) -> None:

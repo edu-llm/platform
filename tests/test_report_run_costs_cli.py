@@ -127,12 +127,18 @@ def lineage(
     return root
 
 
-def binding(team_id: str, *, lead: str = "ericrcwu001") -> TeamBinding:
+def binding(team_id: str, *, lead: str | None = "ericrcwu001") -> TeamBinding:
+    """A bound team, optionally with nobody recorded as leading it.
+
+    ``lead=None`` is reachable on the shipped roster and was not reachable here, which is
+    the whole reason a team with no lead rendered as ``led by )`` for as long as it did.
+    ``TeamBinding`` dropped its one-lead minimum on 2026-08-01 and this helper kept it.
+    """
     return TeamBinding.model_validate(
         {
             "team_id": team_id,
             "github_team_slug": team_id,
-            "lead_logins": [lead],
+            "lead_logins": [] if lead is None else [lead],
             "s3_namespace": f"sbsandbox-intern-{team_id}",
             "wandb_entity": f"edu-llm-{team_id}",
         }
@@ -170,6 +176,29 @@ def test_the_per_team_section_names_the_lead_of_each_bound_team(tmp_path: Path) 
     )
 
     assert "- memory-split (@memory-split, led by ericrcwu001): $3.00 across 1 run" in report
+
+
+def test_a_team_nobody_leads_says_so_rather_than_trailing_off(tmp_path: Path) -> None:
+    """Mutation: join ``lead_logins`` unconditionally.
+
+    That is what this did, and it rendered ``(@scratch, led by ): $0.00`` -- a line that
+    reads as a roster lookup that returned nothing rather than as a team nobody leads.
+    ``scratch`` is the shipped team it happens to, and ``guides/the-platform.md`` tells
+    every new person to pick ``scratch`` for their first run, so it is the team most
+    likely to appear on this report at all.
+
+    Reachable only since ``TeamBinding`` dropped its one-lead minimum on 2026-08-01. The
+    contract moved, the approver page moved with it, and this renderer did not.
+    """
+    report = report_for(
+        tmp_path,
+        teams=TeamBindingCatalog(teams=(binding("scratch", lead=None),)),
+        intents=[intent(RUN_A, team="scratch")],
+        attempts=[attempt(RUN_A)],
+    )
+
+    assert "- scratch (@scratch, no lead recorded): $3.00 across 1 run" in report
+    assert "led by )" not in report
 
 
 def test_a_bound_team_with_no_runs_is_rendered_at_zero(tmp_path: Path) -> None:

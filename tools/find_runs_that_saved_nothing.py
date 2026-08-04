@@ -119,10 +119,11 @@ from edullm_platform.contracts.workload import WorkloadCatalog
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 #: Where the adjudications live. Under ``config/reports/`` rather than in ``config/`` itself,
-#: and the subdirectory is the whole reason: ``tools/build_admission_lambda.py`` globs
-#: ``config/*.yaml`` into both Lambda zips, so a file there costs a rebuild, an upload and
-#: two release records every time it is edited. Neither function reads this and neither ever
-#: should -- it scopes a report -- so acknowledging a run must not be a Lambda release.
+#: and the subdirectory was the whole reason: ``tools/build_admission_lambda.py`` used to
+#: glob ``config/*.yaml`` into both Lambda zips, so a file there cost a rebuild, an upload
+#: and two release records every time it was edited. Each builder now names the files its
+#: own handler reads, so the placement no longer decides that. It stays where it is because
+#: it scopes a report rather than configuring the platform, and neither function reads it.
 ACKNOWLEDGEMENTS_PATH = PROJECT_ROOT / "config" / "reports" / "checkpoint-acknowledgements.yaml"
 
 EXIT_FOUND_SILENT_FAILURES = 1

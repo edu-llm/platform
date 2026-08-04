@@ -1,0 +1,101 @@
+# Which shapes place, and what to offer when one does not.
+#
+# WHY THIS IS A FILE AT ALL. The submission path promises that asking for a shape which does
+# not reliably place is answered at the moment of choosing with one that does. That promise
+# needs a source of truth, and until this file there was none: `rg -i scarce` over config/
+# returned nothing, and the four scarce shapes were named in prose in
+# docs-frank/reference/system-overview.md and nowhere a generator could read. A behaviour
+# described in a document and absent from the control plane is a behaviour nobody can build.
+#
+# WHY IT IS NOT A FIELD ON THE CATALOG'S PROFILES, WHICH IS WHERE IT BELONGS. ComputeProfile
+# is a contract model with extra="forbid", and its structural digest is recorded in five
+# committed proof bundles, so an `availability` field beside `provisioned` is a proof-bundle
+# regeneration rather than a config edit -- the same reason
+# EXCEPTION_RATE_CEILING_USD_PER_HOUR sits in src/edullm_platform/contracts/policy.py instead
+# of in config/policy.yaml, and config/policy.yaml carries the same kind of pointer. When
+# that regeneration happens, `places` folds into ComputeProfile and this file becomes the
+# substitution table alone.
+#
+# WHAT PLACEMENT IS, AND WHY IT IS A THIRD THING NEXT TO provisioned AND backed. A profile
+# can be priced in config/workload-catalog.yaml, provisioned with a compute environment, and
+# backed by a queue in config/execution-targets.yaml, and still not run: EC2 has to have the
+# capacity to sell. Those first three are facts about this repository and are checkable by
+# reading it. This one is a fact about the account's neighbours, and the way it presents is a
+# job that sits in RUNNABLE with no error anywhere, which is indistinguishable from a job
+# that is merely queued.
+#
+# HOW THE ANSWERS BELOW WERE ARRIVED AT. Not from a placement probe -- there is no cheap one,
+# because the measurement is "did a job start" and the instrument costs an instance. They are
+# the account's own experience as recorded in config/workload-catalog.yaml's comments and in
+# docs-frank/reference/system-overview.md: the P pool is where this account has waited, and
+# g5.12xlarge is the one G-pool shape it has waited on. Re-read the day a shape's answer is
+# doubted rather than on a schedule; a stale entry here costs an unnecessary suggestion, and
+# a missing one costs an afternoon in RUNNABLE.
+#
+# UNKNOWN IS NOT A VALUE, AND THAT IS THE POINT. Every profile in the catalog appears here
+# exactly once, so promoting a shape is an edit here as well. A file listing only the scarce
+# ones would be a denylist, and the way a denylist fails is that the next shape somebody
+# promotes is assumed to place until the first person waits four hours to find out otherwise.
+schema_version: 1
+observed_at: "2026-08-03"
+profiles:
+  - profile: cpu-32vcpu
+    places: reliably
+  - profile: gpu-1xt4
+    places: reliably
+  - profile: gpu-4xt4
+    places: reliably
+  - profile: gpu-8xt4
+    places: reliably
+  - profile: gpu-1xa10g
+    places: reliably
+  # THE ONE ENTRY WHERE THE ANSWER IS TRUE AND USELESS, AND SAYING SO IS THE POINT. g5.2xlarge
+  # is an ordinary G-pool size and EC2 sells it; nothing about capacity is what stops this
+  # profile running. It is SageMaker training, which has no Batch queue to place into, and
+  # `provisioned: false` in config/workload-catalog.yaml is the field that records that. Two
+  # facts, two files, and folding them together here would make "does not place" mean two
+  # different things and put a fifth name on a list the submission path describes as four.
+  - profile: gpu-1xa10g-sagemaker
+    places: reliably
+  # THE ONE G-POOL SHAPE THIS ACCOUNT HAS WAITED ON, and the substitution the submission path
+  # is written around. g6.12xlarge is the same four-card 96 GB machine at $4.602 against
+  # $5.672, drawing on a pool that is not contended the same way, so the offer costs the
+  # submitter nothing at all: same device memory, same device count, less money.
+  - profile: gpu-4xa10g
+    places: unreliably
+    offer_instead: gpu-4xl4
+  - profile: gpu-8xa10g
+    places: reliably
+  - profile: gpu-1xl4
+    places: reliably
+  - profile: gpu-4xl4
+    places: reliably
+  - profile: gpu-8xl4
+    places: reliably
+  - profile: gpu-1xl40s
+    places: reliably
+  - profile: gpu-4xl40s
+    places: reliably
+  - profile: gpu-8xl40s
+    places: reliably
+  # NO offer_instead, AND THE ABSENCE IS THE ANSWER RATHER THAN AN OMISSION. What a submitter
+  # asking for gpu-1xh100 wants is 80 GB on one device, and nothing else in the catalog holds
+  # it: the largest single card here is the 48 GB L40S. This file used to be tempted to name
+  # gpu-1xl40s and the catalog records what happened the last time somebody did -- two pieces
+  # of work asked for an H100, were offered the L40S as "the closest thing available", and it
+  # was not. A 24 GB or 48 GB card is a changed recipe, which is a deviation the researcher
+  # has to declare and defend rather than a substitution the platform may make for them.
+  - profile: gpu-1xh100
+    places: unreliably
+  # 384 GB against 320 GB, on the G pool rather than the P pool, and an admin either way at
+  # $30.131 against $21.958. So the offer costs money and buys memory and a queue that is
+  # actually there, which is the trade the catalog's own note above gpu-8xl40s already makes:
+  # the same reach past 192 GB without the P pool.
+  - profile: gpu-8xa100
+    places: unreliably
+    offer_instead: gpu-8xl40s
+  # 640 GB has no peer here and the substitute is a protocol rather than a profile. This is
+  # the shape the Capacity Block route exists for: prove the work on a smaller node, buy the
+  # block for a dated window, size the run to about 70% of it.
+  - profile: gpu-8xh100
+    places: unreliably

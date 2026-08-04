@@ -24,6 +24,10 @@ admins:
 # by hand rather than trusting this comment:
 #
 #   gh api orgs/edu-llm/teams/team-leads/members --jq '.[].login' | sort
+#
+# Re-checked by hand on 2026-08-04: the GitHub team returns exactly the eight logins below
+# and the symmetric difference is empty. That is a fact about one morning and not a property
+# this repository can hold, which is why the paragraph above stays.
 team_leads:
   - philote-dev
   - ericrcwu001
@@ -135,27 +139,36 @@ pilot_repositories:
 # guides/the-platform.md tells every new person to use `scratch` for their first run, in
 # those words, because it is the bin for work nobody intends to keep and costs no research
 # group anything. So recording assignments without also recording everybody in scratch would
-# have denied the documented first run for all thirty-four people on the day the roster
+# have denied the documented first run for all thirty-five people on the day the roster
 # landed -- a refusal naming a team they were told to pick.
 #
 # scratch therefore carries the whole roster and no lead. It is a bin, not a group: nobody
 # leads it, its runs are costed against nobody, and every member may claim it.
 #
 # ASSIGNMENTS COME FROM THE ARCHITECTURE TEAMS SHEET, confirmed 2026-08-01. Six research
-# groups, and three people sit on two of them, which the sheet marks and this file records
+# groups, and seven people sit on two of them, which the sheet marks and this file records
 # by listing them in both. Nothing here is inferred from who committed where.
+#
+# The seven, counted off member_logins below on 2026-08-04 and excluding scratch, which
+# carries everybody: Avaneesh-Ramesh-07, GMatherne, NotAnAlgorithm, William-2357,
+# alphaxia2100, nzhao721 and sidvenkatayogi. Counting lead_logins as well as member_logins
+# adds VS-code-cloud, alsy7009, ericrcwu001 and philote-dev, for eleven -- a second number
+# that is true of a second question, so the question is stated here rather than left to be
+# re-derived. This paragraph said three until 2026-08-04; three was never right for either
+# question and matched no list in this file.
 #
 # PRESTON LOATS WAS THE ONE NAME THIS FILE COULD NOT HOLD, AND NOW IT CAN. He is named under
 # Input/Core on the sheet and owns the Co-LMLM seed annotations, and the roster is keyed on a
 # GitHub login he had never supplied. `prestonloats` arrived on 2026-08-01 and he was invited
 # to the organization with his team assignment in the same edit that recorded him below.
 #
-# His invitation may still be pending, and that is a real state rather than a defect. The
-# roster is this platform's own record and admission reads it, so his submissions are
-# authorized from the moment this file names him. What an unaccepted invitation costs is the
-# GitHub half: a manual workflow is shown only to somebody with write access, so until he
-# accepts, the Run button is not there to press. tools/report_onboarding_readiness.py is
-# where that shows up, and it reports him rather than this file going quiet about it.
+# His invitation was pending when this paragraph was written and is no longer. He is a member
+# of the edu-llm organization as of 2026-08-04 and orgs/edu-llm/invitations is empty, so the
+# GitHub half is closed: the manual workflow's Run button is shown to him. The reason the
+# pending state was worth writing down still holds for the next person -- the roster is this
+# platform's own record and admission reads it, so submissions are authorized from the moment
+# this file names somebody, while the Run button waits on an accepted invitation, and
+# tools/report_onboarding_readiness.py is where that gap shows up.
 team_bindings:
   teams:
     - team_id: platform
@@ -279,7 +292,7 @@ team_bindings:
         - zsophiaaa
       s3_namespace: sbsandbox-intern-edullm-outputs/teams/scratch
       wandb_entity: eduLLM
-# WHOSE NAME GOES ON A RUN IN WEIGHTS AND BIASES, AND WHY SIX OF THESE ARE BLANK.
+# WHOSE NAME GOES ON A RUN IN WEIGHTS AND BIASES, AND WHY FIVE OF THESE ARE BLANK.
 #
 # The platform logs with a team service account rather than with any person's key, so every
 # run would otherwise appear authored by the platform itself. W&B's remedy is WANDB_USERNAME,
@@ -304,16 +317,24 @@ team_bindings:
 # display name, and it is recorded below. Nothing was done in W&B to make that so, which is
 # the point worth keeping: the gap was in this file rather than in the team.
 #
-# SEVEN PEOPLE HAVE NO W&B ACCOUNT AT ALL, and a blank is the only true answer for them. The
-# entity holds 29 members, one of which is the platform's own service account, so 28 human
-# accounts against 35 roster entries. Benjamin Royston, Arthur Xu, Iris Cai, Yuen Kai Chow,
-# Adarsh Rajesh and Eve Feng are six the member list does not contain under any spelling.
-# Preston Loats is the seventh and differs in kind: he was recorded on 2026-08-01, after the
-# others, so his account was never searched for rather than searched for and absent. The
-# consequence and the remedy are the same either way.
+# FIVE PEOPLE HAVE NO W&B ACCOUNT AT ALL, and a blank is the only true answer for them. The
+# entity holds 31 members as of 2026-08-04, one of which is the platform's own service
+# account, so 30 human accounts against 35 roster entries. Benjamin Royston, Arthur Xu, Iris
+# Cai, Yuen Kai Chow and Adarsh Rajesh are the five the member list does not contain under
+# any spelling.
+#
+# Two names moved on 2026-08-04 and both were re-checked rather than assumed. `preston-loats`
+# now exists under the display name `Preston Loats`, an equality rather than a near-match, so
+# the blank this file carried for him is filled in below. `eve-alpha` exists under the display
+# name `eve`, which is a first-name prefix of `Eve Feng` and is exactly the kind of match this
+# comment refuses on its own -- so it was left blank until the owner confirmed it, which he did
+# later the same day. It is recorded below with that confirmation named beside it, the same
+# treatment zsophiaaa, meric233 and ericrcwu001 already have, so that the next reader does not
+# re-open a question the prefix rule would otherwise re-raise every time.
+#
 # Adding somebody to the W&B team is an owner action in W&B and does not follow this file, so
-# their runs log as the service account until that happens. Every one of the other 28 accounts
-# is now claimed by exactly one roster entry.
+# their runs log as the service account until that happens. All 30 human accounts are now
+# claimed by exactly one roster entry, and no account is claimed twice.
 #
 # NOTHING HERE IS READ OFF WHO RAN WHAT, and the member list is the only source. A run through
 # the shared cluster carries whichever key was on the node, so `eric-gpu-access-smoke` was
@@ -354,6 +375,10 @@ members:
   - {github_login: Adarsh-Rajesh-gitHub, display_name: Adarsh Rajesh}
   - {github_login: syz2026, display_name: Stephen Zhang, wandb_username: stephen-zhang}
   - {github_login: philote-dev, display_name: Frank Gonzalez, wandb_username: philote}
+  # An exact display_name equality -- the entity holds `lol96297` under `Eric Ni` -- and also
+  # owner-confirmed on 2026-08-04, in the same sentence that confirmed
+  # Intern-linjian.ni-sbsandbox in AWS is this person. Both halves are closed, so the surname
+  # question above that role does not need re-opening.
   - {github_login: ninLi0, display_name: Eric Ni, wandb_username: lol96297}
   # Confirmed by Frank rather than matched, because the display names differ: the eduLLM
   # entity holds `langming-xing` under `Langming Xing`. Twenty-two runs across `edullm-p7`
@@ -370,7 +395,11 @@ members:
   - {github_login: LawrenceDong71, display_name: Lawrence Dong, wandb_username: lawrence-dong}
   - {github_login: katiehehe, display_name: Katie He, wandb_username: katiehe}
   - {github_login: alphaxia2100, display_name: Andrew Xia, wandb_username: alphaai-andrew}
-  - {github_login: NotAnAlgorithm, display_name: Eve Feng}
+  # Confirmed by the owner on 2026-08-04 rather than matched, because `eve-alpha` sits under
+  # the display name `eve`, a first-name prefix of `Eve Feng` rather than an equality, and the
+  # comment above this list refuses prefixes on its own. Owner confirmation is the only thing
+  # that admits one, which is the same treatment zsophiaaa, meric233 and ericrcwu001 have.
+  - {github_login: NotAnAlgorithm, display_name: Eve Feng, wandb_username: eve-alpha}
   - {github_login: blackbird-alt, display_name: Ellie Zhang, wandb_username: blackbird-alt}
   # Recorded on 2026-08-01, after the assignments landed rather than with them. He is named
   # under Input/Core on the architecture sheet and owns the Co-LMLM seed annotations, and the
@@ -378,8 +407,7 @@ members:
   # no organization this file could read one from. The login arrived from Frank; the account
   # exists and was invited to the organization with its team assignment in the same edit.
   #
-  # No wandb_username, and blank is the honest answer rather than an unfinished one. The
-  # comment above the member list gives the reason at length: a guess that is not a real
-  # login inside the eduLLM team logs the run as the service account, which is
-  # indistinguishable from sending no name at all.
-  - {github_login: prestonloats, display_name: Preston Loats}
+  # The W&B side was blank until 2026-08-04 and is no longer: the eduLLM entity holds
+  # `preston-loats` under the display name `Preston Loats`, an exact equality, which is the
+  # one thing the comment above the member list accepts without owner confirmation.
+  - {github_login: prestonloats, display_name: Preston Loats, wandb_username: preston-loats}

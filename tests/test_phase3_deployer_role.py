@@ -84,10 +84,19 @@ NO_RESOURCE_TYPE_ACTIONS = frozenset(
 #: handler on an attachment that names no VPN gateway, DescribeInstances by the
 #: SecurityGroup handler's Delete, and DescribeLaunchTemplateVersions by the Batch compute
 #: environment handler with no launch template in sight.
+#:
+#: ec2:DescribeLaunchTemplates arrived on 2026-08-04 with the first launch template this
+#: account has ever had, and it is a different action from the Versions one beside it: that
+#: is what the Batch compute environment handler reads, this is what
+#: AWS::EC2::LaunchTemplate's own Read, List and Delete call. It measured the same way --
+#: implicitDeny when granted on one launch-template ARN and simulated against that same ARN
+#: -- while the five write verbs of the same resource measured `allowed` under the identical
+#: probe and are therefore scoped rather than sitting here.
 EC2_DESCRIBE_ACTIONS = frozenset(
     {
         "ec2:DescribeAvailabilityZones",
         "ec2:DescribeInternetGateways",
+        "ec2:DescribeLaunchTemplates",
         "ec2:DescribeNetworkAcls",
         "ec2:DescribeRouteTables",
         "ec2:DescribeSecurityGroupRules",
@@ -121,14 +130,23 @@ PASS_ROLE_NAMES = [
     "sbsandbox-intern-edullm-lifecycle-lambda",
 ]
 
-#: The EC2 network write scope, and the one place in this role where a resource ARN does not
-#: carry the project prefix. An EC2 network resource is addressed by an ID the service
-#: assigns at creation, so there is no name for IAM to match on and `vpc/*` is the narrowest
-#: ARN that can be written. Enumerated here rather than exempted by a pattern, so that a
-#: sixth unscoped EC2 resource type is a visible edit to this list.
-EC2_NETWORK_RESOURCE_TYPES = frozenset(
+#: Every EC2 resource type this role writes to, and the one place in it where a resource ARN
+#: does not carry the project prefix. Each of these is addressed by an ID the service assigns
+#: at creation, so there is no name for IAM to match on and `vpc/*` is the narrowest ARN that
+#: can be written. Enumerated here rather than exempted by a pattern, so that a further
+#: unscoped EC2 resource type is a visible edit to this list.
+#:
+#: This read EC2_NETWORK_RESOURCE_TYPES and held six until 2026-08-04. `launch-template` is
+#: the seventh and the first that is not networking, which is why the name no longer says
+#: network: infra/batch-compute-gpu-shapes.yaml declares an AWS::EC2::LaunchTemplate giving
+#: the two eight-device P shapes a 500 GiB root volume, and the deploy role is what creates
+#: it. It is granted in a statement of its own rather than added to the network one, so that
+#: the two exemptions keep their separate reasons and neither statement's verbs reach the
+#: other's resources.
+EC2_ID_ADDRESSED_RESOURCE_TYPES = frozenset(
     {
         "internet-gateway",
+        "launch-template",
         "route-table",
         "security-group",
         "security-group-rule",
@@ -407,10 +425,16 @@ def test_every_scoped_phase3_arn_carries_the_project_prefix_or_is_a_named_except
     ``sbsandbox-intern-`` is the whole account's prefix and every intern's resources begin
     with it, so only the ``edullm`` segment makes a name ours. Two ARNs cannot carry the
     prefix at all, and both are enumerated rather than pattern-matched, because the exemption
-    is what a future widening would hide behind. An EC2 network resource and a Lambda event
-    source mapping are each addressed by an identifier the service assigns at creation, so
-    `vpc/*` and `event-source-mapping:*` are the narrowest ARNs there are; a seventh EC2
-    resource type or a second unscoped Lambda ARN has to be a visible edit.
+    is what a future widening would hide behind. An EC2 resource of any of these types and a
+    Lambda event source mapping are each addressed by an identifier the service assigns at
+    creation, so `vpc/*`, `launch-template/*` and `event-source-mapping:*` are the narrowest
+    ARNs there are; an eighth EC2 resource type or a second unscoped Lambda ARN has to be a
+    visible edit.
+
+    ``launch-template`` is the one that proved the point. It was added on 2026-08-04 for the
+    first launch template this account has ever had, and the equality below is what made that
+    a deliberate line in this list rather than something a ``vpc/*``-shaped pattern would have
+    waved through.
     """
     scoped = [
         arn
@@ -426,7 +450,9 @@ def test_every_scoped_phase3_arn_carries_the_project_prefix_or_is_a_named_except
     assert all(arn.startswith("arn:${AWS::Partition}:") for arn in everything_else)
     assert all(RESOURCE_PREFIX in arn for arn in everything_else)
     assert not [arn for arn in everything_else if f"{SHARED_PREFIX}*" in arn]
-    assert {arn.rsplit(":", 1)[1].split("/", 1)[0] for arn in ec2_arns} == EC2_NETWORK_RESOURCE_TYPES
+    assert {
+        arn.rsplit(":", 1)[1].split("/", 1)[0] for arn in ec2_arns
+    } == EC2_ID_ADDRESSED_RESOURCE_TYPES
     assert all(arn.endswith("/*") for arn in ec2_arns)
     # Two statements may use the mapping ARN, and what separates them is the whole point.
     # A mapping is addressed by a UUID Lambda assigns at creation, so there is no name for
@@ -466,6 +492,54 @@ def test_every_scoped_phase3_arn_carries_the_project_prefix_or_is_a_named_except
             }
         }
     }
+
+
+def test_the_launch_template_grant_is_the_handler_list_and_stops_there() -> None:
+    """Mutation: add ``ec2:ModifyLaunchTemplate``, or fold these into the network statement.
+
+    The five actions are the ``AWS::EC2::LaunchTemplate`` handler's own permission list, read
+    from the registry with ``cloudformation describe-type`` rather than inferred from the
+    template: create needs ``CreateLaunchTemplate`` and ``CreateTags``, update needs
+    ``CreateLaunchTemplateVersion``, ``CreateTags`` and ``DeleteTags``, delete needs
+    ``DeleteLaunchTemplate``, ``DeleteTags`` and ``DescribeLaunchTemplates``. The describe is
+    unscoped with the rest of EC2's describes because it has no resource type; these five
+    measured ``allowed`` when granted on one launch-template ARN and simulated against that
+    same ARN, so each supports resource-level permissions and an unscoped grant would be
+    wider than anything needs.
+
+    ``ec2:ModifyLaunchTemplate`` is the plausible addition and is in none of those lists. It
+    sets a template's default version, and the two compute environments name a concrete
+    version number rather than ``$Default``, so nothing here would ever call it.
+
+    The statement is its own rather than merged into the EC2 network write scope, which
+    already carries ``CreateTags`` and ``DeleteTags`` on six other ARNs. IAM authorizes a
+    tagging call against the resource being tagged, so that grant cannot reach a launch
+    template -- and widening its resource list to reach one would also hand every network
+    verb in it a launch-template ARN it has no use for.
+    """
+    granting = [
+        statement
+        for statement in statements(PHASE3_POLICY_NAME)
+        if any(action.endswith("LaunchTemplate") for action in statement_actions(statement))
+    ]
+
+    assert len(granting) == 1
+    statement = granting[0]
+    assert statement_actions(statement) == [
+        "ec2:CreateLaunchTemplate",
+        "ec2:CreateLaunchTemplateVersion",
+        "ec2:CreateTags",
+        "ec2:DeleteLaunchTemplate",
+        "ec2:DeleteTags",
+    ]
+    assert arns(statement) == [
+        "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:launch-template/*"
+    ]
+    assert "ec2:ModifyLaunchTemplate" not in actions()
+    # The read half stays on "*" with the other describes, and the two are different actions
+    # on different handlers rather than a pair that should have travelled together.
+    assert "ec2:DescribeLaunchTemplates" in EC2_DESCRIBE_ACTIONS
+    assert "ec2:DescribeLaunchTemplates" not in statement_actions(statement)
 
 
 def test_the_batch_scopes_cover_all_three_resource_types_the_stack_creates() -> None:

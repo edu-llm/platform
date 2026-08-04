@@ -6,12 +6,20 @@ object that key names. This is that step, and it exists as a second command rath
 flag because the two artifacts are two objects with two versions and a release procedure
 that confuses them deploys the wrong code under the right name.
 
-**The two zips are byte-identical by construction, and that is deliberate rather than
-accidental.** Both functions are entry points into the same package, `Handler` in each
-template names which one, and shipping one artifact under two keys would couple the two
-releases: an admission fix would move the recorder's `S3ObjectVersion` and a template edit
-would follow for a function whose behaviour did not change. Building twice costs a minute
-and keeps each function pinned to a version that only moves when somebody releases it.
+**The two zips were once byte-identical and are now deliberately not.** Both functions are
+entry points into the same package and `Handler` in each template names which one, so the
+first version of this built one artifact and uploaded it under two keys. That coupled the
+releases: an admission fix moved the recorder's `S3ObjectVersion` and a template edit
+followed for a function whose behaviour had not changed. Two builds cost a minute and keep
+each function pinned to a version that only moves when somebody releases it.
+
+What each carries is now measured per entry point, and the recorder is much the smaller of
+the two. It imports 15 of the package's modules against the validator's 28, and it reads no
+configuration whatsoever -- it projects a Batch state-change event into a lifecycle record
+and never consults the policy, the roster, the catalog or anything else under `config/`. It
+carried all of it until 2026-08-04 anyway, which meant a one-line roster edit moved this
+function's release digest and turned a red required check into work only somebody with AWS
+credentials could clear.
 
 Everything about *how* it is built is `tools/build_admission_lambda.py`'s, imported rather
 than restated. The wheels are built for `x86_64-manylinux_2_28` and CPython 3.12 with
@@ -52,7 +60,14 @@ from build_admission_lambda import (
     build_package,
 )
 
-__all__ = ["ARTIFACT_KEY", "HANDLER_ENTRY_POINT", "RECORDER_ENTRYPOINT", "build_parser", "main"]
+__all__ = [
+    "ARTIFACT_KEY",
+    "HANDLER_ENTRY_POINT",
+    "RECORDER_CONFIG",
+    "RECORDER_ENTRYPOINT",
+    "build_parser",
+    "main",
+]
 
 #: Where the artifact is uploaded, and what `infra/batch-events.yaml` names as `S3Key`.
 #: Its own prefix rather than a second file beside the validator's, so the two functions'
@@ -68,6 +83,17 @@ HANDLER_ENTRY_POINT = "edullm_platform.lifecycle_handler.handler"
 #: different parts of the package, and a shared default would put each one's
 #: dependencies into the other's release.
 RECORDER_ENTRYPOINT = "edullm_platform.lifecycle_handler"
+
+#: EMPTY, AND THAT IS THE MEASUREMENT RATHER THAN AN OVERSIGHT. An audit hook on CPython's
+#: ``open`` event -- which fires below pathlib and yaml alike -- recorded no file under
+#: ``config/`` being opened anywhere in this handler's test modules, and no module this
+#: entrypoint carries names one. The recorder reads a Batch state-change event and writes a
+#: lifecycle record; there is no policy for it to consult and no roster for it to resolve.
+#:
+#: Passed explicitly rather than defaulted to empty, so that a handler which does start
+#: reading configuration has to say so here. ``tests/test_lambda_package_closure.py``
+#: compares this against what the packaged modules name, in both directions.
+RECORDER_CONFIG: frozenset[str] = frozenset()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -91,6 +117,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             PROJECT_ROOT,
             arguments.output,
             entrypoint=RECORDER_ENTRYPOINT,
+            configuration=RECORDER_CONFIG,
             python_platform=arguments.python_platform,
             python_version=arguments.python_version,
         )

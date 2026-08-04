@@ -17,10 +17,18 @@ Description: The three roles a Batch GPU job runs under, and the instance profil
 #
 # The second is that these roles genuinely differ, so the duplication is thinner than it
 # looks. Only this execution role reads a secret. Only this workload role may read an object
-# back, because only a training job resumes from a checkpoint it wrote. Only this instance
-# role joins the GPU cluster. Widening the CPU trio would have handed each of those
-# capabilities to a CPU job that has no use for any of them, which is the same argument that
-# made three roles out of one in the first place.
+# back out of the OUTPUTS bucket, because only a training job resumes from a checkpoint it
+# wrote. Only this instance role joins the GPU cluster. Widening the CPU trio would have
+# handed each of those capabilities to a CPU job that has no use for any of them, which is
+# the same argument that made three roles out of one in the first place.
+#
+# THAT SENTENCE SAID "may read an object back" WITHOUT NAMING A BUCKET, AND THE MISSING WORD
+# WAS LOAD-BEARING. Read as a claim about s3:GetObject generally it is now false: the CPU
+# workload role holds a read on the dataset airlock, added because
+# config/workload-catalog.yaml offers a workload whose whole job is reading shards and which
+# could not read them. What remains true, and is what this paragraph was always about, is
+# the outputs bucket. See the dataset-library statement below for what the two roles now
+# share and the one bucket they deliberately do not.
 #
 # What is shared, deliberately: the ECR repository, because there is one image; and the
 # outputs bucket, because there is one place results go.
@@ -222,6 +230,26 @@ Resources:
               # write from this role anyway; granting only GetObject means the refusal is
               # also true one layer earlier, where it can be read off a role diff rather
               # than inferred from a bucket policy in someone else's stack.
+              #
+              # THE CPU WORKLOAD ROLE NOW HOLDS THIS SAME PAIR, AND THE PERIOD WHEN IT DID
+              # NOT WAS AN ACCIDENT RATHER THAN A DECISION. This statement said "which the
+              # CPU workload role does not have and should not" of the outputs-bucket read
+              # above it, and nothing said anything about this one -- so the split on the
+              # sealed library read as intentional and was not. It was a fact about dates:
+              # this grant arrived in Phase 4 because a training run reads a corpus, and the
+              # CPU role was left without it because the only CPU workload in the catalog at
+              # the time read nothing. Neither half is about CPU versus GPU, and the
+              # submission form's compute_profile is what actually decides placement, so the
+              # split was a grant that depended on a dropdown. Closed in
+              # infra/iam/batch-roles.yaml, where the argument is written out in full.
+              #
+              # WHAT IS STILL ASYMMETRIC, DELIBERATELY: edullm-landing. That is the candidate
+              # side of the airlock, nothing in config/datasets.yaml lives there, and the
+              # only workload that reads it is the validator -- which is CPU work. So this
+              # role is not widened to match, and the consequence is named where a submitter
+              # meets it rather than left here: a validator placed on a GPU profile fails on
+              # its first read, and config/workload-catalog.yaml and guides/edullm-data.md
+              # both say so.
               - Effect: Allow
                 Action: s3:GetObject
                 Resource:

@@ -1,0 +1,60 @@
+{
+  "attached_managed_policies": [],
+  "environment": "sandbox",
+  "inline_policies": [
+    {
+      "policy_name": "write-own-log-group",
+      "policy_version": "2012-10-17",
+      "statements": [
+        {
+          "action_match": {
+            "actions": [
+              "logs:CreateLogGroup",
+              "logs:CreateLogStream",
+              "logs:PutLogEvents"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:logs:us-east-1:<aws-account-id>:log-group:/aws/lambda/sbsandbox-intern-edullm-admission-validator:*"
+            ]
+          },
+          "sid": null
+        }
+      ]
+    }
+  ],
+  "max_session_duration_seconds": 3600,
+  "observed_at": "2026-08-04T19:32:37Z",
+  "permissions_boundary_policy_name": "InternSandboxBoundary",
+  "role_name": "sbsandbox-intern-edullm-admission-lambda",
+  "source": "aws",
+  "status": "ok",
+  "trust_policy_version": "2012-10-17",
+  "trust_statements": [
+    {
+      "action_match": {
+        "actions": [
+          "sts:AssumeRole"
+        ],
+        "element": "Action"
+      },
+      "conditions": [],
+      "effect": "Allow",
+      "principal_match": {
+        "element": "Principal",
+        "principals": [
+          {
+            "identifier": "lambda.amazonaws.com",
+            "principal_type": "Service"
+          }
+        ]
+      },
+      "sid": null
+    }
+  ]
+}

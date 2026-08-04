@@ -28,6 +28,7 @@ only because the batch size happens to be one.
 
 from __future__ import annotations
 
+import email
 import json
 import string
 from collections.abc import Iterator
@@ -177,6 +178,19 @@ IMAGE_PULLING_ROLES = (
 #: on 2026-07-27; the consequence of getting it wrong is a job that waits rather than errors.
 INSTANCE_CAPABLE_ZONES = ("us-east-1a", "us-east-1b", "us-east-1c", "us-east-1d", "us-east-1f")
 ZONE_WITHOUT_THE_INSTANCE_TYPE = "us-east-1e"
+
+#: Every zone the network stack declares a subnet in, which since 2026-08-03 is one more than
+#: the CPU environment may use. The two lists were the same until p5 was backed, and the tests
+#: below keep them apart on purpose: this one is what the VPC has, the one above is what
+#: c7i.8xlarge can be placed into.
+DECLARED_ZONES = (*INSTANCE_CAPABLE_ZONES, ZONE_WITHOUT_THE_INSTANCE_TYPE)
+
+#: The compute environments whose instance type EC2 offers in us-east-1e, read against the
+#: account on 2026-08-03. p5.48xlarge and p5.4xlarge are offered in all six zones; c7i.8xlarge,
+#: g4dn, g5 and g6 in five; g6e.12xlarge and p4d.24xlarge in four. Only an environment named
+#: here may import the 1e subnet, and an environment that imports it without being named here
+#: is a job that waits in RUNNABLE forever with no error anywhere.
+ZONE_1E_CAPABLE_INSTANCE_TYPES = frozenset({"p5.48xlarge", "p5.4xlarge"})
 
 CONDITIONAL_WRITE_PARAMETERS = {"ChecksumAlgorithm": "SHA256", "IfNoneMatch": "*"}
 
@@ -510,24 +524,324 @@ def test_nothing_in_the_batch_stack_survives_a_stack_delete() -> None:
 
 
 # --------------------------------------------------------------------------------------
+# The launch template the two eight-device P shapes boot from
+# --------------------------------------------------------------------------------------
+
+
+def launch_templates() -> dict[str, dict[str, Any]]:
+    return resources_of_type(GPU_SHAPES_PATH, "AWS::EC2::LaunchTemplate")
+
+
+def gpu_shape_environments() -> dict[str, dict[str, Any]]:
+    return resources_of_type(GPU_SHAPES_PATH, "AWS::Batch::ComputeEnvironment")
+
+
+def environment_named(name: str) -> dict[str, Any]:
+    matching = [
+        resource["Properties"]
+        for resource in gpu_shape_environments().values()
+        if resource["Properties"]["ComputeEnvironmentName"] == name
+    ]
+    assert len(matching) == 1, f"expected exactly one compute environment named {name}"
+    return matching[0]
+
+
+def user_data_of(launch_template: dict[str, Any]) -> str:
+    encoded = launch_template["Properties"]["LaunchTemplateData"]["UserData"]
+    assert set(encoded) == {"Fn::Base64"}, "user data must go through Fn::Base64"
+    return str(encoded["Fn::Base64"])
+
+
+#: The two that boot from it, and the only two. Written out rather than derived from the
+#: shape list, because the whole content of the scope is which names are in it.
+P_FAMILY_PROFILES = ("gpu-8xa100", "gpu-8xh100")
+
+#: 37.2 GiB of corpus is what a job already tried to stage, so a root volume has to be
+#: comfortably above that and not merely above it. The number below is a floor rather than
+#: the 500 the template sets, because raising the volume is a change nobody should have to
+#: come here to permit and lowering it back under the corpus is the one that has to fail.
+MINIMUM_P_FAMILY_ROOT_GIB = 200
+
+#: Written by AWS Batch itself into /etc/ecs/ecs.config and documented as reserved. Setting
+#: either from a launch template is documented to break scheduling and scaling.
+BATCH_RESERVED_ECS_VARIABLES = ("ECS_CLUSTER", "ECS_INSTANCE_ATTRIBUTES")
+
+
+def test_the_two_p_shapes_boot_from_a_root_volume_the_corpus_actually_fits_in() -> None:
+    """Mutation: drop ``VolumeSize`` back under the corpus, or delete the mapping entirely.
+
+    This is the constraint a future edit would break in silence, which is why it is pinned
+    here rather than left to the comment that argues it. With no launch template at all --
+    which is how all sixteen environments in this account stood until 2026-08-04 -- Batch
+    takes the ECS AL2023 GPU AMI's own mapping, a single 30 GiB gp3 volume, leaving roughly
+    13 GiB free once the OS and the training image are on it. A run staging 9,989,799,834
+    tokens at four bytes each needs 37.2 GiB and died in ``stage_input`` with ENOSPC; it
+    could not have succeeded on a clean instance either.
+
+    Nothing about that failure is visible from this template without this test. The
+    environment reports VALID, the job is placed, the container starts, and the only symptom
+    is an ``OSError`` from inside somebody's training script.
+    """
+    templates = launch_templates()
+    assert len(templates) == 1, "one launch template, shared, so a size change cannot be half-made"
+    data = next(iter(templates.values()))["Properties"]["LaunchTemplateData"]
+    mappings = data["BlockDeviceMappings"]
+
+    assert len(mappings) == 1
+    root = mappings[0]
+    # The AMI's own RootDeviceName, read from describe-images rather than assumed. A device
+    # name the AMI does not use is not an error: it silently attaches a second volume beside
+    # an untouched 30 GiB root, so the job dies of ENOSPC while the disk looks bought.
+    assert root["DeviceName"] == "/dev/xvda"
+    assert root["Ebs"]["VolumeSize"] >= MINIMUM_P_FAMILY_ROOT_GIB
+    assert root["Ebs"]["VolumeType"] == "gp3"
+    # gp3's free baseline is 125 MB/s, which makes staging the corpus five and a half
+    # minutes of a job doing nothing else.
+    assert root["Ebs"]["Throughput"] > 125
+    assert root["Ebs"]["DeleteOnTermination"] is True
+    # Absent rather than false. The account has EbsEncryptionByDefault off and this AMI's
+    # snapshot is unencrypted, so omitting the flag matches the account today and follows it
+    # if the account default is ever turned on. `false` would refuse to launch on that day.
+    assert "Encrypted" not in root["Ebs"]
+
+
+def test_the_agent_settings_reach_the_instance_as_mime_multipart_and_nothing_else_does() -> None:
+    """Mutation: replace the MIME wrapper with a bare ``#!/bin/bash`` script.
+
+    AWS Batch merges its own user data with the launch template's, and documents that user
+    data in a launch template must be MIME multi-part for that merge to happen. A bare script
+    is not rejected -- it is discarded. The instance boots on the agent defaults, a stopped
+    container's writable layer is kept for three hours, and this template still reads as
+    though fifteen minutes were configured.
+
+    Parsed rather than pattern-matched, because the format's load-bearing parts are the blank
+    lines, and a regular expression over the text would pass on a document cloud-init's own
+    parser rejects.
+    """
+    body = user_data_of(next(iter(launch_templates().values())))
+    message = email.message_from_string(body)
+    parts = [part for part in message.walk() if not part.is_multipart()]
+
+    assert message.is_multipart()
+    assert message.get_content_type() == "multipart/mixed"
+    assert not message.defects
+    assert len(parts) == 1
+    assert parts[0].get_content_type() == "text/x-shellscript"
+    assert not parts[0].defects
+
+    script = str(parts[0].get_payload())
+    assert script.startswith("#!/bin/bash")
+    assert "/etc/ecs/ecs.config" in script
+    # The one that fixes the second failure: three jobs landed on one instance and the second
+    # and third died in six seconds each on the first's leftover partial download, because
+    # ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION defaults to three hours. The reference also says
+    # image cleanup cannot touch an image while a container still references it, so this
+    # setting gates the three below rather than sitting beside them.
+    assert "ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION=15m" in script
+    # Each of these is a real variable in the agent's configuration reference and each is
+    # inside the bounds it documents: the cleanup interval may not go below 10m, and the
+    # number deleted per cycle may not go below 1.
+    assert "ECS_IMAGE_CLEANUP_INTERVAL=15m" in script
+    assert "ECS_IMAGE_MINIMUM_CLEANUP_AGE=30m" in script
+    assert "ECS_NUM_IMAGES_DELETE_PER_CYCLE=25" in script
+    # Batch writes both of these itself and names them reserved. Setting either here is
+    # documented to break scheduling and scaling, and would do it on the two most expensive
+    # shapes in the account.
+    for reserved in BATCH_RESERVED_ECS_VARIABLES:
+        assert reserved not in script
+    # Not an ECS agent variable at all. It appears nowhere in the configuration reference, so
+    # a line naming it would sit in ecs.config being ignored while reading like a guard.
+    assert "ECS_DISK_FREE_SPACE_THRESHOLD" not in script
+
+
+def test_only_the_two_idle_p_shapes_were_given_the_launch_template() -> None:
+    """Mutation: attach it to a third environment, or to all fourteen.
+
+    Attaching a launch template is an infrastructure update, and an infrastructure update
+    replaces every container instance in the environment. ``TerminateJobsOnUpdate`` is false
+    and ``JobExecutionTimeoutMinutes`` is 360, so a deploy waits up to six hours for running
+    jobs and then kills what is left. The two below were idle when this landed and ``gpu``
+    and ``gpu-4xl40s`` were not, which is the whole reason the scope is two rather than
+    fourteen -- and a later edit that widens it silently would kill somebody's training run.
+
+    Widening it is allowed and is meant to be: what this test asks is that it be done in a
+    commit that says so.
+    """
+    attached = sorted(
+        properties["ComputeEnvironmentName"].removeprefix("sbsandbox-intern-edullm-")
+        for properties in (
+            resource["Properties"] for resource in gpu_shape_environments().values()
+        )
+        if "LaunchTemplate" in properties["ComputeResources"]
+    )
+
+    assert attached == sorted(P_FAMILY_PROFILES)
+    assert len(gpu_shape_environments()) == len(GPU_SHAPE_PROFILES)
+
+
+def test_the_two_p_shapes_name_a_version_that_moves_when_the_template_is_edited() -> None:
+    """Mutation: replace the ``Fn::GetAtt`` with ``$Latest``.
+
+    Batch resolves ``$Latest`` and ``$Default`` once, when the compute environment is created
+    or updated, and documents that a later change to the launch template is not picked up
+    until something calls ``UpdateComputeEnvironment``. So the two environments would stay on
+    the version they were born with while this file described another one, and the next
+    person to raise the volume would watch a green deploy change nothing.
+
+    A concrete version number is a property of the compute environment, so editing the
+    launch template changes both environments in the same deploy.
+    """
+    logical_id = next(iter(launch_templates()))
+
+    for profile in P_FAMILY_PROFILES:
+        specification = environment_named(f"sbsandbox-intern-edullm-{profile}")["ComputeResources"][
+            "LaunchTemplate"
+        ]
+        assert specification["LaunchTemplateId"] == {"Ref": logical_id}
+        assert specification["Version"] == {"Fn::GetAtt": f"{logical_id}.LatestVersionNumber"}
+        assert "$Latest" not in str(specification)
+        assert "$Default" not in str(specification)
+
+
+def test_the_launch_template_leaves_batch_the_settings_batch_owns() -> None:
+    """Mutation: put ``InstanceType`` or ``IamInstanceProfile`` in the launch template.
+
+    AWS Batch documents four launch template parameters it ignores outright -- instance type,
+    instance role, network interface subnets and instance market options -- and each of those
+    is set on the compute environment a few lines away in the same file. A copy here would
+    not fail and would not take effect; it would sit in the template as a second, silently
+    inoperative answer to a question the environment already answers, and the next reader
+    would have no way to tell which one the account is using.
+    """
+    data = next(iter(launch_templates().values()))["Properties"]["LaunchTemplateData"]
+
+    assert set(data) == {"BlockDeviceMappings", "UserData"}
+    for ignored in (
+        "InstanceType",
+        "IamInstanceProfile",
+        "NetworkInterfaces",
+        "InstanceMarketOptions",
+    ):
+        assert ignored not in data
+    # ImageId specifically: a launch template AMI takes precedence over Ec2Configuration, so
+    # one here would silently override ECS_AL2023_NVIDIA -- and an AMI with no NVIDIA driver
+    # runs the job on the CPU at $21.96/hour with nothing erroring anywhere.
+    assert "ImageId" not in data
+
+
+# --------------------------------------------------------------------------------------
 # Networking
 # --------------------------------------------------------------------------------------
 
 
-def test_the_subnets_exclude_the_zone_that_cannot_hold_the_instance_type() -> None:
-    """Mutation: add a us-east-1e subnet, or drop one of the other five.
+def test_the_network_declares_one_subnet_per_zone_and_no_zone_twice() -> None:
+    """Mutation: drop a subnet, or declare two in one zone.
 
-    c7i.8xlarge is not offered in us-east-1e. A subnet there is one Batch will consider and
-    can never place into, and Batch does not fail a job it cannot place -- it waits. The
-    symptom is a job in ``RUNNABLE`` with no error, which is the hardest failure in this
-    phase to diagnose and the cheapest to prevent.
+    This used to assert that us-east-1e was absent, and that assertion was correct for as
+    long as every backed shape stopped at five zones. p5.48xlarge and p5.4xlarge are offered
+    in all six, so 1e stopped being a zone nothing could use and became a sixth of a scarce
+    on-demand pool that no environment could ask for.
+
+    What the old test was protecting has not gone away -- it has moved one file over. A
+    subnet Batch will consider and can never place into still produces a job in ``RUNNABLE``
+    with no error, and the two tests below are now what prevent it: the CPU environment is
+    held to the five zones c7i.8xlarge is offered in, and the 1e subnet is importable only by
+    an environment whose instance type EC2 offers there.
     """
     subnets = resources_of_type(NETWORK_PATH, "AWS::EC2::Subnet")
     zones = [resource["Properties"]["AvailabilityZone"] for resource in subnets.values()]
 
-    assert sorted(zones) == sorted(INSTANCE_CAPABLE_ZONES)
-    assert ZONE_WITHOUT_THE_INSTANCE_TYPE not in zones
-    assert len(set(zones)) == len(zones), "two subnets in one zone is not five zones"
+    assert sorted(zones) == sorted(DECLARED_ZONES)
+    assert len(set(zones)) == len(zones), "two subnets in one zone is not six zones"
+
+
+def test_the_zone_the_cpu_shape_cannot_use_is_declared_but_not_imported_by_it() -> None:
+    """Mutation: add the 1e import to infra/batch-compute.yaml, which deploys clean.
+
+    This is the assertion that replaces the old "1e is absent" one, and it is the half that
+    was load-bearing. Declaring the subnet is harmless; handing it to an environment running
+    a shape EC2 does not offer in that zone is the silent failure, because Batch does not
+    fail a job it cannot place -- it waits, with no error and no statusReason worth reading.
+
+    Asserted against the CPU environment by name rather than against every environment,
+    because the GPU shapes file is where an environment legitimately may import it and the
+    test below is what governs that.
+    """
+    cpu = properties_of(COMPUTE_PATH, "AWS::Batch::ComputeEnvironment")["ComputeResources"]
+    imported = [entry["Fn::ImportValue"] for entry in cpu["Subnets"]]
+
+    assert not any(name.endswith(ZONE_WITHOUT_THE_INSTANCE_TYPE) for name in imported), (
+        "c7i.8xlarge is not offered in us-east-1e, so this import is a zone Batch will "
+        "consider and can never place into"
+    )
+    assert len(imported) == len(INSTANCE_CAPABLE_ZONES)
+
+
+def test_only_a_shape_offered_in_that_zone_imports_the_us_east_1e_subnet() -> None:
+    """Reads every compute template. Mutation: paste the p5 subnet list onto another shape.
+
+    The 1e subnet exists for p5 and for nothing else. Copying a working six-subnet list onto
+    the next environment somebody adds is the easiest possible mistake to make and the
+    hardest to see afterwards: the deploy succeeds, the environment reports healthy, and the
+    only symptom is that some fraction of that shape's jobs wait forever because Batch chose
+    a zone the instance type is not sold in.
+
+    ``ZONE_1E_CAPABLE_INSTANCE_TYPES`` is a measurement rather than a policy, so backing a
+    shape that is offered in 1e means adding it there in the same change as the subnet, which
+    is a line a reviewer reads rather than a deploy that quietly works.
+    """
+    offenders: list[str] = []
+    for path in COMPUTE_PATHS:
+        for resource in resources_of_type(path, "AWS::Batch::ComputeEnvironment").values():
+            properties = resource["Properties"]
+            compute = properties["ComputeResources"]
+            imports = [entry["Fn::ImportValue"] for entry in compute["Subnets"]]
+            if not any(name.endswith(ZONE_WITHOUT_THE_INSTANCE_TYPE) for name in imports):
+                continue
+            unsupported = set(compute["InstanceTypes"]) - ZONE_1E_CAPABLE_INSTANCE_TYPES
+            if unsupported:
+                offenders.append(
+                    f"{path.name}: {properties['ComputeEnvironmentName']} imports the "
+                    f"us-east-1e subnet with {sorted(unsupported)}, which EC2 does not offer "
+                    "there"
+                )
+
+    assert not offenders, "; ".join(offenders)
+
+
+def test_every_environment_that_may_take_the_sixth_zone_actually_takes_it() -> None:
+    """Mutation: drop the 1e import, leaving the subnet declared and used by nothing.
+
+    The test above is a prohibition and passes vacuously if no environment imports the 1e
+    subnet at all, which is exactly the state this change was made to leave behind. This is
+    the matching obligation, so the subnet cannot be quietly stranded: it was added because
+    on-demand p5 could not be obtained in any of the other five zones, and a declared subnet
+    nothing places into buys none of that back.
+
+    Driven off the instance type rather than off a list of environment names, so backing a
+    third p5 shape gets the sixth zone by construction instead of by somebody remembering.
+    """
+    every_zone = sorted(
+        f"sbsandbox-intern-edullm-batch-subnet-{zone}" for zone in DECLARED_ZONES
+    )
+    checked = 0
+    for resource in resources_of_type(GPU_SHAPES_PATH, "AWS::Batch::ComputeEnvironment").values():
+        properties = resource["Properties"]
+        compute = properties["ComputeResources"]
+        if not set(compute["InstanceTypes"]) <= ZONE_1E_CAPABLE_INSTANCE_TYPES:
+            continue
+        checked += 1
+        imported = sorted(entry["Fn::ImportValue"] for entry in compute["Subnets"])
+        assert imported == every_zone, (
+            f"{properties['ComputeEnvironmentName']} runs "
+            f"{compute['InstanceTypes']}, which EC2 offers in all six zones, so all six "
+            "belong here"
+        )
+
+    assert checked == 2, (
+        "expected gpu-8xh100 and gpu-1xh100 to be the p5 environments; a change to that set "
+        "is a change to which environments may import the us-east-1e subnet"
+    )
 
 
 def test_the_vpc_is_created_unconditionally_because_the_quota_landed() -> None:
@@ -637,20 +951,31 @@ def test_every_security_group_description_uses_only_characters_ec2_accepts() -> 
 # --------------------------------------------------------------------------------------
 
 
-def test_the_compute_environment_places_into_exactly_the_subnets_the_network_exports() -> None:
-    """Reads BOTH files. Mutation: export a sixth subnet, or import one that is not exported.
+def test_the_compute_environment_places_into_every_exported_subnet_its_shape_can_use() -> None:
+    """Reads BOTH files. Mutation: drop a subnet from the import list, or import an unexport.
 
     The two templates are separate stacks and the only thing joining them is an export name
     spelled identically in both. An import of an export that does not exist fails the
     deploy, which is the safe half; the unsafe half is a network stack that exports a subnet
-    the compute environment never uses, which deploys clean and quietly halves the zones
+    the compute environment never uses, which deploys clean and quietly narrows the zones
     Batch can place into.
+
+    This compared the two lists for equality until 2026-08-03, when the network stack gained
+    a us-east-1e subnet that only p5 may use. Equality would now force the CPU environment to
+    import a zone c7i.8xlarge is not offered in, which is the opposite failure and a worse
+    one. So the comparison is against the exports this shape *can* use, and the narrowing it
+    was written to catch is still caught: dropping 1a from the import list still fails here.
     """
     subnets = resources_of_type(NETWORK_PATH, "AWS::EC2::Subnet")
     exported = {
         output["Export"]["Name"]: output["Value"]["Ref"]
         for output in load_template(NETWORK_PATH)["Outputs"].values()
         if "Export" in output and "-subnet-" in output["Export"]["Name"]
+    }
+    usable = {
+        name: logical_id
+        for name, logical_id in exported.items()
+        if subnets[logical_id]["Properties"]["AvailabilityZone"] in INSTANCE_CAPABLE_ZONES
     }
     imported = [
         entry["Fn::ImportValue"]
@@ -659,11 +984,16 @@ def test_the_compute_environment_places_into_exactly_the_subnets_the_network_exp
         ]["Subnets"]
     ]
 
-    assert sorted(imported) == sorted(exported)
-    assert len(imported) == len(set(imported)) == len(subnets)
+    assert sorted(imported) == sorted(usable)
+    assert len(imported) == len(set(imported)) == len(INSTANCE_CAPABLE_ZONES)
+    # Every export is either usable by this shape or accounted for as one that is not, so an
+    # export nothing imports cannot hide behind the filter above.
     for export_name, logical_id in exported.items():
         zone = subnets[logical_id]["Properties"]["AvailabilityZone"]
-        assert zone in INSTANCE_CAPABLE_ZONES, f"{export_name} is in {zone}"
+        if export_name in usable:
+            assert zone in INSTANCE_CAPABLE_ZONES, f"{export_name} is in {zone}"
+        else:
+            assert zone == ZONE_WITHOUT_THE_INSTANCE_TYPE, f"{export_name} is in {zone}"
 
 
 def test_the_compute_environment_uses_the_security_group_the_network_stack_exports() -> None:
@@ -876,8 +1206,11 @@ def test_the_job_definition_the_states_role_may_submit_is_the_one_that_is_regist
 
     ``SubmitJob`` authorizes against the queue and the job definition together, so a rename
     on one side denies every submission -- which fails closed and still costs a live run to
-    diagnose. Both ARN forms are required because RegisterJobDefinition mints a revision on
-    every deploy and the revision is part of the ARN.
+    diagnose. Each name is granted with a trailing wildcard because RegisterJobDefinition
+    mints a revision on every deploy and the revision is part of the ARN; an IAM wildcard
+    matches ``:`` like any other character, so one ``-run*`` covers the bare definition and
+    every revision of it. That used to be spelled as two ARNs each, and the pair is what
+    took the rendered policy over IAM's 10240-byte cap on 2026-08-02.
 
     **A third name the templates do not create, and it is the point of this phase.** An
     accepted run registers a definition of its own so that the digest its manifest declared
@@ -895,17 +1228,16 @@ def test_the_job_definition_the_states_role_may_submit_is_the_one_that_is_regist
         for name in (named_after(arn, "job-definition") for arn in states_role_submit_arns())
         if name is not None
     }
-    revisions = [arn for arn in states_role_submit_arns() if arn.endswith(":*")]
-
     assert registered == {
         JOB_DEFINITION_NAME,
         GPU_JOB_DEFINITION_NAME,
         *GPU_SHAPE_JOB_DEFINITION_NAMES,
     }
-    assert from_the_role == registered | {PER_RUN_JOB_DEFINITION_NAME}
-    assert len(revisions) == len(from_the_role), (
+    assert from_the_role == {f"{name}*" for name in registered} | {PER_RUN_JOB_DEFINITION_NAME}
+    assert all(name.endswith("*") for name in from_the_role), (
         "a grant on the bare definition name authorizes nothing once a second revision "
-        "exists, so every definition this role may submit to needs both ARN forms"
+        "exists, so every definition this role may submit to is named with a trailing "
+        "wildcard -- which covers the revision because an IAM wildcard matches ':'"
     )
 
 
@@ -1649,6 +1981,16 @@ def test_the_workload_role_writes_only_under_a_runs_prefix_of_the_outputs_bucket
     that ``contracts/results.py::output_prefix`` is the single author of -- which is what
     makes tightening this later an IAM change rather than a migration of keys already
     written into lineage records nothing rewrites.
+
+    THE LISTING HALF IS ABOUT THIS BUCKET AND NOT ABOUT LISTING, which it did not have to
+    distinguish until the role could list a second one. It counted every ``s3:ListBucket``
+    statement on the role and required exactly one, which was the same assertion for as long
+    as the outputs bucket was the only bucket in reach. It stopped being the same assertion
+    when ``read-the-dataset-airlock`` was added, and the difference is what the condition is
+    for: the outputs bucket is partitioned by team, so the prefix *is* the partition, while
+    the two airlock buckets have no team dimension to scope by. The same narrowing was made
+    for the same reason in ``tests/test_phase5_team_isolation.py``; the airlock's own listing
+    is asserted in ``tests/test_workload_dataset_reach.py`` rather than left implied.
     """
     role = role_named(BATCH_ROLES_PATH, WORKLOAD_ROLE_NAME)
     statements = [
@@ -1669,7 +2011,12 @@ def test_the_workload_role_writes_only_under_a_runs_prefix_of_the_outputs_bucket
     # Listing is a bucket-level action that no object ARN can scope, so the prefix condition
     # is the only thing keeping it below the same layout.
     listing = [
-        statement for statement in statements if "s3:ListBucket" in statement_actions(statement)
+        statement
+        for statement in statements
+        if "s3:ListBucket" in statement_actions(statement)
+        and any(
+            arn.endswith(f":{OUTPUTS_BUCKET}") for arn in resource_arns(statement["Resource"])
+        )
     ]
     assert len(listing) == 1
     assert listing[0]["Condition"]["StringLike"]["s3:prefix"] == "teams/*/runs/*"

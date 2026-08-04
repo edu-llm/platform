@@ -60,6 +60,8 @@ from edullm_platform.evidence import (
 __all__ = [
     "APPROVAL_ENVIRONMENT_NAMES",
     "LEAD_APPROVAL_TEAM_SLUG",
+    "PHASE2_ROLE_CAPTURE_DIR",
+    "PHASE2_ROLE_TEMPLATES",
     "ROLE_TEAM_SLUGS",
     "EnvironmentInventory",
     "EnvironmentReviewer",
@@ -100,6 +102,29 @@ PHASE2_ROLE_TEMPLATES: tuple[tuple[str, str], ...] = (
     ("sbsandbox-intern-edullm-admission-states", "infra/iam/admission-service-roles.yaml"),
     ("sbsandbox-intern-edullm-admission-lambda", "infra/iam/admission-service-roles.yaml"),
 )
+
+#: Where captures of the registry above are committed.
+#:
+#: THE REGISTRY EXISTED FOR WEEKS WITH NOTHING WRITING HERE, AND THAT IS THE GAP THIS
+#: CONSTANT CLOSES. ``PHASE2_ROLE_TEMPLATES`` was declared, ``pending_amendments`` merged it
+#: into ``declared_role_templates``, and no capture tool walked it and no test read one --
+#: so the three roles the admission gate runs as were the only committed roles in this
+#: repository never compared against the account. Phase 1's two, Phase 3's four and the
+#: dataset validator all had both halves; these had the registry and not the comparison.
+#:
+#: What that cost is a matter of record rather than a hypothetical. On 2026-08-02 a deploy
+#: of ``infra/iam/admission-service-roles.yaml`` failed on the IAM inline-policy size limit
+#: and rolled back, leaving ``sbsandbox-intern-edullm-admission-states`` holding
+#: ``batch:SubmitJob`` on eleven of the sixteen queues the template names. Every test in the
+#: suite reads the template, so every test passed; the five profiles were simply
+#: unsubmittable, and the way anybody would have found out is a researcher's job failing at
+#: the submit state.
+#:
+#: A directory of its own, for the reason written above ``DATASET_VALIDATOR_CAPTURE_DIR``:
+#: the reader reports in both directions, so a capture present for a role the registry does
+#: not declare is a finding too, and a directory shared with another registry would make one
+#: registry's filing look like the other's drift.
+PHASE2_ROLE_CAPTURE_DIR: str = "fixtures/evidence/phase-2/roles"
 
 OrderedStrings = Annotated[tuple[str, ...], BeforeValidator(require_ordered_sequence)]
 

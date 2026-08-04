@@ -687,7 +687,14 @@ jobs:
           set -euo pipefail
           shapes_json="${RUNNER_TEMP}/phase4-gpu-shapes.json"
           : > "${shapes_json}"
-          for shape in gpu-1xt4:4:1 gpu-4xt4:48:4 gpu-8xt4:96:8 gpu-4xa10g:48:4 gpu-8xa10g:192:8 gpu-1xl4:4:1 gpu-4xl4:48:4 gpu-8xl4:192:8 gpu-1xl40s:4:1 gpu-4xl40s:48:4 gpu-8xl40s:192:8 gpu-8xa100:96:8 gpu-8xh100:192:8; do
+          # Every shape this stack deploys, and the list has to stay that way: it carried
+          # thirteen of the fourteen job definitions in infra/batch-compute-gpu-shapes.yaml,
+          # and the one it left out was gpu-1xh100. That is the shape with the least margin
+          # for going unchecked -- it is the newest, it is a p5.4xlarge, and it is the one
+          # that shipped asking for more memory than its host registers. gpu-1xa10g is not
+          # here and should not be: it lives in infra/batch-compute-gpu.yaml and the earlier
+          # "Verify CPU and GPU batch execution" step covers it.
+          for shape in gpu-1xt4:4:1 gpu-4xt4:48:4 gpu-8xt4:96:8 gpu-4xa10g:48:4 gpu-8xa10g:192:8 gpu-1xl4:4:1 gpu-4xl4:48:4 gpu-8xl4:192:8 gpu-1xl40s:4:1 gpu-4xl40s:48:4 gpu-8xl40s:192:8 gpu-8xa100:96:8 gpu-1xh100:16:1 gpu-8xh100:192:8; do
             profile="${shape%%:*}"
             rest="${shape#*:}"
             vcpus="${rest%%:*}"
