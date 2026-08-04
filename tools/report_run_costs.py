@@ -153,10 +153,27 @@ def _runs(runs: int, unpriced: int = 0) -> str:
     return f"{counted}, {unpriced} with no figure" if unpriced else counted
 
 
+def _leads(lead_logins: Sequence[str]) -> str:
+    """Who a team's line names, or that nobody has said.
+
+    A BLANK WHERE A NAME BELONGS READS AS A LOOKUP THAT BROKE, which is the same reason
+    ``submission._routing_note`` says "No lead is recorded" rather than leaving the space
+    empty. This line read ``led by )`` for any team with none -- ``scratch`` on the shipped
+    roster, which is the bin the guide tells every new person to pick and so the team most
+    likely to be on a report at all.
+
+    ``lead_logins`` could not be empty when this was written: ``TeamBinding`` required at
+    least one login until 2026-08-01, when the constraint was dropped because a group with
+    no recorded lead is an ordinary state that the approver page already handled. The
+    contract changed and this renderer did not.
+    """
+    return f"led by {', '.join(lead_logins)}" if lead_logins else "no lead recorded"
+
+
 def _bound_line(spend: TeamSpend) -> str:
     line = (
-        f"- {spend.team_id} (@{spend.github_team_slug}, led by "
-        f"{', '.join(spend.lead_logins)}): ${_plain(spend.cost_usd)} across "
+        f"- {spend.team_id} (@{spend.github_team_slug}, {_leads(spend.lead_logins)}"
+        f"): ${_plain(spend.cost_usd)} across "
         f"{_runs(spend.runs, spend.unpriced_runs)}"
     )
     tags = ", ".join(f"{tag.key}={tag.value}" for tag in spend.attribution_tags)
