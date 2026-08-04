@@ -33,6 +33,36 @@ def checkout(tmp_path: Path, **spec: object) -> tuple[Path, FakeRunner]:
     return tmp_path, FakeRunner(git_answers(tmp_path))
 
 
+def test_check_reaches_no_network_at_all_however_stale_this_install_is(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**THE PROPERTY THE VERSION PROBE WAS DELIBERATELY KEPT OUT OF THIS VERB TO PROTECT.**
+
+    Mutation: probe for a newer release here too. ``check`` answers in a fraction of a
+    second and asks nothing, which is what makes it the verb somebody runs half a dozen
+    times while editing a spec and the verb that works on a cluster login node with no
+    egress. One API call is a tenth of a second on a good connection and a hang on a bad
+    one, spent on a question that only matters at the moment a submission costs somebody
+    else's approval -- which is where the probe lives instead.
+
+    Asserted as the absence of a call rather than as a duration, because a timing
+    assertion is a flake on a loaded machine and this is the fact underneath it: nothing
+    was asked, so there was nothing to wait for.
+    """
+    root, runner = checkout(tmp_path, compute="gpu-1xa10g")
+
+    code, out, err = invoke(
+        ["check", "--dataset", "regmix-10b-v1", "--experiment", "an-experiment"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+    assert runner.ran("gh") == []
+    assert [argv[0] for argv in runner.calls] == ["git"] * len(runner.calls)
+
+
 def test_a_clean_submission_is_cleared_and_priced_from_the_catalog(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

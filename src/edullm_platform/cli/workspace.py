@@ -23,12 +23,14 @@ laid out somewhere this does not expect.
 from __future__ import annotations
 
 import os
+import platform
 import shutil
 import subprocess
-from collections.abc import Mapping
+import sys
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Final, Protocol
 
 __all__ = [
     "CommandResult",
@@ -36,12 +38,17 @@ __all__ = [
     "GitFacts",
     "SubprocessRunner",
     "ToolMissingError",
+    "github_interop_diagnostic",
     "github_login",
     "read_git_facts",
     "repository_name_from_remote",
 ]
 
 LOGIN_VARIABLE = "EDULLM_GITHUB_LOGIN"
+
+#: What a command that ran out of time exits with, which is the convention ``timeout(1)``
+#: set and every shell script since has read.
+TIMED_OUT: Final = 124
 
 
 class ToolMissingError(RuntimeError):
@@ -70,7 +77,11 @@ class CommandResult:
 
 class CommandRunner(Protocol):
     def __call__(
-        self, argv: tuple[str, ...], *, cwd: Path | None = None
+        self,
+        argv: tuple[str, ...],
+        *,
+        cwd: Path | None = None,
+        timeout: float | None = None,
     ) -> CommandResult: ...
 
 
@@ -81,27 +92,125 @@ class SubprocessRunner:
     is not a git repository, a commit no remote carries, a ``gh`` that is not logged in.
     Each of those is an answer this CLI turns into a sentence, and an exception would make
     the caller write the same try block six times.
+
+    ``timeout`` is unset almost everywhere and deliberately so: a dispatch or a log read
+    takes as long as GitHub takes, and cutting one off would turn a slow answer into no
+    answer. The one caller that passes it is the version probe, which is a courtesy the
+    submission must not wait on. A timeout reads as a failed command rather than as an
+    exception, for the same reason a non-zero exit does.
     """
 
-    def __call__(self, argv: tuple[str, ...], *, cwd: Path | None = None) -> CommandResult:
+    def __call__(
+        self,
+        argv: tuple[str, ...],
+        *,
+        cwd: Path | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
         if shutil.which(argv[0]) is None:
             raise ToolMissingError(
                 f"{argv[0]} is not on PATH. edullm drives git and gh rather than holding a "
                 "credential of its own, so both have to be installed and gh has to be "
                 "logged in: gh auth login."
             )
-        completed = subprocess.run(
-            list(argv),
-            capture_output=True,
-            text=True,
-            cwd=None if cwd is None else str(cwd),
-            check=False,
-        )
+        try:
+            completed = subprocess.run(
+                list(argv),
+                capture_output=True,
+                text=True,
+                cwd=None if cwd is None else str(cwd),
+                check=False,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as expired:
+            return CommandResult(
+                returncode=TIMED_OUT,
+                stdout="",
+                stderr=f"{argv[0]} did not answer within {expired.timeout}s",
+            )
         return CommandResult(
             returncode=completed.returncode,
             stdout=completed.stdout,
             stderr=completed.stderr,
         )
+
+
+def github_interop_diagnostic(
+    *,
+    environ: Mapping[str, str] | None = None,
+    which: Callable[[str], str | None] | None = None,
+    kernel_release: str | None = None,
+) -> str | None:
+    """Said at startup when the ``gh`` on PATH is a Windows executable under WSL.
+
+    **THIS IS THE ONE WINDOWS PROBLEM WORTH CODE, BECAUSE IT IS THE ONE THAT IS SILENT.**
+    WSL's ``appendWindowsPath`` defaults to true, so a distribution with no Linux ``gh``
+    installed resolves ``gh`` to ``/mnt/c/.../gh.exe`` and every call in this package
+    quietly goes to a different operating system. Two things then break in ways nobody
+    could reasonably diagnose:
+
+    ``gh.exe`` reads its credential from ``%AppData%``, which the Linux-side lookup in
+    :func:`_login_from_gh_config` will never find -- so ``check`` decides nobody is logged
+    in and refuses on the roster, while ``submit`` falls through to ``gh api user`` and
+    succeeds. Two verbs disagreeing about who you are is a bug report nobody can write.
+
+    And ``compiled_submission`` hands ``gh run download --dir`` a Linux
+    ``TemporaryDirectory``. A Windows executable cannot write to a bare ``/tmp/...`` path,
+    the download fails, the method answers ``None`` by design, and ``None`` is
+    indistinguishable from "the compile job has not finished" -- so ``status`` silently
+    stops resolving run ids and every ``status`` and ``cancel`` falls through to a dispatch
+    that costs a runner.
+
+    **SAID RATHER THAN WORKED AROUND, AND SAID RATHER THAN REFUSED.** Path rewriting to
+    make ``gh.exe`` usable would be clever, cross-OS, slow, and would still leave the
+    credential in the wrong place; refusing would take the platform away from somebody who
+    is one ``apt install`` from working. One line naming the executable and the remedy is
+    the whole of what is useful here. Native Windows is not supported and this does not
+    make it so -- it only names the failure on the arrangement that is.
+    """
+    variables = os.environ if environ is None else environ
+    locate = shutil.which if which is None else which
+    if not _under_wsl(variables, kernel_release):
+        return None
+    windows = [
+        f"{tool} is {found}"
+        for tool in ("gh", "git")
+        if (found := locate(tool)) is not None and _is_a_windows_executable(found)
+    ]
+    if not windows:
+        return None
+    return (
+        f"{', and '.join(windows)} -- a Windows executable on WSL's inherited PATH, and "
+        "edullm cannot use it. gh.exe reads your login from %AppData% rather than "
+        "~/.config/gh, so check and submit disagree about who you are, and it cannot write "
+        "to a Linux temporary directory, so status stops resolving run ids. Install the "
+        "Linux build inside WSL -- for Ubuntu, `sudo apt install gh git` -- or set "
+        "appendWindowsPath=false under [interop] in /etc/wsl.conf. Nothing below this line "
+        "is trustworthy until you do."
+    )
+
+
+def _under_wsl(variables: Mapping[str, str], kernel_release: str | None) -> bool:
+    """Whether this is a Linux kernel Microsoft shipped, by the two signals there are.
+
+    The environment variable is what WSL itself sets and is the cheap answer; the kernel
+    release string is the one that survives a login shell that scrubbed the environment,
+    and is what everything from Docker to Ansible keys on. Neither is read on a machine
+    that is not Linux, so a macOS ``/mnt``-mounted anything cannot trip this.
+    """
+    if variables.get("WSL_DISTRO_NAME") or variables.get("WSL_INTEROP"):
+        return True
+    if kernel_release is not None:
+        return "microsoft" in kernel_release.lower()
+    if not sys.platform.startswith("linux"):
+        return False
+    return "microsoft" in platform.uname().release.lower()
+
+
+def _is_a_windows_executable(path: str) -> bool:
+    """A ``.exe``, or anything reached through the Windows drives WSL mounts at ``/mnt``."""
+    lowered = path.lower()
+    return lowered.endswith((".exe", ".bat", ".cmd")) or lowered.startswith("/mnt/")
 
 
 @dataclass(frozen=True)

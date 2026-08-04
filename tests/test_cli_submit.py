@@ -19,12 +19,14 @@ from pathlib import Path
 
 import pytest
 
-from edullm_platform.cli.actions import SUBMIT_WORKFLOW
+from edullm_platform.cli.actions import PLATFORM_REPOSITORY, SUBMIT_WORKFLOW
 from edullm_platform.cli.main import EXIT_OK, EXIT_REFUSED
+from edullm_platform.cli.release import install_command, installed_version
 from edullm_platform.submission import SubmissionInputs
 from tests.cli_support import (
     PROJECT_ROOT,
     FakeRunner,
+    failed,
     git_answers,
     invoke,
     ok,
@@ -39,11 +41,15 @@ WORKFLOW_RUN = {
     "html_url": "https://github.com/edu-llm/platform/actions/runs/19407766",
 }
 
+#: The endpoint the version probe reads, spelled as the prefix ``FakeRunner`` matches on.
+RELEASES = ("gh", "api", f"repos/{PLATFORM_REPOSITORY}/releases/latest")
+
 
 def submitting(
     tmp_path: Path,
     *,
     compiled: dict[str, object] | None = None,
+    release: object | None = None,
     **spec: object,
 ) -> tuple[Path, FakeRunner]:
     """A checkout that can submit, with GitHub answering as it does after a dispatch."""
@@ -51,6 +57,10 @@ def submitting(
     answers = dict(git_answers(tmp_path))
     answers[("gh", "workflow", "run")] = ok("")
     answers[("gh", "api")] = ok(json.dumps({"workflow_runs": [WORKFLOW_RUN]}))
+    # The suite runs from a checkout, where ``installed_version`` finds no distribution and
+    # nothing can be stale. Answering the probe with the current release by default keeps
+    # every other test in this file about the thing it is about.
+    answers[RELEASES] = release if release is not None else ok(_current_release())
 
     def download(argv: tuple[str, ...]) -> object:
         if compiled is None:
@@ -66,6 +76,13 @@ def submitting(
 
     answers[("gh", "run", "download")] = download  # type: ignore[assignment]
     return tmp_path, FakeRunner(answers)
+
+
+def _current_release() -> str:
+    """Whatever this install would call itself, so the default probe answer is "current"."""
+    installed = installed_version()
+    version = installed.version or "0.0.0"
+    return f"v{version}\t2026-08-04T00:00:00Z\n"
 
 
 def dispatched_fields(runner: FakeRunner) -> dict[str, str]:
@@ -320,3 +337,137 @@ def test_the_workflow_it_dispatches_is_the_one_the_trust_policy_pins(
     assert argv[3] == SUBMIT_WORKFLOW
     # And that name is a file in this repository rather than a string agreeing with itself.
     assert (PROJECT_ROOT / ".github" / "workflows" / SUBMIT_WORKFLOW).is_file()
+
+
+# ---------------------------------------------------------------------------------------
+# the version probe
+# ---------------------------------------------------------------------------------------
+#
+# ONE gh CALL, HERE AND NOWHERE ELSE. The reviewed configuration travels inside the wheel,
+# `config/` took 55 commits in the last thirty days, and the direction that costs money is
+# real: #188 withdrew two H100 shapes, so a CLI from before it prices an H100 run, calls it
+# valid, and spends a lead's approval on a submission admission then refuses. This is the
+# one moment in the CLI's life where that is worth an API call, because it is the one
+# moment where being wrong costs somebody else's attention.
+
+
+def test_a_stale_install_is_warned_and_dispatched_anyway(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**WARN, NOT REFUSE, AND THE DISPATCH IS THE ASSERTION.**
+
+    Mutation: refuse on staleness. Releases are cut per merge touching the CLI or the
+    configuration, so being behind is the ordinary state of every install within a day --
+    and a refusal that fires on the ordinary state is one everybody routes around, at which
+    point it protects nobody and has cost somebody a submission at a bad hour. The probe
+    also fails open by requirement, so a gate here would advertise an enforcement that
+    being offline defeats, over a check admission makes again inside AWS regardless.
+
+    The warning carries the ``--force`` install line and must not carry the other one:
+    ``uv tool upgrade`` answers ``Nothing to upgrade`` for a git-installed tool, so a
+    warning suggesting it would send the reader away believing they had fixed this.
+    """
+    root, runner = submitting(
+        tmp_path, release=ok("v99.0.0\t2026-07-01T00:00:00Z\n")
+    )
+
+    code, _, err = invoke(
+        [
+            "submit",
+            "--dataset",
+            "regmix-10b-v1",
+            "--experiment",
+            "an-experiment",
+            "--no-wait",
+        ],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK
+    assert len(runner.ran("gh", "workflow", "run")) == 1
+    assert "v99.0.0" in err
+    assert install_command(repository=PLATFORM_REPOSITORY, tag="v99.0.0") in err
+    assert "uv tool upgrade" not in err
+
+
+def test_the_probe_runs_before_the_dispatch_and_not_after_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: ask afterwards.
+
+    The warning is about a submission that is about to be made. Printed after the dispatch
+    it is a fact about one that already was, arriving under the run url, where the reader
+    has what they came for and has stopped reading.
+    """
+    root, runner = submitting(tmp_path, release=ok("v99.0.0\t2026-07-01T00:00:00Z\n"))
+
+    invoke(
+        [
+            "submit",
+            "--dataset",
+            "regmix-10b-v1",
+            "--experiment",
+            "an-experiment",
+            "--no-wait",
+        ],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+
+    order = [argv[:3] for argv in runner.calls if argv[0] == "gh"]
+    assert order.index(RELEASES) < order.index(("gh", "workflow", "run"))
+
+
+def test_a_probe_that_cannot_be_answered_still_dispatches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: raise, or return non-zero, when the probe fails.
+
+    A validator that stops working on a train is worse than one that is occasionally
+    stale, and a repository with no releases yet answers 404 -- which is the state this
+    one is in until the first tag is cut, so the day-one behaviour is the failure path.
+    """
+    root, runner = submitting(tmp_path, release=failed("gh: Not Found (HTTP 404)"))
+
+    code, _, err = invoke(
+        [
+            "submit",
+            "--dataset",
+            "regmix-10b-v1",
+            "--experiment",
+            "an-experiment",
+            "--no-wait",
+        ],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK
+    assert len(runner.ran("gh", "workflow", "run")) == 1
+    assert "404" in err
+
+
+def test_a_submission_refused_locally_is_not_worth_a_probe_either(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The existing "no gh at all" property, restated now that there is a second gh call.
+
+    Mutation: probe before the local checks. Nothing is being dispatched, so there is no
+    approval to protect, and the researcher is about to be handed a wall of refusals with
+    a note about a newer version on top of it.
+    """
+    root, runner = submitting(tmp_path)
+
+    code, _, _ = invoke(
+        ["submit", "--dataset", "math-frontload-100m", "--experiment", "an-experiment"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_REFUSED
+    assert runner.ran("gh") == []

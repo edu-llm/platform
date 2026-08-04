@@ -1,6 +1,15 @@
 [project]
 name = "edullm-platform"
-version = "0.1.0"
+# BUMPED BY `.github/workflows/release-tag.yml` AND NOT BY HAND, THOUGH A HAND EDIT IS
+# HONOURED. It read 0.1.0 from the first commit to the day the CLI shipped, so
+# `edullm --version` answered the same thing for an install from today and one from six
+# weeks earlier, and a staleness check against a number that never moves checks nothing.
+# That workflow cuts a release per merge to main touching src/edullm_platform/** or
+# config/**, which is what `edullm submit` compares this against.
+#
+# 0.2.0 rather than 0.1.1 because 0.1.0 was never released and nothing was ever installed
+# from a tag; the first tag this repository has should not look like the second.
+version = "0.2.0"
 requires-python = ">=3.12"
 dependencies = [
   "pydantic>=2,<3",
@@ -45,10 +54,25 @@ reader = [
   "edullm-data @ git+https://github.com/edu-llm/edullm-data@38bf831a6c3f445e394784018441fd59288b876c",
 ]
 
-# THE BINARY. `uv tool install edullm --from git+https://github.com/edu-llm/platform@<tag>`
-# installs one executable, which is the whole of what a researcher needs on day one --
-# `docs-frank/reference/system-overview.md` counts twelve of the fourteen surfaces that
-# reach a researcher as this one command.
+# THE BINARY. One command installs one executable, which is the whole of what a researcher
+# needs on day one -- `docs-frank/reference/system-overview.md` counts twelve of the
+# fourteen surfaces that reach a researcher as this one command:
+#
+#   uv tool install --force git+https://github.com/edu-llm/platform@v0.2.0
+#
+# THAT LINE IS TESTED RATHER THAN PROOFREAD, by tests/test_cli_install_command.py, which
+# holds it to the one in `edullm_platform.cli.release`. What used to be written here was
+# `uv tool install edullm --from git+https://github.com/edu-llm/platform@<tag>`, and it
+# had never been run: `--from` names the distribution, the distribution is
+# `edullm-platform`, `edullm` is only the console script, and uv answers "Package name
+# (`edullm-platform`) provided with `--from` does not match install request (`edullm`)".
+# It had already been copied into two transcripts by the time anybody typed it, which is
+# why the copy is now a test rather than a comment.
+#
+# `--force` is also the upgrade, because there is no working upgrade to point at:
+# `uv tool upgrade edullm-platform` answers `Nothing to upgrade` for a git-installed tool,
+# with `--reinstall` too, so the obvious command tells a researcher they are current when
+# they are not. It must never appear in a guide except beside that answer.
 [project.scripts]
 edullm = "edullm_platform.cli:main"
 
@@ -61,9 +85,17 @@ packages = ["src/edullm_platform"]
 
 # THE REVIEWED CONFIGURATION TRAVELS INSIDE THE WHEEL, AND THAT IS WHAT KEEPS THE CLI AND
 # THE VALIDATOR FROM DISAGREEING ABOUT WHAT IS VALID. `edullm check` reads the same
-# config/*.yaml the compile job reads, so an install from a tag refuses exactly what the
-# platform at that tag refuses -- where a CLI carrying its own copy of a threshold would be
-# wrong within a month and wrong silently.
+# config/*.yaml the compile job reads, rather than a threshold copied into the CLI, which
+# would be wrong within a month and wrong silently.
+#
+# It buys a pinned copy and not agreement with the server, and the difference matters.
+# submit-run.yml checks out `github.sha` on the default branch, so the compile job reads
+# config/ at main HEAD; admission re-derives every verdict from a named subset zipped into
+# its Lambda on a separate cadence. The platform does not run at a tag. What the wheel buys
+# is that a config-only change cannot brick an installed CLI -- contracts/base.py sets
+# extra="forbid", so a CLI fetching config at runtime would exit 2 on every machine older
+# than the merge that added one field. `edullm submit` closes the gap the other way, by
+# naming the current release before it spends anybody's approval.
 #
 # force-include rather than a package directory, because config/ is the control plane and
 # has to stay at the repository root where every workflow, tool and test already reads it.

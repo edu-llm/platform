@@ -15,9 +15,12 @@ answer to a different question:
 1. ``--config-dir``, for a researcher checking a submission against a branch of the
    platform before it merges.
 2. ``EDULLM_CONFIG_DIR``, the same thing without retyping it.
-3. The copy packaged into the installed distribution, which is the ordinary path. A
-   ``uv tool install`` from a tag pins the configuration to that tag, so what the CLI
-   refuses is what the platform at that tag refuses.
+3. The copy packaged into the installed distribution, which is the ordinary path. An
+   install from a tag pins the configuration to that tag -- which is reproducibility of the
+   CLI and is *not* agreement with the platform, because ``submit-run.yml`` checks out
+   ``github.sha`` on the default branch and admission runs whatever Lambda release is
+   deployed. There are three vintages and this is the third. ``edullm submit`` names the
+   current release before it dispatches, which is where that gap is made visible.
 4. A ``config/`` directory found by walking up from the working directory, which is what
    makes the suite and a platform checkout work with no environment set at all.
 

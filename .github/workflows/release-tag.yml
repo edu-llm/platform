@@ -1,0 +1,131 @@
+name: Cut a release when the CLI or the configuration changes
+
+# THE ONE THING THAT MAKES `edullm submit`'S STALENESS CHECK MEAN ANYTHING. That check asks
+# `repos/edu-llm/platform/releases/latest` and compares the answer with the version the
+# researcher has installed, so if releases are cut by somebody remembering to, then the
+# morning somebody forgets is the morning every CLI in the field is told it is current.
+# The dangerous config change is the one nobody thought was a release: #188 took two H100
+# shapes off the form, and a CLI from before it will price an H100 run, call it valid, and
+# spend a lead's approval on a submission admission then refuses.
+#
+# So it is automatic, and the paths below are the definition of "worth a release": the code
+# that decides a refusal, the configuration that decides it, and the file the version lives
+# in. A merge touching none of them changes nothing an installed CLI would answer
+# differently, and cutting a release for it would teach people that the version moving
+# means nothing -- which is where this started.
+#
+# WHAT IT COSTS IS ONE BOT COMMIT PER QUALIFYING MERGE, and that is the cheaper of the two
+# available mistakes. The alternative is a required-check that fails a pull request touching
+# those paths without a version bump; it costs no commit and is forgotten in exactly the
+# hotfix where the config change is most urgent and least reviewed.
+#
+# NO WHEEL IS BUILT AND NOTHING IS UPLOADED. `uv tool install git+...@<tag>` builds the
+# wheel on the researcher's own machine from the tagged source, so a release here is a tag,
+# a name and generated notes. No PyPI token, no signing key, no index, no new runner OS.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/edullm_platform/**"
+      - "config/**"
+      - "pyproject.toml"
+
+# contents: write is the whole of it, and it is why this is its own file rather than a job
+# in ci.yml -- that workflow declares contents: read and runs on pull_request, including
+# from forks. Nothing here runs on a pull request and nothing here reads one.
+permissions:
+  contents: write
+
+# Serialized rather than cancelled. Two merges landing a minute apart must produce two
+# releases; cancelling the first would leave its commit on main with no tag pointing at it
+# and the version already bumped past it.
+concurrency:
+  group: release-tag
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: tag and release
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 because the decision below is "does this tag already exist", and
+      # the shallow default fetches no tags at all -- which would read as "no tag exists"
+      # every time and try to cut the same one on every merge.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # TWO CASES, AND THE SECOND ONE IS WHAT MAKES THE FIRST RELEASE POSSIBLE.
+      #
+      # If no tag matches the declared version, the version is ahead of the tags: either
+      # somebody bumped it by hand in this pull request -- a minor or major bump, which is
+      # a statement nobody should have to fight this workflow to make -- or this is the
+      # first run and there are no tags at all. Both want the same thing: tag what is here.
+      #
+      # Otherwise the declared version has already been released, so this merge is an
+      # ordinary one and earns the next patch. The bump is committed to main before the tag
+      # is cut, so the tag points at a tree whose pyproject.toml says what the tag says. An
+      # install from that tag then reports a version equal to its own tag, which is what
+      # the staleness comparison assumes and what a test asserts.
+      - name: Decide the version this merge releases
+        id: version
+        run: |
+          set -euo pipefail
+          version="$(python3 tools/next_version.py)"
+          if git rev-parse --verify --quiet "refs/tags/v${version}" >/dev/null; then
+            version="$(python3 tools/next_version.py --bump)"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add pyproject.toml
+            git commit -m "Release v${version}"
+            git push origin HEAD:main
+            echo "bumped=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "bumped=false" >> "${GITHUB_OUTPUT}"
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "tag=v${version}" >> "${GITHUB_OUTPUT}"
+
+      # A RELEASE AND NOT ONLY A TAG, deliberately. The CLI's probe reads
+      # `repos/.../releases/latest`, which a bare tag does not create and which answers 404
+      # for a repository that has tags and no releases -- so tagging alone would leave the
+      # probe permanently unable to answer, which it reads as "say nothing".
+      #
+      # WHETHER config/ MOVED IS THE FIRST LINE OF THE NOTES, because it is the one thing a
+      # reader needs and the one thing generated notes cannot infer. A release that changed
+      # only code costs a researcher nothing to skip; one that moved the reviewed
+      # configuration is a release after which their `edullm check` and the platform
+      # answer the same question differently.
+      - name: Cut the tag and the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if git rev-parse --verify --quiet "${BEFORE}^{commit}" >/dev/null \
+             && ! git diff --quiet "${BEFORE}" HEAD -- config/; then
+            headline="**This release moves the reviewed configuration**, so \`edullm check\` answers differently after you re-install."
+          else
+            headline="This release changes code only. The reviewed configuration is unchanged."
+          fi
+
+          cat > "${RUNNER_TEMP}/notes.md" <<EOF
+          ${headline}
+
+          Install, upgrade or repair — one idempotent line does all three:
+
+          \`\`\`bash
+          uv tool install --force git+https://github.com/${GITHUB_REPOSITORY}@${TAG}
+          \`\`\`
+
+          \`uv tool upgrade\` does not work for a tool installed from git: it answers \`Nothing to upgrade\` whatever the state of the install, including with \`--reinstall\`. The line above is the upgrade.
+          EOF
+
+          git tag -a "${TAG}" -m "${TAG}"
+          git push origin "${TAG}"
+          gh release create "${TAG}" \
+            --title "${TAG}" \
+            --notes-file "${RUNNER_TEMP}/notes.md" \
+            --generate-notes
