@@ -36,7 +36,7 @@
 # launches. A pool that has something costs one instance for as long as it takes to call
 # terminate-instances, which is seconds. Every answer below was re-measured that way against
 # every subnet each shape's instance type is offered in, and the launched instances were
-# terminated immediately. Six of the fifteen answers were wrong.
+# terminated immediately. Six of the seventeen answers were wrong.
 #
 # THE SHAPE OF THE ERROR IS WORTH MORE THAN THE CORRECTIONS. Every wrong answer was wrong in
 # the same direction -- a shape recorded as reliable that does not place -- and the reason is

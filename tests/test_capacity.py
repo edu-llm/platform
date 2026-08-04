@@ -39,7 +39,7 @@ PLACEMENT_ANSWERS = frozenset({"reliably", "unreliably"})
 #: because nothing launches -- put the whole g6e family, both multi-card g6 sizes and both
 #: multi-card g5 sizes on this list.
 #:
-#: THE COUNT IS LOAD-BEARING IN A SECOND WAY NOW. Ten of fifteen priced shapes do not place,
+#: THE COUNT IS LOAD-BEARING IN A SECOND WAY NOW. Ten of seventeen priced shapes do not place,
 #: so this set being long is the finding rather than an accident of bookkeeping, and shrinking
 #: it back is a claim that wants the same probe behind it.
 SHAPES_THAT_DO_NOT_PLACE = frozenset(
