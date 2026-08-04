@@ -134,14 +134,38 @@
 # and does not. Between the two, a truncated read that this validator still describes as an
 # unreviewed finding is the exact sentence the change exists to stop saying. Cut from
 # 83318b3, and the digest below is a local rebuild of that tree rather than a copied number.
+#
+# THIS RELEASE CARRIES A CONTAINER MEMORY CORRECTION AND CHANGES NO ADMISSION DECISION.
+# src/edullm_platform/execution.py is one of the twenty-eight modules in this zip, and #187
+# moved two entries in CONTAINER_SHAPES: gpu-1xl4 from 15360 to 14315 and gpu-1xl40s from
+# 31744 to 30587, because a g6.xlarge registers 15339 MiB with ECS and a g6e.xlarge 31611,
+# so both shapes asked for more than their host can offer and Batch refused to place them.
+# Nothing on the handler's path reads a shape's memory -- placement is Batch's decision and
+# it is taken long after admission -- so the validator this release deploys admits and
+# refuses exactly what the one before it did. What was stale was the bytes, never the
+# behaviour.
+#
+# THE ORDERING RULE IN THIS FILE IS WHY THIS RELEASE IS ITS OWN COMMIT. #187 landed red on
+# the tripwire deliberately: bumping the digest there would have described a release nobody
+# had performed, since deploy-phase2-admission.yml runs only from main and the zip could not
+# be uploaded until the change merged. So the release was cut from main at ae829f0 with
+# tools/release_lambda.py, which uploaded before editing and read the version id below off
+# what S3 returned. Neither field here was typed by hand.
+#
+# Only the validator was released. The lifecycle recorder rebuilds to 82d291969f3b, the
+# digest already in its own record, because since 2026-08-04 each builder names the config
+# its own handler reads and execution.py is not among the recorder's modules. Releasing it
+# too would have uploaded identical bytes under a new version id and put a Lambda nobody
+# changed through a CloudFormation update, so `--function validator` was passed rather than
+# taking the tool's default of both.
 schema_version: 1
 
 #: The object the template's Code block names. Kept here as well so the two can be
 #: compared: a version id edited in one place and not the other is a template pointing at
 #: a zip nobody recorded, or a record describing a zip nobody deployed.
 s3_key: admission-validator/admission-validator.zip
-s3_object_version: TPmo8NeJBp4EP_Vs82xveP0SAEBlj2YE
+s3_object_version: RM5oUf3SoXJBtDRl3XiODEOSKLdWxECZ
 
 #: sha256 of the uploaded zip, as tools/build_admission_lambda.py reports it. This is the
 #: field that ties the release to a tree rather than to a moment.
-sha256: 6d5524f6cfb5505cd5bfc13b2e712d61cddfdba57d61d9635d6510eb519550b4
+sha256: d02adc7738217af87e47d9877050d23cba8cc14a8b1c8349bb665700961fbafe
