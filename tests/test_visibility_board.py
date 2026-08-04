@@ -37,6 +37,7 @@ import ast
 import json
 import re
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -48,27 +49,35 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "tools"))
 
 from visibility_board import (
+    BINDING_PREFIX,
+    DEGRADING_LINEAGE_PREFIXES,
     EXIT_DISAGREES,
     EXIT_OK,
     EXIT_UNUSABLE,
+    MISSING_BINDING_GRANT,
     MISSING_TAG_GRANT,
     PLATFORM_TAG_KEYS,
+    REQUIRED_LINEAGE_PREFIXES,
     RUN_ID_TAG,
     Board,
+    BoundRun,
     Match,
     OutputPrefix,
     SourceGap,
     TaggedResource,
     WandbRun,
     build_board,
+    read_binding_records,
     read_output_prefixes,
     read_tagged_resources,
     render,
     run_id_of,
     team_runs_prefix,
 )
+from wandb_reconciliation import WandbReference, observe
 
 from edullm_platform.capture_tooling import CaptureFailedError
+from edullm_platform.contracts.execution import BatchJobBinding
 from edullm_platform.contracts.results import OUTPUTS_BUCKET, output_prefix
 
 EXECUTION = PROJECT_ROOT / "src" / "edullm_platform" / "execution.py"
@@ -135,6 +144,53 @@ def a_resource(run_id: str | None, *, team: str = "platform") -> TaggedResource:
 
 def a_prefix(segment: str, *, team: str = "platform", objects: int = 4) -> OutputPrefix:
     return OutputPrefix(team=team, segment=segment, objects=objects, bytes=15317 * objects)
+
+
+def a_binding(run_id: str, *, profile: str = "gpu-1xa10g", day: int = 28) -> BoundRun:
+    return BoundRun(
+        run_id=run_id,
+        compute_profile=profile,
+        submitted_at=datetime(2026, 7, day, 5, 24, 39, tzinfo=UTC),
+    )
+
+
+def a_binding_record(run_id: str, *, profile: str = "cpu-32vcpu") -> dict[str, Any]:
+    """A stored binding built through the contract, so a fixture cannot outlive the shape."""
+    record = BatchJobBinding(
+        schema_version=1,
+        run_id=run_id,
+        batch_job_id="caddfe44-daaa-4469-b185-609c708b02de",
+        batch_job_arn=(
+            f"arn:aws:batch:us-east-1:{DOCUMENTATION_ACCOUNT}:job/"
+            "caddfe44-daaa-4469-b185-609c708b02de"
+        ),
+        batch_job_name=run_id,
+        job_queue_arn=(
+            f"arn:aws:batch:us-east-1:{DOCUMENTATION_ACCOUNT}:job-queue/"
+            "sbsandbox-intern-edullm-cpu"
+        ),
+        job_definition_arn=(
+            f"arn:aws:batch:us-east-1:{DOCUMENTATION_ACCOUNT}:job-definition/"
+            "sbsandbox-intern-edullm-cpu-run"
+        ),
+        compute_profile=profile,
+        log_group="/aws/batch/sbsandbox-intern-edullm-cpu",
+        attempt_duration_seconds=3600,
+        attempts=1,
+        array_size=None,
+        submitted_at="2026-07-28T05:24:39.892Z",
+    )
+    return json.loads(record.model_dump_json())
+
+
+def a_binding_tree(root: Path, records: dict[str, Any]) -> Path:
+    directory = root / BINDING_PREFIX
+    directory.mkdir(parents=True, exist_ok=True)
+    for name, body in records.items():
+        (directory / f"{name}.json").write_text(
+            body if isinstance(body, str) else json.dumps(body), encoding="utf-8"
+        )
+    return root
 
 
 # ----------------------------------------------------------------------------------------
@@ -811,6 +867,464 @@ def test_the_statement_reaches_the_report_rather_than_only_the_source() -> None:
     assert MISSING_TAG_GRANT in report
     assert "```yaml" in report
     assert "which runs logged nothing" in report
+
+
+# ----------------------------------------------------------------------------------------
+# The second account-side source, and the horizon each one covers
+# ----------------------------------------------------------------------------------------
+
+
+def test_a_run_the_tagging_api_has_forgotten_is_still_on_the_account_side() -> None:
+    """THE ONE THAT MATTERS. Mutation: read the account from the tags alone, as before.
+
+    The tagging API reports a resource while the resource exists and Batch drops a finished
+    job after about a week, so the account side shrinks on its own. Measured on 2026-08-04
+    the platform held 136 intent records, the tags answered for 112 runs, and five of the 24
+    the board could not see carry a binding -- which means Batch accepted them and they ran.
+    A denominator that quietly contracts is worse than a small one, because every count over
+    it reads as a trend.
+    """
+    board = build_board(
+        wandb_runs=[a_wandb_run(NAMED_RUN, Match.NAMED)],
+        resources=[a_resource(NAMED_RUN)],
+        bindings=[a_binding(NAMED_RUN), a_binding(UNNAMED_RUN)],
+        outputs=[a_prefix(NAMED_RUN)],
+    )
+
+    assert board.account_run_ids == frozenset({NAMED_RUN, UNNAMED_RUN})
+    assert board.in_account_not_in_wandb == (UNNAMED_RUN,)
+    assert UNNAMED_RUN in board.known_run_ids
+
+    report = render(board)
+
+    assert "## Spend nobody can see a loss curve for" in report
+    assert "| binding |" in report, "the row says which source still remembers the run"
+
+
+def test_the_two_account_sources_are_named_separately_in_the_table() -> None:
+    """Mutation: merge the two into one mapping and print one column.
+
+    They are opposite kinds of evidence. A run known only from a binding is one the tagging
+    API has already forgotten, which is the case this source was added for; a run known only
+    from the tags never went through admission, which is a different finding with a
+    different owner. One column that said "the account" would hide both.
+    """
+    board = build_board(
+        wandb_runs=[],
+        resources=[a_resource(NAMED_RUN)],
+        bindings=[a_binding(DIED_RUN)],
+        outputs=[],
+    )
+
+    report = render(board)
+
+    assert f"| `{NAMED_RUN}` " in report and "| tags |" in report
+    assert f"| `{DIED_RUN}` " in report and "| binding |" in report
+
+
+def test_an_unread_binding_prefix_narrows_the_horizon_and_keeps_the_account_side() -> None:
+    """Mutation: fold `binding/` into the required sync, which is the shorter diff.
+
+    `sync_bucket` raises on a refused prefix rather than skipping it, so one denial would
+    take the cost figures, the result records and the W&B reconciliation with it -- which is
+    exactly what `attempt/` did to the whole cost mapping for months. The reader role does
+    not hold `binding/` yet, so that denial is tonight's expected answer rather than a
+    hypothetical.
+    """
+    board = build_board(
+        wandb_runs=[a_wandb_run(NAMED_RUN, Match.NAMED)],
+        resources=[a_resource(NAMED_RUN), a_resource(UNNAMED_RUN)],
+        bindings=None,
+        outputs=[a_prefix(NAMED_RUN)],
+        gaps=[
+            SourceGap(
+                source="the account, from `binding/` records",
+                reason="binding_records_not_read",
+                detail="could not read the prefix",
+                unanswered=("which runs the tagging API has already forgotten",),
+                remedy=MISSING_BINDING_GRANT,
+            )
+        ],
+    )
+
+    assert board.account_run_ids == frozenset({NAMED_RUN, UNNAMED_RUN})
+    assert board.in_account_not_in_wandb == (UNNAMED_RUN,)
+
+    report = render(board)
+
+    assert MISSING_BINDING_GRANT in report
+    assert "| the account, from `binding/` records | not read |" in report
+
+
+def test_the_report_says_what_each_number_was_counted_over() -> None:
+    """THE ONE THAT MATTERS. Mutation: add the source and leave the counts unexplained.
+
+    Adding the bindings moves the account side without anything about the account having
+    moved, so a reader holding yesterday's board beside today's reads five new runs. Two of
+    these windows move on their own and none of them was on the page, which made every
+    comparison across mornings a comparison of two populations.
+    """
+    board = build_board(
+        wandb_runs=[a_wandb_run(NAMED_RUN, Match.NAMED)],
+        resources=[a_resource(NAMED_RUN)],
+        bindings=[a_binding(NAMED_RUN), a_binding(UNNAMED_RUN)],
+        outputs=[a_prefix(NAMED_RUN)],
+    )
+
+    report = render(board)
+
+    assert "## What these numbers are counted over" in report
+    assert "| the account, from resource tags | 1 |" in report
+    assert "| the account, from `binding/` records | 2 |" in report
+    assert "roughly a week" in report, "the tagging API's window is the one that moves"
+    assert (
+        "The account side of every finding above is the union of the first two, which is 2"
+        in report
+    )
+
+
+def test_the_horizon_is_printed_even_when_every_source_answered() -> None:
+    """Mutation: print the windows only beside a gap, since a whole board needs no caveat.
+
+    A whole board is exactly when the numbers get compared, and the tagging API's window is
+    narrowing on a night when nothing was refused. The horizon is a property of the sources
+    rather than a symptom of a failure.
+    """
+    board = build_board(
+        wandb_runs=[a_wandb_run(NAMED_RUN, Match.NAMED)],
+        resources=[a_resource(NAMED_RUN)],
+        bindings=[a_binding(NAMED_RUN)],
+        outputs=[a_prefix(NAMED_RUN)],
+        costs={},
+    )
+
+    assert not board.disagrees
+    assert "## What these numbers are counted over" in render(board)
+
+
+def test_the_binding_horizon_names_the_dates_it_actually_covers() -> None:
+    """Mutation: claim "every run ever" and leave it there.
+
+    It is true and unfalsifiable, and it is the one window here that can be measured. A
+    reader who can see the oldest record behind the claim can tell a source that goes back
+    to the first submission from one that was truncated by a partial sync.
+    """
+    board = build_board(
+        wandb_runs=[],
+        resources=[],
+        bindings=[a_binding(NAMED_RUN, day=28), a_binding(UNNAMED_RUN, day=31)],
+        outputs=[],
+    )
+
+    assert "2026-07-28 to 2026-07-31" in render(board)
+
+
+def test_agreement_is_counted_over_the_union_of_the_account_sources() -> None:
+    """Mutation: require both account sources before counting agreement.
+
+    It reads as the careful choice and it makes the number `None` every night until an IAM
+    change lands, which turns a count somebody skips past into a caveat they stop reading. A
+    run either source names really did run, so a missing source can only under-count
+    agreement -- unlike an unread W&B, which would invent findings. That asymmetry is the
+    same one `in_wandb_with_no_output` and `output_with_no_wandb_run` are written around.
+    """
+    board = build_board(
+        wandb_runs=[a_wandb_run(NAMED_RUN, Match.NAMED)],
+        resources=None,
+        bindings=[a_binding(NAMED_RUN)],
+        outputs=[a_prefix(NAMED_RUN)],
+        gaps=[a_gap()],
+    )
+
+    assert board.agreeing == 1
+    assert board.in_account_not_in_wandb == ()
+
+
+def test_neither_account_source_read_still_answers_nothing() -> None:
+    """The line the test above must not cross: no account source is still no account side."""
+    board = build_board(
+        wandb_runs=[a_wandb_run(NAMED_RUN, Match.NAMED)],
+        resources=None,
+        bindings=None,
+        outputs=[a_prefix(NAMED_RUN)],
+        gaps=[a_gap()],
+    )
+
+    assert board.account_run_ids is None
+    assert board.in_account_not_in_wandb is None
+    assert board.agreeing is None
+
+
+def test_a_binding_the_contract_refuses_still_names_its_run(tmp_path: Path) -> None:
+    """THE ONE THAT MATTERS. Mutation: skip a record `BatchJobBinding` will not validate.
+
+    Three of the committed bindings are refused: an early state machine wrote the whole
+    execution payload where `array_size` takes an integer. Those runs ran, the records are
+    immutable, and dropping them would take three runs out of the denominator over a field
+    that says nothing about which run it is -- which is the defect this source exists to
+    close, reintroduced by the reader that closes it.
+    """
+    broken = a_binding_record(DIED_RUN)
+    broken["array_size"] = {"the whole": "execution payload"}
+    root = a_binding_tree(
+        tmp_path, {NAMED_RUN: a_binding_record(NAMED_RUN), DIED_RUN: broken}
+    )
+
+    bound, degraded = read_binding_records(root)
+
+    assert {entry.run_id for entry in bound} == {NAMED_RUN, DIED_RUN}
+    assert degraded == 1
+    assert next(entry for entry in bound if entry.run_id == DIED_RUN).compute_profile is None
+    assert next(entry for entry in bound if entry.run_id == NAMED_RUN).compute_profile
+
+
+def test_a_binding_with_no_readable_run_id_is_counted_and_not_invented(tmp_path: Path) -> None:
+    """Mutation: fall back to the file name, which is the run id for every record there is.
+
+    It is, and taking it from there would mean this reader trusts a key rather than a
+    record. A binding carrying no run id anybody can read is a record the state machine
+    should not have been able to write, and inventing one out of the object key would hide
+    exactly that.
+    """
+    root = a_binding_tree(tmp_path, {NAMED_RUN: {"schema_version": 1, "run_id": "not-a-run"}})
+
+    bound, degraded = read_binding_records(root)
+
+    assert bound == ()
+    assert degraded == 1
+
+
+def test_a_binding_stored_as_a_string_holding_json_is_still_read(tmp_path: Path) -> None:
+    """The state machine writes canonical bytes rather than re-encoding, so both shapes exist."""
+    root = a_binding_tree(
+        tmp_path, {NAMED_RUN: json.dumps(json.dumps(a_binding_record(NAMED_RUN)))}
+    )
+
+    bound, degraded = read_binding_records(root)
+
+    assert [entry.run_id for entry in bound] == [NAMED_RUN]
+    assert degraded == 0
+
+
+def test_a_binding_tree_that_is_not_there_raises_rather_than_reading_as_no_runs(
+    tmp_path: Path,
+) -> None:
+    """THE ONE THAT MATTERS. Mutation: answer with no runs when the directory is absent.
+
+    An empty account side is a claim -- it says this platform has never started anything --
+    and a prefix nobody synced is not. Collapsing them would make a laptop pointed at a
+    partial tree report every W&B run and every output prefix as belonging to a run that
+    never ran, which is the failure `read_tagged_resources` already refuses on its own side.
+    """
+    from report_run_costs import ReportInputError
+
+    with pytest.raises(ReportInputError):
+        read_binding_records(tmp_path)
+
+
+def test_the_degrading_prefix_is_not_one_the_board_cannot_run_without() -> None:
+    """Mutation: declare `binding/` in both lists, so the sync asks for it twice.
+
+    The two sets mean opposite things to `tests/test_nightly_workflow.py`: everything in the
+    required set has to be granted, and everything in the degrading set is allowed to be and
+    is not required to be. A prefix in both would be asserted to be granted and permitted
+    not to be, which is a check that cannot fail.
+    """
+    assert set(REQUIRED_LINEAGE_PREFIXES) & set(DEGRADING_LINEAGE_PREFIXES) == set()
+    assert BINDING_PREFIX in DEGRADING_LINEAGE_PREFIXES
+    assert "result" in REQUIRED_LINEAGE_PREFIXES, (
+        "the W&B reconciliation reads the result records and cannot run without them"
+    )
+
+
+def test_the_binding_statement_the_report_quotes_is_one_somebody_can_apply() -> None:
+    """Mutation: describe the missing grant in prose instead of quoting it.
+
+    The value of naming an IAM change in a 05:00 report is that whoever applies it pastes a
+    reviewed string rather than reconstructing one from a sentence, which is the argument
+    `MISSING_TAG_GRANT` is already held to. Only the statement that can be pasted whole is
+    quoted; the other half of the change edits an existing statement and is said in words.
+    """
+    parsed = yaml.safe_load(MISSING_BINDING_GRANT)
+
+    assert isinstance(parsed, list) and len(parsed) == 1
+    statement = parsed[0]
+    assert statement["Effect"] == "Allow"
+    assert statement["Action"] == "s3:GetObject"
+    assert statement["Resource"]["Fn::Sub"].endswith(f"-lineage/{BINDING_PREFIX}/*")
+    assert "Sid" in statement
+    assert not ACCOUNT_LITERAL.search(MISSING_BINDING_GRANT)
+
+
+# ----------------------------------------------------------------------------------------
+# The W&B reference reconciliation, which is reported and does not move the exit code
+# ----------------------------------------------------------------------------------------
+
+
+def a_reading(*run_ids: str) -> Any:
+    from wandb_reconciliation import ReferenceReading
+
+    return ReferenceReading(
+        references=tuple(
+            WandbReference(
+                run_id=run_id,
+                entity="eduLLM",
+                project="eduLLM",
+                name=run_id,
+                outcome="succeeded",
+            )
+            for run_id in run_ids
+        ),
+        results_read=len(run_ids),
+        without_reference=0,
+        unparsed=0,
+    )
+
+
+def test_a_record_naming_a_run_wandb_does_not_have_is_reported() -> None:
+    reading = a_reading(NAMED_RUN)
+    board = build_board(
+        wandb_runs=[],
+        resources=[a_resource(NAMED_RUN)],
+        outputs=[a_prefix(NAMED_RUN)],
+        observations=observe(reading.references, []),
+        reference_reading=reading,
+    )
+
+    assert len(board.false_references) == 1
+
+    report = render(board)
+
+    assert "## Whether the lineage records name W&B runs that exist" in report
+    assert "lineage record(s) name a W&B run that does not exist" in report
+
+
+def test_a_false_reference_does_not_turn_a_clean_board_into_a_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """THE ONE THAT MATTERS. Mutation: add the false references to `disagrees`.
+
+    It is a real disagreement and it is one nobody can repair: the lineage bucket refuses
+    any write to a key that already exists, so the 28 records carrying a false reference
+    carry it for ever. Gating on it would hold this job red permanently, and the next real
+    finding would arrive at a job that was already red -- which is the argument
+    `tools/find_runs_that_saved_nothing.py` makes beside its own acknowledgement list. The
+    count is in the verdict line and the runs are in a table, which is what a reader acts on.
+    """
+    reading = a_reading(NAMED_RUN)
+    board = build_board(
+        wandb_runs=[a_wandb_run(NAMED_RUN, Match.NAMED, project="somewhere-else")],
+        resources=[a_resource(NAMED_RUN)],
+        bindings=[a_binding(NAMED_RUN)],
+        outputs=[a_prefix(NAMED_RUN)],
+        costs={},
+        observations=observe(
+            reading.references, [a_wandb_run(NAMED_RUN, Match.NAMED, project="somewhere-else")]
+        ),
+        reference_reading=reading,
+    )
+
+    assert board.false_references, "the reference is false and the board says so"
+    assert not board.disagrees
+    assert _exit_for(board, monkeypatch, tmp_path) == EXIT_OK
+
+
+def test_the_reconciliation_does_not_rescue_a_board_that_disagrees(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The other direction, which is the one the exit code must not lose.
+
+    The board exits 1 today because it found 78 real disagreements, and that is the tool
+    working. Nothing added here is allowed to move a run off the account side or otherwise
+    turn one of those into a pass.
+    """
+    reading = a_reading(NAMED_RUN)
+    resolves = a_wandb_run(NAMED_RUN, Match.NAMED, project="eduLLM")
+    board = build_board(
+        wandb_runs=[resolves],
+        resources=[a_resource(NAMED_RUN)],
+        bindings=[a_binding(NAMED_RUN), a_binding(UNNAMED_RUN)],
+        outputs=[a_prefix(NAMED_RUN)],
+        observations=observe(reading.references, [resolves]),
+        reference_reading=reading,
+    )
+
+    assert board.false_references == ()
+    assert board.disagrees
+    assert _exit_for(board, monkeypatch, tmp_path) == EXIT_DISAGREES
+
+
+def test_an_unreachable_wandb_marks_no_lineage_record_false() -> None:
+    """THE ONE THAT MATTERS, again, at the board's own boundary.
+
+    With W&B unread every reference is trivially unresolvable, and a board that printed that
+    would report the whole result store as lying on the morning a key lapsed.
+    """
+    reading = a_reading(NAMED_RUN, UNNAMED_RUN)
+    board = build_board(
+        wandb_runs=None,
+        resources=[a_resource(NAMED_RUN)],
+        outputs=[],
+        observations=observe(reading.references, None),
+        reference_reading=reading,
+        gaps=[a_gap()],
+    )
+
+    assert board.false_references == ()
+
+    report = render(board)
+
+    assert "Not asked" in report
+    assert "name a W&B run that does not exist" not in report
+
+
+def test_the_runs_that_logged_nowhere_are_named_on_stderr(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: print them only into the markdown.
+
+    A step summary is read by a person the morning after; a machine-readable line is what
+    lets somebody grep a month of scheduled logs for a run that never logged. It costs one
+    line and it is the reporting half of this change, which is the part that was asked for.
+    """
+    reading = a_reading(NAMED_RUN)
+    board = build_board(
+        wandb_runs=[],
+        resources=[a_resource(NAMED_RUN)],
+        outputs=[],
+        observations=observe(reading.references, []),
+        reference_reading=reading,
+    )
+
+    _exit_for(board, monkeypatch, tmp_path)
+
+    assert f"logged_nowhere {NAMED_RUN}" in capsys.readouterr().err
+
+
+def test_the_machine_readable_answer_is_written_when_asked_for(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import visibility_board
+
+    reading = a_reading(NAMED_RUN)
+    board = build_board(
+        wandb_runs=[],
+        resources=[a_resource(NAMED_RUN)],
+        outputs=[],
+        observations=observe(reading.references, []),
+        reference_reading=reading,
+    )
+    monkeypatch.setattr(visibility_board, "_collect", lambda _: board)
+    landing = tmp_path / "observations.json"
+
+    visibility_board.main(
+        ["--output", str(tmp_path / "board.md"), "--wandb-observations", str(landing)]
+    )
+
+    written = json.loads(landing.read_text(encoding="utf-8"))
+
+    assert written["counts"] == {"present": 0, "absent": 1, "unreachable": 0}
+    assert [entry["run_id"] for entry in written["observations"]] == [NAMED_RUN]
 
 
 def test_the_nightly_reader_role_holds_the_statement_this_report_quotes() -> None:

@@ -132,8 +132,28 @@ def read_records(directory: Path) -> tuple[list[IntentRecord], list[SchedulerAtt
     return intents, attempts, unparsed
 
 
-def sync_bucket(bucket: str, destination: Path, *, profile: str | None, region: str | None) -> None:
-    for prefix in LINEAGE_PREFIXES:
+def sync_bucket(
+    bucket: str,
+    destination: Path,
+    *,
+    profile: str | None,
+    region: str | None,
+    prefixes: Sequence[str] = LINEAGE_PREFIXES,
+) -> None:
+    """Pull each named prefix, refusing to carry on past one that would not come.
+
+    ``prefixes`` defaults to the two this report needs and is a parameter because the
+    visibility board reads more of the store than this does -- the result records, for the
+    W&B reconciliation, and the binding records, for the account side. One spelling of the
+    sync rather than a second one over there: a prefix that raises here and is skipped there
+    would be two different meanings for the same denial.
+
+    All or nothing within one call, which is the property the caller depends on. A half
+    synced tree reads as records that were never written, and a report that quietly
+    described the readable subset is the failure this whole board exists to find. A caller
+    that can survive one prefix being refused asks for it in a call of its own.
+    """
+    for prefix in prefixes:
         completed = aws(
             ["s3", "sync", f"s3://{bucket}/{prefix}/", str(destination / prefix), "--quiet"],
             profile=profile,

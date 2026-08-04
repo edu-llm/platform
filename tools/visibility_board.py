@@ -69,6 +69,31 @@ to every key any team has written anywhere in the bucket, which is a decision ab
 account rather than a decision about a report, so this board is scoped to what the grant
 already allows and says so instead.
 
+**THE ACCOUNT SIDE FORGETS, WHICH IS WHY IT IS READ TWICE.** The resource tagging API reports
+a resource while the resource exists, and Batch stops listing a completed job after roughly a
+week. So the account side of this board shrinks every day on its own: the platform holds 136
+intent records, the tagging API answered for 112 runs on 2026-08-04, and five of the 24 the
+board could not see carry a ``binding/`` record, which means Batch accepted them and they
+genuinely ran. A denominator that quietly contracts is worse than a small one, because every
+count taken over it reads as a trend.
+
+``binding/`` is the second source and it is a join rather than a new read: the board already
+syncs this bucket for the cost figures. A binding is written write-once by the state machine
+the instant Batch accepts a submission, so it never expires and it is exactly the population
+"what this platform started". What it cannot see is anything that ran in the account without
+going through admission, which is what the tagging API is for and what the untagged section
+below reports. Neither source covers the other, so **the window each one covers is printed**
+rather than left for a reader to assume, and the counts say what they were taken over.
+
+**A RECORD THAT NAMES A W&B RUN IS NOT A RECORD THAT WAS CHECKED.**
+``ResultManifest.wandb_run`` is composed inside the lifecycle recorder out of the entity and
+project the container was handed; nothing asks W&B whether the run is there. Read live on
+2026-08-04, 42 of the 102 result records carry a reference and 28 of them name a run W&B does
+not have. This board is where that gets asked, because it already reads every run in the
+entity -- so the answer costs no second call, no new job on the schedule and no new deployed
+artifact. ``tools/wandb_reconciliation.py`` holds the reasoning, including why the answer is
+recomputed into this report rather than written back beside the record it is about.
+
 **THE ACCOUNT SIDE NEEDS A GRANT, AND THE ROLE NOW HOLDS IT.**
 ``infra/iam/nightly-reader-role.yaml`` grants ``tag:GetResources``, region-conditioned and
 with no adjacent write, which is what makes the account side readable at all. It did not
@@ -106,6 +131,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
@@ -118,11 +144,22 @@ if str(PROJECT_ROOT / "src") not in sys.path:
 if str(TOOLS_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIRECTORY))
 
-from report_run_costs import ReportInputError, read_records, sync_bucket
+from report_run_costs import LINEAGE_PREFIXES, ReportInputError, read_records, sync_bucket
 from verify_wandb_credential import SECRET_NAME, WandbCredentialError, read_the_secret
+from wandb_reconciliation import (
+    RESULT_PREFIX,
+    ReferenceReading,
+    WandbObservation,
+    never_logged,
+    observation_document,
+    observe,
+    read_references,
+    render_section,
+)
 
 from edullm_platform.capture_tooling import CaptureFailedError, aws
 from edullm_platform.config import load_yaml
+from edullm_platform.contracts.execution import BatchJobBinding
 from edullm_platform.contracts.identity import RUN_ID_PREFIX, RUN_ID_REGEX, UUID7_TEXT_PATTERN
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.results import OUTPUTS_BUCKET, output_prefix
@@ -132,20 +169,27 @@ from edullm_platform.execution import WANDB_ENTITY
 from edullm_platform.run_costs import RunCost, run_costs
 
 __all__ = [
+    "BINDING_PREFIX",
+    "DEGRADING_LINEAGE_PREFIXES",
     "EXIT_DISAGREES",
     "EXIT_OK",
     "EXIT_UNUSABLE",
+    "MISSING_BINDING_GRANT",
     "PLATFORM_TAG_KEYS",
+    "REQUIRED_LINEAGE_PREFIXES",
     "RUN_ID_TAG",
     "Board",
+    "BoundRun",
     "Match",
     "OutputPrefix",
     "SourceGap",
+    "SourceHorizon",
     "TaggedResource",
     "WandbRun",
     "build_board",
     "build_parser",
     "main",
+    "read_binding_records",
     "read_output_prefixes",
     "read_tagged_resources",
     "read_wandb_runs",
@@ -246,6 +290,45 @@ MISSING_TAG_GRANT: Final = """\
                     aws:RequestedRegion:
                       Fn::Sub: ${AWS::Region}"""
 
+#: The lineage prefix holding one write-once record per run Batch accepted.
+BINDING_PREFIX: Final = "binding"
+
+#: What this board syncs and cannot report without. ``intent`` and ``attempt`` are the cost
+#: report's own two, and ``result`` is where a W&B reference lives -- the checkpoint
+#: reconciliation already syncs that one, so the reader role already grants it and this costs
+#: no IAM change. ``tests/test_nightly_workflow.py`` derives the grant it expects from this
+#: tuple rather than restating it, which is what stopped ``attempt/`` being missing for
+#: months.
+REQUIRED_LINEAGE_PREFIXES: Final = (*LINEAGE_PREFIXES, RESULT_PREFIX)
+
+#: What it syncs and survives being refused, in a call of its own so that one denial does not
+#: take the required prefixes with it. ``binding/`` is the second account-side source and the
+#: nightly reader role does not hold it yet, so a refusal here is the expected answer today
+#: rather than a finding -- the board reports the narrower horizon and quotes the statement
+#: below. It is separated from the required set rather than folded in because a prefix whose
+#: absence removes a source is a different thing from one whose absence stops the report.
+DEGRADING_LINEAGE_PREFIXES: Final = (BINDING_PREFIX,)
+
+#: What ``infra/iam/nightly-reader-role.yaml`` needs so the second account-side source can be
+#: read, quoted rather than described for the reason :data:`MISSING_TAG_GRANT` is quoted: the
+#: value of naming an IAM change in a 05:00 report is that whoever applies it pastes a
+#: reviewed string instead of reconstructing one from a sentence.
+#:
+#: Only the statement that can be pasted whole is quoted. The second half of the change is an
+#: edit to an existing statement -- ``binding/*`` added to the ``s3:prefix`` condition on
+#: ``ListLineageRecords`` -- and it is said in the gap's own words rather than quoted, because
+#: a fragment that looks pasteable and is not is worse than a sentence. Forgetting it is the
+#: failure that reads as fine in a policy review: ``aws s3 sync`` lists before it fetches, so
+#: a ``GetObject`` grant whose prefix is missing from the condition is refused at the first
+#: call with no object fetched, which is exactly how ``attempt/`` was missing from this board
+#: for every night it ran.
+MISSING_BINDING_GRANT: Final = """\
+              - Sid: ReadBindingRecords
+                Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-lineage/binding/*"""
+
 
 class Match(StrEnum):
     """How firmly a W&B run says which platform run it belongs to.
@@ -322,6 +405,75 @@ class TaggedResource:
 
 
 @dataclass(frozen=True)
+class BoundRun:
+    """One run Batch accepted, as the state machine recorded it at the instant it did.
+
+    THE SECOND ACCOUNT-SIDE SOURCE, AND IT EXISTS BECAUSE THE FIRST ONE FORGETS. The tagging
+    API reports a resource while the resource exists and Batch drops a completed job after
+    about a week, so a board reading tags alone has a denominator that shrinks on its own.
+    A binding is written write-once the moment Batch accepts a submission, so it is
+    permanent and it is the honest answer to "did this run start".
+
+    Three fields out of the eleven the record carries, and the eight left behind are left
+    behind on purpose. The rest are ARNs -- the job, the queue, the job definition -- and
+    every ARN holds the account id, which this report goes into a scheduled log in a public
+    repository without. What the board needs is which runs started, what they were submitted
+    against and when, and none of those three needs an ARN.
+
+    ``compute_profile`` and ``submitted_at`` are optional because three of the committed
+    bindings cannot be parsed against ``BatchJobBinding``: an early state machine wrote the
+    entire execution payload into ``array_size``, where an integer belongs. Those runs ran,
+    the records are immutable, and dropping them would shrink the denominator over a field
+    that has nothing to do with the run's identity -- which is the defect this whole source
+    exists to close. So the run id is taken from a record the contract refuses and the
+    decorations are left empty, and the count of those is reported.
+    """
+
+    run_id: str
+    compute_profile: str | None
+    submitted_at: datetime | None
+
+
+def _binding_span(bound: Mapping[str, BoundRun] | None) -> str:
+    """The dates the binding records actually cover, or nothing to say.
+
+    The window this source claims is "for ever", and a claim of for ever is unfalsifiable
+    until it names the oldest record behind it. It is the one horizon here that can be
+    measured rather than described, so it is.
+    """
+    if not bound:
+        return ""
+    submitted = sorted(
+        entry.submitted_at for entry in bound.values() if entry.submitted_at is not None
+    )
+    if not submitted:
+        return ""
+    return (
+        f", which tonight is {submitted[0].date().isoformat()} "
+        f"to {submitted[-1].date().isoformat()}"
+    )
+
+
+@dataclass(frozen=True)
+class SourceHorizon:
+    """What one source can see, so that a count taken over it can be read.
+
+    A RECONCILIATION THAT QUIETLY CHANGES ITS DENOMINATOR IS WORSE THAN ONE WITH A SMALL
+    DENOMINATOR, because the trend line lies. The tagging API's window moves every day as
+    Batch forgets finished jobs, the binding records never expire, and the outputs listing
+    covers only what a team wrote under ``teams/{team}/runs/``. None of that was on the page
+    before, so a reader comparing two mornings was comparing two populations.
+
+    ``counted`` is ``None`` where the source was not read, which is the same distinction
+    every other value on this board carries and for the same reason.
+    """
+
+    source: str
+    window: str
+    counted: int | None
+
+
+@dataclass(frozen=True)
 class OutputPrefix:
     """One directory under ``teams/{team}/runs/``, and what is inside it.
 
@@ -357,6 +509,10 @@ class Board:
     unplaced_wandb: tuple[WandbRun, ...]
     account: Mapping[str, tuple[TaggedResource, ...]] | None
     untagged_account: tuple[TaggedResource, ...]
+    #: The second account-side source, or ``None`` where it was not read. Held apart from
+    #: ``account`` rather than merged into it because the two cover different windows and the
+    #: horizon section has to be able to say which runs came from which.
+    bound: Mapping[str, BoundRun] | None
     outputs: Mapping[str, OutputPrefix] | None
     untraceable_outputs: tuple[OutputPrefix, ...]
     #: Teams whose listing was refused, which makes the outputs source partial rather than
@@ -370,12 +526,39 @@ class Board:
     #: have one.
     costs: Mapping[str, RunCost] | None
     gaps: tuple[SourceGap, ...]
+    #: What W&B said about each reference the result records carry. Empty when no result
+    #: tree was read, which the reading below is what distinguishes from "read and there were
+    #: none".
+    observations: tuple[WandbObservation, ...] = ()
+    #: The population the observations were taken over, or ``None`` where the result records
+    #: were not read at all.
+    reference_reading: ReferenceReading | None = None
+    #: How many bindings named a run this tree could not otherwise parse. Reported rather
+    #: than hidden, because the whole point of the second source is that nothing quietly
+    #: leaves the denominator.
+    degraded_bindings: int = 0
+
+    @property
+    def account_run_ids(self) -> frozenset[str] | None:
+        """Every run the account is known to have started, from whichever sources answered.
+
+        ``None`` only when neither answered. A partial account side is not the same hazard
+        as a partial W&B side: every run either source names really did run, so one source
+        being unread can only under-report the findings built on top of it, where an unread
+        W&B would invent them. That is the same asymmetry ``in_wandb_with_no_output`` and
+        ``output_with_no_wandb_run`` are already written around.
+        """
+        known = [set(source) for source in (self.account, self.bound) if source is not None]
+        if not known:
+            return None
+        return frozenset().union(*known)
 
     @property
     def in_account_not_in_wandb(self) -> tuple[str, ...] | None:
-        if self.account is None or self.wandb is None:
+        started = self.account_run_ids
+        if started is None or self.wandb is None:
             return None
-        return tuple(sorted(set(self.account) - set(self.wandb)))
+        return tuple(sorted(started - set(self.wandb)))
 
     @property
     def in_wandb_with_no_output(self) -> tuple[str, ...] | None:
@@ -416,21 +599,96 @@ class Board:
 
     @property
     def agreeing(self) -> int | None:
-        if self.wandb is None or self.account is None or self.outputs is None:
+        started = self.account_run_ids
+        if self.wandb is None or started is None or self.outputs is None:
             return None
         if self.refused_teams:
             # A run under an unlisted team would be counted as present in two sources and
             # absent from the third, which is not agreement and is not disagreement either.
             return None
-        return len(set(self.wandb) & set(self.account) & set(self.outputs))
+        return len(set(self.wandb) & started & set(self.outputs))
 
     @property
     def known_run_ids(self) -> tuple[str, ...]:
         seen: set[str] = set()
-        for source in (self.wandb, self.account, self.outputs):
+        for source in (self.wandb, self.account, self.bound, self.outputs):
             if source is not None:
                 seen |= set(source)
         return tuple(sorted(seen))
+
+    @property
+    def false_references(self) -> tuple[WandbObservation, ...]:
+        """Records naming a W&B run W&B does not have, sorted with the worst case first.
+
+        REPORTED AND NOT GATED, WHICH IS A DECISION RATHER THAN AN OVERSIGHT. This is a real
+        disagreement and it is one nobody can repair: the lineage store refuses any write to
+        a key that exists, so the 28 records that carry a false reference will carry it for
+        ever. Folding it into :attr:`disagrees` would hold the nightly red permanently over a
+        condition with no remedy, and a job that is red every morning is a job whose next
+        real finding arrives unread -- which is the argument
+        ``tools/find_runs_that_saved_nothing.py`` makes at length beside its own
+        acknowledgement list. The exit code stays a statement about the three-source join.
+        """
+        return tuple(
+            sorted(
+                (entry for entry in self.observations if entry.names_nothing),
+                key=lambda entry: (not entry.logged_nowhere, entry.reference.run_id),
+            )
+        )
+
+    @property
+    def horizons(self) -> tuple[SourceHorizon, ...]:
+        """What each source can see, in the order the findings above lean on them."""
+        return (
+            SourceHorizon(
+                source="the account, from resource tags",
+                window=(
+                    "resources that still exist. Batch stops listing a completed job after "
+                    "roughly a week, so this window moves every day and a run that ran last "
+                    "month is not in it"
+                ),
+                counted=None if self.account is None else len(self.account),
+            ),
+            SourceHorizon(
+                source="the account, from `binding/` records",
+                window=(
+                    "every run Batch has ever accepted from this platform"
+                    + _binding_span(self.bound)
+                    + ". The record is written write-once at submission and never expires. "
+                    "It cannot see a resource that ran without going through admission, "
+                    "which is what the tags above are for"
+                ),
+                counted=None if self.bound is None else len(self.bound),
+            ),
+            SourceHorizon(
+                source="Weights and Biases",
+                window=(
+                    f"every run in `{WANDB_ENTITY}`, across every project, for as long as "
+                    "the entity keeps them. Most of them never went through this platform"
+                ),
+                counted=None if self.wandb is None else len(self.wandb),
+            ),
+            SourceHorizon(
+                source="the outputs bucket",
+                window=(
+                    f"`s3://{OUTPUTS_BUCKET}/teams/{{team}}/runs/` and nothing else, which "
+                    "is the shape the reader role's prefix condition permits. Anything a "
+                    "team wrote elsewhere in the bucket is invisible here"
+                ),
+                counted=None if self.outputs is None else len(self.outputs),
+            ),
+            SourceHorizon(
+                source="the result records",
+                window=(
+                    "one per run that reached a terminal state with an attempt behind it, "
+                    "which is what the W&B reference reconciliation is taken over"
+                ),
+                counted=(
+                    None if self.reference_reading is None
+                    else self.reference_reading.results_read
+                ),
+            ),
+        )
 
     @property
     def disagrees(self) -> bool:
@@ -733,6 +991,74 @@ def read_tagged_resources(
     )
 
 
+def _binding_document(path: Path) -> object:
+    """One stored binding, unwrapped.
+
+    A record is sometimes a JSON string holding JSON, because the state machine writes the
+    handler's canonical bytes rather than re-encoding them, and both spellings are in the
+    committed fixtures for the same prefix.
+    """
+    loaded: object = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(loaded, str):
+        try:
+            loaded = json.loads(loaded)
+        except ValueError:
+            return loaded
+    return loaded
+
+
+def read_binding_records(root: Path) -> tuple[tuple[BoundRun, ...], int]:
+    """Every run Batch accepted, and how many of them the contract would not parse.
+
+    THE CONTRACT IS THE READER AND IT IS NOT THE GATE, WHICH IS THE ONE THING WORTH READING
+    HERE. Three of the committed bindings are refused by ``BatchJobBinding``: an early state
+    machine passed the whole execution payload where ``array_size`` takes an integer, the
+    records are immutable, and the runs behind them ran. Dropping them would take three runs
+    out of the account side over a field that says nothing about which run it is -- and a
+    denominator that quietly loses records is exactly the defect this second source exists
+    to close. So a refused record still yields its run id, provided the run id is one, and
+    the decorations the contract would have supplied are left empty and counted.
+
+    The count is returned rather than printed, because the caller is the one that knows
+    whether it is reporting at all.
+
+    A tree that is not there raises rather than answering with no runs. An empty account
+    side is a claim -- it would say this platform has never started anything -- and a prefix
+    nobody synced is not, and this whole board is written around keeping those apart.
+    """
+    directory = root / BINDING_PREFIX
+    if not directory.is_dir():
+        raise ReportInputError(f"no {BINDING_PREFIX}/ directory under {root}")
+    bound: list[BoundRun] = []
+    degraded = 0
+    for path in sorted(directory.rglob("*.json")):
+        try:
+            document = _binding_document(path)
+        except (OSError, ValueError):
+            degraded += 1
+            continue
+        try:
+            record = BatchJobBinding.model_validate(document)
+        except ValueError:
+            claimed = document.get("run_id") if isinstance(document, Mapping) else None
+            if not isinstance(claimed, str) or RUN_ID_REGEX.fullmatch(claimed) is None:
+                # No run id anybody can read. Counted, because a binding this tree cannot
+                # place at all is a record the recorder should not have been able to write.
+                degraded += 1
+                continue
+            degraded += 1
+            bound.append(BoundRun(run_id=claimed, compute_profile=None, submitted_at=None))
+            continue
+        bound.append(
+            BoundRun(
+                run_id=record.run_id,
+                compute_profile=record.compute_profile,
+                submitted_at=record.submitted_at,
+            )
+        )
+    return tuple(sorted(bound, key=lambda entry: entry.run_id)), degraded
+
+
 # ----------------------------------------------------------------------------------------
 # Source three, what the bucket holds
 # ----------------------------------------------------------------------------------------
@@ -840,9 +1166,13 @@ def build_board(
     wandb_runs: Sequence[WandbRun] | None,
     resources: Sequence[TaggedResource] | None,
     outputs: Sequence[OutputPrefix] | None,
+    bindings: Sequence[BoundRun] | None = None,
     refused_teams: Sequence[str] = (),
     costs: Mapping[str, RunCost] | None = None,
     gaps: Sequence[SourceGap] = (),
+    observations: Sequence[WandbObservation] = (),
+    reference_reading: ReferenceReading | None = None,
+    degraded_bindings: int = 0,
 ) -> Board:
     """Index the three sources by run id, keeping what would not index.
 
@@ -871,6 +1201,14 @@ def build_board(
             else:
                 by_run_account.setdefault(resource.run_id, []).append(resource)
 
+    # A binding names one run by construction -- ``BatchJobBinding`` refuses a record whose
+    # Batch job name is not the run id -- so there is no untraceable pile here to match the
+    # two above. A record with no readable run id never reaches this point; it is counted as
+    # degraded by the reader and reported as a number.
+    by_run_bound: dict[str, BoundRun] | None = (
+        None if bindings is None else {entry.run_id: entry for entry in bindings}
+    )
+
     by_run_output: dict[str, OutputPrefix] | None = None
     untraceable: list[OutputPrefix] = []
     if outputs is not None:
@@ -894,11 +1232,15 @@ def build_board(
             else {run_id: tuple(found) for run_id, found in by_run_account.items()}
         ),
         untagged_account=tuple(untagged),
+        bound=by_run_bound,
         outputs=by_run_output,
         untraceable_outputs=tuple(untraceable),
         refused_teams=tuple(refused_teams),
         costs=None if costs is None else dict(costs),
         gaps=tuple(gaps),
+        observations=tuple(observations),
+        reference_reading=reference_reading,
+        degraded_bindings=degraded_bindings,
     )
 
 
@@ -987,21 +1329,46 @@ def _unlogged_section(board: Board, found: Sequence[str]) -> list[str]:
             "list is worth more attention than the largest figure."
         ),
         "",
-        "| Run | Team | Submitter | Compute | Cost | Experiment |",
-        "| --- | --- | --- | --- | --- | --- |",
+        "| Run | Team | Submitter | Compute | Cost | Experiment | Known from |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
     ]
     for run_id in found:
         resources = (board.account or {}).get(run_id, ())
         first = resources[0] if resources else None
+        # A run the tags have already forgotten is described from the two records that
+        # outlive them. The binding says which profile it was submitted against and the cost
+        # record says which team and person claimed it, so the row is as full as it was
+        # before the tagging API dropped the job rather than four columns of "unknown".
+        bound = (board.bound or {}).get(run_id)
+        cost = (board.costs or {}).get(run_id)
+        team = first.team if first else (cost.team if cost else None)
+        submitter = (first.submitter if first else None) or (cost.submitter if cost else None)
+        profile = (first.compute_profile if first else None) or (
+            bound.compute_profile if bound else None
+        )
         lines.append(
-            f"| `{run_id}` | {first.team if first else 'unknown'} "
-            f"| {first.submitter if first and first.submitter else 'not recorded'} "
-            f"| {first.compute_profile if first else 'unknown'} "
-            f"| {_dollars((board.costs or {}).get(run_id), costing_read=costed)} "
-            f"| {first.experiment if first and first.experiment else 'none'} |"
+            f"| `{run_id}` | {team or 'unknown'} "
+            f"| {submitter or 'not recorded'} "
+            f"| {profile or 'unknown'} "
+            f"| {_dollars(cost, costing_read=costed)} "
+            f"| {first.experiment if first and first.experiment else 'none'} "
+            f"| {_known_from(first is not None, bound is not None)} |"
         )
     lines.append("")
     return lines
+
+
+def _known_from(tagged: bool, bound: bool) -> str:
+    """Which account-side source names this run, printed because the two differ in age.
+
+    A row known only from a binding is a run the tagging API has already forgotten, which is
+    the case the second source was added for; a row known only from the tags is a resource
+    that never went through admission, which is a different thing entirely and worth seeing
+    in the same table.
+    """
+    if tagged and bound:
+        return "tags, binding"
+    return "tags" if tagged else "binding"
 
 
 def _no_output_section(board: Board, found: Sequence[str]) -> list[str]:
@@ -1122,6 +1489,50 @@ def _unplaced_section(board: Board) -> list[str]:
     ]
 
 
+def _horizon_section(board: Board) -> list[str]:
+    """What each number above was counted over, before anybody compares two mornings.
+
+    STATED RATHER THAN SILENTLY FIXED, WHICH IS THE WHOLE POINT OF THE SECTION. Adding the
+    binding records moved the account side without moving anything about the account, and a
+    reader with yesterday's board beside today's would have read that as five new runs. Every
+    source here has a window, two of them move, and a reconciliation whose denominator
+    changes without saying so is worse than one with a small denominator.
+    """
+    lines = [
+        "## What these numbers are counted over",
+        "",
+        (
+            "Each source sees a different slice of the same platform and two of the slices "
+            "move on their own. The counts above are only comparable across mornings while "
+            "these windows are, so they are printed rather than assumed."
+        ),
+        "",
+        "| Source | Runs it named tonight | What it can see |",
+        "| --- | --- | --- |",
+    ]
+    for horizon in board.horizons:
+        counted = "not read" if horizon.counted is None else str(horizon.counted)
+        lines.append(f"| {horizon.source} | {counted} | {horizon.window} |")
+    lines.append("")
+    lines.append(
+        f"The account side of every finding above is the union of the first two, which is "
+        f"{'not counted' if board.account_run_ids is None else len(board.account_run_ids)} "
+        "run(s) tonight."
+    )
+    if board.degraded_bindings:
+        lines.append("")
+        lines.append(
+            f"{board.degraded_bindings} binding record(s) do not parse against "
+            "`BatchJobBinding` and are counted anyway, from their run id alone. An early "
+            "state machine wrote the whole execution payload where `array_size` takes an "
+            "integer; those runs ran, the records cannot be rewritten, and leaving them out "
+            "would be this board losing three runs from its own denominator over a field "
+            "that says nothing about which run it is."
+        )
+    lines.append("")
+    return lines
+
+
 def _untagged_section(board: Board) -> list[str]:
     return [
         "## Resources tagged as ours that carry no run id",
@@ -1147,14 +1558,19 @@ def render(board: Board) -> str:
     """The board, mismatches first and the agreeing majority as a single number.
 
     Section order is the order a reader needs and not the order the sources were read in.
-    What could not be read comes first because it scopes everything under it, the three
-    disagreements come next in descending cost, and the two explanatory sections come after
-    them because they exist to stop a reader misreading the three.
+    What could not be read comes first because it scopes everything under it, and what each
+    source can see comes second for the same reason -- a count is unreadable until somebody
+    knows what it was counted over, and two of the windows move on their own. The three
+    disagreements come next in descending cost, the W&B reference reconciliation after them
+    because it is about the records rather than about the runs, and the explanatory sections
+    last because they exist to stop a reader misreading what is above them.
     """
     lines = ["# The visibility board", "", _verdict(board), ""]
 
     if board.gaps:
         lines += _gaps_section(board)
+
+    lines += _horizon_section(board)
 
     unlogged = board.in_account_not_in_wandb
     if unlogged:
@@ -1167,6 +1583,11 @@ def render(board: Board) -> str:
     untraceable = board.output_with_no_wandb_run
     if untraceable or board.untraceable_outputs:
         lines += _untraceable_section(board, untraceable or ())
+
+    if board.reference_reading is not None:
+        lines += render_section(
+            board.observations, reading=board.reference_reading, entity=WANDB_ENTITY
+        )
 
     if board.untagged_account:
         lines += _untagged_section(board)
@@ -1199,14 +1620,28 @@ def _verdict(board: Board) -> str:
     scope = (
         f"{len(board.known_run_ids)} run(s) are known to at least one of the three sources."
     )
+    # Said in a sentence of its own rather than folded into the list above, because it is
+    # not one of the three findings and does not move the exit code. See
+    # ``Board.false_references`` for why a defect nobody can repair is reported and not
+    # gated.
+    false = board.false_references
+    lying = (
+        ""
+        if not false
+        else (
+            f" Separately, {len(false)} lineage record(s) name a W&B run that does not "
+            "exist."
+        )
+    )
     if not found:
         if board.gaps:
             return (
                 f"{scope} Nothing disagrees among the sources that were read, and "
-                f"{len(board.gaps)} source(s) were not read, so this is not a clean board."
+                f"{len(board.gaps)} source(s) were not read, so this is not a clean "
+                f"board.{lying}"
             )
-        return f"{scope} All three sources agree about every one of them."
-    return f"{scope} {', '.join(found)}."
+        return f"{scope} All three sources agree about every one of them.{lying}"
+    return f"{scope} {', '.join(found)}.{lying}"
 
 
 def _agreement_section(board: Board) -> list[str]:
@@ -1347,15 +1782,28 @@ def _collect(options: argparse.Namespace) -> Board:
         )
 
     costs: Mapping[str, RunCost] | None = None
+    bindings: tuple[BoundRun, ...] | None = None
+    degraded = 0
+    reading: ReferenceReading | None = None
+    observations: tuple[WandbObservation, ...] = ()
     with tempfile.TemporaryDirectory() as scratch:
         root = options.lineage_root
         try:
             if root is None:
                 root = Path(scratch)
                 sync_bucket(
-                    options.lineage_bucket, root, profile=options.profile, region=options.region
+                    options.lineage_bucket,
+                    root,
+                    profile=options.profile,
+                    region=options.region,
+                    prefixes=REQUIRED_LINEAGE_PREFIXES,
                 )
             costs = _read_costs(root, options.config_dir)
+            # Read after the costs and inside the same try, because both come out of the
+            # same tree and a tree that would not sync has neither. The reconciliation is
+            # not a second network call: the entity listing above is what answers it.
+            reading = read_references(root)
+            observations = observe(reading.references, wandb_runs)
         except (CaptureFailedError, ReportInputError, OSError, ValueError) as error:
             gaps.append(
                 SourceGap(
@@ -1374,7 +1822,55 @@ def _collect(options: argparse.Namespace) -> Board:
                         "runs with no money against it, and every other finding is "
                         "unaffected."
                     ),
-                    unanswered=("what the unlogged spend cost",),
+                    unanswered=(
+                        "what the unlogged spend cost",
+                        "which lineage records name a W&B run that does not exist",
+                    ),
+                )
+            )
+
+        # A call of its own, after the required prefixes, because this one is allowed to be
+        # refused. The nightly reader role does not hold `binding/` yet, and folding it into
+        # the sync above would mean one expected denial taking the cost figures, the result
+        # records and the reconciliation down with it -- which is precisely what `attempt/`
+        # did to the cost mapping for months.
+        try:
+            if options.lineage_root is None:
+                sync_bucket(
+                    options.lineage_bucket,
+                    Path(scratch),
+                    profile=options.profile,
+                    region=options.region,
+                    prefixes=DEGRADING_LINEAGE_PREFIXES,
+                )
+            bindings, degraded = read_binding_records(
+                options.lineage_root if options.lineage_root is not None else Path(scratch)
+            )
+        except (CaptureFailedError, ReportInputError, OSError, ValueError) as error:
+            bindings = None
+            gaps.append(
+                SourceGap(
+                    source="the account, from `binding/` records",
+                    reason="binding_records_not_read",
+                    detail=(
+                        f"{_masked(str(error))}. This is the expected answer today: "
+                        "`infra/iam/nightly-reader-role.yaml` grants `intent/`, `attempt/` "
+                        "and `result/` and not `binding/`, so the account side is the "
+                        "tagging API alone and its window is whatever Batch still lists -- "
+                        "roughly a week for a finished job. Two edits close it. Paste the "
+                        "statement below under the policy, and add `binding/*` to the "
+                        "`s3:prefix` condition on `ListLineageRecords`, which is an edit to "
+                        "an existing statement rather than a paste. Both are needed: "
+                        "`aws s3 sync` lists before it fetches, so a fetch grant whose "
+                        "prefix is missing from the condition is refused at the first call "
+                        "with nothing fetched. Then apply the stack from a laptop as "
+                        "`infra/README.md` describes."
+                    ),
+                    unanswered=(
+                        "which runs the tagging API has already forgotten",
+                        "how much of the account side this board is counting over",
+                    ),
+                    remedy=MISSING_BINDING_GRANT,
                 )
             )
 
@@ -1382,9 +1878,13 @@ def _collect(options: argparse.Namespace) -> Board:
         wandb_runs=wandb_runs,
         resources=resources,
         outputs=outputs,
+        bindings=bindings,
         refused_teams=refused,
         costs=costs,
         gaps=gaps,
+        observations=observations,
+        reference_reading=reading,
+        degraded_bindings=degraded,
     )
 
 
@@ -1395,13 +1895,25 @@ def build_parser() -> argparse.ArgumentParser:
         "--lineage-root",
         type=Path,
         default=None,
-        help="a directory already holding intent/ and attempt/ records, rather than syncing",
+        help=(
+            "a directory already holding intent/, attempt/, result/ and binding/ records, "
+            "rather than syncing"
+        ),
     )
     parser.add_argument("--lineage-bucket", default="sbsandbox-intern-edullm-lineage")
     parser.add_argument("--outputs-bucket", default=OUTPUTS_BUCKET)
     parser.add_argument("--entity", default=WANDB_ENTITY, help="the W&B entity to read")
     parser.add_argument("--wandb-secret", default=SECRET_NAME)
     parser.add_argument("--output", type=Path, help="write the board here rather than to stdout")
+    parser.add_argument(
+        "--wandb-observations",
+        type=Path,
+        help=(
+            "write the W&B reference reconciliation here as JSON, one record per reference "
+            "with its three-state answer. The markdown above is for a person; this is for "
+            "anything that wants to count"
+        ),
+    )
     # No default profile. The nightly runs on an assumed role and passes none, and a default
     # of `sbsandbox` would send it looking for an SSO session that is not there.
     parser.add_argument("--profile", default=None)
@@ -1419,8 +1931,32 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         print(report, end="")
 
+    if options.wandb_observations and board.reference_reading is not None:
+        options.wandb_observations.write_text(
+            json.dumps(
+                observation_document(
+                    board.observations,
+                    reading=board.reference_reading,
+                    entity=options.entity,
+                ),
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
     for gap in board.gaps:
         print(gap.reason, file=sys.stderr, flush=True)
+
+    # THE RECONCILIATION IS PRINTED AND IS NOT IN THE EXIT CODE. A run that logged nowhere
+    # and a record that names a run W&B does not have are both true and neither is
+    # repairable: the result records are write-once and the workload's own command decides
+    # whether it calls wandb.init(). Gating on either would hold this job red for ever, and
+    # the next real finding would arrive at a job that was already red. The count is in the
+    # verdict line and the runs are in a table, which is what a reader can act on.
+    for entry in never_logged(board.observations):
+        print(f"logged_nowhere {entry.reference.run_id}", file=sys.stderr, flush=True)
 
     # A definite finding outranks an unanswered question, which is the rule
     # tools/verify_deployed_stacks.py already follows and the reason is the same. Somebody
