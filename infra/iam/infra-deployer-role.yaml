@@ -403,6 +403,14 @@ Resources:
               #   - DescribeLaunchTemplateVersions: AWS::Batch::ComputeEnvironment's
               #     Create, Update and Delete, whether or not a launch template is named.
               #
+              # ec2:DescribeLaunchTemplates joined them on 2026-08-04 and is the neighbour
+              # of the line above rather than a duplicate: Versions is what the Batch
+              # compute environment handler reads, Templates is what
+              # AWS::EC2::LaunchTemplate's own Read, List and Delete call. Measured the same
+              # way -- implicitDeny granted on one launch-template ARN and simulated against
+              # it, so no resource type -- while its five write siblings answered `allowed`
+              # under the identical probe and are scoped below.
+              #
               # Read-only, and that bounds it: this statement reveals the shape of the
               # shared account's networking and changes none of it. The actions that change
               # networking are below, and their scope is the problem recorded there.
@@ -411,6 +419,7 @@ Resources:
                   - ec2:DescribeAvailabilityZones
                   - ec2:DescribeInstances
                   - ec2:DescribeInternetGateways
+                  - ec2:DescribeLaunchTemplates
                   - ec2:DescribeLaunchTemplateVersions
                   - ec2:DescribeNetworkAcls
                   - ec2:DescribeNetworkInterfaces
@@ -514,6 +523,38 @@ Resources:
                   - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group-rule/*
                   - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:subnet/*
                   - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:vpc/*
+              # THE LAUNCH TEMPLATE LIFECYCLE, ADDED 2026-08-04. No compute environment here
+              # had one until then, so every GPU instance booted the ECS AL2023 AMI's 30 GiB
+              # root and a job staging a 37.2 GiB corpus could not run at all.
+              # infra/batch-compute-gpu-shapes.yaml now declares an AWS::EC2::LaunchTemplate
+              # giving the two eight-device P shapes 500 GiB, and that stack is CI-deployed.
+              #
+              # The five are the handler's own list, read from the registry with
+              # cloudformation describe-type rather than inferred, and each measured
+              # `allowed` granted on one launch-template ARN and simulated against it, so
+              # each is scopable. DescribeLaunchTemplates measured implicitDeny and is
+              # unscoped above with the other reads. Both controls behaved throughout.
+              #
+              # CreateTags and DeleteTags appear twice in this policy on purpose: IAM
+              # authorizes a tagging call against the resource being tagged, so the network
+              # statement's copy cannot reach a launch template, and widening its resource
+              # list to reach one would hand every network verb there an ARN it cannot use.
+              #
+              # launch-template/* is the exemption the paragraph above argues for the network
+              # types, wants the same aws:ResourceTag narrowing, and is smaller in reach: EC2
+              # assigns the ID at creation so there is no name to match on, and a launch
+              # template holds no data. ec2:ModifyLaunchTemplate is the one a reader will
+              # reach for and is in no handler list -- it sets a default version, and these
+              # environments name a concrete one. ec2:RunInstances stays absent.
+              - Effect: Allow
+                Action:
+                  - ec2:CreateLaunchTemplate
+                  - ec2:CreateLaunchTemplateVersion
+                  - ec2:CreateTags
+                  - ec2:DeleteLaunchTemplate
+                  - ec2:DeleteTags
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:launch-template/*
               - Effect: Allow
                 Action:
                   - batch:CreateComputeEnvironment

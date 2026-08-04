@@ -198,14 +198,22 @@ def test_the_deployer_projection_keeps_the_narrowed_wildcards_it_was_given(
     bucket_arn = "arn:${AWS::Partition}:s3:::%s"
     role_arn = "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/%s"
     # The one exception to "wildcards only after the edullm segment", and it is not a
-    # slip. An EC2 network resource is addressed by an ID the service assigns at creation,
-    # so there is no name for IAM to match on and `vpc/*` is the narrowest ARN that can be
-    # written. The template says so in the open and names the tag-condition narrowing that
-    # was not taken; enumerating the six here means a seventh has to be a visible edit.
-    ec2_network = {
+    # slip. An EC2 resource of any of these types is addressed by an ID the service assigns
+    # at creation, so there is no name for IAM to match on and `vpc/*` is the narrowest ARN
+    # that can be written. The template says so in the open and names the tag-condition
+    # narrowing that was not taken; enumerating them here means the next one has to be a
+    # visible edit.
+    #
+    # It held six until 2026-08-04 and holds seven now. `launch-template` is the first that
+    # is not networking: infra/batch-compute-gpu-shapes.yaml declares one, giving the two
+    # eight-device P shapes a 500 GiB root volume in place of the AMI's 30 GiB, and the
+    # deploy role is what creates it. This assertion is what made that a line somebody had
+    # to write rather than something the existing exemption absorbed.
+    ec2_id_addressed = {
         template_arn % ("ec2", f"{resource_type}/*")
         for resource_type in (
             "internet-gateway",
+            "launch-template",
             "route-table",
             "security-group",
             "security-group-rule",
@@ -253,7 +261,7 @@ def test_the_deployer_projection_keeps_the_narrowed_wildcards_it_was_given(
         # read cannot be scoped by name either. It is the only action granted on it and it
         # is read-only, which the deployer role tests pin.
         template_arn % ("lambda", "event-source-mapping:*"),
-        *ec2_network,
+        *ec2_id_addressed,
     }
     assert not [one for one in resources if "sbsandbox-intern-*" in one]
     # The roles iam:PassRole names are written out whole, and a projection that folded

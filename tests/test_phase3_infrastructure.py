@@ -28,6 +28,7 @@ only because the batch size happens to be one.
 
 from __future__ import annotations
 
+import email
 import json
 import string
 from collections.abc import Iterator
@@ -507,6 +508,212 @@ def test_nothing_in_the_batch_stack_survives_a_stack_delete() -> None:
     for logical_id, resource in load_template(COMPUTE_PATH)["Resources"].items():
         assert "DeletionPolicy" not in resource, logical_id
         assert "UpdateReplacePolicy" not in resource, logical_id
+
+
+# --------------------------------------------------------------------------------------
+# The launch template the two eight-device P shapes boot from
+# --------------------------------------------------------------------------------------
+
+
+def launch_templates() -> dict[str, dict[str, Any]]:
+    return resources_of_type(GPU_SHAPES_PATH, "AWS::EC2::LaunchTemplate")
+
+
+def gpu_shape_environments() -> dict[str, dict[str, Any]]:
+    return resources_of_type(GPU_SHAPES_PATH, "AWS::Batch::ComputeEnvironment")
+
+
+def environment_named(name: str) -> dict[str, Any]:
+    matching = [
+        resource["Properties"]
+        for resource in gpu_shape_environments().values()
+        if resource["Properties"]["ComputeEnvironmentName"] == name
+    ]
+    assert len(matching) == 1, f"expected exactly one compute environment named {name}"
+    return matching[0]
+
+
+def user_data_of(launch_template: dict[str, Any]) -> str:
+    encoded = launch_template["Properties"]["LaunchTemplateData"]["UserData"]
+    assert set(encoded) == {"Fn::Base64"}, "user data must go through Fn::Base64"
+    return str(encoded["Fn::Base64"])
+
+
+#: The two that boot from it, and the only two. Written out rather than derived from the
+#: shape list, because the whole content of the scope is which names are in it.
+P_FAMILY_PROFILES = ("gpu-8xa100", "gpu-8xh100")
+
+#: 37.2 GiB of corpus is what a job already tried to stage, so a root volume has to be
+#: comfortably above that and not merely above it. The number below is a floor rather than
+#: the 500 the template sets, because raising the volume is a change nobody should have to
+#: come here to permit and lowering it back under the corpus is the one that has to fail.
+MINIMUM_P_FAMILY_ROOT_GIB = 200
+
+#: Written by AWS Batch itself into /etc/ecs/ecs.config and documented as reserved. Setting
+#: either from a launch template is documented to break scheduling and scaling.
+BATCH_RESERVED_ECS_VARIABLES = ("ECS_CLUSTER", "ECS_INSTANCE_ATTRIBUTES")
+
+
+def test_the_two_p_shapes_boot_from_a_root_volume_the_corpus_actually_fits_in() -> None:
+    """Mutation: drop ``VolumeSize`` back under the corpus, or delete the mapping entirely.
+
+    This is the constraint a future edit would break in silence, which is why it is pinned
+    here rather than left to the comment that argues it. With no launch template at all --
+    which is how all sixteen environments in this account stood until 2026-08-04 -- Batch
+    takes the ECS AL2023 GPU AMI's own mapping, a single 30 GiB gp3 volume, leaving roughly
+    13 GiB free once the OS and the training image are on it. A run staging 9,989,799,834
+    tokens at four bytes each needs 37.2 GiB and died in ``stage_input`` with ENOSPC; it
+    could not have succeeded on a clean instance either.
+
+    Nothing about that failure is visible from this template without this test. The
+    environment reports VALID, the job is placed, the container starts, and the only symptom
+    is an ``OSError`` from inside somebody's training script.
+    """
+    templates = launch_templates()
+    assert len(templates) == 1, "one launch template, shared, so a size change cannot be half-made"
+    data = next(iter(templates.values()))["Properties"]["LaunchTemplateData"]
+    mappings = data["BlockDeviceMappings"]
+
+    assert len(mappings) == 1
+    root = mappings[0]
+    # The AMI's own RootDeviceName, read from describe-images rather than assumed. A device
+    # name the AMI does not use is not an error: it silently attaches a second volume beside
+    # an untouched 30 GiB root, so the job dies of ENOSPC while the disk looks bought.
+    assert root["DeviceName"] == "/dev/xvda"
+    assert root["Ebs"]["VolumeSize"] >= MINIMUM_P_FAMILY_ROOT_GIB
+    assert root["Ebs"]["VolumeType"] == "gp3"
+    # gp3's free baseline is 125 MB/s, which makes staging the corpus five and a half
+    # minutes of a job doing nothing else.
+    assert root["Ebs"]["Throughput"] > 125
+    assert root["Ebs"]["DeleteOnTermination"] is True
+    # Absent rather than false. The account has EbsEncryptionByDefault off and this AMI's
+    # snapshot is unencrypted, so omitting the flag matches the account today and follows it
+    # if the account default is ever turned on. `false` would refuse to launch on that day.
+    assert "Encrypted" not in root["Ebs"]
+
+
+def test_the_agent_settings_reach_the_instance_as_mime_multipart_and_nothing_else_does() -> None:
+    """Mutation: replace the MIME wrapper with a bare ``#!/bin/bash`` script.
+
+    AWS Batch merges its own user data with the launch template's, and documents that user
+    data in a launch template must be MIME multi-part for that merge to happen. A bare script
+    is not rejected -- it is discarded. The instance boots on the agent defaults, a stopped
+    container's writable layer is kept for three hours, and this template still reads as
+    though fifteen minutes were configured.
+
+    Parsed rather than pattern-matched, because the format's load-bearing parts are the blank
+    lines, and a regular expression over the text would pass on a document cloud-init's own
+    parser rejects.
+    """
+    body = user_data_of(next(iter(launch_templates().values())))
+    message = email.message_from_string(body)
+    parts = [part for part in message.walk() if not part.is_multipart()]
+
+    assert message.is_multipart()
+    assert message.get_content_type() == "multipart/mixed"
+    assert not message.defects
+    assert len(parts) == 1
+    assert parts[0].get_content_type() == "text/x-shellscript"
+    assert not parts[0].defects
+
+    script = str(parts[0].get_payload())
+    assert script.startswith("#!/bin/bash")
+    assert "/etc/ecs/ecs.config" in script
+    # The one that fixes the second failure: three jobs landed on one instance and the second
+    # and third died in six seconds each on the first's leftover partial download, because
+    # ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION defaults to three hours. The reference also says
+    # image cleanup cannot touch an image while a container still references it, so this
+    # setting gates the three below rather than sitting beside them.
+    assert "ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION=15m" in script
+    # Each of these is a real variable in the agent's configuration reference and each is
+    # inside the bounds it documents: the cleanup interval may not go below 10m, and the
+    # number deleted per cycle may not go below 1.
+    assert "ECS_IMAGE_CLEANUP_INTERVAL=15m" in script
+    assert "ECS_IMAGE_MINIMUM_CLEANUP_AGE=30m" in script
+    assert "ECS_NUM_IMAGES_DELETE_PER_CYCLE=25" in script
+    # Batch writes both of these itself and names them reserved. Setting either here is
+    # documented to break scheduling and scaling, and would do it on the two most expensive
+    # shapes in the account.
+    for reserved in BATCH_RESERVED_ECS_VARIABLES:
+        assert reserved not in script
+    # Not an ECS agent variable at all. It appears nowhere in the configuration reference, so
+    # a line naming it would sit in ecs.config being ignored while reading like a guard.
+    assert "ECS_DISK_FREE_SPACE_THRESHOLD" not in script
+
+
+def test_only_the_two_idle_p_shapes_were_given_the_launch_template() -> None:
+    """Mutation: attach it to a third environment, or to all fourteen.
+
+    Attaching a launch template is an infrastructure update, and an infrastructure update
+    replaces every container instance in the environment. ``TerminateJobsOnUpdate`` is false
+    and ``JobExecutionTimeoutMinutes`` is 360, so a deploy waits up to six hours for running
+    jobs and then kills what is left. The two below were idle when this landed and ``gpu``
+    and ``gpu-4xl40s`` were not, which is the whole reason the scope is two rather than
+    fourteen -- and a later edit that widens it silently would kill somebody's training run.
+
+    Widening it is allowed and is meant to be: what this test asks is that it be done in a
+    commit that says so.
+    """
+    attached = sorted(
+        properties["ComputeEnvironmentName"].removeprefix("sbsandbox-intern-edullm-")
+        for properties in (
+            resource["Properties"] for resource in gpu_shape_environments().values()
+        )
+        if "LaunchTemplate" in properties["ComputeResources"]
+    )
+
+    assert attached == sorted(P_FAMILY_PROFILES)
+    assert len(gpu_shape_environments()) == len(GPU_SHAPE_PROFILES)
+
+
+def test_the_two_p_shapes_name_a_version_that_moves_when_the_template_is_edited() -> None:
+    """Mutation: replace the ``Fn::GetAtt`` with ``$Latest``.
+
+    Batch resolves ``$Latest`` and ``$Default`` once, when the compute environment is created
+    or updated, and documents that a later change to the launch template is not picked up
+    until something calls ``UpdateComputeEnvironment``. So the two environments would stay on
+    the version they were born with while this file described another one, and the next
+    person to raise the volume would watch a green deploy change nothing.
+
+    A concrete version number is a property of the compute environment, so editing the
+    launch template changes both environments in the same deploy.
+    """
+    logical_id = next(iter(launch_templates()))
+
+    for profile in P_FAMILY_PROFILES:
+        specification = environment_named(f"sbsandbox-intern-edullm-{profile}")["ComputeResources"][
+            "LaunchTemplate"
+        ]
+        assert specification["LaunchTemplateId"] == {"Ref": logical_id}
+        assert specification["Version"] == {"Fn::GetAtt": f"{logical_id}.LatestVersionNumber"}
+        assert "$Latest" not in str(specification)
+        assert "$Default" not in str(specification)
+
+
+def test_the_launch_template_leaves_batch_the_settings_batch_owns() -> None:
+    """Mutation: put ``InstanceType`` or ``IamInstanceProfile`` in the launch template.
+
+    AWS Batch documents four launch template parameters it ignores outright -- instance type,
+    instance role, network interface subnets and instance market options -- and each of those
+    is set on the compute environment a few lines away in the same file. A copy here would
+    not fail and would not take effect; it would sit in the template as a second, silently
+    inoperative answer to a question the environment already answers, and the next reader
+    would have no way to tell which one the account is using.
+    """
+    data = next(iter(launch_templates().values()))["Properties"]["LaunchTemplateData"]
+
+    assert set(data) == {"BlockDeviceMappings", "UserData"}
+    for ignored in (
+        "InstanceType",
+        "IamInstanceProfile",
+        "NetworkInterfaces",
+        "InstanceMarketOptions",
+    ):
+        assert ignored not in data
+    # ImageId specifically: a launch template AMI takes precedence over Ec2Configuration, so
+    # one here would silently override ECS_AL2023_NVIDIA -- and an AMI with no NVIDIA driver
+    # runs the job on the CPU at $21.96/hour with nothing erroring anywhere.
+    assert "ImageId" not in data
 
 
 # --------------------------------------------------------------------------------------

@@ -606,6 +606,11 @@ PHASE3_WILDCARDS = [
             "vpc",
         )
     ],
+    # The launch template lifecycle, in a statement of its own after the network one. Same
+    # exemption and same reason -- EC2 assigns the ID at creation, so there is no name to
+    # scope on -- but a separate statement, because folding it into the list above would
+    # hand every network verb there a launch-template ARN it has no use for.
+    REGIONAL_ARN % ("ec2", "launch-template/*"),
     REGIONAL_ARN % ("batch", f"compute-environment/{RESOURCE_PREFIX}*"),
     # Creating or updating a job queue is authorized against the compute environments the
     # queue names as well as against the queue, so that statement carries both ARNs.

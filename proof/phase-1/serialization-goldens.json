@@ -8,9 +8,9 @@
       "relative_path": "infra/iam/ecr-publisher-role.yaml"
     },
     {
-      "canonical_json_bytes": 14029,
+      "canonical_json_bytes": 14408,
       "contract": "TemplateRole",
-      "digest": "sha256:b3d149ffd5828ffc8a0e7a9de9814e0dbcc0c774ec9332818ea5cbe43de47806",
+      "digest": "sha256:ef11a66f117cada956adf84bc4a370f885c2e6372d9ca4524d265e6fca4230ec",
       "fixture": "sbsandbox-intern-edullm-infra-deployer",
       "relative_path": "infra/iam/infra-deployer-role.yaml"
     }
