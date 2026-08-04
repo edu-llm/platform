@@ -102,23 +102,79 @@ def test_the_marker_certifies_the_digest_of_the_bytes_that_were_actually_written
     assert marker["step"] == 20
 
 
-def test_committing_the_same_checkpoint_twice_produces_byte_identical_markers() -> None:
-    """Mutation: put a clock in the function, or serialize without sorting the keys.
+#: What a marker for one known checkpoint is, byte for byte. Written out rather than
+#: computed, for the reason the CRC32C check value beside :func:`crc32c` is written out: a
+#: canonical form compared only against itself is not pinned to anything, and this is the
+#: form a reader outside this process has to be able to reproduce.
+#:
+#: Sorted keys, so ``bytes`` leads and ``step`` trails although the function builds the
+#: mapping in neither order; and ``(",", ":")`` separators, so there is no whitespace to
+#: drift. The second literal carries the two optional fields, which is where sorting is
+#: load-bearing rather than incidental: appended in construction order they would sit at the
+#: end, and here ``crc32c`` sorts between ``bytes`` and ``created_at`` while ``epoch`` sorts
+#: after it.
+CANONICAL_MARKER = (
+    b'{"bytes":41,"created_at":"2026-07-29T02:14:44+00:00","payload":"model.pt",'
+    b'"schema_version":1,"sha256":"sha256:' + b"a" * 64 + b'","step":20}'
+)
+CANONICAL_MARKER_WITH_OPTIONAL_FIELDS = (
+    b'{"bytes":41,"crc32c":"crc32c:q1w2e3r4","created_at":"2026-07-29T02:14:44+00:00",'
+    b'"epoch":2,"payload":"model.pt","schema_version":1,"sha256":"sha256:' + b"a" * 64 + b'",'
+    b'"step":20}'
+)
 
-    Two attempts that wrote the same weights at the same step should be comparable by
-    their markers and not only by a digest computed over them, and a marker whose bytes
-    move on every call cannot be compared at all.
+
+def test_the_marker_is_the_canonical_bytes_a_second_reader_would_have_to_reproduce() -> None:
+    """SERIALIZING WITHOUT SORTING THE KEYS WAS INVISIBLE HERE. Mutation: drop
+    ``sort_keys=True``, or widen the separators.
+
+    This test used to call the function twice with one set of arguments and assert the two
+    results were equal. ``success_marker_bytes`` is a pure function of its arguments, so
+    that held whatever the function did with them: dropping ``sort_keys=True`` changed
+    every marker this platform writes and the whole suite stayed green.
+
+    The two tests that look like they cover the gap do not either, and both for the same
+    reason. ``tools/build_gpu_training_submission.py`` builds the container's writer by
+    interpolating ``inspect.getsource(success_marker_bytes)``, so
+    ``test_the_embedded_writer_produces_exactly_what_the_platform_writer_produces`` in
+    ``tests/test_phase4_training_submission.py`` executes one function's source twice and
+    compares it with itself. There is only one implementation, so no comparison between
+    implementations can disagree.
+
+    A literal is what makes the form checkable from outside. The marker is the object that
+    certifies a checkpoint a GPU run was paid for, and what a later reader does with it is
+    compare bytes -- ``success_marker_bytes``'s own docstring says byte-identity across two
+    attempts is the point. Byte-identity across two calls in one process is not that claim;
+    it is arithmetic. This is the claim.
     """
-    first = success_marker_bytes(
-        step=20, payload_name="model.pt", digest="sha256:" + "a" * 64,
-        size_bytes=41, created_at=WRITTEN_AT,
+    marker = success_marker_bytes(
+        step=20,
+        payload_name="model.pt",
+        digest="sha256:" + "a" * 64,
+        size_bytes=41,
+        created_at=WRITTEN_AT,
     )
-    second = success_marker_bytes(
-        step=20, payload_name="model.pt", digest="sha256:" + "a" * 64,
-        size_bytes=41, created_at=WRITTEN_AT,
+    with_optional = success_marker_bytes(
+        step=20,
+        payload_name="model.pt",
+        digest="sha256:" + "a" * 64,
+        size_bytes=41,
+        created_at=WRITTEN_AT,
+        crc32c_digest="crc32c:q1w2e3r4",
+        epoch=2,
     )
 
-    assert first == second
+    assert marker == CANONICAL_MARKER
+    assert with_optional == CANONICAL_MARKER_WITH_OPTIONAL_FIELDS
+    # And still the property the literals are a stand-in for: nothing in the function
+    # varies between two calls that were given the same thing to certify.
+    assert marker == success_marker_bytes(
+        step=20,
+        payload_name="model.pt",
+        digest="sha256:" + "a" * 64,
+        size_bytes=41,
+        created_at=WRITTEN_AT,
+    )
 
 
 def test_the_marker_lands_inside_the_prefix_it_certifies() -> None:

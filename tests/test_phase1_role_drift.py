@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from edullm_platform.evidence import AWS_ACCOUNT_ID_PLACEHOLDER, scan_for_secrets
 from edullm_platform.phase1_evidence import DeployedRoleEvidence
@@ -34,6 +35,7 @@ from edullm_platform.role_drift import (
     compare_role_to_template,
     load_template_roles,
     normalize_policy_string,
+    project_template_role,
     redact_account_in_arn,
 )
 
@@ -176,6 +178,44 @@ def test_the_publisher_projection_is_the_role_the_template_declares(
     assert len(policy.statements) == 2
     assert policy.statements[0].action_match.actions == ("ecr:GetAuthorizationToken",)
     assert len(policy.statements[1].action_match.actions) == 9
+
+
+def test_a_template_that_omits_a_session_length_projects_the_one_the_service_applies() -> None:
+    """THE DEFAULT SESSION LENGTH WAS ASSERTED NOWHERE. Mutation: 3600 to 3601 in
+    ``DEFAULT_MAX_SESSION_DURATION_SECONDS``.
+
+    That mutation survived the whole suite. The assertion above looks like it covers the
+    constant -- it says ``max_session_duration_seconds == 3600`` -- but every one of the
+    sixteen roles under ``infra/iam/`` writes ``MaxSessionDuration: 3600`` out, so the
+    projection reads the declared value and ``properties.get`` never reaches its default.
+    Twelve assertions across five modules say 3600 and all of them read a declared 3600.
+
+    The constant is not decoration. Its comment says it is "what CloudFormation applies
+    when a role template does not ask for a session length", and the projection is one
+    side of the deployed-versus-committed comparison: if it were wrong, a template that
+    dropped the field would be compared against a real role holding 3600 and the drift
+    report would either invent a finding or, widened the other way, miss a role whose
+    credentials outlive the template's claim by hours. Neither shows up until somebody
+    deletes a line that all sixteen templates currently happen to carry.
+
+    So the value is asserted here as a literal rather than against the imported constant,
+    which is the only way the assertion can disagree with it. 3600 is a fact about what the
+    service does, not a fact about this repository, so a copy of it is not duplication.
+    """
+    document = yaml.safe_load((PROJECT_ROOT / PUBLISHER_TEMPLATE).read_text(encoding="utf-8"))
+    properties = next(
+        copy.deepcopy(resource["Properties"])
+        for resource in document["Resources"].values()
+        if resource.get("Type") == "AWS::IAM::Role"
+        and resource["Properties"].get("RoleName") == PUBLISHER_ROLE
+    )
+    declared = properties.pop("MaxSessionDuration")
+
+    projected = project_template_role(properties)
+
+    # The template does declare one, so the omission being projected here is synthetic.
+    assert declared == 3600
+    assert projected.max_session_duration_seconds == 3600
 
 
 def test_the_deployer_projection_keeps_the_narrowed_wildcards_it_was_given(
