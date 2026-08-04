@@ -165,6 +165,18 @@ _PRECISION_SETTING_WORDS: Final = ("dtype", "precision")
 #: no rather than somebody asking for bfloat16 with an unusual argument.
 _TURNED_OFF: Final = frozenset({"false", "0", "no", "off", "none", "null"})
 
+#: Shell operators, which arrive stuck to the end of a word rather than as one.
+#:
+#: ``shlex.split`` splits on whitespace and quoting and not on control operators, so
+#: ``DTYPE=bfloat16; python train.py`` comes back with ``DTYPE=bfloat16;`` as a single word
+#: -- and ``simple_command_segments`` cannot separate them either, because it recognises an
+#: operator only where it is a word of its own. Without this the guard reads
+#: ``TORCH_DTYPE=bfloat16 python train.py`` and not the same line with a semicolon in it,
+#: which is a difference no submitter could be expected to know about and the shape of gap
+#: that makes a guard look present and behave absently. The word is quoted back to the
+#: submitter as they wrote it; only the reading is trimmed.
+_TRAILING_OPERATORS: Final = ";&|"
+
 
 def instance_family(instance_type: str) -> str:
     """``g4dn.metal`` is ``g4dn``.
@@ -274,7 +286,10 @@ def _request_at(word: str, following: str | None) -> str | None:
     be read as true when nothing follows it and as false when ``false`` does, since both are
     written.
     """
-    key, separator, value = word.partition("=")
+    read = word.rstrip(_TRAILING_OPERATORS)
+    value_after = None if following is None else following.rstrip(_TRAILING_OPERATORS).casefold()
+
+    key, separator, value = read.partition("=")
     if separator:
         name = _setting_name(key)
         if name in _SWITCHES:
@@ -286,15 +301,15 @@ def _request_at(word: str, following: str | None) -> str | None:
     # A leading dash from here down, because these two forms are flags. Without it
     # ``python bf16_ablation.py bfloat16`` would read as a request, and a positional argument
     # is never how a dtype is passed.
-    if not word.startswith("-"):
+    if not read.startswith("-"):
         return None
-    name = _setting_name(word)
+    name = _setting_name(read)
     if name in _SWITCHES:
-        return None if following is not None and following.casefold() in _TURNED_OFF else word
+        return None if value_after is not None and value_after in _TURNED_OFF else word
     if (
         _names_a_precision_setting(name)
-        and following is not None
-        and following.casefold() in BFLOAT16_SPELLINGS
+        and value_after is not None
+        and value_after in BFLOAT16_SPELLINGS
     ):
         return f"{word} {following}"
     return None
