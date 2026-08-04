@@ -1,9 +1,9 @@
 {
   "fixtures": [
     {
-      "canonical_json_bytes": 2031,
+      "canonical_json_bytes": 2156,
       "contract": "TemplateRole",
-      "digest": "sha256:bbbcbda85c852be157a87465ccc06ff64fef34c2402d8d062879e176d58d4711",
+      "digest": "sha256:e787c6b2bc7fc54c7932cefd858f7ef5828543008514026073a0b86db43a5f8a",
       "fixture": "sbsandbox-intern-edullm-batch-execution",
       "relative_path": "infra/iam/batch-roles.yaml"
     },
@@ -15,9 +15,9 @@
       "relative_path": "infra/iam/batch-roles.yaml"
     },
     {
-      "canonical_json_bytes": 2257,
+      "canonical_json_bytes": 2382,
       "contract": "TemplateRole",
-      "digest": "sha256:9dae40efaac240d89dc328e79323c0f1b98edc79747af8a7d30abbc46c046216",
+      "digest": "sha256:036bb85baec47faeaca22f89c683a12237e19f38b59eb2742e0140db166badf8",
       "fixture": "sbsandbox-intern-edullm-batch-instance",
       "relative_path": "infra/iam/batch-roles.yaml"
     },

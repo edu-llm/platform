@@ -100,6 +100,7 @@ Resources:
                   # a policy.
                   - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-olmo-eval-full
                   - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-alt-cl
+                  - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-open-instruct-scored-rewards
               # Deliberately absent: logs:CreateLogGroup. infra/batch-compute.yaml creates
               # the group, so a role that could create it would only ever do so by
               # creating one nobody declared -- under a name a typo chose, with no
@@ -493,6 +494,7 @@ Resources:
                   - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-data
                   - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-olmo-eval-full
                   - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-alt-cl
+                  - Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/sbsandbox-intern-edullm-open-instruct-scored-rewards
               # The ECS agent's own log group, which is not the job's. Scoped to the
               # /aws/ecs/ path so an instance cannot write into the record of what a job
               # printed.
