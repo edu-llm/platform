@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from edullm_platform.cli.main import EXIT_OK, EXIT_REFUSED
+from edullm_platform.cli.main import EXIT_OK, EXIT_REFUSED, EXIT_UNUSABLE
 from tests.cli_support import (
     SUBMITTER_ON_TWO_TEAMS,
     SUBMITTER_TEAM,
@@ -387,22 +387,72 @@ def test_the_two_checks_a_laptop_cannot_make_are_named_rather_than_passed_over(
     assert "image_scan_findings_unreviewed" in out
 
 
-def test_dry_run_is_the_same_verb_under_the_spelling_every_guide_uses(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("retired", ["dry-run", "new"])
+def test_a_retired_name_is_refused_and_the_refusal_names_check(
+    retired: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Mutation: drop the alias.
+    """Mutation: make them aliases again.
 
-    ``decisions.md`` settles ``check`` as the name and every transcript and guide written
-    before that date types ``dry-run``. A researcher typing what they were taught should get
-    the command rather than a usage error listing the verbs that happen to exist.
+    An alias makes two names work and teaches nobody which one is the name, so the retired
+    spelling survives into the next guide somebody writes and the rename never finishes.
+    Refusing costs one retry and ends it. What makes the refusal worth the retry is that it
+    names the replacement, so nobody has to go and look the new name up.
     """
     root, runner = checkout(tmp_path, workload="olmo-core-check", compute="gpu-1xt4")
-    arguments = ["--dataset", "none", "--experiment", "an-experiment"]
 
-    checked = invoke(["check", *arguments], runner=runner, cwd=root, monkeypatch=monkeypatch)
-    dry_run = invoke(["dry-run", *arguments], runner=runner, cwd=root, monkeypatch=monkeypatch)
+    code, out, err = invoke([retired], runner=runner, cwd=root, monkeypatch=monkeypatch)
 
-    assert dry_run == checked
+    assert code == EXIT_UNUSABLE
+    assert f"{retired} is not a verb. check is" in err
+    assert out == ""
+    # Nothing was judged, so nothing was read: no git, no gh, no configuration.
+    assert runner.calls == []
+
+
+def test_the_refusal_says_what_check_would_do_in_this_repository_rather_than_in_general(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: print one fixed sentence about ``check`` in both states.
+
+    "Type check instead" is a redirection. "Here, check would write a first spec and then
+    price it" is the answer to what the person was trying to find out, and the difference
+    costs one directory walk. The two states have to read differently or the sentence is
+    decoration -- a repository with a spec is told the path that will be priced, and one
+    without is told a file is about to appear.
+    """
+    empty = tmp_path / "fresh"
+    empty.mkdir()
+    runner = FakeRunner({})
+
+    _, _, raw_without = invoke(["new"], runner=runner, cwd=empty, monkeypatch=monkeypatch)
+    root, spec_runner = checkout(tmp_path, workload="olmo-core-check", compute="gpu-1xt4")
+    _, _, raw_with = invoke(["new"], runner=spec_runner, cwd=root, monkeypatch=monkeypatch)
+    # Unwrapped, because where the paragraph breaks is a width and not a claim.
+    without, with_spec = " ".join(raw_without.split()), " ".join(raw_with.split())
+
+    assert "write a first .edullm/run.yaml -- there is none at or above here" in without
+    assert f"price {root / '.edullm' / 'run.yaml'} and list every refusal" in with_spec
+    assert "write a first" not in with_spec
+
+
+def test_a_word_that_is_nobody_s_verb_gets_the_list_and_the_nearest_spelling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A typo is a different fact from a rename and gets a different answer.
+
+    Mutation: route typos through the rename table, or renames through the typo path. The
+    first invents a replacement that was never settled; the second answers "the guide told
+    me to type dry-run" with a menu to search.
+    """
+    runner = FakeRunner({})
+
+    code, _, err = invoke(["stauts"], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
+
+    assert code == EXIT_UNUSABLE
+    assert "stauts is not a verb." in err
+    assert "Did you mean status?" in err
+    assert "check" in err and "cancel" in err
+    assert runner.calls == []
 
 
 def test_nothing_this_verb_does_reaches_the_network(

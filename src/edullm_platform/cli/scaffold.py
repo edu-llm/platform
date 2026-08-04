@@ -88,7 +88,7 @@ def _notes(configuration: ReviewedConfiguration, repository: str) -> tuple[str, 
     )
     return (
         (
-            "# Written by edullm new, from config/workload-catalog.yaml in "
+            "# Written by edullm check, from config/workload-catalog.yaml in "
             f"{configuration.directory}."
         ),
         "# Everything here is a property of the code and travels with it in git.",

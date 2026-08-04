@@ -149,6 +149,11 @@ def invoke(
     where a login is declared. Without it a suite run on a laptop with ``gh auth login``
     already done would read that person's login out of their home directory, and the test
     for "nobody is logged in" would pass or fail depending on whose machine it ran on.
+
+    ``--config-dir`` goes after the verb because that is where it lives: the root parser
+    takes no option carrying a value, which is what lets a first word be read as a verb
+    without parsing, and is what lets a retired name be answered with its replacement
+    rather than with argparse's list of choices.
     """
     monkeypatch.setenv("GH_CONFIG_DIR", str(cwd / "_no-gh-config"))
     if login is None:
@@ -156,8 +161,9 @@ def invoke(
     else:
         monkeypatch.setenv("EDULLM_GITHUB_LOGIN", login)
     out, err = io.StringIO(), io.StringIO()
+    verb, *rest = argv
     code = main(
-        ["--config-dir", str(CONFIG_DIR), *argv],
+        [verb, "--config-dir", str(CONFIG_DIR), *rest],
         runner=runner,
         out=out,
         err=err,

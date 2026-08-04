@@ -7,16 +7,25 @@ reader learning the shape once can then find the number they came for without re
 rest. The refusal form is the other one those transcripts settle: a count, a line saying
 nothing was dispatched, and then one block per refusal carrying a code and a remedy.
 
-**Three places the transcripts and the code disagreed, and the code won each time.** The
-money is printed as the platform's own arithmetic prints it, quantized to a cent, where
-``adarsh-rajesh-first-run.md`` shows ``$48.288`` -- a CLI that rounded differently from the
-approver page would have a submitter and a lead reading two prices for one run. The
-automatic runtime bound is read from ``config/policy.yaml`` rather than fixed at the four
-hours ``grant-matherne-scarce-shape-v2.md`` prints, because
-``docs-frank/reference/decisions.md`` records four hours as *not ruled* and one hour as
-what the configuration says. And no device memory is printed beside a machine: the
-transcripts show ``4 x A10G 96 GB``, and 96 GB is in a table in the overview and in no file
-this binary reads, so what is printed is the instance type and the device count, which are.
+**Three places the transcripts and the code disagreed, and the code won each time; the
+transcripts have since been corrected to match.** The money is printed as the platform's own
+arithmetic prints it, quantized to a cent, where ``adarsh-rajesh-first-run.md`` showed a
+third decimal -- a CLI that rounded differently from the approver page would have a
+submitter and a lead reading two prices for one run. The automatic runtime bound is read
+from ``config/policy.yaml`` rather than fixed at the figure
+``grant-matherne-scarce-shape-v2.md`` printed, because ``docs-frank/reference/decisions.md``
+records that figure as *not ruled*. And no device memory is printed beside a machine: the
+transcripts showed a per-node total that lives in a prose table in the overview and in no
+file this binary reads, so what is printed is the instance type and the device count, which
+are read.
+
+NO POLICY NUMBER IS WRITTEN ANYWHERE IN THIS PACKAGE, AND ``test_cli_no_hardcoded_bounds.py``
+is what keeps it that way. Every bound, rate and ceiling that reaches a terminal is
+interpolated out of the loaded configuration at the moment of printing, so the only way to
+change what ``edullm`` says a limit is is to change the file that is the limit. The rule is
+structural rather than a habit because the runtime bound has already disagreed between the
+documents and the configuration three separate times, and each of those was two copies that
+agreed on the day somebody wrote the second one.
 """
 
 from __future__ import annotations
@@ -31,6 +40,7 @@ from edullm_platform.contracts.workload import ComputeProfile, WorkloadProfile
 from edullm_platform.execution import CONTAINER_SHAPES
 
 __all__ = [
+    "plain_decimal",
     "render_preflight",
     "render_refusals",
     "render_run_listing",
@@ -134,9 +144,9 @@ def _cost_block(preflight: Preflight) -> str:
     nodes = "node" if cost.nodes == 1 else "nodes"
     return (
         "worst case\n"
-        f"  ${_plain(cost.hourly_rate_usd)}/hour x {cost.nodes} {nodes} x "
-        f"{_plain(cost.maximum_runtime_hours)}h x {cost.maximum_attempts} {attempts} x "
-        f"{cost.cells} {cells} = ${_plain(cost.maximum_compute_cost_usd)}\n"
+        f"  ${plain_decimal(cost.hourly_rate_usd)}/hour x {cost.nodes} {nodes} x "
+        f"{plain_decimal(cost.maximum_runtime_hours)}h x {cost.maximum_attempts} {attempts} x "
+        f"{cost.cells} {cells} = ${plain_decimal(cost.maximum_compute_cost_usd)}\n"
         "  This is the ceiling, not an estimate. It is also what routes the run, so "
         "lowering\n"
         "  --hours is what moves a short run under the automatic bound."
@@ -152,8 +162,8 @@ def _approval_block(preflight: Preflight, policy: ApprovalPolicy) -> str:
     lines = ["approval"]
     if approval_class is ApprovalClass.AUTOMATIC:
         lines.append(
-            f"  automatic -- under ${_plain(limits.automatic_below_cost_usd)} and under "
-            f"{_plain(limits.automatic_below_runtime_hours)}h. Nobody releases this."
+            f"  automatic -- under ${plain_decimal(limits.automatic_below_cost_usd)} and under "
+            f"{plain_decimal(limits.automatic_below_runtime_hours)}h. Nobody releases this."
         )
         return "\n".join(lines)
 
@@ -166,7 +176,7 @@ def _approval_block(preflight: Preflight, policy: ApprovalPolicy) -> str:
             # reports, because it is not a bound on the size of the request. Named here so
             # the block never prints a class with no reason under it.
             lines.append(
-                f"  the hourly rate of ${_plain(cost.hourly_rate_usd)} is what gates this, "
+                f"  the hourly rate of ${plain_decimal(cost.hourly_rate_usd)} is what gates this, "
                 "whatever the total is"
             )
         return "\n".join(lines)
@@ -191,13 +201,13 @@ def _why_not_automatic(preflight: Preflight, policy: ApprovalPolicy) -> list[str
         reasons.append("a fan-out is never released automatically, whatever it costs")
     if cost.maximum_compute_cost_usd >= limits.automatic_below_cost_usd:
         reasons.append(
-            f"over the automatic bound: ${_plain(cost.maximum_compute_cost_usd)} is not "
-            f"under ${_plain(limits.automatic_below_cost_usd)}"
+            f"over the automatic bound: ${plain_decimal(cost.maximum_compute_cost_usd)} is not "
+            f"under ${plain_decimal(limits.automatic_below_cost_usd)}"
         )
     if cost.maximum_runtime_hours >= limits.automatic_below_runtime_hours:
         reasons.append(
-            f"over the automatic bound: {_plain(cost.maximum_runtime_hours)}h is not under "
-            f"{_plain(limits.automatic_below_runtime_hours)}h"
+            f"over the automatic bound: {plain_decimal(cost.maximum_runtime_hours)}h is not under "
+            f"{plain_decimal(limits.automatic_below_runtime_hours)}h"
         )
     return reasons or ["any of the nine approvers can release it"]
 
@@ -219,7 +229,7 @@ def _workload_said(workload: WorkloadProfile) -> str:
     attempts = "attempt" if workload.maximum_attempts == 1 else "attempts"
     return _two_columns(
         workload.name,
-        f"{_plain(workload.maximum_runtime_hours)}h ceiling, "
+        f"{plain_decimal(workload.maximum_runtime_hours)}h ceiling, "
         f"{workload.maximum_attempts} {attempts}, {checkpoint}",
     )
 
@@ -231,7 +241,7 @@ def _compute_said(compute: ComputeProfile) -> str:
     ) or (f"{shape.gpus} GPUs" if shape is not None and shape.gpus > 1 else f"{compute.accelerator}")
     return _two_columns(
         compute.name,
-        f"{compute.instance_type}, {devices}, ${_plain(compute.hourly_rate_usd)}/hour",
+        f"{compute.instance_type}, {devices}, ${plain_decimal(compute.hourly_rate_usd)}/hour",
     )
 
 
@@ -250,7 +260,7 @@ def _two_columns(first: str, second: str) -> str:
     return f"{first:<20} {second}" if len(first) < 20 else f"{first}  {second}"
 
 
-def _plain(value: Decimal) -> str:
+def plain_decimal(value: Decimal) -> str:
     """The same rendering the approver page uses, for the same reason it uses it.
 
     ``StrictDecimal`` normalizes on the way in, so a reviewed ceiling of ``"500"`` is held

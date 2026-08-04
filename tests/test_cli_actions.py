@@ -126,10 +126,10 @@ def test_a_settled_verb_that_is_unbuilt_says_so_rather_than_being_absent(
 ) -> None:
     """Mutation: leave them out of the parser.
 
-    ``decisions.md`` settled thirteen verbs. Somebody typing one of the seven that are not
-    built yet should learn that it is a plan, not that they have made a typo -- and the
-    answer has to name what does exist, because that list is short and the person asking is
-    usually on their first day. It exits 2 rather than 1: nothing was judged.
+    ``decisions.md`` settled a list of verbs. Somebody typing one that is not built yet
+    should learn that it is a plan, not that they have made a typo -- and the answer has to
+    name what does exist, because that list is short and the person asking is usually on
+    their first day. It exits 2 rather than 1: nothing was judged.
     """
     runner = FakeRunner({})
 
@@ -137,7 +137,7 @@ def test_a_settled_verb_that_is_unbuilt_says_so_rather_than_being_absent(
 
     assert code == EXIT_UNUSABLE
     assert f"{verb} is not built yet" in err
-    assert "check, new, submit, status, logs, cancel" in err
+    assert "check, submit, status, logs, cancel" in err
     assert runner.calls == []
 
 

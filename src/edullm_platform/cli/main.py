@@ -6,32 +6,41 @@ judge. ``tools/compile_submission.py`` separates the last two and says why in it
 header -- a refusal is a verdict a submitter can act on and an unreadable configuration is
 not -- and a CLI that collapsed them would send somebody to edit a spec that was fine.
 
-WHICH VERBS ARE HERE AND WHICH ARE STUBS. ``docs-frank/reference/decisions.md`` settled
-thirteen verbs on 2026-08-04. Six are the governed-submission core and are built:
-``check``, ``new``, ``submit``, ``status``, ``logs``, ``cancel``. The interactive three
-(``run``, ``shell``, and the notebook, which that record folds into ``shell --notebook``),
-the agent-facing two (``add``, ``ask``) and ``activity`` -- which the same record folds
-into bare ``status`` -- are declared and refuse with a sentence saying so. Declared rather
-than absent so that the answer to ``edullm shell`` is what it is rather than a usage error
-listing the commands that happen to exist today.
+EVERY WORD THIS BINARY IS TYPED IS ONE OF THREE THINGS, AND THEY GET THREE ANSWERS.
+``BUILT_TODAY`` is the governed-submission core -- ``check``, ``submit``, ``status``,
+``logs``, ``cancel`` -- and runs. ``NOT_BUILT_YET`` is the rest of what
+``docs-frank/reference/decisions.md`` settled on 2026-08-04, declared rather than absent so
+that the answer to ``edullm shell`` is a plan rather than a usage error. ``RETIRED`` is the
+names that were folded into those: ``dry-run`` and ``new`` into ``check``, ``activity``
+into bare ``status``, ``notebook`` into ``shell --notebook``, and ``results`` into looking
+at Weights and Biases. A typo is the fourth case and gets the nearest spelling and the list.
 
-``dry-run`` AND ``new`` ARE THE SPELLINGS EVERY WRITTEN GUIDE USES AND ``check`` IS THE
-SETTLED ONE. The record is explicit -- ``check`` replaces ``dry-run`` and absorbs ``new``,
-because ``--dry-run`` is already this repository's word for a modifier and promoting it to
-a verb would collide with a settled usage as well as with ``run``. Both older spellings are
-kept as aliases: every transcript in ``docs-frank/working/terminal-mockups/`` types them,
-and a researcher typing what they were taught should get the command rather than a usage
-error. ``check`` absorbs ``new`` by scaffolding a spec when the repository has none and
-then checking it, which is the two commands those transcripts always run back to back.
+WHY THE RETIRED NAMES ARE REFUSED RATHER THAN ALIASED. Every transcript in
+``docs-frank/working/terminal-mockups/`` types ``dry-run`` and ``new``, so accepting them
+is tempting and wrong: an alias makes two names work and settles nothing, the retired one
+survives into the next guide, and the rename never finishes. Fewer names is the direction
+of this whole design -- ``check`` absorbed two verbs and ``status`` absorbed one -- and an
+alias would quietly undo that. So the old spelling costs one retry, and what it buys is a
+sentence naming what ``check`` would do in the repository the person is standing in, which
+is the thing they were trying to find out.
+
+NOTHING IN THIS PACKAGE WRITES A POLICY NUMBER DOWN. Every ceiling, rate and bound that
+reaches a terminal is interpolated from the loaded configuration at the point of printing,
+and ``tests/test_cli_no_hardcoded_bounds.py`` fails the build if one is written out. The
+rule is structural because the alternative has already failed: the routine runtime bound
+has disagreed between the documents and ``config/policy.yaml`` three separate times, every
+one of them a second copy that was correct on the day it was typed.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+import textwrap
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
+from difflib import get_close_matches
 from pathlib import Path
 from typing import Final, TextIO
 
@@ -60,6 +69,7 @@ from edullm_platform.cli.preflight import (
     working_tree_refusals,
 )
 from edullm_platform.cli.presentation import (
+    plain_decimal,
     render_preflight,
     render_refusals,
     render_run_listing,
@@ -82,16 +92,82 @@ EXIT_OK: Final = 0
 EXIT_REFUSED: Final = 1
 EXIT_UNUSABLE: Final = 2
 
-#: What ``decisions.md`` settled on 2026-08-04, in the order that record lists them, with
-#: the sentence each stub prints. Present so the binary can say "not built yet" rather than
-#: "invalid choice", which are different facts: one is a plan and the other is a typo.
+#: The five verbs that work, and the line each shows in ``--help`` and in the orientation a
+#: bare ``edullm`` prints. One table rather than two so those two can never drift.
+BUILT_TODAY: Final = {
+    "check": "price a submission here; writes a first spec if there is none",
+    "submit": "dispatch the submission workflow",
+    "status": "what your runs are doing",
+    "logs": "the last lines a run printed",
+    "cancel": "stop a run",
+}
+
+#: The verbs that are settled and unbuilt, with the sentence each prints. Present so the
+#: binary can say "not built yet" rather than "invalid choice", which are different facts:
+#: one is a plan and the other is a typo.
 NOT_BUILT_YET: Final = {
     "run": "ship this working tree to a machine and stream the output back",
     "shell": "open an editor over SSH on a machine, with --notebook for Jupyter",
-    "notebook": "folded into `shell --notebook`; one machine, two clients",
-    "activity": "folded into bare `status`; the document keeps the name, the verb does not",
     "add": "teach the platform about a repository, dataset, shape, model or person",
     "ask": "ask for something for yourself, which produces a time-boxed grant",
+}
+
+#: The names that were something and are now something else, and what to type instead.
+#:
+#: NOT ALIASES, AND THE DIFFERENCE IS THE WHOLE REASON THIS TABLE EXISTS. An alias makes
+#: two names work and teaches nobody which one is the name; the second one then appears in
+#: a guide somebody writes next month and the rename never finishes. Reducing the number of
+#: names is a running theme of this design -- ``check`` absorbed two verbs, ``status``
+#: absorbed one, ``notebook`` folded into a flag -- and an alias would undo that quietly.
+#:
+#: So the retired name is refused, and the refusal names the replacement. Four of the five
+#: are ``decisions.md``'s own foldings; ``results`` is the one that comes from the mockups
+#: instead, where ``nathan-zhao-curriculum-matrix.md`` records it being cut and the
+#: comparison moving into Weights and Biases.
+RETIRED: Final = {
+    "dry-run": (
+        "check",
+        "dry-run is not a verb. check is.",
+        (
+            "check validates a submission completely on this machine and prints exactly "
+            "what would be sent. It reaches no network and queues nothing, which is the "
+            "whole of what dry-run meant."
+        ),
+    ),
+    "new": (
+        "check",
+        "new is not a verb. check is, and it scaffolds.",
+        (
+            "check writes the spec when a repository has none and then prices it, so the "
+            "first command a newcomer types is also the one that gets them a file."
+        ),
+    ),
+    "activity": (
+        "status",
+        "activity is not a verb. status is.",
+        (
+            "`edullm status` with no run id is what activity was going to be: your recent "
+            "submissions and what each is doing. Naming one run narrows it to that run."
+        ),
+    ),
+    "notebook": (
+        "shell",
+        "notebook is not a verb. It folded into a flag: `edullm shell --notebook`.",
+        (
+            "One machine, two clients -- an editor over SSH or Jupyter, chosen at the "
+            "point of asking rather than by picking a different verb. shell is not built "
+            "yet, so neither spelling runs today."
+        ),
+    ),
+    "results": (
+        None,
+        "results is not a verb, and nothing replaced it here.",
+        (
+            "Comparing runs happens in Weights and Biases, where the numbers already are "
+            "and where a chart is a chart rather than a table redrawn in a terminal. "
+            "`edullm status <run-id>` prints that run's link."
+        ),
+    ),
 }
 
 
@@ -102,7 +178,15 @@ def build_parser() -> argparse.ArgumentParser:
             "Submit and follow runs on the eduLLM platform without opening the Actions UI."
         ),
     )
-    parser.add_argument(
+    parser.add_argument("--version", action="version", version=f"edullm {_installed_version()}")
+    # ON EVERY SUBCOMMAND RATHER THAN ON THE ROOT, WHICH IS WHAT LETS THE FIRST WORD BE
+    # READ AS THE VERB WITHOUT PARSING ANYTHING. A root option taking a value puts a
+    # non-flag word in front of the verb -- `edullm --config-dir /tmp check` -- so the
+    # teaching path below could not tell that word from a mistyped verb, and a typo would
+    # be answered with argparse's own "invalid choice" listing the retired names as though
+    # they worked.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
         "--config-dir",
         type=Path,
         help=(
@@ -111,29 +195,17 @@ def build_parser() -> argparse.ArgumentParser:
             "version refuses."
         ),
     )
-    parser.add_argument(
+    common.add_argument(
         "--platform-repository",
         default=PLATFORM_REPOSITORY,
         help="where the submission workflows live",
     )
     verbs = parser.add_subparsers(dest="verb", required=True, metavar="verb")
 
-    check = verbs.add_parser(
-        "check",
-        aliases=["dry-run"],
-        help="validate a submission locally and print exactly what would be sent",
-    )
+    check = verbs.add_parser("check", parents=[common], help=BUILT_TODAY["check"])
     _add_submission_arguments(check)
 
-    new = verbs.add_parser("new", help=f"write a first {SPEC_PATH} and stop")
-    new.add_argument("--spec", type=Path, help=f"where to write it; defaults to {SPEC_PATH}")
-    new.add_argument("--workload", help="the workload profile to write in")
-    new.add_argument("--compute", help="the machine to suggest")
-    new.add_argument(
-        "--force", action="store_true", help="overwrite a spec that is already there"
-    )
-
-    submit = verbs.add_parser("submit", help="dispatch the submission workflow")
+    submit = verbs.add_parser("submit", parents=[common], help=BUILT_TODAY["submit"])
     _add_submission_arguments(submit)
     submit.add_argument(
         "--no-wait",
@@ -150,13 +222,13 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    status = verbs.add_parser("status", help="what your runs are doing")
+    status = verbs.add_parser("status", parents=[common], help=BUILT_TODAY["status"])
     status.add_argument("run_id", nargs="?", help="one run; omit for your recent submissions")
 
-    logs = verbs.add_parser("logs", help="the last lines a run printed")
+    logs = verbs.add_parser("logs", parents=[common], help=BUILT_TODAY["logs"])
     logs.add_argument("run_id", help="the run to read")
 
-    cancel = verbs.add_parser("cancel", help="stop a run")
+    cancel = verbs.add_parser("cancel", parents=[common], help=BUILT_TODAY["cancel"])
     cancel.add_argument("run_id", help="the run to stop")
     cancel.add_argument(
         "--reason",
@@ -168,8 +240,95 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     for verb, description in NOT_BUILT_YET.items():
-        verbs.add_parser(verb, help=f"not built yet: {description}")
+        verbs.add_parser(verb, parents=[common], help=f"not built yet: {description}")
     return parser
+
+
+def _no_such_verb(word: str, *, cwd: Path) -> str:
+    """A word the binary does not know, answered with the word it does.
+
+    THE STATE SENTENCE IS THE POINT WHEN THE REPLACEMENT IS ``check``. "Type check instead"
+    is a redirection; "here, check would write a first spec and then price it" is the
+    answer to what the person was trying to find out, and it costs one directory walk.
+    """
+    lines = [""]
+    entry = RETIRED.get(word)
+    if entry is not None:
+        replacement, headline, explanation = entry
+        lines += [headline, "", *_wrapped(explanation)]
+        if replacement == "check":
+            lines += ["", *_wrapped(f"From this directory, check would {_what_check_would_do(cwd)}.")]
+        if replacement is not None and replacement in NOT_BUILT_YET:
+            lines += ["", f"  edullm {replacement}   is not built yet"]
+        elif replacement is not None:
+            lines += ["", f"  edullm {replacement}"]
+        return "\n".join([*lines, ""])
+
+    known = sorted({*BUILT_TODAY, *NOT_BUILT_YET, *RETIRED})
+    near = get_close_matches(word, known, n=1, cutoff=0.6)
+    lines += [f"{word} is not a verb."]
+    if near:
+        lines += ["", f"Did you mean {near[0]}?"]
+    lines += ["", "These are:"]
+    lines += [f"  {verb:<8} {summary}" for verb, summary in BUILT_TODAY.items()]
+    lines += [f"  {verb:<8} not built yet" for verb in NOT_BUILT_YET]
+    return "\n".join([*lines, ""])
+
+
+def _orientation(*, cwd: Path) -> str:
+    """What a bare ``edullm`` says, which for most people is the first thing it ever says."""
+    lines = [
+        "",
+        "edullm submits and follows runs on the eduLLM platform, so that nobody has to",
+        "open the Actions UI. These verbs work:",
+        "",
+    ]
+    lines += [f"  {verb:<8} {summary}" for verb, summary in BUILT_TODAY.items()]
+    lines += [
+        "",
+        *_wrapped(f"Start with check. Here it would {_what_check_would_do(cwd)}."),
+        "",
+        "  edullm check --help    the flags one submission takes",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _what_check_would_do(cwd: Path) -> str:
+    """Read from the filesystem rather than asserted, so the sentence is about here."""
+    found = find_spec(cwd)
+    if found is not None:
+        return f"price {found} and list every refusal, dispatching nothing"
+    return (
+        f"write a first {SPEC_PATH} -- there is none at or above here -- and then price it"
+    )
+
+
+def _wrapped(text: str) -> list[str]:
+    """Wrapped at spaces and at nothing else, because these paragraphs carry paths.
+
+    ``textwrap`` breaks on hyphens by default, and the paths this prints are full of them --
+    a wrapped ``/tmp/pytest-of-frank/...`` comes back as ``pytest-`` and ``of-frank`` on two
+    lines, which is a path nobody can copy and one that does not exist.
+    """
+    return textwrap.wrap(
+        text,
+        width=78,
+        initial_indent="  ",
+        subsequent_indent="  ",
+        break_on_hyphens=False,
+        break_long_words=False,
+    )
+
+
+def _installed_version() -> str:
+    """What ``pip`` thinks is installed, or a working tree's honest admission that nothing is."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("edullm-platform")
+    except PackageNotFoundError:
+        return "(not installed)"
 
 
 def _add_submission_arguments(parser: argparse.ArgumentParser) -> None:
@@ -210,27 +369,38 @@ def main(
     The four keyword arguments are what make the suite hermetic. Nothing else in this
     package reaches a process, a stream or the filesystem's idea of where it is standing.
     """
-    arguments = build_parser().parse_args(argv)
+    tokens = sys.argv[1:] if argv is None else list(argv)
     stdout = sys.stdout if out is None else out
     stderr = sys.stderr if err is None else err
     command_runner: CommandRunner = SubprocessRunner() if runner is None else runner
     here = Path.cwd() if cwd is None else cwd
 
+    # BEFORE ARGPARSE, BECAUSE ARGPARSE'S ANSWER TO A WORD IT DOES NOT KNOW IS A LIST OF
+    # WORDS IT DOES. That is the right answer for a typo and the wrong one for a rename: a
+    # researcher who types `dry-run` because a guide said so needs to be told the verb was
+    # renamed and what it is now, not handed a menu to search.
+    word = tokens[0] if tokens and not tokens[0].startswith("-") else None
+    if not tokens:
+        print(_orientation(cwd=here), end="", file=stderr)
+        return EXIT_UNUSABLE
+    if word is not None and word not in BUILT_TODAY and word not in NOT_BUILT_YET:
+        print(_no_such_verb(word, cwd=here), end="", file=stderr)
+        return EXIT_UNUSABLE
+
+    arguments = build_parser().parse_args(tokens)
     verb = arguments.verb
     if verb in NOT_BUILT_YET:
         print(
             f"{verb} is not built yet. It is settled -- it would "
-            f"{NOT_BUILT_YET[verb]} -- and nothing behind it exists. Built today: check, "
-            "new, submit, status, logs, cancel.",
+            f"{NOT_BUILT_YET[verb]} -- and nothing behind it exists. Built today: "
+            f"{', '.join(BUILT_TODAY)}.",
             file=stderr,
         )
         return EXIT_UNUSABLE
 
     try:
-        if verb in {"check", "dry-run"}:
+        if verb == "check":
             return _check(arguments, runner=command_runner, out=stdout, err=stderr, cwd=here)
-        if verb == "new":
-            return _new(arguments, runner=command_runner, out=stdout, err=stderr, cwd=here)
         if verb == "submit":
             return _submit(arguments, runner=command_runner, out=stdout, err=stderr, cwd=here)
         if verb == "status":
@@ -305,55 +475,6 @@ def _spec_for_checking(
         compute_profile=arguments.compute,
     )
     return load_spec(written), written
-
-
-# ---------------------------------------------------------------------------------------
-# new
-# ---------------------------------------------------------------------------------------
-
-
-def _new(
-    arguments: argparse.Namespace,
-    *,
-    runner: CommandRunner,
-    out: TextIO,
-    err: TextIO,
-    cwd: Path,
-) -> int:
-    """The scaffold half of ``check``, kept as its own spelling.
-
-    ``decisions.md`` folds this into ``check`` and every transcript types it on its own, so
-    both work. What it does not do is check: somebody who typed ``new`` is about to edit the
-    file, and pricing a command they are two minutes from replacing is noise.
-    """
-    configuration = _configuration(arguments)
-    facts = read_git_facts(runner, cwd=cwd)
-    if facts.root is None or facts.repository is None:
-        print(
-            render_refusals(working_tree_refusals(facts)),
-            end="",
-            file=err,
-        )
-        return EXIT_REFUSED
-    destination = arguments.spec if arguments.spec else facts.root / SPEC_PATH
-    if destination.exists() and not arguments.force:
-        print(
-            f"{destination} is already there. Read it, or pass --force to replace it.",
-            file=err,
-        )
-        return EXIT_REFUSED
-    written = scaffold_spec(
-        configuration,
-        repository=facts.repository,
-        root=facts.root,
-        destination=destination,
-        workload_profile=arguments.workload,
-        compute_profile=arguments.compute,
-    )
-    print(f"wrote {written}", file=out)
-    print(file=out)
-    print("edullm check prices it and lists every refusal, without dispatching.", file=out)
-    return EXIT_OK
 
 
 # ---------------------------------------------------------------------------------------
@@ -655,9 +776,10 @@ def _preflight(
                 code="no_run_spec",
                 detail=(
                     f"there is no {SPEC_PATH} at or above here, and none could be written "
-                    "because this is not a checkout of a registered repository. edullm new "
-                    "writes a first one; it holds what is a property of the code -- the "
-                    "command, the workload profile and a suggested machine."
+                    "because this is not a checkout of a registered repository. check "
+                    "writes a first one from inside a checkout; it holds what is a property "
+                    "of the code -- the command, the workload profile and a suggested "
+                    "machine."
                 ),
             )
         )
@@ -668,7 +790,7 @@ def _preflight(
     )
     if team_refusal is not None:
         refusals.append(team_refusal)
-    missing = _missing_required(arguments, spec, team)
+    missing = _missing_required(arguments, spec, team, configuration)
     refusals.extend(missing)
 
     if spec is None or team is None or missing or facts.commit_sha is None:
@@ -726,7 +848,10 @@ def _preflight(
 
 
 def _missing_required(
-    arguments: argparse.Namespace, spec: RunSpec | None, team: str | None
+    arguments: argparse.Namespace,
+    spec: RunSpec | None,
+    team: str | None,
+    configuration: ReviewedConfiguration,
 ) -> list[Refusal]:
     """The fields with no default anywhere, named one at a time rather than as a usage line.
 
@@ -767,12 +892,30 @@ def _missing_required(
                 detail=(
                     f"neither --compute nor a suggested_compute in {SPEC_PATH} names a "
                     "machine. It is the most expensive field on a submission by some "
-                    "distance -- $0.526 an hour against $55.04 -- and there is nothing to "
+                    f"distance -- {_rate_span(configuration)} -- and there is nothing to "
                     "derive it from, so it is asked rather than defaulted."
                 ),
             )
         )
     return refusals
+
+
+def _rate_span(configuration: ReviewedConfiguration) -> str:
+    """The catalog's cheapest and dearest hourly rates, read at the moment of printing.
+
+    Written out, this sentence said ``$0.526 an hour against $55.04``, which was true of the
+    catalog on the day it was typed and is a second copy of two numbers that live in
+    ``compute-catalog.yaml``. Adding a shape would have left the refusal quietly stale, and
+    a refusal that argues from a wrong price is worse than one that argues from none.
+    """
+    rates = [
+        profile.hourly_rate_usd
+        for profile in configuration.catalog.compute_profiles
+        if profile.provisioned
+    ]
+    if not rates:
+        return "the catalog's rates span orders of magnitude"
+    return f"${plain_decimal(min(rates))} an hour against ${plain_decimal(max(rates))}"
 
 
 def _partial_request(

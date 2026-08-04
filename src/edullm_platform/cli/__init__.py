@@ -19,10 +19,16 @@ attention already spent on it.
 
 THE VERB NAMES FOLLOW ``docs-frank/reference/decisions.md``, WHICH SETTLED THEM ON
 2026-08-04: ``check`` is the validator and absorbs the scaffolding ``new`` used to do,
-``submit``, ``status``, ``logs`` and ``cancel`` are unchanged. ``dry-run`` and ``new`` are
-kept as aliases because every mockup and every guide written before that date spells them
-that way, and a first-week researcher typing the spelling they were taught should get the
-command rather than a usage error.
+``submit``, ``status``, ``logs`` and ``cancel`` are unchanged, ``status`` with no run id
+absorbs ``activity``, and ``notebook`` is a flag on ``shell``.
+
+THE RETIRED SPELLINGS ARE REFUSED RATHER THAN ALIASED, AND THE REFUSAL NAMES THE
+REPLACEMENT. Every mockup and every guide written before that date types ``dry-run`` and
+``new``, so the tempting move is to accept both -- but an alias makes two names work and
+teaches nobody which is the name, and the retired one then reappears in the next guide
+somebody writes. Fewer names is the whole direction of this design, so the old spelling
+costs one retry and ends there, and what it buys for that retry is a sentence naming what
+``check`` would do in the repository the person is standing in.
 """
 
 from __future__ import annotations

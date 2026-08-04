@@ -1,10 +1,16 @@
-"""``edullm new``, and ``check`` absorbing it.
+"""``check`` scaffolding, which is the only way a spec gets written.
 
 What a scaffold is worth is entirely in whether the file it writes is one the checks then
 clear, so most of what is asserted here is that: write it, check it, and expect no refusal
 about the fields the scaffold chose. A scaffold that produced a plausible file the platform
 refuses would be worse than no scaffold, because it puts the mistake in version control
 under somebody else's name.
+
+There is no ``new``. ``decisions.md`` folds it into ``check`` and the fold is the point
+rather than a convenience: the first command a newcomer types is also the one that gets them
+a file, and it prices the file in the same breath, so nobody learns their corpus is
+unregistered on a second command they had to be told to run. ``check`` never replaces a spec
+it did not just write, which is what makes writing safe enough to do without asking.
 """
 
 from __future__ import annotations
@@ -16,6 +22,8 @@ import pytest
 from edullm_platform.cli.main import EXIT_OK, EXIT_REFUSED
 from edullm_platform.cli.spec import load_spec
 from tests.cli_support import CONFIG_DIR, FakeRunner, failed, git_answers, invoke
+
+FIRST_CHECK = ["check", "--dataset", "regmix-10b-v1", "--experiment", "an-experiment"]
 
 
 def test_a_first_spec_names_a_workload_this_repository_registers(
@@ -29,9 +37,8 @@ def test_a_first_spec_names_a_workload_this_repository_registers(
     """
     runner = FakeRunner(git_answers(tmp_path))
 
-    code, out, err = invoke(["new"], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
+    invoke(FIRST_CHECK, runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
 
-    assert code == EXIT_OK, out + err
     spec = load_spec(tmp_path / ".edullm" / "run.yaml")
     assert spec.workload_profile in {"olmo-core-check", "olmo-core-train"}
     assert spec.suggested_compute is not None
@@ -45,46 +52,44 @@ def test_the_scaffolded_command_satisfies_the_rules_the_check_then_applies(
     Mutation: scaffold a command that names no ``$EDULLM_CHECKPOINT_DIR`` under a workload
     that checkpoints, or one that starts a single process on a multi-device suggestion.
     Both are refused by rules this repository already owns, so the assertion is simply that
-    ``check`` clears what ``new`` wrote.
+    the check clears the file the same invocation just wrote.
     """
     (tmp_path / ".edullm").mkdir()
     (tmp_path / ".edullm" / "train_on_corpus.py").write_text("print(1)\n", encoding="utf-8")
     runner = FakeRunner(git_answers(tmp_path))
 
-    invoke(["new"], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
-    code, out, err = invoke(
-        ["check", "--dataset", "regmix-10b-v1", "--experiment", "an-experiment"],
-        runner=FakeRunner(git_answers(tmp_path)),
-        cwd=tmp_path,
-        monkeypatch=monkeypatch,
-    )
+    code, out, err = invoke(FIRST_CHECK, runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
 
     assert code == EXIT_OK, out + err
+    assert out.startswith("wrote ")
     assert "no refusals. edullm submit will dispatch this." in out
     assert err == ""
 
 
-def test_a_spec_that_is_already_there_is_not_replaced_without_being_asked(
+def test_a_spec_that_is_already_there_is_not_replaced(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Mutation: overwrite.
+    """Mutation: scaffold whenever the fields would differ, or offer a ``--force``.
 
-    The file is edited by hand after it is written -- that is what it is for -- so the
-    second ``new`` in a repository is somebody who has forgotten they ran the first, and
-    what it would cost them is a command they tuned over a week.
+    The file is edited by hand after it is written -- that is what it is for -- so every
+    ``check`` after the first is somebody whose command is theirs now. There is no flag to
+    replace it because there is no request behind one: a spec that should go is deleted, and
+    the next ``check`` writes a fresh one, which is one concept rather than two.
     """
     runner = FakeRunner(git_answers(tmp_path))
-    invoke(["new"], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
-    written = (tmp_path / ".edullm" / "run.yaml").read_text(encoding="utf-8")
-    (tmp_path / ".edullm" / "run.yaml").write_text(
-        written.replace("schema_version: 1", "schema_version: 1\n# mine"), encoding="utf-8"
+    invoke(FIRST_CHECK, runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
+    spec_path = tmp_path / ".edullm" / "run.yaml"
+    spec_path.write_text(
+        spec_path.read_text(encoding="utf-8").replace(
+            "schema_version: 1", "schema_version: 1\n# mine"
+        ),
+        encoding="utf-8",
     )
 
-    code, _, err = invoke(["new"], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
+    _, out, _ = invoke(FIRST_CHECK, runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
 
-    assert code == EXIT_REFUSED
-    assert "--force" in err
-    assert "# mine" in (tmp_path / ".edullm" / "run.yaml").read_text(encoding="utf-8")
+    assert "wrote " not in out
+    assert "# mine" in spec_path.read_text(encoding="utf-8")
 
 
 def test_check_writes_a_first_spec_where_there_is_none_and_then_checks_it(
@@ -99,12 +104,7 @@ def test_check_writes_a_first_spec_where_there_is_none_and_then_checks_it(
     """
     runner = FakeRunner(git_answers(tmp_path))
 
-    code, out, err = invoke(
-        ["check", "--dataset", "regmix-10b-v1", "--experiment", "an-experiment"],
-        runner=runner,
-        cwd=tmp_path,
-        monkeypatch=monkeypatch,
-    )
+    code, out, err = invoke(FIRST_CHECK, runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
 
     assert (tmp_path / ".edullm" / "run.yaml").is_file()
     assert out.startswith("wrote ")
@@ -128,10 +128,10 @@ def test_a_directory_that_is_not_a_checkout_is_told_that_rather_than_scaffolded(
     """
     runner = FakeRunner({("git", "rev-parse", "--show-toplevel"): failed("not a git repo")})
 
-    code, _, err = invoke(["new"], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
+    code, out, _ = invoke(FIRST_CHECK, runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
 
     assert code == EXIT_REFUSED
-    assert "refused  not_a_repository" in err
+    assert "refused  not_a_repository" in out
     assert not (tmp_path / ".edullm").exists()
 
 
@@ -151,7 +151,7 @@ def test_the_written_file_reads_back_as_the_spec_it_was_rendered_from(
     runner = FakeRunner(git_answers(tmp_path))
 
     invoke(
-        ["new", "--compute", "gpu-4xa10g"],
+        [*FIRST_CHECK, "--compute", "gpu-4xa10g"],
         runner=runner,
         cwd=tmp_path,
         monkeypatch=monkeypatch,
@@ -174,7 +174,7 @@ def test_the_header_names_the_configuration_the_choices_were_read_from(
     """
     runner = FakeRunner(git_answers(tmp_path))
 
-    invoke(["new"], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
+    invoke(FIRST_CHECK, runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
 
     written = (tmp_path / ".edullm" / "run.yaml").read_text(encoding="utf-8")
     assert str(CONFIG_DIR) in written
