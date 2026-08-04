@@ -12,6 +12,7 @@ submission path offers a substitute when a requested shape does not place, and a
 from this file has no answer to offer -- which presents as silence, not as an error.
 """
 
+import ast
 import re
 from pathlib import Path
 
@@ -20,6 +21,7 @@ import yaml
 
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.workload import ComputeProfile, WorkloadCatalog
+from edullm_platform.placement import read_capacity
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CAPACITY_PATH = PROJECT_ROOT / "config" / "capacity.yaml"
@@ -238,46 +240,80 @@ def test_a_substitute_is_at_least_the_machine_it_replaces(
         )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "config/capacity.yaml has no reader outside this module. The substitution it "
-        "describes is not implemented, and whether to build it or to delete the table is a "
-        "decision for whoever owns the submission path"
-    ),
-)
+#: Where a reader would live. Tests are excluded on purpose: this module reading the file
+#: is what the check exists to distinguish from production reading it.
+PRODUCTION_TREES = ("src", "tools")
+
+#: The module that turns the file into records. A consumer is anything that imports from it;
+#: the module itself is not its own consumer, so it is skipped when they are counted.
+READER_MODULE = PROJECT_ROOT / "src" / "edullm_platform" / "placement.py"
+
+
+def _production_consumers_of_the_reader() -> list[str]:
+    """Every production module that imports :mod:`edullm_platform.placement`.
+
+    Parsed rather than searched. The predecessor of this check looked for the string
+    ``capacity.yaml`` in each file and could not tell a reader from a sentence about one --
+    on 2026-08-04 it matched ``src/edullm_platform/execution.py``, where the name appears in
+    a comment, and ``tools/build_admission_lambda.py``, where the comment says the file is
+    *deliberately absent* from what the Lambda carries. A check that counts a line denying
+    the file is read as evidence that it is read cannot fail for the reason it exists.
+
+    ``ast`` does not see comments or docstrings at all, so the only thing that satisfies this
+    is an import a module actually executes.
+    """
+    consumers: list[str] = []
+    for directory in PRODUCTION_TREES:
+        for path in sorted((PROJECT_ROOT / directory).rglob("*.py")):
+            if path == READER_MODULE:
+                continue
+            parsed = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(parsed):
+                if (
+                    isinstance(node, ast.ImportFrom)
+                    and node.module == "edullm_platform.placement"
+                ) or (
+                    isinstance(node, ast.Import)
+                    and any(alias.name == "edullm_platform.placement" for alias in node.names)
+                ):
+                    consumers.append(str(path.relative_to(PROJECT_ROOT)))
+                    break
+    return consumers
+
+
 def test_the_substitution_table_is_read_by_something_that_can_act_on_it() -> None:
-    """NOTHING WALKS THIS REGISTRY, AND THE TESTS AROUND IT CANNOT SAY SO.
+    """THE TABLE HAS A READER ON THE SUBMISSION PATH, AND THIS FAILS IF IT LOSES ONE.
 
     ``config/capacity.yaml`` opens by stating that "the submission path promises that asking
     for a shape which does not reliably place is answered at the moment of choosing with one
-    that does". No such answer is given anywhere. ``rg -l capacity.yaml`` over ``src/``,
-    ``tools/`` and ``.github/workflows/`` returns nothing; every other file under
-    ``config/`` has between seven and forty-eight readers there. ``offer_instead`` and
-    ``unreliably`` appear in this file and in this test module and nowhere else in the tree.
+    that does". For a while nothing kept that promise: the four checks above held the table
+    self-consistent, a submitter asking for ``gpu-4xa10g`` was told nothing, and none of them
+    could fail because the behaviour the table exists for was absent.
 
-    So the four checks above hold a table self-consistent, and a submitter asking for
-    ``gpu-4xa10g`` is still told nothing and still waits in ``RUNNABLE``. Every one of them
-    can fail on an edit to the table; none of them can fail because the behaviour the table
-    exists for is absent, which is the state the repository is actually in.
+    That was recorded as ``xfail(strict=True)`` so it would turn red the day somebody built
+    the reader. :mod:`edullm_platform.placement` is that reader and
+    ``tools/compile_submission.py`` is the consumer, so the marker has done its job and is
+    gone. It is replaced rather than deleted with it: an ``xfail`` that clears itself takes
+    the property with it when it goes, and the property -- that this file is read by
+    something on the path to a submission, and not merely mentioned -- is the one worth
+    keeping now that it finally holds.
 
-    Marked ``xfail(strict=True)`` rather than deleted or left red, so the gap is reported on
-    every run and the marker becomes the failure the day somebody gives the table a reader.
-    The two ways out are a submission path that consults it and a deletion of the file with
-    its four tests; both are somebody's decision rather than this test's.
+    Both halves are asserted because either can be lost on its own. A consumer that imports
+    the reader and never calls it still satisfies the first, and a reader that stops parsing
+    the shipped file still satisfies the second.
     """
-    searched = ("src", "tools", ".github/workflows")
-    readers = sorted(
-        str(path.relative_to(PROJECT_ROOT))
-        for directory in searched
-        for path in (PROJECT_ROOT / directory).rglob("*")
-        if path.is_file()
-        and path.suffix in {".py", ".yml", ".yaml"}
-        and "capacity.yaml" in path.read_text(encoding="utf-8", errors="ignore")
+    consumers = _production_consumers_of_the_reader()
+
+    assert consumers, (
+        "nothing in " + ", ".join(PRODUCTION_TREES) + " imports edullm_platform.placement, "
+        "so config/capacity.yaml is read only by its own tests and the substitution it "
+        "describes cannot reach a submitter"
     )
 
-    assert readers, (
-        "nothing in " + ", ".join(searched) + " reads config/capacity.yaml, so the "
-        "substitution it describes cannot happen and the tests over it only hold it "
-        "self-consistent"
+    records = read_capacity(CAPACITY_PATH)
+
+    assert records, "the reader parses config/capacity.yaml into no records at all"
+    assert {record.profile for record in records} >= SHAPES_THAT_DO_NOT_PLACE, (
+        "the reader does not return the shapes this file records as unplaceable, so what "
+        "the consumers above act on is not the table these tests check"
     )
