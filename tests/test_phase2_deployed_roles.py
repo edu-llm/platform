@@ -35,9 +35,12 @@ from pathlib import Path
 
 from edullm_platform.evidence import CAPTURE_SUFFIX, CaptureLoadVerdict, scan_for_secrets
 from edullm_platform.pending_amendments import UNREACHABLE_COMPUTE_PROFILES, pending_for
-from edullm_platform.phase1_capture import CaptureVerdict, read_committed_role_captures
+from edullm_platform.phase1_capture import (
+    CaptureVerdict,
+    CommittedRoleCapture,
+    read_committed_role_captures,
+)
 from edullm_platform.phase2_evidence import PHASE2_ROLE_CAPTURE_DIR, PHASE2_ROLE_TEMPLATES
-
 from tests.infrastructure_support import INFRA_ROOT, load_template
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -56,7 +59,7 @@ COMPUTE_PATHS = (
 )
 
 
-def captures() -> tuple:
+def captures() -> tuple[CommittedRoleCapture, ...]:
     return read_committed_role_captures(
         PROJECT_ROOT, capture_dir=CAPTURE_DIR, role_templates=PHASE2_ROLE_TEMPLATES
     )
