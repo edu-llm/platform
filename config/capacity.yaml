@@ -24,23 +24,55 @@
 # job that sits in RUNNABLE with no error anywhere, which is indistinguishable from a job
 # that is merely queued.
 #
-# HOW THE ANSWERS BELOW WERE ARRIVED AT. Not from a placement probe -- there is no cheap one,
-# because the measurement is "did a job start" and the instrument costs an instance. They are
-# the account's own experience as recorded in config/workload-catalog.yaml's comments and in
-# docs-frank/reference/system-overview.md: the P pool is where this account has waited, and
-# g5.12xlarge is the one G-pool shape it has waited on. Re-read the day a shape's answer is
-# doubted rather than on a schedule; a stale entry here costs an unnecessary suggestion, and
-# a missing one costs an afternoon in RUNNABLE.
+# HOW THE ANSWERS BELOW WERE ARRIVED AT, AND THE METHOD CHANGED ON 2026-08-04. The first
+# version of this file said there was no cheap placement probe, "because the measurement is
+# 'did a job start' and the instrument costs an instance", and inferred every answer from the
+# account's own experience as recorded in config/workload-catalog.yaml's comments.
+#
+# THERE IS A CHEAP PROBE AND NOT FINDING IT COST THIS FILE MOST OF ITS ACCURACY.
+# `ec2 create-fleet --type instant` with a target capacity of one asks EC2 for a real instance
+# and returns synchronously: either instance ids, or a per-pool error naming
+# InsufficientInstanceCapacity. A pool that has nothing costs nothing to ask, because nothing
+# launches. A pool that has something costs one instance for as long as it takes to call
+# terminate-instances, which is seconds. Every answer below was re-measured that way against
+# every subnet each shape's instance type is offered in, and the launched instances were
+# terminated immediately. Six of the fifteen answers were wrong.
+#
+# THE SHAPE OF THE ERROR IS WORTH MORE THAN THE CORRECTIONS. Every wrong answer was wrong in
+# the same direction -- a shape recorded as reliable that does not place -- and the reason is
+# that the old method could only see shapes the account had already waited on. A shape nobody
+# had submitted to yet had no experience attached, and "no experience" was written down as
+# "reliably". That is a denylist wearing the file's own clothes, and the header above spends
+# four sentences arguing against exactly that under UNKNOWN IS NOT A VALUE. The default was
+# never stated, so nobody noticed it was being applied.
+#
+# WHAT THE PROBE FOUND, WHICH IS NOT THE STORY ANYBODY EXPECTED. The P pool is dry, on-demand
+# and on spot, in all fourteen type-and-zone combinations. So is every four-card and
+# eight-card G shape except the T4s. What places in this region today is small and old:
+# g4dn in all three sizes, and one card of A10G or L4. The G pool is not the safe harbour the
+# substitutions below assumed it was; the T4 family is, and nothing in this file pointed at it
+# before.
+#
+# Re-read the day a shape's answer is doubted rather than on a schedule; a stale entry here
+# costs an unnecessary suggestion, and a missing one costs an afternoon in RUNNABLE.
 #
 # UNKNOWN IS NOT A VALUE, AND THAT IS THE POINT. Every profile in the catalog appears here
 # exactly once, so promoting a shape is an edit here as well. A file listing only the scarce
 # ones would be a denylist, and the way a denylist fails is that the next shape somebody
 # promotes is assumed to place until the first person waits four hours to find out otherwise.
 schema_version: 1
-observed_at: "2026-08-03"
+observed_at: "2026-08-04"
 profiles:
   - profile: cpu-32vcpu
     places: reliably
+  # THE THREE T4 SHAPES ARE THE ONLY MULTI-CARD MACHINES IN THIS FILE THAT PLACE, and
+  # g4dn.metal below is the only eight-card machine of any kind the account could obtain on
+  # 2026-08-04. All three were measured by launching one and terminating it, not inferred.
+  #
+  # That makes gpu-8xt4 the shape to know about, and it was previously the shape nothing
+  # pointed at: 8 x T4 is 128 GB of device memory, which is less than the eight-card A10G, L4
+  # and L40S machines this file used to recommend and more than any of them can currently
+  # supply, because none of them place.
   - profile: gpu-1xt4
     places: reliably
   - profile: gpu-4xt4
@@ -57,27 +89,44 @@ profiles:
   # different things and put a fifth name on a list the submission path describes as four.
   - profile: gpu-1xa10g-sagemaker
     places: reliably
-  # THE ONE G-POOL SHAPE THIS ACCOUNT HAS WAITED ON, and the substitution the submission path
-  # is written around. g6.12xlarge is the same four-card 96 GB machine at $4.602 against
-  # $5.672, drawing on a pool that is not contended the same way, so the offer costs the
-  # submitter nothing at all: same device memory, same device count, less money.
+  # THE SUBSTITUTION THIS FILE WAS WRITTEN AROUND, AND IT POINTED AT A SHAPE THAT DOES NOT
+  # PLACE. The note here read: "g6.12xlarge is the same four-card 96 GB machine at $4.602
+  # against $5.672, drawing on a pool that is not contended the same way, so the offer costs
+  # the submitter nothing at all." Every clause of that is still true except the one that
+  # mattered. On 2026-08-04 g6.12xlarge returned InsufficientInstanceCapacity in all five
+  # zones it is offered in, at the same minute g5.12xlarge did.
+  #
+  # NO REPLACEMENT OFFER, AND THE ABSENCE IS A DECISION. gpu-4xt4 places and is the only
+  # four-card machine that does, but it is 4 x 16 GB against 4 x 24 GB. This file already
+  # records what happens when a smaller card is offered as "the closest thing available" --
+  # see gpu-1xh100 below, where two pieces of work took that offer and it was not close. A
+  # third of the device memory removed is a changed recipe, which is the submitter's decision
+  # to make and not the platform's to make quietly on their behalf.
   - profile: gpu-4xa10g
     places: unreliably
-    offer_instead: gpu-4xl4
+  # RECORDED AS RELIABLE AND NEVER MEASURED. g5.48xlarge placed once, on 2026-08-03, which is
+  # the whole of the evidence that produced the old answer. It returned
+  # InsufficientInstanceCapacity in all five zones on 2026-08-04.
   - profile: gpu-8xa10g
-    places: reliably
+    places: unreliably
   - profile: gpu-1xl4
     places: reliably
   - profile: gpu-4xl4
-    places: reliably
+    places: unreliably
   - profile: gpu-8xl4
-    places: reliably
+    places: unreliably
+  # THE WHOLE g6e FAMILY IS DRY AND ALL THREE SIZES WERE RECORDED AS RELIABLE. This is the
+  # correction that matters most, because gpu-8xl40s was the substitute this file offered to
+  # anybody who could not get an eight-card A100 -- the busiest substitution on the list, sent
+  # to a machine that has never been obtained. gpu-4xl40s has an autoscaling group with no
+  # successful launch in its history and thirty failures in the half hour before this was
+  # written, with two jobs waiting behind them.
   - profile: gpu-1xl40s
-    places: reliably
+    places: unreliably
   - profile: gpu-4xl40s
-    places: reliably
+    places: unreliably
   - profile: gpu-8xl40s
-    places: reliably
+    places: unreliably
   # NO offer_instead, AND THE ABSENCE IS THE ANSWER RATHER THAN AN OMISSION. What a submitter
   # asking for gpu-1xh100 wants is 80 GB on one device, and nothing else in the catalog holds
   # it: the largest single card here is the 48 GB L40S. This file used to be tempted to name
@@ -87,15 +136,33 @@ profiles:
   # has to declare and defend rather than a substitution the platform may make for them.
   - profile: gpu-1xh100
     places: unreliably
-  # 384 GB against 320 GB, on the G pool rather than the P pool, and an admin either way at
-  # $30.131 against $21.958. So the offer costs money and buys memory and a queue that is
-  # actually there, which is the trade the catalog's own note above gpu-8xl40s already makes:
-  # the same reach past 192 GB without the P pool.
+  # THE OFFER HERE WAS gpu-8xl40s AND IT IS WITHDRAWN, WHICH LEAVES THIS SHAPE WITH NOTHING.
+  # The reasoning was sound and is worth keeping: "384 GB against 320 GB, on the G pool rather
+  # than the P pool, and an admin either way at $30.131 against $21.958. So the offer costs
+  # money and buys memory and a queue that is actually there." The last clause is the one that
+  # stopped being true. g6e.48xlarge returned InsufficientInstanceCapacity in all four zones on
+  # 2026-08-04, so the offer bought a second queue to wait in.
+  #
+  # NOTHING REPLACES IT. 320 GB of device memory across eight cards has no peer that places:
+  # the only eight-card machine available is gpu-8xt4 at 128 GB, which is not the same work.
+  # A submitter whose model needs 320 GB is choosing between a Capacity Block and waiting, and
+  # both of those are decisions with a person attached rather than a substitution.
+  #
+  # The environment behind this profile now lists p4de.24xlarge as well as p4d.24xlarge, which
+  # is two more placement pools rather than a change to this answer. It was still unreliable
+  # with four pools and it is still unreliable with six.
   - profile: gpu-8xa100
     places: unreliably
-    offer_instead: gpu-8xl40s
   # 640 GB has no peer here and the substitute is a protocol rather than a profile. This is
   # the shape the Capacity Block route exists for: prove the work on a smaller node, buy the
   # block for a dated window, size the run to about 70% of it.
+  #
+  # THE CAPACITY BLOCK ROUTE WAS CHECKED ON 2026-08-04 AND IT IS OPEN, which this note asserted
+  # without testing. ec2:PurchaseCapacityBlock and ec2:DescribeCapacityBlockOfferings are both
+  # permitted -- InternSandboxBoundary's DenyCostCommitmentPurchases names
+  # ec2:CreateCapacityReservation and does not name either of these. The offerings are real and
+  # they are not soon: one p5.48xlarge for 24 hours was offered at $996.67 upfront starting
+  # 2026-08-29, and one p4d.24xlarge at $283.20 starting 2026-08-15. So the route works and it
+  # is a fortnight of lead time, which is the fact to plan against.
   - profile: gpu-8xh100
     places: unreliably
