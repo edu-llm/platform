@@ -1,10 +1,18 @@
 """A shape that may not place is said so at submission time, and is still submittable.
 
-``config/capacity.yaml`` recorded four shapes as ``places: unreliably`` and a substitution
-for two of them, and nothing read the file. All four stayed in the form's dropdown, so the
-only way to learn that one of them does not place was to submit and wait: a job that cannot
-be placed sits in ``RUNNABLE`` with no error written anywhere, which is indistinguishable
-from a job that is merely queued.
+``config/capacity.yaml`` records ten of seventeen priced shapes as ``places: unreliably``,
+and nothing read the file. They stayed in the form's dropdown, so the only way to learn that
+one of them does not place was to submit and wait: a job that cannot be placed sits in
+``RUNNABLE`` with no error written anywhere, which is indistinguishable from a job that is
+merely queued.
+
+**NOTHING HERE COVERS A SUBSTITUTION, BECAUSE THERE IS NO LONGER SUCH A THING.** The file
+recorded two, both were re-measured on 2026-08-04 and pointed at machines this account has
+never obtained, and both were withdrawn on the rule that a smaller card is a changed recipe
+the submitter declares. The tests that covered naming a substitute went with the branch that
+named one: kept alive against a fixture the shipped file can never produce, they would have
+been checks incapable of failing, and the parametrize over the two recorded substitutions had
+already become one -- it collected zero cases.
 
 **The two failures worth testing here pull in opposite directions, and both have happened
 to warnings in this repository before.** One is the warning not arriving -- a shape that
@@ -27,6 +35,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from edullm_platform.placement import (
     CAPACITY_FILENAME,
@@ -51,12 +60,25 @@ PUBLISHED_DIGEST = "sha256:" + "1a" * 32
 FIRST_PUSH = "2026-07-26T09:02:00.000000Z"
 SCANNED_AT = "2026-07-26T22:07:12.000000Z"
 
-#: The two shapes the file records a substitute for, and the substitute it records.
-SUBSTITUTIONS = {"gpu-4xa10g": "gpu-4xl4", "gpu-8xa100": "gpu-8xl40s"}
-
-#: The two where the absence of a substitute is the recorded answer. Nothing else in the
-#: catalog holds 80 GB on one device or 640 GB on one node.
-NO_SUBSTITUTE = ("gpu-1xh100", "gpu-8xh100")
+#: Every shape the probe could not obtain on 2026-08-04, and so every shape that warns.
+#: Named here as well as in the file, on the same reasoning ``tests/test_capacity.py`` gives
+#: for its copy: a shape quietly becoming reliable should be a test edit rather than a silent
+#: one. The set is read back out of the shipped file below rather than trusted from here, so
+#: this is the second opinion and not the source.
+SHAPES_THAT_DO_NOT_PLACE = frozenset(
+    {
+        "gpu-4xa10g",
+        "gpu-8xa10g",
+        "gpu-4xl4",
+        "gpu-8xl4",
+        "gpu-1xl40s",
+        "gpu-4xl40s",
+        "gpu-8xl40s",
+        "gpu-1xh100",
+        "gpu-8xa100",
+        "gpu-8xh100",
+    }
+)
 
 
 @pytest.fixture(scope="module")
@@ -155,7 +177,7 @@ def test_every_priced_shape_this_reads_carries_one_of_the_two_answers(
     assert len({record.profile for record in shipped}) == len(shipped)
 
 
-def test_the_four_shapes_that_do_not_place_are_the_four_that_warn(
+def test_the_shapes_that_do_not_place_are_exactly_the_shapes_that_warn(
     shipped: tuple[PlacementRecord, ...],
 ) -> None:
     """Mutation: warn on every shape, or on none.
@@ -163,50 +185,53 @@ def test_the_four_shapes_that_do_not_place_are_the_four_that_warn(
     Both are ways for this to look wired up and say nothing useful. A warning on every
     submission is one submitters learn to skip; a warning on none is the state before this
     existed, and neither fails anything else.
+
+    The set is derived twice and compared, which is what makes it more than a restatement
+    of :func:`placement_warning`: once by asking the function about every shape, and once by
+    reading ``places`` straight out of the shipped YAML without going through the reader.
+    A reader that dropped an entry, or a warning that stopped keying off ``places``, moves
+    one side and not the other.
     """
     warned = {
         record.profile
         for record in shipped
         if placement_warning(record.profile, capacity=shipped) is not None
     }
+    document = yaml.safe_load(CAPACITY_PATH.read_text(encoding="utf-8"))
+    unplaceable_in_the_file = {
+        str(entry["profile"])
+        for entry in document["profiles"]
+        if entry["places"] == PLACES_UNRELIABLY
+    }
 
-    assert warned == {*SUBSTITUTIONS, *NO_SUBSTITUTE}
-
-
-@pytest.mark.parametrize(("shape", "substitute"), sorted(SUBSTITUTIONS.items()))
-def test_a_recorded_substitute_is_named_in_the_message(
-    shape: str, substitute: str, shipped: tuple[PlacementRecord, ...]
-) -> None:
-    """Mutation: say only that the shape may not place.
-
-    The substitution is the whole reason the file records more than a boolean, and a
-    warning that withheld it would leave the submitter with the same problem and no next
-    step -- which is what sends somebody back to the shape they already picked.
-    """
-    warning = placement_warning(shape, capacity=shipped)
-
-    assert warning is not None
-    assert f"`{substitute}`" in warning
-    assert f"`{shape}`" in warning
+    assert warned == unplaceable_in_the_file
+    assert warned == set(SHAPES_THAT_DO_NOT_PLACE)
 
 
-@pytest.mark.parametrize("shape", NO_SUBSTITUTE)
-def test_no_recorded_substitute_is_stated_as_an_answer_rather_than_left_blank(
-    shape: str, shipped: tuple[PlacementRecord, ...]
+def test_the_warning_offers_no_substitute_and_says_whose_decision_that_is(
+    shipped: tuple[PlacementRecord, ...],
 ) -> None:
     """Mutation: name the nearest smaller card anyway.
 
-    ``config/workload-catalog.yaml`` records what happened the last time somebody did:
-    two pieces of work asked for an H100, were offered the L40S as "the closest thing
-    available", and it was not. A message that stayed silent about the absence would read
-    as a lookup that broke rather than as an answer.
-    """
-    warning = placement_warning(shape, capacity=shipped)
+    ``config/workload-catalog.yaml`` records what happened the last time somebody did: two
+    pieces of work asked for an H100, were offered the L40S as "the closest thing
+    available", and it was not. That is the reasoning behind the withdrawal of both recorded
+    substitutions on 2026-08-04, so the message has to leave the choice where the rule puts
+    it rather than quietly making it.
 
-    assert warning is not None
-    assert "No substitute is recorded" in warning
-    assert "absence is an answer" in warning
-    assert not any(other in warning for other in SUBSTITUTIONS.values())
+    Every unplaceable shape is checked, not one, because a substitution reintroduced for a
+    single profile is exactly the shape this would otherwise miss.
+    """
+    every_other_profile = {record.profile for record in shipped} - SHAPES_THAT_DO_NOT_PLACE
+
+    for shape in sorted(SHAPES_THAT_DO_NOT_PLACE):
+        warning = placement_warning(shape, capacity=shipped)
+
+        assert warning is not None
+        assert "changed recipe" in warning
+        assert "declare" in warning
+        # No other profile name appears, which is what naming a substitute would look like.
+        assert not any(f"`{other}`" in warning for other in every_other_profile), shape
 
 
 def test_the_message_claims_no_more_than_the_file_does(
@@ -264,9 +289,8 @@ def test_a_shape_the_file_does_not_record_is_unknown_rather_than_fine() -> None:
         ("[]\n", "not a top-level mapping"),
         ("schema_version: 1\n", "lists no profiles"),
         ("profiles:\n  - profile: a\n    places: sometimes\n", "does not name a profile"),
-        ("profiles:\n  - profile: a\n    places: reliably\n    offer_instead: 7\n", "not a"),
     ],
-    ids=["empty", "sequence", "no profiles key", "invented answer", "substitute is a number"],
+    ids=["empty", "sequence", "no profiles key", "invented answer"],
 )
 def test_a_document_that_is_not_a_placement_answer_is_refused(
     tmp_path: Path, document: str, expected: str
@@ -327,10 +351,17 @@ def test_an_unreliable_shape_still_compiles_and_carries_the_warning(tmp_path: Pa
     assert exit_code == EXIT_OK
     assert compiled["manifest"]["compute_profile"] == "gpu-4xa10g"
     assert "`gpu-4xa10g` may not place" in summary
-    assert "`gpu-4xl4`" in summary
 
 
-def test_a_shape_with_no_substitute_compiles_and_says_there_is_none(tmp_path: Path) -> None:
+def test_the_shape_with_no_route_but_a_capacity_block_compiles_and_warns(
+    tmp_path: Path,
+) -> None:
+    """``gpu-1xh100`` is the case with the least to offer and it still has to say something.
+
+    Nothing in the catalog holds 80 GB on one device, so there is no smaller machine even in
+    principle, and what a submitter needs is the pointer to where the Capacity Block route is
+    written down rather than silence.
+    """
     exit_code, summary, compiled = compile_form(
         tmp_path,
         payload=form(compute_profile="gpu-1xh100", command=one_gpu_command()),
@@ -339,7 +370,7 @@ def test_a_shape_with_no_substitute_compiles_and_says_there_is_none(tmp_path: Pa
     assert exit_code == EXIT_OK
     assert compiled["manifest"]["compute_profile"] == "gpu-1xh100"
     assert "`gpu-1xh100` may not place" in summary
-    assert "No substitute is recorded" in summary
+    assert f"config/{CAPACITY_FILENAME}" in summary
 
 
 def test_a_shape_that_places_puts_nothing_in_front_of_the_approver(tmp_path: Path) -> None:

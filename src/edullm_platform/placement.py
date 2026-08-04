@@ -8,25 +8,31 @@ written anywhere, which is indistinguishable from a job that is merely queued --
 researcher finds out by waiting, and finds out hours later.
 
 ``config/capacity.yaml`` has recorded the answer for every priced shape since it was written,
-including the substitution to offer for two of the four that do not place. Nothing read it.
-This is what reads it, and the submission path says so at the moment of choosing rather than
-leaving it to be discovered.
+and nothing read it. This is what reads it, and the submission path says so at the moment of
+choosing rather than leaving it to be discovered.
 
 **A WARNING AND NEVER A REFUSAL, WHICH IS THE ONE DESIGN DECISION HERE THAT COULD GO EITHER
 WAY.** Every other guard on the submission path refuses, and this one deliberately does not.
-``config/capacity.yaml``'s own header is explicit about what it is: the account's experience
-of which pools it has waited on, arrived at by having waited, because "the measurement is 'did
-a job start' and the instrument costs an instance". Refusing a submission on a judgement call
-recorded from memory would make an unmeasured file into a gate, and the first cost of that
-would be a shape that has quietly become available and that nobody can ask for. So the shape
-stays submittable, the sentence goes in front of the person, and the decision stays theirs.
+What ``config/capacity.yaml`` holds is what ``ec2 create-fleet --type instant`` answered for
+each pool on one day: a reading of what EC2 had to sell at that moment rather than a promise
+about the next one. Refusing a submission on a dated reading would make it a gate, and the
+first cost of that would be a shape that has quietly become available and that nobody can ask
+for. So the shape stays submittable, the sentence goes in front of the person, and the
+decision stays theirs.
 
 The message says no more than the file claims. It says the shape *may* not place rather than
-that it will not, it names the file so the reasoning behind a particular entry can be read
-where that reasoning lives, and where no substitute is recorded it says the absence is an
-answer -- because for ``gpu-1xh100`` and ``gpu-8xh100`` it is one. Nothing else in the catalog
-holds 80 GB on one device or 640 GB on one node, and the catalog records what happened the
-last time somebody offered a smaller card as "the closest thing available".
+that it will not, and it names the file so the reasoning behind a particular entry can be read
+where that reasoning lives -- which, for the shapes whose only route is a Capacity Block, is
+the one place that route is written down.
+
+**IT OFFERS NOTHING IN PLACE OF THE SHAPE, AND THAT IS A POSITION RATHER THAN A GAP.** An
+earlier version of this module named a substitute wherever the file recorded one. The file
+recorded two; both were re-measured on 2026-08-04, both turned out to point at machines this
+account has never obtained, and both were withdrawn on the rule that a third of the device
+memory removed is a changed recipe the submitter declares rather than a substitution the
+platform makes for them. Ten of the seventeen priced shapes do not place and not one of them
+has a substitute, so there is no branch here that could name one -- and a branch kept alive
+against a fixture the shipped file can never produce would be a check unable to fail.
 
 Read with ``yaml`` rather than through a contract model, which is the choice
 ``tests/test_capacity.py`` already made and recorded: placement belongs on ``ComputeProfile``
@@ -81,11 +87,10 @@ class UnreadableCapacityError(ValueError):
 
 @dataclass(frozen=True)
 class PlacementRecord:
-    """One profile's recorded answer, and what to offer when the answer is no."""
+    """One profile's recorded placement answer."""
 
     profile: str
     places: str
-    offer_instead: str | None = None
 
 
 def read_capacity(path: Path) -> tuple[PlacementRecord, ...]:
@@ -108,19 +113,12 @@ def read_capacity(path: Path) -> tuple[PlacementRecord, ...]:
             raise UnreadableCapacityError(f"{path} holds an entry that is not a mapping")
         profile = entry.get("profile")
         places = entry.get("places")
-        substitute = entry.get("offer_instead")
         if not isinstance(profile, str) or places not in (PLACES_RELIABLY, PLACES_UNRELIABLY):
             raise UnreadableCapacityError(
                 f"{path} holds an entry that does not name a profile and one of "
                 f"{PLACES_RELIABLY!r} or {PLACES_UNRELIABLY!r}: {entry!r}"
             )
-        if substitute is not None and not isinstance(substitute, str):
-            raise UnreadableCapacityError(
-                f"{path}: the substitute offered for {profile} is not a profile name"
-            )
-        records.append(
-            PlacementRecord(profile=profile, places=places, offer_instead=substitute)
-        )
+        records.append(PlacementRecord(profile=profile, places=places))
     return tuple(records)
 
 
@@ -132,23 +130,38 @@ _WHAT_IT_LOOKS_LIKE: Final = (
 )
 
 #: The limit of what the file claims, said where the warning is read rather than left in the
-#: file's header. A reader who takes this for a measurement will read more into it than the
-#: account can support, and the honest version is short enough to print every time.
+#: file's header. A reader who takes a dated probe for a standing guarantee will read more
+#: into it than the account can support, and the honest version is short enough to print
+#: every time.
 _WHAT_THIS_IS_NOT: Final = (
-    f"This is a warning and not a refusal: `config/{CAPACITY_FILENAME}` records what this "
-    "account has experienced rather than anything EC2 has told it, so the run was submitted "
-    "as filled in and may well start."
+    f"This is a warning and not a refusal: `config/{CAPACITY_FILENAME}` records what one pool "
+    "probe found on one day rather than what EC2 will sell today, so the run was submitted as "
+    "filled in and may well start."
+)
+
+#: Where the reasoning for a particular entry lives. Said rather than summarised here,
+#: because what is worth reading differs per shape -- for the two H100 profiles it is the
+#: dated Capacity Block offerings, and nothing this function could generalise would carry
+#: that.
+_WHERE_THE_REASONING_IS: Final = (
+    f"`config/{CAPACITY_FILENAME}` says beside that entry what was measured and what the "
+    "route to this shape is instead, and choosing a smaller machine is a changed recipe "
+    "for you to declare rather than one this platform substitutes on your behalf."
 )
 
 
 def placement_warning(compute_profile: str, *, capacity: Sequence[PlacementRecord]) -> str | None:
     """What a submitter is owed about the shape they asked for, or ``None`` if nothing.
 
-    ``None`` for every shape that places, which is eleven of the fifteen. A line printed on
+    ``None`` for every shape that places, which is seven of the seventeen. A line printed on
     every submission is a line readers learn to skip, and this one has to survive being read
     by somebody who has submitted forty runs -- the same reason
     :func:`~edullm_platform.launchers.waived_launch_check_note` returns nothing when the
     waiver it describes did not change the outcome.
+
+    Ten of seventeen is a lot of warning, and it is the measurement rather than a threshold
+    anybody picked. Narrowing it would mean saying nothing about a shape the probe could not
+    obtain, which is the state this module was written to end.
     """
     recorded = next(
         (record for record in capacity if record.profile == compute_profile), None
@@ -163,21 +176,7 @@ def placement_warning(compute_profile: str, *, capacity: Sequence[PlacementRecor
         )
     if recorded.places != PLACES_UNRELIABLY:
         return None
-    if recorded.offer_instead is not None:
-        offer = (
-            f"`{recorded.offer_instead}` is recorded as the shape to take instead, and "
-            f"`config/{CAPACITY_FILENAME}` says beside that entry what the swap costs and "
-            "buys. Taking it means re-submitting with that profile; nothing here changes the "
-            "submission you filled in."
-        )
-    else:
-        offer = (
-            "No substitute is recorded, and the absence is an answer rather than an omission: "
-            "nothing else in the catalog holds what this shape holds, so there is no smaller "
-            f"machine to offer that would run the same recipe. `config/{CAPACITY_FILENAME}` "
-            "says beside that entry what the route to this shape is instead."
-        )
     return (
-        f"**`{compute_profile}` may not place.** This account has waited on it, and "
-        f"{_WHAT_IT_LOOKS_LIKE} {offer} {_WHAT_THIS_IS_NOT}"
+        f"**`{compute_profile}` may not place.** A pool probe could not obtain it, and "
+        f"{_WHAT_IT_LOOKS_LIKE} {_WHERE_THE_REASONING_IS} {_WHAT_THIS_IS_NOT}"
     )
