@@ -54,17 +54,52 @@ uv run mypy               # types
 ```
 
 `uv run pytest -q` runs every test and is the command every proof bundle asks a reviewer
-for. Around three hundred of those tests start a subprocess — a real git repository, a bash
-workflow body, a stubbed CLI, a nested pytest — and they are marked `slow`. While working
-on something else you can leave them out:
+for. It is also the slowest way to run it. When the wait matters, run the whole suite in
+parallel rather than running less of it:
 
 ```bash
-uv run pytest -q -m "not slow"   # nine tests in ten, in a few seconds
+uv run pytest -q -n4 --dist loadgroup   # every test, in about a quarter of the time
 ```
 
-That is a convenience and not a default. The exclusion belongs on the command line and
-nowhere else: written into `addopts` it would make the standard command quietly run less
-than it claims, and `tests/test_suite_budget.py` fails if anyone tries.
+`--dist loadgroup` is not optional. Without the groups `tests/conftest.py` assigns, xdist
+distributes individual tests, rebuilds every module's session fixtures on every worker, and
+gives most of the parallelism back. `.github/workflows/ci.yml` runs exactly this command and
+records the measurements beside it.
+
+Around three hundred tests start a subprocess — a real git repository, a bash workflow body,
+a stubbed CLI, a nested pytest — and they are marked `slow`. **`-m "not slow"` is not the
+fast path, and this file used to advertise it as one.** What it claimed was "nine tests in
+ten, in a few seconds", and only the first half was ever true.
+
+Measured on 2026-08-04, over 4,835 tests:
+
+| command | what it runs | wall clock |
+| --- | --- | --- |
+| `pytest -q` | everything | 651s |
+| `pytest -q -m "not slow"` | 4,507 tests, 328 deselected | 240s |
+| `pytest -q -n4 --dist loadgroup` | everything | 107s |
+
+The escape hatch is beaten by a complete run, so there is nothing left for it to be good
+for. The two lower rows were measured in adjacent runs on one machine, which is what makes
+that comparison worth anything; the machine was busy throughout, so read the ratios rather
+than the seconds.
+
+There is no marking that would rescue the claim, which is worth stating because "the wrong
+tests are marked" is the obvious next thought. `--durations=0` over one serial run puts
+644s of measured test time behind those 4,835 tests, and it is spread rather than pooled:
+the slowest single test is 10.2s, the 25 slowest are 17% of the total, the hundred slowest
+are 44%, and the median timed test is 0.07s. Getting to "a few seconds" means deselecting
+the five hundred slowest tests, which is 92% of the runtime and not a suite any more.
+
+The marker is worth keeping for what it says — `slow` means *starts a subprocess*, which is
+a real category and the reason those tests are worth knowing about. It is not a proxy for
+expensive, and reading it as one is the mistake behind the deleted claim: 186 unmarked tests
+take half a second or more and 320s between them, and the slowest unmarked test at 7.5s is
+slower than every marked test but two.
+
+Wherever the exclusion is used it belongs on the command line and nowhere else: written into
+`addopts` it would make the standard command quietly run less than it claims, and
+`tests/test_suite_budget.py` fails if anyone tries.
 
 `ruff check .` respects `.gitignore`, so a file listed there is never linted by the
 standard command. Three Phase 3 files were ignored for a while — `phase3_evidence.py`,
