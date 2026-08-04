@@ -89,6 +89,9 @@ WORKLOAD_CATALOG_PATH = Path("config/workload-catalog.yaml")
 SUBMISSION_FORM_PATH = Path(".github/workflows/submit-run.yml")
 ECR_TEMPLATE_PATH = Path("infra/ecr-repositories.yaml")
 PUBLISHER_TEMPLATE_PATH = Path("infra/iam/ecr-publisher-role.yaml")
+ADMISSION_SERVICE_ROLES_PATH = Path("infra/iam/admission-service-roles.yaml")
+BATCH_ROLES_PATH = Path("infra/iam/batch-roles.yaml")
+GPU_BATCH_ROLES_PATH = Path("infra/iam/batch-gpu-roles.yaml")
 
 #: The deployer's ECR grant is scoped to `repository/sbsandbox-intern-edullm-*`, narrower
 #: than the contract's own pattern, which accepts any `sbsandbox-intern-` name. A
@@ -129,6 +132,85 @@ DEFAULT_MAXIMUM_ATTEMPTS = 1
 
 
 @dataclass(frozen=True)
+class Grant:
+    """One IAM statement whose ``Resource`` list has to name every submittable repository.
+
+    Located by role name and by action rather than by line, because both role templates
+    spell the same pull grant twice and an anchor on the action alone would match the
+    execution role and the instance role in one file.
+    """
+
+    path: Path
+    role_name: str
+    #: The action that identifies the statement inside that role. Every statement below is
+    #: found by exactly one of these, asserted rather than assumed.
+    action: str
+    #: Why this grant exists, for the reader of the diff rather than for the code.
+    purpose: str
+
+
+#: THE FIVE ECR GRANTS A REGISTRATION NEEDS AND THIS TOOL DID NOT WRITE UNTIL 2026-08-04.
+#
+# Found the way the follow-up list above was found -- by applying a registration and
+# running the suite -- except that these were found on the fifth registration rather than
+# the fourth, by the two Phase 3 tests that compare a grant against every *submittable*
+# repository rather than every *registered* one. Registering
+# ``open-instruct-scored-rewards`` turned both red, and the tool's own follow-up list did
+# not name either.
+#
+# WHY IT SURVIVED FOUR REGISTRATIONS. The publisher grant this tool already writes is
+# scoped to every *registered* repository, and until a repository also has a workload
+# profile the two sets are the same. ``edullm-data`` was registered and unsubmittable for a
+# day, so it never exercised these. The first registration that landed a workload profile
+# in the same change was the first that could fail here.
+#
+# WHAT THE FAILURE LOOKS LIKE, AND IT IS THE WORST SHAPE A FAILURE CAN HAVE HERE. Nothing
+# refuses the submission. The scan grant's absence reaches the validator as the same branch
+# an unscanned image does, so an image with an entry in config/image-exceptions.yaml is
+# admitted on a scan nobody read. The four pull grants fail later still: after admission,
+# after approval, after the queue found capacity and an instance scaled up, as a
+# ``CannotPullContainerError`` that names a registry path rather than a policy and
+# reproduces identically on every resubmission. It reads as a broken image.
+#
+# BOTH COMPUTE STACKS, WHICH IS WHY THERE ARE FOUR AND NOT TWO. The execution role is ECS's
+# identity while it starts the task and the instance role is the agent's on the host, and
+# each is spelled once per stack. Widening the CPU file alone leaves every GPU submission
+# unable to start.
+REGISTRATION_GRANTS: tuple[Grant, ...] = (
+    Grant(
+        path=ADMISSION_SERVICE_ROLES_PATH,
+        role_name="sbsandbox-intern-edullm-admission-states",
+        action="ecr:DescribeImageScanFindings",
+        purpose="the ReadImageScan state reads the scan before anything is judged",
+    ),
+    Grant(
+        path=BATCH_ROLES_PATH,
+        role_name="sbsandbox-intern-edullm-batch-execution",
+        action="ecr:BatchGetImage",
+        purpose="ECS pulls the image to start the task, on the CPU stack",
+    ),
+    Grant(
+        path=BATCH_ROLES_PATH,
+        role_name="sbsandbox-intern-edullm-batch-instance",
+        action="ecr:BatchGetImage",
+        purpose="the ECS agent pulls the image on the host, on the CPU stack",
+    ),
+    Grant(
+        path=GPU_BATCH_ROLES_PATH,
+        role_name="sbsandbox-intern-edullm-batch-gpu-execution",
+        action="ecr:BatchGetImage",
+        purpose="ECS pulls the image to start the task, on the GPU stack",
+    ),
+    Grant(
+        path=GPU_BATCH_ROLES_PATH,
+        role_name="sbsandbox-intern-edullm-batch-gpu-instance",
+        action="ecr:BatchGetImage",
+        purpose="the ECS agent pulls the image on the host, on the GPU stack",
+    ),
+)
+
+
+@dataclass(frozen=True)
 class FollowUp:
     """One thing this tool cannot do, named with what does it and what stays broken until."""
 
@@ -149,9 +231,9 @@ class FollowUp:
 # predictable from reading the registry, which is the whole argument for writing them down
 # here instead of leaving each one to be rediscovered as a red test.
 #
-# This list is the honest answer to "registration should be a ten minute action". The three
+# This list is the honest answer to "registration should be a ten minute action". The eight
 # file edits above are ten minutes. The tail is not, and none of it is removable from inside
-# this tool. Two steps need an AWS session, one needs an S3 write, and one is a literal in
+# this tool. Three steps need an AWS session, one needs an S3 write, and one is a literal in
 # a test module this tool has no business editing.
 FOLLOW_UPS: tuple[FollowUp, ...] = (
     FollowUp(
@@ -168,6 +250,27 @@ FOLLOW_UPS: tuple[FollowUp, ...] = (
             "edullm-data shipped in for a day."
         ),
         paths=("infra/iam/ecr-publisher-role.yaml", "infra/README.md"),
+    ),
+    FollowUp(
+        summary="Deploy the three role stacks the five ECR grants were written into",
+        detail=(
+            "This change now writes the scan grant and the four image-pull grants, which "
+            "closes the red tests -- and a template is not a deploy. Until "
+            "sbsandbox-intern-edullm-phase2-admission-service-roles, "
+            "sbsandbox-intern-edullm-batch-iam and sbsandbox-intern-edullm-batch-gpu-iam "
+            "are deployed, the account's roles still cannot read this repository's scan or "
+            "pull its image, and the job fails after admission, approval and placement "
+            "with a CannotPullContainerError that names a registry path rather than a "
+            "policy. Check `aws cloudformation describe-stacks` against the templates "
+            "before deploying: a stack already ahead of `main` carries somebody else's "
+            "in-flight registration, and deploying this tree over it reverts their grant "
+            "with no error to say so."
+        ),
+        paths=(
+            "infra/iam/admission-service-roles.yaml",
+            "infra/iam/batch-roles.yaml",
+            "infra/iam/batch-gpu-roles.yaml",
+        ),
     ),
     FollowUp(
         summary="Re-capture the publisher role, or record the gap while it is open",
@@ -558,6 +661,36 @@ def insert_before_outputs(text: str, block: str) -> str:
     return "".join(lines)
 
 
+def indentation_of(line: str) -> int:
+    return len(line) - len(line.lstrip(" "))
+
+
+def append_to_list_under(lines: list[str], start: int, item: str, what: str) -> list[str]:
+    """Insert ``item`` after the last ``- `` entry of the list opened at ``lines[start]``.
+
+    Split out of ``insert_after_last_list_item`` so the role-grant editor below can reuse
+    it once it has located the right ``Resource:`` of the several a role template holds.
+    ``lines`` is not mutated; the extended copy is returned.
+    """
+    key_indent = indentation_of(lines[start])
+    last: int | None = None
+    for index in range(start + 1, len(lines)):
+        stripped = lines[index].strip()
+        if not stripped or indentation_of(lines[index]) <= key_indent:
+            break
+        if stripped.startswith("- "):
+            last = index
+        elif not stripped.startswith("#"):
+            break
+    if last is None:
+        raise SourceUnusable(f"list_has_no_items:{what}")
+
+    extended = list(lines)
+    margin = " " * indentation_of(lines[last])
+    extended.insert(last + 1, f"{margin}{item}\n")
+    return extended
+
+
 def insert_after_last_list_item(text: str, key: str, item: str) -> str:
     """Extend the YAML list under ``key``, refusing when it cannot say which list that is.
 
@@ -571,25 +704,105 @@ def insert_after_last_list_item(text: str, key: str, item: str) -> str:
     positions = [index for index, line in enumerate(lines) if line.strip() == f"{key}:"]
     if len(positions) != 1:
         raise SourceUnusable(f"list_key_occurrences:{key}:{len(positions)}")
-    start = positions[0]
-    key_indent = len(lines[start]) - len(lines[start].lstrip(" "))
+    return "".join(append_to_list_under(lines, positions[0], item, key))
 
-    last: int | None = None
-    for index in range(start + 1, len(lines)):
-        stripped = lines[index].strip()
-        indent = len(lines[index]) - len(lines[index].lstrip(" "))
-        if not stripped or indent <= key_indent:
-            break
-        if stripped.startswith("- "):
-            last = index
-        elif not stripped.startswith("#"):
-            break
-    if last is None:
-        raise SourceUnusable(f"list_has_no_items:{key}")
 
-    margin = " " * (len(lines[last]) - len(lines[last].lstrip(" ")))
-    lines.insert(last + 1, f"{margin}{item}\n")
-    return "".join(lines)
+def role_block_of(lines: list[str], role_name: str) -> tuple[int, int]:
+    """The half-open line range of the resource declaring ``RoleName: role_name``.
+
+    Scoping the edit to one role is the whole point. ``infra/iam/batch-roles.yaml`` spells
+    ``ecr:BatchGetImage`` twice -- once for the execution role and once for the instance
+    role -- so an anchor on the action alone would find two statements in one file and have
+    no way to say which was asked for.
+    """
+    positions = [
+        index for index, line in enumerate(lines) if line.strip() == f"RoleName: {role_name}"
+    ]
+    if len(positions) != 1:
+        raise SourceUnusable(f"role_name_occurrences:{role_name}:{len(positions)}")
+    declared = positions[0]
+
+    start = next(
+        (
+            index
+            for index in range(declared, -1, -1)
+            if lines[index].strip().endswith(":")
+            and not lines[index].strip().startswith("#")
+            and indentation_of(lines[index]) == 2
+        ),
+        None,
+    )
+    if start is None:
+        raise SourceUnusable(f"role_has_no_logical_id:{role_name}")
+
+    end = next(
+        (
+            index
+            for index in range(start + 1, len(lines))
+            if lines[index].strip() and indentation_of(lines[index]) <= 2
+        ),
+        len(lines),
+    )
+    if not start < declared < end:
+        raise SourceUnusable(f"role_block_does_not_contain_its_name:{role_name}")
+    return start, end
+
+
+def insert_into_role_grant(text: str, grant: Grant, ecr_repository: str) -> str:
+    """Add one ECR repository ARN to the statement in ``grant`` that names its action.
+
+    A text insertion rather than a YAML round trip, for the reason every other edit here
+    is: these templates carry more comment than policy, and the comments are where the
+    argument for each grant lives.
+    """
+    item = (
+        "- Fn::Sub: arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}"
+        f":repository/{ecr_repository}"
+    )
+    lines = text.splitlines(keepends=True)
+    start, end = role_block_of(lines, grant.role_name)
+
+    # The action reaches a statement either as ``Action: x`` or as ``- x`` under ``Action:``,
+    # and both spellings are in use across these three files.
+    named = [
+        index
+        for index in range(start, end)
+        if lines[index].strip() in (f"Action: {grant.action}", f"- {grant.action}")
+    ]
+    if len(named) != 1:
+        raise SourceUnusable(
+            f"action_occurrences:{grant.role_name}:{grant.action}:{len(named)}"
+        )
+    at = named[0]
+
+    if lines[at].strip().startswith("- "):
+        at = next(
+            (
+                index
+                for index in range(at, start - 1, -1)
+                if lines[index].strip() == "Action:"
+            ),
+            -1,
+        )
+        if at < 0:
+            raise SourceUnusable(f"action_list_has_no_key:{grant.role_name}:{grant.action}")
+    statement_indent = indentation_of(lines[at])
+
+    resource = next(
+        (
+            index
+            for index in range(at + 1, end)
+            if lines[index].strip() == "Resource:"
+            and indentation_of(lines[index]) == statement_indent
+        ),
+        None,
+    )
+    if resource is None:
+        raise SourceUnusable(f"statement_has_no_resource:{grant.role_name}:{grant.action}")
+
+    return "".join(
+        append_to_list_under(lines, resource, item, f"{grant.role_name}:{grant.action}")
+    )
 
 
 def owner_id_of(publisher: dict[str, Any]) -> str:
@@ -810,12 +1023,25 @@ def plan(
         f":repository/{entry.ecr_repository}",
     )
 
+    # THE FIVE GRANTS, WHICH ARE THREE MORE FILES AND THE REASON THIS TOOL WRITES EIGHT.
+    # Grouped by path first, because two of the three files carry two grants each and both
+    # have to be applied to the same text or the second insertion is computed against a
+    # document that does not have the first in it.
+    grant_edits: list[Edit] = []
+    for path in dict.fromkeys(grant.path for grant in REGISTRATION_GRANTS):
+        before = read(root / path)
+        after = before
+        for grant in (item for item in REGISTRATION_GRANTS if item.path == path):
+            after = insert_into_role_grant(after, grant, entry.ecr_repository)
+        grant_edits.append(Edit(path, before, after))
+
     return [
         Edit(REGISTRY_PATH, registry_before, registry_after),
         Edit(WORKLOAD_CATALOG_PATH, catalog_before, catalog_after),
         Edit(SUBMISSION_FORM_PATH, form_before, form_after),
         Edit(ECR_TEMPLATE_PATH, ecr_before, ecr_after),
         Edit(PUBLISHER_TEMPLATE_PATH, publisher_before, publisher_after),
+        *grant_edits,
     ]
 
 
@@ -841,7 +1067,7 @@ def verify(
     without a YAML round trip discarding the comments that carry their arguments. The cost
     of text insertion is that it can put something syntactically fine in the wrong place,
     so nothing is written until the result parses and says what it was supposed to say.
-    Failing here leaves the tree untouched, because all five files are written together
+    Failing here leaves the tree untouched, because all eight files are written together
     afterwards or not at all.
 
     The form is checked for the two options this change adds and for the order of the lists
@@ -942,6 +1168,79 @@ def verify(
     }
     if granted != {item.ecr_repository for item in registry.repositories}:
         raise SourceUnusable("publisher_push_scope_and_registry_disagree")
+
+    verify_grants(by_path, registry, catalog)
+
+
+def role_named(template: dict[str, Any], role_name: str) -> dict[str, Any]:
+    for resource in template["Resources"].values():
+        if resource.get("Type") != "AWS::IAM::Role":
+            continue
+        if resource["Properties"].get("RoleName") == role_name:
+            return dict(resource["Properties"])
+    raise SourceUnusable(f"role_absent:{role_name}")
+
+
+def statement_actions(statement: dict[str, Any]) -> list[str]:
+    action = statement.get("Action", [])
+    return [str(action)] if isinstance(action, str) else [str(item) for item in action]
+
+
+def granted_repositories(statement: dict[str, Any]) -> set[str]:
+    resource = statement["Resource"]
+    entries = resource if isinstance(resource, list) else [resource]
+    return {
+        str(item["Fn::Sub"]).rsplit(":repository/", 1)[-1]
+        for item in entries
+        if isinstance(item, dict) and ":repository/" in str(item.get("Fn::Sub", ""))
+    }
+
+
+def verify_grants(
+    by_path: dict[Path, str], registry: RepositoryRegistry, catalog: WorkloadCatalog
+) -> None:
+    """Every submittable repository is named by all five grants, read back off the YAML.
+
+    Asked the way ``test_the_states_role_may_read_a_scan_for_every_submittable_repository``
+    and ``test_every_role_that_pulls_an_image_may_pull_from_every_submittable_repository``
+    ask it -- against the *submittable* set, which is the intersection of the registry and
+    the workload catalog -- so this refuses here rather than in CI, and refuses before
+    anything is written.
+
+    Submittable and not registered, deliberately. A repository with no workload profile
+    cannot be named by a submission, so nothing needs to pull its image; scoping these to
+    every registered repository would widen four roles for a name that reaches no queue.
+    """
+    submittable = {
+        item.ecr_repository: item.repository
+        for item in registry.repositories
+        if item.repository in {workload.repository for workload in catalog.workloads}
+    }
+
+    for path in dict.fromkeys(grant.path for grant in REGISTRATION_GRANTS):
+        try:
+            template = yaml.safe_load(by_path[path])
+        except yaml.YAMLError as error:
+            raise SourceUnusable(f"grants_would_not_parse:{path.as_posix()}:{error}") from error
+
+        for grant in (item for item in REGISTRATION_GRANTS if item.path == path):
+            role = role_named(template, grant.role_name)
+            statements = [
+                statement
+                for policy in role["Policies"]
+                for statement in policy["PolicyDocument"]["Statement"]
+                if grant.action in statement_actions(statement)
+            ]
+            if len(statements) != 1:
+                raise SourceUnusable(
+                    f"grant_statements:{grant.role_name}:{grant.action}:{len(statements)}"
+                )
+            uncovered = sorted(set(submittable) - granted_repositories(statements[0]))
+            if uncovered:
+                raise SourceUnusable(
+                    f"grant_does_not_cover:{grant.role_name}:{grant.action}:"
+                    + ",".join(uncovered)
+                )
 
 
 def commit_message(entry: RegisteredRepository, reason: str) -> str:

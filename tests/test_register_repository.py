@@ -65,11 +65,61 @@ TOUCHED = (
     ".github/workflows/submit-run.yml",
     "infra/ecr-repositories.yaml",
     "infra/iam/ecr-publisher-role.yaml",
+    # The three role templates the five ECR grants live in, added 2026-08-04. They are here
+    # rather than in a list of their own because every "nothing was written" assertion in
+    # this module iterates this tuple, and a refusal that left a widened role behind would
+    # be exactly the half state those assertions exist to catch.
+    "infra/iam/admission-service-roles.yaml",
+    "infra/iam/batch-roles.yaml",
+    "infra/iam/batch-gpu-roles.yaml",
 )
 
 REASON = (
     "A mixture-of-experts trainer whose fused kernels need a build step OLMo-core does not "
     "carry, so sharing an image would put a compiler in every training run."
+)
+
+#: THE FIVE GRANTS A SUBMITTABLE REPOSITORY NEEDS, WRITTEN OUT HERE RATHER THAN IMPORTED
+#: FROM THE TOOL.
+#
+# ``register_repository.REGISTRATION_GRANTS`` says the same thing, and reading it would make
+# this test agree with the tool by construction: deleting an entry from that table would
+# delete the assertion that it is missing. The requirement belongs to the platform -- the
+# admission state machine reads a scan, and four roles across two compute stacks pull an
+# image -- so it is stated independently and the tool is measured against it.
+#
+# Path, role, the action that identifies the statement, and what breaks without it.
+GRANTS_A_SUBMISSION_NEEDS = (
+    (
+        "infra/iam/admission-service-roles.yaml",
+        "sbsandbox-intern-edullm-admission-states",
+        "ecr:DescribeImageScanFindings",
+        "the image gate passes because it could not run rather than because it found nothing",
+    ),
+    (
+        "infra/iam/batch-roles.yaml",
+        "sbsandbox-intern-edullm-batch-execution",
+        "ecr:BatchGetImage",
+        "ECS cannot start the task on the CPU stack",
+    ),
+    (
+        "infra/iam/batch-roles.yaml",
+        "sbsandbox-intern-edullm-batch-instance",
+        "ecr:BatchGetImage",
+        "the ECS agent cannot fetch the image on the CPU stack",
+    ),
+    (
+        "infra/iam/batch-gpu-roles.yaml",
+        "sbsandbox-intern-edullm-batch-gpu-execution",
+        "ecr:BatchGetImage",
+        "ECS cannot start the task on the GPU stack",
+    ),
+    (
+        "infra/iam/batch-gpu-roles.yaml",
+        "sbsandbox-intern-edullm-batch-gpu-instance",
+        "ecr:BatchGetImage",
+        "the ECS agent cannot fetch the image on the GPU stack",
+    ),
 )
 
 #: The three registrations that existed when the destination-name derivation was written,
@@ -310,6 +360,99 @@ def test_the_registration_is_submittable_and_not_merely_publishable(
     assert workloads == sorted(workloads)
     assert repositories == sorted(
         {entry.repository for entry in registry_of(tree).repositories}, key=str.lower
+    )
+
+
+def test_the_registration_writes_every_grant_a_submittable_repository_needs(
+    tree: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: drop any one of ``REGISTRATION_GRANTS``, or scope one to the wrong role.
+
+    THIS IS THE TEST THAT WOULD HAVE CAUGHT open-instruct-scored-rewards. That registration
+    was written by this tool on 2026-08-04 and turned two Phase 3 tests red --
+    ``test_the_states_role_may_read_a_scan_for_every_submittable_repository`` and
+    ``test_every_role_that_pulls_an_image_may_pull_from_every_submittable_repository`` --
+    because the tool wrote the publisher's push grant and none of the five that a
+    submission needs. The grants were added by hand in that pull request, which fixed the
+    repository and not the tool, so the next registration would have arrived the same way.
+
+    Asked against the tool's output rather than against the committed templates, and the
+    difference is the whole point. The committed templates are correct right now; they were
+    corrected by hand. Only a test that registers something new can tell a tool that writes
+    these grants apart from a tree somebody repaired after the last time it did not.
+
+    WHY THE SUBMITTABLE SET AND NOT THE REGISTERED ONE. ``edullm-data`` is registered with
+    no workload profile, so no submission can name it and nothing needs to pull its image.
+    Holding these five to every *registered* repository would widen four roles for a name
+    that reaches no queue, which is the opposite mistake and just as easy to make.
+
+    WHAT EACH ABSENCE COSTS, WHICH IS WHY THIS IS NOT A STYLE ASSERTION. Without the scan
+    grant, ``ReadImageScan`` catches the AccessDenied in the branch an unscanned image takes
+    and an image with an entry in ``config/image-exceptions.yaml`` is admitted on a scan
+    nobody read. Without a pull grant, the job is admitted, approved, placed, scaled onto an
+    instance and then dies with ``CannotPullContainerError`` -- after the money is spent, and
+    naming a registry path rather than a policy.
+    """
+    result = run(tree, capsys)
+    assert result.code == 0
+
+    registry = registry_of(tree)
+    catalog = loaded(tree, "config/workload-catalog.yaml")
+    submittable = {
+        item.ecr_repository
+        for item in registry.repositories
+        if item.repository in {entry["repository"] for entry in catalog["workloads"]}
+    }
+    registered = {item.ecr_repository for item in registry.repositories}
+    assert "sbsandbox-intern-edullm-olmo-mixer" in submittable
+    assert submittable <= registered
+    # The intersection is computed rather than assumed, and today it happens to be the whole
+    # registry: `edullm-data` was the unsubmittable one and it has carried
+    # `edullm-data-validate` since. The asymmetry has not gone away, it has only changed
+    # sides -- `dolma` has a workload profile and no registration -- so a grant scoped to
+    # every *workload's* repository would name a destination that does not exist. The two
+    # containments below are what say which direction this is read in.
+    named_by_a_workload = {entry["repository"] for entry in catalog["workloads"]}
+    assert named_by_a_workload - {item.repository for item in registry.repositories}, (
+        "this test reads submittable as registered AND named by a workload; if every "
+        "workload's repository is also registered, re-derive whether that is still the set "
+        "these five grants should be scoped to"
+    )
+
+    uncovered: list[str] = []
+    for path, role_name, action, purpose in GRANTS_A_SUBMISSION_NEEDS:
+        template = loaded(tree, path)
+        statements = [
+            statement
+            for role in template["Resources"].values()
+            if role.get("Type") == "AWS::IAM::Role"
+            and role["Properties"].get("RoleName") == role_name
+            for policy in role["Properties"]["Policies"]
+            for statement in policy["PolicyDocument"]["Statement"]
+            if action in as_list(statement["Action"])
+        ]
+        assert len(statements) == 1, (
+            f"{action} belongs to exactly one statement in {role_name}, and {path} has "
+            f"{len(statements)}"
+        )
+        granted = {
+            str(item["Fn::Sub"]).rsplit(":repository/", 1)[-1]
+            for item in as_list(statements[0]["Resource"])
+            if isinstance(item, dict) and ":repository/" in str(item.get("Fn::Sub", ""))
+        }
+        uncovered.extend(
+            f"{missing} is unreachable by {role_name} ({action}, {path}) -- {purpose}"
+            for missing in sorted(submittable - granted)
+        )
+        assert not granted - registered, (
+            f"{role_name} names a destination no registration declares: "
+            f"{sorted(granted - registered)}"
+        )
+
+    assert not uncovered, (
+        "a registration this tool wrote is submittable and the roles that serve it were "
+        "not widened, so the run is admitted, approved, placed and then denied: "
+        + "; ".join(uncovered)
     )
 
 
