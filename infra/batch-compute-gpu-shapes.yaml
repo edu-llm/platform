@@ -848,6 +848,11 @@ Resources:
   Gpu1xL4JobDefinition:
     Type: AWS::Batch::JobDefinition
     Properties:
+      # MEMORY IS 14315 RATHER THAN THE 15360 A g6.xlarge's 16 GiB SUGGESTS, and the odd figure
+      # is the point. This host registers 15339 MiB with ECS, not 16384 and not the 15872 that
+      # 31/32 of the advertised figure predicts, so the 15360 this definition carried was 21
+      # MiB above what any g6.xlarge here can offer. 14315 is that registration less the 1 GiB
+      # per 4 vCPU the agent is allowed. See CONTAINER_SHAPES in src/edullm_platform/execution.py.
       JobDefinitionName: sbsandbox-intern-edullm-gpu-1xl4-run
       Type: container
       PlatformCapabilities:
@@ -868,7 +873,7 @@ Resources:
           - Type: VCPU
             Value: "4"
           - Type: MEMORY
-            Value: "15360"
+            Value: "14315"
           - Type: GPU
             Value: "1"
         Secrets:
@@ -1186,6 +1191,10 @@ Resources:
   Gpu1xL40sJobDefinition:
     Type: AWS::Batch::JobDefinition
     Properties:
+      # MEMORY IS 30587 FOR THE SAME REASON gpu-1xl4 IS 14315. A g6e.xlarge registers 31611 MiB
+      # of its advertised 32768, so the 31744 this definition carried was 133 MiB above the
+      # ceiling and no job at the full shape could ever be placed here -- the two g6e.xlarge
+      # instances this account has started both came up for jobs that overrode memory downward.
       JobDefinitionName: sbsandbox-intern-edullm-gpu-1xl40s-run
       Type: container
       PlatformCapabilities:
@@ -1206,7 +1215,7 @@ Resources:
           - Type: VCPU
             Value: "4"
           - Type: MEMORY
-            Value: "31744"
+            Value: "30587"
           - Type: GPU
             Value: "1"
         Secrets:
@@ -1223,7 +1232,7 @@ Resources:
           - Name: EDULLM_OUTPUT_PREFIX
             Value: s3://sbsandbox-intern-edullm-outputs/no-submission-supplied-a-prefix/
         LinuxParameters:
-          SharedMemorySize: 7936
+          SharedMemorySize: 7646
         LogConfiguration:
           LogDriver: awslogs
           Options:
