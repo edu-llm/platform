@@ -25,13 +25,9 @@ from __future__ import annotations
 import pytest
 
 # Re-exported rather than restated, because pytest reads hooks out of a conftest namespace
-# and `tests/test_module_identity.py` has to be able to prove that these exact three fail a
-# run. Both halves of that only work if there is one copy of them, which is the subject.
-from module_identity import (  # noqa: F401
-    pytest_runtest_call,
-    pytest_sessionfinish,
-    pytest_terminal_summary,
-)
+# and `tests/test_module_identity.py` has to be able to prove that this exact one fails a
+# run. Both halves of that only work if there is one copy of it, which is the subject.
+from module_identity import pytest_runtest_call  # noqa: F401
 
 SESSION_BUDGET_MARKER = "session_budget"
 GROUP_MARKER = "xdist_group"

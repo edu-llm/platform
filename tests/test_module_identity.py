@@ -146,11 +146,7 @@ def test_something_that_is_not_a_module_at_all_is_ignored() -> None:
 # ------------------------------------------------------------------------------------------
 
 CHILD_CONFTEST = """
-from module_identity import (  # noqa: F401
-    pytest_runtest_call,
-    pytest_sessionfinish,
-    pytest_terminal_summary,
-)
+from module_identity import pytest_runtest_call  # noqa: F401
 """
 
 #: The victim's half, and the reason it is at module scope. `tests/test_visibility_board.py`
@@ -292,8 +288,8 @@ def test_a_rebinding_wholly_inside_one_test_body_is_a_known_blind_spot(tmp_path:
     )
 
 
-def test_this_suites_conftest_installs_the_hooks_this_file_proves() -> None:
-    """The child runs prove the hooks fail a run; this proves they are *this* run's hooks.
+def test_this_suites_conftest_installs_the_hook_this_file_proves() -> None:
+    """The child runs prove the hook fails a run; this proves it is *this* run's hook.
 
     Mutation: delete the import from `tests/conftest.py`. Every other test in this file
     still passes, because the child session builds a conftest of its own -- so without this
@@ -305,12 +301,11 @@ def test_this_suites_conftest_installs_the_hooks_this_file_proves() -> None:
     import conftest
     import module_identity
 
-    for hook in ("pytest_runtest_call", "pytest_sessionfinish", "pytest_terminal_summary"):
-        assert getattr(conftest, hook, None) is getattr(module_identity, hook), (
-            f"tests/conftest.py does not re-export {hook} from module_identity, so the "
-            "guard that tests/test_module_identity.py proves can fail is not the one this "
-            "suite is running"
-        )
+    assert conftest.pytest_runtest_call is module_identity.pytest_runtest_call, (
+        "tests/conftest.py does not re-export pytest_runtest_call from module_identity, so "
+        "the guard that tests/test_module_identity.py proves can fail is not the one this "
+        "suite is running"
+    )
 
 
 def test_the_guard_raises_rather_than_returning_its_finding() -> None:

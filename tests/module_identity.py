@@ -1,9 +1,9 @@
 """A run fails if it ever rebinds a name in ``sys.modules`` to a second copy of a file.
 
 Not collected by pytest: the filename deliberately does not start with ``test_``.
-``tests/conftest.py`` re-exports the three hooks below, because a conftest is where pytest
-looks for them; they live here so that `tests/test_module_identity.py` can prove the guard
-fails by running *these* hooks rather than a restatement of them.
+``tests/conftest.py`` re-exports the hook below, because a conftest is where pytest looks
+for one; it lives here so that `tests/test_module_identity.py` can prove the guard fails by
+running *this* hook rather than a restatement of it.
 
 WHAT THIS CATCHES, AND WHY IT IS NOT THE OBVIOUS CHECK
 ------------------------------------------------------
@@ -46,8 +46,20 @@ against ``report_run_costs`` from a tool importing its neighbour by bare name. T
 of those when this was written, none of them able to fail: every pair of files that shares
 one was run together in one process, in both orders, and none produced a failure that the
 files did not produce alone. They are the setup for the same accident and not the accident,
-and failing on them would mean either a 28-entry inventory or restatement of how every tool
-imports its neighbours, so this reports nothing about them.
+and failing on them would mean either a 28-entry inventory or a restatement of how every
+tool imports its neighbours, so this reports nothing about them.
+
+A name imported and replaced inside a single test body, which is sampled holding only the
+second object and reads as ordinary. `tests/test_module_identity.py` keeps that limit as a
+passing test rather than a note. It is close to self-limiting: being harmed needs somebody
+else to hold the discarded copy, and that somebody imports at module scope, which happens
+during collection and therefore before any test body runs.
+
+A rebinding after the last test on a worker has finished. There is nothing left to harm,
+and a check there could not report anyway -- one was written, and it failed a serial run
+correctly and exited 0 under ``-n2``, because a worker's exit status is not the run's. A
+guard path that cannot fail under the flags CI uses is worse than no path, so there isn't
+one.
 
 Deleting a name and importing it again reads as a rebinding, and is meant to: the stale
 references it leaves behind are the same ones however the second copy was arrived at.
@@ -159,7 +171,6 @@ class ModuleIdentity:
 
 
 _identity = ModuleIdentity()
-_LATE_REBINDING: pytest.StashKey[str] = pytest.StashKey[str]()
 
 
 def refuse_a_second_copy() -> None:
@@ -186,23 +197,3 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, object, object]:
     result = yield
     refuse_a_second_copy()
     return result
-
-
-def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
-    """A teardown after the last test is still somewhere a loader runs, so look once more.
-
-    Reported through the session's exit status rather than by raising, because an exception
-    from here belongs to no test and prints as an internal error.
-    """
-    try:
-        refuse_a_second_copy()
-    except RebindingSeen as seen:
-        session.config.stash[_LATE_REBINDING] = str(seen)
-        session.exitstatus = pytest.ExitCode.TESTS_FAILED
-
-
-def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
-    late = terminalreporter.config.stash.get(_LATE_REBINDING, None)
-    if late is not None:
-        terminalreporter.section("module identity", red=True)
-        terminalreporter.write_line(late)
