@@ -44,6 +44,11 @@ def container(**changes: str | None) -> dict[str, str]:
         "EDULLM_WANDB_PROJECT": "olmo-core-memory-split",
         "WANDB_PROJECT": "olmo-core-memory-split",
         "WANDB_ENTITY": "eduLLM",
+        # The platform's own run id, which is the whole of the join between a run here and
+        # a run in W&B. Equal to EDULLM_RUN_ID above on a single run and suffixed with
+        # -cell-<index> on a fan-out cell, which is why the client keeps it as its own
+        # field rather than deriving it.
+        "WANDB_RUN_ID": RUN_ID,
         "WANDB_RUN_GROUP": "an-ablation",
         "WANDB_USERNAME": "philote",
         "EDULLM_DATASET_ID": "pretrain/regmix-10b",
