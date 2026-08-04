@@ -130,58 +130,20 @@ class PendingAmendment:
 
 def pending_amendments() -> tuple[PendingAmendment, ...]:
     """Every committed template amendment the account has not caught up with yet."""
-    # One entry, which is the state this registry is meant to spend as little of its life
-    # in as possible. An entry lives here only between a template amendment being committed
-    # and the laptop deploy that realises it. The two before this one were removed on
-    # 2026-07-27 when their stack was applied and the re-capture reported no findings: the
-    # Phase 2 deployer amendment earlier in the day, and the Phase 3 one -- a third
-    # job_workflow_ref for deploy-phase3-batch.yml and the deploy-phase3-batch-stacks
-    # inline policy -- when sbsandbox-intern-edullm-infra-deployer-iam was deployed from a
-    # laptop.
+    # Empty, which is the state this registry is meant to spend most of its life in. An
+    # entry lives here only between a template amendment being committed and the laptop
+    # deploy that realises it. Three have been removed so far: the Phase 2 deployer
+    # amendment and the Phase 3 one -- a third job_workflow_ref for deploy-phase3-batch.yml
+    # and the deploy-phase3-batch-stacks inline policy -- both on 2026-07-27 when
+    # sbsandbox-intern-edullm-infra-deployer-iam was applied, and the
+    # sbsandbox-intern-edullm-batch-workload `read-the-dataset-airlock` policy on
+    # 2026-08-04 when sbsandbox-intern-edullm-phase3-batch-iam was applied and the
+    # re-capture reported no findings on any of the four Phase 3 roles.
     #
     # Removal rather than exemption is the rule. The findings are compared for equality,
     # so a record left here after its deploy fails rather than lingering, and nothing in
     # this module offers a way to keep one that no longer describes a difference.
-    #
-    # NOT THE ONLY UNDEPLOYED AMENDMENT IN THE TREE, AND THE OTHER ONE IS DELIBERATELY NOT
-    # RECORDED HERE BY WHOEVER PASSES THROUGH NEXT. sbsandbox-intern-edullm-lifecycle-lambda
-    # is also NARROWER than its template -- one s3:ListBucket statement on the outputs
-    # bucket -- and carries no entry, so it reads as DRIFTED, which is the verdict a role
-    # widened in a console gets. That is a real gap and it belongs to whoever made that
-    # change; adding a record for a difference nobody here can vouch for would be this
-    # module used as an exemption rather than as a record.
-    amendments: tuple[PendingAmendment, ...] = (
-        PendingAmendment(
-            role_name="sbsandbox-intern-edullm-batch-workload",
-            reason=(
-                "infra/iam/batch-roles.yaml gained a second inline policy, "
-                "`read-the-dataset-airlock`, granting s3:GetObject and s3:ListBucket on "
-                "edullm-data and edullm-landing. It closes a gap that made "
-                "config/workload-catalog.yaml's `edullm-data-validate` unrunnable on every "
-                "profile it could be placed on: the shared CPU workload role held no "
-                "s3:GetObject at all, so a validator was admitted, approved, placed and "
-                "then denied on its first read. The policy is additive and read-only, and "
-                "the account still holds the role without it."
-            ),
-            cleared_by=(
-                "deploying sbsandbox-intern-edullm-batch-iam from a laptop holding an SSO "
-                "session -- IAM role lifecycle is withheld from CI by InternSandboxBoundary "
-                "-- then re-running tools/capture_phase3_evidence.py --target roles and "
-                "deleting this record, which fails on its own equality check the moment the "
-                "recapture stops reporting exactly this finding."
-            ),
-            findings=(
-                RoleDriftFinding(
-                    direction=DriftDirection.NARROWER,
-                    element="inline policy 'read-the-dataset-airlock'",
-                    detail=(
-                        "the template declares an inline policy the deployed role does not "
-                        "carry"
-                    ),
-                ),
-            ),
-        ),
-    )
+    amendments: tuple[PendingAmendment, ...] = ()
     declared = declared_role_templates()
     for amendment in amendments:
         if amendment.role_name not in declared:

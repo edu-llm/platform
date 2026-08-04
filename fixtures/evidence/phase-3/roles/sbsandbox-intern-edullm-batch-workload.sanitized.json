@@ -3,6 +3,48 @@
   "environment": "sandbox",
   "inline_policies": [
     {
+      "policy_name": "read-the-dataset-airlock",
+      "policy_version": "2012-10-17",
+      "statements": [
+        {
+          "action_match": {
+            "actions": [
+              "s3:GetObject"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:s3:::edullm-data/*",
+              "arn:aws:s3:::edullm-landing/*"
+            ]
+          },
+          "sid": null
+        },
+        {
+          "action_match": {
+            "actions": [
+              "s3:ListBucket"
+            ],
+            "element": "Action"
+          },
+          "conditions": [],
+          "effect": "Allow",
+          "resource_match": {
+            "element": "Resource",
+            "resources": [
+              "arn:aws:s3:::edullm-data",
+              "arn:aws:s3:::edullm-landing"
+            ]
+          },
+          "sid": null
+        }
+      ]
+    },
+    {
       "policy_name": "write-team-outputs-only",
       "policy_version": "2012-10-17",
       "statements": [
@@ -53,7 +95,7 @@
     }
   ],
   "max_session_duration_seconds": 3600,
-  "observed_at": "2026-08-01T06:27:28Z",
+  "observed_at": "2026-08-04T19:02:22Z",
   "permissions_boundary_policy_name": "InternSandboxBoundary",
   "role_name": "sbsandbox-intern-edullm-batch-workload",
   "source": "aws",
