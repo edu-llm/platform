@@ -4,7 +4,7 @@ The nineteen Phase 3 acceptance criteria, mapped to the tests cited for each one
 
 This mapping is defined once, in `src/edullm_platform/phase3_criteria.py`. The acceptance gate reads the same definition and executes the same node ids, so this matrix and `tools/validate_phase3.py` cannot disagree.
 
-Verification run: 483 tests executed, 483 passed, 0 failed, 0 errored, pytest exit code 0.
+Verification run: 496 tests executed, 496 passed, 0 failed, 0 errored, pytest exit code 0.
 
 Three statuses exist and no more. **COVERED** means one or more cited tests prove the criterion as stated against the shipped configuration and all of them pass; the gate passes it. **DEFERRED** means an explicit recorded decision not to satisfy it yet, which requires both a written reason and a written trigger describing what makes it live again; the gate passes it. **GAP** is everything else, and the gate fails it. There is no in-between status, because an in-between status is what lets a gate be green and wrong at the same time.
 
@@ -29,7 +29,7 @@ Three statuses exist and no more. **COVERED** means one or more cited tests prov
 | 18 | GAP | 0 | 6 | The EventBridge rule receives only our queue's events. |
 | 19 | COVERED | 2 | 6 | A run is traceable end to end by run id alone. |
 | 20 | COVERED | 2 | 6 | The deployer's unscoped actions are exactly the measured ones, in two statements separated by why each is unscoped. |
-| 21 | COVERED | 1 | 7 | The networking the compute environment uses is recorded, with its terms. |
+| 21 | COVERED | 1 | 10 | The networking the compute environment uses is recorded, with its terms. |
 | 22 | COVERED | 4 | 6 | The image-scan decision has been answered. |
 
 ## Gaps
@@ -477,15 +477,18 @@ Proving tests (1), all executed and passing:
 
 - `tests/test_phase3_run_evidence.py::test_the_networking_the_compute_environment_uses_is_recorded`
 
-Supporting tests (7), all executed and passing, cited as evidence rather than as proof:
+Supporting tests (10), all executed and passing, cited as evidence rather than as proof:
 
 - `tests/test_phase3_account_measurements.py::test_the_capture_is_committed_and_inside_its_freshness_window`
 - `tests/test_phase3_account_measurements.py::test_the_vpc_quota_has_room_for_a_vpc_we_own`
 - `tests/test_phase3_account_measurements.py::test_the_subnet_list_excludes_any_zone_that_does_not_offer_the_instance_type`
 - `tests/test_phase3_account_measurements.py::test_the_capture_records_how_it_was_measured`
 - `tests/test_phase3_infrastructure.py::test_the_vpc_is_created_unconditionally_because_the_quota_landed`
-- `tests/test_phase3_infrastructure.py::test_the_subnets_exclude_the_zone_that_cannot_hold_the_instance_type`
-- `tests/test_phase3_infrastructure.py::test_the_compute_environment_places_into_exactly_the_subnets_the_network_exports`
+- `tests/test_phase3_infrastructure.py::test_the_network_declares_one_subnet_per_zone_and_no_zone_twice`
+- `tests/test_phase3_infrastructure.py::test_the_zone_the_cpu_shape_cannot_use_is_declared_but_not_imported_by_it`
+- `tests/test_phase3_infrastructure.py::test_only_a_shape_offered_in_that_zone_imports_the_us_east_1e_subnet`
+- `tests/test_phase3_infrastructure.py::test_every_environment_that_may_take_the_sixth_zone_actually_takes_it`
+- `tests/test_phase3_infrastructure.py::test_the_compute_environment_places_into_every_exported_subnet_its_shape_can_use`
 
 ### Check 22 — The image-scan decision has been answered.
 

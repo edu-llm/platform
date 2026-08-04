@@ -175,12 +175,16 @@ Description: Fourteen GPU compute environments, their job queues and their diges
 # SUBNETS ARE MEASURED PER INSTANCE TYPE AND ARE NOT A PROPERTY OF THE FAMILY.
 # describe-instance-type-offerings on 2026-08-01 reports g4dn.xlarge, g4dn.12xlarge,
 # g5.12xlarge, g5.48xlarge, g6.xlarge, g6.12xlarge and p5.48xlarge in us-east-1a, 1b, 1c, 1d
-# and 1f, and g6e.12xlarge and p4d.24xlarge in 1a, 1b, 1c and 1d only. p5.48xlarge is also
-# offered in us-east-1e, where the network stack has no subnet.
+# and 1f, and g6e.12xlarge and p4d.24xlarge in 1a, 1b, 1c and 1d only. p5.48xlarge and
+# p5.4xlarge are also offered in us-east-1e, and that zone had no subnet to offer them until
+# 2026-08-03. It has one now, those two environments import it, and they are the only two
+# that may -- the block above each of their Subnets lists says why, and
+# infra/batch-network.yaml argues it at length.
 #
 # The four types added on 2026-08-02 were measured the same way on that date. g4dn.metal and
 # g6.48xlarge are offered in 1a, 1b, 1c, 1d and 1f. g6e.48xlarge and g6e.xlarge are offered
-# in 1a, 1b, 1c and 1d only. So nine environments list five subnets and four list four.
+# in 1a, 1b, 1c and 1d only. So eight environments list five subnets, four list four, and the
+# two p5 shapes list six.
 #
 # gpu-1xl40s is the one a copy would have got wrong, and it is the shape two teams are
 # waiting on. g6.xlarge and g6e.xlarge are the same size, sit next to each other in every
@@ -1779,11 +1783,37 @@ Resources:
           - p5.48xlarge
         InstanceRole:
           Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:instance-profile/sbsandbox-intern-edullm-batch-gpu-instance
+        # SIX SUBNETS. Only this environment and gpu-1xh100 get six, because only p5 can use
+        # the sixth.
+        #
+        # p5.48xlarge is offered in us-east-1a, 1b, 1c, 1d, 1e and 1f -- every zone in the
+        # region. Read against describe-instance-type-offerings on 2026-08-03, alongside every
+        # other shape this repository backs: c7i.8xlarge, g4dn and g5 and g6 stop at five, the
+        # g6e family and p4d.24xlarge at four, and p5.4xlarge and p5.48xlarge are the only two
+        # offered in us-east-1e. infra/batch-network.yaml did not declare a 1e subnet at all
+        # until that day, for the good reason that no shape could use one.
+        #
+        # WHY IT IS WORTH A TEMPLATE CHANGE RATHER THAN A NOTE. On 2026-08-03 a job at this
+        # environment's exact shape sat in RUNNABLE while the autoscaling group behind it
+        # failed a launch in every one of the five zones it could reach, each with
+        # "InsufficientInstanceCapacity - We currently do not have sufficient p5.48xlarge
+        # capacity in the Availability Zone you requested". Five of six zones, retried for
+        # thirty minutes, nothing placed. A sixth zone does not make p5 capacity appear, and
+        # this change should not be read as a fix for a shortage -- but it is the only part of
+        # that shortage that was ours, and it is the zone with the least competition precisely
+        # because almost nothing else is offered there.
+        #
+        # DO NOT COPY THIS LIST ONTO ANOTHER ENVIRONMENT. Every other compute environment in
+        # this file must keep the subnet list its own instance type is offered in. A subnet
+        # Batch will consider and can never place into produces a job that waits in RUNNABLE
+        # with no error anywhere, which infra/batch-network.yaml argues at length and which is
+        # a worse failure than the narrow pool this widens.
         Subnets:
           - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1a
           - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1b
           - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1c
           - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1d
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1e
           - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1f
         SecurityGroupIds:
           - Fn::ImportValue: sbsandbox-intern-edullm-batch-security-group-id
@@ -1877,9 +1907,13 @@ Resources:
         Privileged: false
 
   # -------------------------------------------------------------------------------------
-  # gpu-1xh100, one H100 80 GB on p5.4xlarge, $6.88/hour. FIVE SUBNETS: p5.4xlarge is offered
-  # in all six us-east-1 zones and this VPC has a subnet in five of them, so the list is short
-  # of the offering rather than of the family.
+  # gpu-1xh100, one H100 80 GB on p5.4xlarge, $6.88/hour. SIX SUBNETS, and this comment used
+  # to say five and say why: "p5.4xlarge is offered in all six us-east-1 zones and this VPC
+  # has a subnet in five of them, so the list is short of the offering rather than of the
+  # family." That was an accurate description of a gap, and infra/batch-network.yaml now
+  # declares the sixth subnet, so the gap is closed rather than described. p5.4xlarge and
+  # p5.48xlarge are the only shapes in this file offered in us-east-1e; every other list here
+  # is short of nothing and must stay as it is.
   #
   # THE ONLY 80 GB SINGLE CARD HERE, AND THE ONE SHAPE THREE PIECES OF WORK ASKED FOR BY NAME.
   # grpo-tutor's README says one H100 with vLLM. The P7 tutor recipe annotates
@@ -1922,11 +1956,16 @@ Resources:
           - p5.4xlarge
         InstanceRole:
           Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:instance-profile/sbsandbox-intern-edullm-batch-gpu-instance
+        # Six, for the reason the header of this section gives. Worth more here than on the
+        # eight-card environment rather than less: p5.4xlarge draws on the same scarce P pool,
+        # and on 2026-08-03 that pool would not sell a single p5.48xlarge in any of the five
+        # zones this VPC could reach, across 6,815 launch attempts over nine hours.
         Subnets:
           - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1a
           - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1b
           - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1c
           - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1d
+          - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1e
           - Fn::ImportValue: sbsandbox-intern-edullm-batch-subnet-us-east-1f
         SecurityGroupIds:
           - Fn::ImportValue: sbsandbox-intern-edullm-batch-security-group-id
