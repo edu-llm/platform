@@ -68,6 +68,23 @@ WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "submit-run.yml"
 #: names are, rather than as something the form may still say.
 RETIRED_SENTINEL = "inherit"
 
+#: Registered repositories deliberately kept off the ``repository`` dropdown, each mapped to
+#: the reason. Empty, and it is the emptiness that is worth keeping rather than the
+#: mechanism.
+#:
+#: THIS EXISTS BECAUSE THE COMPARISON BELOW USED TO EXCLUDE THE CASE IT WAS GUARDING. It
+#: held the dropdown equal to *the registered repositories that have a workload profile*,
+#: and a registration with no workload profile is absent from both sides of that: it is not
+#: on the form, and the filter drops it before the comparison sees it. So the one state the
+#: test was written about -- registered, and impossible to submit for -- was the one state
+#: it could not fail on. ``edullm-data`` sat in it from its registration until
+#: ``edullm-data-validate`` was added, with this module green throughout.
+#:
+#: The dropdown is compared against the registry now, so a registration is either
+#: submittable or listed here with a sentence saying why. Both are visible in a diff;
+#: omission was not.
+UNSUBMITTABLE_BY_DESIGN: dict[str, str] = {}
+
 #: AWS's own documented example account, which this repository's secret scan exempts.
 #: ``resolve_execution_target`` composes ARNs from whatever account it is handed and this
 #: test cares only about whether it can compose them at all, so no real account is needed.
@@ -153,39 +170,84 @@ def offerable_compute_profiles() -> list[str]:
     )
 
 
-def test_the_repository_dropdown_offers_the_registered_repositories_that_have_a_workload() -> None:
-    """REGISTERED IS NOT THE SAME AS USABLE, and this is where the difference shows.
+def registered_repositories() -> set[str]:
+    return {entry["repository"] for entry in registry("repositories.yaml")["repositories"]}
 
-    Mutation: offer every registered repository. A registration says where a repository's
-    images go and what base they build from; it does not say there is anything to run. A
-    repository with no workload profile cannot be submitted for at all -- the workload is
-    what fixes the compute profile, the bounds and the checkpoint contract -- so offering
-    it is the same broken promise as offering a workload whose repository is unregistered,
-    one step further along.
 
-    ``edullm-data`` was the live instance of that gap and no longer is. It was registered,
-    had an ECR repository and had publisher-role scope, and could not be submitted for,
-    because nothing in the catalog named it. ``edullm-data-validate`` now does, so it is
-    offered, and the assertion that used to say it must not be is gone rather than inverted.
+def repositories_with_a_workload() -> set[str]:
+    return {
+        workload["repository"] for workload in registry("workload-catalog.yaml")["workloads"]
+    }
 
-    ``dolma`` still holds the other side of the join: it has a workload and no registration,
-    so it is absent from here for the opposite reason.
+
+def test_every_registered_repository_is_submittable_or_is_visibly_excused() -> None:
+    """A REGISTRATION WITH NO WORKLOAD PROFILE CAN NEVER BE SUBMITTED FOR, AND NOTHING SAID
+    SO. Mutation: register a repository and write no workload profile for it.
+
+    That mutation used to be invisible here. The dropdown was held equal to the registered
+    repositories *that have a workload profile*, which is a filter both sides of the
+    comparison went through: the unsubmittable registration is off the form, and the filter
+    drops it before the comparison, so the two lists agreed about a repository neither of
+    them contained. The assertion could not fail in the case it existed for.
+
+    ``edullm-data`` is the worked example rather than a hypothetical. It was registered with
+    an ECR repository and publisher-role scope and no catalog entry, so it never reached the
+    dropdown and no run could name it, and this module was green for the whole of that
+    window. ``edullm-data-validate`` closed it; this closes the hole it went through.
+
+    The claim is asked of the registry now. Every registration either has a workload profile
+    or is named in ``UNSUBMITTABLE_BY_DESIGN`` with a reason, so the two ways a repository
+    can be off the form -- a decision and a defect -- stop looking alike. An exemption is a
+    line somebody wrote and a reviewer can argue with; an omission was neither.
+
+    ``dolma`` is the opposite side of the same join and is asserted separately below: it has
+    a workload and no registration, so there is no image its workload could run from.
     """
-    registered = {
-        entry["repository"] for entry in registry("repositories.yaml")["repositories"]
-    }
-    with_work = {
-        workload["repository"]
-        for workload in registry("workload-catalog.yaml")["workloads"]
-        if workload["repository"] in registered
-    }
+    registered = registered_repositories()
+    with_work = repositories_with_a_workload()
 
-    assert options_for("repository") == sorted(with_work, key=str.lower)
-    assert {"edullm-data", "olmo-eval-full"} <= with_work, (
-        "both were registered before either had a workload profile, which is the state this "
-        "test was written about; a registration that loses its last workload belongs back "
-        "out of the dropdown"
+    unsubmittable = sorted(registered - with_work - set(UNSUBMITTABLE_BY_DESIGN))
+    assert not unsubmittable, (
+        f"{unsubmittable} are registered and have no workload profile in "
+        "config/workload-catalog.yaml, so they cannot appear on the submission form and no "
+        "run can name them. Give each one a catalog entry, or declare it in "
+        "UNSUBMITTABLE_BY_DESIGN with the reason it is registered and not runnable"
     )
+
+    # AN EXEMPTION THAT HAS STOPPED BEING TRUE IS THE SAME DEFECT WEARING A REASON. A name
+    # here that is no longer registered, or that has since gained a workload, would go on
+    # excusing something and would also keep that repository off the dropdown comparison
+    # below -- which is the omission this whole mechanism replaced.
+    stale = sorted(name for name in UNSUBMITTABLE_BY_DESIGN if name not in registered)
+    assert not stale, (
+        f"{stale} are excused from the submission form and are not registered at all, so "
+        "the exemption is excusing nothing and hiding the dropdown from a comparison"
+    )
+    resolved = sorted(name for name in UNSUBMITTABLE_BY_DESIGN if name in with_work)
+    assert not resolved, (
+        f"{resolved} now have a workload profile, so they are submittable and the exemption "
+        "is what is keeping them off the form"
+    )
+    for name, reason in UNSUBMITTABLE_BY_DESIGN.items():
+        assert reason.strip(), f"{name} is excused with no reason, which is an omission again"
+
+
+def test_the_repository_dropdown_offers_every_registration_that_is_not_excused() -> None:
+    """Mutation: leave a registration off the form and let it drop out of the comparison.
+
+    The other half of the test above, and the half a submitter meets. Compared against the
+    registry minus the declared exemptions rather than against the registrations that happen
+    to have a workload, so a repository can be absent from this list only because somebody
+    said it should be.
+
+    Written as an equality, so it fails in both directions. A registration missing from the
+    dropdown is a repository nobody can submit for; an option the registry does not carry is
+    a menu item whose only outcome is ``unregistered_repository`` at admission, after a lead
+    has spent an approval on it.
+    """
+    offerable = sorted(registered_repositories() - set(UNSUBMITTABLE_BY_DESIGN), key=str.lower)
+
+    assert options_for("repository") == offerable
     assert "dolma" not in options_for("repository"), (
         "dolma has a workload and no registration, so there is no image to run it from"
     )
@@ -434,6 +496,13 @@ def test_no_offered_dataset_is_one_a_training_run_cannot_use_as_a_corpus() -> No
     property rests on one string never being added to it. Everything else here follows from
     that set being right, so the set is held to it directly, and a reader who adds
     ``tokenizer`` to make some other test pass gets this failure with the reason attached.
+
+    THE LOOP BELOW WAS A TAUTOLOGY AND NOW READS THE FORM. It walked the corpora
+    ``corpora_a_run_could_actually_train_on`` returns and asserted the family condition that
+    function had already filtered on, so it could not fail: an entry in a non-trainable
+    family is dropped before the loop sees it. The dropdown is the artifact this is a claim
+    about, so the dropdown is what it iterates, and a tokenizer's reference id typed onto the
+    form now fails here rather than only in the set comparison further up.
     """
     assert "tokenizer" not in TRAINABLE_FAMILIES, (
         "a tokenizer is an input to a corpus and must never be nameable as one; a run handed "
@@ -447,10 +516,14 @@ def test_no_offered_dataset_is_one_a_training_run_cannot_use_as_a_corpus() -> No
     )
 
     published = registry("datasets.yaml").get("published", [])
-    offerable = corpora_a_run_could_actually_train_on()
-    for entry in published:
-        if entry["reference_id"] not in offerable:
-            continue
+    offered = set(options_for("dataset_release"))
+    reaching_the_form = [entry for entry in published if entry["reference_id"] in offered]
+
+    assert reaching_the_form, (
+        "the dropdown offers no published corpus at all, so the loop below is passing over "
+        "nothing and the family rule is being asserted against an empty list"
+    )
+    for entry in reaching_the_form:
         assert entry["dataset_id"].split("/", maxsplit=1)[0] in TRAINABLE_FAMILIES, (
             f"{entry['reference_id']} reaches the form and is not in a trainable family; a "
             "dataset offered here is a corpus a training run reads"
@@ -459,7 +532,7 @@ def test_no_offered_dataset_is_one_a_training_run_cannot_use_as_a_corpus() -> No
     unoffered_families = {
         entry["dataset_id"].split("/", maxsplit=1)[0]
         for entry in published
-        if entry["reference_id"] not in offerable
+        if entry["reference_id"] not in offered
     }
     assert "tokenizer" in unoffered_families, (
         "no tokenizer is registered, so the exclusion above is asserting over nothing; "
@@ -483,12 +556,19 @@ def test_every_offered_dataset_names_the_tokenizer_it_was_built_with() -> None:
     offered, because ``None`` is not a key in ``TOKENIZERS``. The claim worth holding is about
     what a submitter can pick, which is a corpus whose tokens exist and whose tokenizer is
     therefore a fact somebody recorded.
+
+    NARROWED AGAINST THE FORM RATHER THAN AGAINST THE JOIN, WHICH IS WHAT MAKES IT ABLE TO
+    FAIL. It read ``corpora_a_run_could_actually_train_on``, whose own filter requires the
+    tokenizer to be a key in ``TOKENIZERS`` -- and every key in that map is a non-null string
+    beginning ``tokenizer/``, so both assertions below followed from the filter and neither
+    could ever fire. A corpus is checked because a submitter can pick it, so the list of
+    things a submitter can pick is the list to walk.
     """
-    offerable = corpora_a_run_could_actually_train_on()
+    offered = set(options_for("dataset_release"))
     checked = [
         entry
         for entry in registry("datasets.yaml").get("published", [])
-        if entry["reference_id"] in offerable
+        if entry["reference_id"] in offered
     ]
 
     assert checked, "no corpus is offered, so this loop is passing over nothing"
