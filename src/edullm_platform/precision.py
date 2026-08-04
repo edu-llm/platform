@@ -7,10 +7,11 @@ kernel that needs the format, after the submission has been compiled, classified
 by a lead, admitted, and given an instance.
 
 **THE MEASUREMENT ON 2026-08-04 IS WHY THIS IS URGENT RATHER THAN THEORETICAL.**
-``config/capacity.yaml`` records that ``gpu-8xt4`` is the only shape above four cards this
-account can obtain, and every other placing GPU shape is a single card. So anybody who needs
-more than one device is routed onto Turing, which is exactly the population most likely to be
-training something large enough to want bfloat16.
+``config/capacity.yaml`` records that ``gpu-4xt4`` and ``gpu-8xt4`` are the only multi-card
+shapes this account can obtain -- every other multi-card row in the catalog returns
+insufficient capacity -- and both of them carry T4s. So anybody who needs more than one
+device is routed onto Turing, with no second option to move to, which is exactly the
+population most likely to be training something large enough to want bfloat16.
 
 **NOTHING BEFORE THE DEVICE SAYS NO, INCLUDING THE OBVIOUS THING TO ASK.**
 ``torch.cuda.is_bf16_supported()`` returns true on a T4, so a program that checks before
@@ -47,12 +48,22 @@ of the command.
 :func:`bfloat16_request_in` finds the three ways a submitter writes a bfloat16 request into
 argv, and it cannot find bfloat16 that was never written there. The largest miss is the
 platform's own documented training command: ``.edullm/train_on_corpus.py`` in the OLMo-core
-image constructs its data-parallel config with ``param_dtype=DType.bfloat16`` and exposes no
-flag for it, so ``python .edullm/train_on_corpus.py "$EDULLM_RUN_ID"`` is a bfloat16 run
-carrying no bfloat16 token. That command on ``gpu-8xt4`` is not refused by this guard and
-will fail on the device. The refusal below says which of the two it checked, in as many
-words, because a guard that lets a submitter believe it covers more than it does is worse
-than one nobody relies on.
+image builds its data-parallel config in bfloat16 by default, so
+``python .edullm/train_on_corpus.py "$EDULLM_RUN_ID"`` is a bfloat16 run carrying no
+bfloat16 token, and this guard accepts it on ``gpu-8xt4``.
+
+**THAT MISS IS BEING CLOSED IN THE IMAGE RATHER THAN HERE, WHICH IS THE RIGHT PLACE FOR IT.**
+Only the process that builds the config can see what the config says. ``edu-llm/OLMo-core``
+`#49 <https://github.com/edu-llm/OLMo-core/pull/49>`_ -- open and not merged as this is
+written -- has the entrypoint read its built config against the device's compute capability
+and exit 73 in the first seconds, before the process group, the model or a single step. So
+the run this guard cannot see is stopped by something that can, and accepting it here stays
+correct rather than becoming a hole somebody has to plug. What brings such a run back into
+*this* guard's view is writing the dtype into the command text --
+``train_module.dp_config.param_dtype=bfloat16``, or the ``--param-dtype`` that PR adds -- at
+which point it is refused before an instance is ever asked for. The refusal below says which
+of the two it checked, in as many words, because a guard that lets a submitter believe it
+covers more than it does is worse than one nobody relies on.
 
 **NO WAIVER, WHICH IS WHERE THIS PARTS FROM ITS TWO NEIGHBOURS.**
 ``EDULLM_LAUNCH_CHECK=waived`` and ``EDULLM_CHECKPOINT_CHECK=waived`` both exist because the
@@ -341,9 +352,12 @@ def _names_a_precision_setting(name: str) -> bool:
 _WHAT_WAS_CHECKED: Final = (
     "This read the words of your command and nothing else. bfloat16 that is set inside the "
     "program, or in a config file in the image, or through a shell variable this cannot "
-    "resolve, is invisible here and is not refused -- .edullm/train_on_corpus.py sets it in "
-    "code with no flag for it, so a command that merely runs that program is a bfloat16 run "
-    "this guard cannot see."
+    "resolve, is invisible here and is not refused -- .edullm/train_on_corpus.py builds its "
+    "data-parallel config in bfloat16 by default, so a command that merely runs that program "
+    "is a bfloat16 run this guard cannot see. Writing the dtype into the command is what "
+    "brings it back into view: train_module.dp_config.param_dtype=bfloat16, or "
+    "--param-dtype bfloat16 where the image offers that flag, is read here and refused "
+    "before the run costs anything."
 )
 
 

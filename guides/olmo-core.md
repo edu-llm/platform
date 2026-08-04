@@ -179,10 +179,12 @@ Memory is the total across the devices, and it is the column to read first becau
 **Your command must start one process per device.** Nothing wraps what you type, so the launcher goes in the command:
 
 ```
-bash -lc 'python -m torch.distributed.run --nproc-per-node=4 --standalone .edullm/train_on_corpus.py "$EDULLM_RUN_ID" --save-folder "$EDULLM_CHECKPOINT_DIR" --steps 4000'
+bash -lc 'python -m torch.distributed.run --nproc-per-node=4 --standalone .edullm/train_on_corpus.py "$EDULLM_RUN_ID" --save-folder "$EDULLM_CHECKPOINT_DIR" --steps 4000 train_module.dp_config.param_dtype=float32'
 ```
 
 Set `--nproc-per-node` to the device count of the shape you picked. `torchrun`, `accelerate launch`, `deepspeed`, `mpirun` and `srun` all work.
+
+**The dtype override is on that line because of which of the ten rows above you can actually get.** `config/capacity.yaml`, measured on 2026-08-04 by asking EC2 for one instance of each, records `gpu-4xt4` and `gpu-8xt4` as the only multi-card shapes that place — the other eight returned insufficient capacity, which is every A10G, L4, L40S, A100 and H100 row in the table. Both survivors are T4, and **T4 has no bfloat16**; the section below is about that. `.edullm/train_on_corpus.py` builds its data-parallel config in bfloat16, so without the override that command is a bfloat16 run on hardware with no bfloat16 — on every multi-card shape it can currently land on, not just the eight-card one — and it dies after the machine is billed. Writing the dtype on the command rather than leaving it in code is also what lets the check below see it, so a wrong answer here is refused at submission instead of on the device. Single-card work is unaffected: `gpu-1xa10g` and `gpu-1xl4` both place and both have the format, which is why the command at the top of this guide carries no dtype.
 
 Leaving the launcher out used to be free and silent: the run trained on one device, billed for four, and exited zero — $136 for a quarter of the work over twenty-four hours. It is now refused at submission, and the refusal prints the corrected command. The same check catches too few ranks, too many ranks, and `torchrun` with no `--nproc-per-node` at all.
 
@@ -220,7 +222,7 @@ Same convention as the launcher waiver, deliberately the same spelling. What it 
 
 **The T4 shapes — `gpu-1xt4`, `gpu-4xt4`, `gpu-8xt4` — have no bfloat16.** T4 is a Turing card, which is the one NVIDIA generation with tensor cores and without the format. Every other card in the table above is Ampere, Ada or Hopper and has it.
 
-This matters more than it reads, because `gpu-8xt4` is currently the only shape above four cards this account can get. Scarcity pushes multi-card work onto exactly the machine that cannot run the format multi-card work usually wants.
+This matters more than it reads, because `gpu-4xt4` and `gpu-8xt4` are currently the only multi-card shapes this account can get at all. Scarcity pushes every multi-card run onto exactly the card that cannot do the format multi-card work usually wants, and there is no second shape to move it to.
 
 **A command that asks for bfloat16 on one of those three is refused when it compiles**, before a lead is asked. The refusal names the shape, the card and the words of your command it matched:
 
@@ -229,15 +231,18 @@ train_module.dp_config.param_dtype=bfloat16   # refused on gpu-8xt4
 --dtype bfloat16   --torch_dtype bfloat16   --mixed_precision bf16   --bf16
 ```
 
-**It reads your command text and nothing else, and the gap is large enough to state plainly.** `.edullm/train_on_corpus.py` builds its data-parallel config with `param_dtype=DType.bfloat16` and offers no flag for it, so the getting-started command at the top of this guide **is a bfloat16 run that carries no bfloat16 token** — and this check will not refuse it on a T4. The same is true of a dtype set in a config file inside the image or read from a shell variable.
+**It reads your command text and nothing else, and the gap is large enough to state plainly.** `.edullm/train_on_corpus.py` builds its data-parallel config in bfloat16 by default, so the getting-started command at the top of this guide **is a bfloat16 run that carries no bfloat16 token** — and this check will not refuse it on a T4. The same is true of a dtype set in a config file inside the image or read from a shell variable.
 
 So treat the refusal as a backstop rather than a guarantee. If you are picking a T4 shape, the question to ask is what your program does, not what your command says:
 
 | If your run | On a T4 shape |
 | --- | --- |
 | Passes a bfloat16 flag on the command line | Refused at submission |
-| Runs `train_on_corpus.py`, or anything else that sets bfloat16 in code | **Accepted, and it will fail on the device** |
+| Runs `train_on_corpus.py` | Accepted here, then refused inside the container in the first seconds at exit 73, before the process group or any GPU work |
+| Sets bfloat16 in code any other way | **Accepted, and it will fail on the device** |
 | Uses fp16 with loss scaling, or fp32 | Fine — this is what a T4 is for |
+
+**The second row is [OLMo-core#49](https://github.com/edu-llm/OLMo-core/pull/49), which is open and not merged as this is written.** Until it lands, that row reads like the third one. It also will not reach a run of yours on the day it merges: every `edullm/**` branch carries its own copy of `.edullm/train_on_corpus.py` with the dtype written into it, and four of them set bfloat16 again in a separate entrypoint that merging that file would not touch — so the in-container check arrives on your branch when you merge `main` into it, and not before. Putting `train_module.dp_config.param_dtype=float32` on the command line works today, on every branch, and is checked at submission, which is why the multi-GPU section above prints it.
 
 There is no waiver. The other two checks have one because the waived run still works; a waived bfloat16 run on a T4 does not.
 

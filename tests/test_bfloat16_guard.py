@@ -297,9 +297,27 @@ def test_the_bfloat16_run_this_guard_cannot_see_is_accepted() -> None:
     """The documented limit, asserted rather than described.
 
     The guide's own training line on the eight-card T4 machine. It is a bfloat16 run and this
-    accepts it, because the dtype is in the program. Written as a test so that the gap is a
-    fact in the suite rather than a paragraph somebody has to believe -- and so that whoever
-    closes it deletes an assertion on purpose.
+    accepts it, because the dtype is in the program and this guard reads command text.
+    Written as a test so that the gap is a fact in the suite rather than a paragraph somebody
+    has to believe.
+
+    **THE HOLE WAS CLOSED IN THE IMAGE RATHER THAN IN THE PLATFORM, WHICH IS WHY THIS STAYS.**
+    This docstring used to anticipate its own deletion -- "so that whoever closes it deletes
+    an assertion on purpose" -- on the assumption that whatever closed the gap would make this
+    acceptance wrong. Nothing did, because the gap was never closable from here: only the
+    process that builds the config can see what the config says. ``edu-llm/OLMo-core`` #49,
+    open and not merged as this is written, has ``train_on_corpus.py`` read its built config
+    against the device's compute capability and exit 73 in the first seconds. Every clause
+    this test rests on survives that: the command below still carries no bfloat16 token, this
+    platform still cannot see inside a program, and accepting is still the right answer for a
+    guard that reads text.
+
+    What changes is the consequence rather than the verdict. Accepting here used to mean a job
+    that was classified, released, admitted, billed and then died minutes in on the first
+    kernel that wanted the format. It now means one the image refuses in seconds, before the
+    process group or a single step. Correct and cheap, where it used to be correct and
+    expensive -- and until that PR lands, and until each research branch merges it, still the
+    expensive kind.
     """
     allow(
         wrapped(
