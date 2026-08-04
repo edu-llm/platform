@@ -667,12 +667,21 @@ def render_approver_context(
     repository_url: str,
     inventory: OrganizationInventory,
     wandb_username: str | None = None,
+    placement_note: str | None = None,
 ) -> str:
     """What the reviewer reads before deciding, as GitHub step-summary markdown.
 
     GitHub's approval notification carries none of this, so the reviewer has to open the
     run. That is a real limitation of the mechanism and not something this function can fix;
     what it can do is make the summary complete enough that opening the run is sufficient.
+
+    ``placement_note`` is :func:`~edullm_platform.placement.placement_warning`'s answer for
+    the shape this run asked for, and it is passed in rather than derived here for the
+    reason every other reviewed fact is: this function is given loaded configuration and
+    reads no file. It is a sentence for the submitter as much as for the approver -- this
+    markdown is the step summary on the run page, which is where both of them look -- and
+    it sits above the table because a shape that may never start is worth knowing before
+    the cost of running it.
     """
     manifest = submission.manifest
     cost = submission.cost
@@ -687,6 +696,7 @@ def render_approver_context(
         "",
         _routing_note(inventory, claimed_team=manifest.team),
         "",
+        *((placement_note, "") if placement_note is not None else ()),
         *_waiver_lines(manifest),
         "| | |",
         "| --- | --- |",
