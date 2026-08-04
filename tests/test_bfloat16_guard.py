@@ -425,6 +425,28 @@ def test_a_request_in_a_later_simple_command_is_read() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "inner",
+    [
+        pytest.param("TORCH_DTYPE=bfloat16 python train.py", id="no operator"),
+        pytest.param("TORCH_DTYPE=bfloat16; python train.py", id="semicolon"),
+        pytest.param("TORCH_DTYPE=bfloat16&& python train.py", id="glued and"),
+        pytest.param("python train.py --dtype bfloat16; echo done", id="value then semicolon"),
+    ],
+)
+def test_a_shell_operator_stuck_to_a_word_does_not_hide_the_request(inner: str) -> None:
+    """Mutation: compare the word as ``shlex`` hands it over.
+
+    ``shlex.split`` does not separate control operators, and ``simple_command_segments``
+    recognises one only where it is a word of its own, so ``DTYPE=bfloat16;`` arrives as a
+    single word ending in a semicolon. Reading it untrimmed makes the guard sensitive to
+    punctuation nobody thinks about: the same line with and without a semicolon would get
+    two different answers, which is how a guard ends up looking present and behaving
+    absently.
+    """
+    assert bfloat16_request_in(wrapped(inner)) is not None
+
+
 def test_the_matched_text_is_quoted_back_rather_than_summarised() -> None:
     """What makes a wrong answer arguable rather than mysterious."""
     assert bfloat16_request_in(wrapped("python t.py --dtype bfloat16")) == "--dtype bfloat16"
