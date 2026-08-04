@@ -45,12 +45,33 @@ reader = [
   "edullm-data @ git+https://github.com/edu-llm/edullm-data@38bf831a6c3f445e394784018441fd59288b876c",
 ]
 
+# THE BINARY. `uv tool install edullm --from git+https://github.com/edu-llm/platform@<tag>`
+# installs one executable, which is the whole of what a researcher needs on day one --
+# `docs-frank/reference/system-overview.md` counts twelve of the fourteen surfaces that
+# reach a researcher as this one command.
+[project.scripts]
+edullm = "edullm_platform.cli:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/edullm_platform"]
+
+# THE REVIEWED CONFIGURATION TRAVELS INSIDE THE WHEEL, AND THAT IS WHAT KEEPS THE CLI AND
+# THE VALIDATOR FROM DISAGREEING ABOUT WHAT IS VALID. `edullm check` reads the same
+# config/*.yaml the compile job reads, so an install from a tag refuses exactly what the
+# platform at that tag refuses -- where a CLI carrying its own copy of a threshold would be
+# wrong within a month and wrong silently.
+#
+# force-include rather than a package directory, because config/ is the control plane and
+# has to stay at the repository root where every workflow, tool and test already reads it.
+# An editable install applies none of this, which is why
+# edullm_platform.cli.configuration also walks up for a config/ directory: that is the path
+# a platform checkout and the suite take.
+[tool.hatch.build.targets.wheel.force-include]
+"config" = "edullm_platform/_config"
 
 # A second package in the same checkout, built and versioned separately. client/ carries its
 # own [project] table because one pyproject.toml declares one distribution, and edullm-client
