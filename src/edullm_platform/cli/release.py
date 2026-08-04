@@ -245,6 +245,7 @@ def staleness_said(
         "checking against a copy that old. Most changes only cost you a refusal that is "
         "not real; a shape or a dataset withdrawn since then is the direction that costs "
         "an approval. Submitting anyway -- admission re-checks all of it. To be current:\n"
+        "\n"
         f"  {install_command(repository=repository, tag=latest.tag)}"
     )
 

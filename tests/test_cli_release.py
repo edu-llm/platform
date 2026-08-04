@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+
 from edullm_platform.cli.actions import PLATFORM_REPOSITORY
 from edullm_platform.cli.release import (
     InstalledVersion,
@@ -23,7 +25,7 @@ from edullm_platform.cli.release import (
     probe_failed_said,
     staleness_said,
 )
-from edullm_platform.cli.workspace import github_interop_diagnostic
+from edullm_platform.cli.workspace import SubprocessRunner, github_interop_diagnostic
 from tests.cli_support import FakeRunner, failed, ok
 
 NOW = datetime(2026, 8, 14, 9, 0, tzinfo=UTC)
@@ -113,6 +115,21 @@ def test_the_probe_is_given_a_timeout_so_a_hung_call_cannot_hold_a_submission() 
     latest_release(runner, repository=PLATFORM_REPOSITORY)  # type: ignore[arg-type]
 
     assert recorded and recorded[0] is not None and recorded[0] > 0
+
+
+@pytest.mark.slow
+def test_the_real_runner_turns_a_timeout_into_a_failed_command_and_not_an_exception() -> None:
+    """The other half of the timeout, against the runner that actually starts a process.
+
+    Mutation: let ``TimeoutExpired`` escape. It is not one of the four exceptions
+    ``main()`` catches, so it would leave a traceback where the contract is a warning --
+    and it would do it on the exact machine the requirement is about, the one whose
+    connection is bad enough for the probe to hang.
+    """
+    result = SubprocessRunner()(("sleep", "10"), timeout=0.2)
+
+    assert not result.ok
+    assert "did not answer" in result.stderr
 
 
 def test_a_repository_with_no_releases_is_a_failed_probe_and_not_a_crash() -> None:
