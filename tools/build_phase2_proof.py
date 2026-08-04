@@ -1227,7 +1227,16 @@ def matrix_rows(
         row("member submits, another member approves", member, other_member, routine.request),
         row("member submits, approver is off the roster", member, UNKNOWN_LOGIN, routine.request),
         row("submitter is off the roster", UNKNOWN_LOGIN, lead, routine.request),
-        row("exception, approved by a lead who is not an admin", member, lead, exception.request),
+        # The exception scenario's own submitter, not the routine one. Attribution is
+        # evaluated before the approver's role, so a submitter who does not belong to the
+        # claimed team is refused for that and the row stops saying anything about who may
+        # approve an exception.
+        row(
+            "exception, approved by a lead who is not an admin",
+            exception.submitter.github_login,
+            lead,
+            exception.request,
+        ),
         row(
             "lead self-authorizes, attributing the run to another team",
             lead_run.submitter.github_login,

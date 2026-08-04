@@ -419,13 +419,32 @@ def test_a_check_with_no_proving_test_says_so_in_the_matrix(
     assert rendered.count("No test proves this check.") == len(unproved)
 
 
+def test_the_deferred_criteria_are_the_ones_the_tree_records() -> None:
+    """Which criteria are deferred, asked without the nested runs.
+
+    This assertion lived inside the test below until 2026-08-04, where the ``verification``
+    fixture put it behind ``EDULLM_REPRODUCE_PROOFS`` and only the nightly could read it.
+    Criterion 9 was promoted to COVERED on 2026-08-02, the list went on naming it, and the
+    pull request that promoted it had no way to fail: the nightly carried the disagreement
+    for two mornings instead. Nothing about which criteria are deferred needs a suite to
+    have been re-run; only the rendering below does.
+    """
+    deferred = [
+        check
+        for check in recorded_checks(discover_fixtures(PROJECT_ROOT))
+        if check.status is CriterionStatus.DEFERRED
+    ]
+
+    assert [check.number for check in deferred] == ["10", "D1"]
+
+
 @pytest.mark.slow
 def test_every_deferral_shows_both_its_reason_and_its_trigger(
     verification: Verification,
 ) -> None:
     checks = recorded_checks(discover_fixtures(PROJECT_ROOT))
     deferred = [check for check in checks if check.status is CriterionStatus.DEFERRED]
-    assert [check.number for check in deferred] == ["9", "10", "D1"]
+    assert deferred, "no deferral is recorded, so the loop below would assert nothing"
     rendered = rendered_matrix(verification)
     assert "## Deferred by explicit decision" in rendered
     for check in deferred:
@@ -444,9 +463,11 @@ def test_the_matrix_uses_only_the_three_statuses(verification: Verification) -> 
     assert permitted == {"COVERED", "DEFERRED", "GAP"}
     for check in checks:
         assert f"| {check.number} | {check.status.name} |" in rendered
-    assert "| 9 | DEFERRED |" in rendered
-    assert "| 10 | DEFERRED |" in rendered
-    assert "| D1 | DEFERRED |" in rendered
+    # Which numbers are deferred is pinned by
+    # test_the_deferred_criteria_are_the_ones_the_tree_records, which can fail on the pull
+    # request. What this needs is that a deferral still exists, so the loop above rendered
+    # one rather than only COVERED rows.
+    assert any(check.status is CriterionStatus.DEFERRED for check in checks)
 
 
 @pytest.mark.slow
