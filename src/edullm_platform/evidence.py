@@ -144,9 +144,18 @@ class InstanceEvidence(TypedDict):
 #: against the same two quotas.
 #:
 #: Two quota codes and not three. L-DB2E81BA is "Running On-Demand G and VT instances" and
-#: covers g4dn, g5, g6 and g6e; L-417A185B is "Running On-Demand P instances" and covers p4d
-#: and p5. Both read as 768 vCPU on 2026-08-01 and again on 2026-08-02. They are separate
-#: pools, which is why the two P shapes below do not compete with the eleven above them.
+#: covers g4dn, g5, g6 and g6e; L-417A185B is "Running On-Demand P instances" and covers p4d,
+#: p4de, p5 and p5en. Both read as 768 vCPU on 2026-08-01, again on 2026-08-02, and again on
+#: 2026-08-04 when the two alternates below were added. They are separate pools, which is why
+#: the P shapes below do not compete with the eleven above them.
+#:
+#: p4de.24xlarge AND p5en.48xlarge ARE ALTERNATES AND NOT PROFILES, WHICH IS WHY NOTHING IN
+#: config/workload-catalog.yaml NAMES THEM. They are the second entry in the two P compute
+#: environments' InstanceTypes, added so BEST_FIT_PROGRESSIVE has somewhere to go when the
+#: primary type has no capacity. They appear here because the ceiling check in
+#: tests/test_phase3_execution.py reads every listed type's vCPU count from this table, and
+#: they draw the same L-417A185B pool as the primaries -- 96 and 192 vCPU respectively, the
+#: same as the type each one backs up, so no ceiling arithmetic changes when one is chosen.
 INSTANCE_EVIDENCE: dict[str, InstanceEvidence] = {
     "g4dn.xlarge": {"required_vcpus": 4, "quota_code": "L-DB2E81BA"},
     "g4dn.12xlarge": {"required_vcpus": 48, "quota_code": "L-DB2E81BA"},
@@ -161,8 +170,10 @@ INSTANCE_EVIDENCE: dict[str, InstanceEvidence] = {
     "g6e.12xlarge": {"required_vcpus": 48, "quota_code": "L-DB2E81BA"},
     "g6e.48xlarge": {"required_vcpus": 192, "quota_code": "L-DB2E81BA"},
     "p4d.24xlarge": {"required_vcpus": 96, "quota_code": "L-417A185B"},
+    "p4de.24xlarge": {"required_vcpus": 96, "quota_code": "L-417A185B"},
     "p5.4xlarge": {"required_vcpus": 16, "quota_code": "L-417A185B"},
     "p5.48xlarge": {"required_vcpus": 192, "quota_code": "L-417A185B"},
+    "p5en.48xlarge": {"required_vcpus": 192, "quota_code": "L-417A185B"},
     "c7i.8xlarge": {"required_vcpus": 32, "quota_code": "L-1216C47A"},
 }
 

@@ -185,12 +185,53 @@ ZONE_WITHOUT_THE_INSTANCE_TYPE = "us-east-1e"
 #: c7i.8xlarge can be placed into.
 DECLARED_ZONES = (*INSTANCE_CAPABLE_ZONES, ZONE_WITHOUT_THE_INSTANCE_TYPE)
 
-#: The compute environments whose instance type EC2 offers in us-east-1e, read against the
-#: account on 2026-08-03. p5.48xlarge and p5.4xlarge are offered in all six zones; c7i.8xlarge,
-#: g4dn, g5 and g6 in five; g6e.12xlarge and p4d.24xlarge in four. Only an environment named
-#: here may import the 1e subnet, and an environment that imports it without being named here
-#: is a job that waits in RUNNABLE forever with no error anywhere.
-ZONE_1E_CAPABLE_INSTANCE_TYPES = frozenset({"p5.48xlarge", "p5.4xlarge"})
+#: Every zone EC2 offers each backed instance type in, read off
+#: ``describe-instance-type-offerings --location-type availability-zone`` against this account
+#: on 2026-08-04. A measurement, not a policy: re-read it, do not reason about it.
+#:
+#: THIS REPLACED A SET OF NAMES AND THE REPLACEMENT IS WHAT MADE A SECOND INSTANCE TYPE SAFE.
+#: What stood here was ``ZONE_1E_CAPABLE_INSTANCE_TYPES``, the two p5 sizes, and the rule it
+#: fed was that an environment importing the us-east-1e subnet must contain nothing else. That
+#: is the correct rule for an environment with one instance type and the wrong one for an
+#: environment with two: p5en.48xlarge is sold in us-east-1b and us-east-1d only, and under
+#: the old rule adding it to gpu-8xh100 would have read as an error when it takes nothing
+#: away -- p5.48xlarge still reaches all six zones and every zone stays placeable.
+#:
+#: A full map rather than a widened set, because two rules need it and they pull opposite
+#: ways. A zone is legitimate if *some* listed type is offered there; a type is legitimate if
+#: it is offered in *some* imported zone. Only the second catches the mistake this change was
+#: one step away from making -- p5e.48xlarge is the obvious third H100 alternate and EC2
+#: offers it in no us-east-1 zone at all, so listing it would have added a name Batch could
+#: never launch and no set of zone names would have noticed.
+ZONES_OFFERING_INSTANCE_TYPE: dict[str, frozenset[str]] = {
+    "c7i.8xlarge": frozenset(INSTANCE_CAPABLE_ZONES),
+    "g4dn.xlarge": frozenset(INSTANCE_CAPABLE_ZONES),
+    "g4dn.12xlarge": frozenset(INSTANCE_CAPABLE_ZONES),
+    "g4dn.metal": frozenset(INSTANCE_CAPABLE_ZONES),
+    "g5.xlarge": frozenset(INSTANCE_CAPABLE_ZONES),
+    "g5.12xlarge": frozenset(INSTANCE_CAPABLE_ZONES),
+    "g5.48xlarge": frozenset(INSTANCE_CAPABLE_ZONES),
+    "g6.xlarge": frozenset(INSTANCE_CAPABLE_ZONES),
+    "g6.12xlarge": frozenset(INSTANCE_CAPABLE_ZONES),
+    "g6.48xlarge": frozenset(INSTANCE_CAPABLE_ZONES),
+    "g6e.xlarge": frozenset({"us-east-1a", "us-east-1b", "us-east-1c", "us-east-1d"}),
+    "g6e.12xlarge": frozenset({"us-east-1a", "us-east-1b", "us-east-1c", "us-east-1d"}),
+    "g6e.48xlarge": frozenset({"us-east-1a", "us-east-1b", "us-east-1c", "us-east-1d"}),
+    "p4d.24xlarge": frozenset({"us-east-1a", "us-east-1b", "us-east-1c", "us-east-1d"}),
+    "p4de.24xlarge": frozenset({"us-east-1c", "us-east-1d"}),
+    "p5.4xlarge": frozenset(DECLARED_ZONES),
+    "p5.48xlarge": frozenset(DECLARED_ZONES),
+    "p5en.48xlarge": frozenset({"us-east-1b", "us-east-1d"}),
+}
+
+#: The instance types EC2 offers in us-east-1e, derived from the map above rather than written
+#: out again, so the two cannot disagree. An environment importing the 1e subnet with none of
+#: these is a job that waits in RUNNABLE forever with no error anywhere.
+ZONE_1E_CAPABLE_INSTANCE_TYPES = frozenset(
+    instance_type
+    for instance_type, zones in ZONES_OFFERING_INSTANCE_TYPE.items()
+    if ZONE_WITHOUT_THE_INSTANCE_TYPE in zones
+)
 
 CONDITIONAL_WRITE_PARAMETERS = {"ChecksumAlgorithm": "SHA256", "IfNoneMatch": "*"}
 
@@ -786,9 +827,16 @@ def test_only_a_shape_offered_in_that_zone_imports_the_us_east_1e_subnet() -> No
     only symptom is that some fraction of that shape's jobs wait forever because Batch chose
     a zone the instance type is not sold in.
 
-    ``ZONE_1E_CAPABLE_INSTANCE_TYPES`` is a measurement rather than a policy, so backing a
+    ``ZONES_OFFERING_INSTANCE_TYPE`` is a measurement rather than a policy, so backing a
     shape that is offered in 1e means adding it there in the same change as the subnet, which
     is a line a reviewer reads rather than a deploy that quietly works.
+
+    ASKS FOR ONE OFFERED TYPE RATHER THAN FOR ALL OF THEM, WHICH IS THE MULTI-TYPE FORM OF THE
+    SAME QUESTION. What makes an imported zone dangerous is that nothing the environment may
+    launch can be placed there; a zone that one of two listed types reaches is a zone the
+    environment uses. Requiring every type to reach every zone would forbid p5en.48xlarge on
+    gpu-8xh100, which is sold in two of the six and costs that environment nothing, while
+    still permitting the mistake the test below catches.
     """
     offenders: list[str] = []
     for path in COMPUTE_PATHS:
@@ -798,13 +846,53 @@ def test_only_a_shape_offered_in_that_zone_imports_the_us_east_1e_subnet() -> No
             imports = [entry["Fn::ImportValue"] for entry in compute["Subnets"]]
             if not any(name.endswith(ZONE_WITHOUT_THE_INSTANCE_TYPE) for name in imports):
                 continue
-            unsupported = set(compute["InstanceTypes"]) - ZONE_1E_CAPABLE_INSTANCE_TYPES
-            if unsupported:
+            if not set(compute["InstanceTypes"]) & ZONE_1E_CAPABLE_INSTANCE_TYPES:
                 offenders.append(
                     f"{path.name}: {properties['ComputeEnvironmentName']} imports the "
-                    f"us-east-1e subnet with {sorted(unsupported)}, which EC2 does not offer "
-                    "there"
+                    f"us-east-1e subnet with {sorted(compute['InstanceTypes'])}, none of "
+                    "which EC2 offers there"
                 )
+
+    assert not offenders, "; ".join(offenders)
+
+
+def test_every_listed_instance_type_has_a_subnet_it_can_actually_be_placed_in() -> None:
+    """Mutation: add p5e.48xlarge to gpu-8xh100, or drop the 1c and 1d subnets from gpu-8xa100.
+
+    THE FAILURE A SECOND INSTANCE TYPE INTRODUCES, AND THE ONE NO ZONE-SIDE RULE CATCHES. The
+    test above asks whether each imported zone is reachable by something. This asks the
+    converse -- whether each listed type is reachable at all -- and only the converse notices
+    a name Batch can never launch, because a type offered in no imported zone subtracts no
+    zone from the environment and so leaves every zone-side check passing.
+
+    It is not hypothetical. p5e.48xlarge reads as the natural alternate for gpu-8xh100: it is
+    the 141 GB H200 part, it is the name every capacity discussion reaches for, and
+    ``describe-instance-type-offerings`` returns nothing for it in any us-east-1 zone.
+    Listing it would have looked like a second option and been a line of dead configuration,
+    with the environment continuing to fail exactly as it does now and a template that reads
+    as though the problem had been addressed.
+    """
+    offenders: list[str] = []
+    for path in COMPUTE_PATHS:
+        for resource in resources_of_type(path, "AWS::Batch::ComputeEnvironment").values():
+            properties = resource["Properties"]
+            compute = properties["ComputeResources"]
+            zones = {
+                entry["Fn::ImportValue"].rsplit("subnet-", 1)[-1] for entry in compute["Subnets"]
+            }
+            for instance_type in compute["InstanceTypes"]:
+                offered = ZONES_OFFERING_INSTANCE_TYPE.get(instance_type)
+                if offered is None:
+                    offenders.append(
+                        f"{path.name}: {properties['ComputeEnvironmentName']} lists "
+                        f"{instance_type}, which has no measured zone list"
+                    )
+                elif not offered & zones:
+                    offenders.append(
+                        f"{path.name}: {properties['ComputeEnvironmentName']} lists "
+                        f"{instance_type}, which EC2 offers only in {sorted(offered)} and "
+                        f"this environment imports {sorted(zones)}"
+                    )
 
     assert not offenders, "; ".join(offenders)
 
@@ -820,6 +908,13 @@ def test_every_environment_that_may_take_the_sixth_zone_actually_takes_it() -> N
 
     Driven off the instance type rather than off a list of environment names, so backing a
     third p5 shape gets the sixth zone by construction instead of by somebody remembering.
+
+    THE PREDICATE MOVED FROM SUBSET TO INTERSECTION WHEN gpu-8xh100 GAINED A SECOND TYPE, AND
+    UNDER THE OLD ONE THIS TEST WOULD HAVE GONE QUIET RATHER THAN RED. ``InstanceTypes`` on
+    gpu-8xh100 is no longer a subset of the 1e-capable names, because p5en.48xlarge is not one
+    of them, so the environment would simply have stopped being checked -- ``checked`` would
+    have fallen to one and only the count below would have caught it. An environment holding a
+    type offered in all six zones owes the sixth zone whatever else it also lists.
     """
     every_zone = sorted(
         f"sbsandbox-intern-edullm-batch-subnet-{zone}" for zone in DECLARED_ZONES
@@ -828,7 +923,7 @@ def test_every_environment_that_may_take_the_sixth_zone_actually_takes_it() -> N
     for resource in resources_of_type(GPU_SHAPES_PATH, "AWS::Batch::ComputeEnvironment").values():
         properties = resource["Properties"]
         compute = properties["ComputeResources"]
-        if not set(compute["InstanceTypes"]) <= ZONE_1E_CAPABLE_INSTANCE_TYPES:
+        if not set(compute["InstanceTypes"]) & ZONE_1E_CAPABLE_INSTANCE_TYPES:
             continue
         checked += 1
         imported = sorted(entry["Fn::ImportValue"] for entry in compute["Subnets"])
