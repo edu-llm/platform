@@ -2,8 +2,8 @@
 
 Phase: phase-5
 Bundle schema version: 1
-Source commit: 62471208a98cec75c2122a408303d2d0538f5ffd
-Generated: 2026-08-02T17:34:46+00:00
+Source commit: 648f74ee40c5f1470043aa707f2d3718f60687e3
+Generated: 2026-08-04T22:01:34+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 5 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase5_proof.py` at generation time. No criterion is a gap and the gate is green, and criterion 6 is deferred rather than covered -- a recorded decision not to satisfy it yet, which passes the gate without anybody having observed it. Read that entry in `negative-case-matrix.md` first: it carries the reason and the trigger, and the Known limitations below say what this phase does not establish.
 
@@ -28,10 +28,10 @@ The one check that is outstanding is a different kind of open from every other i
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 4680 |
-| suite tests executed | 4487 |
-| suite passed | 4484 |
-| suite failed | 3 |
+| suite tests collected | 4822 |
+| suite tests executed | 4629 |
+| suite passed | 4629 |
+| suite failed | 0 |
 | suite errored | 0 |
 | suite skipped | 0 |
 | matrix node ids executed | 96 |
@@ -71,10 +71,10 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | --- | --- |
 | .github/CODEOWNERS | sha256:defc3ec7e43f5dc70f137ff21566d23e3d961355fbc871467e3676c9ab651df4 |
 | .github/workflows/build-research-image.yml | sha256:f39972c4da20a63b3fd0f725ccaf521dd893d94c4d72d6f376456e081223e122 |
-| .github/workflows/submit-run.yml | sha256:e3f6e14cd30a1b82fb8bc52d58f8263d6267cc85f978277de8b03158f5340318 |
+| .github/workflows/submit-run.yml | sha256:521512798bf193cdd950023e8f00bf08d79e1b03e315d11ba66b8b73d39fceca |
 | README.md | sha256:3ee434c2dce810367306b1dea7ed70364dc60f582087a8aeb08c2ee254dc9e66 |
 | config/image-exceptions.yaml | sha256:8b1e3e6ac779215e0c521b91a2889b5e2404139678752534ac1bfb0f34751716 |
-| config/organization.yaml | sha256:4b3d6cbdc0c080dc01b36918401f720f9cfc87d821a6cfa61787fdc7020d80cf |
+| config/organization.yaml | sha256:93dbb74ea3f44c5b1bf9d00d505acfa888a6e78bf456550d0202989571d9c56a |
 | fixtures/evidence/phase-5/branch-protection.sanitized.json | sha256:99a949fb3cae169e5b77cc53661e660410928552213615314bab97ec83100ef5 |
 | fixtures/evidence/phase-5/published-image.sanitized.json | sha256:65f9b7ef2f121541a121944641c51d5e3548675b9da58f15e5aa2dee2d313d37 |
 | src/edullm_platform/image_resolution.py | sha256:0bd11cece57c91d6d82680dbffb1e959dade2ea9f60094a5a1a747accbf554fd |

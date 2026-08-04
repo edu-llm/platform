@@ -98,6 +98,14 @@ PROMOTED_PROFILE = "cpu-32vcpu"
 #: Every profile the catalog marks provisioned, in the order it promotes them. The seam
 #: test below compares this against both config files; the constant exists so that adding
 #: a profile is one visible edit rather than a number somebody increments.
+#:
+#: gpu-1xh100 AND gpu-8xh100 WERE HERE AND CAME OFF ON 2026-08-04. Their compute
+#: environments, queues and job definitions are all still deployed and healthy; what they
+#: have never had is an instance. EC2 refused 6,815 p5.48xlarge launches and 2,530
+#: p5.4xlarge launches with InsufficientInstanceCapacity, and the billing record shows zero
+#: instance-hours of either type since the account existed, so a submission routed to either
+#: queue waits in RUNNABLE with nothing to read. That is a demotion rather than a teardown,
+#: and it is the first one this constant has recorded.
 PROMOTED_PROFILES = (
     PROMOTED_PROFILE,
     "gpu-1xt4",
@@ -112,22 +120,26 @@ PROMOTED_PROFILES = (
     "gpu-1xl40s",
     "gpu-4xl40s",
     "gpu-8xl40s",
-    "gpu-1xh100",
     "gpu-8xa100",
-    "gpu-8xh100",
 )
 #: The profile the refusal tests below ask for. It has to be a profile the catalog prices and
 #: does not provision, and it moved from gpu-4xa10g to gpu-1xl40s and now to here as each of
-#: those was promoted. gpu-1xa10g-sagemaker is the only one left, so this constant has run out
-#: of room. It is also the weaker choice the note here used to explain avoiding, because it is
-#: unprovisioned for a second reason as well: it is a different service with no Batch queue to
-#: give it, so a reader could think these tests turn on that rather than on the flag. They do
-#: not. What they need is a priced profile whose provisioned flag is false, and this file
-#: flips that flag itself where a test needs it true.
+#: those was promoted. It is the weaker choice the note here used to explain avoiding, because
+#: it is unprovisioned for a second reason as well: it is a different service with no Batch
+#: queue to give it, so a reader could think these tests turn on that rather than on the flag.
+#: They do not. What they need is a priced profile whose provisioned flag is false, and this
+#: file flips that flag itself where a test needs it true.
 #:
-#: Promoting the sagemaker profile or removing it leaves nothing here to name, and the answer
-#: then is a profile the catalog does not ship, built in the test rather than read from
-#: config/workload-catalog.yaml.
+#: THE NOTE HERE SAID THIS CONSTANT HAD "run out of room" WITH ONE CANDIDATE LEFT. It has
+#: three as of 2026-08-04: gpu-1xh100 and gpu-8xh100 were demoted after EC2 turned out never
+#: to have sold this account a p5. The sagemaker profile stays named here anyway, because the
+#: two H100 shapes are expected back and a constant that follows a capacity shortage around
+#: would move again when it lifts. What the paragraph below anticipated is still the answer if
+#: this one is ever promoted or removed.
+#:
+#: Promoting the sagemaker profile or removing it leaves nothing permanent here to name, and
+#: the answer then is a profile the catalog does not ship, built in the test rather than read
+#: from config/workload-catalog.yaml.
 UNPROVISIONED_PROFILE = "gpu-1xa10g-sagemaker"
 UNREGISTERED_PROFILE = "cpu-1024vcpu"
 

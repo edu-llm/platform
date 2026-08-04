@@ -109,10 +109,17 @@ GPU_COMPUTE_ENVIRONMENT_NAME = "sbsandbox-intern-edullm-gpu"
 GPU_JOB_QUEUE_NAME = "sbsandbox-intern-edullm-gpu"
 GPU_JOB_DEFINITION_NAME = "sbsandbox-intern-edullm-gpu-run"
 
-#: The thirteen profiles infra/batch-compute-gpu-shapes.yaml backs, in the order the template
+#: The fourteen profiles infra/batch-compute-gpu-shapes.yaml backs, in the order the template
 #: declares them. Every seam below that used to compare against a pair of names now compares
 #: against the CPU name, the original GPU name and these, so promoting a shape is one edit
 #: here rather than a number to increment in each test.
+#:
+#: THIS IS WHAT THE TEMPLATE CREATES AND NOT WHAT A SUBMISSION MAY ASK FOR. The two were the
+#: same list until 2026-08-04. Both H100 shapes still have an environment, a queue and a job
+#: definition here and are no longer routable, so the execution-targets seam reads
+#: :data:`BACKED_GPU_SHAPE_PROFILES` below and the template seams keep reading this one.
+#: Conflating them would make withdrawing a shape from the form look like deleting
+#: infrastructure that is still deployed.
 GPU_SHAPE_PROFILES = (
     "gpu-1xt4",
     "gpu-4xt4",
@@ -131,6 +138,17 @@ GPU_SHAPE_PROFILES = (
 )
 GPU_SHAPE_QUEUE_NAMES = tuple(f"sbsandbox-intern-edullm-{name}" for name in GPU_SHAPE_PROFILES)
 GPU_SHAPE_JOB_DEFINITION_NAMES = tuple(f"{name}-run" for name in GPU_SHAPE_QUEUE_NAMES)
+
+#: The subset of the above that config/execution-targets.yaml still binds, which is every
+#: shape whose instance type this account can actually obtain. p5.48xlarge and p5.4xlarge
+#: were withdrawn on 2026-08-04 after 6,815 and 2,530 launch attempts respectively returned
+#: InsufficientInstanceCapacity and the billing record showed zero instance-hours of either
+#: type ever. Derived by subtraction so that the template list stays the one place a shape is
+#: named, and so re-promoting one is a deletion from this tuple rather than a retyped list.
+UNOBTAINABLE_GPU_SHAPE_PROFILES = ("gpu-1xh100", "gpu-8xh100")
+BACKED_GPU_SHAPE_PROFILES = tuple(
+    profile for profile in GPU_SHAPE_PROFILES if profile not in UNOBTAINABLE_GPU_SHAPE_PROFILES
+)
 
 #: The definition an accepted run registers for itself, as the states role's grants name it.
 #: No template creates it -- it is minted at admission from the run id, which is why it is a
@@ -1369,13 +1387,22 @@ def test_execution_targets_config_names_exactly_what_the_templates_create() -> N
                 GPU_EXECUTION_ROLE_NAME,
                 GPU_WORKLOAD_ROLE_NAME,
             )
-            for profile in GPU_SHAPE_PROFILES
+            for profile in BACKED_GPU_SHAPE_PROFILES
         },
     }
 
     assert set(bindings) == set(backing), (
         "every backed profile needs a compute template and a role template named here; a "
         "target with neither is a validator resolving names nothing creates"
+    )
+    # The other direction, which this test could not previously distinguish because the two
+    # lists were one list. A shape the template creates and nothing binds is deliberate and
+    # has to stay possible; a shape nothing creates and something binds is the defect above.
+    assert set(GPU_SHAPE_PROFILES) - set(bindings) == set(UNOBTAINABLE_GPU_SHAPE_PROFILES), (
+        "the only compute environments this repository creates without routing to them are "
+        "the ones whose instance type the account cannot obtain; withdrawing any other shape "
+        "from config/execution-targets.yaml leaves a queue nothing can reach and no record "
+        "of why"
     )
 
     for profile, (compute, roles, execution_name, workload_name) in backing.items():

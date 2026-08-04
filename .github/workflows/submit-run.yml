@@ -88,6 +88,20 @@ on:
       # the provisioned profiles in config/workload-catalog.yaml sorted. Every one of them
       # has a queue and a job definition; picking one costs the wait for a machine and not
       # a refusal after approval.
+      #
+      # gpu-1xh100 AND gpu-8xh100 CAME OFF THIS LIST ON 2026-08-04, AND THIS IS THE EDIT THAT
+      # ACTUALLY PROTECTS ANYBODY. Their queues exist and are healthy; EC2 will not sell this
+      # account a p5 of either size, so a job routed to one waits in RUNNABLE and no field a
+      # submitter can read ever says why. The per-queue cancel that was supposed to end that
+      # wait cannot fire -- Batch matches those rules on statusReason and leaves it null for
+      # this failure.
+      #
+      # Removing the option is what makes the shape unreachable. The catalog flag alone would
+      # not have been enough: resolve_execution_target runs inside admission, which is after
+      # the approval gate, so an unprovisioned profile reaching that far is refused with
+      # no_execution_target having already spent somebody's signature. A `choice` input
+      # rejects a value that is not listed, so the two edits together mean the form cannot
+      # express the request at all. Send anybody who wanted eight H100 to gpu-8xa100.
       compute_profile:
         description: "Which machine this run gets. Start with cpu-32vcpu."
         required: true
@@ -95,7 +109,6 @@ on:
         options:
           - cpu-32vcpu
           - gpu-1xa10g
-          - gpu-1xh100
           - gpu-1xl4
           - gpu-1xl40s
           - gpu-1xt4
@@ -105,7 +118,6 @@ on:
           - gpu-4xt4
           - gpu-8xa100
           - gpu-8xa10g
-          - gpu-8xh100
           - gpu-8xl4
           - gpu-8xl40s
           - gpu-8xt4

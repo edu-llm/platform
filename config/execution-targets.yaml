@@ -43,8 +43,12 @@ targets:
     execution_role: sbsandbox-intern-edullm-batch-gpu-execution
     workload_role: sbsandbox-intern-edullm-batch-gpu-workload
     log_group: /aws/batch/sbsandbox-intern-edullm-gpu
-  # THE THIRTEEN ROWS BELOW SHARE THE GPU ROLE TRIO AND THE GPU LOG GROUP WITH THE ROW ABOVE,
+  # THE TWELVE ROWS BELOW SHARE THE GPU ROLE TRIO AND THE GPU LOG GROUP WITH THE ROW ABOVE,
   # AND THAT IS A DECISION RATHER THAN A SHORTCUT.
+  #
+  # Thirteen until 2026-08-04, when the two H100 rows were withdrawn. The note where they
+  # stood says why, and none of the argument below is affected: the shared trio is about what
+  # a GPU job reads rather than about how many shapes there are.
   #
   # The isolation the CPU and GPU rows have from each other is real: their execution roles
   # read different secrets, their workload roles reach different objects, and each execution
@@ -57,7 +61,7 @@ targets:
   # What follows from sharing is that infra/batch-compute-gpu-shapes.yaml creates no log
   # group. It names /aws/batch/sbsandbox-intern-edullm-gpu, which infra/batch-compute-gpu.yaml
   # creates, and CloudFormation knows nothing about that dependency because the awslogs driver
-  # takes a string. Deleting the gpu stack would leave these thirteen definitions logging
+  # takes a string. Deleting the gpu stack would leave these twelve definitions logging
   # nowhere.
   #
   # The rows are in the same order the template declares the resources, grouped by card and
@@ -140,24 +144,24 @@ targets:
     execution_role: sbsandbox-intern-edullm-batch-gpu-execution
     workload_role: sbsandbox-intern-edullm-batch-gpu-workload
     log_group: /aws/batch/sbsandbox-intern-edullm-gpu
-  - compute_profile: gpu-1xh100
-    region: us-east-1
-    job_queue: sbsandbox-intern-edullm-gpu-1xh100
-    job_definition: sbsandbox-intern-edullm-gpu-1xh100-run
-    execution_role: sbsandbox-intern-edullm-batch-gpu-execution
-    workload_role: sbsandbox-intern-edullm-batch-gpu-workload
-    log_group: /aws/batch/sbsandbox-intern-edullm-gpu
+  # gpu-1xh100 AND gpu-8xh100 HAD ROWS HERE UNTIL 2026-08-04 AND THE QUEUES THEY NAMED ARE
+  # STILL DEPLOYED, STILL ENABLED AND STILL VALID. Nothing was torn down; the rows were
+  # withdrawn because EC2 will not sell this account a p5 of either size, so a submission
+  # routed to either queue reaches a compute environment that can never place it.
+  #
+  # This file answers "is there anywhere to run it", and for these two the honest answer
+  # stopped being yes while every name in the row stayed correct. That is a case the header
+  # above did not anticipate: a row can be accurate about the infrastructure and still be a
+  # promise the platform cannot keep. config/workload-catalog.yaml carries the measurement
+  # and what would bring them back.
+  #
+  # sbsandbox-intern-edullm-gpu-1xh100 and sbsandbox-intern-edullm-gpu-8xh100 are the queues,
+  # and their -run job definitions are unchanged. Restoring these two rows and flipping the
+  # catalog flag is the whole of the re-promotion; no template edit is involved.
   - compute_profile: gpu-8xa100
     region: us-east-1
     job_queue: sbsandbox-intern-edullm-gpu-8xa100
     job_definition: sbsandbox-intern-edullm-gpu-8xa100-run
-    execution_role: sbsandbox-intern-edullm-batch-gpu-execution
-    workload_role: sbsandbox-intern-edullm-batch-gpu-workload
-    log_group: /aws/batch/sbsandbox-intern-edullm-gpu
-  - compute_profile: gpu-8xh100
-    region: us-east-1
-    job_queue: sbsandbox-intern-edullm-gpu-8xh100
-    job_definition: sbsandbox-intern-edullm-gpu-8xh100-run
     execution_role: sbsandbox-intern-edullm-batch-gpu-execution
     workload_role: sbsandbox-intern-edullm-batch-gpu-workload
     log_group: /aws/batch/sbsandbox-intern-edullm-gpu

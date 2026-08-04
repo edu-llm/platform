@@ -785,6 +785,15 @@ def test_resolving_a_compute_profile_is_the_same_question_the_provisioned_flag_a
     catalog calls provisioned that ``config/execution-targets.yaml`` does not back. The
     resolver has its own error for that, and this is what stops the dropdown offering such
     a profile on the strength of the flag alone.
+
+    THE SET SHRANK BY TWO ON 2026-08-04 AND NEITHER FILE WAS WRONG. gpu-1xh100 and
+    gpu-8xh100 were withdrawn from both together, which is what keeps the equality above
+    true. Everything this test guards is about the two files agreeing; what it cannot see is
+    the third thing that has to be true for an offer to be honest, which is that EC2 will
+    sell the account the instance. It will not sell either p5, and no seam in this
+    repository could have said so -- the environment, the queue, the definition and both
+    roles all exist and are healthy. That is why the demotion is a measurement recorded in
+    config/workload-catalog.yaml rather than a rule anything here can enforce.
     """
     provisioned = {
         profile.name for profile in workload_catalog().compute_profiles if profile.provisioned
@@ -805,9 +814,7 @@ def test_resolving_a_compute_profile_is_the_same_question_the_provisioned_flag_a
         "gpu-1xl40s",
         "gpu-4xl40s",
         "gpu-8xl40s",
-        "gpu-1xh100",
         "gpu-8xa100",
-        "gpu-8xh100",
     }
     for name in provisioned:
         assert resolution_failure(name) is None
