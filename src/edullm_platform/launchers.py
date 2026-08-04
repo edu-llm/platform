@@ -44,15 +44,17 @@ everybody who reuses the form. What it is not is silent:
 :func:`waived_launch_check_note` puts a sentence in front of the lead who releases the run,
 because the command itself is not on the approver page.
 
-**FOUR NAMES HERE ARE PUBLIC BECAUSE A SECOND GUARD READS THE SAME COMMAND.**
+**FIVE NAMES HERE ARE PUBLIC BECAUSE TWO OTHER GUARDS READ THE SAME COMMAND.**
 :mod:`edullm_platform.checkpoint_commands` asks whether a command under a checkpoint contract
-writes where a retry will look, which needs the same three facts this module needs: which
-programs read one argument as a whole command line, where one simple command ends and the
-next begins, and whether an exact token was written anywhere in the text. Restating them
-there would be a second reading of one wrapper, and the drift fails open in both directions
--- a wrapper one guard can see into and the other cannot is a rule that quietly stops
+writes where a retry will look, and :mod:`edullm_platform.precision` asks whether a command
+asks for a number format the devices it is billed for do not have. Both need the same facts
+this module needs: which programs read one argument as a whole command line, where one simple
+command ends and the next begins, what the words of each of those commands are once the
+wrappers are opened, and whether an exact token was written anywhere in the text. Restating
+them there would be a second reading of one wrapper, and the drift fails open in every
+direction -- a wrapper one guard can see into and another cannot is a rule that quietly stops
 applying. The argument against sharing with ``contracts/validation.py`` does not apply here:
-neither module is packaged into either Lambda zip, so nothing about this costs a release.
+none of the three is packaged into either Lambda zip, so nothing about this costs a release.
 """
 
 from __future__ import annotations
@@ -78,6 +80,7 @@ __all__ = [
     "require_a_process_for_every_device",
     "shell_command_string",
     "simple_command_segments",
+    "simple_commands",
     "waived_launch_check_note",
 ]
 
@@ -243,7 +246,7 @@ def read_launch_plan(command: Sequence[str]) -> LaunchPlan:
     accepted those would pass exactly the submission it exists to refuse while looking
     covered.
     """
-    for segment in _simple_commands(tuple(command)):
+    for segment in simple_commands(tuple(command)):
         launcher = _launcher_in(segment)
         if launcher is not None:
             return launcher
@@ -351,8 +354,14 @@ def simple_command_segments(words: Sequence[str]) -> list[tuple[str, ...]]:
     return found
 
 
-def _simple_commands(words: Sequence[str], depth: int = 0) -> list[tuple[str, ...]]:
-    """Every simple command this argv would run, looking inside shell wrappers as it goes."""
+def simple_commands(words: Sequence[str], depth: int = 0) -> list[tuple[str, ...]]:
+    """Every simple command this argv would run, looking inside shell wrappers as it goes.
+
+    A wrapper is replaced by what it runs rather than kept beside it, so what comes back is
+    the words each program is handed. That is what both readers of this want: the launcher
+    is recognised in command position of the inner command, and the precision guard reads
+    the inner command's flags. ``bash`` and ``-lc`` are not words any program sees.
+    """
     found: list[tuple[str, ...]] = []
     for segment in simple_command_segments(words):
         text = shell_command_string(segment)
@@ -366,7 +375,7 @@ def _simple_commands(words: Sequence[str], depth: int = 0) -> list[tuple[str, ..
             # the segment is kept so that whatever is readable in it is still read.
             found.append(segment)
             continue
-        found.extend(_simple_commands(inner, depth + 1))
+        found.extend(simple_commands(inner, depth + 1))
     return found
 
 
