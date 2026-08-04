@@ -144,4 +144,4 @@ s3_object_version: TPmo8NeJBp4EP_Vs82xveP0SAEBlj2YE
 
 #: sha256 of the uploaded zip, as tools/build_admission_lambda.py reports it. This is the
 #: field that ties the release to a tree rather than to a moment.
-sha256: f6b4f16ebdbf1f6132d4fbe49a0bf271821ab0c99e4e95abb9cdafb0bfbb52d4
+sha256: 6d5524f6cfb5505cd5bfc13b2e712d61cddfdba57d61d9635d6510eb519550b4
