@@ -54,17 +54,52 @@ uv run mypy               # types
 ```
 
 `uv run pytest -q` runs every test and is the command every proof bundle asks a reviewer
-for. Around three hundred of those tests start a subprocess — a real git repository, a bash
-workflow body, a stubbed CLI, a nested pytest — and they are marked `slow`. While working
-on something else you can leave them out:
+for. It is also the slowest way to run it. When the wait matters, run the whole suite in
+parallel rather than running less of it:
 
 ```bash
-uv run pytest -q -m "not slow"   # nine tests in ten, in a few seconds
+uv run pytest -q -n4 --dist loadgroup   # every test, in about a quarter of the time
 ```
 
-That is a convenience and not a default. The exclusion belongs on the command line and
-nowhere else: written into `addopts` it would make the standard command quietly run less
-than it claims, and `tests/test_suite_budget.py` fails if anyone tries.
+`--dist loadgroup` is not optional. Without the groups `tests/conftest.py` assigns, xdist
+distributes individual tests, rebuilds every module's session fixtures on every worker, and
+gives most of the parallelism back. `.github/workflows/ci.yml` runs exactly this command and
+records the measurements beside it.
+
+Around three hundred tests start a subprocess — a real git repository, a bash workflow body,
+a stubbed CLI, a nested pytest — and they are marked `slow`. **`-m "not slow"` is not the
+fast path, and this file used to advertise it as one.** What it claimed was "nine tests in
+ten, in a few seconds", and only the first half was ever true.
+
+Measured on 2026-08-04, over 4,835 tests:
+
+| command | what it runs | wall clock |
+| --- | --- | --- |
+| `pytest -q` | everything | 651s |
+| `pytest -q -m "not slow"` | 4,507 tests, 328 deselected | 240s |
+| `pytest -q -n4 --dist loadgroup` | everything | 107s |
+
+The escape hatch is beaten by a complete run, so there is nothing left for it to be good
+for. The two lower rows were measured in adjacent runs on one machine, which is what makes
+that comparison worth anything; the machine was busy throughout, so read the ratios rather
+than the seconds.
+
+There is no marking that would rescue the claim, which is worth stating because "the wrong
+tests are marked" is the obvious next thought. `--durations=0` over one serial run puts
+644s of measured test time behind those 4,835 tests, and it is spread rather than pooled:
+the slowest single test is 10.2s, the 25 slowest are 17% of the total, the hundred slowest
+are 44%, and the median timed test is 0.07s. Getting to "a few seconds" means deselecting
+the five hundred slowest tests, which is 92% of the runtime and not a suite any more.
+
+The marker is worth keeping for what it says — `slow` means *starts a subprocess*, which is
+a real category and the reason those tests are worth knowing about. It is not a proxy for
+expensive, and reading it as one is the mistake behind the deleted claim: 186 unmarked tests
+take half a second or more and 320s between them, and the slowest unmarked test at 7.5s is
+slower than every marked test but two.
+
+Wherever the exclusion is used it belongs on the command line and nowhere else: written into
+`addopts` it would make the standard command quietly run less than it claims, and
+`tests/test_suite_budget.py` fails if anyone tries.
 
 `ruff check .` respects `.gitignore`, so a file listed there is never linted by the
 standard command. Three Phase 3 files were ignored for a while — `phase3_evidence.py`,
@@ -80,6 +115,15 @@ path is enough; ruff reads a file it is handed:
 ```bash
 uv run ruff check src/edullm_platform/some_ignored_file.py
 ```
+
+**If `mypy` reports errors here that CI does not, delete `.mypy_cache` before believing
+them.** The cache records where each module was resolved from, and it survives deleting
+`.venv` and re-syncing — so a virtualenv built once on the wrong interpreter goes on
+producing that interpreter's answers afterwards. It shows up as `boto3` being reported as
+installed-but-untyped, on the two `# type: ignore[import-not-found]` comments that are
+correct when it is genuinely absent, and it has cost time twice. Building the environment on
+a uv-managed CPython rather than a conda base avoids causing it: `uv venv --python 3.13
+--managed-python`.
 
 Regenerate the published schemas after changing any contract. The output is
 byte-reproducible, so a second run should produce no diff:
@@ -243,6 +287,31 @@ that anybody other than the author has used this platform.
 All five count the suite the same way and each excludes all five generator test modules
 from its own verification run, so adding a generator moves a cell in every bundle. Any
 bundle recording four generator modules was written before Phase 5 had one and is stale.
+
+Counting the suite the same way is also why there is a sixth command, and it is the one to
+reach for when a change moves a digest and every bundle has to be rebuilt:
+
+```bash
+uv run python tools/build_all_proofs.py
+```
+
+Each generator verifies the tree by running the whole suite in a child pytest, and
+`run_full_suite` keeps that answer against the tree it measured so a second generator in the
+same process reuses it rather than measuring again. That memory is process-local on purpose,
+so five commands are five processes and the cache never fires: five separate invocations ran
+the whole suite five times over. One invocation runs it once and each phase's own targeted
+run after it. The five per-phase commands are unchanged and are still the right ones for a
+single bundle.
+
+Measured on 2026-08-04: 1,464s for the five commands against 697s for this one, writing the
+same 57 files byte for byte. Most of what remains is the five per-phase targeted runs at
+about 505s between them, and those are five different selections rather than one repeated,
+so there is no second multiplier left to remove.
+
+Nothing about a bundle's contents changes — this calls the same `build_bundle` with the same
+arguments — except that the five now record one `generated_at` rather than five a few minutes
+apart, because they now rest on one verification. Give the five commands and this one the
+same `--generated-at` and an `--output-root`, and the bundles they write compare equal.
 
 Phase 4 has an acceptance gate and no generator, so there is no `proof/phase-4/`. Its
 evidence is committed under `fixtures/evidence/phase-4/` and read by the tests the gate

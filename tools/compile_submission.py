@@ -40,6 +40,12 @@ from edullm_platform.contracts.repository_registry import RepositoryRegistry
 from edullm_platform.contracts.workload import WorkloadCatalog
 from edullm_platform.errors import SubmissionRefusedError
 from edullm_platform.image_resolution import PublishedImage
+from edullm_platform.placement import (
+    CAPACITY_FILENAME,
+    UnreadableCapacityError,
+    placement_warning,
+    read_capacity,
+)
 from edullm_platform.submission import (
     SubmissionInputs,
     compile_submission,
@@ -178,7 +184,14 @@ def main(argv: list[str] | None = None) -> int:
         # can be attributed in W&B, so the approver context can say before the gate what
         # W&B will not say after it.
         inventory = load_yaml(args.config_dir / "organization.yaml", OrganizationInventory)
-    except (OSError, ValidationError, TypeError) as exc:
+        # Whether the shape on the form is one this account has been able to get. Read
+        # here beside the rest of the reviewed configuration, and unreadable here is an
+        # unusable input rather than a refusal, for the reason
+        # edullm_platform.placement.UnreadableCapacityError records: the fail-open
+        # alternative is a file that stops parsing and takes the only warning about a
+        # four-hour wait with it.
+        capacity = read_capacity(args.config_dir / CAPACITY_FILENAME)
+    except (OSError, ValidationError, TypeError, UnreadableCapacityError) as exc:
         print(f"reviewed configuration is unreadable: {exc}", file=sys.stderr)
         return EXIT_UNUSABLE
 
@@ -231,6 +244,18 @@ def main(argv: list[str] | None = None) -> int:
         print(f"the submission does not compile into a valid manifest: {exc}", file=sys.stderr)
         return EXIT_REFUSED
 
+    # After compiling rather than before it, because the profile to ask about is the one
+    # the run lands on: `compute_profile` is resolved onto the manifest and reading it back
+    # from there keeps that resolution the only place it happens. Printed as well as put in
+    # the summary, and to stderr beside the refusals, because the two reach different
+    # people at different moments -- the log is what the submitter is already watching, and
+    # the summary is what survives on the run page for whoever releases it.
+    placement_note = placement_warning(
+        submission.manifest.compute_profile, capacity=capacity
+    )
+    if placement_note is not None:
+        print(placement_note, file=sys.stderr)
+
     document = {
         "run_id": submission.run_id,
         "submitter": args.submitter,
@@ -254,6 +279,7 @@ def main(argv: list[str] | None = None) -> int:
                 repository_url=args.repository_url,
                 inventory=inventory,
                 wandb_username=inventory.wandb_username_for(args.submitter),
+                placement_note=placement_note,
             ),
             encoding="utf-8",
         )

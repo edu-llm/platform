@@ -27,6 +27,7 @@ import subprocess
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -34,12 +35,15 @@ import pytest
 from edullm_platform import proof_bundle
 from edullm_platform.proof_bundle import (
     GENERATOR_NESTED_ENV_VARS,
+    GENERATOR_TEST_PATHS,
+    ProofBundleError,
     collect_node_ids,
     pytest_environment,
     run_full_suite,
 )
 from edullm_platform.proof_generator import parse_generator_args
 from tools import (
+    build_all_proofs,
     build_phase0_proof,
     build_phase1_proof,
     build_phase2_proof,
@@ -247,14 +251,22 @@ def test_no_generator_cli_can_be_asked_to_skip_reproduction() -> None:
     that is kept true is that there is no option to. A ``--no-verify`` or a
     ``--reuse-verification`` appearing here would make the committed bundles stop being
     evidence that anybody ran anything, and this is the only place that would notice.
+
+    The combined command is held to the same rule and differs in one option, because five
+    bundles do not have one output directory: it takes a root and puts each phase's bundle
+    under it. That is the same escape the per-phase ``--output-dir`` already offers, and it
+    is what lets somebody show by hand that this machinery writes the bytes the five
+    separate commands write.
     """
     accepted = {"output_dir", "generated_at", "regenerate_goldens"}
 
     shared = parse_generator_args([], description="phases 1 to 3")
     phase0 = build_phase0_proof.parse_args([])
+    combined = build_all_proofs.parse_args([])
 
     assert set(vars(shared)) == accepted
     assert set(vars(phase0)) == accepted
+    assert set(vars(combined)) == accepted - {"output_dir"} | {"output_root"}
 
 
 def test_every_generator_module_is_listed_as_one() -> None:
@@ -273,8 +285,133 @@ def test_every_generator_module_is_listed_as_one() -> None:
 
 
 # --------------------------------------------------------------------------------------
-# Collection, on the same terms
+# One command for all five, which is what gives the memory above anything to share
 # --------------------------------------------------------------------------------------
+#
+# The memory is process-local, and five command lines are five processes -- so until there
+# was a command that built every bundle, the cache above never once fired outside the test
+# suite and a regeneration measured the same unchanged tree five times over.
+
+
+def fake_generator(phase: str, *, refuses: str | None = None) -> build_all_proofs.Generator:
+    """A generator that verifies the tree and writes one file, or refuses before it does.
+
+    Real enough for what this file asks of it -- it goes through ``run_full_suite``, which
+    is the shared thing -- and nowhere near a bundle, so these cases cost nothing and
+    cannot leave a written document behind.
+    """
+
+    def build(
+        repo_root: Path,
+        output_dir: Path,
+        *,
+        generated_at: datetime,
+        regenerate_goldens: bool = False,
+    ) -> tuple[Path, ...]:
+        if refuses is not None:
+            raise ProofBundleError(refuses)
+        run_full_suite(repo_root, nested_env=NESTED_ENV)
+        return (output_dir / "README.md",)
+
+    return build_all_proofs.Generator(
+        phase=phase,
+        command=f"uv run python tools/build_{phase}_proof.py",
+        test_path=f"tests/test_{phase}_proof.py",
+        default_output_dir=lambda root: root / phase,
+        build_bundle=build,
+    )
+
+
+def test_five_generators_in_one_process_verify_the_tree_once(
+    spawns: SpawnRecorder,
+    tmp_path: Path,
+) -> None:
+    """The saving, stated as the thing it is rather than as a wall-clock number.
+
+    Mutation: run the generators in five subprocesses, which is what the five separate
+    commands do and what this exists to stop. Nothing else in the suite notices, because
+    every bundle produced that way is byte-identical -- the only difference is four extra
+    runs of every test in the repository.
+    """
+    generators = [fake_generator(f"phase-{number}") for number in (0, 1, 2, 3, 5)]
+
+    outcomes = build_all_proofs.build_every_bundle(
+        tmp_path,
+        generated_at=datetime(2026, 8, 4, tzinfo=UTC),
+        generators=generators,
+    )
+
+    assert [outcome.phase for outcome in outcomes] == [g.phase for g in generators]
+    assert all(outcome.built for outcome in outcomes)
+    assert proof_bundle.full_suite_child_runs() == 1
+    assert spawns.roots == [tmp_path]
+
+
+def test_a_generator_that_refuses_does_not_take_the_other_four_with_it(
+    spawns: SpawnRecorder,
+    tmp_path: Path,
+) -> None:
+    """Mutation: stop at the first refusal.
+
+    A generator refuses for reasons about its own phase -- a drifted golden, a lapsed
+    capture, a template the account has not caught up with -- and those are independent.
+    Stopping would report one of them and leave the next to be found one regeneration
+    later, at the price of a full suite run each time.
+    """
+    generators = [
+        fake_generator("phase-0"),
+        fake_generator("phase-1", refuses="a golden moved"),
+        fake_generator("phase-2"),
+    ]
+
+    outcomes = build_all_proofs.build_every_bundle(
+        tmp_path,
+        generated_at=datetime(2026, 8, 4, tzinfo=UTC),
+        generators=generators,
+    )
+
+    assert [outcome.built for outcome in outcomes] == [True, False, True]
+    assert outcomes[1].error == "a golden moved"
+    assert outcomes[1].written == ()
+
+
+def test_the_combined_command_builds_every_bundle_the_registry_knows_about() -> None:
+    """Mutation: add a sixth generator and forget this list.
+
+    The bundle it writes is then never rebuilt by the command that says it rebuilds
+    everything, and what is left behind is a stale bundle rather than a missing one --
+    which reads as current to every reviewer who opens it.
+    """
+    listed = {generator.test_path for generator in build_all_proofs.GENERATORS}
+
+    assert listed == set(GENERATOR_TEST_PATHS)
+    assert len(build_all_proofs.GENERATORS) == len(GENERATOR_TEST_PATHS)
+
+
+@pytest.mark.parametrize("guard", GENERATOR_NESTED_ENV_VARS)
+def test_the_combined_command_refuses_under_any_generators_guard(
+    guard: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: check only this command's own guard, or only Phase 0's.
+
+    This one runs every generator, so the guard it has to respect is every generator's.
+    A nested run carries all five -- ``pytest_environment`` sets them together -- and a
+    check on one of them would be a check on all of them today and a hole the first time
+    that stopped being true. Without it the recursion is unbounded and presents as a
+    machine that has stopped responding.
+    """
+
+    def refuse_to_build(*args: object, **kwargs: object) -> tuple[object, ...]:
+        raise AssertionError("the guard let a real build start")
+
+    # In place of the real build, because the failure this asserts against is one that
+    # would otherwise regenerate five bundles into the working tree and take a quarter of
+    # an hour to do it. A broken guard fails here in milliseconds instead.
+    monkeypatch.setattr(build_all_proofs, "build_every_bundle", refuse_to_build)
+    monkeypatch.setenv(guard, "1")
+
+    assert build_all_proofs.main([]) == 2
 
 
 def test_a_second_collection_of_the_same_tree_starts_no_child(
