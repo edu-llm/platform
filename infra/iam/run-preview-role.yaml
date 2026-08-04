@@ -1,0 +1,138 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: GitHub Actions role that lets a submission dispatched from a platform branch reach the cheapest CPU queue, so a change to this repository can be exercised before it is merged.
+
+Resources:
+  RunPreviewRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sbsandbox-intern-edullm-run-preview
+      PermissionsBoundary:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/InternSandboxBoundary
+      MaxSessionDuration: 3600
+      # WHY THIS ROLE EXISTS. Every other role trusted to a workflow in this repository pins
+      # its subject to `refs/heads/main`: the deployer, the image resolver, the run canceller
+      # and the nightly reader all carry `:ref:refs/heads/main`, and the admission role
+      # carries the three `main`-only approval environments instead. The consequence is that
+      # `submit-run.yml` dispatched from a branch dies in its second job, at the credential
+      # step, before anything is compiled and before any gate is reached. A change to the
+      # submission path could therefore not be exercised at all until it was on `main`, which
+      # is the one place a mistake in it is expensive.
+      #
+      # THE SUBJECT IS AN ENVIRONMENT AND THE REF IS FREE, WHICH IS THE INVERSE OF EVERY
+      # OTHER ROLE HERE AND IS THE POINT. A ref condition is what this role must not have:
+      # being assumable from a branch is the entire reason it exists. What replaces it is the
+      # `run-approval-preview` environment, enumerated as a single literal for exactly the
+      # reason `infra/iam/admission-role.yaml` enumerates its three. GitHub puts
+      # `:environment:<name>` in the subject only for a job that declared `environment:` and
+      # cleared its protection rules, and a `StringLike` on `...:environment:*` would accept
+      # the subject minted for any environment a workflow author invented -- auto-created on
+      # first use, with no protection rules and no diff anybody reviewed.
+      #
+      # `run-approval-preview` has no required reviewers, which is a smaller concession than
+      # it reads as and the same one `run-approval-automatic` already carries. The property
+      # the enumeration protects is that the subject cannot be minted by a workflow edit
+      # alone; the environment has to exist, and creating one is an admin action in the
+      # repository settings. What is given up is the reviewer, and the ceiling below is what
+      # makes that affordable.
+      #
+      # `job_workflow_ref` IS `StringLike` HERE AND `StringEquals` EVERYWHERE ELSE, AND ONLY
+      # THE REF PART IS WILD. The file is still pinned: only `submit-run.yml` in this
+      # repository can present a matching claim, so this role is unreachable from any other
+      # workflow, exactly as the admission role is. Pinning the ref as well would defeat the
+      # role. What that costs is that any branch may present the claim -- which is what
+      # "preview" means, and why the permission below is one queue rather than sixteen.
+      #
+      # A trust policy cannot distinguish jobs within a workflow, so every job in
+      # `submit-run.yml` that declares this environment can assume this role. That is
+      # acceptable only because of the ceiling below, which is why
+      # `tests/test_run_preview_role.py` asserts the action set exactly rather than
+      # approximately.
+      #
+      # The sub prefix carries owner and repository ids because this organization issues
+      # immutable subject claims, verified the same way the deployer role's was:
+      # `gh api repos/edu-llm/platform/actions/oidc/customization/sub` reports
+      # sub_claim_prefix repo:edu-llm@306859726/platform@1311508598.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated:
+                Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:repository_owner_id: "306859726"
+                token.actions.githubusercontent.com:repository_id: "1311508598"
+                token.actions.githubusercontent.com:sub: repo:edu-llm@306859726/platform@1311508598:environment:run-approval-preview
+              StringLike:
+                token.actions.githubusercontent.com:job_workflow_ref: edu-llm/platform/.github/workflows/submit-run.yml@*
+      # Inline rather than a customer managed policy. InternSandboxBoundary denies
+      # iam:CreatePolicyVersion on every policy, so a managed policy could be created once
+      # and never amended; the first permission change would fail the stack update. Inline
+      # policies go through iam:PutRolePolicy, which the boundary permits on this name.
+      Policies:
+        - PolicyName: place-a-preview-job-on-the-cpu-queue-only
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # ONE QUEUE, AND IT IS THE CHEAPEST ONE. `sbsandbox-intern-edullm-cpu` is the
+              # only CPU target in `config/execution-targets.yaml`; the other fifteen rows
+              # are GPU and none of them is reachable from here. The admission states role in
+              # `infra/iam/admission-service-roles.yaml` enumerates all sixteen queues, and
+              # the difference between that list and this one is the whole ceiling on a
+              # preview: a branch may burn CPU minutes and may not burn an H100 hour.
+              #
+              # Two ARNs and two resource types plus a revision wildcard, because SubmitJob
+              # authorizes against both the queue it lands in and the job definition it
+              # instantiates, and RegisterJobDefinition mints a new revision on every deploy.
+              # Granting one without the other is refused, and the denial names only the
+              # missing half. The reasoning is the states role's and is not restated there.
+              #
+              # THIS ROLE SUBMITS DIRECTLY AND DOES NOT GO THROUGH ADMISSION, WHICH IS A REAL
+              # DIFFERENCE FROM THE PRODUCTION PATH AND HAS TO BE READ AS ONE. Every other
+              # principal reaches Batch through the admission state machine, which validates
+              # the manifest, records a decision and writes lineage;
+              # `infra/iam/infra-deployer-role.yaml` states the invariant in those words. A
+              # preview job has none of that. What follows is that a preview job is not an
+              # admitted run and must never be read as one: it carries no lineage record, so
+              # it cannot be mistaken for a run that passed a gate -- it is visibly absent
+              # from the store rather than forged into it.
+              #
+              # The narrower alternative was considered and does not work. Giving this role
+              # `states:StartExecution` on the admission state machine, which is what
+              # `infra/iam/admission-role.yaml` holds, would put a preview back inside
+              # admission and would also hand it every queue the state machine can reach,
+              # because StartExecution takes the profile from its input and no IAM condition
+              # can see inside it. That is the opposite of a ceiling. Submitting directly is
+              # what makes "cannot place a GPU job" a property of the trust policy rather
+              # than a property of a document somebody read.
+              #
+              # Deliberately absent, and each for its own reason: `batch:TerminateJob` and
+              # `batch:CancelJob`, because stopping a run is its own path with its own
+              # principal and `infra/iam/run-canceller-role.yaml` is where it lives;
+              # `states:` of any kind, per the paragraph above; every `s3:` action, so a
+              # preview cannot write into the lineage or outputs buckets and cannot leave
+              # anything behind that a reader would have to date; `iam:PassRole`, because the
+              # job definition already carries its roles and this role never names one;
+              # `secretsmanager:`, so a preview never reaches the W&B key; and every `ecr:`
+              # action, including the two reads `infra/iam/image-resolver-role.yaml` holds.
+              # The last of those is what stops the preview path short today, and
+              # `MAINTAINING.md` records the choice rather than this file working around it.
+              - Effect: Allow
+                Action: batch:SubmitJob
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-queue/sbsandbox-intern-edullm-cpu
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-cpu-run
+                  - Fn::Sub: arn:${AWS::Partition}:batch:${AWS::Region}:${AWS::AccountId}:job-definition/sbsandbox-intern-edullm-cpu-run:*
+
+Outputs:
+  RoleName:
+    Value:
+      Ref: RunPreviewRole
+  RoleArn:
+    Value:
+      Fn::GetAtt:
+        - RunPreviewRole
+        - Arn

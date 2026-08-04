@@ -1382,3 +1382,81 @@ Eight statements, and the two new ones are `batch:RegisterJobDefinition` scoped 
 Check the second by eye: a prefix where those four ARNs should be is the difference between
 a state machine that may hand a container the two identities this repository reviewed and
 one that may hand it any role a later phase happens to name.
+
+## The preview stack, which belongs to no phase
+
+| # | Stack | Template | Roles or resources | Applied from |
+| --- | --- | --- | --- | --- |
+| 1 | `sbsandbox-intern-edullm-run-preview-iam` | `infra/iam/run-preview-role.yaml` | `…-run-preview` | laptop |
+
+Not numbered into a phase because it adds no capability to the platform. It exists so that a
+change *to* the platform can be exercised before it is merged, which is a property of how
+this repository is worked on rather than of what it runs.
+
+**What it is for.** Every other role trusted to a workflow here pins its subject to
+`refs/heads/main`. `submit-run.yml` dispatched from a branch therefore fails in its second
+job, at the credential step, before anything is compiled and before any gate is reached — so
+the submission path was the one path that could not be tried until it was already on `main`.
+The trust condition on this role is the `run-approval-preview` environment subject instead of
+a ref, and `submit-run.yml` routes a non-`main` dispatch to that environment and this role.
+
+**What stops it being a way around the gates.** One queue. `batch:SubmitJob` on
+`sbsandbox-intern-edullm-cpu` and its job definition, and nothing else at all — no GPU queue,
+no `states:`, no `s3:`, no `iam:PassRole`, no `secretsmanager:`. The admission states role
+enumerates sixteen queues; this one enumerates the cheapest, which is the entire ceiling on
+what a branch can spend. `tests/test_run_preview_role.py` asserts the action set and the
+queue exactly, so widening either is a red test rather than a quiet edit.
+
+**Read the template's comments before changing the trust policy.** `job_workflow_ref` is
+`StringLike` here and `StringEquals` everywhere else, and only the ref part is wild: the
+workflow file is still pinned, so the role is unreachable from any other workflow. The
+environment name is enumerated as a single literal for the same reason
+`infra/iam/admission-role.yaml` enumerates its three — a `StringLike` on `:environment:*`
+would accept the subject minted for any environment a workflow author invented, because an
+environment named in a workflow is auto-created on first use with no protection rules.
+
+### Deploying it
+
+```bash
+aws cloudformation deploy \
+  --stack-name sbsandbox-intern-edullm-run-preview-iam \
+  --template-file infra/iam/run-preview-role.yaml \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --no-fail-on-empty-changeset \
+  --profile sbsandbox \
+  --region us-east-1
+```
+
+Then read the role back, as after every deploy above:
+
+```bash
+aws iam get-role \
+  --role-name sbsandbox-intern-edullm-run-preview \
+  --profile sbsandbox --region us-east-1
+
+aws iam list-attached-role-policies \
+  --role-name sbsandbox-intern-edullm-run-preview \
+  --profile sbsandbox --region us-east-1
+```
+
+`AttachedPolicies` must be empty. The one inline policy must name exactly one action,
+`batch:SubmitJob`, over three ARNs that all contain `sbsandbox-intern-edullm-cpu`. Any ARN
+with `gpu` in it means the ceiling is gone and the role should be deleted rather than
+amended.
+
+**Two things do not follow from this deploy and have to be done beside it.** The
+`run-approval-preview` environment has to exist in the repository settings with no required
+reviewers and a deployment branch policy of `*`; an environment named in a workflow and not
+created deliberately is auto-created with no protection rules, which is a different thing
+that happens to share the name. And `AWS_RUN_PREVIEW_ROLE_ARN` has to be set as a repository
+variable, the way `AWS_ADMISSION_ROLE_ARN` and `AWS_IMAGE_RESOLVER_ROLE_ARN` already are.
+
+**The preview path stops short of a full dry run today, and that is deliberate rather than
+unfinished.** The `resolve` job assumes `…-image-resolver`, whose trust still pins
+`refs/heads/main`, so a branch dispatch reaches the preview environment and the preview role
+and does not get past `resolve`. Closing that means either adding the preview environment
+subject as a second statement in `infra/iam/image-resolver-role.yaml`, or adding
+`ecr:DescribeImages` and `ecr:DescribeImageScanFindings` to this role and splitting the
+`resolve` job by ref. Both widen something that exists today, which is a decision to take
+deliberately rather than in passing — the same reasoning the Phase 5 note above gives for
+leaving one `batch:SubmitJob` scope alone.

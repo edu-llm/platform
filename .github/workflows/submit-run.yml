@@ -721,8 +721,24 @@ jobs:
     # two-environment design.
     # The name comes from `needs` because the job that computed it holds no credentials
     # and derives the answer from policy rather than from the submitter.
+    #
+    # ON A BRANCH THE GATE IS `run-approval-preview` INSTEAD, AND THE CONDITION IS THE REF
+    # RATHER THAN ANYTHING THE SUBMITTER TYPED. Every role trusted to this file pins its
+    # subject to `refs/heads/main`, so before this existed a dispatch from a branch died in
+    # the resolve job at the credential step -- the submission path was the one path that
+    # could not be tried until it was already merged. `github.ref` is not a dispatch input
+    # and does not appear on the form; choosing it means pushing a branch, which is the
+    # thing being previewed.
+    #
+    # This can only ever be a demotion, which is what makes it safe to decide here rather
+    # than in the compile job. From `main` the expression is the classified gate and this
+    # job behaves exactly as it did before. From a branch it is an environment with no
+    # reviewers whose role may place a job on the cheapest CPU queue and nothing else --
+    # so a submitter cannot reach a GPU or skip a lead by dispatching from a branch, they
+    # can only reach less. infra/iam/run-preview-role.yaml carries the ceiling and the
+    # argument for it.
     environment:
-      name: ${{ needs.compile.outputs.environment }}
+      name: ${{ github.ref == 'refs/heads/main' && needs.compile.outputs.environment || 'run-approval-preview' }}
     permissions:
       contents: read
       id-token: write
@@ -964,7 +980,12 @@ jobs:
         id: credentials
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
         with:
-          role-to-assume: ${{ vars.AWS_ADMISSION_ROLE_ARN }}
+          # The same ref condition that chose this job's `environment:` above, and it has to
+          # be the same one: the environment decides which subject GitHub mints, and a role
+          # whose trust names the other environment refuses it. Splitting the two conditions
+          # would produce an AccessDenied at this step with nothing pointing at the cause,
+          # which is the failure mode infra/README.md describes for every trust pin here.
+          role-to-assume: ${{ github.ref == 'refs/heads/main' && vars.AWS_ADMISSION_ROLE_ARN || vars.AWS_RUN_PREVIEW_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
           # One StartExecution and a bounded poll. The role's maximum is an hour and this
           # job has no use for one, so it asks for the shortest session STS issues.
