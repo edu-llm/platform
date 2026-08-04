@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: Fourteen GPU compute environments, their job queues and their digest-pinned job definitions, beside the single-A10G stack.
+Description: Fourteen GPU compute environments, their job queues and their digest-pinned job definitions, beside the single-A10G stack, and the launch template the two eight-device P shapes boot from.
 
 # The thirteen GPU shapes this account can run, added alongside infra/batch-compute-gpu.yaml
 # rather than into it. That file's single environment had jobs running when these were
@@ -201,6 +201,16 @@ Description: Fourteen GPU compute environments, their job queues and their diges
 # than opening it. A deploy during the last eighteen hours of a training run still stops
 # waiting and kills it. Disabling the queue and waiting is the procedure for a template edit
 # while a long run is in flight; this field cannot substitute for it.
+#
+# TWO OF THESE FOURTEEN ENVIRONMENTS NOW CARRY A LAUNCH TEMPLATE AND TWELVE DO NOT, WHICH
+# IS A SCOPE AND NOT AN OVERSIGHT. gpu-8xa100 and gpu-8xh100 boot from
+# PFamilyLaunchTemplate: a 500 GiB root volume in place of the AMI's 30, and an ECS agent
+# told to clear a stopped container after fifteen minutes rather than three hours. The long
+# comment above that resource records the 37.2 GiB corpus that did not fit, the three jobs
+# that inherited each other's leftovers, and why the 8 TB of instance store sitting unused
+# on a p4d is the right answer and a later one. Every other environment here keeps the AMI
+# default, because the change was made while those two were idle and gpu and gpu-4xl40s
+# were not.
 #
 # EVERY QUEUE NAME BELOW APPEARS IN THREE OTHER PLACES WITH NOTHING CONNECTING THEM:
 # config/execution-targets.yaml, the event pattern in infra/batch-events.yaml, and the
@@ -1446,6 +1456,165 @@ Resources:
         Privileged: false
 
   # -------------------------------------------------------------------------------------
+  # THE ONLY LAUNCH TEMPLATE IN THIS ACCOUNT, AND IT SERVES EXACTLY THE TWO EIGHT-DEVICE P
+  # SHAPES BELOW.
+  #
+  # Every compute environment in this file and in infra/batch-compute-gpu.yaml was created
+  # without one -- describe-compute-environments returned launchTemplate: None for all
+  # sixteen on 2026-08-04 -- so nothing in this repository ever stated what disk a GPU job
+  # gets, and the answer was whatever the AMI happened to carry.
+  #
+  # WHAT THAT ANSWER IS. Ec2Configuration names ECS_AL2023_NVIDIA and nothing else, so Batch
+  # resolves the ECS-optimized AL2023 GPU AMI and takes that image's own block device mapping
+  # unchanged. Read on 2026-08-04 from ami-011db5ae81cc0f370,
+  # al2023-ami-ecs-gpu-hvm-2023.0.20260727-kernel-6.1-x86_64-ebs: a single 30 GiB gp3 volume
+  # on /dev/xvda at 125 MB/s. After the operating system and the ~4.4 GB compressed training
+  # image there is roughly 13 GiB free.
+  #
+  # WHAT ASKED FOR MORE THAN THAT, AND COULD NEVER HAVE FITTED. A run staged
+  # train-*.u32le.bin to local disk under /tmp inside the container. 9,989,799,834 tokens at
+  # four bytes each is 39,959,199,336 bytes, which is 37.2 GiB against 13 GiB free, and it
+  # died in stage_input with OSError: [Errno 28] No space left on device. A clean instance
+  # would not have saved it: the dataset is larger than the entire 30 GiB root volume before
+  # anything else is written to it, so this shape could not run that job at all.
+  #
+  # 500 GiB IS THE DATASET WITH ROOM TO WORK IN RATHER THAN THE DATASET ROUNDED UP. A
+  # trainer that stages 37.2 GiB also writes checkpoints beside it, and a second job landing
+  # on the same instance stages its own copy. 500 GiB is thirteen times the corpus, which
+  # buys all of that and stops this being re-argued the first time a slightly larger corpus
+  # arrives.
+  #
+  # THE PRICE OF BEING WRONG IN THIS DIRECTION IS NOTHING, AND THAT IS THE WHOLE ARGUMENT.
+  # gp3 in us-east-1 is $0.08/GB-month, so 500 GiB is $40/month -- $1.31 over a 24-hour run
+  # on a 730-hour month -- and the throughput below adds $0.16 more, for $1.48 a day. The
+  # p4d.24xlarge under it is $21.9576/hour, which is $527 over the same 24 hours. The volume
+  # is a third of one percent of the run it protects, and MinvCpus is 0 on both environments
+  # so an idle environment pays neither.
+  #
+  # 250 MB/s BECAUSE THE BASELINE MAKES THE STAGE THE SLOWEST PART OF A SHORT JOB. gp3 gives
+  # 125 MB/s free and charges $0.040 per MB/s-month above it. 39,959,199,336 bytes at
+  # 125 MB/s is 5 minutes 20 seconds of a job doing nothing but copying; at 250 MB/s it is
+  # 2 minutes 40 seconds. Neither instance is the constraint -- describe-instance-types
+  # reports 2,375 MB/s of EBS baseline throughput on p4d.24xlarge and 10,000 MB/s on
+  # p5.48xlarge -- so the volume is what was slow. IOPS is left at the gp3 default of 3,000,
+  # which is well inside the 0.25 MB/s-per-IOPS ceiling that 250 MB/s has to fit under.
+  #
+  # Encrypted IS DELIBERATELY ABSENT RATHER THAN false. The account has
+  # EbsEncryptionByDefault off, this AMI's snapshot is unencrypted, and both live Batch
+  # instances read on 2026-08-04 carry unencrypted roots -- so an omitted flag produces
+  # exactly what the account already does. Writing false would produce the same volume today
+  # and refuse to launch at all on the day somebody turns account-wide default encryption on,
+  # which is a failure mode bought for no present benefit.
+  #
+  # /dev/xvda IS THE AMI'S OWN ROOT DEVICE AND WAS READ RATHER THAN ASSUMED. describe-images
+  # on ami-011db5ae81cc0f370 reports RootDeviceName /dev/xvda and exactly one mapping, on
+  # /dev/xvda; describe-instances agrees on both live hosts. This is the field that fails
+  # quietly when it is wrong: a device name the AMI does not use is not an error, it is a
+  # second empty 500 GiB volume attached beside an untouched 30 GiB root, and the job dies
+  # with the same ENOSPC while the console shows the disk was bought.
+  #
+  # THE USER DATA IS MIME MULTIPART BECAUSE BATCH REQUIRES IT, NOT AS A STYLE. AWS Batch
+  # merges its own user data with whatever the launch template carries, and its
+  # documentation states that user data in a launch template must be in MIME multi-part
+  # archive format for that merge to happen. A bare shell script is not rejected; it is
+  # discarded, and the instance boots with the agent defaults while everything below looks
+  # applied. The boundary declaration, the blank line before each boundary and the blank
+  # line after each Content-Type are all load-bearing parts of that format.
+  #
+  # cloud-init runs this before the agent reads its configuration. The ECS-optimized AMI
+  # looks for /etc/ecs/ecs.config when the container agent starts, and user data is how AWS
+  # documents writing that file at launch, so appending to it here is the supported ordering
+  # rather than a race this file is winning by luck.
+  #
+  # WHY THE AGENT SETTINGS ARE HERE AT ALL, WHICH IS A SECOND FAILURE AND NOT THE SAME ONE.
+  # Three jobs landed on one container instance in succession. The first ran 2m35s before
+  # ENOSPC; the second and third died in six seconds each, on the first one's leftover
+  # partial download. ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION defaults to three hours, so a
+  # stopped container's writable layer -- and the half-staged corpus inside it -- is kept
+  # for three hours while the next job is placed on the same host. A larger volume alone
+  # would have made that slower rather than absent.
+  #
+  # EVERY VALUE BELOW IS FROM THE AGENT'S OWN CONFIGURATION REFERENCE, INCLUDING THE ONES
+  # THAT CONSTRAIN IT. ECS_IMAGE_CLEANUP_INTERVAL cannot go below 10 minutes and is 15 here
+  # against a default of 30. ECS_IMAGE_MINIMUM_CLEANUP_AGE is 30 minutes against a default
+  # of one hour. ECS_NUM_IMAGES_DELETE_PER_CYCLE is 25 against a default of 5, whose minimum
+  # is 1 and which has no documented maximum: at roughly 12 GiB per unpacked training image
+  # a backlog of 25 is 300 GiB, so one cycle can clear a full volume rather than nibbling at
+  # it five images at a time. ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION is 15 minutes against a
+  # default of three hours, and it is the one that matters most: the reference states that
+  # image cleanup cannot delete an image while any container still references it, so the
+  # task cleanup duration gates the three image settings rather than sitting beside them.
+  #
+  # ECS_CLUSTER and ECS_INSTANCE_ATTRIBUTES are absent and must stay absent. Batch writes
+  # both itself and names them as reserved; setting either from here is documented to break
+  # scheduling and scaling. ECS_DISK_FREE_SPACE_THRESHOLD is also absent, for a plainer
+  # reason -- it is not an ECS agent variable. It appears in no part of the configuration
+  # reference, and a line naming it would sit in /etc/ecs/ecs.config being ignored while
+  # reading like a guard.
+  #
+  # IMAGE ACCUMULATION WAS NOT WHAT HAPPENED HERE. All three jobs pulled one identical
+  # digest, so nothing about the image settings would have saved any of them. They are
+  # tightened in the same change because the defaults are loose and this is the file where
+  # that is now stated; the honest claim is that they are prophylactic and the volume and
+  # the task cleanup duration are the fix.
+  #
+  # THE INSTANCE STORE IS THE RIGHT LONG-TERM HOME FOR A STAGED CORPUS AND IS DELIBERATELY
+  # NOT TOUCHED HERE. p4d.24xlarge carries eight 1,000 GB NVMe disks -- 8 TB, sitting unused
+  # while a job runs out of room on a 30 GiB EBS root -- and p5.48xlarge carries eight of
+  # 3,800 GB, 30.4 TB. It is free, it is local, and it is faster than any EBS volume this
+  # account would pay for. It is also per-shape work that this change is not: eight disks
+  # need a RAID device assembled and mounted before the agent starts, the two shapes below
+  # differ in disk size, and the twelve G-family environments differ again -- g4dn and g5
+  # have one NVMe disk each, g6e has one, and c7i in the CPU stack has none at all, so a
+  # user-data script written for eight disks is a boot failure on most of the estate. This
+  # 500 GiB volume is the interim fix that unblocks the corpus today; mounting the instance
+  # store is the follow-up that makes it free.
+  #
+  # ONE TEMPLATE FOR BOTH SHAPES RATHER THAN ONE EACH. They have the same problem, the same
+  # root device and the same corpus to stage, and two copies of the block below would be two
+  # places for a future size change to be applied to one of. The fourteen other environments
+  # are deliberately left without a launch template: this change was scoped to the two that
+  # were idle, and gpu and gpu-4xl40s had live work on them when it was written.
+  #
+  # THE VERSION IS Fn::GetAtt AND NOT $Latest, AND THAT IS WHAT MAKES AN EDIT TAKE EFFECT.
+  # Batch resolves $Latest and $Default once, when the compute environment is created or
+  # updated, and its documentation is explicit that a later change to the template is not
+  # picked up until something calls UpdateComputeEnvironment. A concrete version number is a
+  # property of the compute environment, so editing the block below changes the two
+  # environments in the same deploy rather than leaving them on the version they were born
+  # with while this file describes another one.
+  # -------------------------------------------------------------------------------------
+  PFamilyLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: sbsandbox-intern-edullm-batch-gpu-p-family
+      LaunchTemplateData:
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: 500
+              VolumeType: gp3
+              Throughput: 250
+              DeleteOnTermination: true
+        UserData:
+          Fn::Base64: |
+            MIME-Version: 1.0
+            Content-Type: multipart/mixed; boundary="==BOUNDARY=="
+
+            --==BOUNDARY==
+            Content-Type: text/x-shellscript; charset="us-ascii"
+
+            #!/bin/bash
+            cat <<'ECSCONFIG' >> /etc/ecs/ecs.config
+            ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION=15m
+            ECS_IMAGE_CLEANUP_INTERVAL=15m
+            ECS_IMAGE_MINIMUM_CLEANUP_AGE=30m
+            ECS_NUM_IMAGES_DELETE_PER_CYCLE=25
+            ECSCONFIG
+
+            --==BOUNDARY==--
+
+  # -------------------------------------------------------------------------------------
   # gpu-8xa100, eight A100 on p4d.24xlarge, $21.958/hour. Draws on the P quota, and needs an
   # admin per submission because that rate is above policy's exception ceiling. FOUR SUBNETS:
   # p4d.24xlarge is not offered in us-east-1f.
@@ -1496,6 +1665,15 @@ Resources:
           - Fn::ImportValue: sbsandbox-intern-edullm-batch-security-group-id
         Ec2Configuration:
           - ImageType: ECS_AL2023_NVIDIA
+        # 500 GiB of gp3 instead of the AMI's 30, and an ECS agent that clears a stopped
+        # container after fifteen minutes instead of three hours. The block above
+        # PFamilyLaunchTemplate records the corpus that did not fit and the three jobs that
+        # inherited each other's leftovers.
+        LaunchTemplate:
+          LaunchTemplateId:
+            Ref: PFamilyLaunchTemplate
+          Version:
+            Fn::GetAtt: PFamilyLaunchTemplate.LatestVersionNumber
         UpdateToLatestImageVersion: true
         Tags:
           Name: sbsandbox-intern-edullm-batch-gpu-8xa100
@@ -1611,6 +1789,14 @@ Resources:
           - Fn::ImportValue: sbsandbox-intern-edullm-batch-security-group-id
         Ec2Configuration:
           - ImageType: ECS_AL2023_NVIDIA
+        # The same launch template gpu-8xa100 uses, and for the same two reasons. p5.48xlarge
+        # has 30.4 TB of instance store rather than the p4d's 8 TB, so it stands to gain more
+        # from the follow-up that mounts it, and exactly as much from the 500 GiB root today.
+        LaunchTemplate:
+          LaunchTemplateId:
+            Ref: PFamilyLaunchTemplate
+          Version:
+            Fn::GetAtt: PFamilyLaunchTemplate.LatestVersionNumber
         UpdateToLatestImageVersion: true
         Tags:
           Name: sbsandbox-intern-edullm-batch-gpu-8xh100
