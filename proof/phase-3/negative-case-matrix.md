@@ -4,7 +4,7 @@ The nineteen Phase 3 acceptance criteria, mapped to the tests cited for each one
 
 This mapping is defined once, in `src/edullm_platform/phase3_criteria.py`. The acceptance gate reads the same definition and executes the same node ids, so this matrix and `tools/validate_phase3.py` cannot disagree.
 
-Verification run: 483 tests executed, 483 passed, 0 failed, 0 errored, pytest exit code 0.
+Verification run: 496 tests executed, 496 passed, 0 failed, 0 errored, pytest exit code 0.
 
 Three statuses exist and no more. **COVERED** means one or more cited tests prove the criterion as stated against the shipped configuration and all of them pass; the gate passes it. **DEFERRED** means an explicit recorded decision not to satisfy it yet, which requires both a written reason and a written trigger describing what makes it live again; the gate passes it. **GAP** is everything else, and the gate fails it. There is no in-between status, because an in-between status is what lets a gate be green and wrong at the same time.
 
@@ -29,7 +29,7 @@ Three statuses exist and no more. **COVERED** means one or more cited tests prov
 | 18 | GAP | 0 | 6 | The EventBridge rule receives only our queue's events. |
 | 19 | COVERED | 2 | 6 | A run is traceable end to end by run id alone. |
 | 20 | COVERED | 2 | 6 | The deployer's unscoped actions are exactly the measured ones, in two statements separated by why each is unscoped. |
-| 21 | COVERED | 1 | 7 | The networking the compute environment uses is recorded, with its terms. |
+| 21 | COVERED | 1 | 10 | The networking the compute environment uses is recorded, with its terms. |
 | 22 | COVERED | 4 | 6 | The image-scan decision has been answered. |
 
 ## Gaps

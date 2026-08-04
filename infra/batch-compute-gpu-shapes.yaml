@@ -175,12 +175,16 @@ Description: Fourteen GPU compute environments, their job queues and their diges
 # SUBNETS ARE MEASURED PER INSTANCE TYPE AND ARE NOT A PROPERTY OF THE FAMILY.
 # describe-instance-type-offerings on 2026-08-01 reports g4dn.xlarge, g4dn.12xlarge,
 # g5.12xlarge, g5.48xlarge, g6.xlarge, g6.12xlarge and p5.48xlarge in us-east-1a, 1b, 1c, 1d
-# and 1f, and g6e.12xlarge and p4d.24xlarge in 1a, 1b, 1c and 1d only. p5.48xlarge is also
-# offered in us-east-1e, where the network stack has no subnet.
+# and 1f, and g6e.12xlarge and p4d.24xlarge in 1a, 1b, 1c and 1d only. p5.48xlarge and
+# p5.4xlarge are also offered in us-east-1e, and that zone had no subnet to offer them until
+# 2026-08-03. It has one now, those two environments import it, and they are the only two
+# that may -- the block above each of their Subnets lists says why, and
+# infra/batch-network.yaml argues it at length.
 #
 # The four types added on 2026-08-02 were measured the same way on that date. g4dn.metal and
 # g6.48xlarge are offered in 1a, 1b, 1c, 1d and 1f. g6e.48xlarge and g6e.xlarge are offered
-# in 1a, 1b, 1c and 1d only. So nine environments list five subnets and four list four.
+# in 1a, 1b, 1c and 1d only. So eight environments list five subnets, four list four, and the
+# two p5 shapes list six.
 #
 # gpu-1xl40s is the one a copy would have got wrong, and it is the shape two teams are
 # waiting on. g6.xlarge and g6e.xlarge are the same size, sit next to each other in every
