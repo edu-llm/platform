@@ -105,6 +105,32 @@ Resources:
                 Action: s3:GetObject
                 Resource:
                   Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-lineage/attempt/*
+              # THE SECOND ACCOUNT-SIDE SOURCE, AND THE ONLY ONE THAT DOES NOT EXPIRE. The
+              # board answers "what did the account actually run" from tag:GetResources,
+              # which drops a finished Batch job after roughly a week -- so the account side
+              # was not merely incomplete, it was silently losing runs as they aged out, and
+              # a board comparing a shrinking denominator reports agreement it did not
+              # verify. The binding records are written once per accepted job and never
+              # expire, so they are what makes the account side's window a property of the
+              # bucket rather than of the tagging API's retention. It takes the board from
+              # 112 runs to 117 and lets it print the window each source covers.
+              #
+              # This is a record of the same kind the three prefixes above already carry --
+              # a job identifier and the run it belongs to -- so it widens what the role can
+              # see by a prefix rather than by a kind of thing. decision/, events/ and
+              # submission-failure/ stay unreadable, and the reasons they are withheld are
+              # unchanged.
+              #
+              # Written character-for-character as tools/visibility_board.py's
+              # MISSING_BINDING_GRANT quotes it, for the reason the tagging grant below is:
+              # the board prints that string into its own 05:00 report as the thing to
+              # paste, so a second spelling here would mean whoever pastes the report changes
+              # the role into something no test covers.
+              - Sid: ReadBindingRecords
+                Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::sbsandbox-intern-edullm-lineage/binding/*
               # Listing is a bucket-level action, so it cannot be scoped by an object ARN and
               # the prefix condition is the narrowing. Granted because the check has to
               # enumerate each tree; it is handed no list of run ids.
@@ -127,6 +153,7 @@ Resources:
                       - intent/*
                       - result/*
                       - attempt/*
+                      - binding/*
               # What a run wrote. GetObject rather than a listing alone because deciding
               # whether a checkpoint would load means reading it: HeadObject is authorized as
               # s3:GetObject, and a `_SUCCESS` marker has to be fetched to be compared

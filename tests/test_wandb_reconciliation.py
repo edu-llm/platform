@@ -56,8 +56,15 @@ LINEAGE_TEMPLATE = INFRA_ROOT / "lineage-bucket.yaml"
 
 #: Three run ids off the account. The first logged nothing at all, the second logged under a
 #: `-died` suffix in the project its record names, and the third resolves exactly.
+#:
+#: No uuid tail here may be twelve decimal digits. The last group of a uuid is twelve hex
+#: characters, and about one in two hundred draws them all from 0-9, which the tracked-tree
+#: account-id scan in `tests/test_evidence.py` reads as a leaked account id. `DIED_RUN` was
+#: drawn that way and did fail that scan. The scan is right to flag it -- an account id also
+#: sits bounded by hyphens in a bucket or log-group name, so exempting the shape would give
+#: up a real leak -- so the id carries a hex letter instead.
 SILENT_RUN = "run_019fc3ae-b197-70d3-80df-12d36d006be3"
-DIED_RUN = "run_019fca21-8bb0-7061-bad8-770710961802"
+DIED_RUN = "run_019fca21-8bb0-7061-bad8-770710961b02"
 LOGGED_RUN = "run_019fbd28-b600-70fa-879b-34fafcd8fe68"
 
 ATTEMPT = "att_019fa731-1b33-72a4-aec8-6b19c7cff944"
