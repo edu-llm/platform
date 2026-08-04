@@ -11,11 +11,33 @@
 # Until then, ownership covered the workflows and the infrastructure and left the admission
 # validator's own source and the policy it enforces uncovered, so a change to the
 # authorization rules needed one approving review from anybody holding write.
-
+#
+# CONFIG IS OWNED MORE WIDELY THAN THE REST, AND ONLY CONFIG. 84 of the last 99 commits on
+# main touched a path owned here and 29 of them touched config, counted on 2026-08-04
+# against the first-parent diff of each commit. Branch protection sets
+# require_code_owner_reviews with required_approving_review_count 1, and all 36
+# collaborators already hold write or better. So the review queue for eight research teams
+# was two people, and the largest single thing they were queueing on was config: profiles,
+# workloads, the roster, datasets.
+#
+# config/ is also the least dangerous place to be wrong. Every file under it is loaded and
+# cross-checked by the suite, which catches an incoherent profile, an unplaceable workload
+# or a roster naming somebody who is not in the organization inside ninety seconds -- so a
+# bad config change is caught by a machine before a reviewer would reach it. A trust policy
+# or a workflow file is not like that: the failure is a run that cannot assume a role, in
+# an account no test here can see. Those stay with the two.
+#
+# THE EIGHT LOGINS ARE SPELLED OUT RATHER THAN NAMED AS @edu-llm/team-leads, on purpose.
+# They are config/organization.yaml's `team_leads` list, and the comment at the top of that
+# file records what happens when the two disagree: the GitHub team went two days out of
+# step with the roster after the Memory group changed lead, and nothing in this repository
+# could notice. The two agree today, login for login. Naming the team here would make this
+# file silently follow the next disagreement; naming the people makes a change to who
+# reviews config a change somebody commits.
 /.github/CODEOWNERS @philote-dev @BritishAmericqn
 /.github/workflows/** @philote-dev @BritishAmericqn
 /infra/** @philote-dev @BritishAmericqn
 /src/edullm_platform/** @philote-dev @BritishAmericqn
-/config/** @philote-dev @BritishAmericqn
+/config/** @philote-dev @BritishAmericqn @VS-code-cloud @alsy7009 @ericrcwu001 @gorpyshortlegs @hiyasvyas @meric233 @pianomaster99
 /tools/build_admission_lambda.py @philote-dev @BritishAmericqn
 /tools/build_lifecycle_lambda.py @philote-dev @BritishAmericqn
