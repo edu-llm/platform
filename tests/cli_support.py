@@ -66,7 +66,13 @@ class FakeRunner:
         self._answers = dict(answers)
         self.calls: list[tuple[str, ...]] = []
 
-    def __call__(self, argv: tuple[str, ...], *, cwd: Path | None = None) -> CommandResult:
+    def __call__(
+        self,
+        argv: tuple[str, ...],
+        *,
+        cwd: Path | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
         self.calls.append(argv)
         matches = [prefix for prefix in self._answers if argv[: len(prefix)] == prefix]
         if not matches:

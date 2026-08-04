@@ -77,6 +77,12 @@ from edullm_platform.cli.presentation import (
     render_run_facts,
     render_run_listing,
 )
+from edullm_platform.cli.release import (
+    installed_version,
+    latest_release,
+    probe_failed_said,
+    staleness_said,
+)
 from edullm_platform.cli.scaffold import scaffold_spec
 from edullm_platform.cli.spec import SPEC_PATH, RunSpec, SpecUnreadableError, find_spec, load_spec
 from edullm_platform.cli.workspace import (
@@ -84,6 +90,7 @@ from edullm_platform.cli.workspace import (
     GitFacts,
     SubprocessRunner,
     ToolMissingError,
+    github_interop_diagnostic,
     github_login,
     read_git_facts,
 )
@@ -181,7 +188,15 @@ def build_parser() -> argparse.ArgumentParser:
             "Submit and follow runs on the eduLLM platform without opening the Actions UI."
         ),
     )
-    parser.add_argument("--version", action="version", version=f"edullm {_installed_version()}")
+    # NAMES THE COMMIT AND NOT ONLY THE VERSION, BECAUSE THE VERSION CANNOT ANSWER THIS
+    # ALONE. A release is cut per merge that touches the CLI or the configuration, so two
+    # installs made hours apart share a version and carry different config -- and the
+    # question somebody asks when a refusal looks wrong is which source their binary was
+    # built from. ``release.installed_version`` reads it out of the metadata the installer
+    # already wrote, so nothing has to be maintained for this line to stay true.
+    parser.add_argument(
+        "--version", action="version", version=f"edullm {installed_version().said()}"
+    )
     # ON EVERY SUBCOMMAND RATHER THAN ON THE ROOT, WHICH IS WHAT LETS THE FIRST WORD BE
     # READ AS THE VERB WITHOUT PARSING ANYTHING. A root option taking a value puts a
     # non-flag word in front of the verb -- `edullm --config-dir /tmp check` -- so the
@@ -194,8 +209,9 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help=(
             "the reviewed configuration to check against. Defaults to the copy this "
-            "install carries, so that what edullm refuses is what the platform at this "
-            "version refuses."
+            "install carries, which is the configuration as it stood at the release this "
+            "was installed from rather than as it stands on the platform now. Inside a "
+            "platform checkout, --config-dir config is what reads the checkout's."
         ),
     )
     common.add_argument(
@@ -324,16 +340,6 @@ def _wrapped(text: str) -> list[str]:
     )
 
 
-def _installed_version() -> str:
-    """What ``pip`` thinks is installed, or a working tree's honest admission that nothing is."""
-    from importlib.metadata import PackageNotFoundError, version
-
-    try:
-        return version("edullm-platform")
-    except PackageNotFoundError:
-        return "(not installed)"
-
-
 def _add_submission_arguments(parser: argparse.ArgumentParser) -> None:
     """The fields a submission needs that are not properties of the code.
 
@@ -377,6 +383,15 @@ def main(
     stderr = sys.stderr if err is None else err
     command_runner: CommandRunner = SubprocessRunner() if runner is None else runner
     here = Path.cwd() if cwd is None else cwd
+
+    # BEFORE ANY VERB, BECAUSE IT INVALIDATES ALL OF THEM. A Windows gh on WSL's inherited
+    # PATH makes check and submit disagree about who you are and makes status stop finding
+    # runs, and both of those read as ordinary answers. Printed rather than refused, and to
+    # stderr so it cannot get into anything reading stdout.
+    interop = github_interop_diagnostic()
+    if interop is not None:
+        print("\n".join(_wrapped(interop)), file=stderr)
+        print(file=stderr)
 
     # BEFORE ARGPARSE, BECAUSE ARGPARSE'S ANSWER TO A WORD IT DOES NOT KNOW IS A LIST OF
     # WORDS IT DOES. That is the right answer for a typo and the wrong one for a rename: a
@@ -515,6 +530,9 @@ def _submit(
         )
 
     actions = PlatformActions(runner, repository=arguments.platform_repository)
+    _say_whether_this_edullm_is_current(
+        runner, repository=arguments.platform_repository, err=err
+    )
     dispatched_at = datetime.now(UTC)
     actions.dispatch(SUBMIT_WORKFLOW, _submission_form(preflight.request))
     print(f"dispatching {SUBMIT_WORKFLOW} ... queued", file=out)
@@ -555,6 +573,38 @@ def _submit(
             file=out,
         )
     return EXIT_OK
+
+
+def _say_whether_this_edullm_is_current(
+    runner: CommandRunner, *, repository: str, err: TextIO
+) -> None:
+    """One ``gh api`` call, in ``submit`` and nowhere else, that cannot stop a submission.
+
+    **IN ``submit`` ONLY, BECAUSE ``check`` IS MEASURED AND THE MEASUREMENT IS A FEATURE.**
+    ``check`` answers in 0.18 s and reaches no network, which is what makes it the verb
+    somebody runs half a dozen times while editing a spec and the verb that works on a
+    cluster login node with no egress. One API call would be a tenth of a second on a good
+    connection and a hang on a bad one, spent on a question that only matters at the moment
+    a submission costs somebody's approval. So it is asked once, here, immediately before
+    the dispatch.
+
+    **AND IT NEVER BLOCKS.** A failed probe, a timeout, a repository with no releases and
+    an offline laptop all reach the same place: a line on stderr and a dispatch. A
+    validator that stops working on a train is worse than one that is occasionally stale,
+    and ``GithubUnreachableError`` already makes exactly this separation for the calls that
+    do matter -- GitHub being unreachable says nothing about the submission.
+    """
+    latest = latest_release(runner, repository=repository)
+    warning = staleness_said(installed_version(), latest, repository=repository)
+    if warning is not None:
+        for paragraph in warning.split("\n"):
+            print("\n".join(_wrapped(paragraph)) if paragraph[:1] != " " else paragraph, file=err)
+        print(file=err)
+        return
+    failed = probe_failed_said(latest)
+    if failed is not None:
+        print("\n".join(_wrapped(failed)), file=err)
+        print(file=err)
 
 
 def _submission_form(request: SubmissionRequest) -> dict[str, str]:
