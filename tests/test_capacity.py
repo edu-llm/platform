@@ -241,11 +241,11 @@ def _production_consumers_of_the_reader() -> list[str]:
 def test_the_substitution_table_is_read_by_something_that_can_act_on_it() -> None:
     """THE TABLE HAS A READER ON THE SUBMISSION PATH, AND THIS FAILS IF IT LOSES ONE.
 
-    ``config/capacity.yaml`` opens by stating that "the submission path promises that asking
-    for a shape which does not reliably place is answered at the moment of choosing with one
-    that does". For a while nothing kept that promise: the four checks above held the table
-    self-consistent, a submitter asking for ``gpu-4xa10g`` was told nothing, and none of them
-    could fail because the behaviour the table exists for was absent.
+    ``config/capacity.yaml`` used to open by promising that asking for a shape which does not
+    reliably place was "answered at the moment of choosing with one that does". For a while
+    nothing kept that promise: the four checks above held the table self-consistent, a
+    submitter asking for ``gpu-4xa10g`` was told nothing, and none of them could fail because
+    the behaviour the table exists for was absent.
 
     That was recorded as ``xfail(strict=True)`` so it would turn red the day somebody built
     the reader. :mod:`edullm_platform.placement` is that reader and

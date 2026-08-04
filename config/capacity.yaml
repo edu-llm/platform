@@ -1,60 +1,60 @@
-# Which shapes place, and what to offer when one does not.
+# Which shapes place, measured rather than assumed.
 #
-# WHY THIS IS A FILE AT ALL. The submission path promises that asking for a shape which does
-# not reliably place is answered at the moment of choosing with one that does. That promise
-# needs a source of truth, and until this file there was none: `rg -i scarce` over config/
-# returned nothing, and the four scarce shapes were named in prose in
+# WHY THIS IS A FILE AT ALL. Whether EC2 will sell this account a shape is something the
+# submission path has to warn about, and until this file there was nowhere to read it: `rg -i
+# scarce` over config/ returned nothing, and the scarce shapes were named in prose in
 # docs-frank/reference/system-overview.md and nowhere a generator could read. A behaviour
-# described in a document and absent from the control plane is a behaviour nobody can build.
+# described in a document and absent from the control plane is one nobody can build.
 #
-# WHY IT IS NOT A FIELD ON THE CATALOG'S PROFILES, WHICH IS WHERE IT BELONGS. ComputeProfile
-# is a contract model with extra="forbid", and its structural digest is recorded in five
-# committed proof bundles, so an `availability` field beside `provisioned` is a proof-bundle
-# regeneration rather than a config edit -- the same reason
-# EXCEPTION_RATE_CEILING_USD_PER_HOUR sits in src/edullm_platform/contracts/policy.py instead
-# of in config/policy.yaml, and config/policy.yaml carries the same kind of pointer. When
-# that regeneration happens, `places` folds into ComputeProfile and this file becomes the
-# substitution table alone.
+# NOTHING HERE OFFERS A SUBSTITUTE, AND THE ABSENCE IS THE POSITION RATHER THAN AN EMPTY COLUMN.
+# This file used to name a replacement wherever it had one, and it had two. #185 re-measured
+# every pool, found both pointed at machines this account has never obtained, and withdrew them
+# on the rule that survives them: a third of the device memory removed is a changed recipe the
+# submitter declares rather than a substitution the platform makes on their behalf. So
+# `edullm_platform.placement` names nothing in place of a scarce shape, and
+# tests/test_capacity.py::test_no_shape_offers_a_substitute_at_all fails if an entry here starts
+# offering one again, so reinstating it is a change to the reader and that test together.
 #
-# WHAT PLACEMENT IS, AND WHY IT IS A THIRD THING NEXT TO provisioned AND backed. A profile
-# can be priced in config/workload-catalog.yaml, provisioned with a compute environment, and
-# backed by a queue in config/execution-targets.yaml, and still not run: EC2 has to have the
-# capacity to sell. Those first three are facts about this repository and are checkable by
-# reading it. This one is a fact about the account's neighbours, and the way it presents is a
-# job that sits in RUNNABLE with no error anywhere, which is indistinguishable from a job
-# that is merely queued.
+# WHY IT IS NOT A FIELD ON THE CATALOG'S PROFILES, WHICH IS WHERE IT BELONGS. ComputeProfile is
+# a contract model with extra="forbid", and its structural digest is recorded in five committed
+# proof bundles, so an `availability` field beside `provisioned` is a proof-bundle regeneration
+# rather than a config edit -- the same reason EXCEPTION_RATE_CEILING_USD_PER_HOUR sits in
+# src/edullm_platform/contracts/policy.py instead of in config/policy.yaml, which carries the
+# same kind of pointer. When that happens, `places` folds into ComputeProfile and this goes away.
 #
-# HOW THE ANSWERS BELOW WERE ARRIVED AT, AND THE METHOD CHANGED ON 2026-08-04. The first
-# version of this file said there was no cheap placement probe, "because the measurement is
-# 'did a job start' and the instrument costs an instance", and inferred every answer from the
-# account's own experience as recorded in config/workload-catalog.yaml's comments.
+# WHAT PLACEMENT IS, AND WHY IT IS A THIRD THING NEXT TO provisioned AND backed. A profile can
+# be priced in config/workload-catalog.yaml, provisioned with a compute environment, and backed
+# by a queue in config/execution-targets.yaml, and still not run: EC2 has to have the capacity
+# to sell. Those first three are facts about this repository and are checkable by reading it.
+# This one is a fact about the account's neighbours, and it presents as a job sitting in
+# RUNNABLE with no error anywhere, indistinguishable from one that is merely queued.
 #
-# THERE IS A CHEAP PROBE AND NOT FINDING IT COST THIS FILE MOST OF ITS ACCURACY.
-# `ec2 create-fleet --type instant` with a target capacity of one asks EC2 for a real instance
-# and returns synchronously: either instance ids, or a per-pool error naming
-# InsufficientInstanceCapacity. A pool that has nothing costs nothing to ask, because nothing
-# launches. A pool that has something costs one instance for as long as it takes to call
-# terminate-instances, which is seconds. Every answer below was re-measured that way against
-# every subnet each shape's instance type is offered in, and the launched instances were
-# terminated immediately. Six of the seventeen answers were wrong.
+# HOW THE ANSWERS BELOW WERE MEASURED, AND THE METHOD CHANGED ON 2026-08-04. The first version
+# of this file said there was no cheap placement probe, "because the measurement is 'did a job
+# start' and the instrument costs an instance", and inferred every answer from the account's
+# own experience in config/workload-catalog.yaml's comments. There is a cheap probe, and not
+# finding it cost this file most of its accuracy. `ec2 create-fleet --type instant` with a
+# target capacity of one asks EC2 for a real instance and answers synchronously: instance ids,
+# or a per-pool InsufficientInstanceCapacity. An empty pool costs nothing to ask, because
+# nothing launches; a pool with something costs one instance for the seconds it takes to call
+# terminate-instances. Every answer below was re-measured that way in every subnet each shape's
+# instance type is offered in, and the launched instances were terminated immediately.
 #
-# THE SHAPE OF THE ERROR IS WORTH MORE THAN THE CORRECTIONS. Every wrong answer was wrong in
-# the same direction -- a shape recorded as reliable that does not place -- and the reason is
-# that the old method could only see shapes the account had already waited on. A shape nobody
-# had submitted to yet had no experience attached, and "no experience" was written down as
-# "reliably". That is a denylist wearing the file's own clothes, and the header above spends
-# four sentences arguing against exactly that under UNKNOWN IS NOT A VALUE. The default was
-# never stated, so nobody noticed it was being applied.
+# SIX OF THE SEVENTEEN ANSWERS WERE WRONG, AND THE SHAPE OF THE ERROR IS WORTH MORE THAN THE
+# CORRECTIONS. Every one was wrong in the same direction -- a shape recorded as reliable that
+# does not place -- because the old method could only see shapes the account had already
+# waited on. A shape nobody had submitted to had no experience attached, and "no experience"
+# was written down as "reliably": a denylist wearing this file's own clothes, never stated as
+# a default, so nobody noticed it was being applied.
 #
 # WHAT THE PROBE FOUND, WHICH IS NOT THE STORY ANYBODY EXPECTED. The P pool is dry, on-demand
-# and on spot, in all fourteen type-and-zone combinations. So is every four-card and
-# eight-card G shape except the T4s. What places in this region today is small and old:
-# g4dn in all three sizes, and one card of A10G or L4. The G pool is not the safe harbour the
-# substitutions below assumed it was; the T4 family is, and nothing in this file pointed at it
-# before.
+# and on spot, in all fourteen type-and-zone combinations, and so is every four-card and
+# eight-card G shape except the T4s. What places in this region today is small and old: g4dn in
+# all three sizes, and one card of A10G or L4. The G pool is not the safe harbour this file once
+# treated it as; the T4 family is, and nothing here pointed at it before.
 #
 # Re-read the day a shape's answer is doubted rather than on a schedule; a stale entry here
-# costs an unnecessary suggestion, and a missing one costs an afternoon in RUNNABLE.
+# costs an unnecessary warning, and a missing one costs an afternoon in RUNNABLE.
 #
 # UNKNOWN IS NOT A VALUE, AND THAT IS THE POINT. Every profile in the catalog appears here
 # exactly once, so promoting a shape is an edit here as well. A file listing only the scarce
