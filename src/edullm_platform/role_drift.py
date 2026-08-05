@@ -93,6 +93,8 @@ __all__ = [
     "PHASE3_ROLE_TEMPLATES",
     "PHASE5_ROLE_TEMPLATES",
     "PUBLISHER_ROLE_NAME",
+    "RESEARCHER_ROLE_CAPTURE_DIR",
+    "RESEARCHER_ROLE_TEMPLATES",
     "DriftDirection",
     "PolicyNotComparableError",
     "RoleDriftFinding",
@@ -196,6 +198,33 @@ DATASET_VALIDATOR_ROLE_TEMPLATES: Final[tuple[tuple[str, str], ...]] = (
 #: identity a dataset owner's pipeline runs as on our compute, and it arrived with a piece
 #: of remediation rather than with a phase.
 DATASET_VALIDATOR_CAPTURE_DIR: Final = Path("fixtures") / "evidence" / "dataset-validator"
+
+#: The one role a person assumes directly, and the committed template that declares it.
+#:
+#: A registry of its own, for the reason written above ``PHASE3_ROLE_TEMPLATES``: one registry
+#: per unit of work, because the Phase 1 proof bundle counts ``COMMITTED_ROLE_TEMPLATES`` in
+#: its README and appending here would move a committed golden for a reason that has nothing to
+#: do with Phase 1.
+#:
+#: It is also the only registry whose role no service assumes. Every other role here is trusted
+#: to a service principal or to a GitHub OIDC subject; this one is trusted to ``Intern-*`` roles
+#: through account root, so its trust policy is the part that cannot be simulated and has to be
+#: proved by a second person assuming it.
+RESEARCHER_ROLE_TEMPLATES: Final[tuple[tuple[str, str], ...]] = (
+    ("edullm-researcher", "infra/iam/researcher-role.yaml"),
+)
+
+#: Where captures of the registry above are committed. Its own directory, for the reason
+#: written above ``DATASET_VALIDATOR_CAPTURE_DIR``: ``read_committed_role_captures`` reports a
+#: capture the registry does not declare as a finding, so a directory belongs to exactly one
+#: registry.
+#:
+#: It names ``roles`` where ``DATASET_VALIDATOR_CAPTURE_DIR`` stops one level above, and that
+#: is not an inconsistency. ``fixtures/evidence/researcher-lane/`` also holds the expiry
+#: drill's capture, which is evidence about behaviour rather than about a role; leaving it a
+#: sibling of ``roles/`` is what keeps the reader above from reporting it as a capture nothing
+#: declares.
+RESEARCHER_ROLE_CAPTURE_DIR: Final = Path("fixtures") / "evidence" / "researcher-lane" / "roles"
 
 #: What ``DeployedRoleEvidence`` carries that a template projection cannot: the evidence
 #: envelope. Derived rather than restated, so a field added to the evidence record has to

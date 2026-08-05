@@ -65,6 +65,7 @@ from edullm_platform.phase2_evidence import PHASE2_ROLE_TEMPLATES
 from edullm_platform.role_drift import (
     COMMITTED_ROLE_TEMPLATES,
     PHASE3_ROLE_TEMPLATES,
+    RESEARCHER_ROLE_TEMPLATES,
     DriftDirection,
     RoleDriftFinding,
 )
@@ -100,18 +101,26 @@ class PendingAmendmentError(ValueError):
 
 
 def declared_role_templates() -> dict[str, str]:
-    """Every role some committed template declares, across all three phases.
+    """Every role some committed template declares, across the registries merged here.
 
-    The three registries stay separate where they are defined, because a Phase 3 role
-    drifting must not fail a Phase 1 capture. They are merged only here, and only to
-    answer one question: is there a template that will ever compare this role? A pending
-    amendment for a role nothing compares would never clear, because nothing would ever
-    report the findings it is waiting to stop seeing.
+    The registries stay separate where they are defined, because a Phase 3 role drifting
+    must not fail a Phase 1 capture. They are merged only here, and only to answer one
+    question: is there a template that will ever compare this role? A pending amendment for
+    a role nothing compares would never clear, because nothing would ever report the
+    findings it is waiting to stop seeing.
+
+    ``PHASE5_ROLE_TEMPLATES`` and ``DATASET_VALIDATOR_ROLE_TEMPLATES`` are absent and were
+    absent before ``RESEARCHER_ROLE_TEMPLATES`` was added. That is a gap rather than a
+    decision: an amendment naming the image resolver or the dataset validator would be
+    refused here even though both are captured and compared. It is left alone deliberately,
+    because widening this is a change with its own reviewer and this one is about a role
+    being added.
     """
     return {
         **dict(COMMITTED_ROLE_TEMPLATES),
         **dict(PHASE2_ROLE_TEMPLATES),
         **dict(PHASE3_ROLE_TEMPLATES),
+        **dict(RESEARCHER_ROLE_TEMPLATES),
     }
 
 

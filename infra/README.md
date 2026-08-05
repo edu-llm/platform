@@ -1581,3 +1581,76 @@ off-platform spend.
 
 `tests/test_run_preview_role.py` pins this record to the role's actual name, so a rename
 cannot leave a note that reads fine and excludes nothing.
+
+## The researcher lane stacks, which belong to no phase
+
+| # | Stack | Template | Roles or resources | Applied from |
+| --- | --- | --- | --- | --- |
+| 1 | `sbsandbox-intern-edullm-researcher-iam` | `infra/iam/researcher-role.yaml` | `edullm-researcher` | laptop |
+| 2 | `sbsandbox-intern-edullm-audit-reader-iam` | `infra/iam/audit-reader-role.yaml` (amended) | one more `cloudformation:GetTemplate` ARN | laptop |
+
+**Not deployed as of 2026-08-05.** The templates are merged and the stacks do not exist;
+`tools/verify_deployed_stacks.py` reports the first as declared and not deployed every night
+until somebody applies it. That is the check working, and it is the honest state to be in
+rather than a row this table omits.
+
+**The role name has no `sbsandbox-intern-edullm-` prefix**, unlike every other role in this
+file, because `docs-frank/reference/system-overview.md` and
+`docs-frank/reference/aws-spend-controls.md` both name it `edullm-researcher` and a person
+types it. Two consequences: the deployer's resource scopes key on the long prefix and therefore
+cannot touch it, which is correct because no pipeline may; and the boundary's
+`DenyTamperingWithInternRoles` matches `role/Intern-*` and does not cover it either. Whether
+the boundary permits `iam:CreateRole` on this name is simulated before the first deploy rather
+than discovered by it — record the verdict here.
+
+**Its trust policy cannot be simulated and has to be proved by a second person.**
+`simulate-custom-policy` does not evaluate trust policies at all, so the `ArnLike` on
+`aws:PrincipalArn`, the `aws:RequestTag` conditions, `sts:SetSourceIdentity` on a chained call
+and role chaining from a web-identity session are all unproven by the roughly hundred and
+twenty simulations behind the permission policy. Whoever created the role would still pass a
+self-assumption test against a trust policy that accidentally granted only its creator.
+`docs-frank/reference/aws-spend-controls.md`, "The live test plan", step 3 is the one that
+cannot be skipped.
+
+### Applying them
+
+Both from a clean `main` at its tip, per *Which tree you deploy from* above.
+
+```bash
+git fetch origin main
+git status --porcelain          # must print nothing
+git rev-parse HEAD origin/main  # must print the same commit twice
+
+# Before spending a deploy on finding out whether the unprefixed name is permitted.
+account="$(aws sts get-caller-identity --profile sbsandbox --region us-east-1 --query Account --output text)"
+aws iam simulate-principal-policy \
+  --policy-source-arn "arn:aws:iam::${account}:role/Intern-frank.gonzalez-sbsandbox" \
+  --action-names iam:CreateRole iam:PutRolePolicy iam:TagRole \
+  --resource-arns "arn:aws:iam::${account}:role/edullm-researcher" \
+  --profile sbsandbox --region us-east-1 \
+  --query 'EvaluationResults[].{Action:EvalActionName,Decision:EvalDecision}'
+
+aws cloudformation deploy \
+  --stack-name sbsandbox-intern-edullm-researcher-iam \
+  --template-file infra/iam/researcher-role.yaml \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --no-fail-on-empty-changeset \
+  --profile sbsandbox --region us-east-1
+
+aws cloudformation deploy \
+  --stack-name sbsandbox-intern-edullm-audit-reader-iam \
+  --template-file infra/iam/audit-reader-role.yaml \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --no-fail-on-empty-changeset \
+  --profile sbsandbox --region us-east-1
+```
+
+Then read the role back. `PermissionsBoundary` must be `InternSandboxBoundary`, `PolicyNames`
+must be exactly `["lane"]`, and `AttachedPolicies` must be empty — this template attaches no
+managed policy, so anything listed there was added outside CloudFormation.
+
+```bash
+aws iam get-role --role-name edullm-researcher --profile sbsandbox --region us-east-1
+aws iam list-role-policies --role-name edullm-researcher --profile sbsandbox --region us-east-1
+aws iam list-attached-role-policies --role-name edullm-researcher --profile sbsandbox --region us-east-1
+```

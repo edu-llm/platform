@@ -926,6 +926,13 @@
     },
     {
       "base": false,
+      "module": "edullm_platform.researcher_lane",
+      "name": "LaneSettings",
+      "schema_version": "1",
+      "structural_digest": "sha256:bfb2aecec0b7fdf6565e88943ae19f40e298af3fca7a408918ebc719b4f50142"
+    },
+    {
+      "base": false,
       "module": "edullm_platform.role_drift",
       "name": "RoleDriftFinding",
       "schema_version": "unversioned",

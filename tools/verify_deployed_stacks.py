@@ -182,6 +182,10 @@ STACKS: Final = _stacks(
     ("sbsandbox-intern-edullm-phase4-gpu", INFRA_ROOT / "batch-compute-gpu.yaml"),
     ("sbsandbox-intern-edullm-phase4-gpu-shapes", INFRA_ROOT / "batch-compute-gpu-shapes.yaml"),
     ("sbsandbox-intern-edullm-dataset-validator-iam", IAM_ROOT / "dataset-validator-role.yaml"),
+    (
+        "sbsandbox-intern-edullm-researcher-iam",
+        IAM_ROOT / "researcher-role.yaml",
+    ),
     ("sbsandbox-intern-edullm-run-canceller-iam", IAM_ROOT / "run-canceller-role.yaml"),
     ("sbsandbox-intern-edullm-audit-reader-iam", IAM_ROOT / "audit-reader-role.yaml"),
     ("sbsandbox-intern-edullm-phase5-image-resolver-iam", IAM_ROOT / "image-resolver-role.yaml"),
