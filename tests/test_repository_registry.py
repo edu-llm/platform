@@ -112,6 +112,7 @@ def test_the_registry_and_the_pilot_list_are_asked_different_questions() -> None
     assert registered - pilots == {
         "edullm-alt-cl",
         "edullm-data",
+        "edullm-p1",
         "olmo-eval-full",
         "open-instruct-scored-rewards",
     }

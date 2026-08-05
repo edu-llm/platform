@@ -585,3 +585,24 @@ workloads:
       interval_minutes: 30
       destination_prefix: "s3://sbsandbox-intern-edullm-outputs/teams/"
       resume_required: true
+  # edullm-p1-check: the first workload profile for edullm-p1, written with the
+  # registration because a repository with no entry here has nothing a run can name.
+  # MixLaw data-mixing-law validation at 370M, whose image differs in kind from every
+  # registered one rather than in degree: it is the only registration that needs a
+  # prebuilt flash-attn wheel, and .edullm/verify_image.py asserts torch.version.cuda ==
+  # 12.8, loads libcudart.so.12 and pins six distributions to exact versions, so it
+  # builds from the CUDA base olmo-eval-full registered rather than the python base the
+  # three training images share. It also carries its own dependency lock,
+  # .edullm/requirements-linux-cu128.lock, which no other registration does, and its
+  # entrypoint is a seven-arm Batch array over experiments/skill-dag/mixlaw rather than
+  # a program taking a run id.
+  #
+  # The bounds are this tool's defaults and not a measurement: one hour, one attempt and
+  # no checkpoint contract is the shape of every repository's first entry, and it is
+  # right for a check and wrong for anything that trains. The machine is the submission
+  # form's compute_profile field and is deliberately not named here.
+  - name: edullm-p1-check
+    repository: edullm-p1
+    maximum_runtime_hours: "1"
+    maximum_attempts: 1
+    checkpoint: null
