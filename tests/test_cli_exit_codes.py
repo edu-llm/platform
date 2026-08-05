@@ -57,6 +57,7 @@ A_VALUE_FOR = {
     "--reason": "wrong corpus",
     "--experiment": "an-experiment",
     "--dataset": "none",
+    "--detail": "what I have already tried",
 }
 
 #: Which value to give a verb whose positional takes ``choices``, where the choices do not
@@ -78,6 +79,19 @@ def usage_of(verb: str) -> str:
     return verbs()[verb].format_usage()
 
 
+def _is_a_choice_group(token: str) -> bool:
+    """Whether argparse rendered this slot as the set of values it accepts."""
+    return token.startswith("{") and token.endswith("}")
+
+
+def a_value_of(verb: str, rest: list[str]) -> str:
+    """A value for an option, taken from its own choices where argparse printed them."""
+    metavar = rest[0] if rest else ""
+    if _is_a_choice_group(metavar):
+        return A_CHOICE_FOR.get(verb, metavar[1:-1].split(",")[0])
+    return "a-value"
+
+
 def choices_of(verb: str) -> set[str]:
     """Every value a ``choices`` positional on this verb accepts, as argparse renders them."""
     return {
@@ -97,11 +111,12 @@ def argv_for(verb: str) -> list[str]:
     required options and the positionals, and a required flag added to a verb tomorrow is
     filled in here without anybody editing this file.
 
-    A positional with ``choices`` renders as ``{a,b,c}``, and filling that with the same
-    ``a-value`` every other positional gets is argparse's exit 2 rather than a drive of the
-    verb. It is filled from :data:`A_CHOICE_FOR` where that verb is named and from the first
-    choice argparse lists otherwise, so a sixth verb with a choice positional is driven
-    rather than refused on the day it is added.
+    Anything with ``choices`` renders its values as ``{a,b,c}``, and filling that with the
+    same ``a-value`` every other slot gets is argparse's exit 2 rather than a drive of the
+    verb. Those are filled from the choices themselves, which holds for a positional and for
+    a required option alike, so a verb that grows either is driven rather than refused on the
+    day it is added. :data:`A_CHOICE_FOR` overrides the pick where the choices do not all
+    lead to the same place.
     """
     usage = usage_of(verb)
     required = usage.partition("]")[2] if "]" in usage else usage
@@ -113,10 +128,10 @@ def argv_for(verb: str) -> list[str]:
     while index < len(tokens):
         token = tokens[index]
         if token.startswith("--"):
-            argv += [token, A_VALUE_FOR.get(token, "a-value")]
+            argv += [token, A_VALUE_FOR.get(token, a_value_of(verb, tokens[index + 1 :]))]
             index += 2
             continue
-        if token.startswith("{") and token.endswith("}"):
+        if _is_a_choice_group(token):
             argv.append(A_CHOICE_FOR.get(verb, token[1:-1].split(",")[0]))
             index += 1
             continue
@@ -205,6 +220,13 @@ def a_platform(
     answers[("gh", "api")] = gh if gh is not None else api
     answers[("gh", "run", "download")] = gh if gh is not None else download
     answers[("gh", "run", "view")] = gh if gh is not None else ok("")
+    # ``ask`` is the one verb that neither dispatches a workflow nor reads one back, and it
+    # is still a call to GitHub, so it belongs in the fixture that answers every call the
+    # verbs make. Left out, it reaches FakeRunner's refusal to invent an answer and every
+    # case below reports a fixture gap as a defect in the binary.
+    answers[("gh", "issue", "create")] = (
+        gh if gh is not None else ok("https://github.com/edu-llm/platform/issues/301\n")
+    )
     return FakeRunner(answers)
 
 

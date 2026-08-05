@@ -34,7 +34,9 @@ from edullm_platform.cli.preflight import Refusal
 
 __all__ = [
     "ADD_KINDS",
+    "ASK_KINDS",
     "SELF_SERVICE_KINDS",
+    "issue_body",
     "register_repository_form",
     "routed_to_ask",
 ]
@@ -105,3 +107,50 @@ def register_repository_form(
         "dockerfile_path": dockerfile_path,
         "default_branch": default_branch,
     }
+
+
+#: The kinds of ask the intake forms offer, which are also the labels a counter groups on.
+#:
+#: **A COPY, DELIBERATELY, WITH A TEST HOLDING IT TO THE SOURCE.** An installed wheel carries
+#: no ``.github/``, so this cannot be read at runtime, and reading it over the network would
+#: put a call in front of an ask somebody is already annoyed enough to be making.
+#: ``tests/test_cli_ask.py`` reads ``.github/ISSUE_TEMPLATE/*.yml`` and asserts set equality,
+#: which is the same seam ``ADMISSION_JOB`` sits on. The four templates collapse into one
+#: triage form under a plan this module does not own, and the day that lands this list is red
+#: rather than quietly filing asks under labels nothing counts.
+ASK_KINDS: Final[tuple[str, ...]] = (
+    "access-request",
+    "dataset-request",
+    "feedback",
+    "run-problem",
+)
+
+
+def issue_body(
+    *,
+    detail: str,
+    submitter: str | None,
+    version: str | None,
+    config_directory: str,
+    run_id: str | None,
+) -> str:
+    """What somebody typed, and the three facts they could not have known to include.
+
+    **THE FOOTER IS THE REASON THIS VERB BEATS OPENING THE FORM IN A BROWSER.** Half of what
+    is asked here is about a refusal, and the first questions anybody answering one asks are
+    which ``edullm``, which reviewed configuration and who. A stale install checking against
+    the frozen copy it was built with is the commonest cause of a refusal that looks wrong,
+    and it is invisible from the sentence somebody types. The form cannot ask for it and a
+    person cannot be expected to volunteer it.
+
+    Nothing else is collected. No paths, no repository name, no commit. The footer is four
+    facts about the tool rather than about the work, which is the same line
+    ``docs-frank/reference/designing-the-cli.md`` draws around a usage log.
+    """
+    lines = [detail.strip(), "", "---", "", "Filed by edullm."]
+    lines.append(f"- who: {submitter or 'gh has recorded nobody'}")
+    lines.append(f"- edullm: {version or 'an install with no recorded version'}")
+    lines.append(f"- reviewed configuration: {config_directory}")
+    if run_id is not None:
+        lines.append(f"- run: {run_id}")
+    return "\n".join(lines) + "\n"

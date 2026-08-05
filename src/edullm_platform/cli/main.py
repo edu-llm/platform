@@ -89,7 +89,9 @@ from edullm_platform.cli.configuration import (
 )
 from edullm_platform.cli.intake import (
     ADD_KINDS,
+    ASK_KINDS,
     SELF_SERVICE_KINDS,
+    issue_body,
     register_repository_form,
     routed_to_ask,
 )
@@ -251,6 +253,7 @@ BUILT_TODAY: Final = {
     "logs": "the last lines a run printed",
     "cancel": "stop a run",
     "add": "teach the platform about a repository, dataset, shape, model or person",
+    "ask": "ask for something for yourself, which produces a time-boxed grant",
 }
 
 #: What each built verb does, in the sentence its own ``--help`` opens with.
@@ -294,6 +297,11 @@ WHAT_A_VERB_DOES: Final = {
         "configuration rather than a grant to you. A repository is opened as a pull request "
         "from here. The other kinds are refused with the route they go by instead."
     ),
+    "ask": (
+        "Files one ask on the platform repository, labelled with its kind so that asks can "
+        "be counted, and carries which edullm and which reviewed configuration it was made "
+        "from. It grants nothing by itself. A person answers it."
+    ),
 }
 
 #: The verbs that are settled and unbuilt, with the sentence each prints. Present so the
@@ -314,7 +322,6 @@ WHAT_A_VERB_DOES: Final = {
 NOT_BUILT_YET: Final = {
     "run": "ship this working tree to a machine and stream the output back",
     "shell": "open an editor over SSH on a machine, or a Jupyter notebook on the same one",
-    "ask": "ask for something for yourself, which produces a time-boxed grant",
 }
 
 #: The names that were something and are now something else, and what to type instead.
@@ -504,6 +511,15 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
     )
     _add_json(add)
 
+    ask = verb_parser("ask", WHAT_A_VERB_DOES["ask"])
+    ask.add_argument("--kind", required=True, choices=sorted(ASK_KINDS), help="what kind of ask")
+    ask.add_argument(
+        "--title", required=True, help="one line, as somebody scanning would read it"
+    )
+    ask.add_argument("--detail", help="what you want, and what you have already tried")
+    ask.add_argument("--run", help="a run this is about, where it is about one")
+    _add_json(ask)
+
     built: dict[str, argparse.ArgumentParser] = {
         "check": check,
         "submit": submit,
@@ -511,6 +527,7 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
         "logs": logs,
         "cancel": cancel,
         "add": add,
+        "ask": ask,
     }
     for verb, plan in NOT_BUILT_YET.items():
         # THE SENTENCE IS THE PLAN'S, READ RATHER THAN REWRITTEN. An unbuilt verb's help
@@ -887,6 +904,8 @@ def main(
                 cwd=here,
                 dispatched=dispatched,
             )
+        if verb == "ask":
+            return _ask(arguments, runner=command_runner, out=stdout, err=stderr)
     except KeyboardInterrupt:
         # CAUGHT BECAUSE IT IS NOT AN ``Exception`` AND SO SLIPPED PAST EVERYTHING BELOW.
         # The handler two blocks down exists so that a researcher never meets a traceback,
@@ -1638,6 +1657,60 @@ def _registration_refusals(arguments: argparse.Namespace, facts: GitFacts) -> li
             )
         )
     return refusals
+
+
+def _ask(
+    arguments: argparse.Namespace,
+    *,
+    runner: CommandRunner,
+    out: TextIO,
+    err: TextIO,
+) -> int:
+    """File one ask, with the environment it was made from attached to it.
+
+    The configuration is loaded for one field and it is worth the read. Which reviewed
+    configuration answered is the fact behind most refusals that look wrong, and it is the
+    one thing a person filing an ask about a refusal cannot be expected to know.
+    """
+    if not arguments.detail:
+        refusal = Refusal(
+            code="no_ask_detail",
+            detail=(
+                "--detail says what you want and what you have already tried. A title on its "
+                "own costs the person answering a round trip, and here that person is the "
+                "one who merges every configuration change. One or two sentences will do."
+            ),
+        )
+        if arguments.json:
+            emit(refusal_document("ask", [refusal]), out=out)
+        else:
+            print(render_refusals([refusal]), end="", file=err)
+        return EXIT_REFUSED
+
+    configuration = _configuration(arguments)
+    actions = PlatformActions(runner, repository=arguments.platform_repository)
+    body = issue_body(
+        detail=arguments.detail,
+        submitter=github_login(runner, allow_network=True),
+        version=installed_version().version,
+        config_directory=str(configuration.directory),
+        run_id=arguments.run,
+    )
+    url, labelled = actions.create_issue(title=arguments.title, body=body, label=arguments.kind)
+    if not labelled:
+        print(
+            "\n".join(
+                _wrapped(
+                    f"filed without the {arguments.kind} label, which this repository does "
+                    "not carry yet. Asks are counted by label, so add it to the issue or to "
+                    "the repository and this one joins the count.",
+                    indent="",
+                )
+            ),
+            file=err,
+        )
+    print(url, file=out)
+    return EXIT_OK
 
 
 # ---------------------------------------------------------------------------------------
