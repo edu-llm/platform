@@ -276,7 +276,7 @@ def test_every_ecr_repository_is_encrypted_scanned_immutable_and_retained() -> N
         assert repository["Properties"]["ImageTagMutability"] == "IMMUTABLE", logical_id
 
 
-def test_ecr_lifecycle_expires_old_untagged_and_caps_all_tagged_images() -> None:
+def test_ecr_lifecycle_expires_old_untagged_images_and_nothing_else() -> None:
     # Every repository, not the first one. A repository added without a lifecycle policy
     # keeps untagged layers for ever, which costs money quietly rather than failing.
     policies = [
@@ -284,8 +284,8 @@ def test_ecr_lifecycle_expires_old_untagged_and_caps_all_tagged_images() -> None
         for repository in ecr_repositories().values()
     ]
     assert len({json.dumps(entry, sort_keys=True) for entry in policies}) == 1, (
-        "every repository should expire and cap on the same terms; two policies here means "
-        "one of them was edited and the other was not"
+        "every repository should expire on the same terms; two policies here means one of "
+        "them was edited and the other was not"
     )
     policy = policies[0]
     assert policy == {
@@ -301,19 +301,29 @@ def test_ecr_lifecycle_expires_old_untagged_and_caps_all_tagged_images() -> None
                 },
                 "action": {"type": "expire"},
             },
-            {
-                "rulePriority": 2,
-                "description": "Retain at most 50 tagged images",
-                "selection": {
-                    "tagStatus": "tagged",
-                    "tagPatternList": ["*"],
-                    "countType": "imageCountMoreThan",
-                    "countNumber": 50,
-                },
-                "action": {"type": "expire"},
-            },
         ]
     }
+
+
+def test_no_ecr_lifecycle_rule_can_expire_an_image_a_run_names() -> None:
+    """Mutation: cap tagged images at some larger number, or expire them after some age.
+
+    A run manifest names its image by digest, so expiring a tagged image retracts a
+    recorded result rather than reclaiming a build artefact. A count of 50 did exactly
+    that to 100 of 157 recorded runs before it was removed, and the shape of the mistake
+    -- not the number in it -- is what this holds the template to. Asserted separately
+    from the equality above so that the reason survives: an equality that someone updates
+    to match a new policy says nothing about why the new policy is wrong.
+    """
+    for logical_id, repository in ecr_repositories().items():
+        policy = json.loads(repository["Properties"]["LifecyclePolicy"]["LifecyclePolicyText"])
+        for rule in policy["rules"]:
+            selection = rule["selection"]
+            assert selection["tagStatus"] == "untagged", (
+                f"{logical_id} rule {rule['rulePriority']} selects "
+                f"{selection['tagStatus']!r} images. Only untagged images may be expired: "
+                "anything tagged is the image some recorded run declares it ran."
+            )
 
 
 def test_ecr_template_has_no_iam_policy_principal_or_account_literal() -> None:
