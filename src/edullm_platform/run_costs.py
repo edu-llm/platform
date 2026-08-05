@@ -56,31 +56,73 @@ submitter whose recorded group was not the group their manifest claimed, so a ru
 reached an attempt record had been checked. #221 removed that refusal, because it fired
 inside admission, downstream of the approval gate, where it could spend a lead's signature
 and never prevent any spend. What it left behind was ``team_verified`` on the decision
-record, which nothing read.
+record, and :func:`attribute_to_teams` reads it.
 
-So the split below is now approximate in a way it was not before, and the size of the
-approximation is computable from the same two inputs the split already has: the submitter on
-the intent record, and ``member_logins`` in ``config/organization.yaml``. Each bound team
-carries how much of its line was booked by somebody the roster records on a different group,
-and :attr:`TeamAttribution.contradicted` names those runs once. It is a report and not a
-gate: nothing here refuses anything, and a contradicted run is counted into its claimed
-team's total exactly as before, because moving it would be inventing an attribution nobody
-recorded.
+**IT READS THE RECORD AND DOES NOT RE-ASK THE QUESTION, AND THAT IS THE WHOLE OF WHY THIS
+SECTION IS TRUSTWORTHY.** It re-derived the contradiction for one release, from the submitter
+on the intent record against ``member_logins`` as ``config/organization.yaml`` stood at the
+moment the report ran. That answered a different question from the one the record answers.
+``member_logins`` was empty for every group until 2026-08-02, so eighteen runs admitted on
+2026-08-01 -- when nothing about anybody's membership was knowable and nothing could have
+been mis-claimed -- were re-judged against a roster written after they ran and printed as
+people charging work to other groups' budgets. A roster is edited; a decision record is
+sealed. Only one of the two can say what was true when the money was spent.
 
-**THE FIGURE IS A FLOOR AND NOT A COUNT OF EVERY DOUBTFUL CLAIM.** A submitter the roster
-records on no group at all is not counted, because nothing contradicts them. Their runs also
-carry ``team_verified: false``, and ``tools/report_onboarding_readiness.py`` already names
-those people and says what it costs, so counting them again here would be one fact reported
-in two places under two spellings.
+**A FALSE FLAG IS NOT ALWAYS A VERDICT, WHICH IS THE ONE SUBTLETY IN READING IT.**
+``evaluate_authorization`` computes ``team_verified`` as ``membership_is_knowable and
+belongs_to_claimed_team``, so false covers two unlike facts: a claim the roster contradicted,
+and a claim nothing was in a position to check. Before a submitter's group was written down,
+every record they left carried false and none of them meant anything by it.
+
+:func:`verified_from` answers the second question with the records and with nothing else. It
+returns, per submitter, the earliest moment one of their own decision records carried
+``team_verified`` true, which is the earliest moment their membership is known to have been
+recorded. A false sealed before that is not a verdict. A false sealed after it is, because by
+then the flag had demonstrably been able to say the other thing about that person. Somebody
+whose records have never once said true has never been placed on a group this platform could
+see, and none of their falses are verdicts. Three states reach :class:`RunCost`, not two:
+true, false, and ``None`` for a run whose record carries no authorization block, has no
+decision record at all, or predates that submitter's first verified claim.
+
+Per submitter and not per moment, which is the part worth being deliberate about.
+``member_logins`` was filled in for eight groups in one commit, so a single instant would
+give the same answer today; it will not stay that way, because a person joining next month
+gets their line written on the day they join and everything they ran before it must go on
+reading as unknowable rather than becoming a contradiction the afternoon their lead types
+their name. A per-submitter horizon is also the one thing here that cannot be moved by a
+roster edit at all, which is the property that was missing.
+
+A run with no verdict is neither named as contradicted nor counted as verified.
+:attr:`TeamAttribution.without_verdict` counts them so that the silence is visible, because a
+report that quietly dropped eighteen runs out of a finding would be the same shape of error
+as the one that quietly invented them.
+
+It is a report and not a gate: nothing here refuses anything, and a contradicted run is
+counted into its claimed team's total, because moving it would be inventing an attribution
+nobody recorded.
+
+**AND IT IS A FLOOR, WITH A HOLE THAT IS WORTH STATING RATHER THAN HIDING.** A submitter who
+is on a group and has never once claimed the group they are on leaves no true behind, so
+their horizon never opens and every one of their contradictions is read as unknowable. That
+is the price of a flag that collapses two facts into one bool, paid in the direction of
+saying too little. The fix is upstream and not here: a decision record that recorded whether
+membership was knowable, separately from whether the claim matched, would make this function
+unnecessary. ``tools/report_onboarding_readiness.py`` names the people whose roster line is
+missing, which is the other half of the same picture.
+
+The roster is still read, and only to say where it places somebody today. That is printed
+beside the verdict as a present-tense aside and is never the verdict, so a roster edit can
+change who a reader is told to ask and cannot change who is accused.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal, localcontext
 
-from edullm_platform.contracts.admission import IntentRecord
+from edullm_platform.contracts.admission import DecisionRecord, IntentRecord
 from edullm_platform.contracts.bindings import AttributionTag, TeamBindingCatalog
 from edullm_platform.contracts.lifecycle import SchedulerAttempt
 from edullm_platform.contracts.workload import ComputeProfile
@@ -97,6 +139,7 @@ __all__ = [
     "attribute_to_teams",
     "run_costs",
     "total_priced",
+    "verified_from",
 ]
 
 SECONDS_PER_HOUR: int = 3600
@@ -127,6 +170,15 @@ class RunCost:
     seconds: Decimal
     cost_usd: Decimal | None
     unpriced_reason: str | None
+    #: What this run's decision record recorded about the team it claimed, and ``None``
+    #: where that record has no verdict to give. The module docstring argues the three
+    #: states at length; the short version is that ``team_verified`` false means two unlike
+    #: things and only one of them is a finding, so a run whose record cannot be told apart
+    #: gets neither answer rather than the wrong one. Defaulted so that the callers pricing
+    #: runs without reading decision records -- ``tools/visibility_board.py`` and
+    #: :mod:`edullm_platform.substrate` -- go on saying nothing about a question they do
+    #: not ask.
+    team_verified: bool | None = None
 
     @property
     def priced(self) -> bool:
@@ -156,11 +208,69 @@ def _cost(profile: ComputeProfile, seconds: Decimal) -> Decimal:
         ).quantize(Decimal("0.0001"))
 
 
+def verified_from(decisions: Iterable[DecisionRecord]) -> Mapping[str, datetime]:
+    """When each submitter's membership is first known to have been recorded.
+
+    The earliest ``recorded_at`` among that submitter's own decision records carrying
+    ``team_verified`` true. Before it, a false on one of their records says only that
+    nothing could check them; from it, a false says the check ran and disagreed. A
+    submitter absent from the answer has never left a true behind and so has no moment
+    from which their falses mean anything.
+
+    Read off the records and off nothing else, which is the whole point. The same fact is
+    in ``config/organization.yaml``'s history, and reading it from there would put a
+    report's findings at the mercy of a file somebody edits: the eighteen runs this
+    replaced were re-judged against a roster written the day after they ran. A submitter's
+    own sealed records cannot be rewritten by a roster edit.
+
+    Monotone by construction, and that is what makes it safe to apply to old runs. A
+    membership once recorded is not usually withdrawn, and if it were, this would go on
+    reporting from the first moment it was recorded rather than reaching a different verdict
+    about a run that already happened.
+    """
+    earliest: dict[str, datetime] = {}
+    for decision in decisions:
+        authorization = decision.authorization
+        if authorization is None or not authorization.team_verified:
+            continue
+        submitter = authorization.submitter
+        recorded = earliest.get(submitter)
+        if recorded is None or decision.recorded_at < recorded:
+            earliest[submitter] = decision.recorded_at
+    return earliest
+
+
+def _recorded_verdicts(decisions: Sequence[DecisionRecord]) -> Mapping[str, bool]:
+    """Each run's recorded answer about its team claim, for the runs that have one.
+
+    A run missing from the answer has no verdict, and the three ways that happens are
+    unlike each other and all real. There is no decision record for it, which is a hole in
+    the lineage. Its record carries no authorization block at all, which happens exactly
+    when the manifest hash did not match and nothing derived from the manifest was
+    evaluated. Or its record predates :func:`verified_from` for that submitter, which is
+    the eighteen.
+    """
+    horizons = verified_from(decisions)
+    verdicts: dict[str, bool] = {}
+    for decision in decisions:
+        authorization = decision.authorization
+        if authorization is None:
+            continue
+        if authorization.team_verified:
+            verdicts[decision.run_id] = True
+            continue
+        opened = horizons.get(authorization.submitter)
+        if opened is not None and decision.recorded_at >= opened:
+            verdicts[decision.run_id] = False
+    return verdicts
+
+
 def run_costs(
     *,
     intents: Iterable[IntentRecord],
     attempts: Iterable[SchedulerAttempt],
     compute_profiles: Iterable[ComputeProfile],
+    decisions: Iterable[DecisionRecord] = (),
 ) -> tuple[RunCost, ...]:
     """Every run that both declared itself and ran, priced where pricing is honest.
 
@@ -169,8 +279,14 @@ def run_costs(
     the same fact. A run with an attempt and no intent cannot be attributed to a team at
     all, and is also left out -- the caller is told how many, because a growing count
     means the lineage has developed a hole.
+
+    ``decisions`` carries the recorded answer to whether each run's team claim was
+    verified, and defaults to none of them. A caller that does not hand them in gets runs
+    whose :attr:`RunCost.team_verified` is ``None``, which is the truthful answer for a
+    reading that never opened the ``decision/`` prefix rather than a silent false.
     """
     by_profile = {profile.name: profile for profile in compute_profiles}
+    verdicts = _recorded_verdicts(tuple(decisions))
     attempts_by_run: dict[str, list[SchedulerAttempt]] = {}
     for attempt in attempts:
         attempts_by_run.setdefault(attempt.run_id, []).append(attempt)
@@ -211,6 +327,7 @@ def run_costs(
                 seconds=seconds,
                 cost_usd=cost,
                 unpriced_reason=reason,
+                team_verified=verdicts.get(intent.run_id),
             )
         )
     return tuple(sorted(costed, key=lambda entry: entry.run_id))
@@ -257,9 +374,9 @@ class TeamSpend:
     cost_usd: Decimal
     runs: int
     unpriced_runs: int
-    #: How many of ``runs`` were booked by somebody the roster records on a different group.
-    #: Counted into ``runs`` and ``cost_usd`` as well, because this is a statement about how
-    #: reliable those two figures are rather than a subtraction from them.
+    #: How many of ``runs`` carry a decision record saying the team they claimed was not
+    #: verified. Counted into ``runs`` and ``cost_usd`` as well, because this is a statement
+    #: about how reliable those two figures are rather than a subtraction from them.
     contradicted_runs: int = 0
     #: How much of ``cost_usd`` those runs carry. Unpriced ones are in ``contradicted_runs``
     #: and contribute nothing here, for the reason :func:`total_priced` gives.
@@ -285,23 +402,23 @@ class UnboundTeamSpend:
 
 @dataclass(frozen=True)
 class ContradictedClaim:
-    """One run booked against a real group the roster records its submitter elsewhere from.
+    """One run whose own decision record says the group it claimed was never verified.
 
     Named per run rather than only counted, because the count says the split is off and only
-    the run says by whose hand and by how much. All four fields are already in hand: the
-    first three come off the intent record and :attr:`recorded_teams` off
-    ``config/organization.yaml``, so nothing here needs a source the cost report was not
-    already reading.
+    the run says by whose hand and by how much. The verdict comes from the record and the
+    record alone; :attr:`recorded_teams` is an aside for the reader deciding who to ask.
 
-    :attr:`recorded_teams` is never empty. A submitter the roster places nowhere is not a
-    contradiction and is deliberately not one of these; the module docstring says where that
-    person is reported instead.
+    :attr:`recorded_teams` can be empty, unlike the version of this that derived the finding
+    from the roster. Nothing about the roster today is load-bearing here any more, so a
+    submitter it has stopped placing anywhere keeps the verdict their record carries and
+    loses only the aside.
     """
 
     run_id: str
     submitter: str
     claimed_team: str
-    #: Every group the roster does record this submitter on, in catalog order.
+    #: Every group the roster records this submitter on **now**, in catalog order, which is
+    #: not necessarily where it recorded them when the run was admitted.
     recorded_teams: tuple[str, ...]
     #: ``None`` where the run itself carries no figure, which is a spot run or a profile the
     #: catalog does not price. The claim is still contradicted and still worth naming.
@@ -322,10 +439,15 @@ class TeamAttribution:
 
     bound: tuple[TeamSpend, ...]
     unbound: tuple[UnboundTeamSpend, ...]
-    #: Every run inside ``bound`` whose submitter the roster records on another group. It is
-    #: the same population the per-team ``contradicted_runs`` counts add up to, held once so
-    #: that a renderer wanting the names does not recompute the comparison.
+    #: Every run inside ``bound`` whose decision record says its team claim was not verified.
+    #: It is the same population the per-team ``contradicted_runs`` counts add up to, held
+    #: once so that a renderer wanting the names does not recompute anything.
     contradicted: tuple[ContradictedClaim, ...] = ()
+    #: How many runs inside ``bound`` carry no verdict either way. Reported rather than left
+    #: implicit: this is the population the previous reading of ``team_verified`` printed as
+    #: contradicted, and a report that stopped naming them without saying how many it had
+    #: stopped naming would have replaced one silent error with another.
+    without_verdict: int = 0
 
     @property
     def unbound_cost_usd(self) -> Decimal:
@@ -375,25 +497,26 @@ def attribute_to_teams(
     surface, and a run attributed to the wrong team is indistinguishable from a correctly
     attributed one.
 
-    **WHO MAY CLAIM A GROUP IS ASKED HERE AND REFUSED NOWHERE**, which the module docstring
-    argues at length. The comparison is ``TeamBinding.includes``, the same primitive
-    ``teams_for_member`` and ``cli.preflight._check_team`` are built on, so a roster edit
-    moves every reading of it together. It is asked only of a submitter the roster places
-    somewhere: somebody it places nowhere has nothing to be contradicted by, and answering
-    otherwise would report thirty-five people as misattributing spend for a line their lead
-    has not written yet.
+    **WHO MAY CLAIM A GROUP IS ANSWERED FROM THE RECORD AND ASKED NOWHERE**, which the module
+    docstring argues at length. :attr:`RunCost.team_verified` is what admission wrote at the
+    time; false is a finding, true is not, and ``None`` is a run whose record has no verdict
+    to give and which is therefore counted into ``without_verdict`` and named nowhere. The
+    roster is consulted for one thing only, and it is not the finding: where it places this
+    submitter today, printed as an aside beside a verdict that does not depend on it.
     """
     bound_by_id = {team.team_id: team for team in catalog.teams}
     bound_tallies = {team.team_id: _Tally() for team in catalog.teams}
     unbound_tallies: dict[str, _Tally] = {}
     contradicted: list[ContradictedClaim] = []
+    without_verdict = 0
     for entry in costs:
         claimed = bound_by_id.get(entry.team)
         if claimed is None:
             unbound_tallies.setdefault(entry.team, _Tally()).add(entry)
             continue
-        recorded = catalog.teams_for_member(entry.submitter)
-        disputed = bool(recorded) and not claimed.includes(entry.submitter)
+        disputed = entry.team_verified is False
+        if entry.team_verified is None:
+            without_verdict += 1
         bound_tallies[entry.team].add(entry, contradicted=disputed)
         if disputed:
             contradicted.append(
@@ -401,7 +524,9 @@ def attribute_to_teams(
                     run_id=entry.run_id,
                     submitter=entry.submitter,
                     claimed_team=entry.team,
-                    recorded_teams=tuple(team.team_id for team in recorded),
+                    recorded_teams=tuple(
+                        team.team_id for team in catalog.teams_for_member(entry.submitter)
+                    ),
                     cost_usd=entry.cost_usd,
                 )
             )
@@ -437,4 +562,5 @@ def attribute_to_teams(
             sorted(unbound, key=lambda spend: (-spend.cost_usd, spend.claimed_team))
         ),
         contradicted=tuple(sorted(contradicted, key=lambda claim: claim.run_id)),
+        without_verdict=without_verdict,
     )

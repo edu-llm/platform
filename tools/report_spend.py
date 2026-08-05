@@ -24,8 +24,11 @@ grouped by ``edullm:team`` returns the whole account's spend under the empty-val
 
 **AND THE SPLIT IS APPROXIMATE IN ONE MORE WAY THAN IT USED TO BE.** Nothing inside AWS has
 compared a claimed group against the roster since #221, so a run can be charged to a group
-its submitter is not on and nothing stops it. Each line therefore carries how much of it was
-claimed that way, which is the honest replacement for a sentence implying the split is exact.
+its submitter is not on and nothing stops it. Each line therefore carries how many of its
+runs carry a decision record saying the claim on them was never verified, which is the honest
+replacement for a sentence implying the split is exact. That figure is read off the records
+and is not worked out again here against the roster as it stands this morning;
+:mod:`edullm_platform.run_costs` says what went wrong when it was.
 
 Exit codes follow the repository's convention. 0 reported, 2 the inputs could not be read.
 There is no 1: this tool judges nothing, and in particular a projection over the limit is
@@ -53,7 +56,13 @@ if str(PROJECT_ROOT / "src") not in sys.path:
 if str(TOOLS_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIRECTORY))
 
-from report_run_costs import ReportInputError, read_records, sync_bucket
+from report_run_costs import (
+    REPORT_PREFIXES,
+    ReportInputError,
+    read_decisions,
+    read_records,
+    sync_bucket,
+)
 
 from edullm_platform.capture_tooling import CaptureFailedError, aws
 from edullm_platform.config import load_yaml
@@ -93,10 +102,17 @@ SPEND_LIMITS_PATH = TOOLS_DIRECTORY / "spend-limits.yaml"
 
 DEFAULT_LINEAGE_BUCKET = "sbsandbox-intern-edullm-lineage"
 
-#: Cost Explorer's own name for what was actually charged. Not ``AmortizedCost``, which
-#: spreads a reservation over the term it covers: this account holds none, so the two agree
-#: today, and the unblended figure is the one that matches what a person sees in the console
-#: and in the Budgets API when they go to check this number.
+#: Cost Explorer's own name for what was actually charged, and the figure that matches what
+#: a person sees in the console and in the Budgets API when they go to check this number.
+#:
+#: NOT ``AmortizedCost``, AND THE TWO NO LONGER AGREE. This said the account holds no
+#: reservations, which was true when it was written and is not now: on 2026-08-04 the
+#: ``Amazon EC2 - Compute`` line was $234.49 unblended against $434.25 amortised, because
+#: something is covering most of the instance families the platform runs on. Unblended stays,
+#: because a limit somebody set by looking at the console has to be compared against the
+#: number the console shows. What it costs is that the account total here is what was billed
+#: in the month rather than what the month's usage was worth, and those diverge whenever
+#: coverage is bought or expires.
 METRIC = "UnblendedCost"
 
 
@@ -226,12 +242,20 @@ def read_team_shares(
 
     **A CLAIM ON A GROUP THAT DOES EXIST CAN ALSO BE WRONG, AND THAT IS CARRIED TOO.** Since
     #221 nothing inside AWS refuses a submitter who names a group the roster records them
-    elsewhere from, so ``attribute_to_teams`` measures how much of each line was claimed that
-    way and :class:`~edullm_platform.spend.TeamShare` carries it into the section. An unbound
-    claim gets no such figure, because a group nothing binds cannot be one anybody is on and
-    the line above already says the whole of it is unroutable.
+    elsewhere from, and what the platform does instead is write ``team_verified`` on the
+    decision record. That is why this reads a third prefix: ``attribute_to_teams`` reports
+    the flag rather than working the comparison out again, and it cannot report a flag
+    nobody handed it. :class:`~edullm_platform.spend.TeamShare` carries the figure into the
+    section. An unbound claim gets no such figure, because a group nothing binds cannot be
+    one anybody is on and the line above already says the whole of it is unroutable.
+
+    **A MISSING ``decision/`` IS A REFUSAL RATHER THAN A QUIET ZERO**, which is what
+    ``read_decisions`` raising gets us. The caller degrades to a section with no split at
+    all, and that is the right trade: a split printed with every claim silently unverified
+    reads as a month in which nothing went wrong.
     """
     intents, every_attempt, _ = read_records(lineage_root)
+    decisions, _unparsed = read_decisions(lineage_root)
     attempts = [
         attempt
         for attempt in every_attempt
@@ -240,7 +264,10 @@ def read_team_shares(
     catalog = load_yaml(config_dir / "workload-catalog.yaml", WorkloadCatalog)
     organization = load_yaml(config_dir / "organization.yaml", OrganizationInventory)
     costs = run_costs(
-        intents=intents, attempts=attempts, compute_profiles=catalog.compute_profiles
+        intents=intents,
+        attempts=attempts,
+        compute_profiles=catalog.compute_profiles,
+        decisions=decisions,
     )
     attribution = attribute_to_teams(costs, catalog=organization.team_bindings)
     return tuple(
@@ -301,7 +328,13 @@ def spend_section(
             root = lineage_root
             if root is None:
                 root = Path(scratch)
-                sync_bucket(lineage_bucket, root, profile=profile, region=region)
+                sync_bucket(
+                    lineage_bucket,
+                    root,
+                    profile=profile,
+                    region=region,
+                    prefixes=REPORT_PREFIXES,
+                )
             shares = read_team_shares(
                 lineage_root=root,
                 config_dir=config_dir,
@@ -362,7 +395,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--lineage-root",
         type=Path,
         default=None,
-        help="a directory already holding intent/ and attempt/ records, rather than syncing",
+        help=(
+            "a directory already holding intent/, attempt/ and decision/ records, rather "
+            "than syncing"
+        ),
     )
     parser.add_argument("--lineage-bucket", default=DEFAULT_LINEAGE_BUCKET)
     parser.add_argument("--output", type=Path, help="write the section here rather than to stdout")

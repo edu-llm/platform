@@ -1,6 +1,12 @@
 """The cost report as a reader meets it, against records on disk.
 
-Two things here are about the report being honest rather than about it being correct.
+Three things here are about the report being honest rather than about it being correct.
+
+Whether a run's team claim was verified is read off ``team_verified`` on its decision record,
+so these write decision records and the report reads a third prefix. It used to work the
+answer out again from the roster as the report ran, which named eighteen runs from
+2026-08-01 as people charging work to other groups' budgets. Every one of them was admitted
+before any group's membership was written down.
 
 The per-team section is reconciled against ``TeamBindingCatalog``, so spend claiming a team
 nothing binds has to reach the reader under the name it claimed. Every run recorded so far
@@ -31,12 +37,19 @@ import pytest
 from edullm_platform.contracts.bindings import TeamBinding, TeamBindingCatalog
 from edullm_platform.contracts.workload import ComputeProfile
 from edullm_platform.run_costs import run_costs
-from tools.report_run_costs import EXIT_OK, EXIT_UNUSABLE, main, read_records, render
+from tools.report_run_costs import (
+    EXIT_OK,
+    EXIT_UNUSABLE,
+    main,
+    read_decisions,
+    read_records,
+    render,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR = PROJECT_ROOT / "config"
 
-INTENT_FIXTURE = (
+PHASE_3_RUN = (
     PROJECT_ROOT
     / "fixtures"
     / "evidence"
@@ -44,9 +57,11 @@ INTENT_FIXTURE = (
     / "runs"
     / "run_019fa73d-be37-7066-984b-a4bacf194f49"
     / "records"
-    / "intent"
-    / "run_019fa73d-be37-7066-984b-a4bacf194f49.json"
 )
+
+INTENT_FIXTURE = PHASE_3_RUN / "intent" / "run_019fa73d-be37-7066-984b-a4bacf194f49.json"
+
+DECISION_FIXTURE = PHASE_3_RUN / "decision" / "run_019fa73d-be37-7066-984b-a4bacf194f49.json"
 
 #: The command as it reached AWS Batch in run_019fb4ce, where a pilot user's shell quoting
 #: survived into the form field and ``shlex.split`` returned the whole line as one token.
@@ -56,6 +71,9 @@ UNSPLIT_COMMAND = ['python -c "print(\\"hello from a second person\\")"']
 RUN_A = "run_019fa73d-be37-7066-984b-a4bacf194f49"
 RUN_B = "run_019fa9a6-4460-7095-a358-a1552e250f1b"
 UNREADABLE_RUN = "run_019fb4ce-cf24-7028-8eed-a32a28ec2493"
+
+#: A run that exists only as a decision record, used by :func:`membership_recorded`.
+HORIZON_RUN = "run_019fa96f-8f10-705a-a7a9-69c42eafce16"
 
 ON_DEMAND = "gpu-1xa10g"
 SPOT = "gpu-1xa10g-spot"
@@ -97,6 +115,55 @@ def intent(
     return dict(loaded)
 
 
+def decision(
+    run_id: str,
+    *,
+    team: str,
+    team_verified: bool | None = True,
+    recorded_at: str = "2026-07-28T14:07:43.198481Z",
+) -> dict[str, Any]:
+    """A stored decision record with its claimed team and its verdict swapped out.
+
+    ``team_verified=None`` drops the whole authorization block, which is what a record
+    refused for a manifest hash mismatch carries and the only shape the contract permits it
+    on. It is a third answer rather than a missing one.
+
+    Built from a record the platform actually wrote, for the reason :func:`intent` gives.
+    """
+    loaded: Any = json.loads(DECISION_FIXTURE.read_text(encoding="utf-8"))
+    loaded["run_id"] = run_id
+    loaded["recorded_at"] = recorded_at
+    if team_verified is None:
+        loaded["authorization"] = None
+        loaded["cost"] = None
+        loaded["accepted"] = False
+        loaded["reason"] = "manifest_hash_mismatch"
+        loaded["detail"] = "The manifest presented after approval does not hash to it."
+        return dict(loaded)
+    loaded["authorization"]["claimed_team"] = team
+    loaded["authorization"]["team_verified"] = team_verified
+    return dict(loaded)
+
+
+def membership_recorded() -> dict[str, Any]:
+    """A decision record whose only job is to say this submitter was once checkable.
+
+    ``team_verified: false`` means two unlike things, and only a true on one of the same
+    submitter's records tells them apart: before the first one, false is the absence of a
+    check; after it, false is a check that disagreed. So a test that wants a contradiction
+    has to establish that the person was checkable at all, and this is how.
+
+    Given a run id of its own with no intent and no attempt, which is not a contrivance:
+    every run admission denied is in the store as a decision with nothing beneath it.
+    """
+    return decision(
+        HORIZON_RUN,
+        team="platform",
+        team_verified=True,
+        recorded_at="2026-07-28T00:00:00.000000Z",
+    )
+
+
 def attempt(run_id: str, *, hours: int = 1) -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -111,12 +178,17 @@ def attempt(run_id: str, *, hours: int = 1) -> dict[str, Any]:
 
 
 def lineage(
-    tmp_path: Path, *, intents: list[dict[str, Any]], attempts: list[dict[str, Any]]
+    tmp_path: Path,
+    *,
+    intents: list[dict[str, Any]],
+    attempts: list[dict[str, Any]],
+    decisions: list[dict[str, Any]] | None = None,
 ) -> Path:
     root = tmp_path / "lineage"
     for prefix, documents, key in (
         ("intent", intents, "run_id"),
         ("attempt", attempts, "attempt_id"),
+        ("decision", decisions or [], "run_id"),
     ):
         directory = root / prefix
         directory.mkdir(parents=True)
@@ -158,15 +230,18 @@ def report_for(
     teams: TeamBindingCatalog,
     intents: list[dict[str, Any]],
     attempts: list[dict[str, Any]],
+    decisions: list[dict[str, Any]] | None = None,
 ) -> str:
-    root = lineage(tmp_path, intents=intents, attempts=attempts)
+    root = lineage(tmp_path, intents=intents, attempts=attempts, decisions=decisions)
     parsed_intents, parsed_attempts, unparsed = read_records(root)
+    parsed_decisions, unparsed_decisions = read_decisions(root)
     costs = run_costs(
         intents=parsed_intents,
         attempts=parsed_attempts,
         compute_profiles=[compute_profile(ON_DEMAND), compute_profile(SPOT)],
+        decisions=parsed_decisions,
     )
-    return render(costs, teams=teams, unparsed=unparsed)
+    return render(costs, teams=teams, unparsed=unparsed + unparsed_decisions)
 
 
 # ---------------------------------------------------------------------------------------
@@ -289,23 +364,24 @@ def test_a_teams_unpriced_runs_are_counted_beside_its_figure(tmp_path: Path) -> 
 
 
 # ---------------------------------------------------------------------------------------
-# What the section says about the claims the roster disagrees with
+# What the section says about the group each run's own record says it claimed
 # ---------------------------------------------------------------------------------------
 #
 # The report is the one surface carrying this, and `tools/report_spend.py` prints the figure
 # beside the same split without repeating the list. These are about it staying a report:
-# saying the size on the team's own line, naming the runs once, and never turning into
-# something that refuses or subtracts.
+# saying the size on the team's own line, naming the runs once, never turning into something
+# that refuses or subtracts, and reading the verdict off the record rather than working it
+# out again against whatever the roster says this morning.
 
 
-def test_a_run_claimed_against_a_group_the_roster_disagrees_with_is_named_once(
+def test_a_run_whose_record_says_the_claim_was_not_verified_is_named_once(
     tmp_path: Path,
 ) -> None:
     """What replaced the refusal #221 removed, at the place the loss actually lands.
 
-    ``philote-dev`` submitted the fixture record. Recorded on ``platform`` and claiming
-    ``memory-split``, this is exactly the case admission used to refuse from inside AWS
-    after a lead had already released the run.
+    ``philote-dev`` submitted the fixture record. Its decision record carries
+    ``team_verified: false`` against a claim on ``memory-split``, which is exactly the case
+    admission used to refuse from inside AWS after a lead had already released the run.
     """
     report = report_for(
         tmp_path,
@@ -317,60 +393,121 @@ def test_a_run_claimed_against_a_group_the_roster_disagrees_with_is_named_once(
         ),
         intents=[intent(RUN_A, team="memory-split")],
         attempts=[attempt(RUN_A)],
+        decisions=[
+            membership_recorded(),
+            decision(RUN_A, team="memory-split", team_verified=False),
+        ],
     )
 
     assert report.count(RUN_A) == 2, "once in the section below, once in Every run"
+    assert "What the decision records say about the group each run claimed" in report
     assert (
-        "Claimed against a group the roster puts the submitter on a different one from"
-        in report
+        f"- `{RUN_A}` $3.00: philote-dev claimed memory-split and its decision record "
+        "carries `team_verified: false`. The roster today records them on platform" in report
     )
     assert (
-        f"- `{RUN_A}` $3.00: philote-dev claimed memory-split and the roster records them "
-        "on platform" in report
+        "$3.00 of that, across 1 run, carries a decision record saying the claim on it was "
+        "never verified" in report
     )
-    assert "$3.00 of that, across 1 run, was claimed by somebody the roster records on " in (
-        report
-    )
+    assert "carry no verdict either way" not in report
 
 
-def test_the_section_is_absent_when_the_roster_disagrees_with_nothing(
+def test_a_run_the_record_verified_stays_out_however_the_roster_has_moved_since(
     tmp_path: Path,
 ) -> None:
+    """Mutation: compare the submitter against the roster instead of reading the record.
+
+    This is the failure the section was rebuilt around. The record says the claim was
+    checked and matched. The roster since puts ``philote-dev`` somewhere else, because
+    people move between groups after their runs are over. Re-asking gets the roster's
+    answer to today's question and prints it as a statement about a run that predates the
+    edit.
+    """
+    report = report_for(
+        tmp_path,
+        teams=TeamBindingCatalog(
+            teams=(
+                binding("memory-split", members=("katiehehe",)),
+                binding("platform", members=("philote-dev",)),
+            )
+        ),
+        intents=[intent(RUN_A, team="memory-split")],
+        attempts=[attempt(RUN_A)],
+        decisions=[decision(RUN_A, team="memory-split", team_verified=True)],
+    )
+
+    assert "carries a decision record saying the claim on it was never verified" not in report
+    assert "What the decision records say" not in report
+    assert "nothing on the platform refuses a claim the roster disagrees with" in report
+
+
+def test_a_run_whose_record_carries_no_verdict_is_counted_and_named_nowhere(
+    tmp_path: Path,
+) -> None:
+    """The eighteen, and the sentence that keeps their absence from being a clean bill.
+
+    Eighteen runs from 2026-08-01 were admitted before any group's ``member_logins``
+    existed. Their records say false because nothing could check anybody, and the first
+    reading of the flag printed all eighteen as people charging work to other groups'
+    budgets. They belong in neither answer, and the count is what stops that reading as
+    every claim having been verified.
+    """
+    report = report_for(
+        tmp_path,
+        teams=TeamBindingCatalog(teams=(binding("memory-split", members=("katiehehe",)),)),
+        intents=[intent(RUN_A, team="memory-split")],
+        attempts=[attempt(RUN_A)],
+        decisions=[decision(RUN_A, team="memory-split", team_verified=False)],
+    )
+
+    assert "1 run above carries no verdict either way" in report
+    assert "No run above carries a decision record saying its team claim was contradicted" in (
+        report
+    )
+    assert RUN_A not in report.split("### What the decision records say")[1].split(
+        "## By submitter"
+    )[0]
+
+
+def test_a_record_that_evaluated_no_authorization_is_not_read_as_a_verdict(
+    tmp_path: Path,
+) -> None:
+    """Mutation: read a null authorization block as false.
+
+    ``run_019fa4c0`` in the store is refused for a manifest hash mismatch and carries no
+    authorization at all, because nothing derived from an unapproved manifest is
+    trustworthy. Reading the absence as false manufactures a finding out of a deliberate
+    refusal to make one.
+    """
+    report = report_for(
+        tmp_path,
+        teams=TeamBindingCatalog(teams=(binding("memory-split", members=("katiehehe",)),)),
+        intents=[intent(RUN_A, team="memory-split")],
+        attempts=[attempt(RUN_A)],
+        decisions=[decision(RUN_A, team="memory-split", team_verified=None)],
+    )
+
+    assert "carries a decision record saying the claim on it was never verified" not in report
+    assert "1 run above carries no verdict either way" in report
+
+
+def test_a_split_with_nothing_to_say_either_way_prints_no_section(tmp_path: Path) -> None:
     """A finding printed at zero is a heading a reader learns to skip.
 
     The standing sentence about how the split is produced stays, because it is true every
-    time. The section naming runs appears only when there are runs to name.
+    time. The section appears when a record has something to say or when records are being
+    withheld, and not when every claim was verified.
     """
     report = report_for(
         tmp_path,
         teams=TeamBindingCatalog(teams=(binding("memory-split", members=("philote-dev",)),)),
         intents=[intent(RUN_A, team="memory-split")],
         attempts=[attempt(RUN_A)],
+        decisions=[decision(RUN_A, team="memory-split", team_verified=True)],
     )
 
-    assert "a different one from" not in report
-    assert "was claimed by somebody the roster records" not in report
-    assert "nothing on the platform refuses a claim the roster disagrees with" in report
-
-
-def test_a_submitter_on_no_recorded_group_is_not_reported_as_misattributing(
-    tmp_path: Path,
-) -> None:
-    """Mutation: report every run whose ``team_verified`` would be false.
-
-    Most of the pilot has no recorded membership, so that reading would put nearly every run
-    on this page under a heading accusing its submitter of booking spend to somebody else's
-    group. ``tools/report_onboarding_readiness.py`` is where the missing roster lines are
-    reported, and the report says so rather than leaving the omission to be noticed.
-    """
-    report = report_for(
-        tmp_path,
-        teams=TeamBindingCatalog(teams=(binding("memory-split"),)),
-        intents=[intent(RUN_A, team="memory-split")],
-        attempts=[attempt(RUN_A)],
-    )
-
-    assert "a different one from" not in report
+    assert "What the decision records say" not in report
+    assert "carry no verdict" not in report
 
 
 def test_the_contradicted_spend_is_still_inside_the_team_total_it_is_reported_under(
@@ -392,6 +529,11 @@ def test_the_contradicted_spend_is_still_inside_the_team_total_it_is_reported_un
         ),
         intents=[intent(RUN_A, team="memory-split"), intent(RUN_B, team="memory-split")],
         attempts=[attempt(RUN_A), attempt(RUN_B)],
+        decisions=[
+            membership_recorded(),
+            decision(RUN_A, team="memory-split", team_verified=False),
+            decision(RUN_B, team="memory-split", team_verified=False),
+        ],
     )
 
     assert "- memory-split (@memory-split, led by ericrcwu001): $6.00 across 2 runs" in report
@@ -513,6 +655,26 @@ def test_a_report_written_to_a_file_exits_zero(tmp_path: Path) -> None:
     assert "# What runs have cost" in written
     assert "## By team" in written
     assert "## By submitter" in written
+
+
+def test_a_root_with_no_decision_prefix_is_unusable_rather_than_a_split_with_no_verdicts(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Mutation: carry on with no decisions when the prefix is not there.
+
+    A store where every claim went unverified is a real state with a real report, so a
+    reading that never opened ``decision/`` must not be spelled the same way. It would print
+    every run as carrying no verdict, which is exactly what the store looked like before
+    2026-08-02 and would stay on the page long after it stopped being true.
+    """
+    root = lineage(tmp_path, intents=[intent(RUN_A, team="memory-split")], attempts=[])
+    shutil.rmtree(root / "decision")
+
+    exit_code = main(["--lineage-root", str(root), "--config-dir", str(CONFIG_DIR)])
+
+    assert exit_code == EXIT_UNUSABLE
+    assert "no decision/ directory" in capsys.readouterr().err
 
 
 def test_a_lineage_root_holding_no_records_is_unusable_rather_than_an_empty_report(
