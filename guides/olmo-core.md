@@ -8,7 +8,7 @@ Usually nothing. There are three levels and most experiments never leave the fir
 
 | You want to change | You write | Where it goes |
 | --- | --- | --- |
-| Model size, learning rate, batch size, sequence length, step count, seed, corpus | Nothing. Flags on the command | The `command` field on the form |
+| Model size, learning rate, batch size, sequence length, step count, seed, corpus | Nothing beyond flags on the command | The `command` field on the form |
 | Something flags cannot express: a new callback, a different data mix, a custom evaluation | One Python file on your branch | Anywhere in the repo. Point the command at it |
 | The training library's own behaviour | A pull request against `src/olmo_core/`, with a `CHANGELOG.md` entry | Reviewed like any other change |
 
@@ -240,7 +240,7 @@ So treat the refusal as a backstop rather than a guarantee. If you are picking a
 | Passes a bfloat16 flag on the command line | Refused at submission |
 | Runs `train_on_corpus.py` | Accepted here, then refused inside the container in the first seconds at exit 73, before the process group or any GPU work |
 | Sets bfloat16 in code any other way | **Accepted, and it will fail on the device** |
-| Uses fp16 with loss scaling, or fp32 | Fine. This is what a T4 is for |
+| Uses fp16 with loss scaling, or fp32 | Fine, and what a T4 is for |
 
 **The second row is [OLMo-core#49](https://github.com/edu-llm/OLMo-core/pull/49), which is open and not merged as this is written.** Until it lands, that row reads like the third one. It also will not reach a run of yours on the day it merges: every `edullm/**` branch carries its own copy of `.edullm/train_on_corpus.py` with the dtype written into it, and four of them set bfloat16 again in a separate entrypoint that merging that file would not touch. So the in-container check arrives on your branch when you merge `main` into it, and not before. Putting `train_module.dp_config.param_dtype=float32` on the command line works today, on every branch, and is checked at submission, which is why the multi-GPU section above prints it.
 
