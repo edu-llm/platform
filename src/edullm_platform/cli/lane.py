@@ -19,7 +19,9 @@ machine, you do what you like, nothing is checked and nothing is recorded as cit
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Final, Literal
 
@@ -39,18 +41,30 @@ from edullm_platform.placement import (
     UnreadableCapacityError,
     read_capacity,
 )
+from edullm_platform.researcher_lane import (
+    EXPIRES_AT_TAG_KEY,
+    PROJECT_TAG_KEY,
+    RESEARCHER_ROLE_NAME,
+)
 
 __all__ = [
+    "GPU_AMI_PARAMETER",
     "LANE_INSTANCE_PROFILE",
+    "LANE_TAG_KEY",
     "WORKING_TIER_SETTINGS_PATH",
     "WORK_BUCKET",
     "LaneRequest",
     "WorkingTierSettings",
+    "assume_lane_argv",
+    "credentials_environment",
+    "expires_at",
+    "find_machine_argv",
     "instance_type_for",
     "lane_refusals",
     "load_working_tier_settings",
     "person_from_caller_arn",
     "placement_warning",
+    "run_instances_argv",
     "working_prefix",
     "working_uri",
 ]
@@ -72,6 +86,22 @@ WORK_BUCKET: Final = "edullm-work"
 LANE_INSTANCE_PROFILE: Final = "edullm-lane-instance"
 
 WORKING_TIER_SETTINGS_PATH: Final = "config/reports/working-tier.yaml"
+
+#: Where the lane's image comes from, resolved at launch rather than pinned. The parameter is
+#: Amazon's and it moves; on 2026-08-05 it answered ami-0326665395a428ccf, which is the image the
+#: one instance in the platform's VPC that Systems Manager reports as Online is running. Reading
+#: the parameter is what keeps a lane machine on a current driver without anybody editing a
+#: template, and it costs one ssm:GetParameter the boundary does not deny.
+GPU_AMI_PARAMETER: Final = (
+    "/aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-22.04/latest/ami-id"
+)
+
+#: The tag that says which person's lane a machine belongs to, carrying the source identity.
+#:
+#: Prefixed, so it stays out of the researcher role's GOVERNANCE_TAG_KEYS and the tag-stripping
+#: deny does not cover a key the lane may legitimately rewrite. It is what lets a second
+#: `edullm run` find the machine the first one started instead of starting another.
+LANE_TAG_KEY: Final = "edullm:lane"
 
 #: The session segment of an assumed-role ARN for a session this lane itself created. Sessions
 #: are named lane-<project> by the verbs, so a caller matching this is already in the lane and
@@ -294,3 +324,159 @@ def lane_refusals(
             )
         )
     return tuple(refusals)
+
+
+def expires_at(now: datetime, lifetime_hours: int) -> str:
+    """The absolute UTC instant the janitor may stop this machine at, ISO-8601 with a Z.
+
+    Seconds included and sub-seconds not, because the janitor compares this against a sweep that
+    runs on a minute boundary. Absolute rather than a duration, for the reason
+    ``docs-frank/reference/aws-spend-controls.md`` gives under "The helper" and the researcher
+    role's template repeats: LaunchTime is the wrong clock for a duration, and an extension is one
+    unambiguous write where a duration has to be read, interpreted and summed.
+    """
+    return (now + timedelta(hours=lifetime_hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def assume_lane_argv(
+    *, account: str, project: str, person: str, lifetime_hours: int
+) -> tuple[str, ...]:
+    """Enter the lane, declaring the three things the trust policy demands.
+
+    **THE VERB DOES THIS ITSELF RATHER THAN ASKING FOR ``tools/enter_researcher_lane.py``'S
+    EXPORTS.** The slice's done-condition is a machine in one command with no AWS profile typed,
+    and two commands with an ``eval`` between them is not that. The helper is still the right tool
+    for somebody who wants a lane shell of their own, and this duplicates its call rather than its
+    purpose.
+
+    One hour, which costs nothing: a chained session is capped at an hour whatever is asked for.
+    The lifetime tag is what the person promised and is a different number from the session's.
+    """
+    return (
+        "aws",
+        "sts",
+        "assume-role",
+        "--role-arn",
+        f"arn:aws:iam::{account}:role/{RESEARCHER_ROLE_NAME}",
+        "--role-session-name",
+        f"lane-{project}"[:64],
+        "--source-identity",
+        person,
+        "--tags",
+        f"Key=project,Value={project}",
+        f"Key=lifetime,Value={lifetime_hours}",
+        "--duration-seconds",
+        "3600",
+        "--output",
+        "json",
+    )
+
+
+def credentials_environment(assumed: Mapping[str, object]) -> dict[str, str]:
+    """An ``sts assume-role`` Credentials block as the three variables every AWS tool reads.
+
+    An environment for one child process rather than a profile in a file, because a profile is a
+    thing a researcher then has to know the name of, and the done-condition for this slice is that
+    they never type one.
+    """
+    return {
+        "AWS_ACCESS_KEY_ID": str(assumed["AccessKeyId"]),
+        "AWS_SECRET_ACCESS_KEY": str(assumed["SecretAccessKey"]),
+        "AWS_SESSION_TOKEN": str(assumed["SessionToken"]),
+    }
+
+
+def find_machine_argv(*, project: str, person: str) -> tuple[str, ...]:
+    """Whether this person already has a machine for this project, and which one.
+
+    Both tags, because two people on one project both get a machine and finding the other
+    person's would put one researcher's session on another's instance. ``pending`` is included
+    with ``running`` so a second invocation thirty seconds after the first waits for the machine
+    that is coming rather than starting a second one.
+    """
+    return (
+        "aws",
+        "ec2",
+        "describe-instances",
+        "--filters",
+        f"Name=tag:{PROJECT_TAG_KEY},Values={project}",
+        f"Name=tag:{LANE_TAG_KEY},Values={person}",
+        "Name=instance-state-name,Values=pending,running",
+        "--query",
+        "Reservations[].Instances[].InstanceId",
+        "--output",
+        "json",
+    )
+
+
+def run_instances_argv(
+    *,
+    request: LaneRequest,
+    instance_type: str,
+    image_id: str,
+    subnet_id: str,
+    security_group_id: str,
+    expires_at_value: str,
+    settings: WorkingTierSettings,
+    spot: bool,
+) -> tuple[str, ...]:
+    """One lane machine, with everything the role, the janitor and the session need.
+
+    **NO KEY PAIR AND NO PUBLIC PORT.** The connection is Systems Manager, which reaches the
+    machine through the agent's own outbound call, so there is nothing to open and no key to
+    distribute. The security group this is given has zero ingress rules and that is correct.
+
+    **ON-DEMAND UNLESS ASKED OTHERWISE, WHICH IS THE ONE PLACE THIS PARTS FROM
+    ``system-overview.md``.** A one-time Spot instance cannot be stopped, so the plain reading of
+    that document hands the expiry janitor a machine it cannot reclaim. ``--spot`` builds the one
+    form ``RunInstances`` will make that ``StopInstances`` accepts, and ``decisions.md`` records
+    the departure under "The lane runs On-Demand and --spot is the persistent stop form".
+    """
+    tags = (
+        f"ResourceType=instance,Tags=["
+        f"{{Key={PROJECT_TAG_KEY},Value={request.project}}},"
+        f"{{Key={EXPIRES_AT_TAG_KEY},Value={expires_at_value}}},"
+        f"{{Key={LANE_TAG_KEY},Value={request.person}}},"
+        f"{{Key=Name,Value=lane-{request.person}-{request.project}}}]"
+    )
+    volume_tags = f"ResourceType=volume,Tags=[{{Key={PROJECT_TAG_KEY},Value={request.project}}}]"
+    market: tuple[str, ...] = ()
+    if spot:
+        market = (
+            "--instance-market-options",
+            (
+                "MarketType=spot,SpotOptions={"
+                "SpotInstanceType=persistent,InstanceInterruptionBehavior=stop}"
+            ),
+        )
+    return (
+        "aws",
+        "ec2",
+        "run-instances",
+        "--image-id",
+        image_id,
+        "--instance-type",
+        instance_type,
+        "--subnet-id",
+        subnet_id,
+        "--security-group-ids",
+        security_group_id,
+        "--iam-instance-profile",
+        f"Name={LANE_INSTANCE_PROFILE}",
+        "--metadata-options",
+        "HttpTokens=required,HttpEndpoint=enabled",
+        "--block-device-mappings",
+        (
+            "DeviceName=/dev/sda1,Ebs={"
+            f"VolumeSize={settings.root_volume_gib},VolumeType=gp3,DeleteOnTermination=true"
+            "}"
+        ),
+        "--tag-specifications",
+        tags,
+        volume_tags,
+        *market,
+        "--query",
+        "Instances[0].InstanceId",
+        "--output",
+        "text",
+    )

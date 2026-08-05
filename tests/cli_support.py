@@ -66,6 +66,9 @@ class FakeRunner:
     def __init__(self, answers: Mapping[tuple[str, ...], CommandResult | Callable[[tuple[str, ...]], CommandResult]]) -> None:
         self._answers = dict(answers)
         self.calls: list[tuple[str, ...]] = []
+        #: Beside ``calls`` rather than zipped into it, because a case about the lane wants the
+        #: credential a call carried and every case that came before wants only the argv.
+        self.environments: list[dict[str, str]] = []
 
     def __call__(
         self,
@@ -73,8 +76,10 @@ class FakeRunner:
         *,
         cwd: Path | None = None,
         timeout: float | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> CommandResult:
         self.calls.append(argv)
+        self.environments.append(dict(env or {}))
         matches = [prefix for prefix in self._answers if argv[: len(prefix)] == prefix]
         if not matches:
             raise UnexpectedCommandError(
