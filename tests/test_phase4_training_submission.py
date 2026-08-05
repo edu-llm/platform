@@ -17,6 +17,7 @@ tests are what confirm the embedding still resolves to the same function.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import shlex
@@ -45,9 +46,8 @@ from edullm_platform.execution import (
 )
 from tests.fake_object_store import FakeObjectStore
 from tools.build_gpu_training_submission import (
-    FOREIGN_TEAM_PREFIX,
+    JOB_DEFINITION_PLACEHOLDER_DIGEST,
     LINEAGE_BUCKET,
-    TRAINING_IMAGE_DIGEST,
     dispatch_form,
     dispatch_inputs,
     for_the_wire,
@@ -112,17 +112,46 @@ def test_the_program_is_valid_python() -> None:
     compile(training_program(), "<training>", "exec")
 
 
-def test_the_form_names_the_image_the_gpu_job_definition_is_pinned_to() -> None:
-    """Mutation: let the digest drift from infra/batch-compute-gpu.yaml.
+def test_the_form_does_not_name_the_digest_the_job_definition_carries() -> None:
+    """Reads BOTH sides. Mutation: copy the job definition's digest into the form, which
+    is what this test used to require.
 
-    Read from the template rather than from a second literal. A submission naming a digest
-    the definition does not carry is refused at admission, which is the right answer and a
-    slow way to learn it: the refusal names the image, not the disagreement.
+    NOT HYPOTHETICAL, AND THE OLD VERSION OF THIS TEST ENFORCED THE DEFECT. The GPU job
+    definitions are pinned to a placeholder, because RegisterJobDefinition substitutes the
+    manifest's own digest per run -- so the base definition's image is never the image a
+    run pulls. compile_submission separately requires the declared digest to be one the
+    declared commit published. A form copying the placeholder therefore compiles for
+    exactly one commit and is refused for every other, with a message about an image
+    rather than about the copying.
+
+    Measured 2026-08-04: the placeholder is no longer in the registry at all, so the form
+    compiled for no commit whatsoever, and a dispatch was refused at the compile job.
     """
-    template = (Path(__file__).resolve().parents[1] / "infra" / "batch-compute-gpu.yaml").read_text()
+    template = (
+        Path(__file__).resolve().parents[1] / "infra" / "batch-compute-gpu.yaml"
+    ).read_text()
 
-    assert TRAINING_IMAGE_DIGEST in template
-    assert dispatch_form(commit_sha=COMMIT)["image_digest"] == TRAINING_IMAGE_DIGEST
+    assert JOB_DEFINITION_PLACEHOLDER_DIGEST in template, (
+        "the constant is kept only to explain what the form must not copy; if the template "
+        "no longer carries it, re-read the explanation rather than deleting the constant"
+    )
+    assert dispatch_form(commit_sha=COMMIT)["image_digest"] == ""
+    assert (
+        dispatch_form(commit_sha=COMMIT, image_digest="sha256:" + "b" * 64)["image_digest"]
+        == "sha256:" + "b" * 64
+    )
+
+
+def test_an_unpinned_digest_is_left_out_of_the_dispatch_rather_than_sent_empty() -> None:
+    """Mutation: send image_digest as an empty string.
+
+    The workflow's image_digest input is optional and its help says to leave it blank, but
+    the resolver reads whether the key is present. dispatch_inputs drops empty values for
+    exactly this reason, and that behaviour is load bearing here rather than incidental.
+    """
+    assert "image_digest" not in dispatch_inputs(dispatch_form(commit_sha=COMMIT))
+    pinned = dispatch_inputs(dispatch_form(commit_sha=COMMIT, image_digest="sha256:" + "b" * 64))
+    assert pinned["image_digest"] == "sha256:" + "b" * 64
 
 
 def test_the_form_lets_the_platform_choose_the_identity_it_will_be_charged_under() -> None:
@@ -511,14 +540,18 @@ def test_the_three_dataset_variables_fit_beside_a_resume_block() -> None:
     assert with_corpus - without < MAXIMUM_CONTAINER_OVERRIDES_BYTES - without
 
 
-def test_the_wire_form_removes_comments_and_changes_nothing_else() -> None:
-    """Mutation: strip docstrings too, or strip nothing.
+def test_the_wire_form_removes_the_prose_and_leaves_the_program() -> None:
+    """Mutation: strip nothing, or strip something that runs.
 
-    Comments are 2,581 bytes of this program and exist for somebody reading the tool, which
-    is what gets reviewed; nobody reads the command string in a Batch job description.
-    Docstrings are kept because they travel inside the platform's own marker writer, and
-    removing them would break the property that what runs is that function rather than a
-    copy of it.
+    Comments and docstrings are prose. They exist for somebody reading the tool, which is
+    what gets reviewed; nobody reads the command string in a Batch job description, and
+    two submissions were refused by Batch for carrying them.
+
+    Docstrings were kept until 2026-08-04 and the reason was a real one -- see for_the_wire
+    -- so what replaces it has to be a check rather than a rewording. The check is below
+    and in the two tests further down: the program still parses, the unstripped text still
+    carries the platform writer's exact source, and the stripped writer still computes the
+    platform writer's exact bytes.
     """
     written = training_program(resume_from=f"s3://{BUCKET}/teams/platform/runs/x/model.pt")
     wire = for_the_wire(written)
@@ -526,8 +559,13 @@ def test_the_wire_form_removes_comments_and_changes_nothing_else() -> None:
     assert len(wire) < len(written)
     assert "# Both halves of the silent failure" not in wire
     assert "# WHAT THIS ROLE CANNOT REACH" not in wire
-    assert '"""' in wire, "docstrings stay; they carry the platform's own function"
+    assert '"""' not in wire, "docstrings go too; two Batch refusals bought this line"
     compile(wire, "<wire>", "exec")
+
+    # Nothing that runs was removed with them. Statement counts rather than a text
+    # comparison, because a stripper that deleted a line of code would otherwise have to be
+    # noticed by eye in a diff of a generated string.
+    assert len(ast.parse(wire).body) == len(ast.parse(written).body)
 
 
 def test_a_hash_inside_a_string_is_not_treated_as_a_comment() -> None:
@@ -542,17 +580,39 @@ def test_a_hash_inside_a_string_is_not_treated_as_a_comment() -> None:
     assert for_the_wire(source) == 'value = "a # b"\nother = 1\n'
 
 
-def test_the_wire_form_still_carries_the_platforms_marker_writer() -> None:
-    """Reads BOTH sides. Mutation: strip docstrings, which would silently break this.
+def test_the_wire_forms_marker_writer_computes_what_the_platforms_writer_computes() -> None:
+    """Reads BOTH sides. Mutation: reimplement the writer, or strip something that runs.
 
-    The embedding is only worth anything if the bytes survive the transformation applied on
-    the way to the wire. A stripper that removed docstrings would leave a function that
-    behaves the same and is no longer the same source, and the test asserting it *is* the
-    same source is checking the unstripped form.
+    THIS TEST USED TO ASSERT THE WIRE FORM CONTAINED THE PLATFORM WRITER'S SOURCE TEXT, AND
+    THAT IS NO LONGER TRUE BECAUSE THE WIRE FORM DROPS DOCSTRINGS. What the text assertion
+    was protecting is that the container runs the platform's function rather than a copy
+    that can drift from it, and that property is not made by the text being identical -- it
+    is made by the source being extracted with inspect.getsource instead of typed out, which
+    test_the_embedded_marker_writer_is_the_platform_function_and_not_a_copy still asserts
+    against the unstripped program.
+
+    What is left to check is the half a text comparison never checked: that the function
+    surviving the transformation still computes the same bytes. So it is executed. A copy
+    that had drifted, or a stripper that removed a line of code rather than a line of prose,
+    fails here rather than in a bucket.
     """
     wire = for_the_wire(training_program())
+    namespace: dict[str, Any] = {"json": json, "datetime": datetime}
+    start = wire.index("MARKER_SCHEMA_VERSION =")
+    end = wire.index("def refusal_for")
+    exec(compile(wire[start:end], "<wire-writer>", "exec"), namespace)  # noqa: S102
 
-    assert marker_writer_source() in wire
+    written_at = datetime(2026, 8, 5, 1, 2, 3, tzinfo=UTC)
+    arguments: dict[str, Any] = {
+        "step": 20,
+        "payload_name": "model.pt",
+        "digest": "sha256:" + "a" * 64,
+        "size_bytes": 1024,
+        "created_at": written_at,
+        "crc32c_digest": "crc32c:" + "b" * 8,
+    }
+
+    assert namespace["success_marker_bytes"](**arguments) == success_marker_bytes(**arguments)
 
 
 # ---------------------------------------------------------------------------------------
@@ -575,21 +635,24 @@ def test_the_isolation_probe_reads_the_code_rather_than_whether_the_call_threw()
     assert "botocore.exceptions.ClientError" in program
 
 
-def test_the_probe_reaches_for_a_team_nobody_has_bound() -> None:
-    """Mutation: probe a team that exists, or one whose prefix might hold an object.
+def test_the_two_probes_that_no_longer_probe_anything_are_gone() -> None:
+    """Mutation: keep the four-probe matrix.
 
-    The probe has to be against a prefix where the two outcomes are distinguishable. A real
-    team's prefix could legitimately be empty, so a 404 there would be ambiguous; a team
-    nobody has bound certainly holds nothing, which makes anything other than AccessDenied
-    a statement that the grant is wider than it reads.
+    The deployed GPU workload role grants s3:PutObject and s3:GetObject unconditioned on
+    teams/*/runs/*, which the old probe key matched. So the write probe came back `allowed`
+    and failed the run after the GPU was paid for, and the read probe came back NoSuchKey
+    and passed without establishing anything -- the exact distinction refusal_for's own
+    docstring was written to insist on. infra/iam/batch-gpu-roles.yaml records the decision
+    that widened the role and says the cross-team check encodes no requirement.
     """
     program = training_program()
 
-    assert FOREIGN_TEAM_PREFIX in program
-    assert "not-a-bound-team" in FOREIGN_TEAM_PREFIX
+    assert "read_another_teams_prefix" not in program
+    assert "write_to_another_teams_prefix" not in program
+    assert "not-a-bound-team" not in program
 
 
-def test_all_four_probes_are_asserted_rather_than_merely_recorded() -> None:
+def test_both_probes_are_asserted_rather_than_merely_recorded() -> None:
     """Mutation: print the probe results and let the run succeed anyway.
 
     Recording a refusal that did not happen is worse than not probing at all: the capture
@@ -598,14 +661,132 @@ def test_all_four_probes_are_asserted_rather_than_merely_recorded() -> None:
     """
     program = training_program()
 
-    for probe in (
-        "read_another_teams_prefix",
-        "write_to_another_teams_prefix",
-        "list_the_whole_outputs_bucket",
-        "write_to_the_lineage_bucket",
-    ):
+    for probe in ("list_the_whole_outputs_bucket", "write_to_the_lineage_bucket"):
         assert probe in program, probe
     assert 'assert not reachable, "this role reached something it must not: "' in program
+
+
+def test_the_gate_over_the_probes_fails_the_run_when_a_boundary_is_wrong() -> None:
+    """Reads BOTH sides, by running the gate rather than reading it.
+
+    Mutation: compare against the wrong string, or sort a generator and assert on the
+    generator. Every other test here asserts that a line of text is present, which cannot
+    tell a working gate from a misspelled one -- and a gate that never fires is the same
+    shape of defect as the two probes this change deleted.
+
+    Executed against the real deployed role on 2026-08-04 by policy simulation: both probes
+    came back implicitDeny, and both came back allowed against a deliberately widened copy
+    of the same policy.
+    """
+    program = training_program()
+    start = program.index("reachable = sorted(")
+    gate = compile(program[start:], "<gate>", "exec")
+
+    exec(gate, {"isolation": {"list_the_whole_outputs_bucket": "AccessDenied"}})  # noqa: S102
+
+    with pytest.raises(AssertionError, match="write_to_the_lineage_bucket"):
+        exec(  # noqa: S102
+            gate,
+            {
+                "isolation": {
+                    "list_the_whole_outputs_bucket": "AccessDenied",
+                    "write_to_the_lineage_bucket": "allowed",
+                }
+            },
+        )
+
+
+def test_every_probe_that_remains_names_something_the_deployed_template_refuses() -> None:
+    """Mutation: add a probe against a grant the role actually holds.
+
+    This is the check that would have caught the two just deleted, and it is written
+    against the template rather than against a memory of it. A probe is only worth its
+    bytes if the role could fail it, and the way that stops being true is silent: somebody
+    widens a grant for a good reason and the probe underneath it turns into a green light
+    wired to nothing.
+
+    The outputs ListBucket grant carries a StringLike condition on s3:prefix, so a list
+    from the root is outside it. The lineage bucket appears nowhere in the role at all.
+    """
+    template = (
+        Path(__file__).resolve().parents[1] / "infra" / "iam" / "batch-gpu-roles.yaml"
+    ).read_text(encoding="utf-8")
+    program = training_program()
+
+    assert "list_the_whole_outputs_bucket" in program
+    assert 'Prefix=""' in program
+    assert "s3:prefix" in template, (
+        "the list probe only means something while the ListBucket grant is conditioned on a "
+        "prefix; an unconditioned grant would make listing from the root allowed"
+    )
+
+    assert "write_to_the_lineage_bucket" in program
+    assert f":s3:::{LINEAGE_BUCKET}" not in template, (
+        "the lineage probe only means something while no Resource in the role names that "
+        "bucket; the template's prose says it is deliberately absent, and this is the half "
+        "of that sentence a deploy could contradict"
+    )
+
+
+def test_the_form_asks_for_the_cheapest_card_and_no_retired_corpus() -> None:
+    """Mutation: leave the form pointing at the A10G and at dolma-2026-07.
+
+    The release is the sharper half. config/datasets.yaml marks dolma-2026-07 retired and
+    the submission form's dataset_release is a `choice` input, so a dispatch carrying it is
+    rejected by GitHub with a message about an invalid input value -- before anything is
+    compiled, and naming a field rather than a corpus.
+    """
+    registry = load_yaml(
+        Path(__file__).resolve().parents[1] / "config" / "datasets.yaml", DatasetRegistry
+    )
+    form = dispatch_form(commit_sha=COMMIT)
+
+    assert form["compute_profile"] == "gpu-1xt4"
+    assert form["dataset_release"] == "none"
+    assert form["team"] == "platform"
+    retired = {one.release_id for one in registry.releases if one.retired}
+    assert form["dataset_release"] not in retired
+
+
+def test_the_program_scores_bytes_and_reports_bits_per_byte() -> None:
+    """Mutation: log a loss and call it bits per byte.
+
+    bpb = nats / ln 2 is only a bits-per-byte figure if one token is one byte. The token
+    range is what makes that true, so the two assertions belong together: a program drawing
+    ids from the whole vocabulary and dividing its loss by ln 2 reports bits per TOKEN under
+    a byte's name, and nothing downstream could tell.
+    """
+    program = training_program()
+
+    assert "torch.randint(0, 256," in program
+    assert "LN2 = 0.6931471805599453" in program
+    assert '"train/bpb": loss / LN2' in program
+    assert '"bytes_scored": len(losses) * 1024,' in program
+
+
+def test_the_program_asserts_the_uniform_byte_floor() -> None:
+    """Mutation: report bpb and assert nothing about it.
+
+    Uniform bytes carry eight bits each. Twenty steps over twenty thousand never-repeated
+    tokens cannot get a model below that floor honestly, so a run that reports below it has
+    computed something other than what the field is named. The floor is the one number here
+    that is known without measuring anything.
+    """
+    assert "assert min(losses) / LN2 > 8.0" in training_program()
+
+
+def test_the_program_refuses_to_train_in_anything_but_float32_on_this_card() -> None:
+    """Mutation: leave the dtype to whatever the recipe defaults to.
+
+    gpu-1xt4 is a g4dn.xlarge and the T4 is Turing, which has no hardware bfloat16 --
+    torch.cuda.is_bf16_supported() returns true there and emulates it, so a bf16 run does
+    not crash. It trains slowly and reports numbers that are not the numbers asked for.
+    """
+    program = training_program()
+
+    assert "assert all(p.dtype is torch.float32 for p in model.parameters())" in program
+    assert "torch.bfloat16" not in program
+    assert "bf16" not in program
 
 
 def test_the_lineage_bucket_probe_names_the_bucket_the_platform_alone_writes_to() -> None:

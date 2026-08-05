@@ -27,6 +27,7 @@ honest interim: it is the same bytes, and a test asserts the extraction still re
 from __future__ import annotations
 
 import argparse
+import ast
 import inspect
 import io
 import json
@@ -47,10 +48,22 @@ from edullm_platform.contracts.execution import ExecutionTarget
 from edullm_platform.contracts.manifest import RunManifest
 from edullm_platform.execution import batch_submit_request, refuse_an_oversized_override
 
-#: The image the GPU job definition is pinned to. Named here so the form this tool writes
-#: cannot drift from the definition that will run it; a submission naming a different digest
-#: is refused at admission, which is the right answer but a slow way to learn it.
-TRAINING_IMAGE_DIGEST: Final = (
+#: The digest the GPU job definitions are pinned to, kept only so this file can say why the
+#: form does NOT name it. It is a placeholder: RegisterJobDefinition puts the manifest's own
+#: digest into the per-run definition (execution.py), so the base definition's image is never
+#: the image a run pulls.
+#:
+#: NAMING IT IN THE FORM WAS A REFUSAL WAITING TO HAPPEN, AND IT HAPPENED. compile_submission
+#: requires the declared digest to be one the declared commit published, so a form carrying
+#: this constant compiles only for whichever commit built it -- every other commit is refused
+#: with "image digest ... was not published from commit ...". Measured 2026-08-04: this digest
+#: is no longer in the registry at all, so the form could not compile for any commit.
+#:
+#: The form therefore leaves ``image_digest`` empty, which is what the workflow's own input
+#: help asks for -- "Leave blank. The image comes from the commit above." -- and the
+#: submission workflow resolves the commit's published image before compiling. ``--image-
+#: digest`` pins one where a caller needs two dispatches to declare byte-identical manifests.
+JOB_DEFINITION_PLACEHOLDER_DIGEST: Final = (
     "sha256:50e2488ab3c77e859a8fe3e6d4a06d7d54f5c852bc7c5dd201fb9db53bff455b"
 )
 
@@ -170,16 +183,6 @@ TOKENIZERS: Final[dict[str, str]] = {
     "tokenizer/smollm2-bpe": 'TokenizerConfig.from_hf("HuggingFaceTB/SmolLM2-135M")',
 }
 
-#: A prefix belonging to a team that does not exist, which is the point. The workload role
-#: is scoped to ``teams/platform/runs/*``, so a read here must come back AccessDenied rather
-#: than NoSuchKey -- and the difference between those two answers is the whole check.
-#:
-#: NoSuchKey would mean the role *may* look and there is nothing there, which establishes no
-#: isolation at all. A team name nobody has bound makes the two outcomes distinguishable:
-#: there is certainly no object, so a 404 could only mean the grant is wider than it reads.
-FOREIGN_TEAM_PREFIX: Final = "teams/not-a-bound-team/runs/isolation-probe/"
-
-
 def marker_writer_source() -> str:
     """The platform's marker writer and its checksum, as the text that goes into the program.
 
@@ -221,10 +224,20 @@ def training_program(*, steps: int = TRAINING_STEPS, resume_from: str = "") -> s
     reference to it -- not that torch will accept the bytes. Those are different claims and
     only the second is what a researcher needs.
 
-    The isolation probe reads a prefix belonging to a team that does not exist. The workload
-    role's trust policy names the Batch and ECS task services, so no human can assume it and
-    be refused; the only principal that can be told no is a container. Without this, the
-    cross-team criterion rests on reading a policy document.
+    The two isolation probes reach for things this role is refused: the outputs bucket
+    listed from its root, past the ``s3:prefix`` condition on the ListBucket grant, and the
+    lineage bucket, which the role holds no grant on at all. The workload role's trust
+    policy names the Batch and ECS task services, so no human can assume it and be refused;
+    the only principal that can be told no is a container. Without this, those two criteria
+    rest on reading a policy document.
+
+    **There were four, and two of them could not fail.** They aimed at a cross-team boundary
+    the role no longer has -- ``infra/iam/batch-gpu-roles.yaml`` grants PutObject and
+    GetObject unconditioned on ``teams/*/runs/*`` and records the decision to widen it -- so
+    the probe key matched the grant. The write came back ``allowed`` and failed the run
+    after the GPU had been paid for; the read came back ``NoSuchKey`` and passed while
+    establishing nothing, which is precisely the distinction :func:`refusal_for` exists to
+    insist on.
     """
     resume_block = (
         f'''
@@ -325,17 +338,23 @@ tracker = wandb.init(
 # a real model through a real optimizer on a real GPU and keep the result; which corpus it
 # read is a research question, and downloading one would spend GPU minutes on bandwidth.
 generator = torch.Generator(device="cuda").manual_seed(0)
+LN2 = 0.6931471805599453
 started = time.time()
 losses = []
+# BYTES, NOT ARBITRARY IDS, AND THAT IS WHAT MAKES THE FIGURE BELOW A BITS-PER-BYTE ONE.
+# Drawing from [0, 256) makes one token exactly one byte, so bpb is the loss in bits with no
+# tokenizer to decode through, no network to reach the Hub over, and no conversion factor
+# anybody had to invent. Ids above 255 never occur; the vocabulary, the parameter count and
+# the memory footprint are unchanged.
 for step in range(1, {steps} + 1):
-    ids = torch.randint(0, vocab, (2, 512), device=device, generator=generator)
+    ids = torch.randint(0, 256, (2, 512), device=device, generator=generator)
     output = model(ids, labels=ids)
     output.loss.backward()
     optimizer.step()
     optimizer.zero_grad(set_to_none=True)
     loss = float(output.ce_loss)
     losses.append(loss)
-    tracker.log({{"train/ce_loss": loss, "train/step": step}})
+    tracker.log({{"train/ce_loss": loss, "train/bpb": loss / LN2, "train/step": step}})
 torch.cuda.synchronize()
 elapsed = time.time() - started
 
@@ -379,23 +398,25 @@ s3.put_object(
 
 # Read one object back. The workload role holds s3:GetObject on this prefix precisely so a
 # resumed run can load what it wrote, and a grant nobody exercises is a grant nobody knows
-# works.
-marker = s3.get_object(Bucket=bucket, Key=key + {MARKER_OBJECT!r})["Body"].read().decode()
+# works. The bytes are deliberately dropped: a missing grant raises ClientError here and
+# fails the run, which is the whole of what this call establishes, and the marker's content
+# is already an object in S3 that the platform's own checkpoint survey reads. Echoing it
+# into the summary cost 60 bytes of a container override budget with 8,192 in it.
+s3.get_object(Bucket=bucket, Key=key + {MARKER_OBJECT!r})["Body"].read()
 
 # WHAT THIS ROLE CANNOT REACH, established from inside the only principal that can be
-# refused. Four probes, because the interesting failures are asymmetric: a role that can
-# read another team's outputs leaks research, a role that can write there corrupts it, and
-# a role that can touch the lineage bucket at all can rewrite the record of what it did.
+# refused. Two probes, where there were four. The other two aimed at a team boundary the
+# role no longer has: infra/iam/batch-gpu-roles.yaml grants PutObject and GetObject
+# unconditioned on teams/*/runs/*, which the old probe key matched -- so the write came back
+# allowed and failed the run, and the read came back NoSuchKey and passed while proving
+# nothing. That template records the decision to widen the role and says the cross-team
+# check encodes no requirement.
 #
-# The lineage probe is the sharpest of the four. Every other grant in this platform is
-# arguable; that one is the property the whole write-once design rests on.
+# The two that remain still mean something. ListBucket on the outputs bucket carries a
+# StringLike condition on s3:prefix, so listing from the root is refused; and nothing on this
+# role reaches the lineage bucket at all, which is the property the whole write-once design
+# rests on.
 isolation = {{
-    "read_another_teams_prefix": refusal_for(
-        s3.get_object, Bucket=bucket, Key={FOREIGN_TEAM_PREFIX!r} + "model.pt"
-    ),
-    "write_to_another_teams_prefix": refusal_for(
-        s3.put_object, Bucket=bucket, Key={FOREIGN_TEAM_PREFIX!r} + "written.txt", Body=b"x"
-    ),
     "list_the_whole_outputs_bucket": refusal_for(
         s3.list_objects_v2, Bucket=bucket, Prefix=""
     ),
@@ -417,22 +438,28 @@ summary = {{
     "steps": len(losses),
     "first_loss": round(losses[0], 4),
     "last_loss": round(losses[-1], 4),
+    "first_bpb": round(losses[0] / LN2, 4),
+    "last_bpb": round(losses[-1] / LN2, 4),
+    "bytes_scored": len(losses) * 1024,
     "seconds": round(elapsed, 2),
     "peak_memory_gib": round(torch.cuda.max_memory_allocated() / 2**30, 2),
     "checkpoint_uri": "s3://" + bucket + "/" + key,
     "checkpoint_sha256": digest,
     "checkpoint_bytes": len(payload),
-    "success_marker": json.loads(marker),
     "wandb_url": tracker.url,
     "wandb_project": os.environ["EDULLM_WANDB_PROJECT"],
 }}
 print(json.dumps(summary, indent=2, sort_keys=True))
 tracker.finish()
 
-# The loss is not asserted to have fallen. Twenty steps on random tokens is not a claim about
-# learning, and dressing it as one would be the kind of evidence this repository spends its
-# time removing.
+# The loss is still not asserted to have fallen: twenty steps on random bytes is not a claim
+# about learning. What IS asserted is the floor underneath the figure. Uniform bytes carry
+# eight bits each, so a run reporting below 8.0 over tokens it has never seen twice has
+# computed something other than the thing the field is named after -- which is the failure
+# that would otherwise reach a chart looking like a result.
 assert torch.cuda.max_memory_allocated() > 0, "nothing was ever allocated on the GPU"
+assert min(losses) / LN2 > 8.0, "bits per byte fell below the uniform-byte floor"
+assert all(p.dtype is torch.float32 for p in model.parameters()), "this card has no bfloat16"
 
 # The isolation probes ARE asserted, and the run fails if any of them came back allowed.
 # Recording a refusal that did not happen would be worse than not probing: the capture would
@@ -464,26 +491,9 @@ def _measuring_target() -> ExecutionTarget:
     )
 
 
-def for_the_wire(program: str) -> str:
-    """The program with its comments removed, which is what actually gets submitted.
-
-    **BATCH CAPS ``containerOverrides`` AT 8,192 BYTES AND THIS PROGRAM DID NOT FIT.** The
-    version carrying the resume block and the four isolation probes came to 9,121 bytes,
-    which is 10,063 once the environment and the JSON are counted. It compiled, it validated
-    locally, it was dispatched, it was approved at the environment gate, it was admitted --
-    and Batch refused it with "Container Overrides length must be at most 8192", a message
-    that names neither the command nor the field that overran.
-
-    Comments are 2,581 of those bytes, and they are the right 2,581 to cut. They exist for
-    somebody reading this file, and this file is what gets reviewed; nobody reads the
-    command string in a Batch job description. Docstrings are kept -- they are 962 more and
-    are not needed, but they travel inside
-    :func:`edullm_platform.checkpoints.success_marker_bytes`, and stripping them would break
-    the property that what runs is the platform's function rather than a copy of it.
-
-    Tokenised rather than pattern-matched. A ``#`` inside a string literal is not a comment,
-    and the program contains several -- an S3 key fragment among them.
-    """
+def _without_comments(program: str) -> str:
+    """Tokenised rather than pattern-matched. A ``#`` inside a string literal is not a
+    comment, and the program contains several -- an S3 key fragment among them."""
     lines = program.splitlines(keepends=True)
     starts_at: dict[int, int] = {}
     for token in tokenize.generate_tokens(io.StringIO(program).readline):
@@ -503,20 +513,92 @@ def for_the_wire(program: str) -> str:
     return "".join(kept)
 
 
+def _without_docstrings(program: str) -> str:
+    """The same removal, for the prose that is a statement rather than a comment.
+
+    Parsed rather than matched, and by line span rather than by rewriting the tree:
+    ``ast.unparse`` would reformat every line of the program, and what is wanted here is
+    the program with some lines deleted.
+    """
+    tree = ast.parse(program)
+    spans: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Module | ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            continue
+        first = node.body[0] if node.body else None
+        if (
+            isinstance(first, ast.Expr)
+            and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str)
+            and first.end_lineno is not None
+        ):
+            spans.update(range(first.lineno, first.end_lineno + 1))
+    return "".join(
+        line
+        for number, line in enumerate(program.splitlines(keepends=True), start=1)
+        if number not in spans
+    )
+
+
+def for_the_wire(program: str) -> str:
+    """The program with its comments and docstrings removed, which is what gets submitted.
+
+    **THE 8,192-BYTE LIMIT IS NOT WHERE IT LOOKS, AND THIS FUNCTION IS WHAT PAYS FOR THAT.**
+    Batch refuses a submission with "Container Overrides length must be at most 8192", and
+    :func:`edullm_platform.execution.refuse_an_oversized_override` measures the serialized
+    ``ContainerOverrides`` against that number. Measured 2026-08-04 against two refused
+    submissions on ``gpu-1xt4``: the overrides that arrived were **7,680 bytes**, 512 inside
+    the stated limit, and Batch refused them anyway. Reconstructing the whole ``SubmitJob``
+    request -- JobName, the two ARNs, Tags, Timeout, RetryStrategy and PropagateTags around
+    the same overrides -- gives **8,430**. The limit binds on the request, and the platform's
+    guard is optimistic by roughly 750 bytes. That is a finding about the guard and is not
+    fixed here; what is done here is fitting inside the real budget.
+
+    Comments were the first 2,581 bytes to go and they were the right ones: they exist for
+    somebody reading this file, and this file is what gets reviewed; nobody reads the command
+    string in a Batch job description.
+
+    **DOCSTRINGS NOW GO TOO, WHICH REVERSES A DECISION AND THE REASON IT WAS MADE IS WORTH
+    ANSWERING RATHER THAN DELETING.** They were kept because
+    :func:`edullm_platform.checkpoints.success_marker_bytes` travels inside this program by
+    :func:`inspect.getsource`, and the property being protected was that what runs is the
+    platform's function rather than a copy that can drift from it. That property survives.
+    It is created by extracting the source instead of typing it out, and it is checked two
+    ways that both still hold: the unstripped program is asserted to contain
+    ``getsource(success_marker_bytes)`` exactly, and the embedded writer is *executed* and
+    its bytes compared with the platform writer's. A docstring does not run, and stripping
+    one is the same mechanical transformation already accepted for comments -- applied to
+    text that was extracted, not authored, here.
+    """
+    return _without_docstrings(_without_comments(program))
+
+
 def dispatch_form(
-    *, commit_sha: str, steps: int = TRAINING_STEPS, resume_from: str = ""
+    *,
+    commit_sha: str,
+    steps: int = TRAINING_STEPS,
+    resume_from: str = "",
+    image_digest: str = "",
 ) -> dict[str, str]:
     return {
         "repository": "OLMo-core",
         "commit_sha": commit_sha,
-        "image_digest": TRAINING_IMAGE_DIGEST,
+        # Empty, so the submission workflow resolves the image the declared commit
+        # published. See JOB_DEFINITION_PLACEHOLDER_DIGEST for what naming one cost.
+        "image_digest": image_digest,
         "workload_profile": "olmo-core-check",
-        # Named here since the workload profile stopped declaring one and the form field
-        # stopped being optional. This is the shape the capability run proved and the shape
-        # olmo-core-check-gpu used to fix by name, which is why the entry could lose its
-        # suffix without this submission changing where it lands.
-        "compute_profile": "gpu-1xa10g",
-        "dataset_release": "dolma-2026-07",
+        # THE CHEAPEST CARD IN THE CATALOG, AND THE ONE THE SPINE IS PROVEN ON. Its queue is
+        # one the deployed admission-states role can submit to, its compute environment is
+        # enabled on g4dn.xlarge, and its job definition exists -- all read off the account
+        # rather than assumed. The T4 has no hardware bfloat16 and this program is fp32,
+        # which the container now asserts.
+        #
+        # `none` rather than dolma-2026-07: config/datasets.yaml retires that release and the
+        # form's dataset_release is a `choice` input, so a dispatch naming it is rejected by
+        # GitHub before anything compiles. This program reads no corpus, so `none` is also
+        # the true answer.
+        "compute_profile": "gpu-1xt4",
+        "dataset_release": "none",
         "team": "platform",
         "wandb_project": "edullm-platform-smoke",
         "maximum_runtime_hours": "0.5",
@@ -610,6 +692,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--checkout", type=Path, default=OLMO_CORE_CHECKOUT)
     parser.add_argument(
+        "--image-digest",
+        default="",
+        help=(
+            "pin the image rather than letting the workflow resolve it from the commit. "
+            "Empty is the ordinary answer. Give one where two dispatches have to declare "
+            "byte-identical manifests and a rebuild between them would be a difference."
+        ),
+    )
+    parser.add_argument(
         "--resume-from",
         default="",
         help=(
@@ -625,7 +716,10 @@ def main(argv: list[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
     commit = arguments.commit_sha or head_of(arguments.checkout)
     form = dispatch_form(
-        commit_sha=commit, steps=arguments.steps, resume_from=arguments.resume_from
+        commit_sha=commit,
+        steps=arguments.steps,
+        resume_from=arguments.resume_from,
+        image_digest=arguments.image_digest,
     )
     # The dispatch payload is what gets written; the split form is only ever used to
     # check it here. Writing the split one was a real defect: gh refused it, and the
