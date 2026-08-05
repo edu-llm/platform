@@ -57,7 +57,7 @@ Ask for all three through the [access request](https://github.com/edu-llm/platfo
 | Doing anything for the first time | `cpu-32vcpu` |
 | Checking your code sees a GPU | `gpu-1xa10g` |
 | Training, one device | `gpu-1xa10g` |
-| Training, several devices | A `4x` or `8x` shape, and start one process per device. See your repository's guide |
+| Training, several devices | A `4x` or `8x` shape, and start one process per device, as your repository's guide shows |
 
 **This used to say to leave the field alone, and that advice was wrong the whole time it was there.** The workload profile appeared to name a machine and the form outranked it silently, so a run labelled `olmo-core-train-1gpu` could land on eight H100s and nothing anywhere said so. The catalog no longer claims a machine and this field is required, so you are asked once rather than defaulted somewhere you did not choose.
 

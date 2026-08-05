@@ -12,9 +12,9 @@ Then the guide for what you are actually doing:
 
 | Guide | For |
 | --- | --- |
-| [Training a model](guides/olmo-core.md) | OLMo-core. Pretraining and fine-tuning, one to eight GPUs |
-| [Running an evaluation](guides/olmo-eval-full.md) | olmo-eval-full. Scoring a model against a task suite |
-| [Validating a corpus](guides/edullm-data.md) | edullm-data. Checking and publishing a dataset |
+| [Training a model](guides/olmo-core.md) | OLMo-core, for pretraining and fine-tuning on one to eight GPUs |
+| [Running an evaluation](guides/olmo-eval-full.md) | olmo-eval-full, for scoring a model against a task suite |
+| [Validating a corpus](guides/edullm-data.md) | edullm-data, for checking and publishing a dataset |
 
 Nothing above needs anything installed. If you would rather work in a terminal than in the Actions UI, `uv tool install --force git+https://github.com/edu-llm/platform` puts the `edullm` command on your path. It prices a submission offline before it sends it, and submits, follows and stops runs. [From a terminal](guides/the-platform.md#from-a-terminal) is the whole of it.
 
