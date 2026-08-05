@@ -430,6 +430,32 @@ def test_the_shorter_id_older_transcripts_carry_still_resolves(
     assert "an-experiment" in out
 
 
+def test_the_wait_an_abbreviation_costs_is_named_before_it_is_paid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """26 seconds against the real platform, and a whole id is found in one or two reads.
+
+    Mutation: wait in silence. The difference is not the wait -- an abbreviation genuinely
+    has to read the window out to know no second run answers to it -- it is that a terminal
+    printing nothing for half a minute teaches people the tool hung. Every other wait this
+    binary makes somebody sit through is announced first, including the runner one.
+
+    On stderr, so a script reading the listing is not handed a line that is not a run.
+    """
+    runner = near((RUN_ID, "an-experiment", "2099-01-01T00:00:00Z"))
+
+    _, out, err = invoke(
+        ["status", "run_019fd2a1"], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch
+    )
+
+    assert "resolving run_019fd2a1." in err
+    assert "resolving" not in out
+
+    _, _, whole = invoke(["status", RUN_ID], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
+
+    assert "resolving" not in whole
+
+
 def test_what_reaches_the_workflow_is_the_whole_id_and_never_the_abbreviation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

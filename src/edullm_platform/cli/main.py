@@ -927,6 +927,7 @@ def _status(
         print(render_refusals([refusal]), end="", file=err)
         return EXIT_REFUSED
 
+    _said_resolving(arguments.run_id, err)
     facts = read_run_facts(actions, arguments.run_id)
     print(render_run_facts(facts), end="", file=out)
     if not facts.needs_a_dispatch:
@@ -954,6 +955,7 @@ def _logs(
         print(render_refusals([refusal]), end="", file=err)
         return EXIT_REFUSED
     actions = PlatformActions(runner, repository=arguments.platform_repository)
+    _said_resolving(arguments.run_id, err)
     facts = read_run_facts(actions, arguments.run_id)
     if not facts.needs_a_dispatch:
         # A run that never reached AWS printed nothing there. Dispatching would spend a
@@ -983,6 +985,7 @@ def _cancel(
         print(render_refusals([refusal]), end="", file=err)
         return EXIT_REFUSED
     actions = PlatformActions(runner, repository=arguments.platform_repository)
+    _said_resolving(arguments.run_id, err)
     facts = read_run_facts(actions, arguments.run_id)
     if not facts.needs_a_dispatch:
         # THE ONE PLACE THIS SHORTCUT COULD DO HARM, WHICH IS WHY ``Admitted`` HAS THREE
@@ -1125,6 +1128,30 @@ def _malformed_run_id(run_id: str) -> Refusal | None:
             "two of your recent runs share them. edullm status with no argument lists "
             "yours in the short form."
         ),
+    )
+
+
+def _said_resolving(run_id: str, err: TextIO) -> None:
+    """Name the wait an abbreviation costs, before paying it rather than after.
+
+    A whole id is usually found in the first one or two manifests read, and an abbreviation
+    cannot stop there -- it has to read the window out to know no second run answers to it,
+    which measured 26 seconds against the real platform. This CLI says what a wait is for
+    everywhere else it makes somebody wait, and 26 seconds of a silent terminal is how a
+    person learns to stop pasting the short form.
+    """
+    if RUN_ID_REGEX.fullmatch(run_id):
+        return
+    print(
+        "\n".join(
+            _wrapped(
+                f"resolving {run_id}. Nothing indexes run ids, so this reads the manifest "
+                "of each recent submission until it knows which one -- a few seconds. An "
+                "id given in full is found in the first one or two.",
+                indent="",
+            )
+        ),
+        file=err,
     )
 
 
