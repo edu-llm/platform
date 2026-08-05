@@ -1251,3 +1251,39 @@ def test_the_command_the_form_arrives_pre_filled_with_is_one_the_contract_accept
         checkpoint=None,
         fanout=None,
     )
+
+
+def test_the_eval_sweep_profile_is_registered_and_offered() -> None:
+    names = {workload.name for workload in workload_catalog().workloads}
+    assert "olmo-eval-sweep" in names
+    # Registered and offered are two questions, and the file's own header says so. The second
+    # one is no longer "is it on the dropdown": `workload_profile` is free text, because the
+    # catalog is owned by the admins and all eight leads while the workflow is owned by two
+    # people. So what stands in for the menu is `_resolve_workload`, and an entry is offered
+    # exactly when the compile job resolves it -- asked through the same function
+    # UNREGISTERED_WORKLOAD reaches the refusal through, so this is a claim about the
+    # submission path and not about a string in a test.
+    resolved = _resolve_workload(
+        workload_catalog(), "olmo-eval-sweep", repository="olmo-eval-full"
+    )
+    assert resolved.name == "olmo-eval-sweep"
+
+
+def test_the_eval_sweep_profile_names_the_eval_repository_and_takes_one_attempt() -> None:
+    sweep = next(
+        workload for workload in workload_catalog().workloads if workload.name == "olmo-eval-sweep"
+    )
+    assert sweep.repository == "olmo-eval-full"
+    # One attempt and a null checkpoint contract are one decision. An eval cell reads a
+    # checkpoint somebody else wrote and holds no state worth resuming, so there is no interval
+    # to checkpoint on -- and require_checkpoint_for_retries would refuse the manifest if
+    # maximum_attempts were raised while checkpoint stayed null.
+    assert sweep.maximum_attempts == 1
+    assert sweep.checkpoint is None
+
+
+def test_the_eval_check_profile_was_not_replaced_by_the_sweep() -> None:
+    # The mock-provider check is the free path and costs nothing to keep. Removing it while
+    # adding the sweep would leave no way to exercise the harness without a GPU.
+    names = {workload.name for workload in workload_catalog().workloads}
+    assert {"olmo-eval-check", "olmo-eval-sweep"} <= names
