@@ -86,6 +86,7 @@ from edullm_platform.cli.configuration import (
     find_config_directory,
     load_reviewed_configuration,
 )
+from edullm_platform.cli.intake import ADD_KINDS, SELF_SERVICE_KINDS, routed_to_ask
 from edullm_platform.cli.machine import (
     check_document,
     emit,
@@ -236,6 +237,7 @@ BUILT_TODAY: Final = {
     "status": "what your runs are doing",
     "logs": "the last lines a run printed",
     "cancel": "stop a run",
+    "add": "teach the platform about a repository, dataset, shape, model or person",
 }
 
 #: What each built verb does, in the sentence its own ``--help`` opens with.
@@ -274,6 +276,11 @@ WHAT_A_VERB_DOES: Final = {
         f"Stops one admitted run by dispatching {CANCEL_WORKFLOW} with the reason you give, "
         "which is what the run's history then records instead of a failure."
     ),
+    "add": (
+        "Teaches the platform about a thing, which produces a change to the reviewed "
+        "configuration rather than a grant to you. A repository is opened as a pull request "
+        "from here. The other kinds are refused with the route they go by instead."
+    ),
 }
 
 #: The verbs that are settled and unbuilt, with the sentence each prints. Present so the
@@ -294,7 +301,6 @@ WHAT_A_VERB_DOES: Final = {
 NOT_BUILT_YET: Final = {
     "run": "ship this working tree to a machine and stream the output back",
     "shell": "open an editor over SSH on a machine, or a Jupyter notebook on the same one",
-    "add": "teach the platform about a repository, dataset, shape, model or person",
     "ask": "ask for something for yourself, which produces a time-boxed grant",
 }
 
@@ -465,12 +471,20 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
         ),
     )
 
+    add = verb_parser("add", WHAT_A_VERB_DOES["add"])
+    # A POSITIONAL WITH `choices` RATHER THAN A FLAG, BECAUSE A MISTYPED KIND AND A KIND THAT
+    # GOES THROUGH A PERSON ARE DIFFERENT FACTS. argparse answers the first with the list for
+    # free; routing it to `ask` instead would file an issue asking a human for `add repositry`.
+    add.add_argument("kind", choices=sorted(ADD_KINDS), help="what to teach the platform")
+    _add_json(add)
+
     built: dict[str, argparse.ArgumentParser] = {
         "check": check,
         "submit": submit,
         "status": status,
         "logs": logs,
         "cancel": cancel,
+        "add": add,
     }
     for verb, plan in NOT_BUILT_YET.items():
         # THE SENTENCE IS THE PLAN'S, READ RATHER THAN REWRITTEN. An unbuilt verb's help
@@ -836,6 +850,15 @@ def main(
                 runner=command_runner,
                 out=stdout,
                 err=stderr,
+                dispatched=dispatched,
+            )
+        if verb == "add":
+            return _add(
+                arguments,
+                runner=command_runner,
+                out=stdout,
+                err=stderr,
+                cwd=here,
                 dispatched=dispatched,
             )
     except KeyboardInterrupt:
@@ -1462,6 +1485,41 @@ def _cancel(
         out=out,
         err=err,
     )
+
+
+# ---------------------------------------------------------------------------------------
+# add, ask
+# ---------------------------------------------------------------------------------------
+
+
+def _add(
+    arguments: argparse.Namespace,
+    *,
+    runner: CommandRunner,
+    out: TextIO,
+    err: TextIO,
+    cwd: Path,
+    dispatched: list[str],
+) -> int:
+    """Teach the platform a thing, or say which route this kind goes by instead.
+
+    The routed refusal is answered before anything is read, which is deliberate. Four of the
+    five kinds cost no network to refuse and the fifth costs a dispatch, so an agent that
+    asks for the wrong one pays nothing at all.
+    """
+    if arguments.kind not in SELF_SERVICE_KINDS:
+        refusal = routed_to_ask(arguments.kind)
+        if arguments.json:
+            emit(refusal_document("add", [refusal]), out=out)
+        else:
+            print(render_refusals([refusal]), end="", file=err)
+        return EXIT_REFUSED
+    raise AssertionError(f"unreachable add kind {arguments.kind!r}")
+
+
+# ---------------------------------------------------------------------------------------
+# shared, for the run verbs
+# ---------------------------------------------------------------------------------------
 
 
 def _because(facts: RunFacts) -> str:
