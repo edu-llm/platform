@@ -13,12 +13,14 @@ choosing rather than leaving it to be discovered.
 
 **A WARNING AND NEVER A REFUSAL, WHICH IS THE ONE DESIGN DECISION HERE THAT COULD GO EITHER
 WAY.** Every other guard on the submission path refuses, and this one deliberately does not.
-What ``config/capacity.yaml`` holds is what ``ec2 create-fleet --type instant`` answered for
-each pool on one day: a reading of what EC2 had to sell at that moment rather than a promise
+What ``config/capacity.yaml`` holds is what this account was able to get on the days somebody
+looked: a reading of what EC2 had to sell in a window that has closed rather than a promise
 about the next one. Refusing a submission on a dated reading would make it a gate, and the
 first cost of that would be a shape that has quietly become available and that nobody can ask
-for. So the shape stays submittable, the sentence goes in front of the person, and the
-decision stays theirs.
+for. Six entries have been wrong in that direction already and two more were found the day
+after the first six were corrected, so the cost is measured rather than hypothetical. The
+shape stays submittable, the sentence goes in front of the person, and the decision stays
+theirs.
 
 The message says no more than the file claims. It says the shape *may* not place rather than
 that it will not, and it names the file so the reasoning behind a particular entry can be read
@@ -27,13 +29,24 @@ the one place that route is written down.
 
 **THERE ARE TWO WARNINGS NOW, AND THE SECOND ONE EXISTS BECAUSE THE FIRST WAS BEING PRINTED
 OVER A POOL THAT WORKS.** An instant probe and a queued autoscaling group ask EC2 different
-questions. Three of the pools this module warned "may not place" about had in fact supplied
-nodes -- ``gpu-8xa100`` twelve of them, with jobs running on two while the warning was still
-going out -- and what those submitters needed was the wait, not a rumour that the machine
-might never come. A submitter told to expect an hour and a half plans a day around it; one
-told the shape may not place takes their work somewhere else. So ``places: after_a_wait``
-warns about the wait and names it, and ``places: unreliably`` keeps saying what it always
-said, for the seven pools where it is still true.
+questions. Five of the pools this module warned "may not place" about had in fact supplied
+nodes -- ``gpu-8xa100`` fourteen of them, and ``gpu-8xa10g`` three that were alive together
+while the warning was still going out -- and what those submitters needed was the wait, not
+a rumour that the machine might never come. A submitter told to expect an hour plans a day
+around it; one told the shape may not place takes their work somewhere else. So ``places:
+after_a_wait`` warns about the wait and names it, and ``places: unreliably`` keeps saying
+what it always said, for the five pools where it is still true.
+
+**AND THE REMAINING REFUSALS ARE NOT ALL WORTH THE SAME, WHICH IS WHAT ``measured_by`` IS
+FOR.** Two of those five were measured by a queue that ground against the pool for
+thirty-seven hours and never got an instance; three were measured by one instant probe and
+nothing else, because no job has ever been submitted to their queues. Those are different
+claims and the reader has to be able to tell them apart, because the difference decides
+whether to believe the warning: a refused probe is the instrument that has now been wrong
+eight times, and every one of those eight was in the direction of saying a machine could not
+be had when it could. So the sentence for a probe-only refusal says which instrument
+answered and how far it can be trusted, and the sentence for a queue-measured one does not
+hedge, because nothing about it needs hedging.
 
 **IT OFFERS NOTHING IN PLACE OF THE SHAPE, AND THAT IS A POSITION RATHER THAN A GAP.** An
 earlier version of this module named a substitute wherever the file recorded one. The file
@@ -66,6 +79,9 @@ from edullm_platform.config import SafeUniqueKeyLoader
 
 __all__ = [
     "CAPACITY_FILENAME",
+    "MEASURED_BY_A_PROBE",
+    "MEASURED_BY_A_QUEUE",
+    "MEASUREMENT_INSTRUMENTS",
     "PLACEMENT_ANSWERS",
     "PLACES_AFTER_A_WAIT",
     "PLACES_RELIABLY",
@@ -90,11 +106,11 @@ PLACES_UNRELIABLY: Final = "unreliably"
 #: ``config/capacity.yaml``'s answers came from ``create-fleet --type instant``, which asks
 #: whether an instance is free at one second. A compute environment with a job queued asks
 #: the same pools again every tenth of a second until one is free, and gets a different
-#: answer: the ``gpu-8xa100`` environment took twelve nodes out of 4,348 consecutive
+#: answer: the ``gpu-8xa100`` environment took fourteen nodes out of 5,024 consecutive
 #: ``InsufficientInstanceCapacity`` refusals. Recording that as ``unreliably`` prints "may
 #: not place" over a pool that is running jobs, and recording it as ``reliably`` prints
-#: nothing over a median wait of an hour and a half. Neither is what a submitter needs, so
-#: this says the shape arrives and the wait is the price.
+#: nothing over a median wait of an hour. Neither is what a submitter needs, so this says
+#: the shape arrives and the wait is the price.
 PLACES_AFTER_A_WAIT: Final = "after_a_wait"
 
 #: Every answer :func:`read_capacity` will accept. A fourth is a change here, in the file's
@@ -103,6 +119,25 @@ PLACES_AFTER_A_WAIT: Final = "after_a_wait"
 PLACEMENT_ANSWERS: Final = frozenset(
     {PLACES_RELIABLY, PLACES_UNRELIABLY, PLACES_AFTER_A_WAIT}
 )
+
+#: WHICH INSTRUMENT ANSWERED, WHICH IS A SEPARATE FACT FROM WHAT IT ANSWERED AND HAD TO STOP
+#: BEING FOLDED INTO IT. ``places`` records a verdict; these record how it was reached. They
+#: are orthogonal because every verdict can be reached either way, and keeping them apart is
+#: what lets ``unreliably`` mean one thing when a queue established it and a weaker thing when
+#: a probe did. A fourth ``places`` value would have collapsed the two back together and given
+#: :func:`placement_warning` a branch that was really two questions.
+MEASURED_BY_A_QUEUE: Final = "queue"
+MEASURED_BY_A_PROBE: Final = "probe"
+
+#: Both instruments, and a third is a change here and in the file's header together.
+#:
+#: The asymmetry between them is the reason the field exists. A probe that *obtained* the
+#: machine settles the question, because the account demonstrably held one. A probe that was
+#: refused settles nothing beyond that second: ``create-fleet --type instant`` asks once, an
+#: autoscaling group behind a queued job asks every tenth of a second until the queue's cancel
+#: fires, and every time the two have disagreed the queue has been right. So ``probe`` beside
+#: :data:`PLACES_UNRELIABLY` is the weakest statement this file can make.
+MEASUREMENT_INSTRUMENTS: Final = frozenset({MEASURED_BY_A_QUEUE, MEASURED_BY_A_PROBE})
 
 
 class UnreadableCapacityError(ValueError):
@@ -118,17 +153,25 @@ class UnreadableCapacityError(ValueError):
 
 @dataclass(frozen=True)
 class PlacementRecord:
-    """One profile's recorded placement answer, and what it cost to get the shape.
+    """One profile's recorded placement answer, how it was reached, and what the shape cost.
 
     ``wait`` is the sentence :data:`PLACES_AFTER_A_WAIT` entries carry and nothing else
     does. It is prose in the reviewed file rather than a pair of numbers here because what
     is worth saying differs per pool: ``gpu-8xa100`` has never failed to place a queued
     run and ``gpu-4xl40s`` has had two given up on by hand, and no schema this module
-    could impose would carry the second fact.
+    could impose would carry the second fact. ``gpu-1xl40s`` is the case that settles the
+    argument: a shape whose nodes have arrived but which no submitted run has ever queued
+    for has no median to quote, and its sentence says so rather than inventing one.
+
+    ``measured_by`` has no default, deliberately. The failure this whole file exists to
+    undo was a default nobody chose: a shape with no experience attached was written down
+    as placing reliably, which was a denylist applied without anybody stating it. An
+    instrument that could be omitted would reintroduce exactly that, one field over.
     """
 
     profile: str
     places: str
+    measured_by: str
     wait: str | None = None
 
 
@@ -144,6 +187,14 @@ def read_capacity(path: Path) -> tuple[PlacementRecord, ...]:
     the same failure guarded from both directions. Without it the warning for that verdict
     would have nothing to say but "expect a wait", which a submitter cannot plan against;
     with it on a ``reliably`` entry it would be a measurement nothing prints.
+
+    ``measured_by`` is required on every entry and there is no default, for the reason
+    :class:`PlacementRecord` gives. An ``after_a_wait`` entry must additionally record
+    :data:`MEASURED_BY_A_QUEUE`, because a wait is a thing only a queue can have observed:
+    ``create-fleet --type instant`` returns in one call and cannot watch a job sit in
+    ``RUNNABLE``, so that combination would be a measurement no instrument here could have
+    taken. It is the one cross-field rule worth enforcing, and it is the one that stops a
+    plausible-looking sentence being attached to a shape nothing ever queued for.
     """
     document = yaml.load(path.read_text(encoding="utf-8"), Loader=SafeUniqueKeyLoader)
     if not isinstance(document, dict):
@@ -162,6 +213,13 @@ def read_capacity(path: Path) -> tuple[PlacementRecord, ...]:
                 f"{path} holds an entry that does not name a profile and one of "
                 f"{sorted(PLACEMENT_ANSWERS)}: {entry!r}"
             )
+        measured_by = entry.get("measured_by")
+        if measured_by not in MEASUREMENT_INSTRUMENTS:
+            raise UnreadableCapacityError(
+                f"{path} records {profile!r} and does not say which of "
+                f"{sorted(MEASUREMENT_INSTRUMENTS)} answered for it, so a reader cannot tell "
+                "a verdict a queue measured from one an instant probe guessed at"
+            )
         wait = entry.get("wait")
         if places == PLACES_AFTER_A_WAIT:
             if not isinstance(wait, str) or not wait.strip():
@@ -169,12 +227,22 @@ def read_capacity(path: Path) -> tuple[PlacementRecord, ...]:
                     f"{path} records {profile!r} as {PLACES_AFTER_A_WAIT!r} and gives no "
                     "'wait', so the warning for it could say only that there is one"
                 )
+            if measured_by != MEASURED_BY_A_QUEUE:
+                raise UnreadableCapacityError(
+                    f"{path} records {profile!r} as {PLACES_AFTER_A_WAIT!r} and says "
+                    f"{measured_by!r} measured it; a wait is what a queued job saw, and "
+                    f"only {MEASURED_BY_A_QUEUE!r} can have seen one"
+                )
         elif wait is not None:
             raise UnreadableCapacityError(
                 f"{path} gives {profile!r} a 'wait' and records it as {places!r}, which is "
                 f"a measurement nothing prints; only {PLACES_AFTER_A_WAIT!r} entries carry one"
             )
-        records.append(PlacementRecord(profile=profile, places=places, wait=wait))
+        records.append(
+            PlacementRecord(
+                profile=profile, places=places, measured_by=measured_by, wait=wait
+            )
+        )
     return tuple(records)
 
 
@@ -197,11 +265,19 @@ _WHAT_A_WAIT_LOOKS_LIKE: Final = (
 
 #: What the wait figures are and are not. They are what this account's own queue got, which
 #: is a stronger claim than the instant probe makes and a weaker one than a service level:
-#: EC2 owes nobody the next node in the time it supplied the last twelve.
+#: EC2 owes nobody the next node in the time it supplied the last fourteen.
+#:
+#: CONDITIONAL ON A RANGE BEING QUOTED, BECAUSE NOT EVERY ENTRY CAN QUOTE ONE. This used to
+#: end "the worst case above is the one worth being able to absorb", which reads as a
+#: dangling reference on ``gpu-1xl40s``: two nodes have arrived for that shape and no
+#: submitted run has ever queued for it, so its sentence gives one observation and no range
+#: at all. An entry honest enough to say it cannot quote a median should not be followed by
+#: a line telling the reader to go and look at one.
 _WHAT_A_WAIT_IS_NOT: Final = (
-    f"These are the waits this account's queue actually saw, recorded in "
-    f"`config/{CAPACITY_FILENAME}`, and not a bound EC2 offers -- so plan against the range "
-    "rather than the median, and the worst case above is the one worth being able to absorb."
+    f"What is above is what this account's queue actually saw, recorded in "
+    f"`config/{CAPACITY_FILENAME}`, and not a bound EC2 offers. Where a range is quoted, plan "
+    "against the far end of it rather than the median, because that is the case you have to "
+    "be able to absorb."
 )
 
 #: The limit of what the file claims, said where the warning is read rather than left in the
@@ -209,9 +285,9 @@ _WHAT_A_WAIT_IS_NOT: Final = (
 #: into it than the account can support, and the honest version is short enough to print
 #: every time.
 _WHAT_THIS_IS_NOT: Final = (
-    f"This is a warning and not a refusal: `config/{CAPACITY_FILENAME}` records what one pool "
-    "probe found on one day rather than what EC2 will sell today, so the run was submitted as "
-    "filled in and may well start."
+    f"This is a warning and not a refusal: `config/{CAPACITY_FILENAME}` records what this "
+    "account was able to get on the days it looked rather than what EC2 will sell today, so "
+    "the run was submitted as filled in and may well start."
 )
 
 #: Where the reasoning for a particular entry lives. Said rather than summarised here,
@@ -222,6 +298,25 @@ _WHERE_THE_REASONING_IS: Final = (
     f"`config/{CAPACITY_FILENAME}` says beside that entry what was measured and what the "
     "route to this shape is instead, and choosing a smaller machine is a changed recipe "
     "for you to declare rather than one this platform substitutes on your behalf."
+)
+
+#: WHAT ESTABLISHED THE REFUSAL, AND THE TWO ARE NOT THE SAME STRENGTH OF CLAIM. Said in the
+#: warning rather than left in the file, because the submitter is the person deciding whether
+#: to believe it and they are not going to open the file to find out how it was reached.
+_A_QUEUE_ASKED_AND_NEVER_GOT_ONE: Final = (
+    "A queue asked for this shape repeatedly, in every zone it is offered in, and never "
+    "obtained one, and"
+)
+
+#: The weak case, and it is the one that has been wrong. Naming the count is the point: a
+#: submitter who knows the instrument has been overturned eight times can weigh submitting
+#: anyway against taking the work elsewhere, and that is a judgement the platform should not
+#: be making for them by printing the same flat sentence over both.
+_ONLY_A_PROBE_HAS_ASKED: Final = (
+    "No job has ever been submitted to this shape's queue, so the only thing that has asked "
+    "for it is a single-instant pool probe. That instrument has been overturned eight times "
+    "by a queue that kept asking, always in this direction, so treat this as untested rather "
+    "than as settled: submitting is how it gets measured, and"
 )
 
 
@@ -238,11 +333,20 @@ def placement_warning(compute_profile: str, *, capacity: Sequence[PlacementRecor
     anybody picked. Narrowing it would mean saying nothing about a shape the probe could not
     obtain, which is the state this module was written to end.
 
-    **THE THREE ``after_a_wait`` SHAPES WARN AND ARE NOT COUNTED AS UNPLACEABLE, WHICH IS THE
-    WHOLE OF THE DISTINCTION.** They keep their line because an hour and a half is worth
-    knowing before a day is planned around it. What they lose is the claim that the machine
-    might never arrive, which was false of all three and was the sentence a submitter would
-    have acted on.
+    **THE FIVE ``after_a_wait`` SHAPES WARN AND ARE NOT COUNTED AS UNPLACEABLE, WHICH IS THE
+    WHOLE OF THE DISTINCTION.** They keep their line because an hour is worth knowing before
+    a day is planned around it. What they lose is the claim that the machine might never
+    arrive, which was false of all five and was the sentence a submitter would have acted on.
+
+    **AND THE FIVE THAT STILL SAY "MAY NOT PLACE" DO NOT ALL SAY IT ON THE SAME EVIDENCE.**
+    Two were established by a queue that kept asking and never got a machine. Three were
+    established by one instant probe, because nothing has ever been submitted to their
+    queues, and that instrument's refusals are what the previous eight corrections to
+    ``config/capacity.yaml`` overturned. A submitter deciding whether to take the shape
+    anyway needs to know which of those they are reading, so the branch below says. What it
+    does not do is soften the verdict: both are still "may not place", because the file
+    still records that, and downgrading a warning on the strength of a hunch about the
+    instrument would be this module deciding something the measurement has not.
     """
     recorded = next(
         (record for record in capacity if record.profile == compute_profile), None
@@ -267,7 +371,16 @@ def placement_warning(compute_profile: str, *, capacity: Sequence[PlacementRecor
         )
     if recorded.places != PLACES_UNRELIABLY:
         return None
+    # Which instrument produced the refusal, in the words that say how far it goes. The
+    # probe arm is the longer of the two on purpose: a claim that needs qualifying is worse
+    # than useless when the qualification is left out, and this is the arm that has been
+    # wrong.
+    how_it_is_known = (
+        _A_QUEUE_ASKED_AND_NEVER_GOT_ONE
+        if recorded.measured_by == MEASURED_BY_A_QUEUE
+        else _ONLY_A_PROBE_HAS_ASKED
+    )
     return (
-        f"**`{compute_profile}` may not place.** A pool probe could not obtain it, and "
-        f"{_WHAT_IT_LOOKS_LIKE} {_WHERE_THE_REASONING_IS} {_WHAT_THIS_IS_NOT}"
+        f"**`{compute_profile}` may not place.** {how_it_is_known} {_WHAT_IT_LOOKS_LIKE} "
+        f"{_WHERE_THE_REASONING_IS} {_WHAT_THIS_IS_NOT}"
     )
