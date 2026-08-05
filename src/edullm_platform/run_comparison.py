@@ -69,6 +69,12 @@ from pydantic import BeforeValidator, Field, model_validator
 
 from edullm_platform.contracts.base import ContractModel, require_ordered_sequence
 from edullm_platform.contracts.identity import RunId
+from edullm_platform.evidence import (
+    DigestBearingStr,
+    EvidenceEnvironment,
+    RecordedEventModel,
+    SecretFreeStr,
+)
 
 __all__ = [
     "CHECKPOINT_URI",
@@ -79,14 +85,17 @@ __all__ = [
     "UNPARSED_DIRECTORY",
     "VARIANCE_CAUSES",
     "CheckpointCoverage",
+    "CheckpointPayloadReading",
     "ComparedField",
     "FieldDifference",
     "RecordField",
     "RecordedRun",
     "RequiredFieldCoverage",
     "TwoRunComparison",
+    "TwoRunEvidence",
     "UnreadableCheckpoint",
     "VarianceCause",
+    "agreed_required_fields",
     "cause_for",
     "checkpoint_coverage",
     "compare_runs",
@@ -415,6 +424,108 @@ class TwoRunComparison(ContractModel):
         return tuple(one.path for one in self.differences if one.cause is None)
 
 
+class CheckpointPayloadReading(ContractModel):
+    """What the two checkpoint payloads are, read from the store rather than the record.
+
+    **This exists because the record cannot say it and the comparison therefore cannot
+    either.** ``result.checkpoints[].checksum`` is a SHA-256 over the names and sizes a
+    listing returned, so two runs holding different weights record one value in it and the
+    comparison prints no ``checksum`` row at all. A reader takes that silence for agreement.
+    These fields are the store speaking about the bytes, and they say the opposite.
+
+    The checksums are S3's own, read with ``--checksum-mode ENABLED`` on a HEAD, so nothing
+    here is a claim this repository computed and nothing had to be downloaded to make it. A
+    HEAD is also what makes the reading cheap enough to take every time the record is
+    captured, which is what keeps it from going stale beside a comparison that was
+    recomputed.
+
+    ``differing_bytes`` and ``first_differing_offset`` are the one part a HEAD cannot
+    produce, so they are optional and carry ``measured_by`` saying what did produce them.
+    Absent is honest. A zero would read as two identical payloads, which is the reading this
+    whole class exists to refuse.
+    """
+
+    #: Both payloads, by size. Two fields rather than one, because ``torch.save`` writes a
+    #: length fixed by shapes and dtypes, so a difference here is a truncated checkpoint and
+    #: is a finding. Recording one number would state the conclusion instead of the reading.
+    left_size_bytes: int = Field(ge=0)
+    right_size_bytes: int = Field(ge=0)
+    #: The CRC32C S3 attests for each payload, base64 as the API returns it.
+    left_crc32c: SecretFreeStr = Field(min_length=1, max_length=64)
+    right_crc32c: SecretFreeStr = Field(min_length=1, max_length=64)
+    differing_bytes: int | None = Field(default=None, ge=0)
+    first_differing_offset: int | None = Field(default=None, ge=0)
+    measured_by: SecretFreeStr | None = Field(default=None, min_length=1, max_length=512)
+
+    @property
+    def payloads_agree(self) -> bool:
+        return self.left_crc32c == self.right_crc32c
+
+
+class TwoRunEvidence(RecordedEventModel):
+    """One comparison of two runs, committed so it can be re-checked without the account.
+
+    A ``TwoRunComparison`` on its own is a table of differences and nothing else. Committed
+    as evidence it needs three things that table does not carry, and each of them is a way
+    the artifact would otherwise mislead the person who finds it.
+
+    **Where it came from.** ``observed_at``, ``source``, ``environment`` and
+    ``lineage_bucket``, which is what every other record under ``fixtures/evidence/`` says
+    about itself. This is a :class:`~edullm_platform.evidence.RecordedEventModel` and not a
+    :class:`~edullm_platform.evidence.FreshEvidenceModel`: two runs happened, and no amount
+    of elapsed time makes them stop having happened. A freshness window here would turn a
+    settled result red thirty days on for a reason unrelated to any change.
+
+    **What was equal, and not only what differed.** ``agreed`` holds every name in
+    :data:`REQUIRED_FIELDS` that both records carry, with the value they share. A document
+    listing only differences cannot be told apart from a document produced by a comparison
+    that looked at almost nothing, and the manifest digest, the approval class and the exit
+    code are the fields the claim actually rests on. They are absent from the table for the
+    good reason that they matched.
+
+    **What the pair does not establish.** ``does_not_establish`` is required to hold at
+    least one line, which is deliberate. The word a reader brings to this file is
+    "reproducible", and it is wider than what two agreeing records support: the payloads
+    these two runs wrote differ in most of their bytes, which is ordinary on a GPU and is
+    recorded in ``checkpoint_payloads`` rather than left to be discovered. An artifact that
+    could be written with nothing in this field would be an artifact whose caveats live in a
+    plan nobody opens.
+    """
+
+    schema_version: Literal[1]
+    source: Literal["aws"]
+    environment: EvidenceEnvironment
+    lineage_bucket: SecretFreeStr = Field(min_length=1, max_length=256)
+    #: The digest both runs' manifests hashed to, which is what makes them two dispatches of
+    #: one submission rather than two submissions that resemble each other.
+    manifest_sha256: DigestBearingStr = Field(min_length=1, max_length=128)
+    establishes: SecretFreeStr = Field(min_length=1, max_length=2048)
+    does_not_establish: Annotated[
+        tuple[SecretFreeStr, ...], BeforeValidator(require_ordered_sequence)
+    ] = Field(min_length=1, strict=False)
+    checkpoint_payloads: CheckpointPayloadReading | None = None
+    agreed: Annotated[tuple[RecordField, ...], BeforeValidator(require_ordered_sequence)] = Field(
+        min_length=1, strict=False
+    )
+    comparison: TwoRunComparison
+
+    @model_validator(mode="after")
+    def validate_the_manifest_digest_is_the_one_both_records_carry(self) -> Self:
+        """A header fact that disagrees with the records under it is worse than no header.
+
+        ``manifest_sha256`` is quoted at the top because it is the sentence's subject, and a
+        quoted value nothing checks is a value somebody will eventually edit by hand. Both
+        records carry it, the comparison found them equal, so this is asking the document
+        whether it agrees with itself.
+        """
+        recorded = {field.value for field in self.agreed if field.path.endswith("manifest_sha256")}
+        if not recorded:
+            raise ValueError("no agreed field names a manifest digest")
+        if recorded != {json.dumps(self.manifest_sha256)}:
+            raise ValueError("manifest_sha256 is not the digest the compared records carry")
+        return self
+
+
 def flatten(document: object, prefix: str) -> tuple[RecordField, ...]:
     """One leaf per entry, by dotted path, with the value JSON-encoded."""
     leaves: list[RecordField] = []
@@ -489,6 +600,31 @@ def cause_for(path: str) -> VarianceCause | None:
 
 def unexplained(differences: Sequence[FieldDifference]) -> tuple[str, ...]:
     return tuple(one.path for one in differences if cause_for(one.path) is None)
+
+
+def agreed_required_fields(left: RecordedRun, right: RecordedRun) -> tuple[RecordField, ...]:
+    """Every required name both records carry with one value, and what that value is.
+
+    The inverse of :func:`compare_runs`, and it is here so that a committed comparison can
+    say what matched rather than only what did not. A table of thirteen differences reads
+    the same whether the comparison examined two hundred leaves or four, and the fields the
+    done-condition actually rests on -- the manifest digest, the approval class, the exit
+    code -- are absent from it precisely because they held.
+
+    :data:`REQUIRED_FIELDS` and not the families. A family's members are gathered from the
+    data, and ``intent.manifest.command[*]`` is one of them: on this platform's own
+    synthetic workload that is five thousand characters of Python per element, which would
+    make the artifact mostly a copy of a program nobody reads it for. The named set is
+    bounded, is the set :func:`required_field_coverage` reports against, and is the one a
+    reader can check the record against by eye.
+    """
+    left_fields = left.field_map()
+    right_fields = right.field_map()
+    return tuple(
+        RecordField(path=path, value=left_fields[path])
+        for path in REQUIRED_FIELDS
+        if path in left_fields and left_fields[path] == right_fields.get(path)
+    )
 
 
 def _unparsed_directories(run: RecordedRun) -> tuple[str, ...]:

@@ -948,6 +948,13 @@
     {
       "base": false,
       "module": "edullm_platform.run_comparison",
+      "name": "CheckpointPayloadReading",
+      "schema_version": "unversioned",
+      "structural_digest": "sha256:37646cf7e981e57fb5185e580733231145830ec5141133bd09ff62ffc93727a8"
+    },
+    {
+      "base": false,
+      "module": "edullm_platform.run_comparison",
       "name": "ComparedField",
       "schema_version": "unversioned",
       "structural_digest": "sha256:25693216d0652deffbf2bf769ad65433205dc1d93170d61d77c86878efb0dda9"
@@ -972,6 +979,13 @@
       "name": "TwoRunComparison",
       "schema_version": "1",
       "structural_digest": "sha256:5446c3db520e70321ee0b2cb3b80c9afa9d335791632c5e6a1a0d9146c089869"
+    },
+    {
+      "base": false,
+      "module": "edullm_platform.run_comparison",
+      "name": "TwoRunEvidence",
+      "schema_version": "1",
+      "structural_digest": "sha256:6b94c1fb7264a2953131b94e565ad61b7ad925e8f1726816f8238ebb492646d0"
     },
     {
       "base": false,
