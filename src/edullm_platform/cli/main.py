@@ -44,6 +44,8 @@ from difflib import get_close_matches
 from pathlib import Path
 from typing import Final, TextIO
 
+from pydantic import ValidationError
+
 from edullm_platform.cli.actions import (
     CANCEL_WORKFLOW,
     PLATFORM_REPOSITORY,
@@ -66,6 +68,7 @@ from edullm_platform.cli.preflight import (
     Preflight,
     Refusal,
     SubmissionRequest,
+    first_validation_message,
     resolve_team,
     run_preflight,
     working_tree_refusals,
@@ -83,7 +86,7 @@ from edullm_platform.cli.release import (
     probe_failed_said,
     staleness_said,
 )
-from edullm_platform.cli.scaffold import scaffold_spec
+from edullm_platform.cli.scaffold import scaffold_spec, workloads_registered_for
 from edullm_platform.cli.spec import SPEC_PATH, RunSpec, SpecUnreadableError, find_spec, load_spec
 from edullm_platform.cli.workspace import (
     CommandRunner,
@@ -435,6 +438,27 @@ def main(
         # and the workflow makes the same separation in its own exit codes.
         print(str(exc), file=stderr)
         return EXIT_UNUSABLE
+    except ValidationError as exc:
+        # THE NET UNDER EVERY CONTRACT MODEL THIS BINARY BUILDS, AND IT IS A NET RATHER THAN
+        # A DESIGN. Five constructors sit on the ``check`` path -- ``RunSpec`` in the
+        # scaffold, ``RunManifest``, ``FanOut``, ``CostInputs`` and ``RequestFacts`` -- and
+        # each of them is a rule this CLI is right to be held to. What must never happen is
+        # that being held to one reaches a terminal as a traceback: a researcher who meets
+        # one on their first command learns that the tool is broken, which is a more
+        # expensive thing to believe than any single defect.
+        #
+        # So the named cases are refused by name where they arise, and anything that gets
+        # past them lands here as EXIT_UNUSABLE -- the exit code for a submission nobody
+        # could judge, which is exactly what this is. It says whose fault it is, because a
+        # message that reads as a refusal sends somebody to edit a spec that was fine.
+        print(
+            "edullm assembled something this platform's own contracts refuse, which is a "
+            f"defect in edullm rather than in what you typed: {first_validation_message(exc)}. "
+            "Nothing was dispatched and nothing was written. Please report it with the "
+            f"command you ran, on {PLATFORM_REPOSITORY}.",
+            file=stderr,
+        )
+        return EXIT_UNUSABLE
     raise AssertionError(f"unreachable verb {verb!r}")
 
 
@@ -454,13 +478,68 @@ def _check(
     configuration = _configuration(arguments)
     facts = read_git_facts(runner, cwd=cwd)
     submitter = github_login(runner, allow_network=False)
-    spec, scaffolded = _spec_for_checking(arguments, configuration, facts, cwd=cwd)
+    spec, scaffolded, unscaffoldable = _spec_for_checking(
+        arguments, configuration, facts, cwd=cwd
+    )
     if scaffolded is not None:
-        print(f"wrote {scaffolded}", file=out)
+        # READ THE TREE AGAIN, BECAUSE THIS INVOCATION JUST CHANGED IT.
+        #
+        # The facts above were read before the scaffold was written, so on the one run that
+        # writes a file they describe a tree that no longer exists -- and the file is
+        # uncommitted, so the very next `check` refuses with `uncommitted_changes` naming
+        # it. That refusal is correct. What was wrong is the first run, which said "no
+        # refusals" about a working tree it had just made dirty, so the two runs told
+        # different stories about the same repository thirty seconds apart and neither
+        # reader could tell which one to believe.
+        #
+        # Re-reading rather than adjusting the facts in place, because the same function
+        # answering twice cannot disagree with itself the way a patched copy could. It
+        # costs five git calls on the one invocation in a repository's life that writes a
+        # spec, and nothing on any other.
+        facts = read_git_facts(runner, cwd=cwd)
+        print(_scaffolded_said(scaffolded, facts), file=out)
         print(file=out)
-    preflight = _preflight(arguments, configuration, facts, spec, submitter)
+    preflight = _preflight(
+        arguments, configuration, facts, spec, submitter, unscaffoldable=unscaffoldable
+    )
     print(render_preflight(preflight, policy=configuration.policy), end="", file=out)
     return EXIT_REFUSED if preflight.refused else EXIT_OK
+
+
+def _scaffolded_said(written: Path, facts: GitFacts) -> str:
+    """Where the file went, and that it is the change the refusal below is about.
+
+    The connection is not obvious from the two lines on their own. ``git status`` collapses
+    a wholly untracked directory to a single entry, so a scaffold into a repository with no
+    ``.edullm/`` is reported as ``.edullm/`` while this line names ``.edullm/run.yaml`` --
+    and a reader who does not join them up reads the refusal as being about something else
+    they have forgotten to commit.
+    """
+    if not _named_by_the_dirty_tree(facts, written):
+        return f"wrote {written}"
+    return "\n".join(
+        [
+            f"wrote {written}",
+            *_wrapped(
+                "It is not in any commit yet, which is what the uncommitted_changes "
+                "refusal below is naming. Commit it and check clears that one."
+            ),
+        ]
+    )
+
+
+def _named_by_the_dirty_tree(facts: GitFacts, written: Path) -> bool:
+    """Whether ``uncommitted_changes`` is about to name the file that was just written."""
+    if facts.root is None:
+        return False
+    try:
+        relative = written.relative_to(facts.root).as_posix()
+    except ValueError:
+        return False
+    return any(
+        relative == entry or relative.startswith(entry if entry.endswith("/") else f"{entry}/")
+        for entry in facts.dirty_paths
+    )
 
 
 def _spec_for_checking(
@@ -469,30 +548,90 @@ def _spec_for_checking(
     facts: GitFacts,
     *,
     cwd: Path,
-) -> tuple[RunSpec | None, Path | None]:
+) -> tuple[RunSpec | None, Path | None, Refusal | None]:
     """``check`` absorbing ``new``: a repository with no spec gets one, then gets checked.
 
     Written rather than offered, because the alternative is a prompt and a prompt is what
     stops an agent driving this. What makes writing safe is that everything in the file is
     either read from the catalog or is the reviewed default the form itself carries, and
     the check that follows immediately says which of them will not do.
+
+    The third answer is the one that was missing. Where nothing can be written, that is a
+    fact about where somebody is standing and it is theirs to hear -- not a constructor's
+    to raise. ``arguments.workload or None`` and ``arguments.compute or None`` are the same
+    point one layer down: ``--workload ""`` is an empty flag rather than a profile named
+    "", and everywhere else in this file an empty override already reads as absent.
     """
     declared = arguments.spec if getattr(arguments, "spec", None) else None
     if declared is not None:
-        return load_spec(declared), None
+        return load_spec(declared), None, None
     found = find_spec(cwd)
     if found is not None:
-        return load_spec(found), None
+        return load_spec(found), None, None
     if facts.root is None or facts.repository is None:
-        return None, None
+        return None, None, None
+    unscaffoldable = _nothing_to_scaffold(arguments, configuration, repository=facts.repository)
+    if unscaffoldable is not None:
+        return None, None, unscaffoldable
     written = scaffold_spec(
         configuration,
         repository=facts.repository,
         root=facts.root,
-        workload_profile=arguments.workload,
-        compute_profile=arguments.compute,
+        workload_profile=arguments.workload or None,
+        compute_profile=arguments.compute or None,
     )
-    return load_spec(written), written
+    return load_spec(written), written, None
+
+
+def _nothing_to_scaffold(
+    arguments: argparse.Namespace, configuration: ReviewedConfiguration, *, repository: str
+) -> Refusal | None:
+    """Why no first spec can be written here, in the order the compile job asks it.
+
+    **THE REGISTRY IS ASKED BEFORE THE CATALOG, WHICH IS ``run_preflight``'S ORDER AND
+    ``compile_submission``'S BEFORE IT.** Both say why in their own words: a refusal naming
+    a workload profile when the real problem is an unregistered repository points at a
+    field that was never what stood in the way. It also decides the more visible thing --
+    an unregistered repository gets no file written into it, where before this it got one
+    whenever the catalog happened to name a workload for it, which ``dolma`` does.
+
+    **AND IT IS ASKED HERE RATHER THAN AFTER THE WRITE, BECAUSE THE ALTERNATIVE IS A
+    TRACEBACK.** ``scaffold_spec`` picks the empty string for a workload it cannot infer,
+    ``RunSpec`` refuses that on ``min_length=1``, and the ``ValidationError`` came out of
+    ``main`` unhandled -- so the first command anybody typed in an unregistered checkout,
+    which is the likeliest place to try one, answered with a stack trace ending in "String
+    should have at least 1 character".
+    """
+    if not configuration.repositories.is_registered(repository):
+        registered = ", ".join(
+            sorted(entry.repository for entry in configuration.repositories.repositories)
+        )
+        return Refusal(
+            code="unregistered_repository",
+            detail=(
+                f"{repository!r} is not a repository config/repositories.yaml carries, so "
+                f"there is nothing here to submit and no {SPEC_PATH} was written. A "
+                "registration is what gives a repository somewhere to publish an image "
+                "from and a workload profile a submission can name. It is not a change to "
+                "make yourself: it lands across the registry, the workload catalog, the "
+                "submission form, an ECR stack and an IAM role no workflow may deploy. Ask "
+                f"for it by opening an issue on {PLATFORM_REPOSITORY} -- edullm add is the "
+                "verb that will one day do this and is not built yet. Registered today: "
+                f"{registered}."
+            ),
+        )
+    if arguments.workload or workloads_registered_for(configuration, repository):
+        return None
+    return Refusal(
+        code="no_workload_profile_registered",
+        detail=(
+            f"{repository!r} is registered and config/workload-catalog.yaml names no workload "
+            f"profile for it, so a first {SPEC_PATH} would have nothing to point at. A "
+            "workload profile fixes the runtime bound, the attempt bound and the checkpoint "
+            "contract for one codebase, so adding one is a pull request against the "
+            "platform -- and until there is one, no run can name this repository at all."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------------------
@@ -882,6 +1021,8 @@ def _preflight(
     facts: GitFacts,
     spec: RunSpec | None,
     submitter: str | None,
+    *,
+    unscaffoldable: Refusal | None = None,
 ) -> Preflight:
     """Merge the spec, the flags and the working tree, then run every local check.
 
@@ -889,9 +1030,16 @@ def _preflight(
     is the direction ``system-overview.md`` sets for the machine -- a suggestion in version
     control, a decision at submit time -- and applying the same rule to the workload keeps
     a submitter from having to edit a committed file to try a different profile once.
+
+    ``unscaffoldable`` replaces the generic refusal rather than joining it. Both answer the
+    same question and the specific one answers it better, and a reader handed two refusals
+    that are one problem under two spellings goes looking for the second problem -- which
+    is the argument ``run_preflight`` already makes about the conditions it deduplicates.
     """
     refusals: list[Refusal] = working_tree_refusals(facts)
-    if spec is None:
+    if unscaffoldable is not None:
+        refusals.append(unscaffoldable)
+    elif spec is None:
         refusals.append(
             Refusal(
                 code="no_run_spec",

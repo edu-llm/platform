@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from edullm_platform.cli.main import EXIT_OK, EXIT_REFUSED, EXIT_UNUSABLE
+from edullm_platform.cli.preflight import Preflight
 from tests.cli_support import (
     SUBMITTER_ON_TWO_TEAMS,
     SUBMITTER_TEAM,
@@ -524,6 +525,112 @@ def test_a_word_that_is_nobody_s_verb_gets_the_list_and_the_nearest_spelling(
     assert "Did you mean status?" in err
     assert "check" in err and "cancel" in err
     assert runner.calls == []
+
+
+def test_a_team_that_is_not_a_name_this_platform_can_group_on_is_refused_not_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The gap between two contracts, met by somebody capitalising a team name.
+
+    Mutation: build the classification facts outside a guard. ``RunManifest.team`` accepts
+    any non-empty string and ``RequestFacts.claimed_team`` is a slug, so ``--team "Pre
+    Training"`` produced a valid manifest and then a pydantic traceback one line later --
+    on a mistake that costs a shift key. Both contracts are right; what was wrong was that
+    being held to one of them printed a stack trace.
+
+    The refusal that names the declared teams comes first and is the one to act on. The
+    second says the classification could not be derived, which is the honest consequence
+    rather than a second opinion about the team.
+    """
+    root, runner = checkout(tmp_path)
+
+    code, out, err = invoke(
+        [
+            "check",
+            "--dataset",
+            "regmix-10b-v1",
+            "--experiment",
+            "an-experiment",
+            "--team",
+            "Pre Training",
+        ],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_REFUSED
+    assert "refused  unregistered_team" in out
+    assert "refused  submission_cannot_be_priced" in out
+    assert "claimed_team" in out
+    assert err == ""
+
+
+def test_a_runtime_bound_no_arithmetic_can_carry_is_refused_rather_than_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other side of the same guard, and the reason it is a guard rather than a branch.
+
+    Mutation: refuse an upper bound on ``--hours`` here instead. There is no ceiling this
+    package may write down -- ``test_cli_no_hardcoded_bounds.py`` is the rule -- and there
+    does not need to be one: ``CostInputs`` already refuses a worst case it cannot
+    represent, and the only thing missing was somewhere for that refusal to be read.
+    """
+    root, runner = checkout(tmp_path)
+
+    code, out, err = invoke(
+        ["check", "--dataset", "regmix-10b-v1", "--experiment", "an-experiment", "--hours", "1e400"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_REFUSED
+    assert "refused  submission_cannot_be_priced" in out
+    assert err == ""
+
+
+def test_a_contract_this_binary_breaks_anyway_is_reported_as_a_defect_not_a_traceback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The net under the five contract models on this path, tested as a net.
+
+    Mutation: remove the handler and rely on having found every site. Three were found by
+    looking, all three on the first two minutes of a first user's day, and the argument for
+    a net is that the fourth is found by somebody standing at a terminal. A pydantic
+    traceback teaches a reader that the tool is broken, which is a more expensive belief
+    than whichever defect produced it.
+
+    Exit 2 rather than 1, and the message says whose fault it is: this is a submission
+    nobody could judge rather than one that was declined, and a message that read as a
+    refusal would send somebody to edit a spec that was fine.
+    """
+    from pydantic import BaseModel, Field
+
+    from edullm_platform.cli import main as cli
+
+    class Contract(BaseModel):
+        name: str = Field(min_length=1)
+
+    def refuse_everything(*_: object, **__: object) -> Preflight:
+        return Contract(name="").model_copy()  # type: ignore[return-value]
+
+    monkeypatch.setattr(cli, "run_preflight", refuse_everything)
+    root, runner = checkout(tmp_path)
+
+    code, out, err = invoke(
+        ["check", "--dataset", "regmix-10b-v1", "--experiment", "an-experiment"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_UNUSABLE
+    assert "defect in edullm rather than in what you typed" in err
+    assert "name: String should have at least 1 character" in err
+    assert "edu-llm/platform" in err
+    assert "Traceback" not in err
+    assert out == ""
 
 
 def test_nothing_this_verb_does_reaches_the_network(
