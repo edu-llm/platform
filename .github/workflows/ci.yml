@@ -30,7 +30,15 @@ jobs:
         # 3.12 is the declared floor in pyproject.toml; 3.13 is what maintainers run.
         python-version: ["3.12", "3.13"]
     steps:
+      # Two commits rather than the shallow default, for the last step in this job. On a
+      # pull request actions/checkout leaves the merge commit at HEAD, so depth 2 brings
+      # its two parents with it and HEAD^1 is the base branch -- which makes the diff
+      # against it the change under review and nothing else. Two commits, not the whole
+      # history: this runs twice per pull request and the cost is the point of not
+      # reaching for fetch-depth: 0.
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
 
       - name: Install uv
         uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
@@ -65,3 +73,82 @@ jobs:
         run: |
           uv run --frozen python tools/export_schemas.py
           git diff --exit-code schemas
+
+      # THE HALF OF release-tag.yml THAT HAS TO HAPPEN BEFORE A MERGE, NOT AFTER IT.
+      #
+      # That workflow tags whatever `project.version` declares and cannot bump it, because
+      # the bump is a commit and only a pull request may put a commit on main -- it spent
+      # five merges failing to push one past branch protection. So the version a change
+      # will be released as has to be declared by the pull request making the change, and
+      # this is what makes that true without depending on anybody remembering it.
+      #
+      # The file the workflow's header rejected this idea in was arguing against a check
+      # that "is forgotten in exactly the hotfix where the config change is most urgent".
+      # It was arguing against discipline. This is a required check inside a required job,
+      # so it is not forgotten; it is passed, or it is deliberately bypassed by an
+      # administrator -- and release-tag.yml goes red on the merge when it is, which is the
+      # second half of the same guard.
+      #
+      # LAST IN THE JOB ON PURPOSE. Failing it means adding one line to the pull request,
+      # and somebody who has to do that would rather learn it alongside the test results
+      # than instead of them.
+      #
+      # IT FAILS OPEN ON ITS OWN MALFUNCTION, which is the right way round for this
+      # particular check. A pull request whose base it cannot identify is not evidence of
+      # anything, and blocking every merge in the repository on a step that has decided it
+      # is confused costs more than the thing it is protecting -- which release-tag.yml
+      # catches anyway, loudly, one merge later.
+      - name: A change a release must carry declares a version no release has
+        if: github.event_name == 'pull_request'
+        env:
+          # The same three paths release-tag.yml triggers on, as git pathspecs rather than
+          # as Actions globs. Restated rather than shared because Actions has no way to
+          # share them, and held to the workflow's list by
+          # tests/test_release_tag_workflow.py -- a second copy nothing compares is how the
+          # two lists drift until a config change merges with no release behind it.
+          RELEASE_PATHS: "src/edullm_platform config pyproject.toml"
+        run: |
+          set -euo pipefail
+          if ! git rev-parse --verify --quiet HEAD^1 >/dev/null; then
+            echo "no base commit to compare against, so nothing here can tell whether this"
+            echo "change is one a release has to carry. Skipping; release-tag.yml checks the"
+            echo "same thing on the merge."
+            exit 0
+          fi
+          # Split deliberately: RELEASE_PATHS is a list of three, none of which contains a
+          # space or a glob character. Quoted, it would ask git for one path with two
+          # spaces in its name, which matches nothing and passes everything.
+          set -- ${RELEASE_PATHS}
+          touched="$(git diff --name-only HEAD^1 HEAD -- "$@")"
+          if [ -z "${touched}" ]; then
+            echo "This change touches nothing an installed edullm would answer differently"
+            echo "about, so it needs no version of its own."
+            exit 0
+          fi
+          version="$(python3 tools/next_version.py)"
+          if ! git ls-remote --exit-code --tags origin "refs/tags/v${version}" >/dev/null 2>&1; then
+            echo "This change will be released as v${version} when it merges."
+            exit 0
+          fi
+          {
+            echo "::error::pyproject.toml declares ${version}, which is already released as v${version}. Run 'uv run python tools/next_version.py --bump' and commit the result."
+            echo
+            echo "This change touches:"
+            echo "${touched}" | sed 's/^/  /'
+            echo
+            echo "Those are the paths a release has to carry -- the code that decides a"
+            echo "refusal and the configuration that decides it -- so an installed edullm"
+            echo "answers differently once this merges. But pyproject.toml still declares"
+            echo "${version}, and v${version} is already released."
+            echo
+            echo "Nothing after the merge can fix that. release-tag.yml tags what"
+            echo "pyproject.toml declares and cannot bump it: the bump is a commit, and"
+            echo "branch protection means only a pull request may put one on main. This"
+            echo "pull request is the pull request."
+            echo
+            echo "  uv run python tools/next_version.py --bump"
+            echo
+            echo "That moves pyproject.toml, uv.lock and the pinned install line together."
+            echo "Commit all three."
+          } >&2
+          exit 1

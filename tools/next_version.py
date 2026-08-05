@@ -9,23 +9,30 @@ and ``tests/test_next_version.py`` is where the cases live.
 **AND IT MOVES ``uv.lock`` IN THE SAME BREATH, WHICH IS NOT A TIDINESS.** The lock records
 the root distribution's own version, ``uv sync --locked`` fails when that disagrees with
 ``pyproject.toml``, and that command is the first step of every CI job here. A bump that
-wrote only ``pyproject.toml`` would be pushed straight to ``main`` by ``release-tag.yml``
-with no pull request in front of it, and the next person to open one would find a red
-build they did not cause and cannot fix from their branch. So the two files move together
-or neither does.
+wrote only ``pyproject.toml`` would go red on the first line CI runs, which is the state
+this repository was already in once when ``project.version`` first moved off ``0.1.0``. So
+the two files move together or neither does.
 
 The lock is edited by anchored substitution rather than by running ``uv lock``, for one
-reason beyond keeping this stdlib-only: a resolver on a release runner would have to reach
-every dependency including the git ones, and a release is not the moment to discover that
-an unrelated upstream moved. ``uv lock`` writes exactly the line this writes -- verified by
-running it -- and this cannot write anything else.
+reason beyond keeping this stdlib-only: a resolver would have to reach every dependency
+including the git ones, and finding out that an unrelated upstream moved is not what
+somebody bumping a version asked for. ``uv lock`` writes exactly the line this writes --
+verified by running it -- and this cannot write anything else.
+
+**WHO RUNS THIS, AND WHY IT IS NOT A WORKFLOW ANY MORE.** ``release-tag.yml`` used to call
+this on every qualifying merge and push the result straight to ``main``. It could not:
+branch protection refuses a push to ``main``, in as many words, and five merges in a row
+failed on that line while ``releases/latest`` went on naming a tag from before all of them.
+The version is a literal in a file, so only a commit can move it and only a pull request
+can put a commit on ``main`` -- which makes this a command a person runs on a branch, and
+the bump something a reviewer sees. ``ci.yml`` fails a pull request that changes what an
+installed CLI answers while leaving ``project.version`` at a version already released, so
+running this is not something anybody has to remember.
 
 The patch component and only the patch component. A minor or major bump is a statement
-about what changed and nobody should be able to make it by merging; the workflow that
-calls this cuts a release per merge touching the CLI or the configuration, which is a
-volume no human judgement can keep up with. Where somebody does want to say more than
-"another one", they edit ``project.version`` in the pull request and the workflow tags what
-they wrote rather than bumping past it.
+about what changed, and the pull request making the change is where somebody is already
+deciding how much it changes; where they want to say more than "another one", they edit
+``project.version`` by hand and ``release-tag.yml`` tags what they wrote.
 
 Deliberately stdlib only, and deliberately not a TOML *writer*. ``tomllib`` reads and
 cannot write; every writer reformats the file, and this file is nine tenths comment. So the
@@ -43,6 +50,7 @@ from pathlib import Path
 
 __all__ = [
     "VERSION_PATTERN",
+    "build_parser",
     "lock_version_pattern",
     "next_patch_version",
     "read_lock_version",
@@ -140,8 +148,9 @@ def rewrite_pinned_tag(text: str, *, was: str, now: str) -> str:
     ``pyproject.toml`` carries the install line pinned to the declared version, and
     ``tests/test_cli_install_command.py`` asserts the two agree -- deliberately, because the
     line being wrong and unread for the whole life of the project is what that file exists
-    about. A bump that moved the declaration and left the pin would fail that test on
-    ``main``, with no pull request in front of it and nobody's change to blame.
+    about. A bump that moved the declaration and left the pin would leave the pull request
+    making it red on a test about a line nobody edited, which is a confusing half hour;
+    moving both here is what keeps the bump a one-command change.
 
     Substituting the pin rather than regenerating the line, because regenerating it means
     knowing how it is spelled, and there is exactly one place that knows: this runs from a
@@ -179,7 +188,17 @@ def rewrite_version(text: str, version: str) -> str:
     return VERSION_PATTERN.sub(f'version = "{version}"', text, count=1)
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """Named this because ``tests/test_workflow_tool_arguments.py`` looks for the name.
+
+    That module builds the parser of every tool a workflow runs and checks the flags the
+    workflow passes against it, and it finds the parser by calling ``build_parser``. Built
+    inside ``main`` this parser was invisible to it, and the invocation that has been in
+    ``release-tag.yml`` since it was written went unchecked for the same reason -- it was
+    spelled ``python3``, which that module's pattern does not match either. Both are the
+    kind of gap whose first symptom is a workflow failing at argparse in a job that has
+    already done something.
+    """
     parser = argparse.ArgumentParser(
         description="Print project.version, or bump its patch component and print the new one."
     )
@@ -195,7 +214,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="write the next patch version back to the file before printing it",
     )
-    arguments = parser.parse_args(argv)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    arguments = build_parser().parse_args(argv)
     lock_path = (
         arguments.lock if arguments.lock is not None else arguments.pyproject.parent / "uv.lock"
     )

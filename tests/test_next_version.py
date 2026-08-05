@@ -142,10 +142,20 @@ def test_a_lock_that_does_not_name_the_root_package_is_refused() -> None:
         )
 
 
-def test_reading_and_bumping_are_the_two_things_the_workflow_asks_for(
+def test_the_read_a_workflow_makes_and_the_bump_a_person_makes(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The exact two invocations in ``release-tag.yml``, including that a read writes nothing."""
+    """The two invocations, and they are made by different things now.
+
+    ``release-tag.yml`` runs the read and nothing else: it tags what ``pyproject.toml``
+    declares and has no way to write it, because writing it means a commit on ``main`` and
+    branch protection allows those only through a pull request. The bump is the other
+    invocation, run by whoever opens that pull request.
+
+    That a read writes nothing is the load-bearing half here. A read with a side effect
+    would have the tagging workflow modifying its own checkout on every merge, and the
+    next thing it does is decide whether a tag matching that version already exists.
+    """
     pyproject = tmp_path / "pyproject.toml"
     pyproject.write_text('[project]\nname = "x"\nversion = "0.2.0"\n', encoding="utf-8")
     lock = tmp_path / "uv.lock"
@@ -167,16 +177,18 @@ def test_a_bump_of_the_real_files_leaves_a_tree_the_rest_of_the_suite_accepts(
 ) -> None:
     """THE WHOLE POINT, AND THE ONLY TEST THAT EXERCISES A BUMP ON THE ACTUAL FILES.
 
-    ``release-tag.yml`` runs this bump and pushes the result to ``main`` directly. There is
-    no pull request, so nothing runs CI on that commit before it lands and the first person
-    to find out is whoever opens the next one and gets a red build they cannot explain.
-
-    Two invariants elsewhere in the suite are coupled to ``project.version`` and both used
-    to break on a bump: ``uv.lock`` records the root version and ``uv sync --locked`` --
-    the first line of every CI job -- refuses a disagreement, and
-    ``tests/test_cli_install_command.py`` holds ``pyproject.toml``'s pinned install line to
-    the declared version. Asserted here against copies of the real files, because the
+    Three files move on a bump and two of them are files nobody editing a version thinks
+    about. ``uv.lock`` records the root version and ``uv sync --locked`` -- the first line
+    of every CI job -- refuses a disagreement; ``tests/test_cli_install_command.py`` holds
+    ``pyproject.toml``'s pinned install line to the declared version. Both used to break on
+    a bump, and both are asserted here against copies of the real files, because the
     minimal fixtures above would keep passing if either coupling were reintroduced.
+
+    A bump now lands in an ordinary pull request, so a tree this leaves half-written is
+    caught by the same four gates as anything else rather than after the fact. That is the
+    argument for this test being cheap rather than for it being unnecessary: what it
+    protects is the one-command promise the failure message in ``ci.yml`` makes, and a
+    command that needs a follow-up nobody mentioned is a command people stop trusting.
     """
     from edullm_platform.cli.actions import PLATFORM_REPOSITORY
     from edullm_platform.cli.release import install_command
