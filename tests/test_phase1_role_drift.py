@@ -296,6 +296,17 @@ def test_the_deployer_projection_keeps_the_narrowed_wildcards_it_was_given(
         role_arn % "sbsandbox-intern-edullm-batch-gpu-execution",
         role_arn % "sbsandbox-intern-edullm-batch-gpu-workload",
         role_arn % "sbsandbox-intern-edullm-batch-gpu-instance",
+        # The expiry janitor, which is two more whole role ARNs and one new wildcard in a
+        # service nothing here reached before. The schedule role is the interesting half: an
+        # AWS::Events::Rule targeting a Lambda would have needed lambda:AddPermission, which
+        # this role withholds, so the schedule assumes a role it is passed instead --
+        # infra/batch-events.yaml's rule for the same fork, a capability added rather than a
+        # restriction removed. The scheduler scope stops at the default schedule group,
+        # because a group is a container the caller picks and a grant across every group
+        # would let a schedule be created somewhere nothing looks for it.
+        role_arn % "sbsandbox-intern-edullm-janitor-lambda",
+        role_arn % "sbsandbox-intern-edullm-janitor-schedule",
+        template_arn % ("scheduler", "schedule/default/sbsandbox-intern-edullm-*"),
         # The second exception, and the same cause in another service: an event source
         # mapping is addressed by a UUID Lambda assigns at creation, so the mapping's tag
         # read cannot be scoped by name either. It is the only action granted on it and it

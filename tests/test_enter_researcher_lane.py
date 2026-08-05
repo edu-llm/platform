@@ -14,6 +14,11 @@ import pytest
 from tests.infrastructure_support import INFRA_ROOT
 from tools.enter_researcher_lane import build_parser, expires_at, source_identity_from
 
+#: AWS's own documentation account, which is what every other test module here spells a
+#: fake account id as. tests/test_evidence.py refuses any other twelve-digit run in a
+#: tracked file, because a real one committed once is committed for ever.
+ACCOUNT_ID = "123456789012"
+
 
 def test_the_source_identity_is_the_person_behind_the_broker_session() -> None:
     """Mutation: pass the whole ARN through.
@@ -23,7 +28,7 @@ def test_the_source_identity_is_the_person_behind_the_broker_session() -> None:
     broker session name is the only place a person's name appears in the caller identity.
     """
     arn = (
-        "arn:aws:sts::000000000000:assumed-role/Intern-frank.gonzalez-sbsandbox/"
+        f"arn:aws:sts::{ACCOUNT_ID}:assumed-role/Intern-frank.gonzalez-sbsandbox/"
         "broker-frank.gonzalez-1785873426"
     )
 
@@ -37,7 +42,7 @@ def test_a_session_name_with_no_broker_prefix_still_yields_something_usable() ->
     name the caller chose, and a helper that returned an empty string there would fail the
     trust policy's "?*" presence test with a message about a tag.
     """
-    arn = "arn:aws:sts::000000000000:assumed-role/Intern-amy.lin-sbsandbox/console-session"
+    arn = f"arn:aws:sts::{ACCOUNT_ID}:assumed-role/Intern-amy.lin-sbsandbox/console-session"
 
     assert source_identity_from(arn) == "console-session"
 
@@ -58,7 +63,7 @@ def test_the_source_identity_agrees_with_the_prefix_the_working_tier_deny_fences
     """
     template = (INFRA_ROOT / "iam" / "researcher-role.yaml").read_text(encoding="utf-8")
     arn = (
-        "arn:aws:sts::000000000000:assumed-role/Intern-frank.gonzalez-sbsandbox/"
+        f"arn:aws:sts::{ACCOUNT_ID}:assumed-role/Intern-frank.gonzalez-sbsandbox/"
         "broker-frank.gonzalez-1785873426"
     )
 

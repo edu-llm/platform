@@ -1,0 +1,115 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: The scheduled sweep that warns a lane machine before its expiry and stops it after.
+
+# WHY THIS IS A STACK OF ITS OWN AND NOT A RESOURCE IN infra/batch-events.yaml. That file is
+# about Batch job state changes -- a rule, a queue, a dead-letter queue and the recorder that
+# projects events onto lineage. This is about EC2 instances a person launched outside Batch
+# entirely, on a schedule rather than on an event, and folding them together would make one
+# stack's deploy able to break the other's on a change with nothing to do with it.
+#
+# WHY IT IS DEPLOYED BY THE PHASE 3 WORKFLOW RATHER THAN BY A WORKFLOW OF ITS OWN. The deployer
+# role's trust pins job_workflow_ref to three files with StringEquals, and amending it needs the
+# AWS access the amendment exists to grant -- infra/README.md calls a new workflow file a door
+# that only opens from inside. A step on an existing file costs nothing and needs no trust
+# change.
+#
+# THE THREE NUMBERS BELOW ARE READ FROM config/reports/researcher-lane.yaml AND MUST NOT BE
+# EDITED HERE ALONE. tests/test_janitor_infrastructure.py holds the schedule equal to that
+# file's sweep interval and the environment equal to all three, and LaneSettings refuses a
+# warning lead shorter than the sweep -- which is the rule that makes "warns before it stops
+# anything" hold at all. They reach the function through the environment rather than through the
+# zip so that changing a number does not move the release digest, which is the coupling both
+# other builders were narrowed to break.
+
+Resources:
+  # AN EventBridge Scheduler SCHEDULE RATHER THAN AN AWS::Events::Rule, AND THE DIFFERENCE IS
+  # WHAT THE DEPLOYER IS ALLOWED TO DO.
+  #
+  # A rule targeting a Lambda needs an AWS::Lambda::Permission beside it, which needs
+  # lambda:AddPermission on the deploying principal. infra/iam/infra-deployer-role.yaml excludes
+  # that action in as many words -- "the deployer creates the validator but may neither run it
+  # nor change who may run it" -- and infra/batch-events.yaml already met this fork and recorded
+  # the rule for it: a capability added rather than a restriction removed.
+  #
+  # A schedule invokes its target by assuming a role it is passed. So the deployer gains
+  # iam:PassRole on one role trusted to one service, and gains nothing that lets it write
+  # Principal "*" into a function's resource policy -- which is what AddPermission would have
+  # been. The role is sbsandbox-intern-edullm-janitor-schedule in
+  # infra/iam/janitor-lambda-role.yaml, applied from a laptop with the sweep role beside it.
+  ExpirySweepSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: sbsandbox-intern-edullm-expiry-sweep
+      Description: Sweep the account for lane machines at or near their declared expiry.
+      # Held equal to config/reports/researcher-lane.yaml's sweep_minutes by
+      # tests/test_janitor_infrastructure.py. Editing one without the other is a red test.
+      ScheduleExpression: rate(5 minutes)
+      # OFF, because a sweep has no reason to be spread. A flexible window would let an
+      # invocation land up to fifteen minutes late, which is three sweeps of slack on a
+      # component whose whole promise is that a machine stops near the time its owner named.
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      State: ENABLED
+      Target:
+        Arn:
+          Fn::GetAtt:
+            - ExpiryJanitorFunction
+            - Arn
+        RoleArn:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-janitor-schedule
+        # No retries and no dead-letter queue, deliberately. The next sweep is five minutes
+        # away and reads the same tags, so a dropped invocation costs one interval and nothing
+        # else -- there is no payload to lose. The failure worth catching is the schedule not
+        # firing at all, and that is what tools/verify_deployed_stacks.py and the sweep's own
+        # counts are for.
+        RetryPolicy:
+          MaximumRetryAttempts: 0
+
+  ExpiryJanitorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: sbsandbox-intern-edullm-expiry-janitor
+      Description: Warns a lane machine before its ExpiresAt and stops it after, acting only on the two tags the lane writes.
+      Runtime: python3.12
+      Handler: edullm_platform.janitor_handler.handler
+      Role:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-janitor-lambda
+      # S3ObjectVersion is what makes a code change a CloudFormation change. Without it,
+      # re-uploading a new zip to the same key leaves this resource's properties byte-identical,
+      # the change set comes back empty, and `deploy --no-fail-on-empty-changeset` reports
+      # success while the old code keeps running.
+      #
+      # THE VERSION BELOW IS A PLACEHOLDER AND THE ZIP HAS NEVER BEEN UPLOADED. The digest in
+      # infra/expiry-janitor-release.yaml is real -- the package builds deterministically from
+      # this tree -- and the object does not exist, so there is no version id to pin. The
+      # phase-3 workflow's janitor step checks for this exact token and skips rather than
+      # failing an unrelated dispatch on a stack nobody can create yet;
+      # tests/test_janitor_package.py holds the token in all three places or in none, so the
+      # release that removes it removes the guard in the same change.
+      Code:
+        S3Bucket: sbsandbox-intern-edullm-artifacts
+        S3Key: expiry-janitor/expiry-janitor.zip
+        S3ObjectVersion: PLACEHOLDER-UNTIL-THE-FIRST-UPLOAD
+      # THE THREE NUMBERS, FROM config/reports/researcher-lane.yaml AND NOT FROM ANYBODY'S
+      # MEMORY. The zip carries no configuration, so this is how they reach the function, and
+      # tests/test_janitor_infrastructure.py holds each one equal to that file. The handler
+      # reads them with os.environ[...] and no default, so a deploy that omitted one fails on
+      # the first sweep naming the variable rather than sweeping on a guess.
+      Environment:
+        Variables:
+          EDULLM_DEFAULT_LIFETIME_HOURS: "8"
+          EDULLM_WARNING_LEAD_MINUTES: "30"
+          EDULLM_SWEEP_MINUTES: "5"
+      # One describe call and at most two writes. Sixty seconds is the same bound the lifecycle
+      # recorder carries and is generous for this; a sweep that needs longer is a sweep against
+      # an account with thousands of running instances, which is a different problem.
+      Timeout: 60
+      MemorySize: 512
+
+Outputs:
+  FunctionName:
+    Value:
+      Ref: ExpiryJanitorFunction
+  ScheduleName:
+    Value:
+      Ref: ExpirySweepSchedule

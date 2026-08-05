@@ -105,11 +105,15 @@ CREDENTIALED_JOBS = (
     PLACEMENT_JOB,
 )
 
-#: The two functions the release check reads, and the templates that name them to
+#: The functions the release check reads, and the templates that name them to
 #: CloudFormation. Read from the templates rather than spelled here, because the IAM grant
 #: is written against these names and a rename that missed one of the three places would be
 #: an access denial at 05:00 rather than a failure at review.
-LAMBDA_TEMPLATES = ("admission-state-machine.yaml", "batch-events.yaml")
+LAMBDA_TEMPLATES = (
+    "admission-state-machine.yaml",
+    "batch-events.yaml",
+    "expiry-janitor.yaml",
+)
 
 #: What the repository variable is called, and what the role it names is called. Spelled here
 #: as literals because the workflow reads the variable by name and a rename on one side alone

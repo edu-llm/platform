@@ -44,7 +44,7 @@ def test_both_lambdas_are_released_by_default() -> None:
     """
     parser_default = main.__doc__  # keeps the import used if the assert below is edited out
     assert parser_default is None or isinstance(parser_default, str)
-    assert set(FUNCTIONS) == {"validator", "recorder"}
+    assert set(FUNCTIONS) == {"validator", "recorder", "janitor"}
 
 
 def test_a_substitution_that_matches_nothing_refuses_rather_than_writing(tmp_path: Path) -> None:

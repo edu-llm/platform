@@ -1727,3 +1727,112 @@ aws sts assume-role \
 Expected: an assumed-role ARN. Then the two negative controls, which are the half that makes
 the first mean something — the same call with `--tags` omitted, and again with
 `--source-identity` omitted. Both must return `AccessDenied`. Record all three outcomes here.
+
+## The expiry janitor's stacks
+
+| # | Stack | Template | Roles or resources | Applied from |
+| --- | --- | --- | --- | --- |
+| 1 | `sbsandbox-intern-edullm-janitor-iam` | `infra/iam/janitor-lambda-role.yaml` | `sbsandbox-intern-edullm-janitor-lambda`, `sbsandbox-intern-edullm-janitor-schedule` | laptop |
+| 2 | `sbsandbox-intern-edullm-infra-deployer-iam` | `infra/iam/infra-deployer-role.yaml` (amended) | two `iam:PassRole` ARNs and the `scheduler:*` verbs | laptop |
+| 3 | `sbsandbox-intern-edullm-audit-reader-iam` | `infra/iam/audit-reader-role.yaml` (amended) | two `cloudformation:GetTemplate` ARNs and one `lambda:GetFunctionConfiguration` | laptop |
+| 4 | `sbsandbox-intern-edullm-janitor` | `infra/expiry-janitor.yaml` | the function and its five-minute schedule | CI, `deploy-phase3-batch.yml` |
+
+**Not deployed as of 2026-08-05, and the fourth cannot be until the first two are.** The
+workflow step that applies it skips while `infra/expiry-janitor.yaml` still pins the
+never-uploaded placeholder object version, so an unrelated dispatch is not broken by a stack
+nobody can create yet. `tests/test_janitor_package.py` refuses to let that guard outlive the
+placeholder.
+
+**The deployer amendment must precede the CI deploy.** Until the deployer carries `iam:PassRole`
+on the two janitor roles, `lambda:CreateFunction` is refused and the failure reads like a broken
+template rather than a missing grant. The `scheduler:*` verbs are the same story one resource
+later.
+
+### Why the schedule is EventBridge Scheduler and not an `AWS::Events::Rule`
+
+The obvious wiring for a five-minute sweep is a rule targeting the function. That needs an
+`AWS::Lambda::Permission`, which needs `lambda:AddPermission` on the deploying principal, and
+this deployer withholds that action in as many words: *the deployer creates the validator but
+may neither run it nor change who may run it*. `infra/batch-events.yaml` met the same fork in
+Phase 3 and recorded the rule for it — a capability added rather than a restriction removed.
+
+So the schedule assumes a role it is passed. What the deployer gains is `iam:PassRole` on
+`sbsandbox-intern-edullm-janitor-schedule`, a role trusted to `scheduler.amazonaws.com` alone
+and holding `lambda:InvokeFunction` on one function named in full. That is strictly narrower
+than the grant it avoids: `lambda:AddPermission` would let a deploy credential write
+`Principal: "*"` into the janitor's resource policy, and this cannot.
+
+### Applying them
+
+```bash
+git fetch origin main
+git status --porcelain          # must print nothing
+git rev-parse HEAD origin/main  # must print the same commit twice
+
+aws cloudformation deploy \
+  --stack-name sbsandbox-intern-edullm-janitor-iam \
+  --template-file infra/iam/janitor-lambda-role.yaml \
+  --capabilities CAPABILITY_NAMED_IAM --no-fail-on-empty-changeset \
+  --profile sbsandbox --region us-east-1
+
+aws cloudformation deploy \
+  --stack-name sbsandbox-intern-edullm-infra-deployer-iam \
+  --template-file infra/iam/infra-deployer-role.yaml \
+  --capabilities CAPABILITY_NAMED_IAM --no-fail-on-empty-changeset \
+  --profile sbsandbox --region us-east-1
+
+aws cloudformation deploy \
+  --stack-name sbsandbox-intern-edullm-audit-reader-iam \
+  --template-file infra/iam/audit-reader-role.yaml \
+  --capabilities CAPABILITY_NAMED_IAM --no-fail-on-empty-changeset \
+  --profile sbsandbox --region us-east-1
+```
+
+Then simulate what was granted and, more usefully, what was not.
+
+```bash
+account="$(aws sts get-caller-identity --profile sbsandbox --region us-east-1 --query Account --output text)"
+
+aws iam simulate-principal-policy \
+  --policy-source-arn "arn:aws:iam::${account}:role/sbsandbox-intern-edullm-janitor-lambda" \
+  --action-names ec2:StopInstances ec2:TerminateInstances ec2:RunInstances s3:PutObject \
+  --resource-arns "arn:aws:ec2:us-east-1:${account}:instance/i-0123456789abcdef0" \
+  --profile sbsandbox --region us-east-1 \
+  --query 'EvaluationResults[].{Action:EvalActionName,Decision:EvalDecision}'
+```
+
+Expect `implicitDeny` on all four, because the resource carries no tags and the `StopInstances`
+grant is conditioned on two of them. That is the condition working, and it is also why a
+simulator run alone is evidence about the actions and not about their conditions — *Stack 4*
+above records a role that simulated correctly and could stop nothing. The conditions are proved
+by the drill against a real tagged instance.
+
+### Releasing the code object, which is what unblocks the CI deploy
+
+```bash
+uv run --frozen python tools/release_lambda.py --function janitor --dry-run
+uv run --frozen python tools/release_lambda.py --function janitor
+```
+
+That builds, uploads, writes the version id and digest into both the template and the release
+record, and runs the tripwire with its exit code read directly. The placeholder guard in
+`.github/workflows/deploy-phase3-batch.yml` has to come out in the same change — the tripwire
+holds the token in all three files or in none, so it will say so.
+
+Then dispatch and confirm:
+
+```bash
+gh workflow run deploy-phase3-batch.yml --ref main
+aws lambda get-function-configuration \
+  --function-name sbsandbox-intern-edullm-expiry-janitor \
+  --profile sbsandbox --region us-east-1 \
+  --query '{Handler:Handler,Runtime:Runtime,CodeSha256:CodeSha256}'
+aws scheduler get-schedule \
+  --name sbsandbox-intern-edullm-expiry-sweep \
+  --profile sbsandbox --region us-east-1 \
+  --query '{State:State,Schedule:ScheduleExpression}'
+uv run --frozen python tools/verify_deployed_lambdas.py --profile sbsandbox --region us-east-1
+```
+
+`CodeSha256` is base64 and the release record is hex, so the last command is how they are
+compared rather than by eye.
