@@ -280,6 +280,44 @@ class PlatformActions:
             )
         self._dispatched.append(workflow)
 
+    def create_issue(self, *, title: str, body: str, label: str | None) -> tuple[str, bool]:
+        """File one issue and answer with its URL and whether the label went on.
+
+        **A LABEL THAT WILL NOT ATTACH DOES NOT STOP THE ASK, AND THAT IS A RULING RATHER
+        THAN A FALLBACK.** GitHub creates a label declared in an issue form the first time
+        that form is used, so a repository can be in a state where the vocabulary is correct
+        and the label does not exist yet. Refusing an ask over that would be a gate that
+        prevents nothing and costs the one thing this call exists to produce. The caller is
+        told which label did not attach so somebody can add it, and an uncounted ask is worth
+        more than an unfiled one.
+
+        The second value rather than a second call, because whether the label attached is
+        something only this method observes. A caller asking again would be asking GitHub a
+        question this already has the answer to.
+        """
+        argv: tuple[str, ...] = (
+            "gh",
+            "issue",
+            "create",
+            "--repo",
+            self._repository,
+            "--title",
+            title,
+            "--body",
+            body,
+        )
+        if label is not None:
+            labelled = self._runner((*argv, "--label", label))
+            if labelled.ok:
+                return labelled.text, True
+        result = self._runner(argv)
+        if not result.ok:
+            raise GithubUnreachableError(
+                f"gh could not open an issue on {self._repository}: {_said(result)}. Nothing "
+                "was filed. This is not a judgement about the ask."
+            )
+        return result.text, False
+
     def repository_id(self, repository: str) -> str:
         """The numeric id of a repository in this organization, which the form asks for.
 
