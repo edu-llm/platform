@@ -23,7 +23,7 @@ import pytest
 from edullm_platform.cli.machine import FORMAT_VERSION
 from edullm_platform.cli.main import EXIT_OK, EXIT_REFUSED
 from edullm_platform.cli.preflight import UNRESOLVED_IMAGE_DIGEST
-from tests.cli_support import FakeRunner, git_answers, invoke, write_spec
+from tests.cli_support import FakeRunner, git_answers, invoke, ok, write_spec
 
 
 def checkout(tmp_path: Path, **spec: object) -> tuple[Path, FakeRunner]:
@@ -238,3 +238,163 @@ def test_check_without_the_flag_still_prints_the_paragraphs(
     assert code == EXIT_OK, out + err
     assert out.startswith("checked against ")
     assert "no refusals. edullm submit will dispatch this." in out
+
+
+STATUS_RUNS = """{"workflow_runs": [
+  {"id": 41, "status": "completed", "conclusion": "success",
+   "created_at": "2026-08-05T10:00:00Z",
+   "html_url": "https://github.com/edu-llm/platform/actions/runs/41"}
+]}"""
+
+COMPILED = """{
+  "run_id": "run_019fcf3c-9878-7c1a-8f00-1c2d3e4f5a6b",
+  "submitter": "caiiris",
+  "approval_class": "routine",
+  "approving_environment": "run-approval-lead",
+  "manifest_sha256": "1f0e9d8c7b6a5948372615043f2e1d0c9b8a7960514233221100ffeeddccbbaa",
+  "experiment": "an-experiment",
+  "team": "memory-split",
+  "manifest": {"fanout": null}
+}"""
+
+ADMITTED_JOBS = """{"jobs": [
+  {"name": "Submit the approved manifest to admission", "conclusion": "success"}
+]}"""
+
+
+def status_runner(tmp_path: Path) -> FakeRunner:
+    """A single admitted submission, answered entirely from GitHub.
+
+    Admitted is the case worth building the fixture around, because it is the one where
+    read_run_facts stops and reports that AWS would have to be asked. Everything the
+    document has to carry is populated on that branch.
+
+    ONE CALLABLE ON ("gh", "api") RATHER THAN A TUPLE PER ENDPOINT, WHICH IS THE PATTERN
+    tests/test_cli_run_verbs.py ALREADY USES AND IS NOT A STYLE CHOICE. FakeRunner matches a
+    prefix of the argv exactly, and `workflow_runs` appends a query string to the path, so a
+    key spelling the path without `?per_page=...&event=...&actor=...` matches nothing and the
+    fake raises UnexpectedCommandError. Dispatching on `argv[-1]` with `in` is what survives
+    a query string.
+    """
+
+    def api(argv: tuple[str, ...]) -> Any:
+        path = argv[-1]
+        if "/workflows/submit-run.yml/runs" in path:
+            return ok(STATUS_RUNS)
+        if path.endswith("/41/jobs"):
+            return ok(ADMITTED_JOBS)
+        if path.endswith("/41/approvals"):
+            return ok("[]")
+        return ok("{}")
+
+    def download(argv: tuple[str, ...]) -> Any:
+        destination = Path(argv[argv.index("--dir") + 1])
+        destination.mkdir(parents=True, exist_ok=True)
+        (destination / "compiled-submission.json").write_text(COMPILED, encoding="utf-8")
+        return ok("")
+
+    return FakeRunner(
+        {
+            ("gh", "api"): api,
+            ("gh", "run", "download"): download,
+        }
+    )  # type: ignore[arg-type]
+
+
+def test_status_json_answers_one_run_from_github_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: drop `needs_a_dispatch` and let a caller infer it from `admitted`.
+
+    Whether the next question costs a runner is the single fact this verb exists to answer
+    cheaply, and it is not the same fact as whether the run was admitted. A run parked at a
+    gate is not admitted and needs no dispatch, and an admission job that failed at an
+    unknown point is not admitted and does.
+    """
+    code, out, err = invoke(
+        ["status", "--json", "run_019fcf3c-9878-7c1a-8f00-1c2d3e4f5a6b"],
+        runner=status_runner(tmp_path),
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+    document = only_document(out)
+    assert document["verb"] == "status"
+    assert document["run_id"] == "run_019fcf3c-9878-7c1a-8f00-1c2d3e4f5a6b"
+    assert document["admitted"] == "yes"
+    assert document["needs_a_dispatch"] is True
+    assert document["was_found"] is True
+    assert document["submission"]["workflow_run_id"] == 41
+    assert document["submission"]["short_run_id"] == "run_019fcf3c-9878"
+    assert document["team"] == "memory-split"
+
+
+def test_status_json_never_dispatches_a_workflow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: dispatch cancel-run.yml and put its markdown in a field.
+
+    THE AWS HALF HAS NO STRUCTURE AND PUBLISHING IT WOULD BE INVENTING ONE. What comes back
+    is markdown headings scraped out of a job log, which is precisely why
+    designing-the-cli.md puts no --json on logs and cancel. So this publishes the half that
+    is structured and names the half that is not, and a caller that wants the AWS answer runs
+    the same verb without the flag. It also means --json costs no runner, which matters when
+    the caller is a loop.
+    """
+    runner = status_runner(tmp_path)
+
+    code, out, err = invoke(
+        ["status", "--json", "run_019fcf3c-9878-7c1a-8f00-1c2d3e4f5a6b"],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+    assert runner.ran("gh", "workflow", "run") == []
+    assert only_document(out)["aws_report"] is None
+
+
+def test_status_json_with_no_run_id_lists_the_recent_submissions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: return a bare array rather than a document with a `runs` key.
+
+    `docker ps --format json` emits one object per line rather than an array and the
+    maintainers closed the report because the shape had become load-bearing. A top-level
+    array here has the same problem one step along: there is nowhere to put format_version,
+    so the day a field changes meaning nothing can say so.
+    """
+    code, out, err = invoke(
+        ["status", "--json"],
+        runner=status_runner(tmp_path),
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+    document = only_document(out)
+    assert document["format_version"] == FORMAT_VERSION
+    assert [run["short_run_id"] for run in document["runs"]] == ["run_019fcf3c-9878"]
+
+
+def test_a_malformed_run_id_is_a_document_on_stdout_and_still_exits_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: keep printing render_refusals to stderr under --json.
+
+    "One document on stdout whatever the outcome" is the contract, and a refusal is an
+    outcome. A caller that has to read stderr to find out why exit 1 happened is back to
+    parsing prose, which is the whole thing this flag removes.
+    """
+    code, out, err = invoke(
+        ["status", "--json", "not-a-run-id"],
+        runner=FakeRunner({}),
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_REFUSED, out + err
+    document = only_document(out)
+    assert [refusal["code"] for refusal in document["refusals"]] == ["run_id_not_well_formed"]

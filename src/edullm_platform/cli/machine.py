@@ -44,6 +44,7 @@ import json
 from collections.abc import Sequence
 from typing import Any, Final, TextIO
 
+from edullm_platform.cli.actions import RunFacts, SubmissionRun
 from edullm_platform.cli.configuration import ReviewedConfiguration
 from edullm_platform.cli.preflight import DEFERRED_TO_SUBMIT, Preflight, Refusal
 from edullm_platform.cli.presentation import plain_decimal
@@ -55,6 +56,8 @@ __all__ = [
     "emit",
     "envelope",
     "refusal_document",
+    "status_document",
+    "status_listing_document",
 ]
 
 #: The version of the envelope below, bumped when a field changes meaning or goes away.
@@ -164,4 +167,69 @@ def _cost_of(preflight: Preflight) -> dict[str, Any] | None:
         "maximum_attempts": cost.maximum_attempts,
         "cells": cost.cells,
         "maximum_compute_cost_usd": plain_decimal(cost.maximum_compute_cost_usd),
+    }
+
+
+def status_document(facts: RunFacts) -> dict[str, Any]:
+    """One run, as far as GitHub can answer, and whether the rest costs a runner.
+
+    ``aws_report`` is present and always ``None``. It is the place a caller would look for
+    what ``cancel-run.yml`` reports, and the answer is that this verb does not dispatch under
+    ``--json``: the report is markdown scraped out of a job log, so a field carrying it would
+    publish a shape that does not exist. The key is here rather than absent so that the
+    answer is "nothing was asked" rather than a ``KeyError``.
+    """
+    return {
+        **envelope("status"),
+        "run_id": facts.run_id,
+        "admitted": facts.admitted.value,
+        "because": facts.because,
+        "needs_a_dispatch": facts.needs_a_dispatch,
+        "was_found": facts.was_found,
+        "submission": None if facts.submission is None else _submission_of(facts.submission),
+        "gate": facts.gate,
+        "reviewers": list(facts.reviewers),
+        "you_can_release": facts.you_can_release,
+        "approver": facts.approver,
+        "approved_at": None if facts.approved_at is None else facts.approved_at.isoformat(),
+        "experiment": facts.experiment,
+        "team": facts.team,
+        "aws_report": None,
+        "refused": False,
+        "refusals": [],
+    }
+
+
+def status_listing_document(runs: Sequence[SubmissionRun]) -> dict[str, Any]:
+    """The recent submissions, under a key rather than as a bare array.
+
+    A top-level array has nowhere to carry ``format_version``, so the day a field changes
+    meaning there is no way to say so. ``docker ps --format json`` is the worked example of
+    what that costs once callers exist.
+    """
+    return {
+        **envelope("status"),
+        "runs": [_submission_of(run) for run in runs],
+        "refused": False,
+        "refusals": [],
+    }
+
+
+def _submission_of(run: SubmissionRun) -> dict[str, Any]:
+    """One dispatch of ``submit-run.yml``, including the short form the listing prints.
+
+    ``short_run_id`` is emitted beside ``run_id`` rather than left to the caller to slice.
+    Its length is measured rather than chosen and the measurement is in that property's own
+    docstring, so a caller computing it independently would be recomputing a decision and
+    would get it wrong the day the measurement changes.
+    """
+    return {
+        "workflow_run_id": run.workflow_run_id,
+        "run_id": run.run_id,
+        "short_run_id": run.short_run_id,
+        "state": run.state,
+        "created_at": run.created_at.isoformat(),
+        "url": run.url,
+        "experiment": run.experiment,
+        "cells": run.cells,
     }
