@@ -47,8 +47,16 @@ CREDENTIALED_AUDIT_JOBS = frozenset(
         "deployed-stack-templates",
         "visibility-board",
         "placement-verdicts",
+        "substrate-capture",
     }
 )
+
+#: The scheduled jobs that write to this repository, which is a shorter list than the one
+#: above and must never overlap it. A job holding both a credential into the account and a
+#: write into this repository could publish a reading it invented, which is the same argument
+#: ``infra/iam/audit-reader-role.yaml`` makes for the reader role holding no write in the
+#: account: a check able to change what it is checking can produce its own all-clear.
+PUBLISHING_AUDIT_JOBS = frozenset({"substrate-history"})
 
 #: The contexts pinned in branch protection on ``main``. They are job names, so renaming
 #: either one silently stops the protection matching anything.
@@ -176,12 +184,44 @@ def test_only_the_jobs_that_read_the_account_can_reach_it() -> None:
         if job_id in CREDENTIALED_AUDIT_JOBS:
             assert job["permissions"] == {"contents": "read", "id-token": "write"}, job_id
             continue
+        if job_id in PUBLISHING_AUDIT_JOBS:
+            # No id-token at all, so this job cannot obtain an AWS identity however its
+            # steps are written, and the separation is a property of the token rather than
+            # of anybody remembering not to add a credential step.
+            assert job["permissions"] == {"contents": "write"}, job_id
+            reaching = [step for step in job["steps"] if "aws-actions/" in step.get("uses", "")]
+            assert reaching == [], f"{job_id} writes to this repository and must not read AWS"
+            continue
         assert "permissions" not in job, f"{job_id} reads committed records and needs none"
         # The permission and the step are separate mutations. A gate that gained a
         # configure-aws-credentials without a permissions block fails at 05:00 rather than
         # here, and a reader of that failure has no reason to look at this list.
         reaching = [step for step in job["steps"] if "aws-actions/" in step.get("uses", "")]
         assert reaching == [], f"{job_id} reads committed records and needs no credential"
+
+
+def test_no_scheduled_job_both_reads_the_account_and_writes_to_this_repository() -> None:
+    """Mutation: give substrate-capture `contents: write` and drop the second job.
+
+    It is the obvious simplification -- one job, three fewer steps, no artifact hand-off --
+    and it puts a repository write on the only job here holding a credential into the
+    account. A reader that could commit could publish a reading it invented, and the reading
+    is the artifact everything downstream believes precisely because nobody can go back and
+    check it against sources that have since forgotten.
+
+    Asserted as a disjointness rather than as a property of the two names, so a third job of
+    either kind is held to it without being added to a list.
+    """
+    assert not CREDENTIALED_AUDIT_JOBS & PUBLISHING_AUDIT_JOBS
+
+    workflow = _load_workflow(AUDIT_PATH)
+    for job_id, job in workflow["jobs"].items():
+        permissions = job.get("permissions", {})
+        writes = permissions.get("contents") == "write"
+        mints = permissions.get("id-token") == "write"
+        assert not (writes and mints), f"{job_id} can reach the account and rewrite the record"
+        assert (job_id in PUBLISHING_AUDIT_JOBS) == writes, job_id
+        assert (job_id in CREDENTIALED_AUDIT_JOBS) == mints, job_id
 
 
 def test_no_scheduled_job_takes_a_secret_or_names_the_account() -> None:

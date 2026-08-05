@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -76,6 +77,8 @@ RELEASE_JOB = "deployed-lambda-release"
 STACKS_JOB = "deployed-stack-templates"
 BOARD_JOB = "visibility-board"
 PLACEMENT_JOB = "placement-verdicts"
+CAPTURE_JOB = "substrate-capture"
+HISTORY_JOB = "substrate-history"
 
 RECONCILE_TOOL = "tools/find_runs_that_saved_nothing.py"
 WANDB_TOOL = "tools/verify_wandb_credential.py"
@@ -83,6 +86,7 @@ RELEASE_TOOL = "tools/verify_deployed_lambdas.py"
 STACKS_TOOL = "tools/verify_deployed_stacks.py"
 BOARD_TOOL = "tools/visibility_board.py"
 PLACEMENT_TOOL = "tools/verify_placement_verdicts.py"
+CAPTURE_TOOL = "tools/read_substrate.py"
 
 RECONCILE_STEP = "Reconcile what those runs actually wrote"
 WANDB_STEP = "Ask W&B whether it would accept the stored key"
@@ -91,7 +95,16 @@ RELEASE_STEP = "Compare what AWS is running against what was released"
 STACKS_STEP = "Compare each deployed stack against the template main declares"
 BOARD_STEP = "Join what W&B, the account and the outputs bucket each say"
 PLACEMENT_STEP = "Recompute each placement verdict from the sixteen queues"
+CAPTURE_STEP = "Read the account and write today down"
+CAPTURE_UPLOAD_STEP = "Publish the reading"
+HISTORY_STEP = "Keep the reading on the machine/substrate branch"
 GUARD_STEP = "Check the audit reader role is deployed"
+
+#: Where a reading is kept, and what it is called there. Both are spelled here because the
+#: workflow writes the branch by name and nothing at runtime would notice a rename: a push to
+#: a branch nobody reads succeeds exactly as a push to the right one does.
+HISTORY_BRANCH = "machine/substrate"
+CAPTURE_ARTIFACT = "substrate"
 
 #: Every job here that takes a credential. Each one is held to the same guard, the same
 #: role and the same refusal to be informational, so the list is what a seventh such job has
@@ -103,6 +116,7 @@ CREDENTIALED_JOBS = (
     STACKS_JOB,
     BOARD_JOB,
     PLACEMENT_JOB,
+    CAPTURE_JOB,
 )
 
 #: The two functions the release check reads, and the templates that name them to
@@ -1044,6 +1058,214 @@ def test_the_placement_check_reads_only_grants_the_role_holds(role: dict[str, An
         )
 
 
+# ----------------------------------------------------------------------------------------
+# The reading, and the two sources that forget
+# ----------------------------------------------------------------------------------------
+
+
+def capture_step(workflow: dict[str, Any]) -> str:
+    return step(workflow["jobs"][CAPTURE_JOB], CAPTURE_STEP)["run"]
+
+
+def capture_command(workflow: dict[str, Any]) -> str:
+    """The one line that runs the collector, with its continuations joined.
+
+    THE COMMAND RATHER THAN THE WHOLE STEP BODY, AND THE DIFFERENCE IS NOT PEDANTRY. This
+    step prints a sentence naming `--write` when the file it expects is missing, so a
+    substring search over the body passes for a step that dropped the flag from the command
+    and kept it in the error message. That mutation was made and the body-wide search did not
+    notice it.
+    """
+    joined = re.sub(r"\\\s*\n\s*", " ", capture_step(workflow))
+    running = [line for line in joined.splitlines() if CAPTURE_TOOL in line and "uv run" in line]
+    assert len(running) == 1, f"expected one invocation of {CAPTURE_TOOL}, found {running}"
+    return running[0]
+
+
+def run_capture(
+    workflow: dict[str, Any], tmp_path: Path, *, exit_code: int, writes: bool = True
+) -> Any:
+    """The capture step, with the collector replaced by one that honours ``--write``.
+
+    Honouring the flag rather than writing to a fixed name, so a step that stopped passing
+    ``--write`` is a failure here rather than a branch that grows nothing at 05:00.
+    """
+    summary = tmp_path / "summary.md"
+    summary.touch()
+    stub = write_stub(
+        tmp_path / "bin",
+        "uv",
+        f"""
+destination=""
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == "--write" ]]; then destination="$2"; fi
+  shift
+done
+printf '%s\\n' '1 run(s), 1 priced, not read launch event(s)'
+if [[ -n "${{destination}}" && {"1" if writes else "0"} -eq 1 ]]; then
+  mkdir -p "$(dirname "${{destination}}")"
+  printf '%s\\n' '{{"format_version": 1}}' > "${{destination}}"
+fi
+exit {exit_code}
+""",
+    )
+    return run_step_script(
+        capture_step(workflow),
+        cwd=tmp_path,
+        env={"GITHUB_STEP_SUMMARY": str(summary)},
+        stub_bin=stub.parent,
+    )
+
+
+def test_the_audit_takes_a_reading_and_writes_it_down(workflow: dict[str, Any]) -> None:
+    """Mutation: run the collector without --write, which prints a summary and keeps nothing.
+
+    This is the one job here whose product is a record rather than a verdict, and the reason
+    is that two of the four sources forget: Batch drops a job about a week after it ends and
+    CloudWatch keeps a run log for ninety days. A job that reads all four and writes none of
+    it down leaves exactly the same hole as not running at all, one day later.
+    """
+    command = capture_command(workflow)
+
+    assert "--write" in command, "a reading that is only printed is a reading nobody kept"
+    assert "uv run --frozen python" in command
+
+
+def test_the_reading_is_named_by_the_day_in_utc(workflow: dict[str, Any], tmp_path: Path) -> None:
+    """Mutation: name the file with the local date, or with a fixed name.
+
+    A fixed name overwrites yesterday, which is the whole of what this job is for. A local
+    date produces two names for one morning as soon as anybody dispatches this by hand from a
+    laptop, and the branch is keyed by day.
+    """
+    assert "date -u" in capture_step(workflow), "the runner is UTC and a laptop is not"
+
+    finished = run_capture(workflow, tmp_path, exit_code=0)
+
+    assert finished.returncode == 0, finished.stderr
+    written = sorted(path.name for path in (tmp_path / "substrate").iterdir())
+    assert len(written) == 1
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}\.json", written[0]), written
+
+
+def test_a_morning_the_account_could_not_be_read_fails_the_audit(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """THE ONE THAT MATTERS. Mutation: report the refusal and exit zero.
+
+    A missing reading cannot be taken later. Every other job in this file compares two things
+    that will both still be there tomorrow, so a red cross on one of them is a disagreement
+    somebody can go and look at whenever they get to it. This one goes red about a question
+    that stops being answerable, which is why it is red at all: the tool itself judges nothing
+    and has no exit 1.
+    """
+    finished = run_capture(workflow, tmp_path, exit_code=2, writes=False)
+
+    assert finished.returncode != 0
+    assert "substrate_not_read" in finished.stderr
+
+
+def test_a_reading_that_was_reported_and_never_written_fails_the_audit(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """Mutation: trust the exit code and let the upload find nothing.
+
+    An upload with `if-no-files-found: warn` is green on an empty directory, so a `--write`
+    that silently stopped working would leave a green audit, a step summary full of figures
+    and a branch that has not moved in a month. The exit code says the read happened; the
+    file is what says it was kept.
+    """
+    finished = run_capture(workflow, tmp_path, exit_code=0, writes=False)
+
+    assert finished.returncode != 0
+    assert "substrate_reading_is_empty" in finished.stderr
+
+
+def test_the_reading_reaches_the_log_and_not_only_the_step_summary(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """Same argument the reconciliation and the board are held to."""
+    finished = run_capture(workflow, tmp_path, exit_code=0)
+    summary = (tmp_path / "summary.md").read_text(encoding="utf-8")
+
+    assert "1 run(s), 1 priced" in finished.stdout
+    assert "1 run(s), 1 priced" in summary
+
+
+def test_the_reading_is_published_before_anything_can_lose_it(workflow: dict[str, Any]) -> None:
+    """Mutation: upload only on success, or upload after the branch push.
+
+    The capture goes red when a source was refused and still writes what it did read, so an
+    upload conditioned on success would drop the reading on exactly the morning somebody
+    wants it. The artifact is also the hand-off to the job that commits it, so a failure to
+    push must cost the branch and not the reading.
+    """
+    steps = workflow["jobs"][CAPTURE_JOB]["steps"]
+    names = [str(item.get("name", "")) for item in steps]
+    upload = step(workflow["jobs"][CAPTURE_JOB], CAPTURE_UPLOAD_STEP)
+
+    assert upload["uses"].startswith("actions/upload-artifact@")
+    assert upload["if"] == "always()"
+    assert upload["with"]["name"] == CAPTURE_ARTIFACT
+    assert names.index(CAPTURE_STEP) < names.index(CAPTURE_UPLOAD_STEP)
+
+
+def test_the_history_job_keeps_the_reading_where_it_can_be_diffed(
+    workflow: dict[str, Any],
+) -> None:
+    """Mutation: append to main, or force-push the branch the way the run index will.
+
+    main refuses this push and should, because branch protection wants an approving review
+    and a code-owner review. The branch is appended to rather than force-pushed because with
+    a source that forgets, last week is the only copy of last week -- which is the opposite of
+    the run index, where a snapshot refreshed on state change is overwritten in place and its
+    history is noise.
+    """
+    job = workflow["jobs"][HISTORY_JOB]
+    body = step(job, HISTORY_STEP)["run"]
+
+    assert job["needs"] == CAPTURE_JOB
+    assert job["if"] == "always()"
+    assert f"git push origin {HISTORY_BRANCH}" in body
+    assert "--force" not in body.split("git push")[1], "the history is the product here"
+    assert "git switch --orphan" in body, "the readings carry none of the tree they came from"
+
+
+def test_the_history_job_is_the_single_writer_of_its_branch(workflow: dict[str, Any]) -> None:
+    """Mutation: drop the concurrency group, or give this job one of its own.
+
+    Two runs of this workflow appending to one branch race, and the loser is a reading nobody
+    notices is missing until somebody goes looking for that day. The audit already declares a
+    single-writer group for the whole file, which is what makes this safe -- so the property
+    is asserted here rather than left as a fact about a line somebody could move.
+    """
+    assert workflow["concurrency"]["group"] == "audit"
+    assert workflow["concurrency"]["cancel-in-progress"] is False
+
+
+def test_the_history_job_commits_nothing_when_no_reading_was_published(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """Mutation: commit unconditionally, which puts an empty day on the branch.
+
+    A dated commit holding nothing reads as a morning the platform ran nothing, on a branch
+    whose whole purpose is being believed later. The capture writes no file when the
+    collection failed outright, so the absence is what has to travel.
+    """
+    stub = write_stub(tmp_path / "bin", "git", 'echo "git $*" >&2\nexit 1')
+    (tmp_path / "substrate").mkdir()
+
+    finished = run_step_script(
+        step(workflow["jobs"][HISTORY_JOB], HISTORY_STEP)["run"],
+        cwd=tmp_path,
+        env={},
+        stub_bin=stub.parent,
+    )
+
+    assert finished.returncode == 0, finished.stderr
+    assert "git push" not in finished.stderr
+
+
 @pytest.mark.parametrize(
     ("job_id", "step_name"),
     [
@@ -1053,6 +1275,7 @@ def test_the_placement_check_reads_only_grants_the_role_holds(role: dict[str, An
         (STACKS_JOB, STACKS_STEP),
         (BOARD_JOB, BOARD_STEP),
         (PLACEMENT_JOB, PLACEMENT_STEP),
+        (CAPTURE_JOB, CAPTURE_STEP),
     ],
 )
 def test_nothing_in_any_of_these_jobs_is_allowed_to_be_informational(
