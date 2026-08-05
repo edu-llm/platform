@@ -86,7 +86,13 @@ from edullm_platform.cli.configuration import (
     find_config_directory,
     load_reviewed_configuration,
 )
-from edullm_platform.cli.machine import check_document, emit
+from edullm_platform.cli.machine import (
+    check_document,
+    emit,
+    refusal_document,
+    status_document,
+    status_listing_document,
+)
 from edullm_platform.cli.preferences import read_default_team
 from edullm_platform.cli.preflight import (
     Preflight,
@@ -442,6 +448,7 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
     status = verb_parser("status", WHAT_A_VERB_DOES["status"])
     status.add_argument("run_id", nargs="?", help="one run; omit for your recent submissions")
     _add_ask_aws(status)
+    _add_json(status)
 
     logs = verb_parser("logs", WHAT_A_VERB_DOES["logs"])
     logs.add_argument("run_id", help="the run to read")
@@ -855,7 +862,15 @@ def main(
         # Caught here rather than in each of the three verbs that resolve an id, because
         # the answer does not depend on which one asked: whichever it was cannot act until
         # somebody says which run, and the sentence naming them is the same sentence.
-        print(render_refusals([_ambiguous_run_id(exc)]), end="", file=stderr)
+        #
+        # THE STREAM IS THE ONE THING THAT DOES DEPEND ON THE VERB. A caller that asked for
+        # a document has to get one on stdout, and this is the only refusal in the binary
+        # that arrives from outside the verb answering for it. ``getattr`` because three of
+        # the verbs that resolve an id do not carry the flag at all.
+        if getattr(arguments, "json", False):
+            emit(refusal_document(verb, [_ambiguous_run_id(exc)]), out=stdout)
+        else:
+            print(render_refusals([_ambiguous_run_id(exc)]), end="", file=stderr)
         return EXIT_REFUSED
     except ValidationError as exc:
         # THE NET UNDER EVERY CONTRACT MODEL THIS BINARY BUILDS, AND IT IS A NET RATHER THAN
@@ -1270,6 +1285,9 @@ def _status(
     if arguments.run_id is None:
         submitter = github_login(runner, allow_network=True)
         runs = read_submission_runs(actions, actor=submitter)
+        if arguments.json:
+            emit(status_listing_document(runs), out=out)
+            return EXIT_OK
         print(
             render_run_listing(
                 (
@@ -1294,14 +1312,29 @@ def _status(
 
     refusal = _malformed_run_id(arguments.run_id)
     if refusal is not None:
-        print(render_refusals([refusal]), end="", file=err)
+        if arguments.json:
+            emit(refusal_document("status", [refusal]), out=out)
+        else:
+            print(render_refusals([refusal]), end="", file=err)
         return EXIT_REFUSED
 
     _said_resolving(arguments.run_id, err)
     facts = read_run_facts(actions, arguments.run_id)
     if not facts.was_found and not arguments.ask_aws:
-        print(render_refusals([_unfindable_run_id(facts)]), end="", file=err)
+        if arguments.json:
+            emit(refusal_document("status", [_unfindable_run_id(facts)]), out=out)
+        else:
+            print(render_refusals([_unfindable_run_id(facts)]), end="", file=err)
         return EXIT_REFUSED
+    if arguments.json:
+        # NO DISPATCH HERE AND NONE COMING, WHICH IS THE ONE SURPRISE IN THIS FLAG.
+        # What a dispatch buys is a section of markdown scraped out of a job log, and
+        # publishing that as a field would invent a shape rather than serialize one. So the
+        # document carries needs_a_dispatch and stops, and the same verb without --json is
+        # what spends the runner. It also keeps --json free, which matters where the caller
+        # is a loop rather than a person.
+        emit(status_document(facts), out=out)
+        return EXIT_OK
     print(render_run_facts(facts), end="", file=out)
     if not facts.needs_a_dispatch:
         return EXIT_OK
