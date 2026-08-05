@@ -1,0 +1,46 @@
+# The two clocks the expiry janitor runs on, and the lifetime the lane helper defaults to.
+#
+# UNDER config/reports/ RATHER THAN IN config/, and the placement is an argument rather than
+# tidiness. docs-frank/reference/system-overview.md names eight configuration files as the
+# control plane; a ninth in config/ would contradict a document this plan is required to cite
+# rather than edit. config/reports/ is where operational limits that are not the control plane
+# already live -- config/reports/checkpoint-acknowledgements.yaml is here, and
+# docs-frank/reference/decisions.md, under "The budget is a number and a line in the morning
+# message", records that tools/spend-limits.yaml belongs at config/reports/spend.yaml for the
+# same reason.
+#
+# IT IS ALSO NOT A RELEASE PATH, WHICH IS THE SECOND HALF OF THE PLACEMENT ARGUMENT.
+# .github/workflows/release-tag.yml names six files under config/ and no directory, so a number
+# here moves no installed CLI's answer and earns no version. The same edit in config/ would.
+#
+# NOT PACKAGED INTO ANY LAMBDA ZIP. tools/build_janitor_lambda.py declares no configuration at
+# all, the way tools/build_lifecycle_lambda.py does. These two numbers reach the deployed
+# function as environment variables on infra/expiry-janitor.yaml, and
+# tests/test_janitor_infrastructure.py holds the template's values equal to this file. That
+# costs a CI stack deploy to change a number and buys a release digest that does not move when
+# somebody edits one -- which is the coupling both builders were narrowed on 2026-08-04 to
+# break.
+schema_version: 1
+
+# A working day, which is what system-overview.md asks for in "How money gets spent, and what
+# stops a mistake". Whole hours because tools/enter_researcher_lane.py takes whole hours and
+# an ExpiresAt tag is an absolute timestamp computed from one; there is nothing here that
+# would read a fraction.
+default_lifetime_hours: 8
+
+# How long before the expiry the janitor writes its warning. Longer than one sweep by
+# construction -- LaneSettings refuses otherwise -- because the janitor stops only a machine it
+# has already warned about, so a lead inside one sweep interval would let a machine expire
+# unwarned and then be stopped by the first sweep that saw it.
+#
+# Thirty minutes rather than an hour: the warning is not a negotiation. Extending is one write
+# to the ExpiresAt tag, which aws-spend-controls.md argues for at length under "The helper" --
+# an absolute timestamp extends unambiguously where a duration has to be read, interpreted and
+# summed.
+warning_lead_minutes: 30
+
+# How often the sweep runs. Five minutes is the smallest interval worth having: EventBridge
+# delivers a launch event in about a second and CloudTrail queries it in about thirteen
+# (aws-spend-controls.md, "The observation paths, measured"), so nothing upstream is slower
+# than this, and the cost of a sweep is one describe-instances call against a filter.
+sweep_minutes: 5
