@@ -302,8 +302,8 @@ def test_workload_catalog_yaml_validates_against_contract() -> None:
     # gpu-8xl40s filling the eight-device row, then gpu-1xh100. Same tripwire role as the
     # workload count below: a profile arriving without a deliberate edit.
     assert len(catalog.compute_profiles) == 17
-    # Nine: seven, plus open-instruct-scored-rewards-check and
-    # open-instruct-scored-rewards-train. The seven were five since the presets collapsed
+    # Ten: nine, plus edullm-p1-check. Nine was seven plus open-instruct-scored-rewards-check
+    # and open-instruct-scored-rewards-train. The seven were five since the presets collapsed
     # plus edullm-alt-cl-check and edullm-alt-cl-train. It was seven before the collapse
     # too, and the two pairs that merged -- olmo-core-check-cpu with olmo-core-check-gpu,
     # and olmo-core-train-1gpu with olmo-core-train-4gpu -- differed only in a compute
@@ -313,7 +313,14 @@ def test_workload_catalog_yaml_validates_against_contract() -> None:
     # The pair added together rather than the check alone, which is the shape
     # edullm-alt-cl set: a repository registered for training and given only a one-hour
     # check has a dropdown entry and still nowhere to run the work it was registered for.
-    assert len(catalog.workloads) == 9
+    #
+    # edullm-p1 IS THE EXCEPTION TO THAT AND IT IS DELIBERATE RATHER THAN AN OVERSIGHT. Its
+    # workload is a seven-arm Batch array over experiments/skill-dag/mixlaw, so a -train
+    # entry here would have to name a runtime, an attempt count and a checkpoint contract
+    # that nobody has measured, and the argument above is precisely that a bound written
+    # without a measurement is a ceiling pretending to be an estimate. The pre-training team
+    # owns those three numbers; the check exists so the path can be proved while they pick.
+    assert len(catalog.workloads) == 10
     # The check Phase 3 runs. It names OLMo-core, which was the only registered repository
     # with a published image when this was written; dolma-tokenize is the same shape against
     # a repository that still has neither.

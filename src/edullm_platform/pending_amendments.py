@@ -253,6 +253,39 @@ def pending_amendments() -> tuple[PendingAmendment, ...]:
             ),
         ),
         PendingAmendment(
+            role_name="sbsandbox-intern-edullm-admission-states",
+            reason=(
+                "The other half of registering edullm-p1, and the half tools/"
+                "register_repository.py does not write. That tool amends "
+                "infra/ecr-repositories.yaml and infra/iam/ecr-publisher-role.yaml and "
+                "nothing else, so the five places that enumerate one ARN per submittable "
+                "repository were left behind: this role's ecr:DescribeImageScanFindings, "
+                "and the four ecr:BatchGetImage grants in infra/iam/batch-roles.yaml and "
+                "infra/iam/batch-gpu-roles.yaml. All five are amended here. Only this one "
+                "reports drift, because it is the only one of the five whose role has a "
+                "committed capture. Until the stack is applied, a submission naming "
+                "edullm-p1 is refused at the scan-findings read with a message about the "
+                "image rather than about the grant."
+            ),
+            cleared_by=(
+                "The deploy-phase2-admission.yml run that fires on merge to main, then "
+                "tools/capture_phase2_evidence.py, then delete this record. Unlike the "
+                "publisher role above this needs no laptop: the Phase 2 stacks are applied "
+                "by CI, so the window is one workflow run rather than one person."
+            ),
+            findings=(
+                RoleDriftFinding(
+                    direction=DriftDirection.NARROWER,
+                    element="inline policy 'run-admission-workflow' statement 7 resources",
+                    detail=(
+                        "the template declares resources the deployed role does not: "
+                        "arn:<partition>:ecr:<region>:<account>:repository/"
+                        "sbsandbox-intern-edullm-p1"
+                    ),
+                ),
+            ),
+        ),
+        PendingAmendment(
             role_name=DEPLOYER_ROLE_NAME,
             reason=(
                 "The expiry janitor's stack is deployed by deploy-phase3-batch.yml and needs "
