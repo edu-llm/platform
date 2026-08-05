@@ -88,9 +88,21 @@ Resources:
               # role needs the repository lifecycle itself. ecr:PutLifecyclePolicy is what
               # the retired shared role was missing.
               #
-              # Deliberately absent: ecr:SetRepositoryPolicy, ecr:GetRepositoryPolicy and
+              # ecr:GetRepositoryPolicy IS THE READ, AND WITHOUT IT NO EXISTING REPOSITORY
+              # CAN BE UPDATED AT ALL. The ECR resource handler reads the repository policy
+              # whenever it updates a repository, whether or not the template mentions one,
+              # so a stack that could be created could not afterwards be changed. That was
+              # invisible for as long as every deploy only added repositories: a create does
+              # not make the call, and an unchanged repository is not updated. The first
+              # change to a property of all five -- removing the tagged-image expiry rule on
+              # 2026-08-05 -- failed on all five and rolled back, which left the rule that
+              # was deleting images in place.
+              #
+              # Still deliberately absent: ecr:SetRepositoryPolicy and
               # ecr:DeleteRepositoryPolicy. A repository policy is the one ECR grant that
-              # changes who may pull or push an image, and no committed template sets one.
+              # changes who may pull or push an image, and those two are what change it. The
+              # read reveals a policy this account does not set on any repository; it cannot
+              # grant anybody anything.
               - Effect: Allow
                 Action:
                   - ecr:CreateRepository
@@ -99,6 +111,7 @@ Resources:
                   - ecr:PutLifecyclePolicy
                   - ecr:GetLifecyclePolicy
                   - ecr:DeleteLifecyclePolicy
+                  - ecr:GetRepositoryPolicy
                   - ecr:PutImageScanningConfiguration
                   - ecr:PutImageTagMutability
                   - ecr:TagResource

@@ -130,6 +130,7 @@ EXPECTED_REPOSITORY_ACTIONS = {
     "ecr:DeleteRepository",
     "ecr:DescribeRepositories",
     "ecr:GetLifecyclePolicy",
+    "ecr:GetRepositoryPolicy",
     "ecr:ListTagsForResource",
     "ecr:PutImageScanningConfiguration",
     "ecr:PutImageTagMutability",
@@ -232,9 +233,13 @@ ALLOWED_ACTION_PREFIXES = (
     "s3:",
     "states:",
 )
+#: The two repository-policy actions that change who may pull or push an image. The read,
+#: ecr:GetRepositoryPolicy, is deliberately not here: the ECR resource handler makes that
+#: call on every repository update, so forbidding it did not withhold an authority, it
+#: made an existing repository unchangeable. Reading a policy this account never sets
+#: grants nobody anything; setting or deleting one does.
 FORBIDDEN_REPOSITORY_POLICY_ACTIONS = {
     "ecr:DeleteRepositoryPolicy",
-    "ecr:GetRepositoryPolicy",
     "ecr:SetRepositoryPolicy",
 }
 #: What CI must never be able to do to a role, including to this one. iam:PassRole is
@@ -552,14 +557,22 @@ def test_deployer_builds_the_admission_path_and_can_never_run_it() -> None:
     assert not actions & BUILDS_BUT_NEVER_RUNS
 
 
-def test_deployer_can_never_manage_an_ecr_repository_policy() -> None:
+def test_deployer_can_never_write_an_ecr_repository_policy() -> None:
     # A repository policy is the one ECR grant that changes who may pull or push an
     # image. Nothing committed sets one -- infra/ecr-repositories.yaml is forbidden from
-    # carrying RepositoryPolicyText -- so reintroducing these actions must fail here.
+    # carrying RepositoryPolicyText -- so reintroducing the writes must fail here.
+    #
+    # The read is allowed and is named rather than pattern-matched away, because the
+    # difference is the whole of this test now: CloudFormation cannot update a repository
+    # without ecr:GetRepositoryPolicy, so a blanket ban on the substring cost the account
+    # the ability to change a deployed repository and bought nothing. Any fourth
+    # repository-policy action AWS adds still fails here until somebody argues for it.
     actions = set(_actions())
 
     assert not actions & FORBIDDEN_REPOSITORY_POLICY_ACTIONS
-    assert not [action for action in actions if "repositorypolicy" in action.lower()]
+    assert {
+        action for action in actions if "repositorypolicy" in action.lower()
+    } == {"ecr:GetRepositoryPolicy"}
 
 
 def test_deployer_grants_nothing_outside_the_services_the_two_phases_deploy() -> None:
