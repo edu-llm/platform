@@ -59,6 +59,15 @@ A_VALUE_FOR = {
     "--dataset": "none",
 }
 
+#: Which value to give a verb whose positional takes ``choices``, where the choices do not
+#: all lead to the same place. ``add`` is the only one today and it is not a close call: four
+#: of its five kinds are refused locally and run no command at all, so a case about what a
+#: Ctrl-C does or what an unreachable GitHub costs would be driving a verb that reaches
+#: neither and would pass by never getting there. The kind that does the work is the kind to
+#: drive. :func:`test_every_choice_this_file_fills_in_is_still_a_choice_that_verb_takes`
+#: fails if one of these stops being a choice, rather than the fill quietly ceasing to apply.
+A_CHOICE_FOR = {"add": "repository"}
+
 
 def verbs() -> dict[str, argparse.ArgumentParser]:
     """Every verb the parser carries, which is the population every case below runs over."""
@@ -67,6 +76,15 @@ def verbs() -> dict[str, argparse.ArgumentParser]:
 
 def usage_of(verb: str) -> str:
     return verbs()[verb].format_usage()
+
+
+def choices_of(verb: str) -> set[str]:
+    """Every value a ``choices`` positional on this verb accepts, as argparse renders them."""
+    return {
+        choice
+        for group in re.findall(r"\{([a-z0-9,\-]+)\}", usage_of(verb))
+        for choice in group.split(",")
+    }
 
 
 def argv_for(verb: str) -> list[str]:
@@ -78,6 +96,12 @@ def argv_for(verb: str) -> list[str]:
     Optional groups come wrapped in brackets, so stripping the brackets leaves exactly the
     required options and the positionals, and a required flag added to a verb tomorrow is
     filled in here without anybody editing this file.
+
+    A positional with ``choices`` renders as ``{a,b,c}``, and filling that with the same
+    ``a-value`` every other positional gets is argparse's exit 2 rather than a drive of the
+    verb. It is filled from :data:`A_CHOICE_FOR` where that verb is named and from the first
+    choice argparse lists otherwise, so a sixth verb with a choice positional is driven
+    rather than refused on the day it is added.
     """
     usage = usage_of(verb)
     required = usage.partition("]")[2] if "]" in usage else usage
@@ -91,6 +115,10 @@ def argv_for(verb: str) -> list[str]:
         if token.startswith("--"):
             argv += [token, A_VALUE_FOR.get(token, "a-value")]
             index += 2
+            continue
+        if token.startswith("{") and token.endswith("}"):
+            argv.append(A_CHOICE_FOR.get(verb, token[1:-1].split(",")[0]))
+            index += 1
             continue
         argv.append(RUN_ID if "run_id" in token.lower() else "a-value")
         index += 1
@@ -226,6 +254,17 @@ def test_every_flag_this_file_fills_in_is_a_flag_some_verb_still_takes() -> None
     every_usage = " ".join(usage_of(verb) for verb in verbs())
 
     assert all(flag in every_usage for flag in A_VALUE_FOR)
+
+
+def test_every_choice_this_file_fills_in_is_still_a_choice_that_verb_takes() -> None:
+    """Guards :data:`A_CHOICE_FOR` the same way and against a worse silence.
+
+    Mutation: rename ``repository`` to ``codebase``. Nothing here would go red. ``add`` would
+    be driven with a kind argparse refuses, every case would collect its exit 2, and the two
+    invariants that read ``if runner.ran("gh")`` would pass by having reached nothing at all.
+    """
+    for verb, choice in A_CHOICE_FOR.items():
+        assert choice in choices_of(verb), f"{verb} no longer takes {choice!r}"
 
 
 # ---------------------------------------------------------------------------------------
