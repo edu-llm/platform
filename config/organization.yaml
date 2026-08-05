@@ -111,14 +111,19 @@ pilot_repositories:
 # elsewhere. Recording it is a decision for each group's lead, one line per person, and
 # tools/report_onboarding_readiness.py reports whose is missing.
 #
-# WHAT AN EMPTY MEMBER LIST DOES AND DOES NOT COST. evaluate_authorization checks a claimed
-# team only against a submitter whose own membership is recorded. Somebody with no recorded
-# group is authorized exactly as before and their decision record carries team_verified
-# false, which is what that flag has always meant. So groups can be filled in one at a time
-# as their leads confirm them, and each person's claim starts being checked the moment
-# theirs is written down. Before this, populating any team at all refused every submitter
-# who was not in it, including admins, which made this an all-or-nothing edit that nobody
-# could safely make.
+# WHAT AN EMPTY MEMBER LIST DOES AND DOES NOT COST. A claimed team is compared against a
+# submitter whose own membership is recorded, and somebody with no recorded group has
+# nothing to compare against: their decision record carries team_verified false, which is
+# what that flag has always meant. So groups can be filled in one at a time as their leads
+# confirm them, and each person's claim starts being checked the moment theirs is written
+# down.
+#
+# NOTHING HERE CAN REFUSE A RUN ANY MORE, AND FILLING IT IN IS SAFE FOR THAT REASON.
+# evaluate_authorization used to deny a mis-claimed team from inside AWS, past the approval
+# gate, so the only thing a wrong entry here could buy was a lead's signature spent on a
+# refusal. It denied four researchers that way before it was removed. The comparison now
+# happens where it is free -- the form's `team` dropdown and `edullm check` -- and inside
+# AWS it only sets team_verified.
 #
 # LEAD_LOGINS CARRIES ONLY WHAT IS EVIDENCED. Two are: the comment at the top of this file
 # records that VS-code-cloud leads the Memory group, and every run ever submitted under
@@ -132,14 +137,14 @@ pilot_repositories:
 # EVERY MEMBER IS ALSO IN scratch, AND LEAVING THAT OUT WOULD HAVE BROKEN EVERY FIRST RUN.
 #
 # evaluate_authorization reads `membership_is_knowable = bool(teams_for_member(submitter))`.
-# Enforcement is per submitter, so the moment a person's membership is recorded anywhere,
-# every team they claim is checked against their own roster entry and a claim they are not
-# in is denied with submitter_not_in_claimed_team.
+# The comparison is per submitter, so the moment a person's membership is recorded anywhere,
+# every team they claim is checked against their own roster entry, and `edullm check` refuses
+# a claim they are not in with submitter_not_in_claimed_team before anything is dispatched.
 #
 # guides/the-platform.md tells every new person to use `scratch` for their first run, in
 # those words, because it is the bin for work nobody intends to keep and costs no research
 # group anything. So recording assignments without also recording everybody in scratch would
-# have denied the documented first run for all thirty-five people on the day the roster
+# have refused the documented first run for all thirty-five people on the day the roster
 # landed -- a refusal naming a team they were told to pick.
 #
 # scratch therefore carries the whole roster and no lead. It is a bin, not a group: nobody

@@ -37,6 +37,19 @@ class AuthorizationReason(StrEnum):
     APPROVER_LACKS_ADMIN_ROLE = "approver_lacks_admin_role"
     APPROVER_DOES_NOT_LEAD_SUBMITTER_TEAM = "approver_does_not_lead_submitter_team"
     TEAM_SCOPE_REQUIRES_TEAM_BINDINGS = "team_scope_requires_team_bindings"
+    #: NOTHING RETURNS THIS ANY MORE AND IT MUST NOT BE DELETED.
+    #:
+    #: :func:`evaluate_authorization` stopped refusing on a mis-claimed team, for the
+    #: reasons recorded there. Four decision records were written with this reason before
+    #: that, one of them a committed fixture under ``fixtures/evidence/``, and the reason
+    #: is parsed back out of stored JSON by ``AuthorizationReasonValue``. Removing the
+    #: member would make those four records unreadable by the code that wrote them, which
+    #: is the one thing an audit trail may not do.
+    #:
+    #: It is also still a live refusal code, spelled from here rather than typed:
+    #: ``cli.preflight._check_team`` reads ``.value`` off this member for the local check
+    #: that asks the same question before anything is spent. So the word a submitter meets
+    #: is unchanged and only the place it is asked has moved.
     SUBMITTER_NOT_IN_CLAIMED_TEAM = "submitter_not_in_claimed_team"
 
 
@@ -121,16 +134,35 @@ def evaluate_authorization(
     approval_class = classify_request(
         request, policy.thresholds, hourly_rate_usd=hourly_rate_usd
     )
-    # ASKED OF THIS SUBMITTER, NOT OF THE FILE. This read ``bool(inventory.team_bindings
-    # .teams)``, so the first group anybody declared switched checking on for the whole
-    # organization at once, and every submitter whose own group was not yet written down was
-    # refused with submitter_not_in_claimed_team. That included platform admins, and it made
-    # declaring one group an all-or-nothing edit: safe only on the day all thirty-five
-    # assignments landed together, which is the day that never comes. Asking whether this
-    # submitter's membership is recorded gives the same answer once everybody is on a group,
-    # and in the meantime lets groups be filled in one at a time. A submitter with no
-    # recorded group is authorized exactly as before and the decision records team_verified
-    # false, which is what that flag has meant since it was added.
+    # RECORDED, NOT ENFORCED, AND THE FLAG IS NOW THE WHOLE OF WHAT HAPPENS.
+    #
+    # This used to refuse below when the roster recorded a group for the submitter and the
+    # manifest named a different one. It was the only reason in this enum that ever denied
+    # anybody, it denied four times, and all four were real researchers whose approval a
+    # lead or an admin had already spent. Two of the four are twenty-six seconds apart,
+    # which is one person retrying and meeting the same wall.
+    #
+    # WHY REMOVING IT IS SAFE, AND THE REASON IS ITS POSITION RATHER THAN ITS SUBJECT. This
+    # function runs inside admission, which is downstream of the approval gate, so this
+    # refusal never once prevented a submission from committing money. By the time it
+    # spoke, a lead had already said yes. All it could do was waste the yes. The question
+    # is still asked twice where it is free: the form's `team` dropdown offers only the
+    # eight declared ids, and ``cli.preflight._check_team`` compares the roster against the
+    # claim before anything is dispatched, using ``belongs_to_claimed_team`` below so there
+    # is one spelling of the comparison rather than two.
+    #
+    # WHAT STAYS IS THE OBSERVATION. ``team_verified`` is on every decision record, it is
+    # false on 79 of the 158 written so far, and it is now the only thing a mismatched
+    # claim produces. Read it to find a run whose attribution nothing established;
+    # ``tools/build_phase2_proof.py`` and ``tools/build_phase5_proof.py`` already print it
+    # per run, and the nightly report does not surface it yet.
+    #
+    # ASKED OF THIS SUBMITTER, NOT OF THE FILE, and that stays true of the flag as it was
+    # of the refusal. It read ``bool(inventory.team_bindings.teams)`` once, so the first
+    # group anybody declared switched checking on for the whole organization at once and
+    # every submitter whose own group was not yet written down came out false. Asking
+    # whether this submitter's membership is recorded gives the same answer once everybody
+    # is on a group and lets groups be filled in one at a time in the meantime.
     membership_is_knowable = bool(inventory.teams_for_member(submitter))
     team_verified = membership_is_knowable and belongs_to_claimed_team(
         inventory,
@@ -154,15 +186,13 @@ def evaluate_authorization(
         return decision(AuthorizationReason.SUBMITTER_NOT_IN_ROSTER)
     if approver is not None and not is_organization_member(inventory, approver):
         return decision(AuthorizationReason.APPROVER_NOT_IN_ROSTER)
-    if membership_is_knowable and not team_verified:
-        return decision(AuthorizationReason.SUBMITTER_NOT_IN_CLAIMED_TEAM)
 
     # BELOW THE ROSTER CHECKS, AND THAT POSITION IS THE WHOLE OF WHAT AUTO-APPROVAL DOES
-    # NOT WEAKEN. The three refusals above have already run: an off-roster submitter, an
-    # off-roster approver and a submitter claiming a group they are not in are all refused
-    # before this line, for an automatic run exactly as for any other. What this returns
-    # early from is the approver question underneath -- who released it, and whether they
-    # were allowed to -- because for this class the answer is nobody, by policy.
+    # NOT WEAKEN. The two refusals above have already run: an off-roster submitter and an
+    # off-roster approver are both refused before this line, for an automatic run exactly
+    # as for any other. What this returns early from is the approver question underneath --
+    # who released it, and whether they were allowed to -- because for this class the
+    # answer is nobody, by policy.
     #
     # Placed here rather than above the self-approval test, which is the mistake it would be
     # easy to make. An automatic run reaches admission with no approver, so the fall-through

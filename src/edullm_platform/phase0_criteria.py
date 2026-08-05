@@ -328,41 +328,58 @@ def phase0_criteria(references: Sequence[FixtureReference]) -> tuple[CriterionSp
                 "not belong to is rejected. Approver scope is a separate question and follows "
                 "`approval_scope`."
             ),
-            status=CriterionStatus.COVERED,
-            # WHAT MOVED THIS OFF ITS DEFERRAL, AND WHY THESE FOUR ARE THE PROVING ONES.
+            status=CriterionStatus.DEFERRED,
+            # THIS WAS COVERED ON 2026-08-02 AND IS DEFERRED AGAIN ON 2026-08-05, AND THE
+            # HONEST WORD FOR THAT IS A DECISION RATHER THAN A REGRESSION.
             #
-            # The supporting tests below prove the rule against a synthetic two-team
-            # inventory built inside the test. They were all true while the shipped roster
-            # recorded nobody, which is exactly why they could not close this criterion: a
-            # rule that rejects nothing in the configuration that ships is a rule no reviewer
-            # can watch working.
+            # It was closed by four tests run against config/organization.yaml itself, two
+            # of which asserted that evaluate_authorization denies a mis-claimed team. That
+            # branch is gone. It ran inside admission, downstream of the approval gate, so
+            # it never once prevented a submission from committing money -- a lead or an
+            # admin had already said yes every time it spoke. It spoke four times in 158
+            # submissions, all four against real researchers, two of them the same person
+            # twenty-six seconds apart.
             #
-            # These four run against config/organization.yaml itself. The first two are the
-            # shipped denial, one for a retired group name and one for a name no catalog ever
-            # declared, and both fail for the same reason on purpose, because attribution is
-            # read off the submitter and never off the catalog. The third is the shipped
-            # grant with team_verified true, a state no decision could reach before the
-            # assignments landed.
+            # WHAT IS LEFT IS NOT NOTHING AND IS NOT THE CRITERION EITHER. The comparison
+            # still happens twice where it is free: the form's `team` dropdown offers the
+            # eight declared ids, and cli.preflight._check_team refuses a claim the roster
+            # contradicts before anything is dispatched. Neither is the statement above. A
+            # submitter dispatching the form by hand can still name a group they are not in,
+            # and what happens then is a decision record carrying team_verified false.
             #
-            # The fourth is not about attribution and belongs here anyway. Enforcement is per
-            # submitter, so recording somebody's group is what starts checking every team
-            # they name, and guides/the-platform.md tells a new person to name `scratch`.
-            # A recorded member left out of scratch would be refused their first run by the
-            # very edit that recorded them. That property has to hold for the roster to be
-            # safe to fill in, so it is proved rather than assumed.
-            proving_node_ids=(
-                "tests/test_authorization.py::test_attribution_is_enforced_against_the_shipped_roster[curriculum]",
-                "tests/test_authorization.py::test_attribution_is_enforced_against_the_shipped_roster[not-a-team]",
-                "tests/test_authorization.py::test_a_recorded_member_claiming_their_own_group_is_verified_on_the_shipped_roster",
-                "tests/test_authorization.py::test_every_recorded_member_may_claim_scratch",
+            # So the criterion is recorded rather than enforced, which is the state Phase 0
+            # and Phase 2 both described before the assignments landed, reached this time by
+            # a deliberate removal rather than by an empty roster.
+            deferral_reason=(
+                "The refusal that closed this ran inside admission, on the far side of the "
+                "approval gate, so it could never prevent spend. It denied four submissions "
+                "in 158 and every one of them already had a lead's or an admin's approval "
+                "spent on it. It was removed on 2026-08-05 and what a mis-claimed team now "
+                "produces is team_verified false on the decision record. The comparison is "
+                "still made before the gate, by the form's dropdown and by edullm check, "
+                "and neither of those is the statement above: a submitter dispatching the "
+                "form by hand can name a group they are not in and be admitted."
+            ),
+            deferral_trigger=(
+                "Something reading team_verified. The flag is on every decision record and "
+                "false on 79 of the 158 written so far, and no report surfaces it: the "
+                "nightly does not, and tools/build_phase2_proof.py and "
+                "tools/build_phase5_proof.py print it per run in documents nobody reads on "
+                "a schedule. A cost report that lists runs whose attribution nothing "
+                "established closes this as recorded. Refusing again closes it as enforced, "
+                "and would have to happen before the gate to be worth anything."
             ),
             supporting_node_ids=(
                 (
                     "tests/test_authorization.py::test_a_submitter_naming_their_own_team_is_granted_and_recorded_verified",
-                    "tests/test_authorization.py::test_a_submitter_naming_another_teams_id_is_denied_despite_a_valid_lead_approval",
-                    "tests/test_authorization.py::test_a_team_id_no_roster_defines_is_denied_the_same_way_as_a_foreign_team",
-                    "tests/test_authorization.py::test_a_lead_self_authorizing_cannot_attribute_the_run_to_a_foreign_team",
-                    "tests/test_authorization.py::test_an_admin_may_not_attribute_their_run_to_another_teams_budget",
+                    "tests/test_authorization.py::test_a_recorded_member_claiming_their_own_group_is_verified_on_the_shipped_roster",
+                    "tests/test_authorization.py::test_attribution_is_recorded_against_the_shipped_roster_and_not_enforced[curriculum]",
+                    "tests/test_authorization.py::test_attribution_is_recorded_against_the_shipped_roster_and_not_enforced[not-a-team]",
+                    "tests/test_authorization.py::test_the_verified_flag_is_the_only_thing_a_foreign_team_changes_for_a_lead",
+                    "tests/test_authorization.py::test_no_evaluation_against_the_shipped_roster_reaches_the_claimed_team_reason",
+                    "tests/test_authorization.py::test_the_retired_claimed_team_reason_still_reads_back_off_a_stored_record",
+                    "tests/test_authorization.py::test_every_recorded_member_may_claim_scratch",
+                    "tests/test_cli_check.py::test_naming_a_team_the_roster_does_not_put_you_on_is_refused_before_the_gate",
                     "tests/test_policy.py::test_request_facts_require_an_explicit_claimed_team",
                 )
                 + _per_fixture(
@@ -376,18 +393,26 @@ def phase0_criteria(references: Sequence[FixtureReference]) -> tuple[CriterionSp
                     "Attribution travels the whole path. RunManifest.team fills "
                     "RequestFacts.claimed_team, which is required rather than defaulted so a "
                     "caller cannot skip it, and every AuthorizationDecision records both the "
-                    "claimed team and whether membership was verified. Three states are "
-                    "distinguishable in the audit record: verified and correct (team_verified "
-                    "true), verified and wrong (denied with submitter_not_in_claimed_team), and "
-                    "not verifiable yet (team_verified false with an ordinary approval reason). "
-                    "Every shipped decision today is the third state."
+                    "claimed team and whether membership was verified. Two states are "
+                    "distinguishable in the audit record now rather than three: verified "
+                    "(team_verified true) and not verified (team_verified false), the second "
+                    "covering both a claim the roster contradicts and a submitter whose own "
+                    "membership nothing records. A reader who needs those apart has the "
+                    "roster and the claimed team on the same record and can compare them."
                 ),
                 (
-                    "Attribution is checked against the submitter's own membership and nothing "
-                    "else. It is independent of who approves, so a lead self-authorising and an "
-                    "admin self-approving an exception are both refused a team they do not "
-                    "belong to. It is also independent of the repository: RepositoryBinding "
-                    "exists but no rule derives a team from it."
+                    "Attribution is read off the submitter's own membership and nothing else. "
+                    "It is independent of who approves, so a lead self-authorising and an "
+                    "admin self-approving an exception both record team_verified false for a "
+                    "team they do not belong to rather than being refused it. It is also "
+                    "independent of the repository: RepositoryBinding exists but no rule "
+                    "derives a team from it."
+                ),
+                (
+                    "Four decision records carry reason submitter_not_in_claimed_team and the "
+                    "enum member is kept for them. Nothing produces it now, and "
+                    "cli.preflight reads the same member for the local refusal, so the word "
+                    "in the history and the word a submitter meets cannot drift apart."
                 ),
             ),
         ),

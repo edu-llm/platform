@@ -45,7 +45,7 @@ git rev-parse HEAD                        # the commit you put on the form
 | Dockerfile and base | `.edullm/Dockerfile` on `docker.io/library/python` 3.12.13 pinned by digest, the same base OLMo-core registers. Not `infra/Dockerfile.validator`, whose `ENTRYPOINT` of `python -m edullm_data.validate --promote` would prepend the promoter to whatever you type |
 | Tag and digest | The first twelve characters of the commit, and ECR refuses to overwrite a tag, so one commit is one image. Leave `image_digest` blank and it resolves from your commit |
 
-**A green build is not the last step.** The registry scans every image it accepts, and a submission naming an image whose scan has not finished is refused with `image_scan_findings_unreviewed`, which reads as though your image carries unapproved vulnerabilities, and usually means only that the scan was still running. It takes a few minutes. Wait, then resubmit the same commit.
+**A green build is not the last step.** The registry scans every image it accepts, and a submission naming an image whose scan has not finished is routed to an admin rather than to your team lead. The summary on the run page says the scan was still running rather than naming a vulnerability. It takes a few minutes. Wait, then resubmit the same commit, and the run goes back to the lead gate.
 
 ## Workload profiles
 

@@ -10,7 +10,14 @@
 # every accepted run had an approver, so a v3 record reading approval_class: automatic with
 # no approver is a different fact from a v2 record that lost one, and the version is what
 # tells those apart.
-policy_version: v3
+#
+# v4 moves the image-scan gate out of denied_outright and into the exception class. The
+# condition itself is unchanged and classify_request already routes an unreviewed digest to
+# the admin gate; what changes is that an admin can now release one. Bumped for the reason
+# v2 and v3 were. Under v3 a scan finding was refusable by nobody, so a v4 record reading
+# approval_class: exception with an unreviewed digest behind it is a different fact from a
+# v3 record, and the version is what tells those apart.
+policy_version: v4
 # THERE IS A FIFTH BOUND AND IT IS NOT IN THIS FILE.
 # classify_request also refuses to call a request routine when the compute profile it names
 # costs more than EXCEPTION_RATE_CEILING_USD_PER_HOUR, which is $20/hour and lives in
@@ -75,8 +82,8 @@ thresholds:
   # which is what the original incident actually required. An auto-approved run is still
   # recorded, still carries a decision record, and is still denied outright if the
   # submitter is not on the roster. evaluate_authorization returns
-  # automatic_below_approval_thresholds only after the roster, approver-roster and
-  # claimed-team checks have all passed; read it there rather than trusting this note.
+  # automatic_below_approval_thresholds only after the roster and approver-roster checks
+  # have both passed; read it there rather than trusting this note.
   #
   # BOTH HALVES, AND EXCLUSIVE ON BOTH. A run that is cheap only because it is short does
   # not auto-approve if it asks for four hours, and a one-hour run costing eight dollars
@@ -121,11 +128,28 @@ denied_outright:
   - unregistered_compute_profile
   - mutable_repository_revision
   - mutable_image_reference
-  # A digest whose registry scan carries a severity in image_scan.blocking_severities and
-  # which no entry in config/image-exceptions.yaml covers. Denied outright rather than
-  # classified as an exception on purpose: the point is that somebody read the findings
-  # before the run was submitted, not that an admin waved it through while it waited.
-  - image_scan_findings_unreviewed
+  # image_scan_findings_unreviewed WAS HERE AND IS NOW AN EXCEPTION INSTEAD, WHICH IS A
+  # SOFTENING AND NOT A REMOVAL. The condition is still derived, the findings are still
+  # read from the registry by admission itself, and classify_request still refuses to call
+  # an unreviewed digest routine -- so every one of these still goes to the admin gate and
+  # no lead can release it. What changed is that somebody can.
+  #
+  # Denied outright means refusable by nobody, and the whole route is what a wrong answer
+  # then costs. It has fired twice, both times against the owner self-approving as admin,
+  # and config/image-exceptions.yaml holds zero exceptions against sixteen reviewed
+  # findings, so the review process this was meant to force does not exist. The remedy the
+  # refusal offers is editing a security file, which is not a thing a first-week researcher
+  # can do; docs-frank has the transcript of one trying.
+  #
+  # The property this was built for survives. Somebody still has to read the findings
+  # before the run starts, and the approver context now prints them -- which of the four
+  # scan verdicts happened, the counts, and the vulnerabilities by name -- because an
+  # approval given blind is worse than the gate was. What is dropped is the part that cost
+  # the route, which is that nobody could act on what they read.
+  #
+  # It stays a legal value of denied_outright in schemas/policy.schema.json and in
+  # DeniedOutrightCondition, so a policy that names it is still readable and so is every
+  # decision taken under v2 or v3.
   # A dataset config/datasets.yaml carries and whose family is not one a run may train on.
   # Distinct from unregistered_dataset, which says nothing registers this identifier; this
   # one says the registry resolves it exactly and it is an input to a corpus rather than a

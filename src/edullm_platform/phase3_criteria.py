@@ -1021,7 +1021,14 @@ def phase3_criteria() -> tuple[CriterionSpec, ...]:
             proving_node_ids=(
                 *_ids(DECISIONS, "test_the_scan_question_is_gone_because_it_was_answered"),
                 *_ids(SCAN, "test_the_shipped_policy_blocks_on_criticals"),
-                *_ids(SCAN, "test_the_shipped_policy_names_the_denial_condition"),
+                # WAS test_the_shipped_policy_names_the_denial_condition, WHICH READ THE
+                # denied_outright LIST AND STOPPED BEING THE RIGHT QUESTION ON 2026-08-05.
+                # Policy v4 moved the condition into the exception class, so the list no
+                # longer names it and classify_request is the only thing holding the gate
+                # up. A criterion citing the list would now be satisfied by a policy file
+                # and a classifier that ignores the fact, which is the mutation the
+                # replacement asks about directly.
+                *_ids(SCAN, "test_the_shipped_policy_sends_an_unreviewed_scan_to_the_admin_gate"),
                 *_ids(SCAN, "test_the_denial_condition_is_wired_to_the_fact"),
             ),
             supporting_node_ids=(
