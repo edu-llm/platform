@@ -34,7 +34,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
-from edullm_platform.errors import SubmissionRefusedError
+from edullm_platform.errors import (
+    AmbiguousImageError,
+    ImageNotPublishedFromTheCommitError,
+    NoPublishedImageError,
+)
 
 __all__ = [
     "PublishedImage",
@@ -118,7 +122,7 @@ def resolve_image(
     # do -- build the commit -- goes unmentioned. The unbuilt commit is checked first so
     # that it is the one that gets said.
     if not published:
-        raise SubmissionRefusedError(
+        raise NoPublishedImageError(
             f"commit {commit_sha} has no image published from it, so there is nothing for "
             "this submission to run. Build the commit before submitting it: the "
             "build-research-image.yml workflow publishes an image for the commit it is "
@@ -127,7 +131,7 @@ def resolve_image(
 
     if override is not None:
         if override not in {candidate.image_digest for candidate in published}:
-            raise SubmissionRefusedError(
+            raise ImageNotPublishedFromTheCommitError(
                 f"image digest {override} was not published from commit {commit_sha}. A "
                 "run's image has to be one its own commit produced, or the lineage record "
                 "names a commit that did not build the image that ran. Submit the commit "
@@ -167,7 +171,7 @@ def resolve_image(
         # is the same defect as a resolution that does, arriving somewhere nobody thinks
         # to check for it.
         candidates = ", ".join(sorted(candidate.image_digest for candidate in tied))
-        raise SubmissionRefusedError(
+        raise AmbiguousImageError(
             f"commit {commit_sha} has {len(tied)} images published at the same instant "
             f"({latest.isoformat()}), so which of them this submission means cannot be "
             f"derived: {candidates}. Name the one you want in the image_digest field. A "

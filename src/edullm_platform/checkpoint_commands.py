@@ -62,7 +62,7 @@ from collections.abc import Sequence
 from typing import Final
 
 from .contracts.workload import CheckpointContract
-from .errors import SubmissionRefusedError
+from .errors import CheckpointPathNotInCommandError
 from .launchers import (
     MAXIMUM_WRAPPER_DEPTH,
     carries_the_token,
@@ -128,7 +128,7 @@ def require_a_save_folder_a_retry_can_find(
         return
     if expands_the_checkpoint_directory(command):
         return
-    raise SubmissionRefusedError(
+    raise CheckpointPathNotInCommandError(
         _refusal(command, workload_profile=workload_profile, checkpoint=checkpoint)
     )
 

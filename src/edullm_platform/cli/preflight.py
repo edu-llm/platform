@@ -24,6 +24,17 @@ A second spelling of any of them would be a second answer to a settled question,
 direction it fails is the expensive one: the CLI clears a submission, a lead reads it and
 releases it, and admission refuses it from inside AWS with the approval already spent.
 
+**THAT GOES FOR THE CODES AS WELL AS FOR THE RULES, AND IT DID NOT USED TO.** This module
+invented ``workload_profile_repository_mismatch``, ``process_per_device`` and four more of
+its own, because the exception the compile step raises arrived with prose and no code to
+read. It carries one now, so every code below that names a compile-time refusal is read off
+the class that raises it: ``type(exc).reason_code`` where the exception is caught, and
+``SomeError.reason_code`` where the question is asked over again here because there is no
+catalog lookup to catch. Nothing here spells one, which is what makes a fork impossible
+rather than merely discouraged, and ``tests/test_refusal_codes.py`` is what keeps it that
+way. The codes with no compile-time counterpart -- a dirty tree, an unknown submitter, an
+ambiguous team -- are still written here, because here is the only place that asks.
+
 **A REAL ``RunManifest`` IS BUILT, WITH ONE PLACEHOLDER, AND THAT IS WHY THE ANSWERS ARE
 THE SERVER'S.** ``build_request_facts``, ``compute_manifest_cost_inputs``,
 ``denied_outright_conditions`` and ``classify_request`` all take a manifest or the facts
@@ -71,7 +82,14 @@ from edullm_platform.contracts.workload import (
     WorkloadProfile,
     resolve_compute_profile_for_execution,
 )
-from edullm_platform.errors import SubmissionRefusedError
+from edullm_platform.errors import (
+    ExperimentNotASlugError,
+    NoPublishedImageError,
+    RetryWithoutACheckpointContractError,
+    SubmissionRefusedError,
+    UnregisteredWorkloadProfileError,
+    WorkloadProfileRepositoryMismatchError,
+)
 from edullm_platform.launchers import require_a_process_for_every_device
 from edullm_platform.manifest_helpers import build_request_facts, compute_manifest_cost_inputs
 from edullm_platform.precision import require_bfloat16_only_where_the_hardware_has_it
@@ -116,7 +134,9 @@ UNRESOLVED_IMAGE_DIGEST: Final = "sha256:" + "0" * 64
 #: binary holds none of.
 DEFERRED_TO_SUBMIT: Final = (
     (
-        "no_published_image",
+        # The word the refusal itself carries, so a reader told the check was deferred
+        # recognises it when the compile step makes it.
+        NoPublishedImageError.reason_code,
         (
             "Whether this commit published an image. A push to edullm/** builds one; the "
             "registry is asked by the submission workflow, which holds the credential."
@@ -499,7 +519,7 @@ def _check_identity(
     try:
         require_submitter_on_the_roster(submitter, inventory=configuration.inventory)
     except SubmissionRefusedError as exc:
-        return [Refusal(code=AuthorizationReason.SUBMITTER_NOT_IN_ROSTER.value, detail=str(exc))]
+        return [Refusal(code=type(exc).reason_code, detail=str(exc))]
     return []
 
 
@@ -511,7 +531,7 @@ def _check_repository(
             request.repository, repositories=configuration.repositories
         )
     except SubmissionRefusedError as exc:
-        return [Refusal(code="unregistered_repository", detail=str(exc))]
+        return [Refusal(code=type(exc).reason_code, detail=str(exc))]
     return []
 
 
@@ -532,7 +552,10 @@ def _find_workload(
         offered = ", ".join(sorted(entry.name for entry in configuration.catalog.workloads))
         refusals.append(
             Refusal(
-                code="unregistered_workload_profile",
+                # Read off the class ``_resolve_workload`` raises rather than caught from
+                # it, because that function is a lookup this one has already made. The code
+                # is the same word either way, which is the point of reading it there.
+                code=UnregisteredWorkloadProfileError.reason_code,
                 detail=(
                     f"{request.workload_profile!r} is not in config/workload-catalog.yaml. "
                     f"Offered: {offered}. A workload profile fixes the runtime bound, the "
@@ -554,7 +577,7 @@ def _find_workload(
         offered = ", ".join(for_this_repository) or "none at all"
         refusals.append(
             Refusal(
-                code="workload_profile_repository_mismatch",
+                code=WorkloadProfileRepositoryMismatchError.reason_code,
                 detail=(
                     f"workload profile {workload.name!r} belongs to repository "
                     f"{workload.repository!r} and this submission names "
@@ -694,7 +717,7 @@ def _check_experiment(request: SubmissionRequest) -> list[Refusal]:
         return []
     return [
         Refusal(
-            code="experiment_not_a_slug",
+            code=ExperimentNotASlugError.reason_code,
             detail=(
                 f"the experiment {request.experiment!r} is not a name this platform can "
                 "group on. An experiment is written in lower-case letters and digits, with "
@@ -745,7 +768,7 @@ def _build_manifest(
     if attempts > 1 and workload.checkpoint is None:
         return None, [
             Refusal(
-                code="retry_without_a_checkpoint_contract",
+                code=RetryWithoutACheckpointContractError.reason_code,
                 detail=(
                     f"workload profile {workload.name!r} declares no checkpoint contract, so "
                     f"it cannot be retried; asking for {attempts} attempts would produce a "
@@ -815,7 +838,7 @@ def _check_command(manifest: RunManifest, catalog: WorkloadCatalog) -> list[Refu
             command=manifest.command, compute_profile=manifest.compute_profile
         )
     except SubmissionRefusedError as exc:
-        refusals.append(Refusal(code="process_per_device", detail=str(exc)))
+        refusals.append(Refusal(code=type(exc).reason_code, detail=str(exc)))
     try:
         require_a_save_folder_a_retry_can_find(
             command=manifest.command,
@@ -823,7 +846,7 @@ def _check_command(manifest: RunManifest, catalog: WorkloadCatalog) -> list[Refu
             checkpoint=manifest.checkpoint,
         )
     except SubmissionRefusedError as exc:
-        refusals.append(Refusal(code="checkpoint_path_not_in_command", detail=str(exc)))
+        refusals.append(Refusal(code=type(exc).reason_code, detail=str(exc)))
     try:
         require_bfloat16_only_where_the_hardware_has_it(
             command=manifest.command,
@@ -831,7 +854,7 @@ def _check_command(manifest: RunManifest, catalog: WorkloadCatalog) -> list[Refu
             catalog=catalog,
         )
     except SubmissionRefusedError as exc:
-        refusals.append(Refusal(code="bfloat16_not_in_the_hardware", detail=str(exc)))
+        refusals.append(Refusal(code=type(exc).reason_code, detail=str(exc)))
     return refusals
 
 

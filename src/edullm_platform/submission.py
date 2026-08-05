@@ -74,7 +74,17 @@ from edullm_platform.contracts.policy import (
 )
 from edullm_platform.contracts.repository_registry import RepositoryRegistry
 from edullm_platform.contracts.workload import CostInputs, WorkloadCatalog, WorkloadProfile
-from edullm_platform.errors import SubmissionRefusedError
+from edullm_platform.errors import (
+    DeniedOutrightError,
+    ExperimentNotASlugError,
+    RetryWithoutACheckpointContractError,
+    SubmitterNotOnTheRosterError,
+    TeamNotASlugError,
+    UnpriceableComputeProfileError,
+    UnregisteredRepositoryError,
+    UnregisteredWorkloadProfileError,
+    WorkloadProfileRepositoryMismatchError,
+)
 from edullm_platform.image_resolution import PublishedImage, ResolvedImage, resolve_image
 from edullm_platform.launchers import (
     require_a_process_for_every_device,
@@ -214,7 +224,7 @@ def _resolve_workload(catalog: WorkloadCatalog, name: str) -> WorkloadProfile:
         if workload.name == name:
             return workload
     registered = ", ".join(sorted(profile.name for profile in catalog.workloads))
-    raise SubmissionRefusedError(
+    raise UnregisteredWorkloadProfileError(
         f"unregistered workload profile {name!r}; the catalog registers: {registered}"
     )
 
@@ -260,7 +270,7 @@ def require_registered_repository(
     if repositories.is_registered(repository):
         return
     registered = ", ".join(entry.repository for entry in repositories.repositories)
-    raise SubmissionRefusedError(
+    raise UnregisteredRepositoryError(
         f"{repository!r} is not registered in config/repositories.yaml, so admission would "
         f"refuse this run with unregistered_repository whoever released it. Registered "
         f"today: {registered}. A registration is what gives a repository somewhere for its "
@@ -303,7 +313,7 @@ def require_submitter_on_the_roster(submitter: str, *, inventory: OrganizationIn
     """
     if is_organization_member(inventory, submitter):
         return
-    raise SubmissionRefusedError(
+    raise SubmitterNotOnTheRosterError(
         f"{submitter!r} is not on the roster in config/organization.yaml, so admission "
         "would refuse this run with submitter_not_in_roster whoever released it. Write "
         "access to this repository and a place on the roster are granted separately, "
@@ -344,7 +354,7 @@ def compile_submission(
         # account: both sides are in the catalog the compile job already reads. Everything
         # before Batch is cheap, and an approval spent on a submission that cannot be
         # coherent is the expensive thing to avoid.
-        raise SubmissionRefusedError(
+        raise WorkloadProfileRepositoryMismatchError(
             f"workload profile {workload.name!r} belongs to repository "
             f"{workload.repository!r} and this submission names {inputs.repository!r}. A "
             "workload profile fixes the runtime bound, the attempt bound and the checkpoint "
@@ -377,7 +387,7 @@ def compile_submission(
         else workload.maximum_attempts
     )
     if attempts > 1 and workload.checkpoint is None:
-        raise SubmissionRefusedError(
+        raise RetryWithoutACheckpointContractError(
             f"workload profile {workload.name!r} declares no checkpoint contract, so it "
             f"cannot be retried; asking for {attempts} attempts would produce a run that "
             "restarts from nothing. Raise the attempt bound on a workload that checkpoints, "
@@ -402,7 +412,7 @@ def compile_submission(
     # -- see CompiledSubmission.experiment for why a grouping key cannot live in a hashed
     # record.
     if not fullmatch(SLUG_PATTERN, inputs.experiment):
-        raise SubmissionRefusedError(
+        raise ExperimentNotASlugError(
             f"the experiment {inputs.experiment!r} is not a name this platform can group on. "
             "An experiment is written in lower-case letters and digits, with single hyphens "
             "between words and none at either end -- context-length-sweep, tokenizer-ablation. "
@@ -484,7 +494,7 @@ def compile_submission(
     try:
         cost = compute_manifest_cost_inputs(manifest, catalog)
     except ValueError as exc:
-        raise SubmissionRefusedError(
+        raise UnpriceableComputeProfileError(
             f"unregistered compute profile {manifest.compute_profile!r}; it has no rate, so "
             "the submission cannot be priced and policy denies it outright"
         ) from exc
@@ -523,7 +533,7 @@ def compile_submission(
     except ValidationError as exc:
         if not any(error["loc"] == ("claimed_team",) for error in exc.errors()):
             raise
-        raise SubmissionRefusedError(
+        raise TeamNotASlugError(
             f"the team {manifest.team!r} is not a team name this platform can record. A "
             "team is written in lower-case letters and digits, with single hyphens between "
             "words and none at either end -- memory-split, data, olmo-core-eval. Correct "
@@ -536,7 +546,7 @@ def compile_submission(
 
     tripped = denied_outright_conditions(facts, policy)
     if tripped:
-        raise SubmissionRefusedError(
+        raise DeniedOutrightError(
             "the submission trips conditions policy denies outright rather than classifies: "
             f"{', '.join(tripped)}"
         )
