@@ -42,16 +42,22 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Protocol
+from typing import Final, Protocol
 
+from edullm_platform.contracts.manifest import FanOut
 from edullm_platform.contracts.results import CheckpointManifest, ResultManifest
 
 __all__ = [
+    "SWEEP_INDEX_PARAMETER",
     "ResolvedWeights",
     "ResultManifestReader",
+    "SweepCell",
     "UnresolvableWeightsError",
     "WeightsSource",
+    "fanout_for_sweep",
+    "plan_checkpoint_sweep",
     "resolve_weights_from_run",
+    "sweep_plan_document",
 ]
 
 
@@ -124,3 +130,87 @@ def resolve_weights_from_run(
         checkpoints=tuple(latest_at_step[step] for step in steps),
         uncertified_steps=tuple(step for step in steps if not latest_at_step[step].is_resumable),
     )
+
+
+#: What a checkpoint sweep's array index varies.
+#:
+#: A LABEL AND NOT A VARIABLE NAME, WHICH IS EASY TO GET BACKWARDS AND WAS. ``FanOut``'s
+#: ``index_parameter`` records what the index means, and ``execution.py`` puts that string into
+#: the container as the *value* of ``EDULLM_FANOUT_INDEX_PARAMETER``. The index itself is
+#: ``AWS_BATCH_JOB_ARRAY_INDEX``, which Batch sets per child, and that is what a cell reads to
+#: select its row from the sweep plan. So the right value here is the word for what varies -- a
+#: cell learns it is varying the checkpoint, and where the list of them is.
+SWEEP_INDEX_PARAMETER: Final = "checkpoint"
+
+
+@dataclass(frozen=True)
+class SweepCell:
+    #: Position in the array, contiguous from zero, which is what Batch requires. Never the
+    #: step: a checkpoint at step 5000 would otherwise ask for an array of 5001.
+    index: int
+    step: int
+    checkpoint_uri: str
+    #: Whether this cell's own checkpoint carried a success marker. Per cell rather than read
+    #: off the run, because a curve where one point came from an uncertified checkpoint needs
+    #: to say which point. Two of the 260 checkpoints in the store are certified as of
+    #: 2026-08-05 and both are the platform team's own, so on a research team's run this is
+    #: False on every cell -- which is what the record is for rather than a reason to drop it.
+    certified: bool
+
+
+def plan_checkpoint_sweep(weights: ResolvedWeights) -> tuple[SweepCell, ...]:
+    """One cell per recorded checkpoint, in step order.
+
+    EVERY CELL IS A MACHINE. A sweep multiplies the run's cost by its length, and nothing in
+    Batch caps how many run at once -- what bounds it is the compute environment's MaxvCpus
+    divided by what one cell reserves. See config/policy.yaml for the fan-out ceiling and
+    contracts/manifest.py's FanOut for why no parallelism field is offered.
+    """
+    if weights.source is WeightsSource.SEALED_MODEL:
+        raise ValueError(
+            "a sealed model is one set of weights and not a sweep; a sweep is what a prior "
+            "run's checkpoints make"
+        )
+    return tuple(
+        SweepCell(
+            index=index,
+            step=entry.step,
+            checkpoint_uri=entry.uri,
+            certified=entry.is_resumable,
+        )
+        for index, entry in enumerate(weights.checkpoints)
+    )
+
+
+def fanout_for_sweep(cells: Sequence[SweepCell]) -> FanOut | None:
+    """The fan-out a sweep of this length needs, or None where it needs none.
+
+    ``FanOut`` declares ``size >= 2``, so one checkpoint is an ordinary single job. Asking Batch
+    for an array of one is a different job shape whose outputs land under a cell directory, and
+    a curve of one point does not need one.
+    """
+    if len(cells) < 2:
+        return None
+    return FanOut(size=len(cells), index_parameter=SWEEP_INDEX_PARAMETER)
+
+
+def sweep_plan_document(cells: Sequence[SweepCell]) -> dict[str, object]:
+    """What the container reads to find its own checkpoint.
+
+    Written to the run's output prefix before the array is submitted, because a cell cannot be
+    told its own checkpoint through the job definition: every cell of a Batch array runs the
+    same container overrides and differs only in its index.
+    """
+    return {
+        "schema_version": 1,
+        "index_parameter": SWEEP_INDEX_PARAMETER,
+        "cells": [
+            {
+                "index": cell.index,
+                "step": cell.step,
+                "checkpoint_uri": cell.checkpoint_uri,
+                "certified": cell.certified,
+            }
+            for cell in cells
+        ],
+    }
