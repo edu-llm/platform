@@ -97,6 +97,64 @@ class RepositoryBinding(ContractModel):
         return team_id in self.permitted_team_ids
 
 
+#: An IAM role name as IAM itself constrains it: up to 64 characters from a fixed set. Held as
+#: a pattern rather than as a bare string so that a trailing space pasted out of a console
+#: table is refused here rather than producing a role name that matches nothing in CloudTrail
+#: and a person who silently stops being watched.
+AwsRoleName = Annotated[str, Field(min_length=1, pattern=r"^[A-Za-z0-9+=,.@_-]{1,64}$")]
+
+
+class AwsRoleBinding(ContractModel):
+    """One AWS role name, and the roster login whose launches it makes.
+
+    This is the only place a person's AWS identity is written down anywhere in this platform.
+    Nothing else can supply it: the role tag reads the same on every role in the account, the
+    OIDC subject is an email address and the roster is keyed on GitHub logins, and a session
+    tag is exactly what an off-platform launch does not carry.
+    """
+
+    role_name: AwsRoleName
+    github_login: GitHubLogin
+
+
+class ExcludedRole(ContractModel):
+    """One role name whose launches are not a person's, and why.
+
+    LITERAL, NEVER A PATTERN, AND THE REASON IS A FIELD RATHER THAN A COMMENT. A prefix here
+    would silently swallow the next role that happens to match it, which is the same class of
+    failure as a missing binding and harder to see, because a role nobody added still
+    disappears. A reason is required because an exclusion is a decision to stop looking at
+    something, and one with no reason beside it cannot be re-judged later.
+    """
+
+    role_name: AwsRoleName
+    reason: str = Field(min_length=1)
+
+
+class AwsIdentityTable(ContractModel):
+    """Which roles are people's, and which roles are known not to be.
+
+    Two lists rather than one with a flag, because they are read at different points: the
+    first is a join and the second is a subtraction, and a row that is in both is a person
+    whose launches vanish. :class:`~edullm_platform.contracts.inventory.OrganizationInventory`
+    refuses that.
+    """
+
+    roles: Annotated[tuple[AwsRoleBinding, ...], BeforeValidator(require_ordered_sequence)] = (
+        Field(default=(), strict=False)
+    )
+    excluded_roles: Annotated[
+        tuple[ExcludedRole, ...], BeforeValidator(require_ordered_sequence)
+    ] = Field(default=(), strict=False)
+
+    def role_logins(self) -> dict[str, str]:
+        """Role name to roster login, which is the direction the join runs in."""
+        return {binding.role_name: binding.github_login for binding in self.roles}
+
+    def excluded_role_names(self) -> tuple[str, ...]:
+        return tuple(excluded.role_name for excluded in self.excluded_roles)
+
+
 class TeamBindingCatalog(ContractModel):
     teams: Annotated[tuple[TeamBinding, ...], BeforeValidator(require_ordered_sequence)] = Field(
         default=(), strict=False

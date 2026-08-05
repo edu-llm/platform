@@ -454,3 +454,92 @@ members:
   # `preston-loats` under the display name `Preston Loats`, an exact equality, which is the
   # one thing the comment above the member list accepts without owner confirmation.
   - {github_login: prestonloats, display_name: Preston Loats, wandb_username: preston-loats}
+
+# WHICH AWS ROLE EACH PERSON LAUNCHES UNDER. This is the only place in the platform where a
+# person's AWS identity is written down, and the mismatch list in the morning message is the
+# only thing that reads it. `docs-frank/reference/system-overview.md` under "Where everything
+# is seen" says why nothing else can supply it: the role tag reads the same on all of them,
+# the OIDC subject is an email address against a roster keyed on GitHub logins, and a session
+# tag is exactly what an off-platform launch does not carry.
+#
+# A ROLE MISSING FROM THIS LIST IS THE ONE GENUINELY SILENT FAILURE IN THE SURFACE, AND THE
+# MESSAGE PRINTS ITS DENOMINATOR BECAUSE OF IT. Launches under an unlisted role are filtered
+# out, the list comes back short, and a short list is indistinguishable from a clean day. So
+# the morning message reports how many launch events were examined, how many roles resolved
+# and how many did not, and it names the unresolved ones that are named like people. Adding a
+# row here is the fix; the denominator is what tells you a row is missing.
+#
+# Read from the account on 2026-08-05: it holds 43 `Intern-*` roles and twenty of them are
+# the roster's. Two of the 43 are not people at all -- `Intern-p3math-olmo370-eval-20260731`
+# and `Intern-p3math-smoke-download-20260731` are task roles that happen to carry the prefix,
+# which is exactly why the prefix is a highlight in the report and never a filter. The rest
+# belong to people this roster has never heard of and are given up on deliberately.
+#
+# Re-derive both sides with:
+#   AWS_PROFILE=sbsandbox aws iam list-roles \
+#     --query 'sort(Roles[?starts_with(RoleName, `Intern-`)].RoleName)' --output text
+#   uv run --frozen python -c "from edullm_platform.config import load_yaml; \
+#     from edullm_platform.contracts.inventory import OrganizationInventory; \
+#     print('\n'.join(m.display_name or m.github_login for m in \
+#     load_yaml('config/organization.yaml', OrganizationInventory).members))"
+#
+# EVERY `Intern-*` ROLE THIS FILE COULD BIND IS BOUND, AND ONE OF THEM WAS ALMOST LEFT OUT.
+# An earlier draft of this block held `Intern-linjian.ni-sbsandbox` back, on the grounds that
+# no exact name matches it and the only near match is Eric Ni, whose given name may or may not
+# be the one in the role. That reasoning is sound and the conclusion was still wrong, because
+# it treated an answered question as open: the roster comment above `ninLi0` records the owner
+# confirming on 2026-08-04 that this role in AWS is that person, and it has been on `main`
+# since "Record the two W&B accounts that arrived". Binding on a guess would indeed be worse
+# than not binding -- a misbound role is reported as somebody else and looks correct, while an
+# unbound one is reported by name every morning it launches anything -- but this is not a
+# guess, and declining a confirmation is how a closed question gets re-asked forever.
+#
+# The count this changes is not decorative. With the role held back, sixteen of the
+# thirty-five roster members had no bound role; with it bound, fifteen do. Both figures were
+# in circulation across the documents, and the difference between them was this one line.
+# Nothing downstream carries either number: the morning message derives it by set difference
+# against this block and says so in the line it prints, so this file is the only place the
+# figure has to be right.
+aws_identities:
+  # Sorted by role_name, matched on display_name because the role names are
+  # `Intern-<first>.<last>-sbsandbox` and the roster is keyed on GitHub logins.
+  roles:
+    - {role_name: Intern-adarsh.rajesh-sbsandbox, github_login: Adarsh-Rajesh-gitHub}
+    - {role_name: Intern-amy.lin-sbsandbox, github_login: alsy7009}
+    - {role_name: Intern-andrew.xia-sbsandbox, github_login: alphaxia2100}
+    - {role_name: Intern-anshul.mago-sbsandbox, github_login: anshulmago1}
+    - {role_name: Intern-arhant.choudhary-sbsandbox, github_login: gorpyshortlegs}
+    - {role_name: Intern-aryan.verma-sbsandbox, github_login: aryanjverma}
+    - {role_name: Intern-avaneesh.ramesh-sbsandbox, github_login: Avaneesh-Ramesh-07}
+    - {role_name: Intern-cathy.du-sbsandbox, github_login: cd1313}
+    - {role_name: Intern-ellie.zhang-sbsandbox, github_login: blackbird-alt}
+    - {role_name: Intern-eric.wu-sbsandbox, github_login: ericrcwu001}
+    - {role_name: Intern-frank.gonzalez-sbsandbox, github_login: philote-dev}
+    - {role_name: Intern-grant.matherne-sbsandbox, github_login: GMatherne}
+    - {role_name: Intern-hiya.vyas-sbsandbox, github_login: hiyasvyas}
+    # Bound on the owner's 2026-08-04 confirmation rather than on the name, which does not
+    # match: the roster carries this person as Eric Ni. See the block comment above.
+    - {role_name: Intern-linjian.ni-sbsandbox, github_login: ninLi0}
+    - {role_name: Intern-meric.xing-sbsandbox, github_login: meric233}
+    - {role_name: Intern-nathan.zhao-sbsandbox, github_login: nzhao721}
+    - {role_name: Intern-siddhartha.venkatayogi-sbsandbox, github_login: sidvenkatayogi}
+    - {role_name: Intern-stephen.zhang-sbsandbox, github_login: syz2026}
+    - {role_name: Intern-tom.liu-sbsandbox, github_login: pianomaster99}
+    - {role_name: Intern-vishnu.sharma-sbsandbox, github_login: VS-code-cloud}
+  # ROLE NAMES THAT LAUNCH COMPUTE AND BELONG TO NOBODY. Literal names only: a prefix here
+  # would swallow the next role that happens to match it, and a role nobody added would stop
+  # being looked at with nothing to say so.
+  excluded_roles:
+    # A preview submission is a platform change being exercised on a branch. It goes to Batch
+    # directly and writes no lineage record by design, so every one of them has the exact
+    # shape of a mismatch and would fill the morning message with the owner testing the
+    # platform. `infra/iam/run-preview-role.yaml` declares the role and argues its ceiling.
+    #
+    # ONE LITERAL NAME. Not `sbsandbox-intern-edullm-*`, which would also cover the deployer,
+    # the image resolver, the run canceller and the audit reader, and would cover the next
+    # role somebody adds under that name with nothing saying it had stopped being examined.
+    - role_name: sbsandbox-intern-edullm-run-preview
+      reason: >-
+        A branch preview of a platform change. It submits to Batch directly and carries no
+        lineage record by design, so it looks exactly like an unaccounted launch. Its
+        launches are counted and reported as their own figure rather than dropped.
