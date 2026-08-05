@@ -39,14 +39,15 @@ AGENTS = PROJECT_ROOT / "AGENTS.md"
 SKILLS = PROJECT_ROOT / ".cursor" / "skills"
 
 SUBMITTING = SKILLS / "submitting-a-run" / "SKILL.md"
+REGISTERING = SKILLS / "registering-a-repository" / "SKILL.md"
 
 #: Every document in this layer. The shared properties below are parametrized over it, so a
 #: skill added later cannot arrive unheld.
-AGENT_DOCUMENTS: tuple[Path, ...] = (AGENTS, SUBMITTING)
+AGENT_DOCUMENTS: tuple[Path, ...] = (AGENTS, SUBMITTING, REGISTERING)
 
 #: Every skill in this layer, which is AGENT_DOCUMENTS minus the always-on rule. Held apart
 #: because the frontmatter and the length budget are properties of a skill and not of a rule.
-SKILL_DOCUMENTS: tuple[Path, ...] = (SUBMITTING,)
+SKILL_DOCUMENTS: tuple[Path, ...] = (SUBMITTING, REGISTERING)
 
 #: What a SKILL.md body is allowed to run to. The context window is shared with the
 #: conversation, the other skills and the request, so a long skill costs every turn rather
@@ -54,7 +55,13 @@ SKILL_DOCUMENTS: tuple[Path, ...] = (SUBMITTING,)
 SKILL_LINE_BUDGET = 500
 
 #: ``edullm <verb>`` wherever one of these documents writes it.
-VERB_MENTION = re.compile(r"\bedullm\s+([a-z][a-z-]*)")
+#:
+#: The lookbehind is what stops ``.edullm`` being read as the binary. ``.edullm`` is the spec
+#: directory and these documents talk about it constantly, so "no `.edullm` directory" would
+#: otherwise report ``directory`` as a verb the binary does not have. A rule that cried wolf
+#: on a correct sentence would get reworded around rather than fixed, and the next reword
+#: would be the one hiding a real retired name.
+VERB_MENTION = re.compile(r"(?<![.\w-])edullm\s+([a-z][a-z-]*)")
 
 #: A long flag wherever one of these documents writes it.
 FLAG_MENTION = re.compile(r"(?<![\w-])--[a-z][a-z0-9-]*")
@@ -345,3 +352,47 @@ def test_some_skill_actually_tabulates_a_code() -> None:
     green on a layer whose tables had all gone stale.
     """
     assert any(codes_the_skill_tabulates(skill) for skill in SKILL_DOCUMENTS)
+
+
+def test_the_registration_skill_writes_the_three_files_the_verb_does_not() -> None:
+    """Mutation: describe `edullm add repository` and stop there.
+
+    THE SPLIT IS THE WHOLE DESIGN AND IT IS EASY TO MISS. tools/register_repository.py edits
+    five platform files, runs a local verification and opens the configuration pull request.
+    It does not write the research repository's .edullm/Dockerfile, its build-caller workflow
+    or a first .edullm/run.yaml, and system-overview.md's agent layer assigns exactly those
+    three to the skill. A registration with the pull request merged and none of the three
+    written is a repository that is registered and has never built an image, which is the
+    state open-instruct-scored-rewards is in and the reason #217 exists.
+    """
+    text = REGISTERING.read_text(encoding="utf-8")
+
+    for artifact in (".edullm/Dockerfile", ".edullm/run.yaml"):
+        assert artifact in text, f"the registration skill never writes {artifact}"
+    assert "workflow" in text
+
+
+def test_the_registration_skill_resolves_against_the_approved_base_images() -> None:
+    """Mutation: tell the agent to write whatever base image the project happens to use.
+
+    system-overview.md's agent layer states the one question a reviewer answers: the skill
+    resolves the dependency set against the base images repositories.yaml approves, and
+    either picks the closest or names the pin forcing a new one. A second base is a second
+    thing to review, scan and re-pin, and the skill choosing one silently is how that
+    happens without anybody deciding it.
+
+    **READ OF THE PROCEDURE AND NOT OF THE WHOLE FILE, WHICH IS THE CORRECTION THAT MADE THIS
+    A CHECK AT ALL.** Written as `"repositories.yaml" in text` it passed against a skill whose
+    step 2 had been replaced with "use whatever base the project's own Dockerfile names",
+    because the closing Never list still said the words. The mutation it names was run and did
+    not kill it. An agent follows the steps, so the steps are what has to carry the answer.
+    """
+    text = REGISTERING.read_text(encoding="utf-8")
+    procedure = text.split("\n## Never", 1)[0]
+
+    assert procedure != text, "the skill has no Never section, so this is reading the lot"
+    assert "repositories.yaml" in procedure, (
+        "the step that resolves the base image does not send the reader to the registry of "
+        "approved ones, so a Never list saying it does is the only thing left saying it"
+    )
+    assert "base image" in procedure.lower()
