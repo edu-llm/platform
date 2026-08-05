@@ -13,11 +13,12 @@ assertion about what the platform would do rather than about a fixture.
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 import pytest
 
-from edullm_platform.cli.main import EXIT_OK, EXIT_REFUSED, EXIT_UNUSABLE
+from edullm_platform.cli.main import EXIT_OK, EXIT_REFUSED, EXIT_UNUSABLE, main
 from edullm_platform.cli.preflight import Preflight
 from tests.cli_support import (
     SUBMITTER_ON_TWO_TEAMS,
@@ -481,30 +482,64 @@ def test_a_retired_name_is_refused_and_the_refusal_names_check(
     assert runner.calls == []
 
 
-def test_the_refusal_says_what_check_would_do_in_this_repository_rather_than_in_general(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("verb", ["new", "dry-run"])
+def test_a_path_that_read_nothing_promises_nothing_about_this_directory(
+    verb: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Mutation: print one fixed sentence about ``check`` in both states.
+    """Mutation: tailor the sentence to the directory again.
 
-    "Type check instead" is a redirection. "Here, check would write a first spec and then
-    price it" is the answer to what the person was trying to find out, and the difference
-    costs one directory walk. The two states have to read differently or the sentence is
-    decoration -- a repository with a spec is told the path that will be priced, and one
-    without is told a file is about to appear.
+    An earlier version of this walked up looking for a spec and said "here, check would
+    write a first .edullm/run.yaml -- there is none at or above here". It read well and it
+    was a promise, and the binary broke it twice: in an unregistered checkout ``check``
+    writes nothing and refuses, and outside a checkout it writes nothing either. Both are
+    where somebody typing a retired verb is standing.
+
+    The property being defended is that these paths judge nothing and therefore read
+    nothing -- no git, no ``gh``, no configuration, not even the working directory -- and
+    a sentence about *this* directory cannot be honest on that information. So the
+    sentence describes ``check`` instead, and reads the same in a fresh directory and in a
+    checkout that already has a spec.
     """
     empty = tmp_path / "fresh"
     empty.mkdir()
     runner = FakeRunner({})
 
-    _, _, raw_without = invoke(["new"], runner=runner, cwd=empty, monkeypatch=monkeypatch)
+    _, _, raw_without = invoke([verb], runner=runner, cwd=empty, monkeypatch=monkeypatch)
     root, spec_runner = checkout(tmp_path, workload="olmo-core-check", compute="gpu-1xt4")
-    _, _, raw_with = invoke(["new"], runner=spec_runner, cwd=root, monkeypatch=monkeypatch)
+    _, _, raw_with = invoke([verb], runner=spec_runner, cwd=root, monkeypatch=monkeypatch)
     # Unwrapped, because where the paragraph breaks is a width and not a claim.
     without, with_spec = " ".join(raw_without.split()), " ".join(raw_with.split())
 
-    assert "write a first .edullm/run.yaml -- there is none at or above here" in without
-    assert f"price {root / '.edullm' / 'run.yaml'} and list every refusal" in with_spec
-    assert "write a first" not in with_spec
+    assert without == with_spec
+    assert "here" not in without and "write a first" not in without
+    assert str(root) not in with_spec
+    assert runner.calls == [] and spec_runner.calls == []
+
+
+def test_the_orientation_describes_check_without_predicting_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: promise a first spec to whoever runs a bare ``edullm``.
+
+    The bare invocation is the likeliest first contact of all, and the directory it happens
+    in is the likeliest to be unregistered -- somebody types ``edullm`` where they are
+    standing. Naming the condition is the whole difference between a description and a
+    promise: ``check`` writes a spec *where a registered repository has none*, which is
+    true everywhere, including here.
+    """
+    runner = FakeRunner({})
+    monkeypatch.setenv("GH_CONFIG_DIR", str(tmp_path / "_no-gh-config"))
+    out, err = io.StringIO(), io.StringIO()
+
+    # Called without ``invoke``, which puts a verb in front of every argv it is given, and
+    # no verb at all is the thing being tested.
+    code = main([], runner=runner, out=out, err=err, cwd=tmp_path)
+    said = " ".join(err.getvalue().split())
+
+    assert code == EXIT_UNUSABLE and out.getvalue() == ""
+    assert "where a registered repository has no .edullm/run.yaml, it writes a first" in said
+    assert "here it would" not in said.lower()
+    assert runner.calls == []
 
 
 def test_a_word_that_is_nobody_s_verb_gets_the_list_and_the_nearest_spelling(
@@ -525,6 +560,93 @@ def test_a_word_that_is_nobody_s_verb_gets_the_list_and_the_nearest_spelling(
     assert "Did you mean status?" in err
     assert "check" in err and "cancel" in err
     assert runner.calls == []
+
+
+def test_a_mistyped_flag_is_answered_with_the_flag_and_not_with_the_verbs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The one mistake in this binary that used to get a menu instead of a sentence.
+
+    Mutation: let argparse answer. It prints the root usage line, which lists nine verbs
+    and not one flag -- the flags are all on the subparsers, so the message could not
+    contain the answer even in principle. ``--experiement`` is one transposition from
+    ``--experiment``, the same distance ``stauts`` is from ``status``, and the verb path
+    has named the nearest spelling since the day it was written.
+
+    The value after the flag comes back unrecognised too, and naming it would be a second
+    wrong answer to a person who typed nothing wrong there.
+    """
+    root, runner = checkout(tmp_path, workload="olmo-core-check", compute="gpu-1xt4")
+
+    code, out, err = invoke(
+        ["check", "--experiement", "an-experiment"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_UNUSABLE
+    assert "--experiement is not a flag check takes." in err
+    assert "Did you mean --experiment?" in err
+    assert "an-experiment is not" not in err
+    assert "usage: edullm" not in err
+    assert out == ""
+    # Nothing was judged, so nothing was read.
+    assert runner.calls == []
+
+
+def test_a_flag_with_no_near_spelling_still_says_which_verb_takes_none_of_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No suggestion is better than a bad one, and silence is worse than both.
+
+    ``get_close_matches`` at the cutoff the verbs use answers nothing for ``--wibble``,
+    which is right -- guessing at a word with no near neighbour sends people to read a flag
+    they never wanted. What is still owed is the sentence and where the list of flags is.
+    """
+    root, runner = checkout(tmp_path, workload="olmo-core-check", compute="gpu-1xt4")
+
+    code, _, err = invoke(["check", "--wibble"], runner=runner, cwd=root, monkeypatch=monkeypatch)
+
+    assert code == EXIT_UNUSABLE
+    assert "--wibble is not a flag check takes." in err
+    assert "Did you mean" not in err
+    assert "edullm check --help" in err
+
+
+def test_a_stray_word_is_not_called_a_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``check`` takes no positional argument, so a word is a different mistake.
+
+    Mutation: run everything through the flag sentence. "pilot is not a flag check takes"
+    is true and misleading: the person did not type a flag, and the fix is not to spell one
+    correctly.
+    """
+    root, runner = checkout(tmp_path, workload="olmo-core-check", compute="gpu-1xt4")
+
+    code, _, err = invoke(["check", "pilot"], runner=runner, cwd=root, monkeypatch=monkeypatch)
+
+    assert code == EXIT_UNUSABLE
+    assert "check was given a word it does not take: pilot." in err
+    assert "is not a flag" not in err
+
+
+def test_an_unbuilt_verb_says_so_before_it_says_anything_about_a_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two true things, and the order between them is the whole of this test.
+
+    Mutation: check the flags first. ``edullm shell --wibble`` would be answered with the
+    flags ``shell`` takes, which is a conversation about a verb that does not exist yet.
+    """
+    runner = FakeRunner({})
+
+    code, _, err = invoke(["shell", "--wibble"], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
+
+    assert code == EXIT_UNUSABLE
+    assert "shell is not built yet." in err
+    assert "--wibble" not in err
 
 
 def test_a_team_that_is_not_a_name_this_platform_can_group_on_is_refused_not_raised(

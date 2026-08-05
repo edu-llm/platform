@@ -28,7 +28,12 @@ from typing import Any
 import pytest
 import yaml
 
-from edullm_platform.cli.actions import ADMISSION_JOB, CANCEL_WORKFLOW, SUBMIT_WORKFLOW
+from edullm_platform.cli.actions import (
+    ADMISSION_JOB,
+    CANCEL_WORKFLOW,
+    PRINTED_RUN_ID,
+    SUBMIT_WORKFLOW,
+)
 from edullm_platform.cli.main import EXIT_OK, EXIT_REFUSED
 from tests.cli_support import PROJECT_ROOT, FakeRunner, failed, invoke, ok
 
@@ -320,9 +325,198 @@ def test_status_with_no_run_id_reads_your_own_submissions_without_dispatching_an
 
     assert code == EXIT_OK
     assert runner.ran("gh", "workflow", "run") == []
-    assert "run_019fd2a1" in out
+    assert "run_019fd2a1-4e07" in out
     assert "PENDING_APPROVAL" in out
     assert "an-experiment 9 cells" in out
+
+
+# ---------------------------------------------------------------------------------------
+# an abbreviated run id: the form the listing prints and the form people paste back
+# ---------------------------------------------------------------------------------------
+
+
+def near(*runs: tuple[str, str, str], admission: str = "skipped") -> FakeRunner:
+    """A GitHub carrying several dispatches, each with the run id and experiment given."""
+    listed = [
+        {
+            "id": 1000 + index,
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": created,
+            "html_url": f"https://github.com/edu-llm/platform/actions/runs/{1000 + index}",
+        }
+        for index, (_, _, created) in enumerate(runs)
+    ]
+    by_workflow_run = {1000 + index: run_id for index, (run_id, _, _) in enumerate(runs)}
+    experiments = {1000 + index: name for index, (_, name, _) in enumerate(runs)}
+
+    def api(argv: tuple[str, ...]) -> Any:
+        path = argv[-1]
+        if path.endswith("/jobs"):
+            return ok(json.dumps({"jobs": [{"name": ADMISSION_JOB, "conclusion": admission}]}))
+        if path.endswith("/approvals"):
+            return ok(json.dumps([]))
+        if SUBMIT_WORKFLOW in path:
+            return ok(json.dumps({"workflow_runs": listed}))
+        if path.endswith(str(CANCEL_RUN["id"])):
+            return ok(json.dumps(CANCEL_RUN))
+        return ok(json.dumps({"workflow_runs": [CANCEL_RUN]}))
+
+    def download(argv: tuple[str, ...]) -> Any:
+        workflow_run = int(argv[argv.index("download") + 1])
+        directory = Path(argv[argv.index("--dir") + 1])
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "compiled-submission.json").write_text(
+            json.dumps(
+                {
+                    "run_id": by_workflow_run[workflow_run],
+                    "experiment": experiments[workflow_run],
+                    "manifest": {"fanout": {"size": 1, "index_parameter": "arm"}},
+                }
+            ),
+            encoding="utf-8",
+        )
+        return ok("")
+
+    return FakeRunner(
+        {
+            ("gh", "api"): api,  # type: ignore[dict-item]
+            ("gh", "run", "download"): download,  # type: ignore[dict-item]
+            ("gh", "run", "view"): ok(REPORT_LOG),
+            ("gh", "workflow", "run"): ok(""),
+        }
+    )
+
+
+def test_the_id_the_listing_prints_is_an_id_the_verbs_take(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The circle this closes was the first thing a first user hit.
+
+    ``status`` printed ``run_019fd2a1``, which is what anybody would copy, and every verb
+    refused it as malformed -- and the refusal's one remedy was "edullm status with no
+    argument lists yours", which is where the unusable string came from. Mutation: take
+    only ids given in full, and the listing becomes decoration.
+    """
+    runner = near((RUN_ID, "an-experiment", "2099-01-01T00:00:00Z"))
+    printed = RUN_ID[: len("run_") + PRINTED_RUN_ID]
+
+    code, out, err = invoke(
+        ["status", printed], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch
+    )
+
+    assert code == EXIT_OK, out + err
+    assert "run_id_not_well_formed" not in err
+    assert printed in out
+    assert "an-experiment" in out
+
+
+def test_the_shorter_id_older_transcripts_carry_still_resolves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Eight characters is what the listing printed yesterday, so it is what Slack holds.
+
+    Mutation: accept only the length the listing prints today. Every id pasted into a
+    thread before this change is eight characters long, and the person retrying one of them
+    is exactly the person this whole path is for.
+    """
+    runner = near((RUN_ID, "an-experiment", "2099-01-01T00:00:00Z"))
+
+    code, out, err = invoke(
+        ["status", "run_019fd2a1"], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch
+    )
+
+    assert code == EXIT_OK, out + err
+    assert "an-experiment" in out
+
+
+def test_what_reaches_the_workflow_is_the_whole_id_and_never_the_abbreviation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The shorthand stops at this binary's edge.
+
+    ``cancel-run.yml`` checks the shape of what it is handed in its first step and would
+    refuse an abbreviation, correctly -- it has no listing to resolve one against and no
+    business guessing. Mutation: pass through what was typed. It costs a runner to be told
+    the id is malformed, which is the exact cost :func:`_malformed_run_id` exists to avoid.
+    """
+    runner = near((RUN_ID, "an-experiment", "2099-01-01T00:00:00Z"), admission="success")
+
+    code, out, err = invoke(
+        ["cancel", "run_019fd2a1", "--reason", "wrong corpus"],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_OK, out + err
+    assert dispatched_fields(runner)["run_id"] == RUN_ID
+
+
+def test_an_abbreviation_naming_two_runs_names_them_both_and_sends_nobody_back_to_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**The refusal that must never point at the command that produced its input.**
+
+    UUIDv7 puts the clock at the front, so ids collide exactly when runs were submitted
+    close together -- a retry, or the second arm of a sweep. Both of those are ordinary,
+    and both make an eight-character abbreviation name two runs.
+
+    Mutation: answer with "run edullm status to see your runs". The abbreviation came from
+    that listing, so the remedy hands back the input that failed and the person loops. What
+    this has to do instead is carry the answer: each match at a length that tells it from
+    the other, its experiment, and the clock time -- not only how long ago, because runs
+    whose ids collide are runs whose elapsed times round to the same words.
+    """
+    first = "run_019fcf14-6197-70b6-867c-29b766298103"
+    second = "run_019fcf14-0f7c-70f0-bbb3-7f5d6b45482a"
+    runner = near(
+        (first, "strict-in-distribution-lr", "2099-01-01T23:19:58Z"),
+        (second, "regime-arity-param-matched", "2099-01-01T23:19:28Z"),
+    )
+
+    code, out, err = invoke(
+        ["cancel", "run_019fcf14", "--reason", "wrong-arm"],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
+    said = " ".join(err.split())
+
+    assert code == EXIT_REFUSED
+    assert "refused  run_id_is_ambiguous" in err
+    assert "run_019fcf14-6197 (strict-in-distribution-lr" in said
+    assert "run_019fcf14-0f7c (regime-arity-param-matched" in said
+    assert "23:19:58 UTC" in said and "23:19:28 UTC" in said
+    assert "edullm status" not in said
+    # Nothing was stopped, and no runner was spent finding out that nothing could be.
+    assert runner.ran("gh", "workflow", "run") == []
+    assert out == ""
+
+
+def test_an_abbreviation_that_could_be_resolved_never_reaches_a_dispatch_ambiguous(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two runs sharing eight characters, one of them named at the printed length.
+
+    Mutation: stop the search at the first match the way a whole id does. It would pick the
+    newest of the two silently, which for ``cancel`` means stopping a run nobody asked to
+    stop -- the one outcome in this file worth reading every dispatch to avoid.
+    """
+    first = "run_019fcf14-6197-70b6-867c-29b766298103"
+    second = "run_019fcf14-0f7c-70f0-bbb3-7f5d6b45482a"
+    runner = near(
+        (first, "strict-in-distribution-lr", "2099-01-01T23:19:58Z"),
+        (second, "regime-arity-param-matched", "2099-01-01T23:19:28Z"),
+    )
+
+    code, out, err = invoke(
+        ["status", "run_019fcf14-0f7c"], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch
+    )
+
+    assert code == EXIT_OK, out + err
+    assert "regime-arity-param-matched" in out
+    assert "strict-in-distribution-lr" not in out
 
 
 # ---------------------------------------------------------------------------------------

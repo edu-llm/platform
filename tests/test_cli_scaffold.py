@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from edullm_platform.cli.main import EXIT_OK, EXIT_REFUSED
+from edullm_platform.cli.main import EXIT_OK, EXIT_REFUSED, EXIT_UNUSABLE
 from edullm_platform.cli.spec import load_spec
 from edullm_platform.cli.workspace import CommandResult
 from tests.cli_support import CONFIG_DIR, FakeRunner, failed, git_answers, invoke, ok
@@ -337,3 +337,33 @@ def test_the_header_names_the_configuration_the_choices_were_read_from(
     written = (tmp_path / ".edullm" / "run.yaml").read_text(encoding="utf-8")
     assert str(CONFIG_DIR) in written
     assert "olmo-core-check, olmo-core-train" in written
+
+
+def test_a_spec_that_is_not_one_is_named_field_by_field_and_not_by_pydantic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The file this scaffold writes is a file people edit, so this is a normal Tuesday.
+
+    Mutation: interpolate the ``ValidationError``. Pydantic's own rendering of two bad
+    fields is eleven lines carrying the model name twice, each value echoed as a Python
+    repr, and two links to ``errors.pydantic.dev`` -- and the reader who meets it mistyped
+    something in a YAML file. A link to a library's error index answers a question nobody
+    standing in a repository is asking.
+
+    Both fields, and not only the first: they are about to open the file, and the second
+    problem is worth knowing before they close it.
+    """
+    (tmp_path / ".edullm").mkdir()
+    (tmp_path / ".edullm" / "run.yaml").write_text(
+        "schema_version: 1\nworkload_profile: []\n", encoding="utf-8"
+    )
+    runner = FakeRunner(git_answers(tmp_path))
+
+    code, _, err = invoke(FIRST_CHECK, runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
+
+    assert code == EXIT_UNUSABLE
+    assert "is not a run spec this platform can read" in err
+    assert "workload_profile: Input should be a valid string" in err
+    assert "command: Field required" in err
+    assert "errors.pydantic.dev" not in err
+    assert "RunSpec" not in err

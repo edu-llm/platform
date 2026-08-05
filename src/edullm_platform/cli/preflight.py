@@ -90,6 +90,7 @@ __all__ = [
     "first_validation_message",
     "resolve_team",
     "run_preflight",
+    "validation_messages",
     "working_tree_refusals",
 ]
 
@@ -835,9 +836,22 @@ def first_validation_message(exc: ValidationError) -> str:
     saying about a ``ValidationError``, the useful part is which field and what about it,
     and a second spelling of that would drift from this one.
     """
+    return validation_messages(exc)[0]
+
+
+def validation_messages(exc: ValidationError) -> tuple[str, ...]:
+    """Every field pydantic objected to, one line each and no URLs.
+
+    THE WHOLE LIST WHERE THE READER IS GOING TO EDIT A FILE, which is the same argument
+    :func:`run_preflight` makes about collecting refusals: three problems reported one at a
+    time is three trips through an editor, and the second and third were visible the first
+    time. :func:`first_validation_message` is the same rendering for the places that have
+    room for one sentence.
+    """
     errors = exc.errors()
     if not errors:
-        return str(exc)
-    first = errors[0]
-    where = ".".join(str(part) for part in first["loc"]) or "the submission"
-    return f"{where}: {first['msg']}"
+        return (str(exc),)
+    return tuple(
+        f"{'.'.join(str(part) for part in error['loc']) or 'the submission'}: {error['msg']}"
+        for error in errors
+    )
