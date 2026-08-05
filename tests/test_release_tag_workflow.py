@@ -26,6 +26,14 @@ to be the surface an installed CLI can observe and nothing wider**, which is the
 teeth, because the cost of getting it wrong is not a failed run. It is thirty-five people
 told to re-install for a change to a proof generator, until the day they stop reading it.
 
+**AND NEITHER HALF MAY PASS BECAUSE IT COULD NOT TELL.** The pull-request check shipped
+passing when it could not identify the base, on the argument that the merge would be caught
+afterwards. It would not have been: the workflow refused a version already released, so it
+caught the change that declared nothing and tagged the change that declared ``0.2.7`` over a
+released ``v0.2.2``. Two cases here run the bodies as they were against a repository in
+exactly that state, beside the bodies as they are, because a case that only exercised the
+new refusal would have been green against the old code and would have proved nothing.
+
 The behavioural cases run the ``run:`` bodies as the runner runs them, against real git
 repositories with a real remote and against this repository's real tools. A workflow
 asserted only by reading its YAML is how the push to ``main`` survived review in the first
@@ -542,23 +550,39 @@ def test_the_unquoted_on_key_yaml_reads_as_a_boolean_is_still_found() -> None:
     assert trigger_paths(quoted) == trigger_paths(unquoted) == ["a.py"]
 
 
-def test_the_guard_reads_pull_requests_and_stays_out_of_the_merge() -> None:
-    """Mutation: drop the ``if:``.
+def test_the_guard_reads_pull_requests_and_the_merge_is_covered_where_the_merge_is() -> None:
+    """WHY THIS IS TWO CHECKS AND NOT ONE. Mutation: run the guard on the push as well.
 
-    On a push to ``main`` the comparison is against the previous commit rather than
-    against a base, and the declared version is the one the merge just released -- so the
-    step would fail the merge it was meant to protect, in a job that is a required check
-    for everybody else's pull request.
+    The two events are not asking the same question, which is what settles the shape. On a
+    pull request the version must be one no release has and one step above the latest; on a
+    push the release for that very version is being cut in the same run, so the same
+    arithmetic against the same endpoint would refuse the merge it exists to protect -- and
+    would race a workflow finishing beside it to decide which answer it got.
+
+    So the push half lives in ``release-tag.yml``, which is where the push already is. Its
+    trigger has already decided the merge is one a release must carry, so it needs no base
+    commit and cannot have the failure the pull-request half was fixed for; it has the whole
+    history, the tags and the releases API in hand; and it is the last thing that runs
+    before a tag is published, which is the one act nothing afterwards can undo.
+
+    Asserted from both ends, because the failure worth catching is one of them quietly
+    becoming the only one.
     """
     guard = step(checks_job(), GUARD_STEP)
+    decision = script_of(release_job(), DECIDE_STEP)
 
     assert guard["if"] == "github.event_name == 'pull_request'"
+    assert load_workflow(WORKFLOW_PATH)["on"]["push"]["branches"] == ["main"]
+    assert "--next" in decision, "the merge side has to measure the step, not only the tag"
+    assert 'EVENT}" = "push"' in decision, "and it has to measure it on the merge, not a repair"
 
 
 def test_the_ci_checkout_reaches_the_base_the_guard_diffs_against() -> None:
     # actions/checkout leaves the merge commit at HEAD on a pull request, so HEAD^1 is the
-    # base branch -- but only if its parents were fetched. At the shallow default the guard
-    # finds no base, and it is written to pass rather than block when it cannot tell.
+    # base branch -- but only if its parents were fetched, and at the shallow default they
+    # are not. This line is what makes that the ordinary case: the guard refuses when it
+    # cannot find the base, so losing this depth would not quietly disable the check, it
+    # would block every pull request in the repository until somebody put it back.
     steps = checks_job()["steps"]
     assert isinstance(steps, list)
     checkouts = [item for item in steps if "checkout" in str(item.get("uses", ""))]
@@ -678,23 +702,60 @@ def python3_saying(directory: Path, version: str) -> Path:
     interpreter and the tool needs ``tomllib``, which the system one here predates. What
     the tool does with a real ``pyproject.toml`` is ``tests/test_next_version.py``'s
     subject; what the workflow does with the answer is this one's.
+
+    ``--next`` is passed through to the real tool rather than answered here, and that is
+    the half that matters. It reads nothing off disk, so there is nothing to stub around;
+    stubbing it anyway would put a second implementation of "one step above" between the
+    rule under test and the arithmetic it is made of, and a case could then pass while the
+    two disagreed.
     """
-    return write_stub(directory, "python3", f'echo "{version}"\n')
+    return write_stub(
+        directory,
+        "python3",
+        f'if [ "${{2:-}}" = "--next" ]; then exec "{sys.executable}" "$@"; fi\necho "{version}"\n',
+    )
 
 
-def run_decide(repository: Path, tmp_path: Path, *, declared: str) -> tuple[int, str, str, str]:
+#: What ``release-tag.yml`` decided before this change, kept verbatim. A version no tag
+#: carries was a version to publish, and that is the behaviour the two cases below have to
+#: be shown going red against -- a case that only ran the new rule would pass against the
+#: old code as well, and would prove nothing about the hole.
+DECISION_THAT_ONLY_ASKED_WHETHER_THE_TAG_EXISTED = """\
+set -euo pipefail
+version="$(python3 tools/next_version.py)"
+if git rev-parse --verify --quiet "refs/tags/v${version}" >/dev/null; then
+  echo "::error::v${version} is already released"
+  exit 1
+fi
+echo "version=${version}" >> "${GITHUB_OUTPUT}"
+echo "tag=v${version}" >> "${GITHUB_OUTPUT}"
+"""
+
+
+def run_decide(
+    repository: Path,
+    tmp_path: Path,
+    *,
+    declared: str,
+    latest: str = "",
+    event: str = "push",
+    script: str | None = None,
+) -> tuple[int, str, str, str]:
     stub_bin = tmp_path / "bin"
     python3_saying(stub_bin, declared)
+    write_stub(stub_bin, "gh", f'if [ -n "{latest}" ]; then echo "{latest}"; else exit 1; fi\n')
     output = tmp_path / "step-output"
     summary = tmp_path / "step-summary"
     output.write_text("", encoding="utf-8")
     summary.write_text("", encoding="utf-8")
 
     finished = run_step_script(
-        script_of(release_job(), DECIDE_STEP),
+        script if script is not None else script_of(release_job(), DECIDE_STEP),
         cwd=repository,
         env={
             "HOME": str(tmp_path),
+            "GH_TOKEN": "not-a-token",
+            "EVENT": event,
             "GITHUB_OUTPUT": str(output),
             "GITHUB_STEP_SUMMARY": str(summary),
         },
@@ -711,13 +772,18 @@ def run_decide(repository: Path, tmp_path: Path, *, declared: str) -> tuple[int,
 def test_a_version_no_tag_carries_yet_is_the_version_this_merge_releases(
     repository: Path, tmp_path: Path
 ) -> None:
+    install_real_tooling(repository, version="0.2.2")
     commit(repository, "a merge", {"src/edullm_platform/cli/main.py": "code\n"})
+    git(repository, "tag", "--annotate", "v0.2.1", "--message", "v0.2.1")
 
-    code, output, summary, _ = run_decide(repository, tmp_path, declared="0.2.2")
+    code, output, summary, said = run_decide(
+        repository, tmp_path, declared="0.2.2", latest="v0.2.1"
+    )
 
-    assert code == 0
+    assert code == 0, said
     assert "version=0.2.2" in output
     assert "tag=v0.2.2" in output
+    assert "previous=v0.2.1" in output, "the next step reads the previous release from here"
     assert summary == ""
 
 
@@ -771,18 +837,124 @@ def test_the_failure_offers_all_three_sizes_and_not_only_a_patch(
         assert f"{BUMP_COMMAND} {size}" in summary
 
 
+def a_merge_declaring(repository: Path, version: str, *, released: str) -> None:
+    """A merge on main that declares ``version``, with ``released`` already cut."""
+    install_real_tooling(repository, version=version)
+    commit(repository, "a change to the reviewed configuration", {"config/policy.yaml": "few\n"})
+    git(repository, "tag", "--annotate", released, "--message", released)
+
+
+def test_a_merge_declaring_a_version_that_is_not_the_next_one_publishes_nothing(
+    repository: Path, tmp_path: Path
+) -> None:
+    """THE HOLE, RUN. Mutation: go back to asking only whether the tag exists.
+
+    This is the merge the pull-request check was supposed to stop and did not, because it
+    passed when it could not identify the base. ``0.2.7`` above a released ``v0.2.2`` is a
+    version no release has, so the decision that only asked whether the tag existed was
+    green on it -- and being green here is not a warning, it is a tag pushed and a release
+    published over four numbers that were never cut.
+
+    Both are run against the same repository, which is the point. The old decision is not
+    described, it is executed, and it hands ``v0.2.7`` to the step that pushes tags.
+    """
+    a_merge_declaring(repository, "0.2.7", released="v0.2.2")
+
+    was_code, was_output, _, was_said = run_decide(
+        repository,
+        tmp_path,
+        declared="0.2.7",
+        latest="v0.2.2",
+        script=DECISION_THAT_ONLY_ASKED_WHETHER_THE_TAG_EXISTED,
+    )
+    code, output, summary, said = run_decide(
+        repository, tmp_path, declared="0.2.7", latest="v0.2.2"
+    )
+
+    assert was_code == 0, was_said
+    assert "tag=v0.2.7" in was_output, "the behaviour this replaces was about to publish it"
+
+    assert code == 1, said
+    assert output == "", "a refused decision must not leave a tag for the next step to push"
+    assert "::error::" in said
+    assert "v0.2.2" in summary
+    assert "cannot write to `main`" in summary
+    for size in ("patch", "minor", "major"):
+        assert f"{BUMP_COMMAND} {size}" in summary
+    # The three answers, so a reader deciding which size this was does not have to work out
+    # what each of them would produce from a version they are being told is wrong.
+    for candidate in ("0.2.3", "0.3.0", "1.0.0"):
+        assert candidate in summary
+
+
+def test_a_merge_declaring_the_next_one_of_any_size_is_tagged(
+    repository: Path, tmp_path: Path
+) -> None:
+    """All three, because accepting only the patch is how a minor stops being sayable.
+
+    ``ci.yml`` takes any of the three before the merge, so a rule here that took one would
+    turn every reviewed minor into a red run on ``main`` for a version the check in front of
+    it had already agreed to.
+    """
+    a_merge_declaring(repository, "0.2.3", released="v0.2.2")
+
+    for declared in ("0.2.3", "0.3.0", "1.0.0"):
+        code, output, summary, said = run_decide(
+            repository, tmp_path, declared=declared, latest="v0.2.2"
+        )
+
+        assert code == 0, said
+        assert f"tag=v{declared}" in output
+        assert summary == ""
+
+
+def test_a_release_cut_by_hand_is_not_held_to_the_step_a_merge_is(
+    repository: Path, tmp_path: Path
+) -> None:
+    """THE REPAIR THIS RULE WOULD OTHERWISE TAKE AWAY. Mutation: drop the event test.
+
+    A dispatch exists for the morning several releases are missing, and that is exactly the
+    state in which the declared version is several steps above the last one cut: seven
+    merges went unreleased here once, and the version on ``main`` walked on past every one
+    of them. Holding the repair to the rule the automated path follows would leave the only
+    way out of that state being a commit to ``main`` whose purpose is to move a number.
+    """
+    a_merge_declaring(repository, "0.2.7", released="v0.2.2")
+
+    code, output, _, said = run_decide(
+        repository, tmp_path, declared="0.2.7", latest="v0.2.2", event="workflow_dispatch"
+    )
+
+    assert code == 0, said
+    assert "tag=v0.2.7" in output
+
+
+def test_a_read_of_the_releases_api_that_does_not_answer_still_cuts_the_release(
+    repository: Path, tmp_path: Path
+) -> None:
+    """Mutation: refuse when the latest release cannot be read.
+
+    The rule measures from an endpoint over the network, and this is not a required check
+    but it is the last thing between a merged change and the researchers waiting for it. A
+    read that 500s is not evidence that the version is wrong, and refusing on it would trade
+    a rare wrong tag for a release lost to an API blip. It is the same empty answer as no
+    release at all, and ``ci.yml`` has already asked the question before the merge.
+    """
+    a_merge_declaring(repository, "0.2.7", released="v0.2.2")
+
+    code, output, _, said = run_decide(repository, tmp_path, declared="0.2.7", latest="")
+
+    assert code == 0, said
+    assert "tag=v0.2.7" in output
+    assert "previous=\n" in output
+
+
 def run_cut(
-    repository: Path, tmp_path: Path, *, tag: str, latest: str
+    repository: Path, tmp_path: Path, *, tag: str, previous: str
 ) -> tuple[int, str, str, str]:
     stub_bin = tmp_path / "bin"
     calls = tmp_path / "gh-calls"
-    # `gh release view --json tagName --jq .tagName` is a read of the releases API, which is
-    # the only thing here that cannot be answered out of the git repository.
-    write_stub(
-        stub_bin,
-        "gh",
-        f'printf "%s\\n" "$*" >>"{calls}"\nif [ "${{2:-}}" = "view" ]; then echo "{latest}"; fi\n',
-    )
+    write_stub(stub_bin, "gh", f'printf "%s\\n" "$*" >>"{calls}"\n')
     runner_temp = tmp_path / "runner-temp"
     runner_temp.mkdir(exist_ok=True)
 
@@ -793,6 +965,9 @@ def run_cut(
             "HOME": str(tmp_path),
             "GH_TOKEN": "not-a-token",
             "TAG": tag,
+            # The previous release, handed down from the step that read it rather than read
+            # again here. Two reads of one endpoint are two answers to a question with one.
+            "PREVIOUS": previous,
             "GITHUB_REPOSITORY": PLATFORM_REPOSITORY,
             "RUNNER_TEMP": str(runner_temp),
             **{
@@ -833,7 +1008,7 @@ def test_the_tag_reaches_the_remote_and_the_release_is_cut_from_it(
     a_released_repository(repository)
     commit(repository, "a merge", {"src/edullm_platform/cli/main.py": "code\nmore\n"})
 
-    code, notes, calls, said = run_cut(repository, tmp_path, tag="v0.2.2", latest="v0.2.1")
+    code, notes, calls, said = run_cut(repository, tmp_path, tag="v0.2.2", previous="v0.2.1")
 
     assert code == 0, said
     assert "refs/tags/v0.2.2" in git(repository, "ls-remote", "--tags", "origin")
@@ -860,7 +1035,7 @@ def test_both_halves_of_the_note_describe_the_same_range(
     a_released_repository(repository)
     commit(repository, "a merge", {"src/edullm_platform/cli/main.py": "code\nmore\n"})
 
-    _, _, calls, said = run_cut(repository, tmp_path, tag="v0.2.2", latest="v0.2.1")
+    _, _, calls, said = run_cut(repository, tmp_path, tag="v0.2.2", previous="v0.2.1")
 
     assert "--notes-start-tag v0.2.1" in calls, said
 
@@ -876,7 +1051,7 @@ def test_the_first_release_of_all_asks_for_no_starting_point(
     """
     commit(repository, "everything so far", {"src/edullm_platform/cli/main.py": "code\n"})
 
-    code, _, calls, said = run_cut(repository, tmp_path, tag="v0.1.0", latest="")
+    code, _, calls, said = run_cut(repository, tmp_path, tag="v0.1.0", previous="")
 
     assert code == 0, said
     assert "--notes-start-tag" not in calls
@@ -897,7 +1072,7 @@ def test_the_notes_carry_the_install_line_the_code_spells(
     a_released_repository(repository)
     commit(repository, "a merge", {"src/edullm_platform/cli/main.py": "code\nmore\n"})
 
-    _, notes, _, _ = run_cut(repository, tmp_path, tag="v0.2.2", latest="v0.2.1")
+    _, notes, _, _ = run_cut(repository, tmp_path, tag="v0.2.2", previous="v0.2.1")
 
     assert install_command(repository=PLATFORM_REPOSITORY, tag="v0.2.2") in notes
     # The other half of the same rule: naming the command uv answers wrongly is only
@@ -919,7 +1094,7 @@ def test_the_note_uses_a_full_stop_where_a_colon_would_introduce_no_list(
     a_released_repository(repository)
     commit(repository, "a merge", {"src/edullm_platform/cli/main.py": "code\nmore\n"})
 
-    _, notes, _, _ = run_cut(repository, tmp_path, tag="v0.2.2", latest="v0.2.1")
+    _, notes, _, _ = run_cut(repository, tmp_path, tag="v0.2.2", previous="v0.2.1")
 
     assert "installed from git. It answers" in notes
     assert "installed from git:" not in notes
@@ -937,7 +1112,7 @@ def test_a_release_that_moves_the_configuration_says_so_first(
     a_released_repository(repository)
     commit(repository, "a merge that moves the roster", {"config/policy.yaml": "stricter\n"})
 
-    _, notes, _, _ = run_cut(repository, tmp_path, tag="v0.2.2", latest="v0.2.1")
+    _, notes, _, _ = run_cut(repository, tmp_path, tag="v0.2.2", previous="v0.2.1")
 
     assert notes.startswith("**This release moves the reviewed configuration**")
 
@@ -954,7 +1129,7 @@ def test_a_file_under_config_that_the_cli_never_opens_is_not_a_configuration_cha
     a_released_repository(repository)
     commit(repository, "a merge that moves the capacity table", {"config/capacity.yaml": "few\n"})
 
-    _, notes, _, _ = run_cut(repository, tmp_path, tag="v0.2.2", latest="v0.2.1")
+    _, notes, _, _ = run_cut(repository, tmp_path, tag="v0.2.2", previous="v0.2.1")
 
     assert notes.startswith("This release changes code only.")
 
@@ -974,14 +1149,14 @@ def test_a_release_that_moves_only_code_says_that_instead(
     commit(repository, "a merge that moves the roster", {"config/policy.yaml": "stricter\n"})
     commit(repository, "a merge that does not", {"src/edullm_platform/cli/main.py": "code\n2\n"})
 
-    _, moved, _, _ = run_cut(repository, tmp_path, tag="v0.2.2", latest="v0.2.1")
+    _, moved, _, _ = run_cut(repository, tmp_path, tag="v0.2.2", previous="v0.2.1")
 
     assert moved.startswith("**This release moves the reviewed configuration**")
 
     # The cut above left v0.2.2 behind, which is what the next release measures against.
     commit(repository, "another code merge", {"src/edullm_platform/cli/main.py": "code\n3\n"})
 
-    _, code_only, _, _ = run_cut(repository, tmp_path, tag="v0.2.3", latest="v0.2.2")
+    _, code_only, _, _ = run_cut(repository, tmp_path, tag="v0.2.3", previous="v0.2.2")
 
     assert code_only.startswith("This release changes code only.")
 
@@ -989,34 +1164,84 @@ def test_a_release_that_moves_only_code_says_that_instead(
 def test_a_previous_release_whose_tag_is_gone_does_not_kill_the_run(
     repository: Path, tmp_path: Path
 ) -> None:
-    """Mutation: diff against the name without checking that it resolves.
+    """Mutation: hand the name down without checking that it resolves.
 
     A deleted tag leaves a release naming a ref nothing can reach, and ``git diff`` against
     it exits non-zero under ``set -e`` -- which loses the tag, the release and the notes
     rather than losing one sentence. It falls back to saying the configuration moved,
     because a reader told to re-check config that did not move has lost a minute and one not
     told about config that did has a check that disagrees with admission.
-    """
-    a_released_repository(repository)
-    commit(repository, "a merge", {"src/edullm_platform/cli/main.py": "code\nmore\n"})
 
-    code, notes, _, said = run_cut(repository, tmp_path, tag="v0.2.2", latest="v9.9.9")
+    Both halves, because the resolve now happens one step earlier than the diff that needs
+    it. The deciding step is what blanks the name, and the cutting step is what has to read
+    a blank as "no range to describe" rather than as a ref.
+    """
+    a_merge_declaring(repository, "0.2.3", released="v0.2.2")
+
+    _, output, _, decided = run_decide(repository, tmp_path, declared="0.2.3", latest="v9.9.9")
+
+    assert "previous=\n" in output, decided
+
+    code, notes, _, said = run_cut(repository, tmp_path, tag="v0.2.3", previous="")
 
     assert code == 0, said
     assert notes.startswith("**This release moves the reviewed configuration**")
 
 
+def test_only_a_release_that_cannot_be_measured_from_reaches_the_fail_safe_headline(
+    repository: Path, tmp_path: Path
+) -> None:
+    """WHAT GETS THROUGH THE FAIL-SAFE DOOR, ENUMERATED. Mutation: name a fourth way in.
+
+    The headline says the configuration moved whenever there is no previous release to
+    measure from, and the whole safety of that rests on how few ways there are to have
+    none. Every one of them is a state in which nothing can be known, never a state in
+    which nothing moved, so over-warning is the only thing it can cost. An ordinary release
+    cannot reach it at all: it has a previous release whose tag resolves, and it takes the
+    diff -- which is the last assertion here, and the one that makes the rest mean
+    something.
+
+    The name is emptied in one place, so the ways in are the ways that place can empty it.
+    A read of the releases API that answers nothing, which is no release yet *and* a read
+    that failed -- ``gh release view`` exits non-zero for both and the shell cannot tell
+    them apart -- and a name whose tag has been deleted since.
+    """
+    a_merge_declaring(repository, "0.2.3", released="v0.2.2")
+    commit(repository, "a merge that moves nothing the CLI opens", {"README.md": "words\n"})
+
+    _, nothing_answered, _, first = run_decide(repository, tmp_path, declared="0.2.3", latest="")
+    _, tag_deleted, _, second = run_decide(
+        repository, tmp_path, declared="0.2.3", latest="v9.9.9"
+    )
+
+    assert "previous=\n" in nothing_answered, first
+    assert "previous=\n" in tag_deleted, second
+
+    _, unmeasurable, _, said = run_cut(repository, tmp_path, tag="v0.2.3", previous="")
+    _, ordinary, _, also_said = run_cut(repository, tmp_path, tag="v0.2.3", previous="v0.2.2")
+
+    assert unmeasurable.startswith("**This release moves the reviewed configuration**"), said
+    assert ordinary.startswith("This release changes code only."), also_said
+
+
 def run_guard(
-    repository: Path, tmp_path: Path, *, latest: str
+    repository: Path, tmp_path: Path, *, latest: str, base_sha: str = "", script: str | None = None
 ) -> tuple[int, str]:
     stub_bin = tmp_path / "bin"
     uv_running(stub_bin)
     write_stub(stub_bin, "gh", f'if [ -n "{latest}" ]; then echo "{latest}"; else exit 1; fi\n')
 
     finished = run_step_script(
-        script_of(checks_job(), GUARD_STEP),
+        script if script is not None else script_of(checks_job(), GUARD_STEP),
         cwd=repository,
-        env={"HOME": str(tmp_path), "GH_TOKEN": "not-a-token", "GH_REPO": PLATFORM_REPOSITORY},
+        env={
+            "HOME": str(tmp_path),
+            "GH_TOKEN": "not-a-token",
+            "GH_REPO": PLATFORM_REPOSITORY,
+            # Empty on an ordinary pull request too, in the sense that nothing reads it:
+            # the base is HEAD^1 and this is only consulted once that is not there.
+            "BASE_SHA": base_sha,
+        },
         stub_bin=stub_bin,
     )
     return finished.returncode, finished.stdout + finished.stderr
@@ -1149,23 +1374,163 @@ def test_a_change_to_a_module_the_cli_never_imports_is_asked_for_nothing(
     assert "needs no version of its own" in said
 
 
-def test_a_pull_request_whose_base_it_cannot_find_is_not_blocked(
-    repository: Path, tmp_path: Path
-) -> None:
-    """Mutation: let the diff fail the step.
+#: What ``ci.yml`` did with an unreachable base before this change, kept verbatim. The
+#: repository under it is one the guard now refuses, so running this beside the shipped step
+#: is what shows the difference is a difference: a case that only ran the new refusal would
+#: be green against the old code too.
+GUARD_THAT_PASSED_WHEN_IT_COULD_NOT_TELL = """\
+set -euo pipefail
+if ! git rev-parse --verify --quiet HEAD^1 >/dev/null; then
+  echo "no base commit to compare against, so nothing here can tell whether this"
+  echo "change is one a release has to carry. Skipping; release-tag.yml checks the"
+  echo "same thing on the merge."
+  exit 0
+fi
+echo "the rest of the check ran"
+"""
 
-    A checkout with no parent is not evidence that anything is wrong, and blocking every
-    merge in the repository on a step that has decided it is confused costs more than the
-    thing it protects -- which ``release-tag.yml`` catches anyway, loudly, one merge later.
-    Failing open is the right way round for this check and the wrong way round for that
-    one, which is why they are two checks.
+
+@pytest.fixture
+def checkout_without_its_base(tmp_path: Path) -> tuple[Path, str]:
+    """A checkout of a change whose base commit was never fetched, built as Actions builds one.
+
+    Depth 1 is the whole of the condition and the only thing that produces it. git writes
+    the tip into ``.git/shallow``, which makes it a commit with no parents as far as
+    ``HEAD^1`` is concerned -- the state ``actions/checkout`` leaves at its own default, and
+    the state ``fetch-depth: 2`` in ``ci.yml`` exists to avoid. Reproduced rather than
+    imitated with a root commit, because the recovery the step makes before it refuses is a
+    fetch of a commit that is in the remote and not here, and a repository with one commit
+    has no such commit to find.
+
+    ``file://`` rather than a path, because git ignores ``--depth`` on a local clone and
+    would hand back the whole history. The remote is told to serve a commit asked for by
+    name, which is what GitHub does and what a bare repository does not do by default.
     """
-    commit(repository, "the only commit there is", {"config/policy.yaml": "rules\n"})
+    origin = tmp_path / "origin.git"
+    subprocess.run(("git", "init", "--quiet", "--bare", str(origin)), check=True)
+    subprocess.run(
+        ("git", "-C", str(origin), "config", "uploadpack.allowAnySHA1InWant", "true"), check=True
+    )
+    seed = tmp_path / "seed"
+    subprocess.run(
+        ("git", "clone", "--quiet", str(origin), str(seed)), check=True, capture_output=True
+    )
+    git(seed, "config", "user.email", "nobody@example.invalid")
+    git(seed, "config", "user.name", "nobody")
+    install_real_tooling(seed, version="0.2.7")
+    base = git(seed, "rev-parse", "HEAD")
+    commit(seed, "a change to the reviewed configuration", {"config/policy.yaml": "few\n"})
+    branch = git(seed, "rev-parse", "--abbrev-ref", "HEAD")
+    git(seed, "push", "--quiet", "origin", "HEAD")
 
-    code, said = run_guard(repository, tmp_path, latest="v0.2.1")
+    work = tmp_path / "shallow"
+    subprocess.run(
+        ("git", "clone", "--quiet", "--depth=1", "--branch", branch, f"file://{origin}", str(work)),
+        check=True,
+        capture_output=True,
+    )
+    git(work, "config", "user.email", "nobody@example.invalid")
+    git(work, "config", "user.name", "nobody")
+    (work / ".git" / "info" / "exclude").write_text("step.sh\n", encoding="utf-8")
+    return work, base
 
-    assert code == 0, said
-    assert "no base commit" in said
+
+def test_a_pull_request_whose_base_it_cannot_find_is_refused_rather_than_waved_through(
+    checkout_without_its_base: tuple[Path, str], tmp_path: Path
+) -> None:
+    """THE HOLE, ON THE SIDE THAT CAN STILL BE STOPPED. Mutation: pass when the base is gone.
+
+    Both bodies run against the same checkout, and the checkout is one where the answer is
+    known: the change moves ``config/policy.yaml``, ``pyproject.toml`` declares ``0.2.7``,
+    the latest release is ``v0.2.2``, and ``0.2.7`` is four numbers past anything anybody
+    chose. The shipped guard printed a sentence about skipping and exited 0, so the merge
+    went through and ``release-tag.yml`` -- which only refused a version already released --
+    tagged it. That second half is covered by
+    :func:`test_a_merge_declaring_a_version_that_is_not_the_next_one_publishes_nothing`;
+    this half is the one where refusing still costs nothing but a re-run.
+
+    The event names no base here, which is the case with no way out. What happens when it
+    names one is the case below.
+    """
+    checkout, _ = checkout_without_its_base
+
+    was = run_step_script(
+        GUARD_THAT_PASSED_WHEN_IT_COULD_NOT_TELL, cwd=checkout, env={"HOME": str(tmp_path)}
+    )
+    code, said = run_guard(checkout, tmp_path, latest="v0.2.2", base_sha="")
+
+    assert was.returncode == 0, was.stderr
+    assert "Skipping" in was.stdout
+    assert "the rest of the check ran" not in was.stdout, (
+        "the behaviour this replaces stopped before it had asked anything"
+    )
+
+    assert code == 1, said
+    assert "::error::" in said
+
+
+def test_the_refusal_names_both_places_it_looked_and_what_clears_it(
+    checkout_without_its_base: tuple[Path, str], tmp_path: Path
+) -> None:
+    """THE COST OF FAILING CLOSED, AND WHERE IT IS PAID. Mutation: refuse in one line.
+
+    This refusal arrives in front of somebody whose checkout is already misbehaving, on a
+    required check, blocking a merge. A step that says "could not determine base" and stops
+    is worse than the hole it closes, because the reader has no way to tell an outage from
+    a mistake of their own and no idea whether waiting helps.
+
+    So it has to carry four things, and each of them is asserted here rather than left to a
+    proofread: what it could not determine, both places it looked for it, why a checkout
+    arrives like this, and what to do -- including the two commands that answer the question
+    by hand while somebody works out which of the three remedies applies.
+    """
+    checkout, _ = checkout_without_its_base
+
+    _, said = run_guard(
+        checkout, tmp_path, latest="v0.2.2", base_sha="0" * 40
+    )
+
+    assert "which commit this pull request is based on" in said
+    assert "HEAD^1" in said
+    assert "0" * 40 in said, "name the base the event gave, so a reader can look it up"
+    assert "fetch-depth" in said
+    assert "Re-run this job" in said
+    assert "rebase it on main" in said
+    assert "resolve the conflict" in said
+    assert "tools/next_version.py" in said
+    assert "gh release view" in said
+    # Not a version refusal wearing the wrong hat. Whoever reads this has not been told
+    # their bump is wrong, because nothing here knows whether they need one.
+    assert BUMP_COMMAND not in said
+
+
+def test_the_base_the_event_names_is_fetched_before_anything_is_refused(
+    checkout_without_its_base: tuple[Path, str], tmp_path: Path
+) -> None:
+    """WHAT KEEPS THE REFUSAL RARE. Mutation: refuse as soon as HEAD^1 is missing.
+
+    ``HEAD^1`` is a property of the checkout and ``github.event.pull_request.base.sha`` is a
+    property of the pull request, so a checkout that arrived without the parent can still be
+    told which commit to go and get. This is the same shallow checkout the two cases above
+    refuse on, and the only difference is that the event names a base that exists.
+
+    The proof that the fetch produced a real comparison rather than a shrug is that the step
+    refuses for the other reason: it found ``config/policy.yaml`` in the diff against the
+    fetched base and went on to check the declared version against the latest release. A
+    step that had merely stopped failing would say nothing about either.
+
+    It also cannot introduce a flake, which is the reason it is allowed to be a network call
+    inside a required check at all. It runs only where the step was already going to refuse,
+    so a fetch that does not answer leaves the refusal exactly where it was.
+    """
+    checkout, base = checkout_without_its_base
+
+    code, said = run_guard(checkout, tmp_path, latest="v0.2.2", base_sha=base)
+
+    assert code == 1, said
+    assert "config/policy.yaml" in said, "the diff was taken against the base it fetched"
+    assert BUMP_COMMAND in said
+    assert "which commit this pull request is based on" not in said
 
 
 def test_a_repository_with_no_release_yet_is_not_second_guessed(
