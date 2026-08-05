@@ -825,8 +825,11 @@ jobs:
           path: substrate/
 
       # AN ORPHAN BRANCH, APPENDED TO RATHER THAN FORCE-PUSHED. main refuses this push and
-      # should: branch protection requires an approving review and a code-owner review, and
-      # buying an exception to that in order to publish a record is the wrong trade. What
+      # should. Branch protection requires two status checks this token cannot produce, and
+      # buying an exception to that in order to publish a record is the wrong trade. The
+      # required review that used to be the reason came off main on 2026-08-05 and the
+      # checks are what refuse the push now, which changes nothing about where this goes.
+      # What
       # makes the branch the right place is that history is the product here -- the sources
       # forget, so last week is the only copy of last week -- which is the opposite of the
       # run index, where a snapshot refreshed on state change is overwritten in place and its

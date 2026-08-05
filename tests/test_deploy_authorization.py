@@ -100,11 +100,16 @@ def test_a_refused_dispatch_fails_rather_than_reporting_itself_as_skipped(name: 
 def test_a_push_to_main_deploys_without_meeting_the_guard(name: str) -> None:
     """Mutation: guard every event rather than the dispatch.
 
-    A push to main has already been through a code-owner review of the template and of the
-    workflow applying it, and the person who clicks merge on somebody else's approved
-    change need not be an admin. Guarding that path would strand a reviewed infrastructure
-    change with no way to land it, and the failure would name the merger rather than the
-    rule.
+    A push to main has already been through the required checks on the template and on the
+    workflow applying it, and the person who clicks merge need not be an admin. Guarding
+    that path would strand an infrastructure change with no way to land it, and the failure
+    would name the merger rather than the rule.
+
+    The argument was written when a code-owner review stood in front of that merge, and the
+    review came off main on 2026-08-05. What is left in front of it is the two status
+    checks, which is a weaker thing to rest a deploy on and is still the reason not to guard
+    the push. The three workflow files say the same in a comment and are not edited here,
+    because a change to any of them is what their own push trigger fires a deploy on.
     """
     condition = guard_step(name)["if"]
 
