@@ -86,6 +86,7 @@ from edullm_platform.cli.configuration import (
     find_config_directory,
     load_reviewed_configuration,
 )
+from edullm_platform.cli.machine import check_document, emit
 from edullm_platform.cli.preferences import read_default_team
 from edullm_platform.cli.preflight import (
     Preflight,
@@ -419,6 +420,7 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
 
     check = verb_parser("check", WHAT_A_VERB_DOES["check"])
     _add_submission_arguments(check)
+    _add_json(check)
 
     submit = verb_parser("submit", WHAT_A_VERB_DOES["submit"])
     _add_submission_arguments(submit)
@@ -491,6 +493,26 @@ def _add_ask_aws(parser: argparse.ArgumentParser) -> None:
             "ask AWS about a run this cannot find among the recent submissions. Dispatches "
             f"{CANCEL_WORKFLOW}, which spends a runner and waits for it. A run this does "
             "find is answered from GitHub either way."
+        ),
+    )
+
+
+def _add_json(parser: argparse.ArgumentParser) -> None:
+    """The machine-readable form, on the two verbs that are structured under the paragraphs.
+
+    A FLAG AND NOT A TERMINAL CHECK, AND THE DIFFERENCE IS A PROPERTY RATHER THAN A TASTE.
+    The agent-facing writing of the last year says emit JSON whenever stdout is not a
+    terminal. Doing that would make `edullm check > note.txt` and `edullm check` disagree
+    about what was checked, on the one artifact somebody pastes into a message to ask what
+    went wrong. The flag is named in this verb's own help instead, which is the answer
+    ``docs-frank/reference/designing-the-cli.md`` reaches after weighing both.
+    """
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help=(
+            "print one JSON document on stdout instead of the paragraphs, whatever the "
+            "outcome. The exit code is unchanged and is still the contract."
         ),
     )
 
@@ -894,12 +916,22 @@ def _check(
         # costs five git calls on the one invocation in a repository's life that writes a
         # spec, and nothing on any other.
         facts = read_git_facts(runner, cwd=cwd)
-        print(_scaffolded_said(scaffolded, facts), file=out)
-        print(file=out)
+        # ON STDERR UNDER --json, BECAUSE STDOUT IS ONE DOCUMENT THERE AND NOTHING ELSE.
+        # A caller pipes stdout into a parser, and the one invocation in a repository's life
+        # that writes a spec is exactly the one a first-run agent makes.
+        wrote = err if arguments.json else out
+        print(_scaffolded_said(scaffolded, facts), file=wrote)
+        print(file=wrote)
     preflight = _preflight(
         arguments, configuration, facts, spec, submitter, unscaffoldable=unscaffoldable
     )
-    print(render_preflight(preflight, configuration=configuration), end="", file=out)
+    if arguments.json:
+        emit(
+            check_document(preflight, configuration=configuration, submitter=submitter),
+            out=out,
+        )
+    else:
+        print(render_preflight(preflight, configuration=configuration), end="", file=out)
     return EXIT_REFUSED if preflight.refused else EXIT_OK
 
 
