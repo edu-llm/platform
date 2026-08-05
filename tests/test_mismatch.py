@@ -29,6 +29,11 @@ PREVIEW = "sbsandbox-intern-edullm-run-preview"
 
 ROSTER = {AMY: "alsy7009", ALAN: "aabraham"}
 A_RUN = "run_019fa73d-be37-7066-984b-a4bacf194f49"
+#: A well-formed run id that no test ever puts in `known_run_ids`. Named rather than written
+#: inline because the test below is only testing anything while it differs from `A_RUN`, and
+#: an inline literal is one careless copy away from being the same string.
+AN_UNRECORDED_RUN = "run_019fa96f-8f10-705a-a7a9-69c42eafce16"
+assert AN_UNRECORDED_RUN != A_RUN
 
 
 def _launch(event_id: str, role_name: str, *, run_id: str | None = None) -> LaunchEvent:
@@ -70,9 +75,12 @@ def test_a_run_id_the_lineage_store_has_never_heard_of_is_a_mismatch() -> None:
     A tag is written by whoever launched the instance, so a run id nobody recorded is a
     claim rather than a record, and treating the tag as proof would let one tag clear a
     launch the platform never saw.
+
+    The launched run id has to differ from the recorded one or this test passes on a
+    mismatch that is not the one it means; `AN_UNRECORDED_RUN` asserts that at import.
     """
     report = compute_mismatches(
-        [_launch("e1", AMY, run_id="run_019fa73d-be37-7066-984b-a4bacf194f49")],
+        [_launch("e1", AMY, run_id=AN_UNRECORDED_RUN)],
         role_logins=ROSTER,
         excluded_roles=(),
         known_run_ids=frozenset({A_RUN}),
