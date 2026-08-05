@@ -35,6 +35,7 @@ from edullm_platform.cli.preflight import Refusal
 __all__ = [
     "ADD_KINDS",
     "SELF_SERVICE_KINDS",
+    "register_repository_form",
     "routed_to_ask",
 ]
 
@@ -75,3 +76,32 @@ def routed_to_ask(kind: str) -> Refusal:
             "it should be built."
         ),
     )
+
+
+def register_repository_form(
+    *,
+    repository: str,
+    github_repository_id: str,
+    reason: str,
+    dockerfile_path: str,
+    default_branch: str,
+) -> dict[str, str]:
+    """``register-repository.yml``'s inputs, filled in from the checkout somebody is in.
+
+    THE THREE REQUIRED INPUTS ARE FILLED AND THE OPTIONAL ONES ARE LEFT ALONE, WHICH IS THE
+    POINT OF THE SPLIT. ``base_image_repository`` and ``base_image_digest`` default to the
+    base two registrations already share and to the digest an existing registration of that
+    base carries, which is the reviewed one. Sending a value from a laptop would be a second
+    base to review, scan and re-pin, chosen by whoever happened to run the command.
+
+    ``reason`` is required and has no default anywhere. It is written into a comment above
+    the entry and it answers a question nothing else can: why this needs a repository of its
+    own rather than a workload in an existing one.
+    """
+    return {
+        "repository": repository,
+        "github_repository_id": github_repository_id,
+        "reason": reason,
+        "dockerfile_path": dockerfile_path,
+        "default_branch": default_branch,
+    }

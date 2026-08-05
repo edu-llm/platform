@@ -61,6 +61,7 @@ __all__ = [
     "CANCEL_WORKFLOW",
     "PLATFORM_REPOSITORY",
     "PRINTED_RUN_ID",
+    "REGISTER_WORKFLOW",
     "SUBMIT_WORKFLOW",
     "Admitted",
     "AmbiguousRunIdError",
@@ -87,6 +88,12 @@ PLATFORM_REPOSITORY: Final = "edu-llm/platform"
 
 SUBMIT_WORKFLOW: Final = "submit-run.yml"
 CANCEL_WORKFLOW: Final = "cancel-run.yml"
+
+#: The workflow that edits five platform files, runs a local verification and opens the
+#: registration pull request. Named here with the other two rather than in ``intake.py``,
+#: because this module is the one place that knows what this binary drives, and
+#: ``tests/test_cli_add.py`` reads the directory to hold the spelling to a file that exists.
+REGISTER_WORKFLOW: Final = "register-repository.yml"
 
 #: The artifact ``submit-run.yml``'s compile job uploads. It is written before the approval
 #: gate, so it is readable while a run is still waiting for somebody to tap -- which is the
@@ -272,6 +279,26 @@ class PlatformActions:
                 f"{self._repository}."
             )
         self._dispatched.append(workflow)
+
+    def repository_id(self, repository: str) -> str:
+        """The numeric id of a repository in this organization, which the form asks for.
+
+        ``register-repository.yml`` takes it as a required input and its own description
+        gives the command a person would run. Asked here so that a caller standing in a
+        checkout does not have to, and asked of the repository being registered rather than
+        of the platform, which is the one call in this class that is not about
+        ``self._repository``.
+        """
+        organization = self._repository.split("/", 1)[0]
+        answered = self._api(f"repos/{organization}/{repository}")
+        identifier = answered.get("id")
+        if not isinstance(identifier, int):
+            raise GithubUnreachableError(
+                f"repos/{organization}/{repository} answered without a numeric id, so the "
+                "registration form cannot be filled in. Check the spelling and that you can "
+                "see the repository."
+            )
+        return str(identifier)
 
     def workflow_runs(
         self, workflow: str, *, actor: str | None = None, limit: int = 20

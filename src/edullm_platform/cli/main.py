@@ -69,6 +69,7 @@ from edullm_platform.cli.actions import (
     CANCEL_WORKFLOW,
     PLATFORM_REPOSITORY,
     PRINTED_RUN_ID,
+    REGISTER_WORKFLOW,
     SUBMIT_WORKFLOW,
     AmbiguousRunIdError,
     GithubUnreachableError,
@@ -86,7 +87,12 @@ from edullm_platform.cli.configuration import (
     find_config_directory,
     load_reviewed_configuration,
 )
-from edullm_platform.cli.intake import ADD_KINDS, SELF_SERVICE_KINDS, routed_to_ask
+from edullm_platform.cli.intake import (
+    ADD_KINDS,
+    SELF_SERVICE_KINDS,
+    register_repository_form,
+    routed_to_ask,
+)
 from edullm_platform.cli.machine import (
     check_document,
     emit,
@@ -119,7 +125,14 @@ from edullm_platform.cli.release import (
     staleness_said,
 )
 from edullm_platform.cli.scaffold import scaffold_spec, workloads_registered_for
-from edullm_platform.cli.spec import SPEC_PATH, RunSpec, SpecUnreadableError, find_spec, load_spec
+from edullm_platform.cli.spec import (
+    SPEC_DIRECTORY,
+    SPEC_PATH,
+    RunSpec,
+    SpecUnreadableError,
+    find_spec,
+    load_spec,
+)
 from edullm_platform.cli.workspace import (
     CommandRunner,
     GitFacts,
@@ -476,6 +489,19 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
     # GOES THROUGH A PERSON ARE DIFFERENT FACTS. argparse answers the first with the list for
     # free; routing it to `ask` instead would file an issue asking a human for `add repositry`.
     add.add_argument("kind", choices=sorted(ADD_KINDS), help="what to teach the platform")
+    add.add_argument(
+        "--reason",
+        help=(
+            "why this needs a repository of its own rather than a workload in an existing "
+            "one. Written into a comment above the entry, and required for a repository."
+        ),
+    )
+    add.add_argument("--repository", help="overriding what the origin remote says")
+    add.add_argument(
+        "--dockerfile",
+        default=f"{SPEC_DIRECTORY}/Dockerfile",
+        help="repository-relative path to the Dockerfile the build workflow builds",
+    )
     _add_json(add)
 
     built: dict[str, argparse.ArgumentParser] = {
@@ -1514,7 +1540,104 @@ def _add(
         else:
             print(render_refusals([refusal]), end="", file=err)
         return EXIT_REFUSED
-    raise AssertionError(f"unreachable add kind {arguments.kind!r}")
+
+    facts = read_git_facts(runner, cwd=cwd)
+    refusals = _registration_refusals(arguments, facts)
+    if refusals:
+        if arguments.json:
+            emit(refusal_document("add", refusals), out=out)
+        else:
+            print(render_refusals(refusals), end="", file=err)
+        return EXIT_REFUSED
+
+    repository = arguments.repository or facts.repository or ""
+    actions = PlatformActions(
+        runner, repository=arguments.platform_repository, dispatched=dispatched
+    )
+    identifier = actions.repository_id(repository)
+    dispatched_at = datetime.now(UTC)
+    actions.dispatch(
+        REGISTER_WORKFLOW,
+        register_repository_form(
+            repository=repository,
+            github_repository_id=identifier,
+            reason=arguments.reason,
+            dockerfile_path=arguments.dockerfile,
+            default_branch=facts.branch or "main",
+        ),
+    )
+    print(f"dispatching {REGISTER_WORKFLOW} ... queued", file=out)
+    submitter = github_login(runner, allow_network=True)
+    run = actions.wait_for_a_new_run(REGISTER_WORKFLOW, actor=submitter, after=dispatched_at)
+    if run is None:
+        print(
+            "dispatched, and the workflow run it started could not be found within the poll "
+            f"window. It is on its way; the {REGISTER_WORKFLOW} page carries the pull request "
+            "it opens.",
+            file=out,
+        )
+        return EXIT_OK
+    print(str(run.get("html_url") or ""), file=out)
+    print(
+        "\n".join(
+            _wrapped(
+                "It opens a pull request against the reviewed configuration, which somebody "
+                "merges and then deploys. Nothing is registered until both have happened, "
+                "and edullm check refuses this repository until they have.",
+                indent="",
+            )
+        ),
+        file=out,
+    )
+    return EXIT_OK
+
+
+def _registration_refusals(arguments: argparse.Namespace, facts: GitFacts) -> list[Refusal]:
+    """What a registration needs of the place somebody is standing, asked before a dispatch.
+
+    ``working_tree_refusals`` is deliberately not reused. It answers what the *recorded path*
+    needs of a checkout, which is a clean tree, a pushed commit and a published image, and
+    none of those is true of a repository being registered for the first time. What a
+    registration needs is narrower and different: a name that ``config/repositories.yaml``
+    can be keyed on, and a sentence saying why.
+    """
+    refusals: list[Refusal] = []
+    if not facts.is_a_repository and not arguments.repository:
+        refusals.append(
+            Refusal(
+                code="not_a_repository",
+                detail=(
+                    "this directory is not inside a git repository, so there is no name to "
+                    "register. Stand in a checkout, or pass --repository with the name "
+                    "GitHub spells it."
+                ),
+            )
+        )
+    elif facts.repository is None and not arguments.repository:
+        refusals.append(
+            Refusal(
+                code="no_origin_remote",
+                detail=(
+                    "this repository has no origin remote, so which GitHub repository it is "
+                    "cannot be read. config/repositories.yaml is keyed on the GitHub name "
+                    "and a clone can be named anything, so this is asked rather than guessed "
+                    "at: pass --repository, or add the remote."
+                ),
+            )
+        )
+    if not arguments.reason:
+        refusals.append(
+            Refusal(
+                code="no_registration_reason",
+                detail=(
+                    "--reason says why this needs a repository of its own rather than a "
+                    "workload profile in one that is already registered. It is written into "
+                    "a comment above the entry and it is the only part of the pull request a "
+                    "reviewer cannot derive, so there is no default for it."
+                ),
+            )
+        )
+    return refusals
 
 
 # ---------------------------------------------------------------------------------------
