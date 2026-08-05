@@ -293,7 +293,13 @@ def run_preflight(
         cost=cost,
         approval_class=approval_class,
         approving_environment=ApprovalEnvironment.for_approval_class(approval_class),
-        exceeded=exceeded_routine_bounds(facts, configuration.policy),
+        # The rate for the same reason ``classify_request`` above is given it: it is the
+        # fifth bound, RequestFacts cannot carry it, and it is the only thing that makes a
+        # gpu-8xa100 dispatch an exception. Passed rather than left to default so this verb
+        # and the approver page name that reason in one sentence rather than two.
+        exceeded=exceeded_routine_bounds(
+            facts, configuration.policy, hourly_rate_usd=cost.hourly_rate_usd
+        ),
     )
 
 

@@ -222,16 +222,12 @@ def _approval_block(preflight: Preflight, policy: ApprovalPolicy) -> str:
 
     lines.append(f"  {approval_class.value} -> {preflight.approving_environment.value}")
     if approval_class is ApprovalClass.EXCEPTION:
-        if preflight.exceeded:
-            lines.extend(f"  {reason}" for reason in preflight.exceeded)
-        else:
-            # The rate ceiling is the exception nothing in ``exceeded_routine_bounds``
-            # reports, because it is not a bound on the size of the request. Named here so
-            # the block never prints a class with no reason under it.
-            lines.append(
-                f"  the hourly rate of ${plain_decimal(cost.hourly_rate_usd)} is what gates this, "
-                "whatever the total is"
-            )
+        # Every reason comes from ``exceeded_routine_bounds``, including the rate, which
+        # this block used to word for itself because that function reported four bounds and
+        # not the fifth. It reports five now and ``run_preflight`` hands it the rate, so a
+        # sentence composed here would be a second spelling of one an approver reads on the
+        # page this verb is previewing.
+        lines.extend(f"  {reason}" for reason in preflight.exceeded)
         return "\n".join(lines)
 
     lines.extend(f"  {reason}" for reason in _why_not_automatic(preflight, policy))
