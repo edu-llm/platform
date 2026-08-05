@@ -165,15 +165,25 @@ def test_the_distribution_is_not_the_console_script() -> None:
 def test_what_a_researcher_is_told_to_type_is_what_the_code_spells() -> None:
     """Mutation: hand-write the install line into the guide, or let the URL drift.
 
-    The two places addressed to somebody who has not installed this yet. Held to the
+    The three places addressed to somebody who has not installed this yet. Held to the
     *unpinned* line on purpose: it is the one that is true after every release, and pinning
     the documentation to a version would put the guide and the README into the set of files
     a bump has to rewrite, which is a coupling that has already gone wrong three times.
     Re-running the unpinned line is the upgrade, which is the property being documented.
+
+    ``AGENTS.md`` is here for the same reason and one worse. It is loaded into every agent
+    session on this repository, so a tag written into it is a stale number read more often
+    than any other line in the tree, by a reader with no reason to doubt it and no habit of
+    checking. It is also the file that tells an agent never to quote a number from a
+    document, which it would then be doing.
     """
     unpinned = install_command(repository=PLATFORM_REPOSITORY)
 
-    for path in (PROJECT_ROOT / "README.md", PROJECT_ROOT / "guides" / "the-platform.md"):
+    for path in (
+        PROJECT_ROOT / "README.md",
+        PROJECT_ROOT / "guides" / "the-platform.md",
+        PROJECT_ROOT / "AGENTS.md",
+    ):
         assert unpinned in path.read_text(encoding="utf-8"), (
             f"{path.name} does not carry the install line, so the only instruction a "
             "newcomer has is either absent or a second copy that can rot"
