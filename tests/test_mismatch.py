@@ -72,7 +72,7 @@ def test_a_run_id_the_lineage_store_has_never_heard_of_is_a_mismatch() -> None:
     launch the platform never saw.
     """
     report = compute_mismatches(
-        [_launch("e1", AMY, run_id="run_019f0000-0000-7000-8000-000000000000")],
+        [_launch("e1", AMY, run_id="run_019fa73d-be37-7066-984b-a4bacf194f49")],
         role_logins=ROSTER,
         excluded_roles=(),
         known_run_ids=frozenset({A_RUN}),
