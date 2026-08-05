@@ -42,12 +42,17 @@ from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from difflib import get_close_matches
 from pathlib import Path
+from re import findall
 from typing import Final, TextIO
+
+from pydantic import ValidationError
 
 from edullm_platform.cli.actions import (
     CANCEL_WORKFLOW,
     PLATFORM_REPOSITORY,
+    PRINTED_RUN_ID,
     SUBMIT_WORKFLOW,
+    AmbiguousRunIdError,
     GithubUnreachableError,
     PlatformActions,
     RunFacts,
@@ -66,6 +71,7 @@ from edullm_platform.cli.preflight import (
     Preflight,
     Refusal,
     SubmissionRequest,
+    first_validation_message,
     resolve_team,
     run_preflight,
     working_tree_refusals,
@@ -83,7 +89,7 @@ from edullm_platform.cli.release import (
     probe_failed_said,
     staleness_said,
 )
-from edullm_platform.cli.scaffold import scaffold_spec
+from edullm_platform.cli.scaffold import scaffold_spec, workloads_registered_for
 from edullm_platform.cli.spec import SPEC_PATH, RunSpec, SpecUnreadableError, find_spec, load_spec
 from edullm_platform.cli.workspace import (
     CommandRunner,
@@ -101,6 +107,13 @@ __all__ = ["EXIT_OK", "EXIT_REFUSED", "EXIT_UNUSABLE", "build_parser", "main"]
 EXIT_OK: Final = 0
 EXIT_REFUSED: Final = 1
 EXIT_UNUSABLE: Final = 2
+
+#: The fewest characters of a run id's UUID this will try to resolve, which is what the
+#: listing printed before it printed :data:`~edullm_platform.cli.actions.PRINTED_RUN_ID` of
+#: them. Every id copied out of a transcript written before today is this long, and none of
+#: them should stop working; below it an abbreviation names most of a week's runs and
+#: resolving one costs an artifact download per candidate for an answer nobody wants.
+SHORTEST_RUN_ID: Final = 8
 
 #: The five verbs that work, and the line each shows in ``--help`` and in the orientation a
 #: bare ``edullm`` prints. One table rather than two so those two can never drift.
@@ -148,8 +161,9 @@ RETIRED: Final = {
         "check",
         "new is not a verb. check is, and it scaffolds.",
         (
-            "check writes the spec when a repository has none and then prices it, so the "
-            "first command a newcomer types is also the one that gets them a file."
+            "check writes the spec when a registered repository has none and then prices "
+            "it, so the first command a newcomer types is also the one that gets them a "
+            "file."
         ),
     ),
     "activity": (
@@ -182,6 +196,21 @@ RETIRED: Final = {
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """The parser alone, for callers that do not need to answer for a mistyped flag."""
+    return build_parser_and_verbs()[0]
+
+
+def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParser]]:
+    """The parser, and each verb's own parser beside it.
+
+    THE SECOND HALF EXISTS SO THAT A MISSPELLED FLAG CAN BE ANSWERED WITH THE FLAGS THAT
+    VERB TAKES. Every option this binary has lives on a subparser rather than on the root,
+    for the reason the comment below gives, and the root parser has no way to reach one:
+    ``add_subparsers`` keeps them where only private attributes can find them. Handing them
+    back at build time costs a dict and keeps :func:`_nearest_flag` off argparse's
+    internals, which is worth more than it looks -- the internals are where a Python
+    upgrade breaks a CLI's error path silently, months after anybody last read it.
+    """
     parser = argparse.ArgumentParser(
         prog="edullm",
         description=(
@@ -258,25 +287,38 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    built: dict[str, argparse.ArgumentParser] = {
+        "check": check,
+        "submit": submit,
+        "status": status,
+        "logs": logs,
+        "cancel": cancel,
+    }
     for verb, description in NOT_BUILT_YET.items():
-        verbs.add_parser(verb, parents=[common], help=f"not built yet: {description}")
-    return parser
+        built[verb] = verbs.add_parser(
+            verb, parents=[common], help=f"not built yet: {description}"
+        )
+    return parser, built
 
 
-def _no_such_verb(word: str, *, cwd: Path) -> str:
+def _no_such_verb(word: str) -> str:
     """A word the binary does not know, answered with the word it does.
 
-    THE STATE SENTENCE IS THE POINT WHEN THE REPLACEMENT IS ``check``. "Type check instead"
-    is a redirection; "here, check would write a first spec and then price it" is the
-    answer to what the person was trying to find out, and it costs one directory walk.
+    **IT DESCRIBES ``check`` AND NEVER PREDICTS WHAT ``check`` WOULD DO HERE, WHICH IS A
+    PROPERTY RATHER THAN A STYLE.** This path judged nothing, so it reads nothing: no git,
+    no ``gh``, no reviewed configuration, and ``tests/test_cli_check.py`` asserts the
+    absence of every call. A sentence about *this directory* cannot be written from that
+    much information -- the version that tried said "here, check would write a first
+    .edullm/run.yaml", which is untrue in an unregistered checkout and untrue in a
+    directory that is not a checkout at all, and both are where somebody typing a retired
+    name is standing. A path that promises nothing cannot break a promise, and the property
+    is worth more than the tailored sentence was.
     """
     lines = [""]
     entry = RETIRED.get(word)
     if entry is not None:
         replacement, headline, explanation = entry
         lines += [headline, "", *_wrapped(explanation)]
-        if replacement == "check":
-            lines += ["", *_wrapped(f"From this directory, check would {_what_check_would_do(cwd)}.")]
         if replacement is not None and replacement in NOT_BUILT_YET:
             lines += ["", f"  edullm {replacement}   is not built yet"]
         elif replacement is not None:
@@ -294,8 +336,14 @@ def _no_such_verb(word: str, *, cwd: Path) -> str:
     return "\n".join([*lines, ""])
 
 
-def _orientation(*, cwd: Path) -> str:
-    """What a bare ``edullm`` says, which for most people is the first thing it ever says."""
+def _orientation() -> str:
+    """What a bare ``edullm`` says, which for most people is the first thing it ever says.
+
+    THE SENTENCE ABOUT ``check`` DESCRIBES IT AND DOES NOT PREDICT IT, for the reason
+    :func:`_no_such_verb` gives at length: nothing has been read at this point, and the
+    tailored version was a promise the binary could not keep in the two directories a
+    newcomer is likeliest to be standing in.
+    """
     lines = [
         "",
         "edullm submits and follows runs on the eduLLM platform, so that nobody has to",
@@ -305,7 +353,11 @@ def _orientation(*, cwd: Path) -> str:
     lines += [f"  {verb:<8} {summary}" for verb, summary in BUILT_TODAY.items()]
     lines += [
         "",
-        *_wrapped(f"Start with check. Here it would {_what_check_would_do(cwd)}."),
+        *_wrapped(
+            "Start with check. It prices a submission on this machine and lists every "
+            "refusal, reaching no network and dispatching nothing -- and where a "
+            f"registered repository has no {SPEC_PATH}, it writes a first one."
+        ),
         "",
         "  edullm check --help    the flags one submission takes",
         "",
@@ -313,28 +365,69 @@ def _orientation(*, cwd: Path) -> str:
     return "\n".join(lines)
 
 
-def _what_check_would_do(cwd: Path) -> str:
-    """Read from the filesystem rather than asserted, so the sentence is about here."""
-    found = find_spec(cwd)
-    if found is not None:
-        return f"price {found} and list every refusal, dispatching nothing"
-    return (
-        f"write a first {SPEC_PATH} -- there is none at or above here -- and then price it"
+def _unusable_arguments(
+    unknown: Sequence[str], *, verb: str, parser: argparse.ArgumentParser
+) -> str:
+    """A flag or a word this verb does not take, answered the way a bad verb is answered.
+
+    ARGPARSE'S ANSWER TO THIS WAS THE ONE MISTAKE IN THE CLI THAT GOT A MENU INSTEAD OF A
+    SENTENCE. ``edullm check --experiement pilot`` printed the root usage line -- nine verb
+    names, no flags, because the flags are on the subparsers -- so the one piece of
+    information the person needed was the one piece the message could not contain. The
+    spelling they wanted was one character away.
+
+    The value after a misspelled flag comes back as unknown too, and saying "pilot is not a
+    flag" about it would be a second wrong answer, so only the tokens that were typed as
+    flags are named.
+    """
+    flags = tuple(
+        dict.fromkeys(token.split("=", 1)[0] for token in unknown if token.startswith("-"))
     )
+    lines = [""]
+    if flags:
+        named = " and ".join(flags)
+        is_are = "is not a flag" if len(flags) == 1 else "are not flags"
+        lines += _wrapped(f"{named} {is_are} {verb} takes.", indent="")
+        near = _nearest_flag(flags[0], parser)
+        if near is not None:
+            lines += ["", f"Did you mean {near}?"]
+    else:
+        named = ", ".join(unknown)
+        word = "a word" if len(unknown) == 1 else "words"
+        lines += _wrapped(f"{verb} was given {word} it does not take: {named}.", indent="")
+    lines += ["", f"  edullm {verb} --help    the flags this verb takes", ""]
+    return "\n".join(lines)
 
 
-def _wrapped(text: str) -> list[str]:
+def _nearest_flag(flag: str, parser: argparse.ArgumentParser) -> str | None:
+    """The closest spelling among the flags this verb takes, or nothing when none is close.
+
+    READ OUT OF THE USAGE LINE RATHER THAN OUT OF ``parser._actions``, WHICH IS THE SAME
+    INFORMATION FROM A SURFACE THAT IS PROMISED. ``format_usage`` is argparse's own
+    rendering of every option the verb has, so the list cannot drift from the parser the
+    way a hand-kept table would, and a Python release that rearranges the internals leaves
+    this working. The cutoff is the one :func:`_no_such_verb` uses on verbs, so a near miss
+    on a flag and a near miss on a verb are near by the same measure.
+    """
+    options = set(findall(r"--[a-z][a-z0-9-]*", parser.format_usage()))
+    near = get_close_matches(flag, sorted(options), n=1, cutoff=0.6)
+    return near[0] if near else None
+
+
+def _wrapped(text: str, *, indent: str = "  ") -> list[str]:
     """Wrapped at spaces and at nothing else, because these paragraphs carry paths.
 
     ``textwrap`` breaks on hyphens by default, and the paths this prints are full of them --
     a wrapped ``/tmp/pytest-of-frank/...`` comes back as ``pytest-`` and ``of-frank`` on two
-    lines, which is a path nobody can copy and one that does not exist.
+    lines, which is a path nobody can copy and one that does not exist. Flag names break
+    the same way and matter as much: a ``--fanout-index-parameter`` split across a line is
+    a flag that does not exist either.
     """
     return textwrap.wrap(
         text,
         width=78,
-        initial_indent="  ",
-        subsequent_indent="  ",
+        initial_indent=indent,
+        subsequent_indent=indent,
         break_on_hyphens=False,
         break_long_words=False,
     )
@@ -399,19 +492,33 @@ def main(
     # renamed and what it is now, not handed a menu to search.
     word = tokens[0] if tokens and not tokens[0].startswith("-") else None
     if not tokens:
-        print(_orientation(cwd=here), end="", file=stderr)
+        print(_orientation(), end="", file=stderr)
         return EXIT_UNUSABLE
     if word is not None and word not in BUILT_TODAY and word not in NOT_BUILT_YET:
-        print(_no_such_verb(word, cwd=here), end="", file=stderr)
+        print(_no_such_verb(word), end="", file=stderr)
         return EXIT_UNUSABLE
 
-    arguments = build_parser().parse_args(tokens)
+    parser, verb_parsers = build_parser_and_verbs()
+    arguments, unknown = parser.parse_known_args(tokens)
     verb = arguments.verb
     if verb in NOT_BUILT_YET:
         print(
             f"{verb} is not built yet. It is settled -- it would "
             f"{NOT_BUILT_YET[verb]} -- and nothing behind it exists. Built today: "
             f"{', '.join(BUILT_TODAY)}.",
+            file=stderr,
+        )
+        return EXIT_UNUSABLE
+    # AFTER THE VERB IS KNOWN TO BE BUILT AND BEFORE ANYTHING READS A FLAG. Argparse's own
+    # answer here is the root usage line, which names no flags at all -- they live on the
+    # subparsers -- so `edullm check --experiement pilot` printed nine verbs and not one
+    # option. Every other mistake this binary can be handed gets a sentence naming what to
+    # type instead. ``parse_known_args`` hands the leftovers back rather than exiting on
+    # them, which is the whole of what it takes to answer this one the same way.
+    if unknown:
+        print(
+            _unusable_arguments(unknown, verb=verb, parser=verb_parsers[verb]),
+            end="",
             file=stderr,
         )
         return EXIT_UNUSABLE
@@ -435,6 +542,33 @@ def main(
         # and the workflow makes the same separation in its own exit codes.
         print(str(exc), file=stderr)
         return EXIT_UNUSABLE
+    except AmbiguousRunIdError as exc:
+        # Caught here rather than in each of the three verbs that resolve an id, because
+        # the answer does not depend on which one asked: whichever it was cannot act until
+        # somebody says which run, and the sentence naming them is the same sentence.
+        print(render_refusals([_ambiguous_run_id(exc)]), end="", file=stderr)
+        return EXIT_REFUSED
+    except ValidationError as exc:
+        # THE NET UNDER EVERY CONTRACT MODEL THIS BINARY BUILDS, AND IT IS A NET RATHER THAN
+        # A DESIGN. Five constructors sit on the ``check`` path -- ``RunSpec`` in the
+        # scaffold, ``RunManifest``, ``FanOut``, ``CostInputs`` and ``RequestFacts`` -- and
+        # each of them is a rule this CLI is right to be held to. What must never happen is
+        # that being held to one reaches a terminal as a traceback: a researcher who meets
+        # one on their first command learns that the tool is broken, which is a more
+        # expensive thing to believe than any single defect.
+        #
+        # So the named cases are refused by name where they arise, and anything that gets
+        # past them lands here as EXIT_UNUSABLE -- the exit code for a submission nobody
+        # could judge, which is exactly what this is. It says whose fault it is, because a
+        # message that reads as a refusal sends somebody to edit a spec that was fine.
+        print(
+            "edullm assembled something this platform's own contracts refuse, which is a "
+            f"defect in edullm rather than in what you typed: {first_validation_message(exc)}. "
+            "Nothing was dispatched and nothing was written. Please report it with the "
+            f"command you ran, on {PLATFORM_REPOSITORY}.",
+            file=stderr,
+        )
+        return EXIT_UNUSABLE
     raise AssertionError(f"unreachable verb {verb!r}")
 
 
@@ -454,13 +588,68 @@ def _check(
     configuration = _configuration(arguments)
     facts = read_git_facts(runner, cwd=cwd)
     submitter = github_login(runner, allow_network=False)
-    spec, scaffolded = _spec_for_checking(arguments, configuration, facts, cwd=cwd)
+    spec, scaffolded, unscaffoldable = _spec_for_checking(
+        arguments, configuration, facts, cwd=cwd
+    )
     if scaffolded is not None:
-        print(f"wrote {scaffolded}", file=out)
+        # READ THE TREE AGAIN, BECAUSE THIS INVOCATION JUST CHANGED IT.
+        #
+        # The facts above were read before the scaffold was written, so on the one run that
+        # writes a file they describe a tree that no longer exists -- and the file is
+        # uncommitted, so the very next `check` refuses with `uncommitted_changes` naming
+        # it. That refusal is correct. What was wrong is the first run, which said "no
+        # refusals" about a working tree it had just made dirty, so the two runs told
+        # different stories about the same repository thirty seconds apart and neither
+        # reader could tell which one to believe.
+        #
+        # Re-reading rather than adjusting the facts in place, because the same function
+        # answering twice cannot disagree with itself the way a patched copy could. It
+        # costs five git calls on the one invocation in a repository's life that writes a
+        # spec, and nothing on any other.
+        facts = read_git_facts(runner, cwd=cwd)
+        print(_scaffolded_said(scaffolded, facts), file=out)
         print(file=out)
-    preflight = _preflight(arguments, configuration, facts, spec, submitter)
+    preflight = _preflight(
+        arguments, configuration, facts, spec, submitter, unscaffoldable=unscaffoldable
+    )
     print(render_preflight(preflight, policy=configuration.policy), end="", file=out)
     return EXIT_REFUSED if preflight.refused else EXIT_OK
+
+
+def _scaffolded_said(written: Path, facts: GitFacts) -> str:
+    """Where the file went, and that it is the change the refusal below is about.
+
+    The connection is not obvious from the two lines on their own. ``git status`` collapses
+    a wholly untracked directory to a single entry, so a scaffold into a repository with no
+    ``.edullm/`` is reported as ``.edullm/`` while this line names ``.edullm/run.yaml`` --
+    and a reader who does not join them up reads the refusal as being about something else
+    they have forgotten to commit.
+    """
+    if not _named_by_the_dirty_tree(facts, written):
+        return f"wrote {written}"
+    return "\n".join(
+        [
+            f"wrote {written}",
+            *_wrapped(
+                "It is not in any commit yet, which is what the uncommitted_changes "
+                "refusal below is naming. Commit it and check clears that one."
+            ),
+        ]
+    )
+
+
+def _named_by_the_dirty_tree(facts: GitFacts, written: Path) -> bool:
+    """Whether ``uncommitted_changes`` is about to name the file that was just written."""
+    if facts.root is None:
+        return False
+    try:
+        relative = written.relative_to(facts.root).as_posix()
+    except ValueError:
+        return False
+    return any(
+        relative == entry or relative.startswith(entry if entry.endswith("/") else f"{entry}/")
+        for entry in facts.dirty_paths
+    )
 
 
 def _spec_for_checking(
@@ -469,30 +658,90 @@ def _spec_for_checking(
     facts: GitFacts,
     *,
     cwd: Path,
-) -> tuple[RunSpec | None, Path | None]:
+) -> tuple[RunSpec | None, Path | None, Refusal | None]:
     """``check`` absorbing ``new``: a repository with no spec gets one, then gets checked.
 
     Written rather than offered, because the alternative is a prompt and a prompt is what
     stops an agent driving this. What makes writing safe is that everything in the file is
     either read from the catalog or is the reviewed default the form itself carries, and
     the check that follows immediately says which of them will not do.
+
+    The third answer is the one that was missing. Where nothing can be written, that is a
+    fact about where somebody is standing and it is theirs to hear -- not a constructor's
+    to raise. ``arguments.workload or None`` and ``arguments.compute or None`` are the same
+    point one layer down: ``--workload ""`` is an empty flag rather than a profile named
+    "", and everywhere else in this file an empty override already reads as absent.
     """
     declared = arguments.spec if getattr(arguments, "spec", None) else None
     if declared is not None:
-        return load_spec(declared), None
+        return load_spec(declared), None, None
     found = find_spec(cwd)
     if found is not None:
-        return load_spec(found), None
+        return load_spec(found), None, None
     if facts.root is None or facts.repository is None:
-        return None, None
+        return None, None, None
+    unscaffoldable = _nothing_to_scaffold(arguments, configuration, repository=facts.repository)
+    if unscaffoldable is not None:
+        return None, None, unscaffoldable
     written = scaffold_spec(
         configuration,
         repository=facts.repository,
         root=facts.root,
-        workload_profile=arguments.workload,
-        compute_profile=arguments.compute,
+        workload_profile=arguments.workload or None,
+        compute_profile=arguments.compute or None,
     )
-    return load_spec(written), written
+    return load_spec(written), written, None
+
+
+def _nothing_to_scaffold(
+    arguments: argparse.Namespace, configuration: ReviewedConfiguration, *, repository: str
+) -> Refusal | None:
+    """Why no first spec can be written here, in the order the compile job asks it.
+
+    **THE REGISTRY IS ASKED BEFORE THE CATALOG, WHICH IS ``run_preflight``'S ORDER AND
+    ``compile_submission``'S BEFORE IT.** Both say why in their own words: a refusal naming
+    a workload profile when the real problem is an unregistered repository points at a
+    field that was never what stood in the way. It also decides the more visible thing --
+    an unregistered repository gets no file written into it, where before this it got one
+    whenever the catalog happened to name a workload for it, which ``dolma`` does.
+
+    **AND IT IS ASKED HERE RATHER THAN AFTER THE WRITE, BECAUSE THE ALTERNATIVE IS A
+    TRACEBACK.** ``scaffold_spec`` picks the empty string for a workload it cannot infer,
+    ``RunSpec`` refuses that on ``min_length=1``, and the ``ValidationError`` came out of
+    ``main`` unhandled -- so the first command anybody typed in an unregistered checkout,
+    which is the likeliest place to try one, answered with a stack trace ending in "String
+    should have at least 1 character".
+    """
+    if not configuration.repositories.is_registered(repository):
+        registered = ", ".join(
+            sorted(entry.repository for entry in configuration.repositories.repositories)
+        )
+        return Refusal(
+            code="unregistered_repository",
+            detail=(
+                f"{repository!r} is not a repository config/repositories.yaml carries, so "
+                f"there is nothing here to submit and no {SPEC_PATH} was written. A "
+                "registration is what gives a repository somewhere to publish an image "
+                "from and a workload profile a submission can name. It is not a change to "
+                "make yourself: it lands across the registry, the workload catalog, the "
+                "submission form, an ECR stack and an IAM role no workflow may deploy. Ask "
+                f"for it by opening an issue on {PLATFORM_REPOSITORY} -- edullm add is the "
+                "verb that will one day do this and is not built yet. Registered today: "
+                f"{registered}."
+            ),
+        )
+    if arguments.workload or workloads_registered_for(configuration, repository):
+        return None
+    return Refusal(
+        code="no_workload_profile_registered",
+        detail=(
+            f"{repository!r} is registered and config/workload-catalog.yaml names no workload "
+            f"profile for it, so a first {SPEC_PATH} would have nothing to point at. A "
+            "workload profile fixes the runtime bound, the attempt bound and the checkpoint "
+            "contract for one codebase, so adding one is a pull request against the "
+            "platform -- and until there is one, no run can name this repository at all."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------------------
@@ -678,17 +927,21 @@ def _status(
         print(render_refusals([refusal]), end="", file=err)
         return EXIT_REFUSED
 
+    _said_resolving(arguments.run_id, err)
     facts = read_run_facts(actions, arguments.run_id)
     print(render_run_facts(facts), end="", file=out)
     if not facts.needs_a_dispatch:
         return EXIT_OK
     print(file=out)
+    # ``facts.run_id`` and not what was typed, for all three of these verbs. An abbreviation
+    # resolved a moment ago, and the workflow being dispatched knows the whole id and writes
+    # the whole id into the report this then reads headings out of.
     return _drive_the_run_report(
         actions,
-        run_id=arguments.run_id,
+        run_id=facts.run_id,
         stop=False,
         reason=None,
-        headings=(arguments.run_id, "Runs submitted by", "No runs found"),
+        headings=(facts.run_id, "Runs submitted by", "No runs found"),
         out=out,
         err=err,
     )
@@ -702,6 +955,7 @@ def _logs(
         print(render_refusals([refusal]), end="", file=err)
         return EXIT_REFUSED
     actions = PlatformActions(runner, repository=arguments.platform_repository)
+    _said_resolving(arguments.run_id, err)
     facts = read_run_facts(actions, arguments.run_id)
     if not facts.needs_a_dispatch:
         # A run that never reached AWS printed nothing there. Dispatching would spend a
@@ -713,7 +967,7 @@ def _logs(
         return EXIT_OK
     return _drive_the_run_report(
         actions,
-        run_id=arguments.run_id,
+        run_id=facts.run_id,
         stop=False,
         reason=None,
         headings=("The last lines this run printed",),
@@ -731,6 +985,7 @@ def _cancel(
         print(render_refusals([refusal]), end="", file=err)
         return EXIT_REFUSED
     actions = PlatformActions(runner, repository=arguments.platform_repository)
+    _said_resolving(arguments.run_id, err)
     facts = read_run_facts(actions, arguments.run_id)
     if not facts.needs_a_dispatch:
         # THE ONE PLACE THIS SHORTCUT COULD DO HARM, WHICH IS WHY ``Admitted`` HAS THREE
@@ -768,10 +1023,10 @@ def _cancel(
         return EXIT_REFUSED
     return _drive_the_run_report(
         actions,
-        run_id=arguments.run_id,
+        run_id=facts.run_id,
         stop=True,
         reason=arguments.reason,
-        headings=("Run stopped", arguments.run_id),
+        headings=("Run stopped", facts.run_id),
         because=facts.because,
         out=out,
         err=err,
@@ -855,16 +1110,118 @@ def _malformed_run_id(run_id: str) -> Refusal | None:
     That workflow refuses a malformed id in its first step, deliberately, because a mistake
     is a thing to answer in the workflow rather than a call to make with a credential in
     hand. The same argument one layer out is stronger: here it costs no runner either.
+
+    **AN ABBREVIATION IS A RUN ID HERE, WHICH THE WORKFLOW WILL NEVER SEE.** The listing
+    prints a shortened id, the shortened id is what people copy, and refusing what the tool
+    itself printed made the one remedy this refusal offers -- run the listing -- a circle.
+    Anything from the eight characters the listing used to print up to the whole id is
+    taken, and resolved against the recent submissions before anything is dispatched;
+    ``cancel-run.yml`` is still handed the whole id, because by then there is one.
     """
-    if RUN_ID_REGEX.fullmatch(run_id):
+    if RUN_ID_REGEX.fullmatch(run_id) or _abbreviates_a_run_id(run_id):
         return None
     return Refusal(
         code="run_id_not_well_formed",
         detail=(
-            f"{run_id!r} is not a run id. One reads run_ followed by a UUID and is printed "
-            "by the submission that started it. edullm status with no argument lists yours."
+            f"{run_id!r} is not a run id. One reads run_ followed by a UUID, and the "
+            f"leading {SHORTEST_RUN_ID} characters of that UUID are enough as long as no "
+            "two of your recent runs share them. edullm status with no argument lists "
+            "yours in the short form."
         ),
     )
+
+
+def _said_resolving(run_id: str, err: TextIO) -> None:
+    """Name the wait an abbreviation costs, before paying it rather than after.
+
+    A whole id is usually found in the first one or two manifests read, and an abbreviation
+    cannot stop there -- it has to read the window out to know no second run answers to it,
+    which measured 26 seconds against the real platform. This CLI says what a wait is for
+    everywhere else it makes somebody wait, and 26 seconds of a silent terminal is how a
+    person learns to stop pasting the short form.
+    """
+    if RUN_ID_REGEX.fullmatch(run_id):
+        return
+    print(
+        "\n".join(
+            _wrapped(
+                f"resolving {run_id}. Nothing indexes run ids, so this reads the manifest "
+                "of each recent submission until it knows which one -- a few seconds. An "
+                "id given in full is found in the first one or two.",
+                indent="",
+            )
+        ),
+        file=err,
+    )
+
+
+def _abbreviates_a_run_id(given: str) -> bool:
+    """Whether this is the beginning of some well-formed run id and enough of one.
+
+    ASKED BY COMPLETING IT RATHER THAN BY A SECOND REGEX, so there is still exactly one
+    statement in this codebase of what a run id looks like. A string is the start of a run
+    id when filling the rest in from a valid one leaves something ``RUN_ID_REGEX`` accepts,
+    which gets the version and variant nibbles checked for free at whatever position they
+    fall in -- and a second pattern drifting from the first is how a CLI ends up accepting
+    an id the workflow it feeds will reject.
+    """
+    # Filled with a hex letter and not with zeros, which ``test_evidence`` reads as an AWS
+    # account id -- correctly, since twelve digits in a row in this tree usually is one.
+    whole = "run_aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa"
+    if not len("run_") + SHORTEST_RUN_ID <= len(given) <= len(whole):
+        return False
+    return RUN_ID_REGEX.fullmatch(given + whole[len(given) :]) is not None
+
+
+def _ambiguous_run_id(error: AmbiguousRunIdError, *, now: datetime | None = None) -> Refusal:
+    """More than one recent run begins that way, answered with which ones and no more.
+
+    **THE REMEDY IS IN THE SENTENCE AND NOT IN ANOTHER COMMAND**, which is the whole design
+    of this one. The abbreviation being refused was copied out of ``edullm status``, so
+    "run edullm status" is a remedy that hands back the input that failed; a refusal whose
+    cure is the thing that caused it is worse than a refusal with no cure, because the
+    second at least does not waste a minute. Every match is named at a length that tells it
+    from the others, with its experiment and how long ago it went in -- because ids this
+    close together are ids minted seconds apart, and the clock is the only thing about them
+    a person remembers.
+    """
+    matched = tuple(match.run_id or "" for match in error.matches)
+    distinguishing = _shortest_distinguishing(matched)
+    # THE CLOCK TIME AS WELL AS THE ELAPSED ONE, WHICH IS THE OPPOSITE OF WHAT THE LISTING
+    # DOES AND RIGHT HERE. Runs whose ids collide were minted seconds apart, so "45m ago"
+    # is the same sentence twice -- the one form that cannot separate them is the one this
+    # refusal exists to separate them by.
+    said = " and ".join(
+        f"{distinguishing[match.run_id or '']} ({match.experiment or 'no experiment named'}, "
+        f"submitted {elapsed_said(match.created_at, now=now)} ago at "
+        f"{match.created_at.astimezone(UTC).strftime('%H:%M:%S')} UTC)"
+        for match in error.matches
+    )
+    return Refusal(
+        code="run_id_is_ambiguous",
+        detail=(
+            f"{error.given!r} is the beginning of {len(error.matches)} of your recent run "
+            f"ids, so this cannot tell which run you mean: {said}. Pass one of those longer "
+            "forms."
+        ),
+    )
+
+
+def _shortest_distinguishing(run_ids: Sequence[str]) -> dict[str, str]:
+    """Each id at the length the listing prints, or longer where that still does not part them.
+
+    Two runs a minute apart differ somewhere in the middle of the timestamp, so printing
+    them whole would put two 41-character strings in one sentence and make the reader diff
+    them. Starting at the printed length rather than at the shortest that works means the
+    forms named here are usually the exact strings ``edullm status`` printed, which is what
+    lets somebody recognise their run instead of parsing it.
+    """
+    cut = len("run_") + PRINTED_RUN_ID
+    while cut < max(len(run_id) for run_id in run_ids):
+        if len({run_id[:cut] for run_id in run_ids}) == len(set(run_ids)):
+            break
+        cut += 1
+    return {run_id: run_id[:cut] for run_id in run_ids}
 
 
 # ---------------------------------------------------------------------------------------
@@ -882,6 +1239,8 @@ def _preflight(
     facts: GitFacts,
     spec: RunSpec | None,
     submitter: str | None,
+    *,
+    unscaffoldable: Refusal | None = None,
 ) -> Preflight:
     """Merge the spec, the flags and the working tree, then run every local check.
 
@@ -889,9 +1248,16 @@ def _preflight(
     is the direction ``system-overview.md`` sets for the machine -- a suggestion in version
     control, a decision at submit time -- and applying the same rule to the workload keeps
     a submitter from having to edit a committed file to try a different profile once.
+
+    ``unscaffoldable`` replaces the generic refusal rather than joining it. Both answer the
+    same question and the specific one answers it better, and a reader handed two refusals
+    that are one problem under two spellings goes looking for the second problem -- which
+    is the argument ``run_preflight`` already makes about the conditions it deduplicates.
     """
     refusals: list[Refusal] = working_tree_refusals(facts)
-    if spec is None:
+    if unscaffoldable is not None:
+        refusals.append(unscaffoldable)
+    elif spec is None:
         refusals.append(
             Refusal(
                 code="no_run_spec",

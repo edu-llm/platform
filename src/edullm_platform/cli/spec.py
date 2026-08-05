@@ -144,9 +144,20 @@ def find_spec(start: Path) -> Path | None:
 
 
 def load_spec(path: Path) -> RunSpec:
+    """The spec at ``path``, or a sentence about why it is not one.
+
+    WHAT PYDANTIC PRINTS IS NOT WHAT SOMEBODY EDITING A YAML FILE NEEDS. Its own rendering
+    of one bad field is five lines, a repeated model name, the offending value echoed as a
+    Python repr and a link to ``errors.pydantic.dev`` -- and a researcher who mistyped
+    ``schema_version`` meets all of it on their first ``check``, which teaches them the
+    tool broke rather than that their file has a typo in it. Every field it objected to
+    gets one line naming the field, because they are about to open the file and the second
+    problem is worth knowing before they close it.
+    """
     import yaml
     from pydantic import ValidationError
 
+    from edullm_platform.cli.preflight import validation_messages
     from edullm_platform.config import SafeUniqueKeyLoader
 
     try:
@@ -161,7 +172,10 @@ def load_spec(path: Path) -> RunSpec:
     try:
         return RunSpec.model_validate(document)
     except ValidationError as exc:
-        raise SpecUnreadableError(f"{path} is not a run spec this platform can read: {exc}") from exc
+        said = "\n".join(f"  {message}" for message in validation_messages(exc))
+        raise SpecUnreadableError(
+            f"{path} is not a run spec this platform can read:\n{said}"
+        ) from exc
 
 
 def render_spec(spec: RunSpec, *, notes: tuple[str, ...] = ()) -> str:

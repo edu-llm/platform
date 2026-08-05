@@ -60,8 +60,10 @@ __all__ = [
     "ADMISSION_JOB",
     "CANCEL_WORKFLOW",
     "PLATFORM_REPOSITORY",
+    "PRINTED_RUN_ID",
     "SUBMIT_WORKFLOW",
     "Admitted",
+    "AmbiguousRunIdError",
     "GithubUnreachableError",
     "PlatformActions",
     "RunFacts",
@@ -99,6 +101,9 @@ ADMISSION_JOB: Final = "Submit the approved manifest to admission"
 #: through to a dispatch, which is what every run did before this existed.
 SUBMISSION_SEARCH_DEPTH: Final = 30
 
+#: How many characters of a run id the listing prints, measured in :attr:`short_run_id`.
+PRINTED_RUN_ID: Final = 13
+
 
 class GithubUnreachableError(RuntimeError):
     """``gh`` answered with something this cannot act on.
@@ -107,6 +112,21 @@ class GithubUnreachableError(RuntimeError):
     declined, and reporting the two the same way is how somebody spends an afternoon
     editing a spec that was fine.
     """
+
+
+class AmbiguousRunIdError(LookupError):
+    """An abbreviated run id that names more than one of the recent submissions.
+
+    Carries the matches rather than a sentence about them, because the caller is what knows
+    how to say it -- and what it has to say is *which runs*, since the only remedy is to
+    pick one. This is the one lookup failure in this file that must never be answered with
+    "list your runs and try again": the listing is where the abbreviation came from.
+    """
+
+    def __init__(self, given: str, matches: tuple[SubmissionRun, ...]) -> None:
+        super().__init__(f"{given} names {len(matches)} recent submissions")
+        self.given = given
+        self.matches = matches
 
 
 @dataclass(frozen=True)
@@ -129,10 +149,25 @@ class SubmissionRun:
 
     @property
     def short_run_id(self) -> str:
-        """``run_019fd2a1``, which is what every transcript prints and what people say."""
+        """``run_019fcf3c-9878`` -- the whole of the clock the id carries and none of the rest.
+
+        THE LENGTH IS MEASURED RATHER THAN CHOSEN, because the first eight characters were
+        chosen and they collide. A run id is a UUIDv7, whose leading twelve hex digits are
+        the millisecond it was minted; eight of them are the top thirty-two bits of that,
+        which advance once every 65,536 ms. Two submissions inside the same minute
+        therefore *have* to share an eight-character prefix -- it is arithmetic and not bad
+        luck -- and across the last 74 real submissions ten of them did, in five pairs
+        4.6 to 55.6 seconds apart. Retries and a resubmitted sweep are exactly that shape.
+
+        Thirteen characters is the full timestamp: two runs share it only if they were
+        minted in the same millisecond, against a smallest observed gap of 3.875 s. It also
+        ends on a group boundary, and everything past it is the random half of the id,
+        which no reader can reason about. Nine adds only the hyphen and ten leaves 4,096 ms
+        of slack, which that 3.875 s gap already sits inside.
+        """
         if self.run_id is None:
             return f"actions/{self.workflow_run_id}"
-        return self.run_id[: len("run_") + 8]
+        return self.run_id[: len("run_") + PRINTED_RUN_ID]
 
 
 def elapsed_said(since: datetime, *, now: datetime | None = None) -> str:
@@ -455,10 +490,15 @@ def read_run_facts(
     """Everything GitHub knows about one run, and whether AWS has to be asked as well.
 
     THE ORDER IS THE CHEAP QUESTION FIRST. Find the submission, read its jobs, and stop the
-    moment the answer is certain. A run parked at a gate, refused while compiling, or still
+    moment the answer is certain.     A run parked at a gate, refused while compiling, or still
     being compiled has no Batch job for anybody to describe, so those three end here -- and
     they are a large share of what gets asked, because they are what people check in the
     minutes after submitting, over and over, while they wait for a lead.
+
+    ``run_id`` may be abbreviated. What comes back always carries the whole one, because
+    everything downstream of this -- the heading it looks for in a report, the id it
+    dispatches ``cancel-run.yml`` with -- is talking to something that only knows the id in
+    full.
     """
     found = find_submission(actions, run_id, depth=depth)
     if found is None:
@@ -476,7 +516,7 @@ def read_run_facts(
     admission = jobs.get(ADMISSION_JOB)
     conclusion = admission.get("conclusion") if admission is not None else None
     facts = RunFacts(
-        run_id=run_id,
+        run_id=submission.run_id or run_id,
         admitted=Admitted.UNSURE,
         because="",
         submission=submission,
@@ -573,7 +613,7 @@ def find_submission(
     *,
     depth: int = SUBMISSION_SEARCH_DEPTH,
 ) -> tuple[SubmissionRun, dict[str, Any]] | None:
-    """Join a platform run id back to the dispatch that minted it, newest first.
+    """Join a platform run id, whole or abbreviated, back to the dispatch that minted it.
 
     THERE IS NO INDEX AND THERE CANNOT EASILY BE ONE. A workflow run does not expose the
     inputs it was dispatched with, and ``run-name`` -- the one field that would show on the
@@ -581,34 +621,46 @@ def find_submission(
     job has not minted yet. What is left is to read each candidate's compiled manifest,
     which is one artifact download per candidate examined.
 
-    That is why this stops at the first match rather than reading them all. A run somebody
-    is asking about is nearly always one of the last few, so the usual cost is one or two
-    downloads; the pathological cost is ``depth`` of them, and the answer then is that the
-    run was not found and the caller pays for a dispatch as they always did.
+    **A WHOLE ID STOPS AT THE FIRST MATCH AND AN ABBREVIATED ONE CANNOT.** Nothing else
+    could report an ambiguity honestly: a prefix that stopped at the first match would
+    silently pick the newest of several runs, and picking the wrong one for ``cancel``
+    is the worst thing in this file. So the whole window is read for an abbreviation, and
+    the whole window is what it costs -- one artifact download per dispatch examined,
+    against one or two for an id pasted in full. That is the price of the shorthand and it
+    is charged only to whoever uses it.
+
+    :raises AmbiguousRunIdError: when an abbreviation names more than one of them.
     """
+    matches: list[tuple[SubmissionRun, dict[str, Any]]] = []
     for run in actions.workflow_runs(SUBMIT_WORKFLOW, limit=depth):
         identifier = run.get("id")
         created = _instant(run.get("created_at"))
         if not isinstance(identifier, int) or created is None:
             continue
         compiled = actions.compiled_submission(identifier)
-        if compiled is None or _string(compiled, "run_id") != run_id:
+        minted = None if compiled is None else _string(compiled, "run_id")
+        if compiled is None or minted is None or not minted.startswith(run_id):
             continue
         manifest = compiled.get("manifest")
         fanout = manifest.get("fanout") if isinstance(manifest, dict) else None
-        return (
+        found = (
             SubmissionRun(
                 workflow_run_id=identifier,
                 state=submission_state(run),
                 created_at=created,
                 url=str(run.get("html_url") or ""),
-                run_id=run_id,
+                run_id=minted,
                 experiment=_string(compiled, "experiment"),
                 cells=fanout.get("size") if isinstance(fanout, dict) else None,
             ),
             compiled,
         )
-    return None
+        if minted == run_id:
+            return found
+        matches.append(found)
+    if len(matches) > 1:
+        raise AmbiguousRunIdError(run_id, tuple(match for match, _ in matches))
+    return matches[0] if matches else None
 
 
 def submission_state(run: Mapping[str, Any]) -> str:

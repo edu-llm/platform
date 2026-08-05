@@ -62,7 +62,7 @@ from edullm_platform.contracts.authorization import (
 from edullm_platform.contracts.bindings import SLUG_PATTERN
 from edullm_platform.contracts.dataset_registry import PublishedDatasetReference
 from edullm_platform.contracts.manifest import FanOut, RunManifest
-from edullm_platform.contracts.policy import ApprovalClass, classify_request
+from edullm_platform.contracts.policy import ApprovalClass, RequestFacts, classify_request
 from edullm_platform.contracts.workload import (
     ComputeProfile,
     ComputeProfileResolutionError,
@@ -87,8 +87,10 @@ __all__ = [
     "Preflight",
     "Refusal",
     "SubmissionRequest",
+    "first_validation_message",
     "resolve_team",
     "run_preflight",
+    "validation_messages",
     "working_tree_refusals",
 ]
 
@@ -248,25 +250,17 @@ def run_preflight(
 
     refusals.extend(_check_command(manifest, configuration.catalog))
 
-    cost = compute_manifest_cost_inputs(manifest, configuration.catalog)
-    facts = build_request_facts(
-        manifest,
-        repositories=configuration.repositories,
-        catalog=configuration.catalog,
-        dataset_registry=configuration.datasets,
-        estimated_cost_usd=cost.maximum_compute_cost_usd,
-        # THE ONE ARGUMENT DELIBERATELY LEFT OFF, AND THE ONLY PLACE IN THE TREE THAT LEAVES
-        # IT OFF ON PURPOSE. ``build_request_facts`` reads a missing policy as "this caller
-        # is not evaluating the scan gate", which is fail-open and is exactly why it has to
-        # be asked for by omission rather than arrived at. It is asked for here because the
-        # digest above is a placeholder: evaluating a scan gate against an image that does
-        # not exist would refuse every submission with a finding nobody reported. The two
-        # production callers -- ``compile_submission`` and ``admit`` -- both pass the
-        # deployed policy, and ``tests/test_phase3_image_scan.py`` holds them to it. The
-        # cost of the omission is stated to the reader rather than swallowed: see
-        # ``DEFERRED_TO_SUBMIT``.
-        image_scan_policy=None,
-    )
+    priced = _price_and_derive_facts(manifest, configuration)
+    if isinstance(priced, Refusal):
+        return Preflight(
+            request=request,
+            refusals=(*refusals, priced),
+            team_source=team_source,
+            workload=workload,
+            compute=compute,
+            dataset=configuration.datasets.reference_for(request.dataset_release),
+        )
+    cost, facts = priced
     tripped = tuple(
         condition
         for condition in denied_outright_conditions(facts, configuration.policy)
@@ -299,8 +293,64 @@ def run_preflight(
         cost=cost,
         approval_class=approval_class,
         approving_environment=ApprovalEnvironment.for_approval_class(approval_class),
-        exceeded=exceeded_routine_bounds(facts, configuration.policy),
+        # The rate for the same reason ``classify_request`` above is given it: it is the
+        # fifth bound, RequestFacts cannot carry it, and it is the only thing that makes a
+        # gpu-8xa100 dispatch an exception. Passed rather than left to default so this verb
+        # and the approver page name that reason in one sentence rather than two.
+        exceeded=exceeded_routine_bounds(
+            facts, configuration.policy, hourly_rate_usd=cost.hourly_rate_usd
+        ),
     )
+
+
+def _price_and_derive_facts(
+    manifest: RunManifest, configuration: ReviewedConfiguration
+) -> tuple[CostInputs, RequestFacts] | Refusal:
+    """The two contract models between a valid manifest and a classification, or why not.
+
+    **A MANIFEST THAT VALIDATES IS NOT YET A REQUEST THESE TWO ACCEPT, AND THE GAP IS REAL
+    RATHER THAN THEORETICAL.** ``RunManifest.team`` is any non-empty string and
+    ``RequestFacts.claimed_team`` is a slug, so ``--team "Pre Training"`` builds a manifest
+    and then fails here -- and before this it failed as a pydantic traceback, on a mistake
+    somebody makes by capitalising a team name. ``CostInputs`` is the other one: the worst
+    case is a product of five numbers and refuses a total it cannot represent, which
+    ``--hours`` reaches with a large enough figure.
+
+    Both are the contracts being right. What was wrong is that being right arrived as a
+    stack trace rather than as the refusal every other rule on this path produces.
+    """
+    try:
+        cost = compute_manifest_cost_inputs(manifest, configuration.catalog)
+        facts = build_request_facts(
+            manifest,
+            repositories=configuration.repositories,
+            catalog=configuration.catalog,
+            dataset_registry=configuration.datasets,
+            estimated_cost_usd=cost.maximum_compute_cost_usd,
+            # THE ONE ARGUMENT DELIBERATELY LEFT OFF, AND THE ONLY PLACE IN THE TREE THAT
+            # LEAVES IT OFF ON PURPOSE. ``build_request_facts`` reads a missing policy as
+            # "this caller is not evaluating the scan gate", which is fail-open and is
+            # exactly why it has to be asked for by omission rather than arrived at. It is
+            # asked for here because the digest on the manifest is a placeholder:
+            # evaluating a scan gate against an image that does not exist would refuse
+            # every submission with a finding nobody reported. The two production callers
+            # -- ``compile_submission`` and ``admit`` -- both pass the deployed policy, and
+            # ``tests/test_phase3_image_scan.py`` holds them to it. The cost of the
+            # omission is stated to the reader rather than swallowed: see
+            # ``DEFERRED_TO_SUBMIT``.
+            image_scan_policy=None,
+        )
+    except ValidationError as exc:
+        return Refusal(
+            code="submission_cannot_be_priced",
+            detail=(
+                "the manifest is well formed and the facts this platform prices and "
+                f"classifies on could not be derived from it: {first_validation_message(exc)}. "
+                "Correct the field that names -- every value on a submission is recorded, "
+                "and one the contracts refuse is one nothing downstream could store."
+            ),
+        )
+    return cost, facts
 
 
 def working_tree_refusals(facts: GitFacts) -> list[Refusal]:
@@ -739,7 +789,7 @@ def _build_manifest(
                 code="submission_does_not_describe_a_run",
                 detail=(
                     "the spec and the flags do not add up to something this platform can "
-                    f"record: {_first_validation_message(exc)}"
+                    f"record: {first_validation_message(exc)}"
                 ),
             )
         ]
@@ -785,10 +835,29 @@ def _check_command(manifest: RunManifest, catalog: WorkloadCatalog) -> list[Refu
     return refusals
 
 
-def _first_validation_message(exc: ValidationError) -> str:
+def first_validation_message(exc: ValidationError) -> str:
+    """A pydantic error as one sentence naming a field, rather than as five lines and a URL.
+
+    Public because ``main`` needs the same rendering for the same reason: whatever it is
+    saying about a ``ValidationError``, the useful part is which field and what about it,
+    and a second spelling of that would drift from this one.
+    """
+    return validation_messages(exc)[0]
+
+
+def validation_messages(exc: ValidationError) -> tuple[str, ...]:
+    """Every field pydantic objected to, one line each and no URLs.
+
+    THE WHOLE LIST WHERE THE READER IS GOING TO EDIT A FILE, which is the same argument
+    :func:`run_preflight` makes about collecting refusals: three problems reported one at a
+    time is three trips through an editor, and the second and third were visible the first
+    time. :func:`first_validation_message` is the same rendering for the places that have
+    room for one sentence.
+    """
     errors = exc.errors()
     if not errors:
-        return str(exc)
-    first = errors[0]
-    where = ".".join(str(part) for part in first["loc"]) or "the submission"
-    return f"{where}: {first['msg']}"
+        return (str(exc),)
+    return tuple(
+        f"{'.'.join(str(part) for part in error['loc']) or 'the submission'}: {error['msg']}"
+        for error in errors
+    )

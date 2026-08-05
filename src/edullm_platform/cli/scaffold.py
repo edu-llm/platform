@@ -35,7 +35,7 @@ from edullm_platform.cli.spec import SPEC_PATH, RunSpec, render_spec
 from edullm_platform.contracts.workload import ComputeProfile, WorkloadProfile
 from edullm_platform.execution import CONTAINER_SHAPES
 
-__all__ = ["FIRST_RUN_COMMAND", "scaffold_spec"]
+__all__ = ["FIRST_RUN_COMMAND", "scaffold_spec", "workloads_registered_for"]
 
 #: The command ``submit-run.yml`` pre-fills its own form with, quoted identically. Copied
 #: because a scaffold that could not compile would be worse than none, and this is the one
@@ -49,6 +49,22 @@ FIRST_RUN_COMMAND = "python -c 'import sys; print(\"edullm ready\", sys.version)
 ENTRY_POINT_GLOB = ".edullm/*.py"
 
 
+def workloads_registered_for(
+    configuration: ReviewedConfiguration, repository: str
+) -> tuple[str, ...]:
+    """The catalog's entries for one repository, which is what a scaffold may choose from.
+
+    Public because the caller has to ask this *before* scaffolding rather than after.
+    ``RunSpec`` requires a workload profile of at least one character, so a repository the
+    catalog does not name has no file this module could write -- and the difference between
+    answering that with a refusal and discovering it inside a constructor is the difference
+    between a sentence and a traceback.
+    """
+    return tuple(
+        sorted(entry.name for entry in configuration.catalog.workloads if entry.repository == repository)
+    )
+
+
 def scaffold_spec(
     configuration: ReviewedConfiguration,
     *,
@@ -58,7 +74,13 @@ def scaffold_spec(
     workload_profile: str | None = None,
     compute_profile: str | None = None,
 ) -> Path:
-    """Write the file and answer with where it went."""
+    """Write the file and answer with where it went.
+
+    The caller owns whether there is anything to write. ``workload_profile`` is required to
+    resolve to a name, either because one was declared or because
+    :func:`workloads_registered_for` answered non-empty, and a caller that skips that
+    question gets ``RunSpec``'s own refusal rather than a readable one.
+    """
     workload = _pick_workload(configuration, repository, workload_profile)
     compute = _pick_compute(configuration, workload, compute_profile)
     spec = RunSpec(
@@ -79,13 +101,7 @@ def _notes(configuration: ReviewedConfiguration, repository: str) -> tuple[str, 
     Comments rather than prose printed once to a terminal, because the file outlives the
     invocation and the person editing it in a fortnight is the one who needs the list.
     """
-    offered = ", ".join(
-        sorted(
-            entry.name
-            for entry in configuration.catalog.workloads
-            if entry.repository == repository
-        )
-    )
+    offered = ", ".join(workloads_registered_for(configuration, repository))
     return (
         (
             "# Written by edullm check, from config/workload-catalog.yaml in "

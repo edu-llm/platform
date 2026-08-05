@@ -12,12 +12,14 @@ from __future__ import annotations
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Final
 
 import pytest
 
 from edullm_platform.cli.actions import (
     CANCEL_WORKFLOW,
     PLATFORM_REPOSITORY,
+    PRINTED_RUN_ID,
     SUBMIT_WORKFLOW,
     elapsed_said,
     read_report_sections,
@@ -94,6 +96,47 @@ def test_a_wait_is_said_the_way_the_transcripts_say_it(seconds: int, expected: s
     since = datetime.fromtimestamp(now.timestamp() - seconds, UTC)
 
     assert elapsed_said(since, now=now) == expected
+
+
+#: Run ids minted seconds apart by the real platform, kept because the length the listing
+#: prints was chosen from them. Two dispatches of a sweep and a resubmission after a fix --
+#: the ordinary shapes, not a contrived worst case.
+MINTED_CLOSE_TOGETHER: Final = (
+    "run_019fcf14-6197-70b6-867c-29b766298103",  # 23:19:58
+    "run_019fcf14-0f7c-70f0-bbb3-7f5d6b45482a",  # 23:19:28
+    "run_019fce83-9a51-70dc-ad7c-0e4699ef9b93",  # 20:41:59
+    "run_019fce83-4597-703a-b1cb-f52bd59788e4",  # 20:41:26
+    "run_019fce2f-9b5b-70ea-8a77-6703e1b76605",  # 19:10:00
+    "run_019fce2f-895a-7041-a4ad-86604d20905a",  # 19:09:58
+)
+
+
+def test_the_printed_run_id_is_long_enough_for_the_runs_that_actually_collide() -> None:
+    """The length was measured against real ids rather than picked, and this is the measurement.
+
+    A run id is a UUIDv7: its leading twelve hex digits are the millisecond it was minted.
+    Eight of them are the top thirty-two bits of that, which advance once per 65,536 ms --
+    so two submissions inside the same minute *must* share an eight-character prefix. Of
+    the last 74 real submissions, ten did, in five pairs between 4.6 and 55.6 seconds
+    apart; three of those pairs are below. A fan-out shares one id and a retry makes a
+    second one seconds later, so this is the normal case and not the tail.
+
+    Thirteen characters is the whole timestamp, and everything past it is the random half
+    of the id. The smallest gap between two real submissions was 3.875 s, against the
+    1 ms two runs would have to share to collide here.
+
+    Mutation: shorten it back to eight, or lengthen it into the entropy. The first makes
+    the listing print one name for two runs; the second prints characters no reader can do
+    anything with.
+    """
+    printed = {run_id[: len("run_") + PRINTED_RUN_ID] for run_id in MINTED_CLOSE_TOGETHER}
+    at_eight = {run_id[: len("run_") + 8] for run_id in MINTED_CLOSE_TOGETHER}
+
+    assert len(printed) == len(MINTED_CLOSE_TOGETHER)
+    assert len(at_eight) == len(MINTED_CLOSE_TOGETHER) // 2
+    # The whole timestamp and none of the entropy: the character after it is the hyphen
+    # before the version nibble.
+    assert MINTED_CLOSE_TOGETHER[0][len("run_") + PRINTED_RUN_ID] == "-"
 
 
 def test_the_report_a_workflow_teed_into_its_summary_is_recovered_from_the_job_log() -> None:
