@@ -41,7 +41,7 @@ One capture per role, taken against the sandbox and committed after review. The 
 
 | role | observed | matches its template | findings | expires |
 | --- | --- | --- | --- | --- |
-| sbsandbox-intern-edullm-ecr-publisher | 2026-08-01 | yes | 0 | 2026-08-31 |
-| sbsandbox-intern-edullm-infra-deployer | 2026-08-04 | yes | 0 | 2026-09-03 |
+| sbsandbox-intern-edullm-ecr-publisher | 2026-08-04 | yes | 0 | 2026-09-03 |
+| sbsandbox-intern-edullm-infra-deployer | 2026-08-05 | yes | 0 | 2026-09-04 |
 
 **Expires** is thirty days after the observation, and it is not a formality. Every Phase 1 evidence record refuses to load past it, so on that date `tests/test_phase1_deployed_roles.py` goes red, every criterion resting on it reverts with reason `cited_test_failed`, `tools/validate_phase1.py` exits 1, and this bundle stops building. Nothing about the roles will have changed; what will have lapsed is anybody's knowledge of them. The two honest responses are to re-capture, or to delete the records and remove the citations resting on them, which is a decision somebody takes in writing.

@@ -60,6 +60,7 @@
               "ecr:PutLifecyclePolicy",
               "ecr:GetLifecyclePolicy",
               "ecr:DeleteLifecyclePolicy",
+              "ecr:GetRepositoryPolicy",
               "ecr:PutImageScanningConfiguration",
               "ecr:PutImageTagMutability",
               "ecr:TagResource",
@@ -667,7 +668,7 @@
     }
   ],
   "max_session_duration_seconds": 3600,
-  "observed_at": "2026-08-04T18:32:41Z",
+  "observed_at": "2026-08-05T16:29:11Z",
   "permissions_boundary_policy_name": "InternSandboxBoundary",
   "role_name": "sbsandbox-intern-edullm-infra-deployer",
   "source": "aws",
