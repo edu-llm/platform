@@ -19,21 +19,38 @@ machine, you do what you like, nothing is checked and nothing is recorded as cit
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal
 
 from pydantic import Field
 
+from edullm_platform.cli.configuration import (
+    ConfigurationUnreadableError,
+    ReviewedConfiguration,
+)
+from edullm_platform.cli.preflight import Refusal
 from edullm_platform.config import load_yaml
 from edullm_platform.contracts.base import ContractModel
+from edullm_platform.placement import (
+    CAPACITY_FILENAME,
+    PLACES_AFTER_A_WAIT,
+    PLACES_RELIABLY,
+    UnreadableCapacityError,
+    read_capacity,
+)
 
 __all__ = [
     "LANE_INSTANCE_PROFILE",
     "WORKING_TIER_SETTINGS_PATH",
     "WORK_BUCKET",
+    "LaneRequest",
     "WorkingTierSettings",
+    "instance_type_for",
+    "lane_refusals",
     "load_working_tier_settings",
     "person_from_caller_arn",
+    "placement_warning",
     "working_prefix",
     "working_uri",
 ]
@@ -125,3 +142,155 @@ def person_from_caller_arn(caller_arn: str) -> str | None:
     session = _TRAILING_EPOCH.sub("", session)
     cleaned = _UNSAFE_IN_A_SEGMENT.sub("-", session)[:_SEGMENT_LIMIT]
     return cleaned or None
+
+
+@dataclass(frozen=True)
+class LaneRequest:
+    """What a lane verb was asked for, after the flags and the caller identity are merged.
+
+    Four fields, against the fifteen a submission carries. That difference is the slice: a
+    submission is a record and needs everything a record names, and a lane ask is a machine and a
+    place to put files.
+    """
+
+    project: str
+    team: str
+    person: str
+    compute_profile: str
+
+
+def instance_type_for(configuration: ReviewedConfiguration, profile_name: str) -> str | None:
+    """The EC2 instance type one compute profile names, or nothing where the catalog has none.
+
+    A plain lookup rather than ``resolve_compute_profile_for_execution``, which is what the
+    submission path calls, because that function also refuses an unprovisioned profile.
+    ``provisioned`` means a Batch queue exists, a lane machine is not a Batch job, and importing
+    that meaning here would refuse a shape the researcher role's own allow-list permits.
+    """
+    for profile in configuration.catalog.compute_profiles:
+        if profile.name == profile_name:
+            return profile.instance_type
+    return None
+
+
+def placement_warning(configuration: ReviewedConfiguration, profile_name: str) -> str | None:
+    """What ``config/capacity.yaml`` says about finding this shape, or nothing where it is quiet.
+
+    A sentence and never a refusal, which is the same choice ``system-overview.md`` records the
+    compile step making under "The machines". The reasoning there transfers exactly: the person
+    asking is the person paying and the wait is theirs to accept.
+
+    **THE FILE IS READ HERE RATHER THAN OFF ``ReviewedConfiguration``, AND THAT IS TO KEEP A
+    CORRECTION THIS REPOSITORY ALREADY PAID FOR.** ``load_reviewed_configuration`` opens six
+    files, ``tests/test_release_tag_workflow.py`` derives the release trigger by watching it open
+    them, and ``release-tag.yml``'s own header records what happened when capacity counted as
+    reviewed configuration: ``v0.2.1`` announced that ``edullm check`` would answer differently
+    when the only file that had moved was ``config/capacity.yaml``, and everybody who re-installed
+    on that sentence did it for nothing. A seventh field here would reinstate that, so the reader
+    and the verdicts are shared with the compile step and the loader is left alone.
+
+    ``edullm_platform.placement`` owns both, so there is no second table of verdicts and no second
+    parse. What is not shared is the rendering: that module's sentences are markdown for a pull
+    request comment, and this one is a line above the expiry in somebody's terminal.
+    """
+    path = configuration.directory / CAPACITY_FILENAME
+    try:
+        capacity = read_capacity(path)
+    except UnreadableCapacityError as exc:
+        # Re-raised as the class ``main`` already turns into exit 2. ``read_capacity`` is right to
+        # raise rather than default to "everything places", and a ValueError escaping a verb is a
+        # traceback in front of a researcher, which is the one thing this binary promises not to
+        # do. An unreadable capacity file is an unusable installation and reads as one.
+        raise ConfigurationUnreadableError(
+            f"{path} is not a document edullm can act on, so whether a machine is likely to "
+            f"start cannot be said: {exc}"
+        ) from exc
+    verdict = next((record for record in capacity if record.profile == profile_name), None)
+    if verdict is None or verdict.places == PLACES_RELIABLY:
+        return None
+    if verdict.places == PLACES_AFTER_A_WAIT:
+        # ``read_capacity`` refuses this verdict without a wait, so there is always one to quote.
+        assert verdict.wait is not None
+        return (
+            f"config/{CAPACITY_FILENAME} records {profile_name} as arriving after a wait, "
+            f"measured by a {verdict.measured_by}. {verdict.wait} Ctrl-C stops waiting and "
+            "starts nothing."
+        )
+    return (
+        f"config/{CAPACITY_FILENAME} records {profile_name} as placing "
+        f"{verdict.places}, measured by a {verdict.measured_by}. Starting it is allowed and it "
+        "may take a while to arrive, or never arrive. Ctrl-C stops waiting and starts nothing."
+    )
+
+
+def lane_refusals(
+    request: LaneRequest, *, configuration: ReviewedConfiguration
+) -> tuple[Refusal, ...]:
+    """Everything the lane refuses, which is four things and is the whole list.
+
+    **NOTHING HERE IS A PERMISSION AND THAT IS THE TEST EVERY CANDIDATE HAS TO PASS.** Three of
+    the four say a destination is misspelled, and the fourth says the caller cannot be named. Add
+    a fifth only if the same is true of it, and read
+    ``docs-frank/superpowers/specs/2026-08-04-platform-buildout-design.md`` under "The exploration
+    route is a slice, not a non-goal" first.
+
+    ``Refusal`` is imported from ``cli/preflight.py`` and no rule there is called. A frozen
+    dataclass of two strings is a shape rather than a judgement, and a second refusal type would
+    give the CLI two things to render. ``tests/test_lane_verdicts.py`` is where every refusal the
+    submission path makes is ruled on one at a time, and it fails when a new one is added there
+    without a ruling here.
+    """
+    refusals: list[Refusal] = []
+    if not request.person:
+        refusals.append(
+            Refusal(
+                code="cannot_tell_who_you_are",
+                detail=(
+                    "this session is already inside the lane, and sts:GetCallerIdentity does not "
+                    "return the source identity, so which person's working prefix to use cannot "
+                    "be read from it. Run this from your ordinary session and it enters the lane "
+                    "itself, which is one command rather than two."
+                ),
+            )
+        )
+    if not request.project:
+        refusals.append(
+            Refusal(
+                code="no_project",
+                detail=(
+                    "--project names what this machine is for. It tags the instance and the "
+                    "volume, it is the last segment of the working prefix, and it is what cost "
+                    "attribution reads. There is no default for it, because a default would put "
+                    "two unrelated pieces of work under one name and one bill."
+                ),
+            )
+        )
+    declared = {team.team_id for team in configuration.inventory.team_bindings.teams}
+    if request.team not in declared:
+        refusals.append(
+            Refusal(
+                code="unknown_team",
+                detail=(
+                    f"{request.team!r} is not a team config/organization.yaml declares. "
+                    f"Declared: {', '.join(sorted(declared))}. Team is the first segment of your "
+                    "working prefix, so a name nothing declares puts your files where no listing "
+                    "of any group's work will find them."
+                ),
+            )
+        )
+    if instance_type_for(configuration, request.compute_profile) is None:
+        offered = ", ".join(
+            sorted(profile.name for profile in configuration.catalog.compute_profiles)
+        )
+        refusals.append(
+            Refusal(
+                code="unknown_machine",
+                detail=(
+                    f"{request.compute_profile!r} is not in config/workload-catalog.yaml, so "
+                    f"there is no instance type to start. Offered: {offered}. Unlike a "
+                    "submission, an unprovisioned profile is fine here: provisioned means a "
+                    "Batch queue exists and this is not a Batch job."
+                ),
+            )
+        )
+    return tuple(refusals)
