@@ -58,6 +58,19 @@ CREDENTIALED_AUDIT_JOBS = frozenset(
 #: account: a check able to change what it is checking can produce its own all-clear.
 PUBLISHING_AUDIT_JOBS = frozenset({"substrate-history"})
 
+#: The scheduled jobs that read this repository's own issues, which is a third thing a job
+#: here can be and the only one that reaches neither the account nor a write. Declared as a
+#: category rather than waved through, because ``issues: read`` is still a widening of the
+#: file-level ``contents: read`` and the reason it is safe is specific: an issue in this
+#: repository is a thing somebody typed here, so a reader of them can invent no evidence about
+#: the account and can change nothing at all.
+#:
+#: STATED EXPLICITLY RATHER THAN RELIED ON. The endpoint is readable on a public repository
+#: without it today, which is an argument for leaving it off and a bad one -- the permission
+#: the endpoint documents is the permission to ask for, and a repository that goes private
+#: later should not take a scheduled job down with it.
+ISSUE_READING_AUDIT_JOBS = frozenset({"open-asks"})
+
 #: The contexts pinned in branch protection on ``main``. They are job names, so renaming
 #: either one silently stops the protection matching anything.
 #:
@@ -191,6 +204,14 @@ def test_only_the_jobs_that_read_the_account_can_reach_it() -> None:
             assert job["permissions"] == {"contents": "write"}, job_id
             reaching = [step for step in job["steps"] if "aws-actions/" in step.get("uses", "")]
             assert reaching == [], f"{job_id} writes to this repository and must not read AWS"
+            continue
+        if job_id in ISSUE_READING_AUDIT_JOBS:
+            # Read on this repository and nothing else. No id-token, so no AWS identity is
+            # obtainable however the steps are written, and no write of any kind, so the job
+            # cannot alter what it is counting.
+            assert job["permissions"] == {"contents": "read", "issues": "read"}, job_id
+            reaching = [step for step in job["steps"] if "aws-actions/" in step.get("uses", "")]
+            assert reaching == [], f"{job_id} reads issues and must not read AWS"
             continue
         assert "permissions" not in job, f"{job_id} reads committed records and needs none"
         # The permission and the step are separate mutations. A gate that gained a

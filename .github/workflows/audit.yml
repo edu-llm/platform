@@ -1,11 +1,15 @@
 name: The audit (what the platform recorded, against what is actually there)
 
 # THE AUDIT HOLDS WHAT THIS PLATFORM RECORDED AGAINST WHAT IS ACTUALLY THERE, AND GOES RED
-# WHEN THE TWO DISAGREE. That is the one thing the seven checks below have in common, and
-# it is why none of them belongs on the pull-request path. Each asks about the account, or
-# about somebody else's repository, rather than about a change -- so no diff can cause what
-# it finds, no diff can be blamed for it, and a check that ran per pull request would be
-# asking a question the diff in front of it cannot answer.
+# WHEN THE TWO DISAGREE. That is the one thing the jobs below have in common, and it is why
+# none of them belongs on the pull-request path. Each asks about the account, about somebody
+# else's repository, or about what people have filed here, rather than about a change -- so
+# no diff can cause what it finds, no diff can be blamed for it, and a check that ran per
+# pull request would be asking a question the diff in front of it cannot answer.
+#
+# The count is deliberately not stated. It was "seven" through three additions, and a number
+# in a header nothing checks is wrong from the second time somebody adds a job. What is
+# checked is that every job is named below, by tests/test_ci_workflow.py.
 #
 # Nothing here is continue-on-error, and that is the whole point of the arrangement. There
 # is no alerting infrastructure, so a red run is the signal, and a job that cannot go red is
@@ -21,7 +25,7 @@ name: The audit (what the platform recorded, against what is actually there)
 # test suite: the nine configuration checks are tests/test_operational_inventory.py and the
 # recorded digests are tests/test_serialization_goldens.py, both on the pull-request path.
 #
-# Why each of the seven is here rather than in ci.yml:
+# Why each is here rather than in ci.yml:
 #
 #   checkpoint-reconciliation, wandb-credential, deployed-lambda-release,
 #     deployed-stack-templates and visibility-board — these five read the account, and that
@@ -67,6 +71,24 @@ name: The audit (what the platform recorded, against what is actually there)
 #     repository renamed at four in the afternoon would turn every unrelated pull request
 #     red -- and because a fork's pull request should not be able to spend this
 #     repository's API budget enumerating an organisation.
+#
+#   open-asks — the newest, the cheapest, and the only one whose subject is neither the
+#     account nor a repository but the people using this one. It counts the open issues
+#     labelled `ask` by kind and says which kinds have reached the threshold
+#     config/reports/asks.yaml names. docs-frank/reference/system-overview.md says one place
+#     makes asks countable "which turns the third identical one into a config change"; this
+#     is that sentence made into a number somebody can read. It is here rather than on the
+#     pull-request path because what it measures is what other people filed, which no diff
+#     causes and no diff can be blamed for.
+#
+#     It is also the only job in this file that cannot fail for a reason outside the question
+#     it was asked. It assumes no role, reads no repository variable and takes no secret --
+#     `gh api` on the token the runner already holds is the whole of its access -- so it has
+#     none of the credential preamble its neighbours carry and none of the three ways they
+#     can go red before starting. tools/report_asks.py has no exit code 1 by construction: a
+#     queue of asks getting long is a finding and never a failure, for the reason
+#     tools/report_spend.py gives about itself. Exit 2 means the count could not be taken,
+#     which is a real failure and is red.
 #
 # ONE OF THE SEVEN IS NO LONGER ONLY A SIGNAL, AND THAT CHANGES WHAT A RED CROSS ON IT
 # COSTS. wandb-credential publishes its answer as an artifact, and submit-run.yml refuses a
@@ -825,3 +847,35 @@ jobs:
           git add --force substrate/
           git diff --cached --quiet || git commit -m "substrate: $(date -u +%F)"
           git push origin machine/substrate
+
+  open-asks:
+    name: which asks have stopped being asks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Reading this repository's own issues. Nothing here writes anything anywhere, which is
+      # why this job needs no role and no repository variable -- the two things that make every
+      # other job on this schedule able to fail before it starts. It is the only job in this
+      # file that cannot fail for a reason outside the question it was asked.
+      issues: read
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      # NO continue-on-error, AND THAT IS NOT AN OVERSIGHT. tools/report_asks.py has no exit
+      # code 1 by construction -- a long queue of asks is a finding and never a failure, for the
+      # reason tools/report_spend.py states about itself: a red job in a path something else
+      # depends on is one step away from being a control. Exit 2 means the count could not be
+      # taken, which is a real failure and should be red.
+      - name: Count the open asks
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run --frozen python tools/report_asks.py >> "$GITHUB_STEP_SUMMARY"

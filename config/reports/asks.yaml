@@ -1,0 +1,18 @@
+# When a repeated ask stops being a request and starts being a missing feature.
+#
+# docs-frank/reference/system-overview.md, "What you click, and what generates it", says one
+# place makes asks countable "which turns the third identical one into a config change". Three
+# is that sentence, and it is here rather than in tools/report_asks.py so that moving it is a
+# reviewed diff rather than a commit somebody makes while looking at a long list.
+#
+# Under config/reports/ rather than config/ for the reason config/reports/researcher-lane.yaml
+# gives at length: system-overview.md names eight configuration files as the control plane and
+# this is not one of them, and .github/workflows/release-tag.yml names six files under config/
+# and no directory, so a number here moves no installed CLI's answer and earns no version.
+#
+# Not packaged into any Lambda -- nothing either handler reads names it, and
+# tests/test_lambda_package_closure.py is what keeps it that way.
+schema_version: 1
+
+# Inclusive. The third identical ask crosses it; the second does not.
+config_change_threshold: 3
