@@ -25,14 +25,25 @@ that it will not, and it names the file so the reasoning behind a particular ent
 where that reasoning lives -- which, for the shapes whose only route is a Capacity Block, is
 the one place that route is written down.
 
+**THERE ARE TWO WARNINGS NOW, AND THE SECOND ONE EXISTS BECAUSE THE FIRST WAS BEING PRINTED
+OVER A POOL THAT WORKS.** An instant probe and a queued autoscaling group ask EC2 different
+questions. Three of the pools this module warned "may not place" about had in fact supplied
+nodes -- ``gpu-8xa100`` twelve of them, with jobs running on two while the warning was still
+going out -- and what those submitters needed was the wait, not a rumour that the machine
+might never come. A submitter told to expect an hour and a half plans a day around it; one
+told the shape may not place takes their work somewhere else. So ``places: after_a_wait``
+warns about the wait and names it, and ``places: unreliably`` keeps saying what it always
+said, for the seven pools where it is still true.
+
 **IT OFFERS NOTHING IN PLACE OF THE SHAPE, AND THAT IS A POSITION RATHER THAN A GAP.** An
 earlier version of this module named a substitute wherever the file recorded one. The file
 recorded two; both were re-measured on 2026-08-04, both turned out to point at machines this
 account has never obtained, and both were withdrawn on the rule that a third of the device
 memory removed is a changed recipe the submitter declares rather than a substitution the
-platform makes for them. Ten of the seventeen priced shapes do not place and not one of them
-has a substitute, so there is no branch here that could name one -- and a branch kept alive
-against a fixture the shipped file can never produce would be a check unable to fail.
+platform makes for them. Ten of the seventeen priced shapes are worth warning about and not
+one of them has a substitute, so there is no branch here that could name one -- and a branch
+kept alive against a fixture the shipped file can never produce would be a check unable to
+fail.
 
 Read with ``yaml`` rather than through a contract model, which is the choice
 ``tests/test_capacity.py`` already made and recorded: placement belongs on ``ComputeProfile``
@@ -55,6 +66,8 @@ from edullm_platform.config import SafeUniqueKeyLoader
 
 __all__ = [
     "CAPACITY_FILENAME",
+    "PLACEMENT_ANSWERS",
+    "PLACES_AFTER_A_WAIT",
     "PLACES_RELIABLY",
     "PLACES_UNRELIABLY",
     "PlacementRecord",
@@ -66,12 +79,30 @@ __all__ = [
 #: Where the answers live, relative to the reviewed configuration directory.
 CAPACITY_FILENAME: Final = "capacity.yaml"
 
-#: The two answers the file declares. ``unknown`` is deliberately not one of them: every
+#: The three answers the file declares. ``unknown`` is deliberately not one of them: every
 #: priced profile appears exactly once, so promoting a shape is an edit there as well, and a
 #: file listing only the scarce ones would be a denylist that assumes the next promotion
 #: places until somebody waits four hours to find out otherwise.
 PLACES_RELIABLY: Final = "reliably"
 PLACES_UNRELIABLY: Final = "unreliably"
+
+#: THE THIRD ANSWER, AND IT EXISTS BECAUSE THE OTHER TWO BOTH LIE ABOUT THE SAME POOL.
+#: ``config/capacity.yaml``'s answers came from ``create-fleet --type instant``, which asks
+#: whether an instance is free at one second. A compute environment with a job queued asks
+#: the same pools again every tenth of a second until one is free, and gets a different
+#: answer: the ``gpu-8xa100`` environment took twelve nodes out of 4,348 consecutive
+#: ``InsufficientInstanceCapacity`` refusals. Recording that as ``unreliably`` prints "may
+#: not place" over a pool that is running jobs, and recording it as ``reliably`` prints
+#: nothing over a median wait of an hour and a half. Neither is what a submitter needs, so
+#: this says the shape arrives and the wait is the price.
+PLACES_AFTER_A_WAIT: Final = "after_a_wait"
+
+#: Every answer :func:`read_capacity` will accept. A fourth is a change here, in the file's
+#: header, and in :func:`placement_warning` together -- which is the point, because a
+#: verdict with no branch behind it reads as a promise the submission path does not keep.
+PLACEMENT_ANSWERS: Final = frozenset(
+    {PLACES_RELIABLY, PLACES_UNRELIABLY, PLACES_AFTER_A_WAIT}
+)
 
 
 class UnreadableCapacityError(ValueError):
@@ -87,10 +118,18 @@ class UnreadableCapacityError(ValueError):
 
 @dataclass(frozen=True)
 class PlacementRecord:
-    """One profile's recorded placement answer."""
+    """One profile's recorded placement answer, and what it cost to get the shape.
+
+    ``wait`` is the sentence :data:`PLACES_AFTER_A_WAIT` entries carry and nothing else
+    does. It is prose in the reviewed file rather than a pair of numbers here because what
+    is worth saying differs per pool: ``gpu-8xa100`` has never failed to place a queued
+    run and ``gpu-4xl40s`` has had two given up on by hand, and no schema this module
+    could impose would carry the second fact.
+    """
 
     profile: str
     places: str
+    wait: str | None = None
 
 
 def read_capacity(path: Path) -> tuple[PlacementRecord, ...]:
@@ -100,6 +139,11 @@ def read_capacity(path: Path) -> tuple[PlacementRecord, ...]:
     profile is an error here as it is for every other reviewed file. Two answers for one
     shape would otherwise resolve to whichever was written second, which is the sort of
     thing a reviewer reading the diff would not see.
+
+    ``wait`` is required on an ``after_a_wait`` entry and refused on the other two, which is
+    the same failure guarded from both directions. Without it the warning for that verdict
+    would have nothing to say but "expect a wait", which a submitter cannot plan against;
+    with it on a ``reliably`` entry it would be a measurement nothing prints.
     """
     document = yaml.load(path.read_text(encoding="utf-8"), Loader=SafeUniqueKeyLoader)
     if not isinstance(document, dict):
@@ -113,12 +157,24 @@ def read_capacity(path: Path) -> tuple[PlacementRecord, ...]:
             raise UnreadableCapacityError(f"{path} holds an entry that is not a mapping")
         profile = entry.get("profile")
         places = entry.get("places")
-        if not isinstance(profile, str) or places not in (PLACES_RELIABLY, PLACES_UNRELIABLY):
+        if not isinstance(profile, str) or places not in PLACEMENT_ANSWERS:
             raise UnreadableCapacityError(
                 f"{path} holds an entry that does not name a profile and one of "
-                f"{PLACES_RELIABLY!r} or {PLACES_UNRELIABLY!r}: {entry!r}"
+                f"{sorted(PLACEMENT_ANSWERS)}: {entry!r}"
             )
-        records.append(PlacementRecord(profile=profile, places=places))
+        wait = entry.get("wait")
+        if places == PLACES_AFTER_A_WAIT:
+            if not isinstance(wait, str) or not wait.strip():
+                raise UnreadableCapacityError(
+                    f"{path} records {profile!r} as {PLACES_AFTER_A_WAIT!r} and gives no "
+                    "'wait', so the warning for it could say only that there is one"
+                )
+        elif wait is not None:
+            raise UnreadableCapacityError(
+                f"{path} gives {profile!r} a 'wait' and records it as {places!r}, which is "
+                f"a measurement nothing prints; only {PLACES_AFTER_A_WAIT!r} entries carry one"
+            )
+        records.append(PlacementRecord(profile=profile, places=places, wait=wait))
     return tuple(records)
 
 
@@ -127,6 +183,25 @@ def read_capacity(path: Path) -> tuple[PlacementRecord, ...]:
 _WHAT_IT_LOOKS_LIKE: Final = (
     "a shape that cannot be placed does not fail -- the job sits in RUNNABLE with nothing "
     "written anywhere, which looks exactly like a job that is merely queued."
+)
+
+#: The same fact from the other side, for a shape that *is* merely queued. A submitter who
+#: has read the sentence above about a different shape will recognise the symptom and draw
+#: the wrong conclusion from it, so the branch that expects a wait has to say plainly that
+#: this one resolves itself.
+_WHAT_A_WAIT_LOOKS_LIKE: Final = (
+    "While it waits the job sits in RUNNABLE with nothing written anywhere, which looks "
+    "exactly like a shape that will never place -- for this one it is the queue, and "
+    "resubmitting restarts the wait rather than shortening it."
+)
+
+#: What the wait figures are and are not. They are what this account's own queue got, which
+#: is a stronger claim than the instant probe makes and a weaker one than a service level:
+#: EC2 owes nobody the next node in the time it supplied the last twelve.
+_WHAT_A_WAIT_IS_NOT: Final = (
+    f"These are the waits this account's queue actually saw, recorded in "
+    f"`config/{CAPACITY_FILENAME}`, and not a bound EC2 offers -- so plan against the range "
+    "rather than the median, and the worst case above is the one worth being able to absorb."
 )
 
 #: The limit of what the file claims, said where the warning is read rather than left in the
@@ -153,15 +228,21 @@ _WHERE_THE_REASONING_IS: Final = (
 def placement_warning(compute_profile: str, *, capacity: Sequence[PlacementRecord]) -> str | None:
     """What a submitter is owed about the shape they asked for, or ``None`` if nothing.
 
-    ``None`` for every shape that places, which is seven of the seventeen. A line printed on
-    every submission is a line readers learn to skip, and this one has to survive being read
-    by somebody who has submitted forty runs -- the same reason
+    ``None`` for every shape that places promptly, which is seven of the seventeen. A line
+    printed on every submission is a line readers learn to skip, and this one has to survive
+    being read by somebody who has submitted forty runs -- the same reason
     :func:`~edullm_platform.launchers.waived_launch_check_note` returns nothing when the
     waiver it describes did not change the outcome.
 
     Ten of seventeen is a lot of warning, and it is the measurement rather than a threshold
     anybody picked. Narrowing it would mean saying nothing about a shape the probe could not
     obtain, which is the state this module was written to end.
+
+    **THE THREE ``after_a_wait`` SHAPES WARN AND ARE NOT COUNTED AS UNPLACEABLE, WHICH IS THE
+    WHOLE OF THE DISTINCTION.** They keep their line because an hour and a half is worth
+    knowing before a day is planned around it. What they lose is the claim that the machine
+    might never arrive, which was false of all three and was the sentence a submitter would
+    have acted on.
     """
     recorded = next(
         (record for record in capacity if record.profile == compute_profile), None
@@ -173,6 +254,16 @@ def placement_warning(compute_profile: str, *, capacity: Sequence[PlacementRecor
             "either newly promoted or was left out. Whether it places is therefore unknown "
             f"rather than fine: {_WHAT_IT_LOOKS_LIKE} Add an entry for it in a pull request "
             "against this repository."
+        )
+    if recorded.places == PLACES_AFTER_A_WAIT:
+        # ``read_capacity`` refuses this verdict without a wait, so the sentence is here.
+        # Asserted rather than defaulted: a fallback would let a malformed entry print a
+        # warning about a wait it could not name, which is the version of this a submitter
+        # cannot act on.
+        assert recorded.wait is not None
+        return (
+            f"**`{compute_profile}` places, and the wait is what to plan for.** "
+            f"{recorded.wait} {_WHAT_A_WAIT_LOOKS_LIKE} {_WHAT_A_WAIT_IS_NOT}"
         )
     if recorded.places != PLACES_UNRELIABLY:
         return None

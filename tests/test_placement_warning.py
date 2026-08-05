@@ -1,10 +1,16 @@
-"""A shape that may not place is said so at submission time, and is still submittable.
+"""What a submitter is owed about the shape they asked for, said before they wait for it.
 
-``config/capacity.yaml`` records ten of seventeen priced shapes as ``places: unreliably``,
+``config/capacity.yaml`` records ten of seventeen priced shapes as something worth saying,
 and nothing read the file. They stayed in the form's dropdown, so the only way to learn that
 one of them does not place was to submit and wait: a job that cannot be placed sits in
 ``RUNNABLE`` with no error written anywhere, which is indistinguishable from a job that is
 merely queued.
+
+**THE TEN ARE NOT ONE KIND OF THING, AND TREATING THEM AS ONE IS THE DEFECT THIS MODULE
+CARRIED FOR A DAY.** Seven are pools nothing has obtained. Three supply nodes to a queue that
+keeps asking and make you wait for them -- ``gpu-8xa100`` supplied twelve while the warning
+was still telling every submitter it might never place. Both get a line and the lines say
+opposite things, so most of what is below is about which shape gets which.
 
 **NOTHING HERE COVERS A SUBSTITUTION, BECAUSE THERE IS NO LONGER SUCH A THING.** The file
 recorded two, both were re-measured on 2026-08-04 and pointed at machines this account has
@@ -31,6 +37,7 @@ answer to every question they settle.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -39,7 +46,8 @@ import yaml
 
 from edullm_platform.placement import (
     CAPACITY_FILENAME,
-    PLACES_RELIABLY,
+    PLACEMENT_ANSWERS,
+    PLACES_AFTER_A_WAIT,
     PLACES_UNRELIABLY,
     PlacementRecord,
     UnreadableCapacityError,
@@ -60,25 +68,32 @@ PUBLISHED_DIGEST = "sha256:" + "1a" * 32
 FIRST_PUSH = "2026-07-26T09:02:00.000000Z"
 SCANNED_AT = "2026-07-26T22:07:12.000000Z"
 
-#: Every shape the probe could not obtain on 2026-08-04, and so every shape that warns.
+#: Every shape no probe and no queue has obtained, and so every shape told it may not place.
 #: Named here as well as in the file, on the same reasoning ``tests/test_capacity.py`` gives
 #: for its copy: a shape quietly becoming reliable should be a test edit rather than a silent
 #: one. The set is read back out of the shipped file below rather than trusted from here, so
 #: this is the second opinion and not the source.
 SHAPES_THAT_DO_NOT_PLACE = frozenset(
     {
-        "gpu-4xa10g",
         "gpu-8xa10g",
         "gpu-4xl4",
         "gpu-8xl4",
         "gpu-1xl40s",
-        "gpu-4xl40s",
         "gpu-8xl40s",
         "gpu-1xh100",
-        "gpu-8xa100",
         "gpu-8xh100",
     }
 )
+
+#: The shapes that do place and make you queue. They warn too, and about something else: a
+#: measured wait rather than a machine that may never come. Held apart from the set above
+#: because the two messages are the ones that must not be swapped -- printing "may not place"
+#: over a pool running jobs is what this split was made to end, and printing a wait over a
+#: pool that has never supplied anything would invent one.
+SHAPES_THAT_QUEUE = frozenset({"gpu-4xa10g", "gpu-4xl40s", "gpu-8xa100"})
+
+#: Every shape that gets a line at all.
+SHAPES_THAT_WARN = SHAPES_THAT_DO_NOT_PLACE | SHAPES_THAT_QUEUE
 
 
 @pytest.fixture(scope="module")
@@ -169,15 +184,15 @@ def compile_form(
 # ---------------------------------------------------------------------------------------
 
 
-def test_every_priced_shape_this_reads_carries_one_of_the_two_answers(
+def test_every_priced_shape_this_reads_carries_one_of_the_three_answers(
     shipped: tuple[PlacementRecord, ...],
 ) -> None:
     assert shipped
-    assert {record.places for record in shipped} <= {PLACES_RELIABLY, PLACES_UNRELIABLY}
+    assert {record.places for record in shipped} <= PLACEMENT_ANSWERS
     assert len({record.profile for record in shipped}) == len(shipped)
 
 
-def test_the_shapes_that_do_not_place_are_exactly_the_shapes_that_warn(
+def test_the_shapes_that_place_promptly_are_exactly_the_shapes_that_say_nothing(
     shipped: tuple[PlacementRecord, ...],
 ) -> None:
     """Mutation: warn on every shape, or on none.
@@ -191,6 +206,11 @@ def test_the_shapes_that_do_not_place_are_exactly_the_shapes_that_warn(
     reading ``places`` straight out of the shipped YAML without going through the reader.
     A reader that dropped an entry, or a warning that stopped keying off ``places``, moves
     one side and not the other.
+
+    The two warning verdicts are compared separately rather than as one set, which is what
+    this had to gain when the third answer arrived. Collapsing them would let ``gpu-8xa100``
+    slide back to ``unreliably`` -- the exact regression this change undoes -- without
+    moving anything here at all.
     """
     warned = {
         record.profile
@@ -198,14 +218,50 @@ def test_the_shapes_that_do_not_place_are_exactly_the_shapes_that_warn(
         if placement_warning(record.profile, capacity=shipped) is not None
     }
     document = yaml.safe_load(CAPACITY_PATH.read_text(encoding="utf-8"))
-    unplaceable_in_the_file = {
-        str(entry["profile"])
-        for entry in document["profiles"]
-        if entry["places"] == PLACES_UNRELIABLY
+    by_verdict = {
+        verdict: {
+            str(entry["profile"])
+            for entry in document["profiles"]
+            if entry["places"] == verdict
+        }
+        for verdict in (PLACES_UNRELIABLY, PLACES_AFTER_A_WAIT)
     }
 
-    assert warned == unplaceable_in_the_file
-    assert warned == set(SHAPES_THAT_DO_NOT_PLACE)
+    assert by_verdict[PLACES_UNRELIABLY] == set(SHAPES_THAT_DO_NOT_PLACE)
+    assert by_verdict[PLACES_AFTER_A_WAIT] == set(SHAPES_THAT_QUEUE)
+    assert warned == set(SHAPES_THAT_WARN)
+
+
+def test_a_shape_that_queues_is_warned_about_the_wait_and_not_about_never_placing(
+    shipped: tuple[PlacementRecord, ...],
+) -> None:
+    """THE DEFECT THIS WHOLE VERDICT EXISTS FOR, ASSERTED AS A SENTENCE A PERSON READS.
+
+    Every ``gpu-8xa100`` submission printed "may not place" while the pool was supplying
+    nodes and running jobs. That is not a softer version of the truth, it is the opposite
+    one: a submitter told to expect an hour and a half plans a day around it, and one told
+    the machine may never come takes the work elsewhere. So the absence of the old phrase
+    is asserted as hard as the presence of the new one.
+
+    Mutation: print the wait *and* keep the old sentence, on the reasoning that more
+    information is safer. It is not -- the two contradict each other, and the reader
+    resolves the contradiction in the pessimistic direction, which is the behaviour this
+    was written to end.
+    """
+    for shape in sorted(SHAPES_THAT_QUEUE):
+        warning = placement_warning(shape, capacity=shipped)
+        recorded = next(record for record in shipped if record.profile == shape)
+
+        assert warning is not None
+        assert f"**`{shape}` places" in warning
+        assert "may not place" not in warning
+        assert "will not place" not in warning
+        # The measurement itself, straight out of the file rather than paraphrased, so a
+        # wait that stopped being carried through cannot pass as a generic sentence.
+        assert recorded.wait is not None
+        assert recorded.wait in warning
+        assert "RUNNABLE" in warning
+        assert f"config/{CAPACITY_FILENAME}" in warning
 
 
 def test_the_warning_offers_no_substitute_and_says_whose_decision_that_is(
@@ -219,10 +275,20 @@ def test_the_warning_offers_no_substitute_and_says_whose_decision_that_is(
     substitutions on 2026-08-04, so the message has to leave the choice where the rule puts
     it rather than quietly making it.
 
-    Every unplaceable shape is checked, not one, because a substitution reintroduced for a
-    single profile is exactly the shape this would otherwise miss.
+    Every shape that warns is checked, not one, because a substitution reintroduced for a
+    single profile is exactly the shape this would otherwise miss. The ``after_a_wait``
+    shapes are included even though the argument for them is different -- what a submitter
+    who can wait ninety minutes needs is the wait, and naming a smaller machine beside it
+    would be offering them a changed recipe to avoid a delay they have just been told how
+    to plan for.
     """
-    every_other_profile = {record.profile for record in shipped} - SHAPES_THAT_DO_NOT_PLACE
+    for shape in sorted(SHAPES_THAT_WARN):
+        warning = placement_warning(shape, capacity=shipped)
+        every_other_profile = {record.profile for record in shipped} - {shape}
+
+        assert warning is not None
+        # No other profile name appears, which is what naming a substitute would look like.
+        assert not any(f"`{other}`" in warning for other in every_other_profile), shape
 
     for shape in sorted(SHAPES_THAT_DO_NOT_PLACE):
         warning = placement_warning(shape, capacity=shipped)
@@ -230,8 +296,6 @@ def test_the_warning_offers_no_substitute_and_says_whose_decision_that_is(
         assert warning is not None
         assert "changed recipe" in warning
         assert "declare" in warning
-        # No other profile name appears, which is what naming a substitute would look like.
-        assert not any(f"`{other}`" in warning for other in every_other_profile), shape
 
 
 def test_the_message_claims_no_more_than_the_file_does(
@@ -289,8 +353,28 @@ def test_a_shape_the_file_does_not_record_is_unknown_rather_than_fine() -> None:
         ("[]\n", "not a top-level mapping"),
         ("schema_version: 1\n", "lists no profiles"),
         ("profiles:\n  - profile: a\n    places: sometimes\n", "does not name a profile"),
+        (
+            "profiles:\n  - profile: a\n    places: after_a_wait\n",
+            "gives no 'wait'",
+        ),
+        (
+            "profiles:\n  - profile: a\n    places: after_a_wait\n    wait: '  '\n",
+            "gives no 'wait'",
+        ),
+        (
+            "profiles:\n  - profile: a\n    places: reliably\n    wait: 'about an hour'\n",
+            "a measurement nothing prints",
+        ),
     ],
-    ids=["empty", "sequence", "no profiles key", "invented answer"],
+    ids=[
+        "empty",
+        "sequence",
+        "no profiles key",
+        "invented answer",
+        "queues and says nothing about how long",
+        "queues and says only whitespace",
+        "a wait on a verdict that never prints one",
+    ],
 )
 def test_a_document_that_is_not_a_placement_answer_is_refused(
     tmp_path: Path, document: str, expected: str
@@ -300,6 +384,11 @@ def test_a_document_that_is_not_a_placement_answer_is_refused(
     That default reads as "every shape places", so a file that stopped parsing would take
     the only warning about a four-hour wait with it and leave every submission looking
     exactly as it did before.
+
+    The three ``after_a_wait`` rows are the new verdict held to the same standard from both
+    sides. An entry recording a wait it cannot name would print a warning saying there is
+    one and not how long, which is worse than the sentence it replaced; a wait on a verdict
+    that prints nothing is a measurement a reviewer would believe had reached somebody.
     """
     path = tmp_path / CAPACITY_FILENAME
     path.write_text(document, encoding="utf-8")
@@ -307,7 +396,7 @@ def test_a_document_that_is_not_a_placement_answer_is_refused(
     if expected == "no entry":
         assert read_capacity(path) == ()
         return
-    with pytest.raises(UnreadableCapacityError):
+    with pytest.raises(UnreadableCapacityError, match=re.escape(expected)):
         read_capacity(path)
 
 
@@ -342,6 +431,29 @@ def test_an_unreliable_shape_still_compiles_and_carries_the_warning(tmp_path: Pa
     Mutation: raise ``SubmissionRefusedError`` instead. The suite would still be green
     everywhere else and the platform would have turned a file of remembered experience
     into a gate.
+
+    ``gpu-4xl4`` rather than the ``gpu-4xa10g`` this used to name. Both are four-card
+    machines the instant probe could not obtain, and one of them has since been measured
+    supplying nine nodes to a queue -- so this arm moved to the one where the verdict it is
+    asserting is still the file's.
+    """
+    exit_code, summary, compiled = compile_form(
+        tmp_path,
+        payload=form(compute_profile="gpu-4xl4", command=ranked_command(4)),
+    )
+
+    assert exit_code == EXIT_OK
+    assert compiled["manifest"]["compute_profile"] == "gpu-4xl4"
+    assert "`gpu-4xl4` may not place" in summary
+
+
+def test_a_queueing_shape_compiles_and_the_approver_reads_the_wait(tmp_path: Path) -> None:
+    """``gpu-4xa10g`` through the real compile step, on the page a lead actually opens.
+
+    The unit test above proves the sentence; this proves it survives the whole path and
+    reaches the markdown. Mutation: compose the wait correctly and drop ``placement_note``
+    on the way into ``render_approver_context``, which is a one-argument change that no
+    unit test of :func:`placement_warning` can see.
     """
     exit_code, summary, compiled = compile_form(
         tmp_path,
@@ -350,7 +462,9 @@ def test_an_unreliable_shape_still_compiles_and_carries_the_warning(tmp_path: Pa
 
     assert exit_code == EXIT_OK
     assert compiled["manifest"]["compute_profile"] == "gpu-4xa10g"
-    assert "`gpu-4xa10g` may not place" in summary
+    assert "`gpu-4xa10g` places" in summary
+    assert "median of 11 minutes" in summary
+    assert "may not place" not in summary
 
 
 def test_the_shape_with_no_route_but_a_capacity_block_compiles_and_warns(
@@ -400,7 +514,10 @@ def test_the_warning_is_written_where_the_submitter_is_already_looking(
         payload=form(compute_profile="gpu-8xa100", command=ranked_command(8)),
     )
 
-    assert "`gpu-8xa100` may not place" in capsys.readouterr().err
+    printed = capsys.readouterr().err
+
+    assert "`gpu-8xa100` places, and the wait is what to plan for." in printed
+    assert "median of 89 minutes" in printed
 
 
 def test_a_capacity_file_that_cannot_be_read_is_an_unusable_input(

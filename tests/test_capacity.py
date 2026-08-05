@@ -27,7 +27,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CAPACITY_PATH = PROJECT_ROOT / "config" / "capacity.yaml"
 CATALOG_PATH = PROJECT_ROOT / "config" / "workload-catalog.yaml"
 
-PLACEMENT_ANSWERS = frozenset({"reliably", "unreliably"})
+PLACEMENT_ANSWERS = frozenset({"reliably", "unreliably", "after_a_wait"})
 
 #: What one accelerator of each EC2 family in the catalog is: the device a profile name
 #: spells, and the memory on it in GiB. Keyed by instance family rather than by profile
@@ -90,23 +90,33 @@ def accelerator(profile: ComputeProfile) -> tuple[int, int]:
 #: because nothing launches -- put the whole g6e family, both multi-card g6 sizes and both
 #: multi-card g5 sizes on this list.
 #:
-#: THE COUNT IS LOAD-BEARING IN A SECOND WAY NOW. Ten of seventeen priced shapes do not place,
-#: so this set being long is the finding rather than an accident of bookkeeping, and shrinking
-#: it back is a claim that wants the same probe behind it.
+#: THE COUNT IS LOAD-BEARING IN A SECOND WAY NOW. Ten of seventeen priced shapes are worth
+#: warning about, so this set and the one below it being long together is the finding rather
+#: than an accident of bookkeeping, and shrinking either is a claim that wants a measurement
+#: behind it.
+#:
+#: TEN BECAME SEVEN ON 2026-08-05 AND THE THREE THAT LEFT WENT TO ``SHAPES_THAT_QUEUE``.
+#: ``create-fleet --type instant`` asks whether a pool has one free at this second; the
+#: autoscaling group behind a queued job asks the same pools every tenth of a second until
+#: one is. gpu-8xa100 took twelve nodes out of 4,348 consecutive refusals that way, so the
+#: probe's answer was right about the instant and wrong about the shape.
 SHAPES_THAT_DO_NOT_PLACE = frozenset(
     {
-        "gpu-4xa10g",
         "gpu-8xa10g",
         "gpu-4xl4",
         "gpu-8xl4",
         "gpu-1xl40s",
-        "gpu-4xl40s",
         "gpu-8xl40s",
         "gpu-1xh100",
-        "gpu-8xa100",
         "gpu-8xh100",
     }
 )
+
+#: The shapes this account does obtain under sustained demand and makes you wait for. Named
+#: here for the reason the set above is: a pool quietly moving between the two verdicts is a
+#: test edit rather than a silent one, and the direction that costs a researcher a day is a
+#: shape sliding back to ``unreliably`` and being described as unobtainable again.
+SHAPES_THAT_QUEUE = frozenset({"gpu-4xa10g", "gpu-4xl40s", "gpu-8xa100"})
 
 
 @pytest.fixture(scope="module")
@@ -131,11 +141,46 @@ def test_every_priced_shape_has_a_placement_answer(
     assert len(recorded) == len(set(recorded))
 
 
-def test_the_answers_are_the_two_the_file_declares(entries: list[dict[str, object]]) -> None:
+def test_the_answers_are_the_three_the_file_declares(entries: list[dict[str, object]]) -> None:
     assert {entry["places"] for entry in entries} <= PLACEMENT_ANSWERS
     assert {
         str(entry["profile"]) for entry in entries if entry["places"] == "unreliably"
     } == SHAPES_THAT_DO_NOT_PLACE
+    assert {
+        str(entry["profile"]) for entry in entries if entry["places"] == "after_a_wait"
+    } == SHAPES_THAT_QUEUE
+
+
+def test_a_shape_that_queues_says_what_the_wait_was_and_no_other_shape_does(
+    entries: list[dict[str, object]],
+) -> None:
+    """Mutation: record ``after_a_wait`` and leave the measurement out.
+
+    The verdict on its own is worth less than the one it replaced. "May not place" at least
+    told a submitter to expect nothing; "places after a wait" with no figure attached tells
+    them to expect something, at some point, which is the reading that has them checking a
+    RUNNABLE job every ten minutes for six hours.
+
+    Checked here as well as in ``read_capacity`` because this is the side that can see the
+    shipped file: the reader refuses a missing ``wait`` on any document, and this refuses a
+    ``wait`` that is present and says nothing about time.
+    """
+    for entry in entries:
+        profile = str(entry["profile"])
+        wait = entry.get("wait")
+        if profile in SHAPES_THAT_QUEUE:
+            assert isinstance(wait, str) and wait.strip(), (
+                f"{profile} queues and records no wait, so the only warning a submitter "
+                "gets about it cannot say how long"
+            )
+            assert any(unit in wait for unit in ("minute", "hour")), (
+                f"{profile}'s wait names no unit of time: {wait!r}"
+            )
+        else:
+            assert wait is None, (
+                f"{profile} records a wait and is not {sorted(SHAPES_THAT_QUEUE)}, so "
+                "nothing prints it"
+            )
 
 
 def test_every_gpu_shape_in_the_catalog_is_one_this_module_can_size(
@@ -270,7 +315,7 @@ def test_the_substitution_table_is_read_by_something_that_can_act_on_it() -> Non
     records = read_capacity(CAPACITY_PATH)
 
     assert records, "the reader parses config/capacity.yaml into no records at all"
-    assert {record.profile for record in records} >= SHAPES_THAT_DO_NOT_PLACE, (
-        "the reader does not return the shapes this file records as unplaceable, so what "
-        "the consumers above act on is not the table these tests check"
+    assert {record.profile for record in records} >= SHAPES_THAT_DO_NOT_PLACE | SHAPES_THAT_QUEUE, (
+        "the reader does not return the shapes this file records as unplaceable or as "
+        "queueing, so what the consumers above act on is not the table these tests check"
     )

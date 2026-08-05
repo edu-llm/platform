@@ -66,6 +66,7 @@ from edullm_platform.contracts.manifest import (
     RunManifest,
 )
 from edullm_platform.contracts.policy import (
+    EXCEPTION_RATE_CEILING_USD_PER_HOUR,
     ApprovalClass,
     ApprovalPolicy,
     RequestFacts,
@@ -561,8 +562,13 @@ def compile_submission(
     )
 
 
-def exceeded_routine_bounds(facts: RequestFacts, policy: ApprovalPolicy) -> tuple[str, ...]:
-    """Which routine ceilings this request is over, said in words.
+def exceeded_routine_bounds(
+    facts: RequestFacts,
+    policy: ApprovalPolicy,
+    *,
+    hourly_rate_usd: Decimal | None = None,
+) -> tuple[str, ...]:
+    """Which bounds this request is over, said in words.
 
     A cost figure on its own invites a rubber stamp. Which bound was exceeded is the single
     most decision-relevant thing an approver can be told, so it is stated rather than left
@@ -574,6 +580,24 @@ def exceeded_routine_bounds(facts: RequestFacts, policy: ApprovalPolicy) -> tupl
     field a laptop cannot resolve. Two spellings of "which bound did this cross" would
     disagree the first time a threshold moved, and the reader who would find out is an
     approver reading a run the CLI described differently.
+
+    **THE RATE IS THE FIFTH BOUND AND IT WAS THE ONE NOTHING REPORTED.**
+    :func:`~edullm_platform.contracts.policy.classify_request` has always tested
+    ``hourly_rate_usd`` against ``EXCEPTION_RATE_CEILING_USD_PER_HOUR`` beside the four
+    thresholds, and this function tested only the four. So a submission that was an
+    exception *purely* on rate produced no reason at all, and
+    :func:`render_approver_context` fell through to a sentence saying one of its inputs was
+    not registered -- which is false, and sends the approver looking for a registration
+    problem that does not exist. Every ``gpu-8xa100`` dispatch is above the ceiling and
+    every one lands on the same admin, so that was the reason they would read most often.
+
+    ``hourly_rate_usd`` is keyword-only and optional, which is the one asymmetry against
+    ``classify_request``, where it is required so that a caller who has not decided what to
+    pass gets a ``TypeError`` rather than a routine classification. The failure that guards
+    against is a run released by the wrong person; the failure here is a sentence missing
+    from a page that names the class either way, and ``edullm check`` already composes its
+    own rate line from the cost inputs it holds. ``None`` therefore means "this caller has
+    no rate to test", not "the rate is fine".
     """
     limits = policy.thresholds
     exceeded: list[str] = []
@@ -607,6 +631,18 @@ def exceeded_routine_bounds(facts: RequestFacts, policy: ApprovalPolicy) -> tupl
         exceeded.append(
             f"fan-out parallelism of {facts.fanout_parallelism} exceeds the routine ceiling "
             f"of {limits.routine_maximum_parallelism}"
+        )
+    # Last, in the order ``classify_request`` tests them, and the only one whose ceiling is
+    # not in ``policy.thresholds`` -- see EXCEPTION_RATE_CEILING_USD_PER_HOUR for why it is
+    # a constant in contracts/policy.py instead. It says "rate ceiling" rather than "routine
+    # ceiling" for the same reason: the four above bound the size of one request and this
+    # one bounds the machine, and calling it routine would make an approver read the total
+    # beside it as the thing that crossed a line when the total is comfortably under one.
+    if hourly_rate_usd is not None and hourly_rate_usd > EXCEPTION_RATE_CEILING_USD_PER_HOUR:
+        exceeded.append(
+            f"hourly rate of ${_plain(hourly_rate_usd)} exceeds the rate ceiling of "
+            f"${_plain(EXCEPTION_RATE_CEILING_USD_PER_HOUR)}, whatever the run's total "
+            "cost is"
         )
     return tuple(exceeded)
 
@@ -762,7 +798,13 @@ def render_approver_context(
     ]
 
     if submission.approval_class is ApprovalClass.EXCEPTION:
-        exceeded = exceeded_routine_bounds(submission.facts, policy)
+        # The rate beside the facts, for the reason recorded above
+        # EXCEPTION_RATE_CEILING_USD_PER_HOUR: RequestFacts cannot carry it, and it is the
+        # only thing that makes a gpu-8xa100 dispatch an exception. Omitted here, the
+        # fallback below would claim a registration problem on every one of them.
+        exceeded = exceeded_routine_bounds(
+            submission.facts, policy, hourly_rate_usd=cost.hourly_rate_usd
+        )
         lines.append("## Why this is an exception")
         lines.append("")
         if exceeded:
