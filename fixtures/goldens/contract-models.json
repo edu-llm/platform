@@ -429,6 +429,20 @@
     },
     {
       "base": false,
+      "module": "edullm_platform.expiry_janitor",
+      "name": "ExpiryDecision",
+      "schema_version": "unversioned",
+      "structural_digest": "sha256:c4980e06e6473453822898bc2dba33f9f931adb87665d0876fdb9d40ab670f64"
+    },
+    {
+      "base": false,
+      "module": "edullm_platform.expiry_janitor",
+      "name": "TaggedInstance",
+      "schema_version": "unversioned",
+      "structural_digest": "sha256:8134bf6dc225c82ceeaec530cded8edcf0229b56f3b58b983c0f52cf3f7023ae"
+    },
+    {
+      "base": false,
       "module": "edullm_platform.iam_documents",
       "name": "IamActionMatch",
       "schema_version": "unversioned",

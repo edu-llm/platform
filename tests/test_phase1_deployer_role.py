@@ -76,9 +76,16 @@ LOG_GROUP_RESOURCE = {
 #: Two whole role ARNs, never a prefix. Written out here for the same reason they are
 #: written out in the template: a name that has to be typed twice cannot grow a wildcard
 #: on one side only.
+#: Every role this deployer may hand to a service, named in full. The last two are the expiry
+#: janitor's: ``lambda:CreateFunction`` takes the sweep role, and the schedule role is what
+#: replaced a grant this file refuses to make -- an ``AWS::Events::Rule`` targeting a Lambda
+#: would need ``lambda:AddPermission``, which the Phase 2 policy withholds, so the schedule
+#: assumes a passed role instead. ``infra/batch-events.yaml`` recorded the rule for that fork.
 PASS_ROLE_RESOURCES = [
     {"Fn::Sub": ROLE_ARN % f"{RESOURCE_PREFIX}admission-states"},
     {"Fn::Sub": ROLE_ARN % f"{RESOURCE_PREFIX}admission-lambda"},
+    {"Fn::Sub": ROLE_ARN % f"{RESOURCE_PREFIX}janitor-lambda"},
+    {"Fn::Sub": ROLE_ARN % f"{RESOURCE_PREFIX}janitor-schedule"},
 ]
 #: Everything the role can reach, in the order the template scopes it. An inventory
 #: rather than a property, so a resource added anywhere fails here and is read by a
@@ -512,11 +519,14 @@ def test_deployer_resource_scopes_never_widen_to_the_shared_intern_prefix() -> N
     )
 
 
-def test_pass_role_names_two_whole_roles_and_never_a_prefix() -> None:
+def test_pass_role_names_whole_roles_and_never_a_prefix() -> None:
     # The one grant in the amendment that meaningfully widens the deployer. Passing a
     # role is how a principal lends its own limits away, so a prefix here would let this
     # role pass any role that ever takes that name, including one created later with
     # permissions nobody weighed against a deploy credential.
+    #
+    # The count is held to the declared list rather than to a number, because the list is
+    # where each addition has to be argued and a bare integer is a thing somebody increments.
     statements = [
         statement
         for statement in _all_statements()
@@ -530,7 +540,7 @@ def test_pass_role_names_two_whole_roles_and_never_a_prefix() -> None:
     assert statement["Effect"] == "Allow"
     assert statement_actions(statement) == ["iam:PassRole"]
     assert _resources(statement) == PASS_ROLE_RESOURCES
-    assert len(passed) == 2
+    assert len(passed) == len(PASS_ROLE_RESOURCES)
     assert not [arn for arn in passed if "*" in arn]
     assert all(arn.startswith(ROLE_ARN % "") for arn in passed)
     assert all(arn.removeprefix(ROLE_ARN % "").startswith(RESOURCE_PREFIX) for arn in passed)
@@ -639,6 +649,11 @@ PHASE3_WILDCARDS = [
     REGIONAL_ARN % ("batch", f"job-definition/{RESOURCE_PREFIX}*"),
     REGIONAL_ARN % ("batch", f"job-queue/{RESOURCE_PREFIX}*"),
     REGIONAL_ARN % ("events", f"rule/{RESOURCE_PREFIX}*"),
+    # EventBridge Scheduler, which is a different service from EventBridge rules and shares
+    # none of the ARN space above. Scoped to the default schedule group, because a group is a
+    # container the caller picks and a grant across every group would let a schedule be created
+    # somewhere nothing in this repository looks for it.
+    REGIONAL_ARN % ("scheduler", f"schedule/default/{RESOURCE_PREFIX}*"),
     REGIONAL_ARN % ("logs", f"log-group:/aws/batch/{RESOURCE_PREFIX}*"),
     REGIONAL_ARN % ("cloudwatch", f"alarm:{RESOURCE_PREFIX}*"),
     REGIONAL_ARN % ("sqs", f"{RESOURCE_PREFIX}*"),

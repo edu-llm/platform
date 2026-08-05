@@ -45,13 +45,14 @@ from tools.build_admission_lambda import (
     PACKAGE_DIRECTORY,
     reachable_modules,
 )
+from tools.build_janitor_lambda import JANITOR_CONFIG, JANITOR_ENTRYPOINT
 from tools.build_lifecycle_lambda import RECORDER_CONFIG, RECORDER_ENTRYPOINT
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_ROOT = PROJECT_ROOT / PACKAGE_DIRECTORY
 CONFIG_ROOT = PROJECT_ROOT / "config"
 
-ENTRYPOINTS = (ADMISSION_ENTRYPOINT, RECORDER_ENTRYPOINT)
+ENTRYPOINTS = (ADMISSION_ENTRYPOINT, RECORDER_ENTRYPOINT, JANITOR_ENTRYPOINT)
 
 #: What each builder declares it packages, beside the entrypoint it packages it for. The
 #: pairing is the thing under test: an entrypoint whose modules read a file its own builder
@@ -59,6 +60,7 @@ ENTRYPOINTS = (ADMISSION_ENTRYPOINT, RECORDER_ENTRYPOINT)
 PACKAGED_CONFIG = (
     (ADMISSION_ENTRYPOINT, ADMISSION_CONFIG),
     (RECORDER_ENTRYPOINT, RECORDER_CONFIG),
+    (JANITOR_ENTRYPOINT, JANITOR_CONFIG),
 )
 
 
@@ -170,15 +172,20 @@ def test_no_builder_packages_config_its_handler_never_names(
     )
 
 
-def test_the_two_handlers_do_not_carry_the_same_configuration() -> None:
-    """Mutation: give the recorder the validator's config list.
+def test_only_the_validator_carries_configuration() -> None:
+    """Mutation: give the recorder or the janitor the validator's config list.
 
-    The recorder reads nothing under ``config/``, which is what makes it fully immune to a
-    roster or catalog edit. Handing it the validator's list would restore the coupling in
-    the least visible way available: its zip would build, deploy and run correctly, and its
+    Neither of the other two reads anything under ``config/``, which is what makes them immune
+    to a roster or catalog edit. Handing either the validator's list would restore the coupling
+    in the least visible way available: the zip would build, deploy and run correctly, and its
     release digest would move every time somebody edited a policy it never opens.
+
+    The janitor reads two numbers from ``config/reports/researcher-lane.yaml``, and reads them
+    through the environment rather than the zip -- ``infra/expiry-janitor.yaml`` carries them
+    and ``tests/test_janitor_infrastructure.py`` holds them equal to the file.
     """
     assert RECORDER_CONFIG == frozenset()
+    assert JANITOR_CONFIG == frozenset()
     assert ADMISSION_CONFIG > RECORDER_CONFIG
 
 
@@ -232,21 +239,19 @@ def test_the_package_carries_less_than_the_whole_tree(entrypoint: str) -> None:
     assert len(packaged) >= 8, "a handful of modules means the measurement failed"
 
 
-def test_the_two_handlers_carry_different_things() -> None:
-    """Mutation: give both builders one shared entrypoint.
+def test_no_two_handlers_carry_the_same_module_set() -> None:
+    """Mutation: give two builders one shared entrypoint.
 
-    A default that applied to both would put each function's dependencies into the other's
-    release, which reintroduces the churn in a less obvious form: the recorder's digest
-    would move whenever the validator started importing something.
+    A default that applied to more than one would put each function's dependencies into the
+    others' releases, which reintroduces the churn in a less obvious form: one digest would
+    move whenever another handler started importing something.
     """
-    validator = set(reachable_modules(PROJECT_ROOT, ADMISSION_ENTRYPOINT))
-    recorder = set(reachable_modules(PROJECT_ROOT, RECORDER_ENTRYPOINT))
+    sets = {
+        entrypoint: frozenset(reachable_modules(PROJECT_ROOT, entrypoint))
+        for entrypoint in ENTRYPOINTS
+    }
 
-    assert validator != recorder
-    assert recorder < validator or validator - recorder, (
-        "the two handlers reach different parts of the package, and the release digests "
-        "should move independently"
-    )
+    assert len(set(sets.values())) == len(ENTRYPOINTS)
 
 
 def test_no_module_either_handler_carries_reaches_a_phase_specific_one() -> None:

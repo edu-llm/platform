@@ -319,6 +319,29 @@ Resources:
                 Resource:
                   - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-admission-states
                   - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-admission-lambda
+                  # THE EXPIRY JANITOR'S TWO ROLES, AND THE SECOND OF THEM IS THE INTERESTING
+                  # ONE. lambda:CreateFunction takes a role ARN, so the sweep role has to be
+                  # passable for infra/expiry-janitor.yaml to deploy at all -- that is the same
+                  # reason the two above are here.
+                  #
+                  # The schedule role is what replaced a grant this file refuses to make. An
+                  # AWS::Events::Rule targeting a Lambda needs an AWS::Lambda::Permission beside
+                  # it, which needs lambda:AddPermission, which the statement below excludes in
+                  # as many words. An AWS::Scheduler::Schedule invokes by assuming a role it is
+                  # passed instead, so this is a capability added rather than a restriction
+                  # removed -- which is the rule infra/batch-events.yaml recorded when it met
+                  # the same fork and built an SQS lifecycle rather than reversing the deny.
+                  #
+                  # It is strictly narrower than the grant it avoids. lambda:AddPermission would
+                  # let a deploy credential write Principal "*" into the janitor's resource
+                  # policy; this lets it hand one role to a schedule, and that role holds
+                  # lambda:InvokeFunction on one function named in full.
+                  #
+                  # Named in full rather than by an sbsandbox-intern-edullm-* prefix, for the
+                  # reason the paragraph above this statement gives: a prefix would let a role
+                  # created later under a matching name be passed by inheritance.
+                  - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-janitor-lambda
+                  - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-janitor-schedule
         # A third inline policy, for the reason the second one is separate from the first:
         # the phase boundary stays visible in `aws iam list-role-policies`, and a Phase 3
         # edit cannot quietly change what Phase 1 or Phase 2 was reviewed with. The three
@@ -643,6 +666,32 @@ Resources:
                   - events:UntagResource
                 Resource:
                   Fn::Sub: arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:rule/sbsandbox-intern-edullm-*
+              # EventBridge Scheduler is a different service from EventBridge rules, with its
+              # own ARN space and its own verbs, so none of the events:* grants above reaches a
+              # schedule. infra/expiry-janitor.yaml uses one because a rule targeting a Lambda
+              # would need lambda:AddPermission, which the Phase 2 statement above withholds --
+              # a capability added rather than a restriction removed, which is the rule
+              # infra/batch-events.yaml recorded at the same fork.
+              #
+              # Scoped to the default schedule group, which is where a schedule with no
+              # GroupName lands. A group is a container a caller chooses, so a grant covering
+              # every group would let a schedule be created somewhere nothing in this
+              # repository looks for it -- and a schedule nobody can find is a five-minute
+              # invocation of a function that stops machines.
+              #
+              # scheduler:ListSchedules is not here. It takes no resource, and nothing in the
+              # deploy needs to enumerate: CloudFormation addresses the one schedule by name.
+              - Effect: Allow
+                Action:
+                  - scheduler:CreateSchedule
+                  - scheduler:DeleteSchedule
+                  - scheduler:GetSchedule
+                  - scheduler:UpdateSchedule
+                  - scheduler:TagResource
+                  - scheduler:UntagResource
+                  - scheduler:ListTagsForResource
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/default/sbsandbox-intern-edullm-*
               # The Batch job log group, on the /aws/batch/ path, which is a different tree
               # from the /aws/vendedlogs/states/ path the Phase 2 policy scopes. Neither
               # statement reaches the other's groups, so a Phase 3 deploy cannot touch the
