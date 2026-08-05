@@ -182,16 +182,5 @@ def test_workflow_verifies_exact_repository_and_lifecycle_semantics_without_uri_
                 },
                 "action": {"type": "expire"},
             },
-            {
-                "rulePriority": 2,
-                "description": "Retain at most 50 tagged images",
-                "selection": {
-                    "tagStatus": "tagged",
-                    "tagPatternList": ["*"],
-                    "countType": "imageCountMoreThan",
-                    "countNumber": 50,
-                },
-                "action": {"type": "expire"},
-            },
         ]
     }

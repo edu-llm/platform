@@ -1,6 +1,51 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: One ECR repository per registered research repository, for finished commit images.
 
+# NOTHING HERE EXPIRES A TAGGED IMAGE, AND THAT IS THE WHOLE OF THE RETENTION DECISION.
+#
+# A run manifest names its image by digest, and admission refuses anything else. So a tagged
+# image is not a build artefact that has served its purpose -- it is the only copy of the
+# thing a recorded run says it ran. Deleting one does not free space, it retracts a result:
+# the run stays in the lineage store, still readable, still citing a digest that now answers
+# ImageNotFoundException. Nothing warns, and the person who finds out is whoever tries to
+# reproduce the work.
+#
+# This template used to carry a second rule expiring tagged images beyond the fiftieth. On
+# 2026-08-05 that rule had removed 24 of the 47 distinct digests the lineage store names,
+# and those 24 were cited by 100 of 157 recorded runs -- every run before 2026-08-03, on the
+# busiest repository, which was building about 23 images a day and so held two days of
+# history. Twelve of the thirteen run ids cited in proof/ are among them.
+#
+# A LARGER NUMBER WOULD HAVE BEEN THE SAME RULE WITH A LATER FUSE. Fifty images is two days
+# here and would be two weeks somewhere quieter; any count, and any age, is a promise that
+# a run stops being reproducible once enough other work happens. The distinction that
+# actually separates an image worth keeping from one worth dropping is whether any recorded
+# run ever named it -- and roughly 60% of what these repositories hold was built for a
+# commit nobody submitted.
+#
+# ECR CANNOT MAKE THAT DISTINCTION, WHICH IS WHY IT IS NOT ATTEMPTED HERE. A lifecycle rule
+# selects on tag pattern, image count and age, and on nothing else; it cannot read the
+# lineage store. Marking an image as pinned by adding a second tag does not work either --
+# a rule matches an image when its patterns match any of that image's tags, so an extra tag
+# never protects anything (the "tags are not exclusive" example in ECR's own lifecycle
+# documentation). Reaping unreferenced images therefore has to be done by something that
+# can read s3://sbsandbox-intern-edullm-lineage/intent/ and delete by digest. Until that
+# exists, this file keeps everything tagged, because the cost of keeping an image is a
+# line on a bill and the cost of deleting one is a result nobody can reproduce.
+#
+# WHAT KEEPING EVERYTHING COSTS, so that it is a decision rather than a surprise. Storage is
+# $0.10 per GB-month. These repositories hold ~225 GiB today, about $23 a month. Each new
+# OLMo-core image adds ~4.1 GiB that dedupes against nothing, because the research
+# Dockerfile runs its pip install after COPY, so at ~23 builds a day this grows ~2.9 TiB a
+# month: ~$320 in the first month and ~$3,550 a month by the twelfth. Moving the pinned
+# dependency install above COPY in the research repositories would make that layer shared
+# and drop the growth to a few MB a month; that is a change in those repositories, not this
+# one.
+#
+# The untagged rule below stays. Every image this platform publishes is tagged with its
+# commit prefix at push and tags here are immutable, so an untagged manifest is the residue
+# of a push that did not finish, and no run can name one.
+
 Resources:
   OlmoCoreRepository:
     Type: AWS::ECR::Repository
@@ -25,19 +70,6 @@ Resources:
                   "countType": "sinceImagePushed",
                   "countUnit": "days",
                   "countNumber": 7
-                },
-                "action": {
-                  "type": "expire"
-                }
-              },
-              {
-                "rulePriority": 2,
-                "description": "Retain at most 50 tagged images",
-                "selection": {
-                  "tagStatus": "tagged",
-                  "tagPatternList": ["*"],
-                  "countType": "imageCountMoreThan",
-                  "countNumber": 50
                 },
                 "action": {
                   "type": "expire"
@@ -73,19 +105,6 @@ Resources:
                 "action": {
                   "type": "expire"
                 }
-              },
-              {
-                "rulePriority": 2,
-                "description": "Retain at most 50 tagged images",
-                "selection": {
-                  "tagStatus": "tagged",
-                  "tagPatternList": ["*"],
-                  "countType": "imageCountMoreThan",
-                  "countNumber": 50
-                },
-                "action": {
-                  "type": "expire"
-                }
               }
             ]
           }
@@ -113,19 +132,6 @@ Resources:
                   "countType": "sinceImagePushed",
                   "countUnit": "days",
                   "countNumber": 7
-                },
-                "action": {
-                  "type": "expire"
-                }
-              },
-              {
-                "rulePriority": 2,
-                "description": "Retain at most 50 tagged images",
-                "selection": {
-                  "tagStatus": "tagged",
-                  "tagPatternList": ["*"],
-                  "countType": "imageCountMoreThan",
-                  "countNumber": 50
                 },
                 "action": {
                   "type": "expire"
@@ -161,19 +167,6 @@ Resources:
                 "action": {
                   "type": "expire"
                 }
-              },
-              {
-                "rulePriority": 2,
-                "description": "Retain at most 50 tagged images",
-                "selection": {
-                  "tagStatus": "tagged",
-                  "tagPatternList": ["*"],
-                  "countType": "imageCountMoreThan",
-                  "countNumber": 50
-                },
-                "action": {
-                  "type": "expire"
-                }
               }
             ]
           }
@@ -201,19 +194,6 @@ Resources:
                   "countType": "sinceImagePushed",
                   "countUnit": "days",
                   "countNumber": 7
-                },
-                "action": {
-                  "type": "expire"
-                }
-              },
-              {
-                "rulePriority": 2,
-                "description": "Retain at most 50 tagged images",
-                "selection": {
-                  "tagStatus": "tagged",
-                  "tagPatternList": ["*"],
-                  "countType": "imageCountMoreThan",
-                  "countNumber": 50
                 },
                 "action": {
                   "type": "expire"

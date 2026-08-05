@@ -116,6 +116,10 @@ jobs:
               "scanOnPush": True,
               "imageTagMutability": "IMMUTABLE",
           }
+          # One rule, and the absence of a second one is the thing being verified. A rule
+          # expiring tagged images would delete the image a recorded run names by digest,
+          # so this check fails a deploy that reintroduces one. infra/ecr-repositories.yaml
+          # carries the argument.
           expected_policy = {
               "rules": [
                   {
@@ -126,17 +130,6 @@ jobs:
                           "countType": "sinceImagePushed",
                           "countUnit": "days",
                           "countNumber": 7,
-                      },
-                      "action": {"type": "expire"},
-                  },
-                  {
-                      "rulePriority": 2,
-                      "description": "Retain at most 50 tagged images",
-                      "selection": {
-                          "tagStatus": "tagged",
-                          "tagPatternList": ["*"],
-                          "countType": "imageCountMoreThan",
-                          "countNumber": 50,
                       },
                       "action": {"type": "expire"},
                   },

@@ -501,7 +501,7 @@ def insert_form_option(
 def lifecycle_policy_text(template: dict[str, Any]) -> str:
     """The lifecycle policy an existing repository carries, copied rather than restated.
 
-    ``test_ecr_lifecycle_expires_old_untagged_and_caps_all_tagged_images`` requires every
+    ``test_ecr_lifecycle_expires_old_untagged_images_and_nothing_else`` requires every
     repository in the template to carry the same policy, so a literal here would be a second
     copy able to go stale against the first. Reading it off a repository that is already
     there means a change to the policy reaches the next registration for free.
