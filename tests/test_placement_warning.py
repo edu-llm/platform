@@ -7,10 +7,13 @@ one of them does not place was to submit and wait: a job that cannot be placed s
 merely queued.
 
 **THE TEN ARE NOT ONE KIND OF THING, AND TREATING THEM AS ONE IS THE DEFECT THIS MODULE
-CARRIED FOR A DAY.** Seven are pools nothing has obtained. Three supply nodes to a queue that
-keeps asking and make you wait for them -- ``gpu-8xa100`` supplied twelve while the warning
-was still telling every submitter it might never place. Both get a line and the lines say
-opposite things, so most of what is below is about which shape gets which.
+CARRIED FOR A DAY.** Five supply nodes to a queue that keeps asking and make you wait for
+them, and ``gpu-8xa100`` supplied fourteen while the warning was still telling every
+submitter it might never place. Five are pools nothing has obtained, and those five split
+again by which instrument established it: two were ground against by a queue for
+thirty-seven hours, and three have never been submitted to at all, so what stands behind
+them is one instant probe. Three sentences, and most of what is below is about which shape
+gets which.
 
 **NOTHING HERE COVERS A SUBSTITUTION, BECAUSE THERE IS NO LONGER SUCH A THING.** The file
 recorded two, both were re-measured on 2026-08-04 and pointed at machines this account has
@@ -75,22 +78,30 @@ SCANNED_AT = "2026-07-26T22:07:12.000000Z"
 #: this is the second opinion and not the source.
 SHAPES_THAT_DO_NOT_PLACE = frozenset(
     {
-        "gpu-8xa10g",
         "gpu-4xl4",
         "gpu-8xl4",
-        "gpu-1xl40s",
         "gpu-8xl40s",
         "gpu-1xh100",
         "gpu-8xh100",
     }
 )
 
+#: Of those five, the two a queue established and the three only a probe has asked about.
+#: They get different sentences and the split is the point: the probe's refusals are what the
+#: eight corrections to ``config/capacity.yaml`` overturned, so a submitter reading one needs
+#: to know they are reading the weaker instrument. Held as two named sets rather than derived
+#: from the file, so moving a shape between them is a line in a diff.
+REFUSALS_A_QUEUE_MEASURED = frozenset({"gpu-1xh100", "gpu-8xh100"})
+REFUSALS_ONLY_A_PROBE_MEASURED = frozenset({"gpu-4xl4", "gpu-8xl4", "gpu-8xl40s"})
+
 #: The shapes that do place and make you queue. They warn too, and about something else: a
 #: measured wait rather than a machine that may never come. Held apart from the set above
 #: because the two messages are the ones that must not be swapped -- printing "may not place"
 #: over a pool running jobs is what this split was made to end, and printing a wait over a
 #: pool that has never supplied anything would invent one.
-SHAPES_THAT_QUEUE = frozenset({"gpu-4xa10g", "gpu-4xl40s", "gpu-8xa100"})
+SHAPES_THAT_QUEUE = frozenset(
+    {"gpu-4xa10g", "gpu-8xa10g", "gpu-1xl40s", "gpu-4xl40s", "gpu-8xa100"}
+)
 
 #: Every shape that gets a line at all.
 SHAPES_THAT_WARN = SHAPES_THAT_DO_NOT_PLACE | SHAPES_THAT_QUEUE
@@ -298,6 +309,48 @@ def test_the_warning_offers_no_substitute_and_says_whose_decision_that_is(
         assert "declare" in warning
 
 
+def test_a_refusal_says_which_instrument_produced_it(
+    shipped: tuple[PlacementRecord, ...],
+) -> None:
+    """THE DISTINCTION THE FILE ADDED, ASSERTED WHERE A SUBMITTER MEETS IT.
+
+    Five shapes still say "may not place" and two kinds of evidence stand behind them. A
+    queue asked for ``gpu-8xh100`` 7,654 times over thirty-seven hours and never got one; a
+    single instant probe asked for ``gpu-8xl40s`` once, and nothing has ever been submitted
+    to its queue. Both are worth warning about and only one is worth believing without
+    qualification.
+
+    Mutation: print the same flat sentence for both, which is what this module did until the
+    file could tell them apart. The probe-only three are the shapes most likely to be wrong,
+    because every one of the eight corrections so far was a probe refusal a queue
+    overturned, and a submitter told nothing about that reads the weakest claim in the file
+    as the strongest.
+
+    Both halves are asserted. The presence of the hedge on the weak arm is the feature; its
+    absence on the strong arm is what stops the hedge becoming boilerplate that appears
+    everywhere and therefore says nothing.
+    """
+    for shape in sorted(REFUSALS_ONLY_A_PROBE_MEASURED):
+        warning = placement_warning(shape, capacity=shipped)
+        recorded = next(record for record in shipped if record.profile == shape)
+
+        assert warning is not None
+        assert recorded.measured_by == "probe"
+        assert f"**`{shape}` may not place." in warning
+        assert "No job has ever been submitted to this shape's queue" in warning
+        assert "untested rather than as settled" in warning
+
+    for shape in sorted(REFUSALS_A_QUEUE_MEASURED):
+        warning = placement_warning(shape, capacity=shipped)
+        recorded = next(record for record in shipped if record.profile == shape)
+
+        assert warning is not None
+        assert recorded.measured_by == "queue"
+        assert f"**`{shape}` may not place." in warning
+        assert "A queue asked for this shape repeatedly" in warning
+        assert "untested rather than as settled" not in warning
+
+
 def test_the_message_claims_no_more_than_the_file_does(
     shipped: tuple[PlacementRecord, ...],
 ) -> None:
@@ -354,15 +407,36 @@ def test_a_shape_the_file_does_not_record_is_unknown_rather_than_fine() -> None:
         ("schema_version: 1\n", "lists no profiles"),
         ("profiles:\n  - profile: a\n    places: sometimes\n", "does not name a profile"),
         (
-            "profiles:\n  - profile: a\n    places: after_a_wait\n",
+            "profiles:\n  - profile: a\n    places: reliably\n",
+            "does not say which of",
+        ),
+        (
+            "profiles:\n  - profile: a\n    places: reliably\n    measured_by: a hunch\n",
+            "does not say which of",
+        ),
+        (
+            "profiles:\n  - profile: a\n    places: after_a_wait\n    measured_by: queue\n",
             "gives no 'wait'",
         ),
         (
-            "profiles:\n  - profile: a\n    places: after_a_wait\n    wait: '  '\n",
+            (
+                "profiles:\n  - profile: a\n    places: after_a_wait\n"
+                "    measured_by: queue\n    wait: '  '\n"
+            ),
             "gives no 'wait'",
         ),
         (
-            "profiles:\n  - profile: a\n    places: reliably\n    wait: 'about an hour'\n",
+            (
+                "profiles:\n  - profile: a\n    places: after_a_wait\n"
+                "    measured_by: probe\n    wait: 'a median of 20 minutes'\n"
+            ),
+            "only 'queue' can have seen one",
+        ),
+        (
+            (
+                "profiles:\n  - profile: a\n    places: reliably\n"
+                "    measured_by: queue\n    wait: 'about an hour'\n"
+            ),
             "a measurement nothing prints",
         ),
     ],
@@ -371,8 +445,11 @@ def test_a_shape_the_file_does_not_record_is_unknown_rather_than_fine() -> None:
         "sequence",
         "no profiles key",
         "invented answer",
+        "no instrument at all",
+        "an instrument that is not one",
         "queues and says nothing about how long",
         "queues and says only whitespace",
+        "a wait no instrument here could have observed",
         "a wait on a verdict that never prints one",
     ],
 )
@@ -385,10 +462,15 @@ def test_a_document_that_is_not_a_placement_answer_is_refused(
     the only warning about a four-hour wait with it and leave every submission looking
     exactly as it did before.
 
-    The three ``after_a_wait`` rows are the new verdict held to the same standard from both
+    The ``after_a_wait`` rows are the newer verdict held to the same standard from both
     sides. An entry recording a wait it cannot name would print a warning saying there is
     one and not how long, which is worse than the sentence it replaced; a wait on a verdict
     that prints nothing is a measurement a reviewer would believe had reached somebody.
+
+    The ``measured_by`` rows are the same argument applied to the instrument. A missing one
+    is the unstated default this file has already been caught by once, and a wait attributed
+    to a probe is a number with no measurement under it: ``create-fleet --type instant``
+    returns in one call and cannot watch a job sit in ``RUNNABLE``.
     """
     path = tmp_path / CAPACITY_FILENAME
     path.write_text(document, encoding="utf-8")
@@ -411,6 +493,7 @@ def test_two_answers_for_one_shape_are_refused_rather_than_resolved(tmp_path: Pa
     path.write_text(
         "profiles:\n"
         "  - profile: gpu-4xa10g\n"
+        "    measured_by: probe\n"
         "    places: unreliably\n"
         "    places: reliably\n",
         encoding="utf-8",
@@ -463,7 +546,7 @@ def test_a_queueing_shape_compiles_and_the_approver_reads_the_wait(tmp_path: Pat
     assert exit_code == EXIT_OK
     assert compiled["manifest"]["compute_profile"] == "gpu-4xa10g"
     assert "`gpu-4xa10g` places" in summary
-    assert "median of 11 minutes" in summary
+    assert "median of 7 minutes" in summary
     assert "may not place" not in summary
 
 
@@ -517,7 +600,7 @@ def test_the_warning_is_written_where_the_submitter_is_already_looking(
     printed = capsys.readouterr().err
 
     assert "`gpu-8xa100` places, and the wait is what to plan for." in printed
-    assert "median of 89 minutes" in printed
+    assert "median of 61 minutes" in printed
 
 
 def test_a_capacity_file_that_cannot_be_read_is_an_unusable_input(

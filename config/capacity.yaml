@@ -48,19 +48,19 @@
 # a default, so nobody noticed it was being applied.
 #
 # THE PROBE ANSWERS A DIFFERENT QUESTION FROM THE ONE A SUBMITTER ASKS, AND ON 2026-08-05 THAT
-# COST THREE ENTRIES THEIR ACCURACY IN THE OPPOSITE DIRECTION. `create-fleet --type instant`
+# COST FIVE ENTRIES THEIR ACCURACY IN THE OPPOSITE DIRECTION. `create-fleet --type instant`
 # asks whether one instance is free at this exact second. A Batch compute environment with a
 # job queued behind it asks the same pools again every tenth of a second, in every zone the
 # instance type is offered in, until one is free or the queue's thirty-minute CANCEL fires.
 # Those are different questions and they have different answers. The gpu-8xa100 environment
-# logged 4,348 InsufficientInstanceCapacity refusals between 2026-08-02 and 2026-08-05, a
-# median of 0.121 seconds apart and spread almost exactly evenly over us-east-1a, 1b, 1c and
-# 1d -- and obtained twelve nodes through them, two of which are running jobs as this is
+# logged 5,024 InsufficientInstanceCapacity refusals between 2026-08-02 and 2026-08-05, a
+# median of 0.122 seconds apart and spread almost exactly evenly over us-east-1a, 1b, 1c and
+# 1d -- and obtained fourteen nodes through them, the most recent while this was being
 # written.
 #
 # SO `places` HAS A THIRD VALUE, BECAUSE NEITHER OF THE TWO IT HAD COULD SAY THAT. `unreliably`
 # makes src/edullm_platform/placement.py tell the submitter the shape may not place, which is
-# false of a pool that supplied twelve nodes; `reliably` says nothing at all, which would drop
+# false of a pool that supplied fourteen nodes; `reliably` says nothing at all, which would drop
 # the only warning anybody gets about a wait measured in hours. So `after_a_wait` is the answer
 # for a pool that does supply under sustained demand and makes you queue for it, and every
 # entry carrying it also carries a `wait:` sentence -- the measurement itself, in the words the
@@ -73,53 +73,149 @@
 # eight-card G shape except the T4s. What places *at an instant* in this region today is small
 # and old: g4dn in all three sizes, and one card of A10G or L4. The G pool is not the safe
 # harbour this file once treated it as; the T4 family is, and nothing here pointed at it
-# before. Read that qualifier as load-bearing -- three of the shapes this paragraph puts in the
+# before. Read that qualifier as load-bearing -- five of the shapes this paragraph puts in the
 # dry column supply nodes to a queue that keeps asking, and they carry `after_a_wait` below
 # rather than the verdict this paragraph on its own would produce.
 #
-# Re-read the day a shape's answer is doubted rather than on a schedule; a stale entry here
-# costs an unnecessary warning, and a missing one costs an afternoon in RUNNABLE.
+# THE CORRECTION RAN TWICE ON 2026-08-05 AND THE SECOND PASS FOUND TWO MORE OF THE SAME ERROR,
+# WHICH IS THE PART WORTH READING. The first pass moved gpu-4xa10g, gpu-4xl40s and gpu-8xa100
+# off `unreliably` on the strength of their autoscaling histories. It moved the three shapes
+# somebody happened to look at. gpu-8xa10g and gpu-1xl40s were left where they were and both
+# were wrong in the same direction: g5.48xlarge supplied six nodes between 2026-08-03 and
+# 2026-08-05 and every one of the seven runs queued for it started, with three of those nodes
+# alive in us-east-1d while the submission path was still printing "may not place" over the
+# shape. g6e.xlarge supplied two nodes on 2026-08-03. Reading the histories one shape at a time
+# is how a method that is wrong in one direction stays wrong in it, so every one of the sixteen
+# queues was enumerated for this pass rather than the ones under suspicion.
+#
+# gpu-8xa10g IS ALSO THE ONE PLACE WHERE THE WALL IS NOT CAPACITY AT ALL, AND THE TWO LOOK
+# IDENTICAL FROM A QUEUE. Its autoscaling group logged 871 VcpuLimitExceeded refusals against a
+# G-bucket limit of 768 vCPUs on 2026-08-05, beside 105 InsufficientInstanceCapacity refusals
+# on the same day. A submitter waiting on either sees a job in RUNNABLE and nothing written
+# anywhere, but only one of them is EC2 running out: the quota is a support ticket and a person,
+# and no amount of queueing resolves it. That is worth knowing before anybody reads this shape's
+# wait as scarcity and buys a Capacity Block against it.
+#
+# `measured_by` SAYS WHICH INSTRUMENT ANSWERED, BECAUSE `places` ALONE CANNOT AND THE
+# DIFFERENCE DECIDES WHETHER TO BELIEVE THE ANSWER. Six wrong entries in one direction and then
+# two more is not bad luck, it is one instrument being read as though it answered a question it
+# does not. So every entry now records the instrument beside the verdict:
+#
+#   measured_by: queue  -- a Batch job has waited on this shape and the verdict is what the
+#     queue saw. It is the instrument a researcher actually meets, and where the two have
+#     disagreed it has been right every time.
+#   measured_by: probe  -- `create-fleet --type instant` is the only thing that has ever asked,
+#     because no job has ever been submitted to this shape's queue.
+#
+# THE ASYMMETRY IS THE WHOLE VALUE OF THE FIELD. A probe that obtains the machine has proved
+# the account can get it, and that answer needs no second opinion. A probe that is refused has
+# proved that one pool was busy for one second, which is the answer that has been wrong eight
+# times now. So `places: unreliably` with `measured_by: probe` is the weakest claim in this
+# file, and `edullm_platform.placement.placement_warning` says so to the submitter rather than
+# printing the same sentence it prints over a pool a queue ground against for thirty-seven
+# hours and never got.
+#
+# THREE ENTRIES CARRY THAT WEAKEST CLAIM AND THEY ARE THE ONES TO DOUBT FIRST: gpu-4xl4,
+# gpu-8xl4 and gpu-8xl40s. Nothing has ever been submitted to any of their queues. Batch has
+# not even created an autoscaling group for their compute environments, which is the cheap way
+# to check it -- `aws autoscaling describe-auto-scaling-groups` lists a group for eleven of the
+# sixteen and for none of these three. Their verdict is an instant probe and nothing else, and
+# on the record above that is not a verdict a researcher should plan around.
+#
+# HOW THESE NUMBERS STAY TRUE, AND THE HONEST ANSWER IS THAT THEY DO NOT FOR LONG. The three
+# entries this pass rewrote were all correct when they were written and all wrong within a day:
+# gpu-8xa100's median was 89 minutes and a thirteenth run moved it to 61, and gpu-4xa10g's was
+# 11 minutes and ten more nodes moved it to 7. The line that used to stand here said to re-read
+# a shape the day its answer is doubted, and that is exactly the method that left gpu-8xa10g
+# false for two days, because nobody doubts an entry that is merely stale.
+#
+# WHAT IS WORTH AUTOMATING IS THE VERDICT AND NOT THE MEDIAN, WHICH IS A SMALLER THING THAN IT
+# SOUNDS. No submitter has ever chosen differently between a median of 89 minutes and one of
+# 61; what changes a decision is `places`, and every error this file has made has been in that
+# column. So the check worth having is a nightly job that reads the sixteen queues, recomputes
+# each verdict, and goes red when one disagrees with what is recorded here. It reports and
+# writes nothing: a bot editing a reviewed file that is nine tenths comment would need a write
+# credential, a pull request path and a surgical substitution to avoid destroying the prose,
+# which is three failure points bought to save one edit.
+#
+# IT IS NOT BUILT, AND THE REASON IS A GRANT RATHER THAN THE CODE. The nightly reader role
+# holds no batch:ListJobs and no batch:DescribeJobs; infra/iam/nightly-reader-role.yaml omits
+# them deliberately and .github/workflows/nightly.yml says so where the visibility board
+# explains why it reads resource tags instead. That stack is applied by hand from a laptop, so
+# the job would be red from the night it shipped until somebody applied it, which is the exact
+# state that workflow's header records the visibility board spending its first weeks in. The
+# recommendation is therefore: add the two grants, then add the job. Until the first half
+# happens the second is machinery that reports nothing.
 #
 # UNKNOWN IS NOT A VALUE, AND THAT IS THE POINT. Every profile in the catalog appears here
 # exactly once, so promoting a shape is an edit here as well. A file listing only the scarce
 # ones would be a denylist, and the way a denylist fails is that the next shape somebody
 # promotes is assumed to place until the first person waits four hours to find out otherwise.
+#
+# WHAT THE WAIT SENTENCES COUNT, AND IT IS RUNS RATHER THAN JOBS. A `wait:` below counts jobs
+# named `run_*`, which are the submissions this platform compiled, and leaves out the ad-hoc
+# probes and hand-named diagnostics that share these queues. Those land on nodes a submitted
+# run has already warmed up and start in seconds, so counting them would quote a submitter a
+# wait nobody submitting a run has had.
 schema_version: 1
-observed_at: "2026-08-04"
+observed_at: "2026-08-05"
 profiles:
   - profile: cpu-32vcpu
     places: reliably
+    measured_by: queue
   # THE THREE T4 SHAPES ARE THE ONLY MULTI-CARD MACHINES IN THIS FILE THAT PLACE ON DEMAND,
   # and g4dn.metal below is the only eight-card machine of any kind the account could obtain
   # at an instant on 2026-08-04. All three were measured by launching one and terminating it,
   # not inferred.
   #
-  # "ON DEMAND" IS THE CLAUSE THAT MATTERS NOW. Three multi-card shapes below carry
+  # "ON DEMAND" IS THE CLAUSE THAT MATTERS NOW. Five multi-card shapes below carry
   # `after_a_wait`, so these are no longer the only ones a submitter can get -- they are the
   # only ones a submitter can get without queueing for them. gpu-8xa100 supplies 320 GB
-  # against these 128 and takes a median of an hour and a half to do it, which is a trade a
-  # person can weigh and could not before.
+  # against these 128 and takes a median of an hour to do it, which is a trade a person can
+  # weigh and could not before.
   #
-  # That still makes gpu-8xt4 the shape to know about for work that has to start now, and it
-  # was previously the shape nothing pointed at: 8 x T4 is 128 GB of device memory, which is
-  # less than the eight-card A10G, L4 and L40S machines this file used to recommend and more
-  # than any of those can supply, because none of them place at all.
+  # AND THE EIGHT-CARD CLAIM HERE IS NARROWER THAN IT WAS ON 2026-08-04. This read that
+  # 8 x T4 is 128 GB, "which is less than the eight-card A10G, L4 and L40S machines this file
+  # used to recommend and more than any of those can supply, because none of them place at
+  # all". gpu-8xa10g places and carries a measured nine-minute median, so it supplies 192 GB
+  # against these 128 and the sentence is now false of it. What survives is the narrow
+  # version: gpu-8xt4 is the only eight-card machine this account has obtained at an instant,
+  # so it remains the shape for work that cannot queue, and it is no longer the largest
+  # eight-card machine a patient submitter can get.
+  #
+  # TWO OF THE THREE ARE `measured_by: probe`, AND ON THIS FILE'S OWN ARGUMENT THAT IS THE
+  # WEAKER KIND OF EVIDENCE. Nothing has ever been submitted to the gpu-4xt4 or gpu-8xt4
+  # queues, so what is known about them is that a probe asked for one instance and got it.
+  # That is the direction of probe answer worth trusting: the account held the machine, and
+  # no queue is going to discover otherwise. What it does not say is what either shape does
+  # under demand, so the sentence above about work that cannot queue rests on a launch rather
+  # than on a queue, and gpu-1xt4 below is the only T4 size a queue has measured.
   - profile: gpu-1xt4
     places: reliably
+    measured_by: queue
   - profile: gpu-4xt4
     places: reliably
+    measured_by: probe
   - profile: gpu-8xt4
     places: reliably
+    measured_by: probe
   - profile: gpu-1xa10g
     places: reliably
+    measured_by: queue
   # THE ONE ENTRY WHERE THE ANSWER IS TRUE AND USELESS, AND SAYING SO IS THE POINT. g5.2xlarge
   # is an ordinary G-pool size and EC2 sells it; nothing about capacity is what stops this
   # profile running. It is SageMaker training, which has no Batch queue to place into, and
   # `provisioned: false` in config/workload-catalog.yaml is the field that records that. Two
   # facts, two files, and folding them together here would make "does not place" mean two
   # different things and put a fifth name on a list the submission path describes as four.
+  #
+  # `measured_by: probe` HERE MEANS SOMETHING IT MEANS NOWHERE ELSE IN THIS FILE. Every other
+  # probe-only entry has a Batch queue nobody has used yet. This one has no queue at all and
+  # never will while it is SageMaker training, so a probe is not the weaker of two available
+  # instruments, it is the only instrument there is.
   - profile: gpu-1xa10g-sagemaker
     places: reliably
+    measured_by: probe
   # THE SUBSTITUTION THIS FILE WAS WRITTEN AROUND, AND IT POINTED AT A SHAPE THAT DOES NOT
   # PLACE. The note here read: "g6.12xlarge is the same four-card 96 GB machine at $4.602
   # against $5.672, drawing on a pool that is not contended the same way, so the offer costs
@@ -135,27 +231,68 @@ profiles:
   # to make and not the platform's to make quietly on their behalf.
   #
   # AND THE OFFER IS UNNECESSARY NOW, BECAUSE THIS SHAPE IS THE CLEANEST CASE OF THE INSTANT
-  # PROBE READING A QUEUE AS A WALL. The autoscaling group logged 1,499 refusals at a median
-  # of 0.119 seconds apart, which is what the probe caught one instance of on 2026-08-04, and
-  # nine g5.12xlarge came out of them between 2026-08-01 and 2026-08-05. Not one job on this
-  # queue has failed to start.
+  # PROBE READING A QUEUE AS A WALL. The autoscaling group logged 1,578 refusals at a median
+  # of 0.121 seconds apart, which is what the probe caught one instance of on 2026-08-04, and
+  # nineteen g5.12xlarge came out of them between 2026-08-01 and 2026-08-05. Not one job on
+  # this queue has failed to start.
+  #
+  # THE FIGURES BELOW MOVED WITHIN A DAY OF BEING WRITTEN, WHICH IS THE ARGUMENT IN THE
+  # HEADER RATHER THAN A CORRECTION. They read nine nodes and a median of 11 minutes across
+  # nine runs, all of which was true. Ten more nodes arrived on 2026-08-05 and the median
+  # came down.
   - profile: gpu-4xa10g
     places: after_a_wait
+    measured_by: queue
     wait: >-
-      Nine nodes arrived between 2026-08-01 and 2026-08-05, every one of the nine runs that
-      queued for them started, and they waited a median of 11 minutes from submission to
-      start with a worst observed case of 1.5 hours.
-  # RECORDED AS RELIABLE AND NEVER MEASURED. g5.48xlarge placed once, on 2026-08-03, which is
-  # the whole of the evidence that produced the old answer. It returned
-  # InsufficientInstanceCapacity in all five zones on 2026-08-04.
+      Nineteen nodes arrived between 2026-08-01 and 2026-08-05, every one of the eleven runs
+      that queued for them started, and they waited a median of 7 minutes from submission to
+      start with a worst observed case of 1.5 hours. None was ever cancelled for want of
+      capacity.
+  # RECORDED AS RELIABLE, THEN AS UNRELIABLE, AND NEVER ONCE MEASURED AGAINST THE QUEUE. The
+  # first answer came from g5.48xlarge placing once on 2026-08-03, which is no evidence at
+  # all; the second came from InsufficientInstanceCapacity in all five zones on 2026-08-04,
+  # which is the instant probe answering the wrong question. Both were written while the
+  # autoscaling group was doing the only measurement that counts.
+  #
+  # WHAT IT SAYS IS THAT THIS IS THE SECOND-FASTEST MULTI-CARD SHAPE ON THE LIST. Six nodes
+  # between 2026-08-03 and 2026-08-05, seven runs queued and seven started, a median of nine
+  # minutes, and nothing ever cancelled for want of capacity. Three of those nodes were alive
+  # together in us-east-1d at 16:00 UTC on 2026-08-05, two of them launched at 15:57 and
+  # 15:58, while every submission naming the shape was being told it might never place. Two
+  # finished their runs and were torn down within the hour and the third is still up.
+  #
+  # THE WORST CASE IS TWENTY TIMES THE MEDIAN AND IT IS NOT SCARCITY. One run waited 200
+  # minutes, on 2026-08-05, in the window where the group logged 871 VcpuLimitExceeded
+  # refusals against the 768-vCPU G bucket. Four g5.48xlarge is 768 vCPUs, so this shape
+  # reaches the account's own ceiling at four concurrent nodes and then queues behind itself.
+  # A submitter who reads that wait as EC2 being short will wait for weather to change; what
+  # it needs is a quota increase, which is a person.
   - profile: gpu-8xa10g
-    places: unreliably
+    places: after_a_wait
+    measured_by: queue
+    wait: >-
+      Six nodes arrived between 2026-08-03 and 2026-08-05, all seven runs that queued for
+      them started, and they waited a median of 9 minutes from submission to start with a
+      worst observed case of 3.3 hours. None was ever cancelled for want of capacity.
+  # A NODE ARRIVED AND NO JOB HAS EVER RUN ON IT, WHICH IS WHY THIS STAYS `reliably` WITH NO
+  # WAIT ATTACHED. The one job ever submitted here was refused for
+  # MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT and resubmitted elsewhere, but the autoscaling
+  # group had already produced a g6.xlarge within a minute of it. The shape places; nothing
+  # has yet stayed on it long enough to be a wait.
   - profile: gpu-1xl4
     places: reliably
+    measured_by: queue
+  # NOTHING HAS EVER BEEN SUBMITTED TO EITHER OF THESE QUEUES, so both verdicts are an
+  # instant probe on 2026-08-04 and nothing else. On this file's record that is the kind of
+  # answer that has been wrong eight times, and both are multi-card G shapes, which is the
+  # family every one of those eight corrections came from. Read them as untested rather than
+  # as closed, and the way to test one is to submit to it and wait.
   - profile: gpu-4xl4
     places: unreliably
+    measured_by: probe
   - profile: gpu-8xl4
     places: unreliably
+    measured_by: probe
   # THE WHOLE g6e FAMILY IS DRY TO AN INSTANT PROBE AND ALL THREE SIZES WERE RECORDED AS
   # RELIABLE. That is still the correction that matters most for gpu-8xl40s, which was the
   # substitute this file offered to anybody who could not get an eight-card A100 -- the
@@ -165,28 +302,55 @@ profiles:
   # BY READING THE FAILURES AND NOT THE LAUNCHES. It said that shape had "an autoscaling
   # group with no successful launch in its history and thirty failures in the half hour
   # before this was written, with two jobs waiting behind them". The failures were real and
-  # there are now 5,277 of them at a median of 0.115 seconds apart, which is the same grind
+  # there are now 5,301 of them at a median of 0.115 seconds apart, which is the same grind
   # the A100 environment does. Six g6e.12xlarge came out of it, the most recent at 00:07 on
-  # 2026-08-05, and the job that had been queued behind it started twenty-one minutes later
-  # and is still running.
+  # 2026-08-05, and the job that had been queued behind it started four minutes later and ran
+  # to completion.
   #
-  # IT IS THE ONLY ONE OF THE THREE `after_a_wait` ENTRIES WHERE ANYBODY HAS GIVEN UP, AND
+  # IT IS THE ONLY ONE OF THE FIVE `after_a_wait` ENTRIES WHERE ANYBODY HAS GIVEN UP, AND
   # THAT BELONGS IN THE WAIT RATHER THAN IN A DIFFERENT VERDICT. Two runs were cancelled by
   # hand while stuck in RUNNABLE, one of them at a hundred minutes, both with a note from the
   # submitter saying the g6e.12xlarge capacity was not there. A submitter who is told the
   # median, the worst case and that two people stopped waiting can decide for themselves; one
   # told the shape may not place has been told something false and cannot.
+  #
+  # AND IT WAS WRONG ABOUT gpu-1xl40s IN THE OTHER DIRECTION, WHICH THE SENTENCE ABOUT THE
+  # WHOLE FAMILY IS WHAT PRODUCED. g6e.xlarge is a g6e, the family was dry to the probe, and
+  # the entry was written from the family rather than from this shape. The queue got two
+  # g6e.xlarge on 2026-08-03, fifteen minutes apart, against a single
+  # InsufficientInstanceCapacity refusal. One card of L40S is a different pool from four of
+  # them and it behaves like one.
+  #
+  # THE ENTRY BELOW QUOTES NO MEDIAN AND THAT IS DELIBERATE. No run submitted through this
+  # platform has ever queued for this shape. The two jobs that did were hand-named traces,
+  # and one median from one of them would be a figure a submitter would plan against and a
+  # measurement that does not exist. `after_a_wait` rather than `reliably` for the same
+  # reason: on evidence this thin the useful thing is to say what was seen and let the reader
+  # weigh it, and `reliably` is the one verdict that prints nothing at all.
   - profile: gpu-1xl40s
-    places: unreliably
+    places: after_a_wait
+    measured_by: queue
+    wait: >-
+      Two nodes arrived on 2026-08-03 and no run submitted through this platform has ever
+      queued for this shape, so there is no median to quote. The one job that did wait on it
+      started 3.9 minutes after it was created, and nothing here has ever been cancelled for
+      want of capacity.
   - profile: gpu-4xl40s
     places: after_a_wait
+    measured_by: queue
     wait: >-
       Six nodes arrived between 2026-08-02 and 2026-08-05, eight of the ten runs that queued
       for them started, and those eight waited a median of 19 minutes from submission to
       start with a worst observed case of 6.4 hours; the other two were cancelled by hand
       while stuck in RUNNABLE, one of them at a hundred minutes.
+  # THE THIRD SHAPE NOBODY HAS EVER ASKED FOR, and the one where that matters most. This was
+  # the substitute this file used to offer anybody who could not get an eight-card A100, so
+  # it is the shape the most traffic was pointed at, and the only thing ever established
+  # about it is that an instant probe was refused in all four zones on one day. Its compute
+  # environment has no autoscaling group, because Batch has never had a reason to make one.
   - profile: gpu-8xl40s
     places: unreliably
+    measured_by: probe
   # NO offer_instead, AND THE ABSENCE IS THE ANSWER RATHER THAN AN OMISSION. What a submitter
   # asking for gpu-1xh100 wants is 80 GB on one device, and nothing else in the catalog holds
   # it: the largest single card here is the 48 GB L40S. This file used to be tempted to name
@@ -194,8 +358,16 @@ profiles:
   # of work asked for an H100, were offered the L40S as "the closest thing available", and it
   # was not. A 24 GB or 48 GB card is a changed recipe, which is a deviation the researcher
   # has to declare and defend rather than a substitution the platform may make for them.
+  #
+  # THIS IS WHAT `unreliably` LOOKS LIKE WHEN A QUEUE MEASURED IT, AND IT IS A DIFFERENT
+  # CLAIM FROM THE THREE PROBE-ONLY ENTRIES ABOVE. The autoscaling group logged 4,060
+  # InsufficientInstanceCapacity refusals between 2026-08-03 and 2026-08-04, a median of
+  # 0.098 seconds apart, and produced no instance at any point. Two runs were cancelled by
+  # the platform for exactly that. The instrument that overturned eight other entries has
+  # been applied here and it agrees.
   - profile: gpu-1xh100
     places: unreliably
+    measured_by: queue
   # THE OFFER HERE WAS gpu-8xl40s AND IT IS WITHDRAWN, WHICH LEAVES THIS SHAPE WITH NOTHING.
   # The reasoning was sound and is worth keeping: "384 GB against 320 GB, on the G pool rather
   # than the P pool, and an admin either way at $30.131 against $21.958. So the offer costs
@@ -211,31 +383,43 @@ profiles:
   #
   # AND WAITING IS NOW THE MEASURED ANSWER RATHER THAN THE FALLBACK. This entry read
   # `unreliably` and the submission path told every submitter the shape may not place. The
-  # autoscaling history says otherwise: twelve nodes between 2026-08-03 and 2026-08-05,
-  # obtained through 4,348 InsufficientInstanceCapacity refusals at a median of 0.121 seconds
-  # apart, and two of those nodes are running jobs as this is written. Not one job on this
+  # autoscaling history says otherwise: fourteen nodes between 2026-08-03 and 2026-08-05,
+  # obtained through 5,024 InsufficientInstanceCapacity refusals at a median of 0.122 seconds
+  # apart, and the fourteenth arrived while this was being written. Not one job on this
   # queue has ever been cancelled by the thirty-minute CAPACITY:INSUFFICIENT_INSTANCE_CAPACITY
   # time limit -- every run that was left queued got a machine. The instant probe that
   # produced the old answer asked whether one was free at that second, and the answer to that
   # was and is no.
   #
   # THE WAIT BELOW COUNTS SUBMITTED RUNS AND NOT EVERY JOB, WHICH IS THE HARDER NUMBER AND
-  # THE RIGHT ONE. Fourteen jobs have started on this queue and the median across all of them
-  # is 61 minutes, but two were ad-hoc probes dispatched onto nodes a submitted run had
-  # already warmed up -- one of them started in two and a half minutes. Counting those would
-  # quote a submitter a wait nobody submitting a run has had.
+  # THE RIGHT ONE. Fifteen jobs have started on this queue and two of them were ad-hoc probes
+  # dispatched onto nodes a submitted run had already warmed up, one starting in two and a
+  # half minutes. On this reading the two medians happen to agree at 61 minutes, which is a
+  # coincidence of where the thirteenth run landed rather than a reason to stop excluding
+  # them: on the previous reading they were 61 and 89, and the number a submitter plans
+  # against has to be a wait somebody submitting a run has actually had.
   #
-  # THE p4de.24xlarge ADDITION IS PART OF WHY. The environment now lists it beside
-  # p4d.24xlarge, which is two more placement pools, and the node running the older of the
-  # two current jobs is a p4de in us-east-1d. Under the old reading that addition changed
-  # nothing because the verdict could not move; under this one it is one of the things the
-  # wait below is measuring.
+  # THE p4de.24xlarge ADDITION IS PART OF WHY. The environment lists it beside p4d.24xlarge,
+  # which is two more placement pools, and one of the two jobs running when the previous
+  # reading was taken was on a p4de in us-east-1d. Under the old reading that addition
+  # changed nothing because the verdict could not move; under this one it is one of the
+  # things the wait below is measuring.
+  #
+  # THE FIGURES BELOW ARE THE SECOND SET AND THE FIRST SET WAS A DAY OLD. It read twelve
+  # nodes and a median of 89 minutes across twelve runs, which was exact when it was written.
+  # A thirteenth run started on 2026-08-05 after 11 minutes and took the median to 61, and two
+  # more nodes arrived. Two further runs were still in RUNNABLE as this was written, at 70 and
+  # 53 minutes, so the next reading moves again. This is the clearest case in the file for the
+  # header's argument that the verdict is worth automating and the median is not: the shape
+  # has been `after_a_wait` throughout and no submitter would have chosen differently at 89
+  # minutes than at 61.
   - profile: gpu-8xa100
     places: after_a_wait
+    measured_by: queue
     wait: >-
-      Twelve nodes arrived between 2026-08-03 and 2026-08-05, and the twelve runs submitted
-      on this shape waited a median of 89 minutes from submission to start, with a worst
-      observed case of 12.6 hours. None was ever cancelled for want of capacity.
+      Fourteen nodes arrived between 2026-08-03 and 2026-08-05, and the thirteen runs
+      submitted on this shape waited a median of 61 minutes from submission to start, with a
+      worst observed case of 12.6 hours. None was ever cancelled for want of capacity.
   # 640 GB has no peer here and the substitute is a protocol rather than a profile. This is
   # the shape the Capacity Block route exists for: prove the work on a smaller node, buy the
   # block for a dated window, size the run to about 70% of it.
@@ -247,5 +431,10 @@ profiles:
   # they are not soon: one p5.48xlarge for 24 hours was offered at $996.67 upfront starting
   # 2026-08-29, and one p4d.24xlarge at $283.20 starting 2026-08-15. So the route works and it
   # is a fortnight of lead time, which is the fact to plan against.
+  #
+  # QUEUE-MEASURED LIKE gpu-1xh100 AND ON MORE EVIDENCE THAN ANY OTHER REFUSAL HERE: 7,654
+  # InsufficientInstanceCapacity refusals between 2026-08-03 and 2026-08-04, a median of
+  # 0.097 seconds apart, across p5.48xlarge and p5en.48xlarge both, and not one instance.
   - profile: gpu-8xh100
     places: unreliably
+    measured_by: queue

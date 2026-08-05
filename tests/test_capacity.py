@@ -29,6 +29,11 @@ CATALOG_PATH = PROJECT_ROOT / "config" / "workload-catalog.yaml"
 
 PLACEMENT_ANSWERS = frozenset({"reliably", "unreliably", "after_a_wait"})
 
+#: The two instruments an entry may name, spelled here rather than imported for the reason
+#: every other constant in this module is: this file is the second opinion on the reader, and
+#: importing its vocabulary would make a renamed value agree with itself.
+MEASUREMENT_INSTRUMENTS = frozenset({"queue", "probe"})
+
 #: What one accelerator of each EC2 family in the catalog is: the device a profile name
 #: spells, and the memory on it in GiB. Keyed by instance family rather than by profile
 #: name, so this is a fact about what EC2 sells rather than a second copy of the catalog,
@@ -98,14 +103,19 @@ def accelerator(profile: ComputeProfile) -> tuple[int, int]:
 #: TEN BECAME SEVEN ON 2026-08-05 AND THE THREE THAT LEFT WENT TO ``SHAPES_THAT_QUEUE``.
 #: ``create-fleet --type instant`` asks whether a pool has one free at this second; the
 #: autoscaling group behind a queued job asks the same pools every tenth of a second until
-#: one is. gpu-8xa100 took twelve nodes out of 4,348 consecutive refusals that way, so the
+#: one is. gpu-8xa100 took fourteen nodes out of 5,024 consecutive refusals that way, so the
 #: probe's answer was right about the instant and wrong about the shape.
+#:
+#: SEVEN BECAME FIVE LATER THE SAME DAY, AND THE TWO THAT LEFT ARE THE REASON THIS SET IS
+#: WORTH CHECKING AGAINST A SECOND COPY AT ALL. The pass above moved the three shapes
+#: somebody had thought to look at. Enumerating all sixteen queues found gpu-8xa10g had
+#: supplied six nodes and started every one of seven runs, and gpu-1xl40s two nodes, while
+#: both sat here being described as unobtainable. What is left is five, and three of those
+#: five are shapes no queue has ever asked for.
 SHAPES_THAT_DO_NOT_PLACE = frozenset(
     {
-        "gpu-8xa10g",
         "gpu-4xl4",
         "gpu-8xl4",
-        "gpu-1xl40s",
         "gpu-8xl40s",
         "gpu-1xh100",
         "gpu-8xh100",
@@ -116,7 +126,29 @@ SHAPES_THAT_DO_NOT_PLACE = frozenset(
 #: here for the reason the set above is: a pool quietly moving between the two verdicts is a
 #: test edit rather than a silent one, and the direction that costs a researcher a day is a
 #: shape sliding back to ``unreliably`` and being described as unobtainable again.
-SHAPES_THAT_QUEUE = frozenset({"gpu-4xa10g", "gpu-4xl40s", "gpu-8xa100"})
+SHAPES_THAT_QUEUE = frozenset(
+    {"gpu-4xa10g", "gpu-8xa10g", "gpu-1xl40s", "gpu-4xl40s", "gpu-8xa100"}
+)
+
+#: THE SHAPES WHOSE VERDICT RESTS ON A SINGLE-INSTANT PROBE AND NOTHING ELSE. Named because
+#: this is the set that has been wrong: every one of the eight corrections this file has
+#: taken was a probe answer a queue later overturned, and these are the entries where no
+#: queue has yet had the chance. Three are shapes nothing has ever been submitted to; two are
+#: T4 sizes where the probe *obtained* the machine, which is the direction of probe answer
+#: that settles the question; and gpu-1xa10g-sagemaker has no Batch queue to measure it.
+#:
+#: A shape leaving this set is a shape somebody finally queued for, and that is a test edit
+#: rather than a silent one for the same reason the two sets above are.
+SHAPES_ONLY_A_PROBE_HAS_ASKED = frozenset(
+    {
+        "gpu-4xt4",
+        "gpu-8xt4",
+        "gpu-1xa10g-sagemaker",
+        "gpu-4xl4",
+        "gpu-8xl4",
+        "gpu-8xl40s",
+    }
+)
 
 
 @pytest.fixture(scope="module")
@@ -149,6 +181,53 @@ def test_the_answers_are_the_three_the_file_declares(entries: list[dict[str, obj
     assert {
         str(entry["profile"]) for entry in entries if entry["places"] == "after_a_wait"
     } == SHAPES_THAT_QUEUE
+
+
+def test_every_entry_says_which_instrument_answered_for_it(
+    entries: list[dict[str, object]],
+) -> None:
+    """Mutation: record a verdict and leave ``measured_by`` off.
+
+    That is the failure this file has already made once, one field over. A shape with no
+    experience attached was written down as placing reliably, and because the default was
+    never stated nobody noticed it was being applied to six entries. An instrument that can
+    be omitted is a second unstated default, and the one it would hide is worse: a reader
+    would have no way to tell a verdict a queue ground out over thirty-seven hours from one
+    an instant probe guessed at in a second.
+
+    The probe-only set is asserted by name rather than counted, because the count is the
+    thing that drifts quietly. A shape somebody finally submits to should move out of it,
+    and that should be a line in a diff.
+    """
+    for entry in entries:
+        profile = str(entry["profile"])
+        assert entry.get("measured_by") in MEASUREMENT_INSTRUMENTS, (
+            f"{profile} does not say which instrument answered for it, so nothing can tell "
+            "whether its verdict was measured or guessed"
+        )
+
+    assert {
+        str(entry["profile"]) for entry in entries if entry["measured_by"] == "probe"
+    } == SHAPES_ONLY_A_PROBE_HAS_ASKED
+
+
+def test_a_wait_is_only_ever_something_a_queue_saw(
+    entries: list[dict[str, object]],
+) -> None:
+    """Mutation: attach a wait to a shape only a probe has asked for.
+
+    ``create-fleet --type instant`` returns in one call. It cannot watch a job sit in
+    ``RUNNABLE``, so a median it produced would be a number with no measurement under it,
+    and a plausible-looking sentence is exactly what a submitter plans a day around. This is
+    the cross-field rule that stops the file inventing one, and it is checked here as well
+    as in ``read_capacity`` because this is the side that can see the shipped entries.
+    """
+    for entry in entries:
+        if entry["places"] == "after_a_wait":
+            assert entry["measured_by"] == "queue", (
+                f"{entry['profile']} records a wait and says a probe measured it, which is "
+                "a wait no instrument here could have observed"
+            )
 
 
 def test_a_shape_that_queues_says_what_the_wait_was_and_no_other_shape_does(
