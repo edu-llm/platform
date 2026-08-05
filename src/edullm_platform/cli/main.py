@@ -53,9 +53,13 @@ words now and the sentence is derived from the roster for the gate in hand.
 from __future__ import annotations
 
 import argparse
+import json
+import shutil
 import sys
 import textwrap
+import time
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from difflib import get_close_matches
@@ -94,6 +98,27 @@ from edullm_platform.cli.intake import (
     issue_body,
     register_repository_form,
     routed_to_ask,
+)
+from edullm_platform.cli.lane import (
+    GPU_AMI_PARAMETER,
+    SESSION_PLUGIN,
+    LaneRequest,
+    WorkingTierSettings,
+    agent_online_argv,
+    assume_lane_argv,
+    credentials_environment,
+    expires_at,
+    find_machine_argv,
+    instance_type_for,
+    lane_refusals,
+    load_working_tier_settings,
+    missing_plugin_refusal,
+    person_from_caller_arn,
+    placement_warning,
+    remote_command_argv,
+    remote_script,
+    run_instances_argv,
+    working_uri,
 )
 from edullm_platform.cli.machine import (
     check_document,
@@ -146,6 +171,7 @@ from edullm_platform.cli.workspace import (
 )
 from edullm_platform.contracts.admission import ApprovalEnvironment
 from edullm_platform.contracts.identity import RUN_ID_REGEX
+from edullm_platform.researcher_lane import load_lane_settings
 
 __all__ = [
     "EXIT_INTERRUPTED",
@@ -254,6 +280,7 @@ BUILT_TODAY: Final = {
     "cancel": "stop a run",
     "add": "teach the platform about a repository, dataset, shape, model or person",
     "ask": "ask for something for yourself, which produces a time-boxed grant",
+    "run": "ship this working tree to a machine and stream the output back",
 }
 
 #: What each built verb does, in the sentence its own ``--help`` opens with.
@@ -302,6 +329,11 @@ WHAT_A_VERB_DOES: Final = {
         "be counted, and carries which edullm and which reviewed configuration it was made "
         "from. It grants nothing by itself. A person answers it."
     ),
+    "run": (
+        "Starts a machine of your own, copies this directory to it through the working tier, "
+        "runs the command you give after a bare -- and streams the output back. Nothing here "
+        "is checked against the registry and nothing is recorded as a run that can be cited."
+    ),
 }
 
 #: The verbs that are settled and unbuilt, with the sentence each prints. Present so the
@@ -320,9 +352,28 @@ WHAT_A_VERB_DOES: Final = {
 #: list and says in the same paragraph that neither spelling runs today, which is the whole
 #: of what this page was missing.
 NOT_BUILT_YET: Final = {
-    "run": "ship this working tree to a machine and stream the output back",
     "shell": "open an editor over SSH on a machine, or a Jupyter notebook on the same one",
 }
+
+#: The verbs that take a command for somebody else's program after a bare ``--``, and are
+#: therefore the ones :func:`_split_at_the_dashes` runs on. Named rather than inferred, because
+#: splitting a verb's arguments away from it is a thing to do deliberately: on any other verb it
+#: would silently discard everything after a ``--`` argparse would have handled itself.
+LANE_VERBS: Final = ("run", "shell")
+
+
+def _split_at_the_dashes(tokens: Sequence[str]) -> tuple[list[str], tuple[str, ...]]:
+    """This binary's arguments, and the researcher's program's, split at the first bare ``--``.
+
+    Only the first, because a second one belongs to whatever is being run. No ``--`` at all
+    means no command, which the verb answers with a sentence rather than by starting a machine
+    for nothing.
+    """
+    tokens = list(tokens)
+    if "--" not in tokens:
+        return tokens, ()
+    at = tokens.index("--")
+    return tokens[:at], tuple(tokens[at + 1 :])
 
 #: The names that were something and are now something else, and what to type instead.
 #:
@@ -520,6 +571,14 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
     ask.add_argument("--run", help="a run this is about, where it is about one")
     _add_json(ask)
 
+    run = verb_parser("run", WHAT_A_VERB_DOES["run"])
+    _add_lane_arguments(run)
+    run.add_argument(
+        "command",
+        nargs="*",
+        help="the command to run, after a bare -- so its own flags reach it",
+    )
+
     built: dict[str, argparse.ArgumentParser] = {
         "check": check,
         "submit": submit,
@@ -528,6 +587,7 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
         "cancel": cancel,
         "add": add,
         "ask": ask,
+        "run": run,
     }
     for verb, plan in NOT_BUILT_YET.items():
         # THE SENTENCE IS THE PLAN'S, READ RATHER THAN REWRITTEN. An unbuilt verb's help
@@ -779,6 +839,61 @@ def _add_submission_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--spec", type=Path, help=f"a spec other than the {SPEC_PATH} above you")
 
 
+def _add_lane_arguments(parser: argparse.ArgumentParser) -> None:
+    """The four things a lane ask needs, and the one that changes how the machine is bought.
+
+    Deliberately not :func:`_add_submission_arguments`. A submission names a dataset, an
+    experiment, a workload profile and a W&B project because a record names them; a lane ask
+    names a machine and a place to put files. Sharing the flag set would be sharing the meaning.
+
+    **NO ``--json`` HERE, WHICH IS A DECISION RATHER THAN AN OMISSION.**
+    ``cli/machine.py``'s own header gives the rule: a document is published where a structure
+    already exists and is invented nowhere else. ``run``'s stdout is the researcher's program's
+    output, streamed, and ``shell``'s is a terminal handed to a child. Neither can carry one
+    document, and a flag that emptied stdout of the one thing the verb is for would be worse
+    than having none. ``tests/test_cli_shell.py`` holds this.
+    """
+    parser.add_argument("--project", required=True, help="what this machine is for")
+    parser.add_argument("--compute", required=True, help="the machine, from the catalog")
+    parser.add_argument("--team", help="the group this is charged to; defaults from the roster")
+    parser.add_argument(
+        "--hours",
+        type=_whole_hours,
+        help="whole hours before the machine may be stopped; the default is the lane's",
+    )
+    parser.add_argument(
+        "--spot",
+        action="store_true",
+        help="buy it on Spot, as a persistent request that stops rather than terminates",
+    )
+
+
+def _whole_hours(text: str) -> int:
+    """``--hours`` on a lane verb, which is a whole number and not the submission's decimal.
+
+    ITS OWN TYPE SO THAT BOTH SPELLINGS OF THE MISTAKE GET ONE ANSWER. ``--hours`` on ``check``
+    is parsed by hand into a ``Decimal``, because a bound that went through binary floating
+    point is not the number the approver reads, and :func:`_unreadable_hours` answers a bad one
+    with a sentence that says fractions are fine. On a lane verb they are not: the lifetime tag
+    is whole hours. Left to a bare ``type=int``, ``--hours 0.5`` would get argparse's line and
+    ``--hours 0`` would get that other sentence recommending exactly what argparse had just
+    refused. Both are argparse's here, so both read the same.
+    """
+    try:
+        hours = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"{text!r} is not a whole number of hours. A lane machine's lifetime is tagged in "
+            "whole hours, so 4 is fine and 4.5 is not."
+        ) from None
+    if hours < 1:
+        raise argparse.ArgumentTypeError(
+            f"{hours} is not a lifetime. A machine has to live at least an hour to be worth "
+            "starting, and the janitor stops it at the end of the one you ask for."
+        )
+    return hours
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -818,6 +933,14 @@ def main(
     if word is not None and word not in BUILT_TODAY and word not in NOT_BUILT_YET:
         print(_no_such_verb(word), end="", file=stderr)
         return EXIT_UNUSABLE
+
+    # BEFORE ARGPARSE RATHER THAN THROUGH ``nargs=REMAINDER``, WHICH GETS THIS BACKWARDS.
+    # REMAINDER starts collecting at the first token it does not recognise, so
+    # `edullm run --project p --compute c --nonesuch x` is not a usage error at all: the typo
+    # and its value become the researcher's command, a machine starts, and `--nonesuch x` runs
+    # on it. Splitting here leaves argparse a head it can be strict about, which is what makes
+    # a misspelled flag on a lane verb the same exit 2 it is on the other seven.
+    tokens, after_the_dashes = _split_at_the_dashes(tokens) if word in LANE_VERBS else (tokens, ())
 
     parser, verb_parsers = build_parser_and_verbs()
     arguments, unknown = parser.parse_known_args(tokens)
@@ -906,6 +1029,9 @@ def main(
             )
         if verb == "ask":
             return _ask(arguments, runner=command_runner, out=stdout, err=stderr)
+        if verb == "run":
+            arguments.command = list(after_the_dashes)
+            return _run(arguments, runner=command_runner, out=stdout, err=stderr, cwd=here)
     except KeyboardInterrupt:
         # CAUGHT BECAUSE IT IS NOT AN ``Exception`` AND SO SLIPPED PAST EVERYTHING BELOW.
         # The handler two blocks down exists so that a researcher never meets a traceback,
@@ -1016,6 +1142,430 @@ def _check(
     else:
         print(render_preflight(preflight, configuration=configuration), end="", file=out)
     return EXIT_REFUSED if preflight.refused else EXIT_OK
+
+
+# ---------------------------------------------------------------------------------------
+# the lane, which run and shell share
+# ---------------------------------------------------------------------------------------
+
+#: The Name tag prefix and the group name ``infra/batch-network.yaml`` gives the platform's VPC.
+#: Read rather than pinned, so a redeploy that moves an id moves the lane with it.
+PLATFORM_NETWORK_NAME: Final = "sbsandbox-intern-edullm-batch"
+
+#: How often the agent is asked whether it has registered. Five seconds against a wait measured
+#: in minutes, which is often enough that the answer arrives promptly and rare enough that the
+#: waiting costs a handful of calls rather than hundreds.
+AGENT_POLL_SECONDS: Final = 5.0
+
+
+@dataclass(frozen=True)
+class _LaneSession:
+    """A lane entered, a machine found or started, and the credential the rest of it uses."""
+
+    request: LaneRequest
+    machine: str
+    expires_at: str
+    environment: dict[str, str]
+
+
+def _lane_session(
+    arguments: argparse.Namespace,
+    configuration: ReviewedConfiguration,
+    *,
+    runner: CommandRunner,
+    err: TextIO,
+) -> _LaneSession | int:
+    """Everything both lane verbs do before they differ, or the exit code that stopped them.
+
+    An exit code rather than an exception, because the three ways this stops are three different
+    codes and a caller that collapsed them would be the thing this binary's exit-code table exists
+    to prevent.
+
+    **NOTHING HERE CALLS ``run_preflight``.** ``tests/test_lane_verdicts.py`` fails if it ever
+    does, and the argument is in ``cli/lane.py``'s header: the refusals that path makes are about
+    a submission that will be recorded, approved and cited, and none of those three happens here.
+    """
+    if shutil.which(SESSION_PLUGIN) is None:
+        print(render_refusals((missing_plugin_refusal(),)), end="", file=err)
+        return EXIT_UNUSABLE
+    identity = runner(("aws", "sts", "get-caller-identity", "--output", "json"))
+    if not identity.ok:
+        print(_no_aws_session(identity.stderr), end="", file=err)
+        return EXIT_UNREACHABLE
+    facts = json.loads(identity.stdout)
+    person = person_from_caller_arn(str(facts["Arn"])) or ""
+    if arguments.team:
+        team: str | None = arguments.team
+        team_refusal: Refusal | None = None
+    else:
+        team, _, team_refusal = resolve_team(
+            configuration,
+            submitter=github_login(runner, allow_network=False),
+            default=read_default_team(),
+        )
+    request = LaneRequest(
+        project=arguments.project or "",
+        team=team or "",
+        person=person,
+        compute_profile=arguments.compute or "",
+    )
+    refusals = (
+        *((team_refusal,) if team_refusal is not None else ()),
+        *lane_refusals(request, configuration=configuration),
+    )
+    if refusals:
+        print(render_refusals(refusals), end="", file=err)
+        return EXIT_REFUSED
+
+    warning = placement_warning(configuration, request.compute_profile)
+    if warning is not None:
+        print("\n".join(_wrapped(warning, indent="")), file=err)
+
+    settings = load_working_tier_settings()
+    hours = arguments.hours or load_lane_settings().default_lifetime_hours
+    assumed = runner(
+        assume_lane_argv(
+            account=str(facts["Account"]),
+            project=request.project,
+            person=request.person,
+            lifetime_hours=hours,
+        )
+    )
+    if not assumed.ok:
+        print(_cannot_enter_the_lane(assumed.stderr), end="", file=err)
+        return EXIT_UNREACHABLE
+    environment = credentials_environment(json.loads(assumed.stdout)["Credentials"])
+
+    found = runner(
+        find_machine_argv(project=request.project, person=request.person), env=environment
+    )
+    existing = [one for one in json.loads(found.stdout or "[]") if one]
+    expiry = expires_at(datetime.now(tz=UTC), hours)
+    if existing:
+        return _LaneSession(
+            request=request, machine=existing[0], expires_at=expiry, environment=environment
+        )
+
+    machine = _start_a_machine(
+        request,
+        configuration=configuration,
+        settings=settings,
+        expiry=expiry,
+        spot=bool(arguments.spot),
+        runner=runner,
+        environment=environment,
+        err=err,
+    )
+    if isinstance(machine, int):
+        return machine
+    return _LaneSession(
+        request=request, machine=machine, expires_at=expiry, environment=environment
+    )
+
+
+def _start_a_machine(
+    request: LaneRequest,
+    *,
+    configuration: ReviewedConfiguration,
+    settings: WorkingTierSettings,
+    expiry: str,
+    spot: bool,
+    runner: CommandRunner,
+    environment: dict[str, str],
+    err: TextIO,
+) -> str | int:
+    """Launch one, and wait until Systems Manager has heard from it.
+
+    The image, the subnet and the security group are all resolved rather than pinned. An AMI id
+    ages out, a subnet id is a fact about a stack somebody may redeploy, and a hard-coded security
+    group is the one that stops having zero ingress rules without anybody noticing.
+    """
+    image = runner(
+        (
+            "aws",
+            "ssm",
+            "get-parameter",
+            "--name",
+            GPU_AMI_PARAMETER,
+            "--query",
+            "Parameter.Value",
+            "--output",
+            "text",
+        ),
+        env=environment,
+    )
+    subnets = runner(
+        (
+            "aws",
+            "ec2",
+            "describe-subnets",
+            "--filters",
+            f"Name=tag:Name,Values={PLATFORM_NETWORK_NAME}-*",
+            "--query",
+            "Subnets[].SubnetId",
+            "--output",
+            "json",
+        ),
+        env=environment,
+    )
+    groups = runner(
+        (
+            "aws",
+            "ec2",
+            "describe-security-groups",
+            "--filters",
+            f"Name=group-name,Values={PLATFORM_NETWORK_NAME}",
+            "--query",
+            "SecurityGroups[].GroupId",
+            "--output",
+            "json",
+        ),
+        env=environment,
+    )
+    subnet_ids = json.loads(subnets.stdout or "[]")
+    group_ids = json.loads(groups.stdout or "[]")
+    if not image.ok or not subnet_ids or not group_ids:
+        print(_no_network_for_the_lane(), end="", file=err)
+        return EXIT_UNREACHABLE
+
+    instance_type = instance_type_for(configuration, request.compute_profile)
+    # Already refused where it is None, and mypy has no way to know that.
+    assert instance_type is not None
+    launched = runner(
+        run_instances_argv(
+            request=request,
+            instance_type=instance_type,
+            image_id=image.text,
+            subnet_id=subnet_ids[0],
+            security_group_id=group_ids[0],
+            expires_at_value=expiry,
+            settings=settings,
+            spot=spot,
+        ),
+        env=environment,
+    )
+    if not launched.ok:
+        print(_launch_refused(launched.stderr), end="", file=err)
+        return EXIT_UNREACHABLE
+    machine = launched.text
+    print(f"starting {machine}, waiting for it to answer", file=err)
+    deadline = time.monotonic() + settings.boot_wait_seconds
+    while time.monotonic() < deadline:
+        ping = runner(agent_online_argv(machine), env=environment)
+        if ping.text == "Online":
+            return machine
+        time.sleep(AGENT_POLL_SECONDS)
+    print(_machine_never_answered(machine, settings), end="", file=err)
+    return EXIT_UNREACHABLE
+
+
+def _no_aws_session(said: str) -> str:
+    """No credential at all, which is the first thing a newcomer hits and is not a refusal."""
+    return "\n".join(
+        [
+            "",
+            *_wrapped(
+                "AWS would not say who you are, so no machine was asked for. The lane needs an "
+                "AWS session the way the recorded path needs gh: log in the way you normally do "
+                f"and run this again. What it said: {said.strip()}",
+                indent="",
+            ),
+            "",
+        ]
+    )
+
+
+def _cannot_enter_the_lane(said: str) -> str:
+    return "\n".join(
+        [
+            "",
+            *_wrapped(
+                "the researcher role would not let this session in, so nothing was started. The "
+                "role is what gives you a machine without an administrator, and entering it "
+                f"needs a session it trusts. What AWS said: {said.strip()}",
+                indent="",
+            ),
+            "",
+        ]
+    )
+
+
+def _no_network_for_the_lane() -> str:
+    return "\n".join(
+        [
+            "",
+            *_wrapped(
+                "the platform's own network could not be found, so there is nowhere to put a "
+                "machine. That is a deploy having not happened rather than anything about what "
+                "you asked for, and nothing is billing.",
+                indent="",
+            ),
+            "",
+        ]
+    )
+
+
+def _launch_refused(said: str) -> str:
+    return "\n".join(
+        [
+            "",
+            *_wrapped(
+                "EC2 would not start the machine, and nothing is billing. What it said: "
+                f"{said.strip()}",
+                indent="",
+            ),
+            "",
+        ]
+    )
+
+
+def _machine_never_answered(machine: str, settings: WorkingTierSettings) -> str:
+    """**THE ONE MESSAGE HERE THAT HAS TO NAME A MACHINE, BECAUSE ONE IS RUNNING.**
+
+    Every other failure above leaves nothing behind. This one has an instance that started and did
+    not register, so it is billing, and a message that did not name it would leave somebody with a
+    charge and no id to look it up by. The expiry still holds, which is the sentence that turns a
+    frightening message into a bounded one.
+    """
+    return "\n".join(
+        [
+            "",
+            *_wrapped(
+                f"{machine} started and has not answered Systems Manager within "
+                f"{settings.boot_wait_seconds} seconds. It is running and it is billing. Its "
+                "expiry tag still holds, so it will be stopped on schedule whatever happens "
+                "next, and edullm run against the same project reaches it if it comes up.",
+                indent="",
+            ),
+            "",
+        ]
+    )
+
+
+# ---------------------------------------------------------------------------------------
+# run
+# ---------------------------------------------------------------------------------------
+
+
+def _run(
+    arguments: argparse.Namespace,
+    *,
+    runner: CommandRunner,
+    out: TextIO,
+    err: TextIO,
+    cwd: Path,
+) -> int:
+    """A machine, this directory on it, and one command's output coming back.
+
+    **NOTHING HERE CALLS ``run_preflight`` AND THAT IS THE POINT OF THE VERB.**
+    ``tests/test_lane_verdicts.py`` fails if it ever does. The refusals that path makes are
+    about a submission that will be recorded, approved and cited, and none of those three happens
+    here.
+    """
+    configuration = _configuration(arguments)
+    if not arguments.command:
+        print(_run_needs_a_command(), end="", file=err)
+        return EXIT_UNUSABLE
+    session = _lane_session(arguments, configuration, runner=runner, err=err)
+    if isinstance(session, int):
+        return session
+
+    uri = working_uri(
+        team=session.request.team,
+        person=session.request.person,
+        project=session.request.project,
+    )
+    print(f"{session.machine} expires {session.expires_at}", file=out)
+    print(
+        "\n".join(
+            _wrapped(
+                f"Your files go to {uri} and survive the machine. Nothing here is recorded as "
+                "citable, and nothing was checked.",
+                indent="",
+            )
+        ),
+        file=out,
+    )
+    print(file=out)
+
+    command = " ".join(arguments.command)
+    runner(
+        ("aws", "s3", "sync", str(cwd), uri, "--exclude", ".git/*", "--only-show-errors"),
+        env=session.environment,
+    )
+    streamed = runner(
+        remote_command_argv(
+            session.machine,
+            command=remote_script(uri=uri, project=session.request.project, command=command),
+        ),
+        env=session.environment,
+    )
+    print(_without_the_sentinel(streamed.stdout), end="", file=out)
+    status = _remote_status(streamed.stdout)
+    if status is None:
+        print(
+            "\n".join(
+                _wrapped(
+                    "the session ended without reporting what the command did, so nothing here "
+                    "judged it. The machine may have been interrupted. edullm run again reaches "
+                    "the same machine while it lives.",
+                    indent="",
+                )
+            ),
+            file=err,
+        )
+        return EXIT_UNREACHABLE
+    if status != 0:
+        print(f"the command exited {status}", file=err)
+        return EXIT_REFUSED
+    return EXIT_OK
+
+
+def _without_the_sentinel(streamed: str) -> str:
+    """The remote output as the researcher's program wrote it, minus the wrapper's last line.
+
+    The sentinel is this binary talking to itself. Printing it would put ``edullm-exit:0`` at the
+    bottom of every run's output, which is a thing somebody would eventually grep for, and then
+    it would be a format rather than an implementation detail.
+    """
+    lines = streamed.splitlines(keepends=True)
+    kept = [line for line in lines if not line.startswith("edullm-exit:")]
+    return "".join(kept)
+
+
+def _remote_status(streamed: str) -> int | None:
+    """The remote command's exit status, read off the sentinel the wrapper printed.
+
+    ``start-session`` exits with the plugin's status rather than the remote command's, so this is
+    the only place the verb can learn what happened. Absent means the session ended before the
+    wrapper reached its last line, which is a different fact from a non-zero status and gets a
+    different exit code.
+    """
+    for line in reversed(streamed.splitlines()):
+        if line.startswith("edullm-exit:"):
+            try:
+                return int(line.removeprefix("edullm-exit:").strip())
+            except ValueError:
+                return None
+    return None
+
+
+def _run_needs_a_command() -> str:
+    """Why a machine was not started, for somebody who typed the verb and stopped."""
+    return "\n".join(
+        [
+            "",
+            *_wrapped(
+                "run takes the command after a bare --, so its own flags reach it rather than "
+                "this one. Starting a machine with nothing to run would leave it billing until "
+                "its expiry, and edullm shell is the verb for a machine to sit at.",
+                indent="",
+            ),
+            "",
+            "  edullm run --project mixlaw --compute gpu-1xt4 -- python train.py",
+            "",
+        ]
+    )
 
 
 def _scaffolded_said(written: Path, facts: GitFacts) -> str:
