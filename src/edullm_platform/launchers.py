@@ -66,7 +66,7 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Final
 
-from .errors import SubmissionRefusedError
+from .errors import ProcessPerDeviceError
 from .execution import CONTAINER_SHAPES
 
 __all__ = [
@@ -193,14 +193,14 @@ def require_a_process_for_every_device(
         return
 
     if plan.launcher is None:
-        raise SubmissionRefusedError(
+        raise ProcessPerDeviceError(
             _no_launcher_refusal(
                 command,
                 devices=shape.gpus,
                 compute_profile=compute_profile,
             )
         )
-    raise SubmissionRefusedError(
+    raise ProcessPerDeviceError(
         _rank_count_refusal(
             compute_profile=compute_profile,
             devices=shape.gpus,

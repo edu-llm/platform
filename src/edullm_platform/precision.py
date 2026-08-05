@@ -84,7 +84,7 @@ from typing import Final
 
 from .contracts.base import serialize_decimal
 from .contracts.workload import ComputeProfile, WorkloadCatalog
-from .errors import SubmissionRefusedError
+from .errors import Bfloat16NotInTheHardwareError
 from .launchers import simple_commands
 
 __all__ = [
@@ -243,7 +243,7 @@ def require_bfloat16_only_where_the_hardware_has_it(
     request = bfloat16_request_in(command)
     if request is None:
         return
-    raise SubmissionRefusedError(
+    raise Bfloat16NotInTheHardwareError(
         _refusal(profile=profile, gpu=gpu, request=request, catalog=catalog)
     )
 
