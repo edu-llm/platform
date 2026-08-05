@@ -41,9 +41,12 @@ from edullm_platform.execution import CONTAINER_SHAPES
 from edullm_platform.launchers import (
     LAUNCH_CHECK_WAIVER,
     SHELLS_THAT_READ_A_COMMAND_STRING,
+    TENSOR_PARALLEL_OPTION,
+    TENSOR_PARALLEL_SHORT_FORM,
     corrected_command,
     read_launch_plan,
     require_a_process_for_every_device,
+    require_a_tensor_parallel_flag_vllm_reads,
     waived_launch_check_note,
 )
 
@@ -567,3 +570,67 @@ def test_the_approver_context_carries_the_waiver_when_a_run_uses_one() -> None:
 
 def test_the_approver_context_says_nothing_about_a_run_that_needed_no_waiver() -> None:
     assert LAUNCH_CHECK_WAIVER not in render(compile_payload(olmo_payload()))
+
+
+# --------------------------------------------------------------------------------------
+# A vLLM tensor-parallel server, which is one process legitimately driving N devices
+# --------------------------------------------------------------------------------------
+
+SWEEP = (
+    "olmo-eval",
+    "run",
+    "--harness",
+    "default",
+    "-o",
+    "provider.kind=vllm_server",
+    "-o",
+    f"{TENSOR_PARALLEL_OPTION}=4",
+    "-t",
+    "arc_challenge",
+    "-O",
+    "/tmp/out",
+)
+
+
+def test_a_tensor_parallel_server_reports_the_devices_it_drives() -> None:
+    plan = read_launch_plan(SWEEP)
+    assert plan.processes == 4
+    assert plan.launcher == "olmo-eval run (vLLM tensor-parallel)"
+
+
+def test_a_tensor_parallel_server_is_admitted_on_the_shape_it_matches() -> None:
+    require_a_process_for_every_device(command=SWEEP, compute_profile="gpu-4xl40s")
+
+
+def test_a_tensor_parallel_server_is_still_refused_on_a_shape_it_does_not_match() -> None:
+    # The bug this catches: a carve-out written as "olmo-eval is exempt", which would pass
+    # tensor_parallel_size=4 on an eight-card node and idle four of them at $30 an hour.
+    with pytest.raises(SubmissionRefusedError, match="8 GPUs"):
+        require_a_process_for_every_device(command=SWEEP, compute_profile="gpu-8xh100")
+
+
+def test_an_absent_tensor_parallel_option_is_one_device() -> None:
+    # vLLM's own default is 1, so `olmo-eval run` with no option on a four-card shape is the
+    # original defect with a different program in front of it.
+    command = tuple(word for word in SWEEP if not word.startswith(TENSOR_PARALLEL_OPTION))
+    plan = read_launch_plan(command)
+    assert plan.processes == 1
+    with pytest.raises(SubmissionRefusedError, match="4 GPUs"):
+        require_a_process_for_every_device(command=command, compute_profile="gpu-4xl40s")
+
+
+def test_the_short_form_is_refused_because_the_harness_ignores_it() -> None:
+    command = tuple(
+        f"{TENSOR_PARALLEL_SHORT_FORM}=4" if word == f"{TENSOR_PARALLEL_OPTION}=4" else word
+        for word in SWEEP
+    )
+    with pytest.raises(SubmissionRefusedError, match="silently ignored"):
+        require_a_tensor_parallel_flag_vllm_reads(command)
+
+
+def test_the_long_form_passes_the_spelling_check() -> None:
+    require_a_tensor_parallel_flag_vllm_reads(SWEEP)
+
+
+def test_a_command_naming_neither_form_passes_the_spelling_check() -> None:
+    require_a_tensor_parallel_flag_vllm_reads(("python", "train.py"))

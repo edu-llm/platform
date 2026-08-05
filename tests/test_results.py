@@ -41,7 +41,7 @@ CHECKPOINT_MANIFEST_DIGEST = (
 # still serialize to the same bytes -- a None is written rather than omitted -- so this
 # digest is a new one rather than a preserved one, exactly as it was when ``exit_code``
 # arrived.
-RESULT_MANIFEST_DIGEST = "sha256:f5992720ad1b68ea30e1d2b147563df71ec55a60d5a703fb08589ac6168a2ba2"
+RESULT_MANIFEST_DIGEST = "sha256:aaeaced43f43facee5650642cec3863a171bcdc3f4359b7bf9f43af5f163637d"
 
 OUTSIDE_SANDBOX_PREFIXES = (
     "s3://edullm-checkpoints/runs/olmo/",

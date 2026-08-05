@@ -66,18 +66,21 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Final
 
-from .errors import ProcessPerDeviceError
+from .errors import ProcessPerDeviceError, SubmissionRefusedError
 from .execution import CONTAINER_SHAPES
 
 __all__ = [
     "LAUNCH_CHECK_WAIVER",
     "MAXIMUM_WRAPPER_DEPTH",
     "SHELLS_THAT_READ_A_COMMAND_STRING",
+    "TENSOR_PARALLEL_OPTION",
+    "TENSOR_PARALLEL_SHORT_FORM",
     "LaunchPlan",
     "carries_the_token",
     "corrected_command",
     "read_launch_plan",
     "require_a_process_for_every_device",
+    "require_a_tensor_parallel_flag_vllm_reads",
     "shell_command_string",
     "simple_command_segments",
     "simple_commands",
@@ -132,6 +135,21 @@ _RANK_FLAGS: Final = ("--nproc-per-node", "--nproc_per_node")
 
 #: Values of that flag that resolve to a device count at runtime rather than to a number here.
 _RANKS_DECIDED_AT_RUNTIME: Final = frozenset({"auto", "gpu", "cpu"})
+
+#: How vLLM's tensor-parallel size has to be spelled for olmo-eval to read it.
+#:
+#: ``-o`` binds to the preceding ``--harness`` or ``-t``, and the two accept disjoint key sets,
+#: so this belongs in the harness group. The eval team's own sweep script writes it exactly this
+#: way and their skill records why.
+TENSOR_PARALLEL_OPTION: Final = "provider.kwargs.tensor_parallel_size"
+
+#: The spelling that looks right, is accepted, and does nothing. ``ProviderConfig`` has no such
+#: field and ``ProviderConfig.from_dict`` drops keys it does not know, so a submission written
+#: this way boots one device and is billed for every card on the node.
+TENSOR_PARALLEL_SHORT_FORM: Final = "provider.tensor_parallel_size"
+
+#: The program the eval harness installs as a console script.
+_EVAL_HARNESS_PROGRAM: Final = "olmo-eval"
 
 #: One shell inside another is ordinary -- ``bash -lc 'exec bash -c ...'`` -- and a chain of
 #: them is somebody trying to get past this. Bounded rather than followed indefinitely.
@@ -435,6 +453,15 @@ def _launcher_in(segment: Sequence[str]) -> LaunchPlan | None:
     # `accelerate` on its own configures, tests and estimates; only `launch` starts anything.
     if name == "accelerate" and arguments and arguments[0] == "launch":
         return LaunchPlan(launcher="accelerate launch", processes=None)
+    # A vLLM tensor-parallel server is one process driving N devices on purpose, so the
+    # process count this module compares against the shape is that N rather than one. Placed
+    # beside the launchers rather than carved out of the check, because the rule -- the devices
+    # billed are the devices used -- is the same rule and only the arithmetic differs.
+    if name == _EVAL_HARNESS_PROGRAM and arguments and arguments[0] == "run":
+        return LaunchPlan(
+            launcher="olmo-eval run (vLLM tensor-parallel)",
+            processes=_declared_tensor_parallel(arguments),
+        )
     if _PYTHON.match(name):
         module = _module_argument(arguments)
         if module in _TORCH_LAUNCHER_MODULES:
@@ -471,6 +498,54 @@ def _declared_ranks(arguments: Sequence[str]) -> int | None:
         except ValueError:
             return None
     return 1
+
+
+def _declared_tensor_parallel(arguments: Sequence[str]) -> int | None:
+    """How many devices this eval command told vLLM to use.
+
+    AN ABSENT OPTION IS ONE DEVICE, matching vLLM's own default and matching the reading
+    ``_declared_ranks`` takes of an absent ``--nproc-per-node``. A command that names the
+    harness and names no size drives one card, whatever the node holds.
+
+    Only the long form counts. The short form is read by
+    :func:`require_a_tensor_parallel_flag_vllm_reads`, which refuses it outright rather than
+    letting it be mistaken for a declaration here.
+    """
+    for word in arguments:
+        if word.startswith(f"{TENSOR_PARALLEL_OPTION}="):
+            value = word[len(TENSOR_PARALLEL_OPTION) + 1 :]
+            try:
+                return int(value)
+            except ValueError:
+                return None
+    return 1
+
+
+def require_a_tensor_parallel_flag_vllm_reads(command: Sequence[str]) -> None:
+    """Refuse the spelling the harness accepts and ignores.
+
+    Its own function rather than part of the device-count check, because the two answer
+    different questions and only one of them has a remedy the submitter can act on. The device
+    count asks whether the shape matches the command; this asks whether the command means what
+    it says.
+
+    NO WAIVER, UNLIKE THE DEVICE-COUNT CHECK BESIDE IT. ``LAUNCH_CHECK_WAIVER`` exists because
+    one process on a multi-device node is sometimes deliberate. There is no version of this that
+    is deliberate: the flag is discarded before anything reads it, so waiving the refusal would
+    only record that somebody meant a value the harness never receives.
+    """
+    for word in _every_word(tuple(command)):
+        if not word.startswith(f"{TENSOR_PARALLEL_SHORT_FORM}="):
+            continue
+        value = word[len(TENSOR_PARALLEL_SHORT_FORM) + 1 :]
+        raise SubmissionRefusedError(
+            f"{word!r} is accepted by the harness and then silently ignored: ProviderConfig "
+            "has no tensor_parallel_size field and ProviderConfig.from_dict drops keys it does "
+            "not know, so this run would boot one device and be billed for every card on the "
+            f"node. Write {TENSOR_PARALLEL_OPTION}={value} instead, and keep it in the "
+            "--harness group: -o binds to the preceding --harness or -t and the two take "
+            "disjoint keys."
+        )
 
 
 def carries_the_token(command: Sequence[str], token: str) -> bool:
