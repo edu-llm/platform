@@ -6,9 +6,9 @@ Measuring a model against a task suite. Access, the form, the corpora, the run i
 
 ## Prerequisites
 
-- [ ] Your branch is named `edullm/…` — a merge to `main` builds nothing here, see below
+- [ ] Your branch is named `edullm/…`. A merge to `main` builds nothing here, see below
 - [ ] The build workflow has gone green on your commit
-- [ ] The image has finished its security scan — a few minutes *after* the build goes green
+- [ ] The image has finished its security scan, a few minutes *after* the build goes green
 - [ ] You have the full commit SHA (`git rev-parse HEAD`)
 - [ ] You have chosen a model name and a task to give a `mock` run
 
@@ -18,7 +18,7 @@ Measuring a model against a task suite. Access, the form, the corpora, the run i
 | --- | --- | --- |
 | `mock` provider | Yes | Exercises task loading, scoring and result writing without a model. This is the whole of what the published image does today |
 | `vllm`, `hf`, `olmo_core` providers | No | `.edullm/Dockerfile` leaves torch and vllm out, so the import finds nothing to load. `uv` is on `PATH`, but installing a backend spends your one hour on a download |
-| GPU eval profile | No | What is missing is a backend in the image, not a machine — the GPU shapes are provisioned and waiting |
+| GPU eval profile | No | What is missing is a backend in the image, not a machine. The GPU shapes are provisioned and waiting |
 | S3 | Write to the outputs bucket | The workload role holds `s3:PutObject` under `sbsandbox-intern-edullm-outputs/teams/*/runs/*` and no `s3:GetObject` at all |
 
 ## Building your image
@@ -40,11 +40,11 @@ git rev-parse HEAD                   # the commit you put on the form
 | | |
 | --- | --- |
 | What the build checks | `uv run --frozen --no-group vllm pytest tests/ --ignore=tests/integration/`, this repository's own suite minus the parts needing a GPU |
-| Dockerfile | `.edullm/Dockerfile`, never the root `Dockerfile` — that one is refused as `unregistered_stage_reference` |
+| Dockerfile | `.edullm/Dockerfile`, never the root `Dockerfile`, which is refused as `unregistered_stage_reference` |
 | Base | `nvidia/cuda:12.8.1-runtime-ubuntu24.04`, pinned by digest |
 | Tag and digest | The first twelve characters of the commit, and ECR refuses to overwrite a tag, so one commit is one image. Leave `image_digest` blank and it resolves from your commit |
 
-**A green build is not the last step.** The registry scans every image it accepts, and a submission naming an image whose scan has not finished is refused with `image_scan_findings_unreviewed` — which reads as though your image carries unapproved vulnerabilities, and usually means only that the scan was still running. It takes a few minutes. Wait, then resubmit the same commit.
+**A green build is not the last step.** The registry scans every image it accepts, and a submission naming an image whose scan has not finished is refused with `image_scan_findings_unreviewed`, which reads as though your image carries unapproved vulnerabilities, and usually means only that the scan was still running. It takes a few minutes. Wait, then resubmit the same commit.
 
 ## Workload profiles
 
@@ -52,7 +52,7 @@ git rev-parse HEAD                   # the commit you put on the form
 | --- | --- | --- |
 | `olmo-eval-check` | 1h, 1 attempt, no checkpoint | The only entry this repository has. Deliberately the check rather than the eval, on `olmo-core-check`'s precedent: prove the path before spending a GPU on it |
 
-Pick `cpu-32vcpu` for `compute_profile`, which is c7i.8xlarge at $1.428/hr. The profile stopped being part of this entry's name because the entry never decided it — the form always did — and it is still the right answer here for as long as the image carries no GPU backend. A `mock` provider on eight H100s costs $55 an hour to do the same thing.
+Pick `cpu-32vcpu` for `compute_profile`, which is c7i.8xlarge at $1.428/hr. The profile stopped being part of this entry's name because the entry never decided it and the form always did. It is still the right answer here for as long as the image carries no GPU backend. A `mock` provider on eight H100s costs $55 an hour to do the same thing.
 
 ## Running an evaluation
 

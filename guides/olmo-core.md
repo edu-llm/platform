@@ -8,13 +8,13 @@ Usually nothing. There are three levels and most experiments never leave the fir
 
 | You want to change | You write | Where it goes |
 | --- | --- | --- |
-| Model size, learning rate, batch size, sequence length, step count, seed, corpus | Nothing — flags on the command | The `command` field on the form |
+| Model size, learning rate, batch size, sequence length, step count, seed, corpus | Nothing. Flags on the command | The `command` field on the form |
 | Something flags cannot express: a new callback, a different data mix, a custom evaluation | One Python file on your branch | Anywhere in the repo. Point the command at it |
 | The training library's own behaviour | A pull request against `src/olmo_core/`, with a `CHANGELOG.md` entry | Reviewed like any other change |
 
 **Level one is bigger than it sounds.** `.edullm/train_on_corpus.py` already takes `--model-factory`, `--learning-rate`, `--steps`, `--sequence-length`, `--global-batch-size`, `--rank-microbatch-size`, `--warmup-steps`, `--save-interval` and `--data-seed`, and anything after those is a dot-notation override into the config. A hyperparameter sweep is four submissions with different flags and no new code.
 
-**Level two starts from a copy, not from scratch.** Copy `.edullm/train_on_corpus.py` into your branch and edit it. Every part of OLMo-core is a config dataclass with a `build()` method, so a script assembles configs and calls `build()` on them — you add a callback with `TrainerConfig.with_callback("name", YourCallback())`, and swappable components register themselves under a name with a decorator like `@SequenceMixerConfig.register("my_mixer")`. You almost never have to edit the library to change what a run does.
+**Level two starts from a copy, not from scratch.** Copy `.edullm/train_on_corpus.py` into your branch and edit it. Every part of OLMo-core is a config dataclass with a `build()` method, so a script assembles configs and calls `build()` on them. You add a callback with `TrainerConfig.with_callback("name", YourCallback())`, and swappable components register themselves under a name with a decorator like `@SequenceMixerConfig.register("my_mixer")`. You almost never have to edit the library to change what a run does.
 
 Whatever you write has to take the run name as its first argument, resolve its data from the dataset variables rather than a hard-coded path, and save to `$EDULLM_CHECKPOINT_DIR`.
 
@@ -55,7 +55,7 @@ Rules my script has to satisfy:
   - On a multi-GPU machine, start one process per device with
     python -m torch.distributed.run --nproc-per-node=N --standalone.
 
-Start from .edullm/train_on_corpus.py, not src/examples/llm/train.py — the example
+Start from .edullm/train_on_corpus.py, not src/examples/llm/train.py. The example
 hard-codes a C4 shard and the GPT-2 tokenizer and would ignore the corpus I picked.
 
 OLMo-core composes config dataclasses with .build(). Prefer assembling configs in my
@@ -64,9 +64,9 @@ own script over editing anything under src/olmo_core/.
 
 ## Prerequisites
 
-- [ ] Your branch is named `edullm/…` — this is the one people miss, see below
+- [ ] Your branch is named `edullm/…`. This is the one people miss, see below
 - [ ] The build workflow has gone green on your commit
-- [ ] The image has finished its security scan — a few minutes *after* the build goes green
+- [ ] The image has finished its security scan, a few minutes *after* the build goes green
 - [ ] You have the full commit SHA (`git rev-parse HEAD`)
 - [ ] You have a Weights and Biases project to report into
 
@@ -94,7 +94,7 @@ A branch outside those names fails later, at submission, with `commit <sha> has 
 | | |
 | --- | --- |
 | Before you can submit | The registry scans every published image, which finishes a few minutes after the push. See below |
-| What the build checks | `ruff check .` over your checkout — not your tests |
+| What the build checks | `ruff check .` over your checkout, not your tests |
 | Tag | First twelve characters of the commit. ECR refuses to overwrite a tag, so one commit is one image |
 | Digest | Printed in the build's step summary. Leave `image_digest` blank and it is resolved from your commit |
 | Re-running a build | Resumes onto the existing image rather than failing |
@@ -103,7 +103,7 @@ A branch outside those names fails later, at submission, with `commit <sha> has 
 
 The scan is the short part of the wait. From pushing a commit to having a submittable image is eight to eleven minutes: six to eight of build for a 4.4 to 4.6 GB image, about a minute of gate jobs, then the scan. One measured example, run `30755029486`, started 15:44:27Z, image pushed 15:53:08Z, scan complete 15:54:45Z, 10m18s end to end.
 
-If you submit inside that window the refusal reads `image_scan_findings_unreviewed`, which says your image carries vulnerabilities nobody has signed off. That is usually not what happened — the scan had not finished, and the platform reported the wrong reason. Wait a few minutes and resubmit the same commit; nothing else about the submission needs changing.
+If you submit inside that window the refusal reads `image_scan_findings_unreviewed`, which says your image carries vulnerabilities nobody has signed off. That is usually not what happened. The scan had not finished, and the platform reported the wrong reason. Wait a few minutes and resubmit the same commit; nothing else about the submission needs changing.
 
 ## Workload profiles
 
@@ -184,11 +184,11 @@ bash -lc 'python -m torch.distributed.run --nproc-per-node=4 --standalone .edull
 
 Set `--nproc-per-node` to the device count of the shape you picked. `torchrun`, `accelerate launch`, `deepspeed`, `mpirun` and `srun` all work.
 
-**The dtype override is on that line because of which of the ten rows above you can actually get.** `config/capacity.yaml`, measured on 2026-08-04 by asking EC2 for one instance of each, records `gpu-4xt4` and `gpu-8xt4` as the only multi-card shapes that place — the other eight returned insufficient capacity, which is every A10G, L4, L40S, A100 and H100 row in the table. Both survivors are T4, and **T4 has no bfloat16**; the section below is about that. `.edullm/train_on_corpus.py` builds its data-parallel config in bfloat16, so without the override that command is a bfloat16 run on hardware with no bfloat16 — on every multi-card shape it can currently land on, not just the eight-card one — and it dies after the machine is billed. Writing the dtype on the command rather than leaving it in code is also what lets the check below see it, so a wrong answer here is refused at submission instead of on the device. Single-card work is unaffected: `gpu-1xa10g` and `gpu-1xl4` both place and both have the format, which is why the command at the top of this guide carries no dtype.
+**The dtype override is on that line because of which of the ten rows above you can actually get.** `config/capacity.yaml`, measured on 2026-08-04 by asking EC2 for one instance of each, records `gpu-4xt4` and `gpu-8xt4` as the only multi-card shapes that place. The other eight returned insufficient capacity, which is every A10G, L4, L40S, A100 and H100 row in the table. Both survivors are T4, and **T4 has no bfloat16**; the section below is about that. `.edullm/train_on_corpus.py` builds its data-parallel config in bfloat16, so without the override that command is a bfloat16 run on hardware with no bfloat16, and it dies after the machine is billed. That holds on every multi-card shape it can currently land on, not just the eight-card one. Writing the dtype on the command rather than leaving it in code is also what lets the check below see it, so a wrong answer here is refused at submission instead of on the device. Single-card work is unaffected: `gpu-1xa10g` and `gpu-1xl4` both place and both have the format, which is why the command at the top of this guide carries no dtype.
 
-Leaving the launcher out used to be free and silent: the run trained on one device, billed for four, and exited zero — $136 for a quarter of the work over twenty-four hours. It is now refused at submission, and the refusal prints the corrected command. The same check catches too few ranks, too many ranks, and `torchrun` with no `--nproc-per-node` at all.
+Leaving the launcher out used to be free and silent: the run trained on one device, billed for four, and exited zero. That is $136 for a quarter of the work over twenty-four hours. It is now refused at submission, and the refusal prints the corrected command. The same check catches too few ranks, too many ranks, and `torchrun` with no `--nproc-per-node` at all.
 
-**To run one process on a multi-GPU machine deliberately** — a benchmark, a memory profile — waive the check. `olmo-core-train` also declares a checkpoint contract, so a benchmark under it is waiving both, which is why two tokens appear. Each is recorded on the manifest and shown to the approver:
+**To run one process on a multi-GPU machine deliberately**, for a benchmark or a memory profile, waive the check. `olmo-core-train` also declares a checkpoint contract, so a benchmark under it is waiving both, which is why two tokens appear. Each is recorded on the manifest and shown to the approver:
 
 ```
 bash -lc 'EDULLM_LAUNCH_CHECK=waived EDULLM_CHECKPOINT_CHECK=waived python benchmarks/memory.py --batch 64'
@@ -206,11 +206,11 @@ Keep `--save-folder "$EDULLM_CHECKPOINT_DIR"` on the line even though `train_on_
 | `${EDULLM_CHECKPOINT_DIR}` | Behind a backslash, or after a `#` |
 | `${EDULLM_CHECKPOINT_DIR}/step` | A command with no shell in front of it |
 
-The refusal names which of those it found. The unexpanded forms reach your program as the literal text `$EDULLM_CHECKPOINT_DIR`, and OLMo-core creates a directory by that name rather than failing — which is why they count as absent.
+The refusal names which of those it found. The unexpanded forms reach your program as the literal text `$EDULLM_CHECKPOINT_DIR`, and OLMo-core creates a directory by that name rather than failing, which is why they count as absent.
 
 **This is what the check exists to stop.** A trainer that is not told where to save uses its own default, `/tmp` for the OLMo-core example, on a machine that stops existing. The run trains for a day, writes checkpoints nobody can reach, exits zero, and is recorded as an unqualified success. One run in this account is in that state and nothing is recoverable from it.
 
-**If your run genuinely does not save where the platform looks** — a program that derives its own path, or a throwaway nobody will resume — waive it:
+**If your run genuinely does not save where the platform looks**, because it derives its own path or is a throwaway nobody will resume, waive it:
 
 ```
 bash -lc 'EDULLM_CHECKPOINT_CHECK=waived python .edullm/train_on_corpus.py "$EDULLM_RUN_ID" --dry-run'
@@ -220,7 +220,7 @@ Same convention as the launcher waiver, deliberately the same spelling. What it 
 
 ## The bfloat16 refusal
 
-**The T4 shapes — `gpu-1xt4`, `gpu-4xt4`, `gpu-8xt4` — have no bfloat16.** T4 is a Turing card, which is the one NVIDIA generation with tensor cores and without the format. Every other card in the table above is Ampere, Ada or Hopper and has it.
+**The three T4 shapes have no bfloat16: `gpu-1xt4`, `gpu-4xt4` and `gpu-8xt4`.** T4 is a Turing card, which is the one NVIDIA generation with tensor cores and without the format. Every other card in the table above is Ampere, Ada or Hopper and has it.
 
 This matters more than it reads, because `gpu-4xt4` and `gpu-8xt4` are currently the only multi-card shapes this account can get at all. Scarcity pushes every multi-card run onto exactly the card that cannot do the format multi-card work usually wants, and there is no second shape to move it to.
 
@@ -231,7 +231,7 @@ train_module.dp_config.param_dtype=bfloat16   # refused on gpu-8xt4
 --dtype bfloat16   --torch_dtype bfloat16   --mixed_precision bf16   --bf16
 ```
 
-**It reads your command text and nothing else, and the gap is large enough to state plainly.** `.edullm/train_on_corpus.py` builds its data-parallel config in bfloat16 by default, so the getting-started command at the top of this guide **is a bfloat16 run that carries no bfloat16 token** — and this check will not refuse it on a T4. The same is true of a dtype set in a config file inside the image or read from a shell variable.
+**It reads your command text and nothing else, and the gap is large enough to state plainly.** `.edullm/train_on_corpus.py` builds its data-parallel config in bfloat16 by default, so the getting-started command at the top of this guide **is a bfloat16 run that carries no bfloat16 token**, and this check will not refuse it on a T4. The same is true of a dtype set in a config file inside the image or read from a shell variable.
 
 So treat the refusal as a backstop rather than a guarantee. If you are picking a T4 shape, the question to ask is what your program does, not what your command says:
 
@@ -240,9 +240,9 @@ So treat the refusal as a backstop rather than a guarantee. If you are picking a
 | Passes a bfloat16 flag on the command line | Refused at submission |
 | Runs `train_on_corpus.py` | Accepted here, then refused inside the container in the first seconds at exit 73, before the process group or any GPU work |
 | Sets bfloat16 in code any other way | **Accepted, and it will fail on the device** |
-| Uses fp16 with loss scaling, or fp32 | Fine — this is what a T4 is for |
+| Uses fp16 with loss scaling, or fp32 | Fine. This is what a T4 is for |
 
-**The second row is [OLMo-core#49](https://github.com/edu-llm/OLMo-core/pull/49), which is open and not merged as this is written.** Until it lands, that row reads like the third one. It also will not reach a run of yours on the day it merges: every `edullm/**` branch carries its own copy of `.edullm/train_on_corpus.py` with the dtype written into it, and four of them set bfloat16 again in a separate entrypoint that merging that file would not touch — so the in-container check arrives on your branch when you merge `main` into it, and not before. Putting `train_module.dp_config.param_dtype=float32` on the command line works today, on every branch, and is checked at submission, which is why the multi-GPU section above prints it.
+**The second row is [OLMo-core#49](https://github.com/edu-llm/OLMo-core/pull/49), which is open and not merged as this is written.** Until it lands, that row reads like the third one. It also will not reach a run of yours on the day it merges: every `edullm/**` branch carries its own copy of `.edullm/train_on_corpus.py` with the dtype written into it, and four of them set bfloat16 again in a separate entrypoint that merging that file would not touch. So the in-container check arrives on your branch when you merge `main` into it, and not before. Putting `train_module.dp_config.param_dtype=float32` on the command line works today, on every branch, and is checked at submission, which is why the multi-GPU section above prints it.
 
 There is no waiver. The other two checks have one because the waived run still works; a waived bfloat16 run on a T4 does not.
 
@@ -253,16 +253,16 @@ There is no waiver. The other two checks have one because the waived run still w
 | Setting | Value | Why |
 | --- | --- | --- |
 | `--save-folder` | `"$EDULLM_CHECKPOINT_DIR"` | Defaults to `/tmp`, which is local disk on a machine that stops existing. A twenty-four-hour run writes checkpoints nobody can reach, exits zero, and is **recorded as a success** |
-| `trainer.callbacks.checkpointer.max_checkpoints` | `null` | OLMo-core keeps three and deletes the rest. The prune deletes `.metadata.json` first and the workload role is denied that key by name, so the run dies with `OLMoNetworkError` — at `save_interval=200` that is step 600, about an hour in |
+| `trainer.callbacks.checkpointer.max_checkpoints` | `null` | OLMo-core keeps three and deletes the rest. The prune deletes `.metadata.json` first and the workload role is denied that key by name, so the run dies with `OLMoNetworkError`. At `save_interval=200` that is step 600, about an hour in |
 | `trainer.callbacks.checkpointer.ephemeral_save_interval` | `null` | Must be below `save_interval` or OLMo-core refuses the config in the first seconds |
-| `trainer.callbacks.lm_evaluator.enabled` | `false` | Reads a C4 validation shard whose `.csv.gz` index was never published — the URL 404s |
+| `trainer.callbacks.lm_evaluator.enabled` | `false` | Reads a C4 validation shard whose `.csv.gz` index was never published, so the URL 404s |
 | `trainer.callbacks.downstream_evaluator.enabled` | `false` | Scores HellaSwag through `ai2-olmo-eval`, which the training image does not install |
 | `trainer.max_duration` | Set it | Defaults to one epoch, which may be far more or far less than twenty-four hours |
 | `train_module.compile_model` | `false`, if needed | `torch.compile` needs a C compiler. Recent images have one; older commits do not |
 
 Both evaluators fail while the trainer is being built, before the first step, so disabling one sends you back to a crash seconds later with the obvious fix already applied.
 
-Your whole command and environment must fit in 8,192 bytes — Batch's limit. A long program belongs in your repository.
+Your whole command and environment must fit in 8,192 bytes, which is Batch's limit. A long program belongs in your repository.
 
 **The example is not a shortcut.** `src/examples/llm/train.py` has the C4 shard and the GPT-2 tokenizer written into it, so picking `regmix-10b-v1` on the form and running the example gives you a loss curve for a corpus that was never opened. Run it only with everything above applied:
 

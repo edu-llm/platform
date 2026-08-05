@@ -9,9 +9,9 @@ Checking each shard of a staged corpus against the bounds its family declares. A
 ## Prerequisites
 
 - [ ] You have read the two notes above and know whether the grant has been deployed yet
-- [ ] Your branch is named `edullm/…` — a merge to `main` builds nothing here, see below
+- [ ] Your branch is named `edullm/…`. A merge to `main` builds nothing here, see below
 - [ ] The build workflow has gone green on your commit
-- [ ] The image has finished its security scan — a few minutes *after* the build goes green
+- [ ] The image has finished its security scan, a few minutes *after* the build goes green
 - [ ] You have the full commit SHA (`git rev-parse HEAD`)
 
 ## Capabilities
@@ -45,7 +45,7 @@ git rev-parse HEAD                        # the commit you put on the form
 | Dockerfile and base | `.edullm/Dockerfile` on `docker.io/library/python` 3.12.13 pinned by digest, the same base OLMo-core registers. Not `infra/Dockerfile.validator`, whose `ENTRYPOINT` of `python -m edullm_data.validate --promote` would prepend the promoter to whatever you type |
 | Tag and digest | The first twelve characters of the commit, and ECR refuses to overwrite a tag, so one commit is one image. Leave `image_digest` blank and it resolves from your commit |
 
-**A green build is not the last step.** The registry scans every image it accepts, and a submission naming an image whose scan has not finished is refused with `image_scan_findings_unreviewed` — which reads as though your image carries unapproved vulnerabilities, and usually means only that the scan was still running. It takes a few minutes. Wait, then resubmit the same commit.
+**A green build is not the last step.** The registry scans every image it accepts, and a submission naming an image whose scan has not finished is refused with `image_scan_findings_unreviewed`, which reads as though your image carries unapproved vulnerabilities, and usually means only that the scan was still running. It takes a few minutes. Wait, then resubmit the same commit.
 
 ## Workload profiles
 
@@ -53,7 +53,7 @@ git rev-parse HEAD                        # the commit you put on the form
 | --- | --- | --- |
 | `edullm-data-validate` | 1h, 1 attempt, no checkpoint | The only entry this repository has. Reading a corpus holds no state worth resuming |
 
-Pick `cpu-32vcpu` for `compute_profile`, which is c7i.8xlarge at $1.428/hr. Validating a corpus is CPU work over S3 with no accelerator to ask for, and this entry used to say so by naming the profile. It cannot any more, because the form overrode whatever it named, so a GPU shape here is available to you — and unlike everything else in the catalog it does not merely cost more, it does not work. The landing-zone read lives on the CPU workload role alone.
+Pick `cpu-32vcpu` for `compute_profile`, which is c7i.8xlarge at $1.428/hr. Validating a corpus is CPU work over S3 with no accelerator to ask for, and this entry used to say so by naming the profile. It cannot any more, because the form overrode whatever it named, so a GPU shape here is available to you. Unlike everything else in the catalog it does not merely cost more, it does not work. The landing-zone read lives on the CPU workload role alone.
 
 ## Running a validation
 
@@ -66,7 +66,7 @@ There is no `ENTRYPOINT` and no `CMD`, so the script name comes first; `bash -lc
 | Flag | Default | What it does |
 | --- | --- | --- |
 | `--landing-bucket`, `--data-bucket` | `edullm-landing`, `edullm-data` | Where staged datasets are read from, and the sealed library they are checked against and promoted into. Both are the dataset project's own; neither is the platform's output bucket |
-| `--prefix` | omitted | One `<dataset_id>/<version>` — the part of a corpus URI after the bucket, so `pretrain/olmo-127b/v1` names what the form calls `olmo-127b-v1`. Omitted, it discovers what is pending |
+| `--prefix` | omitted | One `<dataset_id>/<version>`, the part of a corpus URI after the bucket, so `pretrain/olmo-127b/v1` names what the form calls `olmo-127b-v1`. Omitted, it discovers what is pending |
 | `--promote`, `--promote-workers` | off, 1 | Copy a passing dataset into the sealed library, on that many threads for the copy and CRC loops |
 | `--now` | none | An ISO-8601 timestamp to stamp markers with |
 
@@ -75,8 +75,8 @@ There is no `ENTRYPOINT` and no `CMD`, so the script name comes first; `bash -lc
 | Setting | Value | Why | Basis |
 | --- | --- | --- | --- |
 | `compute_profile` | `cpu-32vcpu` | The landing-zone read is on the CPU workload role and on no other. A GPU profile fails with `AccessDenied` on the first read rather than merely costing more | configuration |
-| Source-bucket reads | Granted in the template, pending a deploy | `read-the-dataset-airlock` in `infra/iam/batch-roles.yaml` grants `s3:GetObject` and `s3:ListBucket` on both buckets. If the stack has not been deployed you still meet `AccessDenied` — say that on the run rather than concluding your prefix was wrong | configuration |
-| `--prefix` | Set it | With no prefix and nothing pending, the script prints `no pending datasets` and returns zero — a success as far as Batch and the record are concerned. Read the log, not the exit code | configuration |
+| Source-bucket reads | Granted in the template, pending a deploy | `read-the-dataset-airlock` in `infra/iam/batch-roles.yaml` grants `s3:GetObject` and `s3:ListBucket` on both buckets. If the stack has not been deployed you still meet `AccessDenied`. Say that on the run rather than concluding your prefix was wrong | configuration |
+| `--prefix` | Set it | With no prefix and nothing pending, the script prints `no pending datasets` and returns zero, which Batch and the record both read as a success. Read the log, not the exit code | configuration |
 | `--promote` | Leave off | It writes, and this profile's bounds are a read's bounds. At `--promote-workers 1` promotion is roughly two S3 round-trips per object, and `olmo-150b-dolma2-v1` is 6,851 objects | configuration |
 
 ## Output locations
@@ -87,4 +87,4 @@ There is no `ENTRYPOINT` and no `CMD`, so the script name comes first; `bash -lc
 
 ## Support
 
-If you are first through this path, record what you typed and what came back — a failure as carefully as a success. Everything else is in [`the-platform.md`](the-platform.md).
+If you are first through this path, record what you typed and what came back. A failure is worth recording as carefully as a success. Everything else is in [`the-platform.md`](the-platform.md).
