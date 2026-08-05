@@ -32,10 +32,14 @@ And commands that contradict the run you asked for are refused when you submit, 
 
 Open an issue. **@philote-dev reads these.** Include the workflow run link: it carries the run id, and the run id is what every record is filed under.
 
-- [**Access request**](../../issues/new?template=access-request.yml) when you cannot see the Run button, or a submission says you are not on the roster
-- [**Run problem**](../../issues/new?template=run-problem.yml) when a run was refused, failed, or is stuck
-- [**Dataset request**](../../issues/new?template=dataset-request.yml) when you need a corpus that is not on the form
-- [**Platform feedback**](../../issues/new?template=platform-feedback.yml) when something works but gets in your way
+[**Ask for something**](../../issues/new?template=ask.yml) is the one form now, and picking a kind on it is what makes a repeated ask visible as a missing feature rather than as three people needing a favour.
+
+- `access-request` when you cannot see the Run button, or a submission says you are not on the roster
+- `run-problem` when a run was refused, failed, or is stuck
+- `dataset-request` when you need a corpus that is not on the form
+- `feedback` when something works but gets in your way
+
+`edullm ask --kind <kind>` files the same thing from a terminal and attaches which version and which reviewed configuration you were on.
 
 ---
 
