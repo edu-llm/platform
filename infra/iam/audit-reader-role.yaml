@@ -238,7 +238,7 @@ Resources:
               # change set shows what the template being applied says, not what it omits
               # relative to what is live, so nothing warned anyone.
               #
-              # Twenty-one stacks named in full rather than a stack/sbsandbox-intern-edullm-*
+              # Every stack named in full rather than a stack/sbsandbox-intern-edullm-*
               # prefix. A template is the whole configuration of a stack, so this is the
               # widest read in this policy and it is the one worth spelling out: a prefix
               # would silently extend it to whatever a later phase deploys under a matching
@@ -274,6 +274,7 @@ Resources:
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-phase4-gpu/*
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-phase4-gpu-shapes/*
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-dataset-validator-iam/*
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-researcher-iam/*
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-run-canceller-iam/*
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-audit-reader-iam/*
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-phase5-image-resolver-iam/*
@@ -282,7 +283,7 @@ Resources:
               # cloudformation:ListStacks has no resource type at all -- the request names no
               # stack, so there is nothing for a resource ARN to match and a policy that
               # names one denies the call outright. It is granted anyway because it is the
-              # action that stops the check going blind: the twenty-one names above are a
+              # action that stops the check going blind: the names above are a
               # list somebody wrote, so the stack that will not be on it is the one somebody
               # deploys next, and listing the account is how that stack gets reported instead
               # of skipped. Without it the check would silently cover only what it already

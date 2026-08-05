@@ -1581,3 +1581,149 @@ off-platform spend.
 
 `tests/test_run_preview_role.py` pins this record to the role's actual name, so a rename
 cannot leave a note that reads fine and excludes nothing.
+
+## The researcher lane stacks, which belong to no phase
+
+| # | Stack | Template | Roles or resources | Applied from |
+| --- | --- | --- | --- | --- |
+| 1 | `sbsandbox-intern-edullm-researcher-iam` | `infra/iam/researcher-role.yaml` | `edullm-researcher` | laptop |
+| 2 | `sbsandbox-intern-edullm-audit-reader-iam` | `infra/iam/audit-reader-role.yaml` (amended) | one more `cloudformation:GetTemplate` ARN | laptop |
+
+**Not deployed as of 2026-08-05.** The templates are merged and the stacks do not exist;
+`tools/verify_deployed_stacks.py` reports the first as declared and not deployed every night
+until somebody applies it. That is the check working, and it is the honest state to be in
+rather than a row this table omits.
+
+**The role name has no `sbsandbox-intern-edullm-` prefix**, unlike every other role in this
+file, because `docs-frank/reference/system-overview.md` and
+`docs-frank/reference/aws-spend-controls.md` both name it `edullm-researcher` and a person
+types it. Two consequences: the deployer's resource scopes key on the long prefix and therefore
+cannot touch it, which is correct because no pipeline may; and the boundary's
+`DenyTamperingWithInternRoles` matches `role/Intern-*` and does not cover it either.
+
+**The boundary permits the unprefixed name, simulated 2026-08-05 before spending a deploy on
+finding out.** `iam:CreateRole`, `iam:PutRolePolicy`, `iam:TagRole` and `iam:DeleteRole` on
+`role/edullm-researcher` all answer `allowed` for `Intern-frank.gonzalez-sbsandbox`. The
+enumerated denies carry no name-prefix restriction, and this is that expectation measured.
+
+**The simulation has to carry `iam:PermissionsBoundary` in the request context or it answers
+the wrong question.** Without that context entry `iam:CreateRole` comes back `explicitDeny`,
+and the deny is about the boundary being absent from the request rather than about the name —
+the same rule that makes a template omitting `PermissionsBoundary` fail rather than create a
+weaker role. A simulation run without it sends the reader to the boundary owner for a grant
+they already have. The negative control is worth keeping: substituting any other policy ARN for
+the boundary returns `explicitDeny`, so the check can still fail.
+
+**Its trust policy cannot be simulated and has to be proved by a second person.**
+`simulate-custom-policy` does not evaluate trust policies at all, so the `ArnLike` on
+`aws:PrincipalArn`, the `aws:RequestTag` conditions, `sts:SetSourceIdentity` on a chained call
+and role chaining from a web-identity session are all unproven by the roughly hundred and
+twenty simulations behind the permission policy. Whoever created the role would still pass a
+self-assumption test against a trust policy that accidentally granted only its creator.
+`docs-frank/reference/aws-spend-controls.md`, "The live test plan", step 3 is the one that
+cannot be skipped.
+
+### Applying them
+
+Both from a clean `main` at its tip, per *Which tree you deploy from* above.
+
+```bash
+git fetch origin main
+git status --porcelain          # must print nothing
+git rev-parse HEAD origin/main  # must print the same commit twice
+
+# Before spending a deploy on finding out whether the unprefixed name is permitted. The
+# --context-entries line is not optional: without it CreateRole answers explicitDeny about a
+# missing boundary rather than about the name. Answered `allowed` on all three, 2026-08-05.
+account="$(aws sts get-caller-identity --profile sbsandbox --region us-east-1 --query Account --output text)"
+aws iam simulate-principal-policy \
+  --policy-source-arn "arn:aws:iam::${account}:role/Intern-frank.gonzalez-sbsandbox" \
+  --action-names iam:CreateRole iam:PutRolePolicy iam:TagRole \
+  --resource-arns "arn:aws:iam::${account}:role/edullm-researcher" \
+  --context-entries "ContextKeyName=iam:PermissionsBoundary,ContextKeyType=string,ContextKeyValues=arn:aws:iam::${account}:policy/InternSandboxBoundary" \
+  --profile sbsandbox --region us-east-1 \
+  --query 'EvaluationResults[].{Action:EvalActionName,Decision:EvalDecision}'
+
+aws cloudformation deploy \
+  --stack-name sbsandbox-intern-edullm-researcher-iam \
+  --template-file infra/iam/researcher-role.yaml \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --no-fail-on-empty-changeset \
+  --profile sbsandbox --region us-east-1
+
+aws cloudformation deploy \
+  --stack-name sbsandbox-intern-edullm-audit-reader-iam \
+  --template-file infra/iam/audit-reader-role.yaml \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --no-fail-on-empty-changeset \
+  --profile sbsandbox --region us-east-1
+```
+
+Then read the role back. `PermissionsBoundary` must be `InternSandboxBoundary`, `PolicyNames`
+must be exactly `["lane"]`, and `AttachedPolicies` must be empty — this template attaches no
+managed policy, so anything listed there was added outside CloudFormation.
+
+```bash
+aws iam get-role --role-name edullm-researcher --profile sbsandbox --region us-east-1
+aws iam list-role-policies --role-name edullm-researcher --profile sbsandbox --region us-east-1
+aws iam list-attached-role-policies --role-name edullm-researcher --profile sbsandbox --region us-east-1
+```
+
+### Capturing it, so something compares the account to the tree
+
+`tests/test_researcher_role_template.py` reads the template, which is a claim about what the
+account will be asked for rather than a description of what it holds, and it stays green
+against a role nobody deployed. The capture is the half that closes that distance, and it uses
+the machinery Phase 1, Phase 2, Phase 3 and the dataset validator already use.
+
+The capture tool refuses any `--output-dir` outside `docs-frank/working/phase-3-evidence`, and
+that directory is local-only, so the capture is taken there, read, and copied in — the sequence
+*Verifying after each deploy* above describes. It takes no `--environment`.
+
+```bash
+mkdir -p docs-frank/working/phase-3-evidence
+uv run --frozen python tools/capture_phase3_evidence.py \
+  --aws-profile sbsandbox \
+  --home-region us-east-1 \
+  --target researcher-role \
+  --output-dir docs-frank/working/phase-3-evidence
+
+mkdir -p fixtures/evidence/researcher-lane/roles
+cp docs-frank/working/phase-3-evidence/edullm-researcher.sanitized.json \
+   fixtures/evidence/researcher-lane/roles/
+```
+
+Run before the stack is applied it prints `aws_call_failed:iam:get-role`, which is the target
+wired up correctly against a role that does not exist yet. That was the state on 2026-08-05.
+
+The tool prints `"verdict": "ok"` and `"drift_findings": 0` when the account and the template
+agree. A non-zero finding count on a first deploy means one of the two is wrong and the repair
+is fixing whichever, not recording an amendment: an amendment is for a change that has merged
+and not deployed.
+
+`tests/test_researcher_deployed_role.py` is what reads that capture, and it is deliberately not
+in the tree until the capture is. A test that skipped when its evidence was missing would be
+green on an account holding nothing, which is the shape of check this repository has removed
+six times.
+
+### Proving the trust policy, which needs a second person
+
+`simulate-custom-policy` cannot evaluate a trust policy at all, so nothing above says whether
+the `ArnLike`, the two `aws:RequestTag` presence tests or `sts:SetSourceIdentity` work. Whoever
+created the role would pass a self-assumption test against a trust policy that accidentally
+granted only its creator, so this is run by a roster member who holds an `Intern-*` role and is
+not the person who applied the stack. The list is in `docs-frank/reference/who-has-what.md`.
+
+```bash
+aws sts assume-role \
+  --role-arn "arn:aws:iam::$(aws sts get-caller-identity --query Account --output text):role/edullm-researcher" \
+  --role-session-name lane-trust-check \
+  --source-identity "$(aws sts get-caller-identity --query Arn --output text | sed 's#.*/##; s#^broker-##; s#-[0-9]*$##')" \
+  --tags Key=project,Value=trust-check Key=lifetime,Value=1 \
+  --duration-seconds 900 \
+  --query 'AssumedRoleUser.Arn' --output text
+```
+
+Expected: an assumed-role ARN. Then the two negative controls, which are the half that makes
+the first mean something — the same call with `--tags` omitted, and again with
+`--source-identity` omitted. Both must return `AccessDenied`. Record all three outcomes here.

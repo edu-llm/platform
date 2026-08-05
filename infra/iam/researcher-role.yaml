@@ -1,0 +1,428 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: The bounded role a researcher assumes to reach AWS directly, declaring a project, a lifetime and who they are.
+
+# WHY THIS ROLE EXISTS, AND IT IS NOT THE OBVIOUS REASON. Nineteen of the thirty-five people on
+# the roster already hold an account-wide administrator role and lose nothing by not assuming
+# this one; for them it improves the resolution of what is seen. The other sixteen hold no AWS
+# role at all, and docs-frank/reference/system-overview.md observes in "Where everything is
+# seen" that they can produce no mismatch at all -- the monitoring covers exactly the
+# population for whom the recorded path is a choice. This role is what moves those sixteen from
+# invisible to bounded and visible, and every deny below binds them where it merely advises the
+# nineteen.
+#
+# THE SPECIFICATION IS ELSEWHERE AND THIS TEMPLATE DOES NOT RESTATE IT.
+# docs-frank/reference/system-overview.md, "How money gets spent, and what stops a mistake",
+# draws the properties. docs-frank/reference/aws-spend-controls.md, "The permission policy",
+# is the document these statements were simulated against -- roughly a hundred and twenty
+# simulations, with the one result worth carrying here being that boundary v5 alone answers
+# `allowed` for ec2:PurchaseCapacityBlock and boundary v5 plus this policy answers
+# `explicitDeny`. A permissions boundary is a ceiling and not a floor, so a role's own policy
+# may deny what the boundary permits, which is the whole reason this is buildable without the
+# boundary owner.
+#
+# THE NAME HAS NO sbsandbox-intern-edullm- PREFIX and that is deliberate. Both reference
+# documents name it edullm-researcher, and a person types this name. Two consequences: the
+# deployer role's resource scopes key on the long prefix and so cannot touch this role, which
+# is correct because no pipeline may; and InternSandboxBoundary's DenyTamperingWithInternRoles
+# matches role/Intern-* and so does not cover it either.
+#
+# WHAT THIS ROLE DOES NOT DO, stated because the obvious reading is wrong. It is a paved road
+# and not a guardrail: it prevents nothing for anyone who does not assume it, and
+# aws-spend-controls.md, "What the lane does not cover", verified live that the exact shape
+# behind this account's largest charge is one command away from a raw Intern role right now.
+# Only a boundary deny conditioned on aws:PrincipalArn binds, and that needs the boundary
+# owner; decisions.md, "The airlock is a latch", records that ask being assembled.
+#
+# ALL SEVEN PROPERTIES ARE HERE, AND THE SEVENTH IS WRITTEN AHEAD OF WHAT IT NAMES.
+# system-overview.md draws seven and the seventh is the write into
+# edullm-work/<team>/<person>/, the working tier the exploration route defaults its output to.
+# The bucket does not exist yet -- it is absent from list-buckets -- and the grant is written
+# now anyway. docs-frank/superpowers/specs/2026-08-04-platform-buildout-design.md, under "The
+# exploration route is a slice, not a non-goal", names the bucket and this statement as two of
+# the three things that slice consists of, and that slice creates the bucket and assumes this
+# role without amending it. A grant that waited for the bucket would put a second hand-applied
+# IAM deploy inside that work, and a laptop with an SSO session is the scarcest step here.
+#
+# THE SEVENTH STATEMENT BINDS BEFORE THE THING IT NAMES EXISTS, WHICH NONE OF THE OTHERS DO.
+# It is a Deny with NotResource, so it refuses every object write this role makes anywhere that
+# the list does not except. From the day the role is created that means the landing zone, the
+# outputs prefix, and nothing else, with the working tier joining the list the day it is built.
+# That is deliberate and it is the whole reasoning below the statement.
+#
+# APPLIED BY HAND. infra/README.md, "Why IAM is laptop-only", is the argument. The stack name
+# is sbsandbox-intern-edullm-researcher-iam; it is recorded in that file's stack table and in
+# tools/verify_deployed_stacks.py, and a second name would produce a second stack that fails on
+# the role name already existing.
+
+Resources:
+  ResearcherRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: edullm-researcher
+      PermissionsBoundary:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/InternSandboxBoundary
+      # One hour, which costs nothing: a chained session is capped at one hour whatever this
+      # says, Intern-* roles already carry 3600, and researchers re-authenticate hourly today.
+      # aws-spend-controls.md, "Role chaining", records the one real hazard -- a long s3 sync
+      # outliving its credentials -- and that credential_process is the answer to it.
+      MaxSessionDuration: 3600
+      # FOUR THINGS IN THIS TRUST POLICY ARE LOAD-BEARING AND NONE IS OBVIOUS.
+      #
+      # Principal cannot hold a wildcard ARN, so the delegation goes to account root and the
+      # restriction moves into ArnLike on aws:PrincipalArn. For an assumed-role session that
+      # key holds the role ARN rather than the assumed-role/.../session ARN, which is why
+      # role/Intern-* is the correct pattern and assumed-role/Intern-* would match nothing.
+      #
+      # sts:SetSourceIdentity must be in the Action list. AWS requires it in both the caller's
+      # policy and the target role's trust policy; without it the AssumeRole call fails, and
+      # the failure names neither policy.
+      #
+      # StringLike "?*" is a presence test. ? matches one character and * matches the rest, so
+      # it demands a non-empty value and fails when the key is absent altogether.
+      #
+      # The session tags are deliberately not transitive. Re-entering the lane with an
+      # inherited tag key is a hard AssumeRole failure, re-running the helper is exactly what
+      # people do when something goes wrong, and nothing chains beyond this role.
+      #
+      # WHO THIS ADMITS IS AN OPEN QUESTION AND IT IS THE OWNER'S. role/Intern-* is the only
+      # principal any of the thirty-five can present today: sts:AssumeRole needs a principal
+      # that already exists here, and the account holds no other human-assumable role outside
+      # Identity Center. system-overview.md's "The umbrella" draws the people holding no AWS
+      # role reaching this lane directly, and that arrow has no implementation. Admitting them
+      # needs a second trust statement naming the OIDC provider, and
+      # sts:AssumeRoleWithWebIdentity accepts neither a Tags nor a SourceIdentity request
+      # parameter, so the three presence tests below would have to become claims an identity
+      # provider mints per lane entry. Nothing here is built on the answer either way.
+      #
+      # NOT SIMULATABLE. iam simulate-custom-policy cannot evaluate a trust policy at all, so
+      # none of the four is proved by the simulation work behind the permission policy below.
+      # aws-spend-controls.md, "The live test plan", step 3 is what proves them, and it needs a
+      # second person: whoever created the role would still pass step 2 against a trust policy
+      # that accidentally granted only its creator.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: InternRolesMayEnterTheLane
+            Effect: Allow
+            Principal:
+              AWS:
+                Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:root
+            Action:
+              - sts:AssumeRole
+              - sts:SetSourceIdentity
+              - sts:TagSession
+            Condition:
+              ArnLike:
+                aws:PrincipalArn:
+                  Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/Intern-*
+              StringLike:
+                aws:RequestTag/project: "?*"
+                aws:RequestTag/lifetime: "?*"
+                sts:SourceIdentity: "?*"
+              ForAllValues:StringEquals:
+                aws:TagKeys:
+                  - project
+                  - lifetime
+      # Inline rather than a customer-managed policy, for the reason every role in this
+      # repository carries: InternSandboxBoundary denies iam:CreatePolicyVersion on every
+      # policy ARN, so a managed policy is create-once and the first amendment fails
+      # permanently. infra/README.md, "Why customer-managed policies must never be used here".
+      Policies:
+        - PolicyName: lane
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # The ceiling everything below narrows. The boundary is what caps this in
+              # absolute terms; this statement exists so that the role is usable for ordinary
+              # research work and the interesting content of the policy is the denies.
+              - Sid: AllowResearchWorkingSet
+                Effect: Allow
+                Action: "*"
+                Resource: "*"
+              # PROPERTY ONE: the instance-type allow-list, which is the whole compute catalog.
+              #
+              # EXACT TYPES AND NO WILDCARD, and this is the statement most likely to be
+              # "tidied" into families. aws-spend-controls.md, "Why an allow-list rather than a
+              # deny-list", measured both directions on forty-one types: the family form
+              # reaches shapes nobody reviewed and simultaneously misses p5en, p5e, trn2 and
+              # the .metal-48xl sizes. Exact types fail closed on whatever AWS ships next, and
+              # the cost of failing closed is a researcher filing a one-line request.
+              #
+              # READ OFF config/workload-catalog.yaml AND NEVER TYPED.
+              # tests/test_researcher_role_template.py compares this list against
+              # instance_types_the_catalog_prices in both directions, so promoting a profile
+              # without amending this list is a red test rather than a refused launch.
+              #
+              # It includes g4dn.metal, which is the gpu-8xt4 shape, so no separate bare-metal
+              # statement is needed: an exact allow-list already refuses every other metal
+              # size. aws-spend-controls.md carries one because its list was families.
+              - Sid: DenyInstanceTypesOutsideTheCatalog
+                Effect: Deny
+                Action: ec2:RunInstances
+                Resource: arn:aws:ec2:*:*:instance/*
+                Condition:
+                  StringNotLike:
+                    ec2:InstanceType:
+                      - c7i.8xlarge
+                      - g4dn.12xlarge
+                      - g4dn.metal
+                      - g4dn.xlarge
+                      - g5.12xlarge
+                      - g5.2xlarge
+                      - g5.48xlarge
+                      - g5.xlarge
+                      - g6.12xlarge
+                      - g6.48xlarge
+                      - g6.xlarge
+                      - g6e.12xlarge
+                      - g6e.48xlarge
+                      - g6e.xlarge
+                      - p4d.24xlarge
+                      - p5.48xlarge
+                      - p5.4xlarge
+              # PROPERTY TWO: the Project tag on every launch, matching the session tag.
+              #
+              # The value is the session tag rather than a literal, so what lands on the
+              # machine is the project the person declared when they entered the lane. Nothing
+              # checks that they belong to that project -- aws-spend-controls.md says so under
+              # "What the lane does not cover" -- so this is attribution rather than
+              # authorization, and it is what the janitor filters on.
+              #
+              # SCOPED TO instance/* AND volume/*, WHICH IS FORCED. RunInstances authorizes
+              # against the image, the subnet, the security group, the key pair and the network
+              # interface in the same call, and a deny on any of them fails the whole call. The
+              # first four can never carry a request tag, so this condition at Resource "*"
+              # refuses every launch unconditionally. The volume is included on purpose: seven
+              # of the account's eight volumes carried no Project tag when this was measured.
+              - Sid: RequireProjectTagMatchingTheSessionTag
+                Effect: Deny
+                Action: ec2:RunInstances
+                Resource:
+                  - arn:aws:ec2:*:*:instance/*
+                  - arn:aws:ec2:*:*:volume/*
+                Condition:
+                  StringNotEquals:
+                    aws:RequestTag/Project: "${aws:PrincipalTag/project}"
+              # PROPERTY THREE: an absolute ExpiresAt tag on every instance.
+              #
+              # THIS STATEMENT IS WHAT THE JANITOR RESTS ON ENTIRELY. Without it a launch
+              # through the lane can carry no expiry, and the janitor's tag filter -- which is
+              # what keeps it from stopping another project's machine in a shared account --
+              # would skip that instance for ever. The expiry and the thing that enforces it
+              # ship together for this reason; see the plan's shared done-condition.
+              #
+              # Absolute rather than a duration, and aws-spend-controls.md gives two reasons
+              # under "The helper" worth not rediscovering. A duration has to be joined to
+              # LaunchTime, and LaunchTime is the wrong clock -- a stopped and restarted
+              # instance keeps its original one, so a duration-based janitor kills a restarted
+              # machine immediately. And extension is then one unambiguous write, where a
+              # duration needs the old value read, interpreted and summed.
+              #
+              # The value is unconstrained here. IAM cannot compare a request tag against the
+              # current time, so nothing in a policy can refuse an ExpiresAt in the past or a
+              # year out. The janitor is where that is judged.
+              - Sid: RequireExpiresAtTagOnInstances
+                Effect: Deny
+                Action: ec2:RunInstances
+                Resource: arn:aws:ec2:*:*:instance/*
+                Condition:
+                  # QUOTED, AND THE QUOTES ARE THE STATEMENT. YAML 1.1 resolves a bare `Null`
+                  # to the null scalar, so `Null:` unquoted is a mapping key of null rather
+                  # than the IAM condition operator, and what deploys is a condition block
+                  # naming no operator at all. Every other operator in this file is a word
+                  # YAML has no opinion about; this is the one that has to be spelled as a
+                  # string. The same is true of `Yes`, `No`, `On` and `Off` in a value.
+                  "Null":
+                    aws:RequestTag/ExpiresAt: "true"
+              # PROPERTY FOUR: no stripping a governance tag.
+              #
+              # The StringNotEquals on ec2:CreateAction is what excludes the launch's own
+              # tagging. Drop it and every compliant launch is refused, which reads as the
+              # allow-list being wrong and is not.
+              #
+              # DO-NOT-TERMINATE is on the list and nothing this repository builds reads it. It
+              # is a tag the shared account's other tooling honours, and removing it is a
+              # governance act whether or not we act on it.
+              - Sid: DenyStrippingGovernanceTagsAfterLaunch
+                Effect: Deny
+                Action:
+                  - ec2:CreateTags
+                  - ec2:DeleteTags
+                Resource: "*"
+                Condition:
+                  ForAnyValue:StringEquals:
+                    aws:TagKeys:
+                      - Project
+                      - ExpiresAt
+                      - DO-NOT-TERMINATE
+                  StringNotEquals:
+                    ec2:CreateAction: RunInstances
+              # PROPERTY FIVE: no commitment purchases.
+              #
+              # Strictness on the irreversible half. A commitment purchase is four figures, one
+              # API call, and cannot be undone; an instance is dollars an hour and stops.
+              # InternSandboxBoundary v5 removed ec2:PurchaseCapacityBlock from its own deny on
+              # 2026-07-24 and a $3,567.25 charge followed on 2026-07-25 --
+              # aws-spend-controls.md, "The two regressions", has the timeline. This is the
+              # statement whose simulation is recorded there: boundary alone says allowed,
+              # boundary plus this says explicitDeny.
+              - Sid: DenyCostCommitmentPurchases
+                Effect: Deny
+                Action:
+                  - ec2:PurchaseCapacityBlock
+                  - ec2:PurchaseCapacityBlockExtension
+                  - ec2:PurchaseReservedInstancesOffering
+                  - ec2:PurchaseHostReservation
+                  - ec2:PurchaseScheduledInstances
+                  - ec2:CreateCapacityReservation
+                  - ec2:CreateCapacityReservationBySplitting
+                  - ec2:CreateCapacityReservationFleet
+                  - ec2:ModifyCapacityReservation
+                  - ec2:AllocateHosts
+                  - sagemaker:CreateTrainingPlan
+                  - sagemaker:CreateCluster
+                  - savingsplans:CreateSavingsPlan
+                  - rds:PurchaseReservedDBInstancesOffering
+                  - redshift:PurchaseReservedNodeOffering
+                  - elasticache:PurchaseReservedCacheNodesOffering
+                  - dynamodb:PurchaseReservedCapacityOfferings
+                  - es:PurchaseReservedInstanceOffering
+                  - opensearch:PurchaseReservedInstanceOffering
+                Resource: "*"
+              # PROPERTY SIX: no delete on the sealed bucket or the landing zone.
+              #
+              # The configuration actions are here as well as the deletes, and that is the half
+              # a reader skips. decisions.md, "The airlock is a latch", records that
+              # edullm-data's bucket policy denies no s3:PutBucketPolicy and that
+              # InternSandboxBoundary contains no S3 statement of any kind, so any of the
+              # forty-four administrators can replace the airlock. Whoever assumes this role
+              # cannot, which is the only population where that is true.
+              #
+              # No lifecycle write either, and that one is not about malice. The landing zone's
+              # fourteen-day expiry is a lifecycle rule; a session that can rewrite it can
+              # delete 3.9 TB by editing a configuration, and lifecycle deletion is performed
+              # by the S3 service rather than by a principal, so no deny of any kind stops the
+              # deletion once the rule exists.
+              - Sid: DenyDeletesOnSealedBuckets
+                Effect: Deny
+                Action:
+                  - s3:DeleteObject
+                  - s3:DeleteObjectVersion
+                  - s3:DeleteBucket
+                  - s3:PutBucketPolicy
+                  - s3:PutLifecycleConfiguration
+                  - s3:PutBucketVersioning
+                Resource:
+                  - arn:aws:s3:::edullm-data
+                  - arn:aws:s3:::edullm-data/*
+                  - arn:aws:s3:::edullm-landing
+                  - arn:aws:s3:::edullm-landing/*
+              # PROPERTY SEVEN: writes into the working tier, and only into your own part of it.
+              #
+              # A DENY WITH NotResource, WHICH IS FORCED. The fence is "inside edullm-work but
+              # outside my own segment", and IAM cannot say that as a condition. S3 publishes no
+              # condition key carrying the object key, so there is nothing for a StringNotLike to
+              # test against. A Deny on the bucket with a narrow Allow beside it does not work
+              # either, because an explicit deny beats every allow, so the statement would refuse
+              # the writes it exists to permit. NotResource is what is left, and the IAM guide's
+              # own worked example under "IAM JSON policy elements: NotResource" is this shape.
+              #
+              # WHAT THAT COSTS, SAID HERE RATHER THAN FOUND LATER. NotResource matches every
+              # resource that is not listed, so this statement reaches all of S3 rather than one
+              # bucket, and the list below has to name every location this role may write.
+              # Landing is on it because copying a corpus up is a person's act in
+              # system-overview.md's data flow. The outputs prefix is on it because decisions.md,
+              # "Accepted risks", keeps runs/* human-writable. A bucket this project adds later
+              # and does not add here is a write that fails, and the denial names no bucket.
+              #
+              # A PERSONAL BUCKET IS NOT ON THE LIST AND IT IS THE ONE CHOICE IN THIS STATEMENT.
+              # Four people built buckets of their own because the working tier did not exist,
+              # and system-overview.md, "Where data lives", records the tier as the thing that
+              # makes building one the step nobody has to take. The nineteen who hold an Intern
+              # role keep their buckets by not assuming this role. For the sixteen this role is
+              # the whole of their access, and the working tier is where their files go.
+              #
+              # The sealed bucket is off the list as well, and that is a gain property six does
+              # not deliver. Property six denies deletes and configuration on edullm-data and has
+              # never denied a hand-written object there. system-overview.md says nobody moves
+              # bytes into the sealed bucket by hand, and from here that is enforced rather than
+              # observed.
+              #
+              # ${aws:SourceIdentity} IS AN IAM POLICY VARIABLE AND NOT A TEMPLATE ONE. It is a
+              # plain scalar and not inside an Fn::Sub, exactly as ${aws:PrincipalTag/project} is
+              # above, so CloudFormation passes it through untouched. Wrapping it in Fn::Sub is
+              # the mistake that fails the deploy on an unresolved parameter.
+              #
+              # TWO FUNCTIONS DECIDE WHETHER ANY OF THIS WORKS AND THEY MUST AGREE.
+              # tools/enter_researcher_lane.py's source_identity_from sets the value this
+              # statement matches on, and the exploration route's person_from_caller_arn picks
+              # the prefix a lane writes to. Both derive the person from the same caller ARN. The
+              # day they stop agreeing, every write the lane makes is denied and nothing says why.
+              #
+              # IT IS A FENCE AND NOT AN AUTHENTICATION. aws-spend-controls.md, "What the lane
+              # does not cover", records that nothing stops somebody passing another person's
+              # source identity. What this prevents is one researcher silently overwriting
+              # another's files, which is the failure that actually happens.
+              - Sid: DenyWorkingTierWritesOutsideYourOwnPrefix
+                Effect: Deny
+                Action:
+                  - s3:PutObject
+                  - s3:PutObjectAcl
+                  - s3:PutObjectTagging
+                  - s3:DeleteObject
+                  - s3:DeleteObjectVersion
+                  - s3:AbortMultipartUpload
+                NotResource:
+                  - arn:aws:s3:::edullm-work/*/${aws:SourceIdentity}/*
+                  - arn:aws:s3:::edullm-landing/*
+                  - arn:aws:s3:::sbsandbox-intern-edullm-outputs/*
+              # BEYOND THE OVERVIEW'S SEVEN, and both are in aws-spend-controls.md's policy.
+              #
+              # CreateFleet and the spot-fleet calls launch instances without RunInstances ever
+              # being authorized, so every condition above is simply not evaluated on that
+              # path. Leaving them permitted makes the allow-list optional.
+              #
+              # The autoscaling actions are the same hole through a different door. Note that
+              # Batch already goes around this legitimately -- its ASG launches under the
+              # service-linked role and none of this role's conditions evaluate -- which is
+              # recorded rather than fixed, because the governed path is meant to be able to do
+              # more than the human one.
+              - Sid: DenyIndirectLaunchPathsThatBypassInstanceTypeChecks
+                Effect: Deny
+                Action:
+                  - ec2:CreateFleet
+                  - ec2:RequestSpotFleet
+                  - ec2:RequestSpotInstances
+                  - autoscaling:CreateAutoScalingGroup
+                  - autoscaling:UpdateAutoScalingGroup
+                  - autoscaling:StartInstanceRefresh
+                Resource: "*"
+              # The statement that makes the others mean something. A session able to create a
+              # role and attach a policy to it steps outside every deny above in two calls.
+              - Sid: DenyEscapingTheLaneByMintingNewPrincipals
+                Effect: Deny
+                Action:
+                  - iam:CreateRole
+                  - iam:CreateUser
+                  - iam:CreateAccessKey
+                  - iam:AttachRolePolicy
+                  - iam:AttachUserPolicy
+                  - iam:PutRolePolicy
+                  - iam:PutUserPolicy
+                  - iam:CreatePolicy
+                  - iam:CreatePolicyVersion
+                  - iam:SetDefaultPolicyVersion
+                  - iam:UpdateAssumeRolePolicy
+                  - iam:PutRolePermissionsBoundary
+                  - iam:DeleteRolePermissionsBoundary
+                Resource: "*"
+
+Outputs:
+  RoleName:
+    Value:
+      Ref: ResearcherRole
+  RoleArn:
+    Value:
+      Fn::GetAtt:
+        - ResearcherRole
+        - Arn
