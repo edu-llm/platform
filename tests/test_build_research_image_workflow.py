@@ -41,6 +41,7 @@ DECREDENTIAL_STEP = "Remove the source checkout credentials"
 BASE_GATE_STEP = "Require the registered base image"
 DIGEST_STEP = "Read published digest from the registry"
 DIGEST_SUMMARY_STEP = "Publish the digest where a person can copy it"
+FAILURE_NOTICE_STEP = "Say what failed, where the failure notification lands"
 # Written by whichever of the build step and the resume step ran, read by provenance.
 IMAGE_CREATED_FILE = "image-created.txt"
 JOB_WORKFLOW_REF = f"{PLATFORM_REPOSITORY}/{WORKFLOW_PATH_INPUT}@refs/heads/main"
@@ -1505,6 +1506,10 @@ def test_every_run_step_declares_the_directory_its_tooling_lives_in() -> None:
         "publish:Build and push image": "source",
         "publish:Read published digest from the registry": None,
         f"publish:{DIGEST_SUMMARY_STEP}": None,
+        # The failure notice reads three environment variables and writes one summary. It
+        # opens no file, so a working directory would be a claim that it reads the caller's
+        # tree or the platform's, and it reads neither.
+        f"publish:{FAILURE_NOTICE_STEP}": None,
     }
 
 
@@ -1541,3 +1546,34 @@ def test_job_runtimes_are_bounded() -> None:
     assert _job("verify")["timeout-minutes"] == 30
     assert _job("deny")["timeout-minutes"] == 15
     assert _job("publish")["timeout-minutes"] == 60
+
+
+def test_a_failed_build_writes_a_summary_naming_the_repository_and_the_commit() -> None:
+    """Mutation: delete the step, or drop its `if: failure()`.
+
+    GitHub emails whoever pushed when this run goes red, and that email links to a page
+    whose top is a stack of green ticks and one red cross with no sentence on it. This step
+    is the sentence. Without `if: failure()` it would also run on every green build, which
+    is how a notice stops being read.
+
+    The env assertion is a real one rather than a presence check. The body reads three
+    shell variables and prints nothing useful if any of the three is bound to the wrong
+    expression, and a failure notice naming an empty repository is the notice this step
+    exists to replace.
+    """
+    failure_steps = [
+        candidate for candidate in _job("publish")["steps"] if candidate.get("if") == "failure()"
+    ]
+
+    assert len(failure_steps) == 1, "the publish job should carry exactly one failure notice"
+    notice = failure_steps[0]
+    assert notice["name"] == FAILURE_NOTICE_STEP
+    assert notice["env"] == {
+        "FAILED_REPOSITORY": "${{ inputs.repository }}",
+        "FAILED_COMMIT": "${{ github.sha }}",
+        "FAILED_REF": "${{ github.ref }}",
+    }
+    body = notice["run"]
+    assert "GITHUB_STEP_SUMMARY" in body
+    assert "image_build_failed" in body
+    assert "—" not in body, "the house standard forbids an em dash"
