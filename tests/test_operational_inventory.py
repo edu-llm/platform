@@ -297,7 +297,7 @@ def test_aws_capacity_fails_when_gpu_quota_mapping_incomplete() -> None:
     aws_capacity = inputs.aws_capacity
     assert aws_capacity is not None
     quotas = tuple(
-        quota for quota in aws_capacity.quotas if quota.workload_profile != "gpu-4xa10g"
+        quota for quota in aws_capacity.quotas if quota.compute_profile != "gpu-4xa10g"
     )
     result = evaluate_operational_inventory(
         replace(inputs, aws_capacity=aws_capacity.model_copy(update={"quotas": quotas}))

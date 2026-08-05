@@ -28,7 +28,7 @@ ALLOWED_OUTPUT_SUFFIX = Path("docs-frank/working/phase-0-evidence")
 
 class Ec2QuotaTarget(TypedDict):
     quota_code: str
-    workload_profile: str
+    compute_profile: str
     required_vcpus: int
     instance_type: str
 
@@ -67,7 +67,7 @@ def ec2_quota_targets_from_catalog(catalog: WorkloadCatalog) -> tuple[Ec2QuotaTa
         targets.append(
             {
                 "quota_code": metadata["quota_code"],
-                "workload_profile": profile.name,
+                "compute_profile": profile.name,
                 "required_vcpus": metadata["required_vcpus"],
                 "instance_type": profile.instance_type,
             }
@@ -142,7 +142,7 @@ def build_github_plan_evidence(
 def sanitize_quota_record(
     raw: dict[str, object],
     *,
-    workload_profile: str | None = None,
+    compute_profile: str | None = None,
     required_vcpus: int | None = None,
 ) -> QuotaRecord:
     quota_applied_at_level = raw.get("QuotaAppliedAtLevel")
@@ -166,7 +166,7 @@ def sanitize_quota_record(
             "applied_value": value,
             "unit": normalized_unit,
             "quota_applied_at_level": quota_applied_at_level,
-            "workload_profile": workload_profile,
+            "compute_profile": compute_profile,
             "required_vcpus": required_vcpus,
         }
     )
@@ -202,9 +202,7 @@ def assess_capacity_verdict(
             "Sandbox quota increase required before Phase 1: " + "; ".join(insufficient),
         )
     profile_names = " and ".join(
-        quota.workload_profile
-        for quota in quotas
-        if quota.workload_profile is not None
+        quota.compute_profile for quota in quotas if quota.compute_profile is not None
     )
     return (
         "verified",
@@ -350,7 +348,7 @@ def capture_service_quotas(
         quota_records.append(
             sanitize_quota_record(
                 raw_quota,
-                workload_profile=ec2_target["workload_profile"],
+                compute_profile=ec2_target["compute_profile"],
                 required_vcpus=ec2_target["required_vcpus"],
             )
         )

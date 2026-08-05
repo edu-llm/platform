@@ -219,6 +219,15 @@ def test_a_project_is_not_a_dropdown_so_a_new_one_needs_no_pull_request() -> Non
     The other groupings are dropdowns and should be. Each of them registers something with a
     consequence -- a cost centre, a compute profile, a place images may be pushed. An experiment
     registers nothing, so there is nothing for a reviewer to check.
+
+    ``workload_profile`` LEFT THAT LIST AND FOR THE OPPOSITE REASON TO THIS ONE. It registers
+    plenty -- two bounds and a checkpoint contract -- so a reviewer does read it. What made the
+    dropdown wrong is the second sentence above: a ``choice`` is static text in a file two logins
+    own, while ``config/workload-catalog.yaml`` is owned by the admins and all eight team leads,
+    so the entry could be merged and the option offering it could not. The mechanical answer here
+    turned out to apply there too, one step removed. The reason the two boxes are the same shape
+    is not the same reason, which is why this test stopped asserting over it and
+    ``tests/test_submission_form_options.py`` says why free text is safe for that one.
     """
     inputs = load_workflow(SUBMIT_WORKFLOW_PATH)["on"]["workflow_dispatch"]["inputs"]
 
@@ -228,8 +237,7 @@ def test_a_project_is_not_a_dropdown_so_a_new_one_needs_no_pull_request() -> Non
     # The closed sets, so this fails if experiment is made to look like them or if one of them
     # is quietly opened up.
     assert {
-        inputs[name]["type"]
-        for name in ("repository", "workload_profile", "dataset_release")
+        inputs[name]["type"] for name in ("repository", "dataset_release", "team")
     } == {"choice"}
 
 

@@ -7,12 +7,17 @@ name: Submit a run
 # submission: the failure arrives as an AssumeRole denial that reads like a broken role
 # ARN. Change infra/iam/admission-role.yaml in the same commit or do not change this.
 #
-# The form below is SubmissionInputs field for field. Fifteen properties against a
+# The form below is SubmissionInputs field for field. Fourteen properties against a
 # workflow_dispatch ceiling of twenty-five, so the length is a usability question rather
-# than a platform constraint. Nine are required and six may be left empty. Three of the six
-# take a registered default when they are -- the two bounds from the workload profile and
-# the image digest from whatever the declared commit published -- and the other three are
-# the fan-out triple, which is absent altogether unless all three are given.
+# than a platform constraint. Nine are required and five may be left empty. Three of the
+# five take a registered default when they are -- the two bounds from the workload profile
+# and the image digest from whatever the declared commit published -- and the other two are
+# the fan-out pair, which is absent altogether unless both are given.
+#
+# It read fifteen and six and a fan-out triple, which was true until fanout_parallelism was
+# removed for the reason recorded above that pair. Corrected by counting rather than by
+# reading, which is the only way a number in a comment stays true; the limitations heading
+# further down carries no count at all, for the same reason said at greater length.
 #
 # compute_profile is the ninth required field and was one of seven overrides. It is
 # required because the workload profile stopped declaring a machine, so there is no
@@ -41,46 +46,47 @@ on:
         required: false
         type: string
         default: ""
+      # FREE TEXT, AND THE FIELD BELOW IS A DROPDOWN, WHICH LOOKS INCONSISTENT UNTIL YOU ASK
+      # WHAT EACH LIST WAS PROTECTING.
+      #
+      # This was a `choice` enumerating config/workload-catalog.yaml. The catalog is owned by
+      # the admins and all eight team leads, so a lead can already merge a new entry; this
+      # file is owned by two people, because two IAM trust policies pin its exact filename
+      # with StringEquals. Registering a workload therefore needed both files in one pull
+      # request and the second needed an owner -- for a reason that has nothing to do with
+      # the workload. The catalog was open and the form was closed, and the form is what a
+      # researcher meets.
+      #
+      # WHAT THE DROPDOWN WAS BUYING, WHICH IS LESS THAN THE ONE BELOW BUYS. A name nothing
+      # registers is refused by tools/compile_submission.py in the compile job -- before the
+      # approval gate, before any credential exists, and with the registered names printed
+      # in the refusal. That is the trade this form already makes for commit_sha, command
+      # and wandb_project. Nothing here was ever unexpressible the way an unobtainable
+      # machine is: every workload the catalog carries resolves, and the one whose
+      # repository is unregistered is refused by the same compile job either way.
+      #
+      # WHAT IT WAS COSTING. `edullm-data-validate` shipped in the same pull request as the
+      # registration it made usable, and could not have shipped without an owner on it.
+      # tests/test_submission_form_options.py held this list equal to the catalog in both
+      # directions, so a lead adding an entry made that test red and had nowhere to fix it.
+      #
+      # DO NOT MAKE compute_profile FREE TEXT BY ANALOGY. That list is what made gpu-1xh100
+      # and gpu-8xh100 unexpressible rather than merely refusable on 2026-08-04, and the
+      # note above it says why a refusal would not have been enough. Nothing similar was
+      # ever protected here.
+      #
+      # WHAT WENT WITH THE OPTIONS. Each one carried a comment, and the two that were rules
+      # rather than description are both in config/workload-catalog.yaml at greater length,
+      # beside the entries they are about: olmo-core-train on why a multi-GPU command needs
+      # torch.distributed.run, and open-instruct-scored-rewards-train on why its command has
+      # to expand $EDULLM_CHECKPOINT_DIR. Both are enforced while compiling rather than
+      # described here -- require_a_process_for_every_device and
+      # require_a_save_folder_a_retry_can_find -- so the sentence a submitter needs reaches
+      # them in a refusal either way. The catalog is the only place that enumerates now.
       workload_profile:
-        description: "What kind of run this is. Start with olmo-core-check."
+        description: "Which entry in config/workload-catalog.yaml. Start with olmo-core-check."
         required: true
-        type: choice
-        options:
-          # The dataset validator, and the first entry here that is not OLMo-core. Reads a
-          # published corpus and checks each shard against the bounds its family declares.
-          - edullm-alt-cl-check
-          - edullm-alt-cl-train
-          - edullm-data-validate
-          # One check entry where there were two. It named no machine even before the
-          # catalog stopped letting entries name one, so whether a check runs on a CPU or a
-          # GPU is the compute_profile field below and nothing here.
-          - olmo-core-check
-          # One training entry where there were two, and the one whose command has to be
-          # written to match the machine picked below. Nothing on this platform wraps the
-          # command; whatever is typed is what the container execs. So a run on any
-          # multi-GPU profile needs torch.distributed.run in the text or it is one rank on
-          # one device at the whole machine's price.
-          #
-          # That used to report success, which is what made it worth a comment here rather
-          # than a rule somewhere. It is now refused by
-          # edullm_platform.launchers.require_a_process_for_every_device while compiling,
-          # against the profile the submission names, so the sentence a submitter needs
-          # reaches them in the refusal rather than in a dropdown comment nobody reads. This
-          # stays because a reader deciding whether to offer a sixth workload needs to know
-          # the rule exists.
-          - olmo-core-train
-          # The evaluation harness against its `mock` provider. A check of the path rather
-          # than an eval: the published image leaves torch and vllm out, so no eval here
-          # gains anything from a GPU until one of them is in it.
-          # config/workload-catalog.yaml carries the reason.
-          - olmo-eval-check
-          - open-instruct-scored-rewards-check
-          # The GRPO run itself, and the only entry on this list carrying a checkpoint
-          # contract besides the two train entries above. Picking it obliges the command to
-          # expand $EDULLM_CHECKPOINT_DIR, which for this repository means passing it as
-          # CKPT_ROOT; config/workload-catalog.yaml says why the refusal is what makes the
-          # second attempt worth having.
-          - open-instruct-scored-rewards-train
+        type: string
       # REQUIRED, AND BESIDE THE WORKLOAD BECAUSE THE TWO ARE ONE DECISION MADE TWICE.
       # This was an optional override defaulting to `inherit`, on the belief that the
       # workload profile carried the answer. It did not: the value here won whenever it was

@@ -242,7 +242,7 @@ def service_quotas_payload(**overrides: object) -> dict[str, object]:
                 "applied_value": 768,
                 "unit": "vCPU",
                 "quota_applied_at_level": "ACCOUNT",
-                "workload_profile": "gpu-4xa10g",
+                "compute_profile": "gpu-4xa10g",
                 "required_vcpus": 48,
             },
             {
@@ -252,7 +252,7 @@ def service_quotas_payload(**overrides: object) -> dict[str, object]:
                 "applied_value": 1152,
                 "unit": "vCPU",
                 "quota_applied_at_level": "ACCOUNT",
-                "workload_profile": "cpu-32vcpu",
+                "compute_profile": "cpu-32vcpu",
                 "required_vcpus": 32,
             },
         ],
@@ -670,7 +670,7 @@ def test_service_quotas_rejects_secrets_in_scanned_fields(field: str) -> None:
     )
 
 
-@pytest.mark.parametrize("field", ["quota_code", "quota_name", "workload_profile"])
+@pytest.mark.parametrize("field", ["quota_code", "quota_name", "compute_profile"])
 def test_quota_records_reject_secrets_in_scanned_fields(field: str) -> None:
     payload = service_quotas_payload()
     quotas = list(payload["quotas"])  # type: ignore[arg-type]
@@ -731,7 +731,7 @@ def test_sanitize_quota_record_rejects_default_level_quota() -> None:
         "QuotaAppliedAtLevel": "DEFAULT",
     }
     with pytest.raises(ValueError, match="quota evidence must use account-level applied quotas"):
-        sanitize_quota_record(raw, workload_profile="gpu-4xa10g", required_vcpus=48)
+        sanitize_quota_record(raw, compute_profile="gpu-4xa10g", required_vcpus=48)
 
 
 def test_assess_capacity_verdict_blocked_when_mapping_incomplete() -> None:
@@ -742,7 +742,7 @@ def test_assess_capacity_verdict_blocked_when_mapping_incomplete() -> None:
         ),
     )
     quotas = list(payload["quotas"])  # type: ignore[arg-type]
-    quotas[0]["workload_profile"] = None
+    quotas[0]["compute_profile"] = None
     payload["quotas"] = quotas
     evidence = ServiceQuotasEvidence.model_validate(payload)
     verdict, note = assess_capacity_verdict(evidence.quotas)
@@ -761,7 +761,7 @@ def test_sanitize_quota_record_requires_account_level_applied_quota() -> None:
     }
     record = sanitize_quota_record(
         raw,
-        workload_profile="gpu-4xa10g",
+        compute_profile="gpu-4xa10g",
         required_vcpus=48,
     )
     assert record.quota_code == "L-DB2E81BA"
@@ -793,12 +793,12 @@ def test_assess_capacity_verdict_increase_required_when_gpu_quota_insufficient()
 def test_ec2_quota_targets_derive_from_workload_catalog() -> None:
     catalog = workload_catalog()
     targets = ec2_quota_targets_from_catalog(catalog)
-    profiles = {target["workload_profile"] for target in targets}
+    profiles = {target["compute_profile"] for target in targets}
     assert profiles == {
         profile.name for profile in profiles_requiring_capacity_evidence(catalog)
     }
-    gpu_target = next(target for target in targets if target["workload_profile"] == "gpu-4xa10g")
-    cpu_target = next(target for target in targets if target["workload_profile"] == "cpu-32vcpu")
+    gpu_target = next(target for target in targets if target["compute_profile"] == "gpu-4xa10g")
+    cpu_target = next(target for target in targets if target["compute_profile"] == "cpu-32vcpu")
     assert gpu_target["instance_type"] == "g5.12xlarge"
     assert gpu_target["required_vcpus"] == 48
     assert cpu_target["instance_type"] == "c7i.8xlarge"
@@ -827,7 +827,7 @@ def test_build_service_quotas_evidence_scans_verdict_note(
                         "applied_value": 16,
                         "unit": "vCPU",
                         "quota_applied_at_level": "ACCOUNT",
-                        "workload_profile": "gpu-4xa10g",
+                        "compute_profile": "gpu-4xa10g",
                         "required_vcpus": 48,
                     }
                 )
@@ -867,7 +867,7 @@ def test_build_service_quotas_evidence_revalidates_verdict_fields() -> None:
                     "applied_value": 16,
                     "unit": "vCPU",
                     "quota_applied_at_level": "ACCOUNT",
-                    "workload_profile": "gpu-4xa10g",
+                    "compute_profile": "gpu-4xa10g",
                     "required_vcpus": 48,
                 }
             )

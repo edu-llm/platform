@@ -177,7 +177,15 @@ INSTANCE_EVIDENCE: dict[str, InstanceEvidence] = {
     "c7i.8xlarge": {"required_vcpus": 32, "quota_code": "L-1216C47A"},
 }
 
-WORKLOAD_PROFILE_REQUIRED_VCPUS: Final = {
+#: The vCPU one instance of each compute profile reserves, keyed by the profile name.
+#:
+#: THIS WAS ``WORKLOAD_PROFILE_REQUIRED_VCPUS`` AND EVERY KEY IN IT WAS A MACHINE. The
+#: quota records it backs are per-shape -- ``cpu-32vcpu``, ``gpu-1xt4`` -- and the lookup
+#: below resolves them against ``catalog.compute_profiles``, so a reader who took the old
+#: name at its word went looking in ``workloads:`` and found nothing. Renamed rather than
+#: documented, because a name that has to be explained is a name that will mislead the next
+#: person before they reach the explanation.
+COMPUTE_PROFILE_REQUIRED_VCPUS: Final = {
     "gpu-1xt4": INSTANCE_EVIDENCE["g4dn.xlarge"]["required_vcpus"],
     "gpu-4xt4": INSTANCE_EVIDENCE["g4dn.12xlarge"]["required_vcpus"],
     "gpu-8xt4": INSTANCE_EVIDENCE["g4dn.metal"]["required_vcpus"],
@@ -395,7 +403,15 @@ class QuotaRecord(ContractModel):
     applied_value: float = Field(gt=0)
     unit: SecretFreeStr = Field(min_length=1)
     quota_applied_at_level: QuotaAppliedAtLevel
-    workload_profile: SecretFreeStr | None = Field(default=None, min_length=1)
+    #: Which compute profile this quota was read on behalf of. Spelled
+    #: ``workload_profile`` until 2026-08-05, which was wrong in the way that costs a
+    #: reader an afternoon: it has only ever held a shape from ``compute_profiles:``, and
+    #: ``ec2_quota_coverage_issues`` below compares it against exactly that list. Nothing
+    #: outside this repository stores one -- the capture writes
+    #: ``fixtures/evidence/service-quotas.sanitized.json`` and no lineage record, proof
+    #: bundle or exported schema carries the shape -- so the key was renamed in the one
+    #: document written under the old name rather than aliased for compatibility.
+    compute_profile: SecretFreeStr | None = Field(default=None, min_length=1)
     required_vcpus: int | None = Field(default=None, gt=0)
 
 
@@ -407,24 +423,24 @@ class BatchQuotaRecord(ContractModel):
     quota_applied_at_level: QuotaAppliedAtLevel
 
 
-def authoritative_required_vcpus(workload_profile: str | None) -> int | None:
-    if workload_profile is None:
+def authoritative_required_vcpus(compute_profile: str | None) -> int | None:
+    if compute_profile is None:
         return None
-    return WORKLOAD_PROFILE_REQUIRED_VCPUS.get(workload_profile)
+    return COMPUTE_PROFILE_REQUIRED_VCPUS.get(compute_profile)
 
 
-def required_vcpus_for_workload_profile(
+def required_vcpus_for_compute_profile(
     catalog: WorkloadCatalog,
-    workload_profile: str | None,
+    compute_profile: str | None,
 ) -> int | None:
-    per_instance = authoritative_required_vcpus(workload_profile)
+    per_instance = authoritative_required_vcpus(compute_profile)
     if per_instance is None:
         return None
     profile_by_name = {profile.name: profile for profile in catalog.compute_profiles}
-    compute_profile = profile_by_name.get(workload_profile or "")
-    if compute_profile is None:
+    profile = profile_by_name.get(compute_profile or "")
+    if profile is None:
         return per_instance
-    return per_instance * compute_profile.nodes
+    return per_instance * profile.nodes
 
 
 def quota_capacity_issues(
@@ -436,15 +452,15 @@ def quota_capacity_issues(
     insufficient: list[str] = []
     for quota in quotas:
         if catalog is not None:
-            required_vcpus = required_vcpus_for_workload_profile(catalog, quota.workload_profile)
+            required_vcpus = required_vcpus_for_compute_profile(catalog, quota.compute_profile)
         else:
-            required_vcpus = authoritative_required_vcpus(quota.workload_profile)
-        if quota.workload_profile is None or required_vcpus is None:
+            required_vcpus = authoritative_required_vcpus(quota.compute_profile)
+        if quota.compute_profile is None or required_vcpus is None:
             incomplete = True
             continue
         if quota.applied_value < required_vcpus:
             insufficient.append(
-                f"{quota.workload_profile} requires {required_vcpus} vCPU "
+                f"{quota.compute_profile} requires {required_vcpus} vCPU "
                 f"but {quota.quota_code} applied quota is {quota.applied_value:g}"
             )
     return incomplete, insufficient
@@ -478,7 +494,9 @@ def ec2_quota_coverage_issues(
     required_profiles = {
         profile.name for profile in profiles_requiring_capacity_evidence(catalog)
     }
-    covered_profiles = {quota.workload_profile for quota in quotas if quota.workload_profile is not None}
+    covered_profiles = {
+        quota.compute_profile for quota in quotas if quota.compute_profile is not None
+    }
     missing_profiles = sorted(required_profiles - covered_profiles)
     if missing_profiles:
         return (

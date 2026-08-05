@@ -390,7 +390,7 @@
       "module": "edullm_platform.evidence",
       "name": "CapturedServiceQuotasEvidence",
       "schema_version": "unversioned",
-      "structural_digest": "sha256:2e3c2d6b13fa402c242534f5edbcac96eee3dd8fba2431787b5800051b63ba99"
+      "structural_digest": "sha256:18fe0def36668c65ec4cff7baa0b444e0a2b67bcf02c48ec6256f0bb01d69d0d"
     },
     {
       "base": true,
@@ -411,7 +411,7 @@
       "module": "edullm_platform.evidence",
       "name": "QuotaRecord",
       "schema_version": "unversioned",
-      "structural_digest": "sha256:1d12f0f55e61c12b0d042871513637406b2d9bfeb8f8735fbd6d245ef5553af9"
+      "structural_digest": "sha256:072aecccb2688dc76feb039d7bc8cd5d60031ad18ebcbac51fdbb96b8314bbdf"
     },
     {
       "base": true,
@@ -425,7 +425,7 @@
       "module": "edullm_platform.evidence",
       "name": "ServiceQuotasEvidence",
       "schema_version": "unversioned",
-      "structural_digest": "sha256:3b532f5c59cab1982631ea3f179c60b1fbcbab791546565deb4b8bdcdc0d1d42"
+      "structural_digest": "sha256:e518f133eb4a8ac31d803a36ea7758ffcea2c82088ea80640db801b1f4859239"
     },
     {
       "base": false,
