@@ -367,9 +367,23 @@
     {
       "base": false,
       "module": "edullm_platform.contracts.results",
+      "name": "EvalMetric",
+      "schema_version": "unversioned",
+      "structural_digest": "sha256:1704aa48a81d91e959fb46a16c3c3d7e8421704fffd76fa0944c461f1e9957e9"
+    },
+    {
+      "base": false,
+      "module": "edullm_platform.contracts.results",
+      "name": "EvalMetrics",
+      "schema_version": "1",
+      "structural_digest": "sha256:320ff21f6036ed5ed160ae54204276ccf259d982e4ae5f04c445d26b59e8dd79"
+    },
+    {
+      "base": false,
+      "module": "edullm_platform.contracts.results",
       "name": "ResultManifest",
       "schema_version": "1",
-      "structural_digest": "sha256:47ba07791dc06f0b05512ffdcc18ad5b953a650c88e68b30a7b40d93ac1f39e4"
+      "structural_digest": "sha256:12f289f215021876de0248934e3af99127e19f0305cd119b215309a6c79cad18"
     },
     {
       "base": false,

@@ -203,6 +203,47 @@ class CheckpointSurvey(ContractModel):
         return self.outcome is CheckpointListingOutcome.LISTED and self.objects_seen > 0
 
 
+class EvalMetric(ContractModel):
+    """One number an evaluation produced, and enough beside it to compare two runs.
+
+    ``instances`` is here because a score over ten instances and a score over 1,172 are
+    different claims and both serialize as a float. The eval team's own sweep script keeps it
+    for the same reason.
+    """
+
+    task: str = Field(min_length=1)
+    key: str = Field(min_length=1, pattern=r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
+    value: float
+    instances: int = Field(ge=1)
+
+
+class EvalMetrics(ContractModel):
+    """What a run scored, as distinct from what it wrote.
+
+    Which keys make a valid cross-run comparison is a property of the metric and not of this
+    record: see system-overview.md, "Where everything is seen", for the one column that is safe
+    to compare across projects and the one that is not. This model carries what the harness
+    reported and makes no claim about which of it is comparable.
+    """
+
+    schema_version: Literal[1]
+    #: Which harness produced these. Not an enum: a second harness is a registration, and a
+    #: closed set here would refuse a record before anyone could add one.
+    harness: str = Field(min_length=1)
+    metrics: Annotated[tuple[EvalMetric, ...], BeforeValidator(require_ordered_sequence)] = Field(
+        min_length=1, strict=False
+    )
+
+    @model_validator(mode="after")
+    def validate_metrics(self) -> Self:
+        named = [(entry.task, entry.key) for entry in self.metrics]
+        if named != sorted(set(named)):
+            raise ValueError(
+                "eval metrics must be recorded once each in ascending order of task and key"
+            )
+        return self
+
+
 class ResultManifest(ContractModel):
     schema_version: Literal[1]
     run_id: RunId
@@ -238,6 +279,15 @@ class ResultManifest(ContractModel):
     #: rewritten. A required field here would make the whole history unreadable by the
     #: contract that describes it.
     checkpoint_survey: CheckpointSurvey | None = None
+    #: What this run scored, or None on a run that scored nothing and on every record written
+    #: before the field existed.
+    #:
+    #: Optional and defaulted for the reason ``exit_code`` and ``checkpoint_survey`` above are:
+    #: the lineage store already holds result records carrying no such key and none of them can
+    #: be rewritten. None is also the right answer for a corpus validation, a tokenization and a
+    #: smoke test, which have no eval metrics to emit and are not failing to produce them --
+    #: system-overview.md, "Where everything is seen", says so in its own voice.
+    eval_metrics: EvalMetrics | None = None
     retention_class: RetentionClassValue
     completed_at: UtcTimestamp
 
