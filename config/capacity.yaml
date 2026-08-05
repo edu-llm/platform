@@ -47,11 +47,35 @@
 # was written down as "reliably": a denylist wearing this file's own clothes, never stated as
 # a default, so nobody noticed it was being applied.
 #
+# THE PROBE ANSWERS A DIFFERENT QUESTION FROM THE ONE A SUBMITTER ASKS, AND ON 2026-08-05 THAT
+# COST THREE ENTRIES THEIR ACCURACY IN THE OPPOSITE DIRECTION. `create-fleet --type instant`
+# asks whether one instance is free at this exact second. A Batch compute environment with a
+# job queued behind it asks the same pools again every tenth of a second, in every zone the
+# instance type is offered in, until one is free or the queue's thirty-minute CANCEL fires.
+# Those are different questions and they have different answers. The gpu-8xa100 environment
+# logged 4,348 InsufficientInstanceCapacity refusals between 2026-08-02 and 2026-08-05, a
+# median of 0.121 seconds apart and spread almost exactly evenly over us-east-1a, 1b, 1c and
+# 1d -- and obtained twelve nodes through them, two of which are running jobs as this is
+# written.
+#
+# SO `places` HAS A THIRD VALUE, BECAUSE NEITHER OF THE TWO IT HAD COULD SAY THAT. `unreliably`
+# makes src/edullm_platform/placement.py tell the submitter the shape may not place, which is
+# false of a pool that supplied twelve nodes; `reliably` says nothing at all, which would drop
+# the only warning anybody gets about a wait measured in hours. So `after_a_wait` is the answer
+# for a pool that does supply under sustained demand and makes you queue for it, and every
+# entry carrying it also carries a `wait:` sentence -- the measurement itself, in the words the
+# warning puts in front of the submitter, because a generic sentence about waiting is one a
+# reader cannot plan against. `edullm_platform.placement.read_capacity` reads exactly these
+# three and refuses a fourth.
+#
 # WHAT THE PROBE FOUND, WHICH IS NOT THE STORY ANYBODY EXPECTED. The P pool is dry, on-demand
 # and on spot, in all fourteen type-and-zone combinations, and so is every four-card and
-# eight-card G shape except the T4s. What places in this region today is small and old: g4dn in
-# all three sizes, and one card of A10G or L4. The G pool is not the safe harbour this file once
-# treated it as; the T4 family is, and nothing here pointed at it before.
+# eight-card G shape except the T4s. What places *at an instant* in this region today is small
+# and old: g4dn in all three sizes, and one card of A10G or L4. The G pool is not the safe
+# harbour this file once treated it as; the T4 family is, and nothing here pointed at it
+# before. Read that qualifier as load-bearing -- three of the shapes this paragraph puts in the
+# dry column supply nodes to a queue that keeps asking, and they carry `after_a_wait` below
+# rather than the verdict this paragraph on its own would produce.
 #
 # Re-read the day a shape's answer is doubted rather than on a schedule; a stale entry here
 # costs an unnecessary warning, and a missing one costs an afternoon in RUNNABLE.
@@ -65,14 +89,21 @@ observed_at: "2026-08-04"
 profiles:
   - profile: cpu-32vcpu
     places: reliably
-  # THE THREE T4 SHAPES ARE THE ONLY MULTI-CARD MACHINES IN THIS FILE THAT PLACE, and
-  # g4dn.metal below is the only eight-card machine of any kind the account could obtain on
-  # 2026-08-04. All three were measured by launching one and terminating it, not inferred.
+  # THE THREE T4 SHAPES ARE THE ONLY MULTI-CARD MACHINES IN THIS FILE THAT PLACE ON DEMAND,
+  # and g4dn.metal below is the only eight-card machine of any kind the account could obtain
+  # at an instant on 2026-08-04. All three were measured by launching one and terminating it,
+  # not inferred.
   #
-  # That makes gpu-8xt4 the shape to know about, and it was previously the shape nothing
-  # pointed at: 8 x T4 is 128 GB of device memory, which is less than the eight-card A10G, L4
-  # and L40S machines this file used to recommend and more than any of them can currently
-  # supply, because none of them place.
+  # "ON DEMAND" IS THE CLAUSE THAT MATTERS NOW. Three multi-card shapes below carry
+  # `after_a_wait`, so these are no longer the only ones a submitter can get -- they are the
+  # only ones a submitter can get without queueing for them. gpu-8xa100 supplies 320 GB
+  # against these 128 and takes a median of an hour and a half to do it, which is a trade a
+  # person can weigh and could not before.
+  #
+  # That still makes gpu-8xt4 the shape to know about for work that has to start now, and it
+  # was previously the shape nothing pointed at: 8 x T4 is 128 GB of device memory, which is
+  # less than the eight-card A10G, L4 and L40S machines this file used to recommend and more
+  # than any of those can supply, because none of them place at all.
   - profile: gpu-1xt4
     places: reliably
   - profile: gpu-4xt4
@@ -96,14 +127,24 @@ profiles:
   # mattered. On 2026-08-04 g6.12xlarge returned InsufficientInstanceCapacity in all five
   # zones it is offered in, at the same minute g5.12xlarge did.
   #
-  # NO REPLACEMENT OFFER, AND THE ABSENCE IS A DECISION. gpu-4xt4 places and is the only
-  # four-card machine that does, but it is 4 x 16 GB against 4 x 24 GB. This file already
+  # NO REPLACEMENT OFFER, AND THE ABSENCE IS A DECISION. gpu-4xt4 is the other four-card
+  # machine the account can obtain, but it is 4 x 16 GB against 4 x 24 GB. This file already
   # records what happens when a smaller card is offered as "the closest thing available" --
   # see gpu-1xh100 below, where two pieces of work took that offer and it was not close. A
   # third of the device memory removed is a changed recipe, which is the submitter's decision
   # to make and not the platform's to make quietly on their behalf.
+  #
+  # AND THE OFFER IS UNNECESSARY NOW, BECAUSE THIS SHAPE IS THE CLEANEST CASE OF THE INSTANT
+  # PROBE READING A QUEUE AS A WALL. The autoscaling group logged 1,499 refusals at a median
+  # of 0.119 seconds apart, which is what the probe caught one instance of on 2026-08-04, and
+  # nine g5.12xlarge came out of them between 2026-08-01 and 2026-08-05. Not one job on this
+  # queue has failed to start.
   - profile: gpu-4xa10g
-    places: unreliably
+    places: after_a_wait
+    wait: >-
+      Nine nodes arrived between 2026-08-01 and 2026-08-05, every one of the nine runs that
+      queued for them started, and they waited a median of 11 minutes from submission to
+      start with a worst observed case of 1.5 hours.
   # RECORDED AS RELIABLE AND NEVER MEASURED. g5.48xlarge placed once, on 2026-08-03, which is
   # the whole of the evidence that produced the old answer. It returned
   # InsufficientInstanceCapacity in all five zones on 2026-08-04.
@@ -115,16 +156,35 @@ profiles:
     places: unreliably
   - profile: gpu-8xl4
     places: unreliably
-  # THE WHOLE g6e FAMILY IS DRY AND ALL THREE SIZES WERE RECORDED AS RELIABLE. This is the
-  # correction that matters most, because gpu-8xl40s was the substitute this file offered to
-  # anybody who could not get an eight-card A100 -- the busiest substitution on the list, sent
-  # to a machine that has never been obtained. gpu-4xl40s has an autoscaling group with no
-  # successful launch in its history and thirty failures in the half hour before this was
-  # written, with two jobs waiting behind them.
+  # THE WHOLE g6e FAMILY IS DRY TO AN INSTANT PROBE AND ALL THREE SIZES WERE RECORDED AS
+  # RELIABLE. That is still the correction that matters most for gpu-8xl40s, which was the
+  # substitute this file offered to anybody who could not get an eight-card A100 -- the
+  # busiest substitution on the list, sent to a machine that has never been obtained.
+  #
+  # THE SENTENCE THAT FOLLOWED IT WAS WRONG ABOUT gpu-4xl40s WITHIN A DAY, AND IT WAS WRONG
+  # BY READING THE FAILURES AND NOT THE LAUNCHES. It said that shape had "an autoscaling
+  # group with no successful launch in its history and thirty failures in the half hour
+  # before this was written, with two jobs waiting behind them". The failures were real and
+  # there are now 5,277 of them at a median of 0.115 seconds apart, which is the same grind
+  # the A100 environment does. Six g6e.12xlarge came out of it, the most recent at 00:07 on
+  # 2026-08-05, and the job that had been queued behind it started twenty-one minutes later
+  # and is still running.
+  #
+  # IT IS THE ONLY ONE OF THE THREE `after_a_wait` ENTRIES WHERE ANYBODY HAS GIVEN UP, AND
+  # THAT BELONGS IN THE WAIT RATHER THAN IN A DIFFERENT VERDICT. Two runs were cancelled by
+  # hand while stuck in RUNNABLE, one of them at a hundred minutes, both with a note from the
+  # submitter saying the g6e.12xlarge capacity was not there. A submitter who is told the
+  # median, the worst case and that two people stopped waiting can decide for themselves; one
+  # told the shape may not place has been told something false and cannot.
   - profile: gpu-1xl40s
     places: unreliably
   - profile: gpu-4xl40s
-    places: unreliably
+    places: after_a_wait
+    wait: >-
+      Six nodes arrived between 2026-08-02 and 2026-08-05, eight of the ten runs that queued
+      for them started, and those eight waited a median of 19 minutes from submission to
+      start with a worst observed case of 6.4 hours; the other two were cancelled by hand
+      while stuck in RUNNABLE, one of them at a hundred minutes.
   - profile: gpu-8xl40s
     places: unreliably
   # NO offer_instead, AND THE ABSENCE IS THE ANSWER RATHER THAN AN OMISSION. What a submitter
@@ -144,15 +204,38 @@ profiles:
   # 2026-08-04, so the offer bought a second queue to wait in.
   #
   # NOTHING REPLACES IT. 320 GB of device memory across eight cards has no peer that places:
-  # the only eight-card machine available is gpu-8xt4 at 128 GB, which is not the same work.
-  # A submitter whose model needs 320 GB is choosing between a Capacity Block and waiting, and
-  # both of those are decisions with a person attached rather than a substitution.
+  # the only other eight-card machine available is gpu-8xt4 at 128 GB, which is not the same
+  # work. A submitter whose model needs 320 GB is choosing between a Capacity Block and
+  # waiting, and both of those are decisions with a person attached rather than a
+  # substitution.
   #
-  # The environment behind this profile now lists p4de.24xlarge as well as p4d.24xlarge, which
-  # is two more placement pools rather than a change to this answer. It was still unreliable
-  # with four pools and it is still unreliable with six.
+  # AND WAITING IS NOW THE MEASURED ANSWER RATHER THAN THE FALLBACK. This entry read
+  # `unreliably` and the submission path told every submitter the shape may not place. The
+  # autoscaling history says otherwise: twelve nodes between 2026-08-03 and 2026-08-05,
+  # obtained through 4,348 InsufficientInstanceCapacity refusals at a median of 0.121 seconds
+  # apart, and two of those nodes are running jobs as this is written. Not one job on this
+  # queue has ever been cancelled by the thirty-minute CAPACITY:INSUFFICIENT_INSTANCE_CAPACITY
+  # time limit -- every run that was left queued got a machine. The instant probe that
+  # produced the old answer asked whether one was free at that second, and the answer to that
+  # was and is no.
+  #
+  # THE WAIT BELOW COUNTS SUBMITTED RUNS AND NOT EVERY JOB, WHICH IS THE HARDER NUMBER AND
+  # THE RIGHT ONE. Fourteen jobs have started on this queue and the median across all of them
+  # is 61 minutes, but two were ad-hoc probes dispatched onto nodes a submitted run had
+  # already warmed up -- one of them started in two and a half minutes. Counting those would
+  # quote a submitter a wait nobody submitting a run has had.
+  #
+  # THE p4de.24xlarge ADDITION IS PART OF WHY. The environment now lists it beside
+  # p4d.24xlarge, which is two more placement pools, and the node running the older of the
+  # two current jobs is a p4de in us-east-1d. Under the old reading that addition changed
+  # nothing because the verdict could not move; under this one it is one of the things the
+  # wait below is measuring.
   - profile: gpu-8xa100
-    places: unreliably
+    places: after_a_wait
+    wait: >-
+      Twelve nodes arrived between 2026-08-03 and 2026-08-05, and the twelve runs submitted
+      on this shape waited a median of 89 minutes from submission to start, with a worst
+      observed case of 12.6 hours. None was ever cancelled for want of capacity.
   # 640 GB has no peer here and the substitute is a protocol rather than a profile. This is
   # the shape the Capacity Block route exists for: prove the work on a smaller node, buy the
   # block for a dated window, size the run to about 70% of it.

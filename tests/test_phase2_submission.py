@@ -1082,6 +1082,59 @@ def test_an_exception_over_two_ceilings_names_both_of_them() -> None:
     assert any("attempt bound of 3" in bullet for bullet in bullets)
 
 
+#: An eight-rank command, for the one payload below that runs on an eight-device machine.
+#: ``OLMO_COMMAND`` asks for four because ``OLMO_PROFILE`` has four, and
+#: ``require_a_process_for_every_device`` refuses a rank count that disagrees with the shape.
+OLMO_COMMAND_ON_EIGHT_DEVICES = (
+    "bash",
+    "-lc",
+    (
+        "python -m torch.distributed.run --nproc-per-node=8 --standalone "
+        '-m olmo_core.train --save-folder "$EDULLM_CHECKPOINT_DIR"'
+    ),
+)
+
+
+def test_an_exception_on_the_hourly_rate_alone_says_so_rather_than_blaming_registration() -> None:
+    """Mutation: leave the rate out of ``exceeded_routine_bounds`` and let it fall through.
+
+    That is what this did until the bound was added, and the sentence it fell through to
+    was not merely unhelpful but false: it told the approver that "one of its inputs is not
+    registered", which sends them looking for a registration problem that does not exist.
+
+    ``gpu-8xa100`` is the case that makes this matter rather than an invented one. Every
+    dispatch on it is above ``EXCEPTION_RATE_CEILING_USD_PER_HOUR``, so every one routes to
+    ``run-approval-admin`` and lands on the same person, and a reason section that is wrong
+    every time is one that stops being read.
+
+    Twelve hours on one attempt is chosen so the rate is the *only* thing this crosses:
+    $263.49 is well under the $500 routine cost ceiling, twelve hours is under
+    twenty-four, one attempt is under two, and there is no fan-out. So a single bullet is
+    asserted as well as its text -- a second bullet would mean the arm stopped isolating
+    the bound it exists for.
+    """
+    compiled = compile_payload(
+        olmo_payload(
+            compute_profile="gpu-8xa100",
+            command=list(OLMO_COMMAND_ON_EIGHT_DEVICES),
+            maximum_runtime_hours="12",
+            maximum_attempts=1,
+        )
+    )
+    bullets = exception_bullets(render(compiled))
+
+    assert compiled.approval_class is ApprovalClass.EXCEPTION
+    assert compiled.cost.maximum_compute_cost_usd == Decimal("263.49")
+    assert len(bullets) == 1, f"the rate was meant to be the only bound crossed; got {bullets}"
+    assert bullets == [
+        (
+            "hourly rate of $21.9576 exceeds the rate ceiling of $20, whatever the run's "
+            "total cost is"
+        )
+    ]
+    assert "not registered" not in bullets[0]
+
+
 def test_an_exception_no_ceiling_explains_says_that_in_words_too() -> None:
     lenient = load_approval_policy().model_copy(
         update={"denied_outright": ("mutable_image_reference",)}
