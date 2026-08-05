@@ -1343,6 +1343,16 @@ def test_the_nightly_reader_role_holds_the_statement_this_report_quotes() -> Non
     it changes the role into something no test covers. Compared as parsed YAML rather than as
     text, since indentation differs between a quoted block and a template and neither
     spelling is more correct.
+
+    THE LAST ASSERTION USED TO FORBID THE WHOLE ``batch:`` PREFIX AND NOW PINS IT TO TWO
+    ACTIONS. The role holds ``batch:ListJobs`` and ``batch:DescribeJobs`` for the placement
+    check that recomputes ``config/capacity.yaml``'s ``places`` column, so the old sentence
+    -- that there is no substitute read at all -- stopped being true. Its point did not: a
+    queue read is still not a substitute for the tagging grant, because it can only see the
+    queues this platform created, and the gap this board reports is everything else the
+    account ran. Written as an exact set rather than deleted, because what the old assertion
+    was really guarding is that nobody drops the tagging grant on the strength of a batch
+    read, and that guard is worth keeping pointed at the two actions that now exist.
     """
     quoted = yaml.safe_load(MISSING_TAG_GRANT)[0]
     statements = [
@@ -1371,7 +1381,14 @@ def test_the_nightly_reader_role_holds_the_statement_this_report_quotes() -> Non
         "MISSING_TAG_GRANT out of a 05:00 report would change the role to something no test "
         "covers."
     )
-    assert not any(action.startswith("batch:") for action in granted), (
-        "there is still no substitute read, which is what makes the tagging grant the "
-        "only way to see what the account is running"
+    assert {action for action in granted if action.startswith("batch:")} == {
+        "batch:ListJobs",
+        "batch:DescribeJobs",
+    }, (
+        "the queue reads are not a substitute for the tagging grant, which is what the "
+        "assertion above keeps here. ListJobs enumerates a named queue, so between them the "
+        "two see what this platform submitted to the sixteen queues it created and nothing "
+        "the account ran anywhere else -- and the account side is the half of the comparison "
+        "this board exists to supply. Asserted as an exact set rather than as an absence, so "
+        "a third batch action is argued for where the role's grants are argued for."
     )
