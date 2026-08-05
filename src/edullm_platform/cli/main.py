@@ -69,6 +69,7 @@ from edullm_platform.cli.actions import (
     CANCEL_WORKFLOW,
     PLATFORM_REPOSITORY,
     PRINTED_RUN_ID,
+    REGISTER_WORKFLOW,
     SUBMIT_WORKFLOW,
     AmbiguousRunIdError,
     GithubUnreachableError,
@@ -85,6 +86,12 @@ from edullm_platform.cli.configuration import (
     ReviewedConfiguration,
     find_config_directory,
     load_reviewed_configuration,
+)
+from edullm_platform.cli.intake import (
+    ADD_KINDS,
+    SELF_SERVICE_KINDS,
+    register_repository_form,
+    routed_to_ask,
 )
 from edullm_platform.cli.machine import (
     check_document,
@@ -118,7 +125,14 @@ from edullm_platform.cli.release import (
     staleness_said,
 )
 from edullm_platform.cli.scaffold import scaffold_spec, workloads_registered_for
-from edullm_platform.cli.spec import SPEC_PATH, RunSpec, SpecUnreadableError, find_spec, load_spec
+from edullm_platform.cli.spec import (
+    SPEC_DIRECTORY,
+    SPEC_PATH,
+    RunSpec,
+    SpecUnreadableError,
+    find_spec,
+    load_spec,
+)
 from edullm_platform.cli.workspace import (
     CommandRunner,
     GitFacts,
@@ -236,6 +250,7 @@ BUILT_TODAY: Final = {
     "status": "what your runs are doing",
     "logs": "the last lines a run printed",
     "cancel": "stop a run",
+    "add": "teach the platform about a repository, dataset, shape, model or person",
 }
 
 #: What each built verb does, in the sentence its own ``--help`` opens with.
@@ -274,6 +289,11 @@ WHAT_A_VERB_DOES: Final = {
         f"Stops one admitted run by dispatching {CANCEL_WORKFLOW} with the reason you give, "
         "which is what the run's history then records instead of a failure."
     ),
+    "add": (
+        "Teaches the platform about a thing, which produces a change to the reviewed "
+        "configuration rather than a grant to you. A repository is opened as a pull request "
+        "from here. The other kinds are refused with the route they go by instead."
+    ),
 }
 
 #: The verbs that are settled and unbuilt, with the sentence each prints. Present so the
@@ -294,7 +314,6 @@ WHAT_A_VERB_DOES: Final = {
 NOT_BUILT_YET: Final = {
     "run": "ship this working tree to a machine and stream the output back",
     "shell": "open an editor over SSH on a machine, or a Jupyter notebook on the same one",
-    "add": "teach the platform about a repository, dataset, shape, model or person",
     "ask": "ask for something for yourself, which produces a time-boxed grant",
 }
 
@@ -465,12 +484,33 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
         ),
     )
 
+    add = verb_parser("add", WHAT_A_VERB_DOES["add"])
+    # A POSITIONAL WITH `choices` RATHER THAN A FLAG, BECAUSE A MISTYPED KIND AND A KIND THAT
+    # GOES THROUGH A PERSON ARE DIFFERENT FACTS. argparse answers the first with the list for
+    # free; routing it to `ask` instead would file an issue asking a human for `add repositry`.
+    add.add_argument("kind", choices=sorted(ADD_KINDS), help="what to teach the platform")
+    add.add_argument(
+        "--reason",
+        help=(
+            "why this needs a repository of its own rather than a workload in an existing "
+            "one. Written into a comment above the entry, and required for a repository."
+        ),
+    )
+    add.add_argument("--repository", help="overriding what the origin remote says")
+    add.add_argument(
+        "--dockerfile",
+        default=f"{SPEC_DIRECTORY}/Dockerfile",
+        help="repository-relative path to the Dockerfile the build workflow builds",
+    )
+    _add_json(add)
+
     built: dict[str, argparse.ArgumentParser] = {
         "check": check,
         "submit": submit,
         "status": status,
         "logs": logs,
         "cancel": cancel,
+        "add": add,
     }
     for verb, plan in NOT_BUILT_YET.items():
         # THE SENTENCE IS THE PLAN'S, READ RATHER THAN REWRITTEN. An unbuilt verb's help
@@ -836,6 +876,15 @@ def main(
                 runner=command_runner,
                 out=stdout,
                 err=stderr,
+                dispatched=dispatched,
+            )
+        if verb == "add":
+            return _add(
+                arguments,
+                runner=command_runner,
+                out=stdout,
+                err=stderr,
+                cwd=here,
                 dispatched=dispatched,
             )
     except KeyboardInterrupt:
@@ -1462,6 +1511,138 @@ def _cancel(
         out=out,
         err=err,
     )
+
+
+# ---------------------------------------------------------------------------------------
+# add, ask
+# ---------------------------------------------------------------------------------------
+
+
+def _add(
+    arguments: argparse.Namespace,
+    *,
+    runner: CommandRunner,
+    out: TextIO,
+    err: TextIO,
+    cwd: Path,
+    dispatched: list[str],
+) -> int:
+    """Teach the platform a thing, or say which route this kind goes by instead.
+
+    The routed refusal is answered before anything is read, which is deliberate. Four of the
+    five kinds cost no network to refuse and the fifth costs a dispatch, so an agent that
+    asks for the wrong one pays nothing at all.
+    """
+    if arguments.kind not in SELF_SERVICE_KINDS:
+        refusal = routed_to_ask(arguments.kind)
+        if arguments.json:
+            emit(refusal_document("add", [refusal]), out=out)
+        else:
+            print(render_refusals([refusal]), end="", file=err)
+        return EXIT_REFUSED
+
+    facts = read_git_facts(runner, cwd=cwd)
+    refusals = _registration_refusals(arguments, facts)
+    if refusals:
+        if arguments.json:
+            emit(refusal_document("add", refusals), out=out)
+        else:
+            print(render_refusals(refusals), end="", file=err)
+        return EXIT_REFUSED
+
+    repository = arguments.repository or facts.repository or ""
+    actions = PlatformActions(
+        runner, repository=arguments.platform_repository, dispatched=dispatched
+    )
+    identifier = actions.repository_id(repository)
+    dispatched_at = datetime.now(UTC)
+    actions.dispatch(
+        REGISTER_WORKFLOW,
+        register_repository_form(
+            repository=repository,
+            github_repository_id=identifier,
+            reason=arguments.reason,
+            dockerfile_path=arguments.dockerfile,
+            default_branch=facts.branch or "main",
+        ),
+    )
+    print(f"dispatching {REGISTER_WORKFLOW} ... queued", file=out)
+    submitter = github_login(runner, allow_network=True)
+    run = actions.wait_for_a_new_run(REGISTER_WORKFLOW, actor=submitter, after=dispatched_at)
+    if run is None:
+        print(
+            "dispatched, and the workflow run it started could not be found within the poll "
+            f"window. It is on its way; the {REGISTER_WORKFLOW} page carries the pull request "
+            "it opens.",
+            file=out,
+        )
+        return EXIT_OK
+    print(str(run.get("html_url") or ""), file=out)
+    print(
+        "\n".join(
+            _wrapped(
+                "It opens a pull request against the reviewed configuration, which somebody "
+                "merges and then deploys. Nothing is registered until both have happened, "
+                "and edullm check refuses this repository until they have.",
+                indent="",
+            )
+        ),
+        file=out,
+    )
+    return EXIT_OK
+
+
+def _registration_refusals(arguments: argparse.Namespace, facts: GitFacts) -> list[Refusal]:
+    """What a registration needs of the place somebody is standing, asked before a dispatch.
+
+    ``working_tree_refusals`` is deliberately not reused. It answers what the *recorded path*
+    needs of a checkout, which is a clean tree, a pushed commit and a published image, and
+    none of those is true of a repository being registered for the first time. What a
+    registration needs is narrower and different: a name that ``config/repositories.yaml``
+    can be keyed on, and a sentence saying why.
+    """
+    refusals: list[Refusal] = []
+    if not facts.is_a_repository and not arguments.repository:
+        refusals.append(
+            Refusal(
+                code="not_a_repository",
+                detail=(
+                    "this directory is not inside a git repository, so there is no name to "
+                    "register. Stand in a checkout, or pass --repository with the name "
+                    "GitHub spells it."
+                ),
+            )
+        )
+    elif facts.repository is None and not arguments.repository:
+        refusals.append(
+            Refusal(
+                code="no_origin_remote",
+                detail=(
+                    "this repository has no origin remote, so which GitHub repository it is "
+                    "cannot be read. config/repositories.yaml is keyed on the GitHub name "
+                    "and a clone can be named anything, so this is asked rather than guessed "
+                    "at: pass --repository, or add the remote."
+                ),
+            )
+        )
+    if not arguments.reason:
+        refusals.append(
+            Refusal(
+                code="no_registration_reason",
+                detail=(
+                    "--reason says why this needs a repository of its own rather than a "
+                    "workload profile in one that is already registered. It is written into "
+                    "a comment above the entry and it is the only part of the pull request a "
+                    "reviewer cannot derive, so there is no default for it."
+                ),
+            )
+        )
+    return refusals
+
+
+# ---------------------------------------------------------------------------------------
+# shared, for the run verbs
+# ---------------------------------------------------------------------------------------
 
 
 def _because(facts: RunFacts) -> str:
