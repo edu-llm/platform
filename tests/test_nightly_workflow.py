@@ -1023,11 +1023,12 @@ def test_the_role_can_read_and_cannot_write(role: dict[str, Any]) -> None:
         "cloudformation:GetTemplate",
         "cloudformation:ListStacks",
         "tag:GetResources",
+        "cloudtrail:LookupEvents",
     }
     for action in granted:
         assert not any(fragment in action for fragment in MUTATING_ACTION_FRAGMENTS), action
         assert action.startswith(
-            ("s3:", "secretsmanager:", "lambda:", "cloudformation:", "tag:")
+            ("s3:", "secretsmanager:", "lambda:", "cloudformation:", "tag:", "cloudtrail:")
         ), action
         assert "*" not in action, action
 
@@ -1076,8 +1077,8 @@ def test_no_grant_reaches_a_whole_bucket_or_every_secret(role: dict[str, Any]) -
     harmless here: the lineage store holds every run's records and Secrets Manager holds
     everybody's credentials, so an unscoped read is an exfiltration path with a schedule.
 
-    TWO STATEMENTS ARE EXEMPT AND BOTH ARE NAMED RATHER THAN PATTERN-MATCHED, so a third
-    cannot arrive by widening a resource to `*` and calling these two precedent. The
+    THREE STATEMENTS ARE EXEMPT AND ALL THREE ARE NAMED RATHER THAN PATTERN-MATCHED, so a
+    fourth cannot arrive by widening a resource to `*` and calling these three precedent. The
     assertion runs the other way round as well -- exactly these Sids hold a wildcard and no
     others -- because an exemption list that is only a filter grows silently.
 
@@ -1090,10 +1091,19 @@ def test_no_grant_reaches_a_whole_bucket_or_every_secret(role: dict[str, Any]) -
     answers with the ARNs and tags of resources in this region. It is what makes the account
     side of `tools/visibility_board.py` readable at all, and there is no narrower substitute:
     the alternative is `batch:ListJobs`, which this role omits deliberately.
+
+    `cloudtrail:LookupEvents` takes no resource either, and the region condition is the whole
+    of its bound. It reads the ninety-day management-event history, which is the only feed
+    the platform does not write itself: without it the mismatch arm of the instruments can
+    only compare the platform's records with themselves, which is the thing a mismatch report
+    exists to stop. It is a wider disclosure than the other two, since an event carries the
+    caller and the parameters of the call, and it stays because the alternative is a report
+    that cannot see a launch nobody recorded.
     """
     unscopable = {
         "FindStacksNothingInTheRepositoryAccountsFor",
         "FindEveryResourceThisPlatformTagged",
+        "LookUpLaunchEvents",
     }
     assert {
         statement["Sid"]
