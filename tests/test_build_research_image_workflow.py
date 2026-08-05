@@ -55,9 +55,13 @@ PRESIGNED_URL = "https://example.invalid/blob?X-Amz-Signature=deadbeefcafe"
 DECLARED_OUTPUTS = {
     "identity": ("commit_sha", "ecr_repository"),
     "build_inputs": ("base_reference", "build_context", "dockerfile_path"),
+    "cache_ancestors": ("cache_ancestor_tags",),
+    "cache_source": ("cache_from",),
     # Documented output of aws-actions/configure-aws-credentials.
     "credentials": ("aws-account-id",),
 }
+CACHE_ANCESTORS_STEP = "List the ancestors this build may reuse a layer from"
+CACHE_SOURCE_STEP = "Choose a published ancestor to import the build cache from"
 
 
 def _load() -> dict[str, Any]:
@@ -80,6 +84,18 @@ def _run_bodies(workflow: dict[str, Any]) -> Iterator[tuple[str, str]]:
             script = candidate.get("run")
             if script is not None:
                 yield f"{job_name}:{candidate.get('name')}", script
+
+
+def _executable(script: str) -> str:
+    """The lines of a run body that bash acts on, with the comments removed.
+
+    A comment that explains why the workflow does not reach for something contains the
+    thing it is arguing against, so a check written against the whole text cannot tell the
+    argument from the deed. It is the argument that is worth keeping.
+    """
+    return "\n".join(
+        line for line in script.splitlines() if not line.lstrip().startswith("#")
+    )
 
 
 def _strings(value: Any) -> Iterator[str]:
@@ -552,6 +568,9 @@ def test_verify_job_exposes_the_verified_commit_and_ecr_repository() -> None:
     assert verify["outputs"] == {
         "commit_sha": "${{ steps.identity.outputs.commit_sha }}",
         "ecr_repository": "${{ steps.identity.outputs.ecr_repository }}",
+        # The ancestry crosses the job boundary because only this job has it: the publish
+        # checkout is shallow, deliberately, since it is the `docker build` context.
+        "cache_ancestor_tags": "${{ steps.cache_ancestors.outputs.cache_ancestor_tags }}",
     }
     identity = step(verify, "Verify source identity")
     assert identity["id"] == "identity"
@@ -1040,6 +1059,8 @@ def test_the_build_records_the_images_own_creation_time_before_it_pushes(
             "DOCKERFILE_PATH": ".edullm/Dockerfile",
             "BUILD_CONTEXT": ".",
             "COMMIT_SHA": "a" * 40,
+            # The ordinary value on a first build: nothing published to import from.
+            "CACHE_FROM": "",
             "SOURCE_URL": "https://example.invalid/edu-llm/OLMo-core",
             "RUN_URL": "https://example.invalid/runs/1",
         },
@@ -1075,6 +1096,7 @@ def test_an_image_that_cannot_say_when_it_was_built_stops_before_the_push(
             "DOCKERFILE_PATH": ".edullm/Dockerfile",
             "BUILD_CONTEXT": ".",
             "COMMIT_SHA": "a" * 40,
+            "CACHE_FROM": "",
             "SOURCE_URL": "https://example.invalid/edu-llm/OLMo-core",
             "RUN_URL": "https://example.invalid/runs/1",
         },
@@ -1114,6 +1136,130 @@ def test_publish_job_builds_from_the_registered_base_digest_under_an_immutable_t
     assert ":latest" not in workflow_text
     assert "docker/build-push-action" not in workflow_text
     assert "buildx" not in workflow_text
+
+
+def test_the_cache_may_only_come_from_a_commit_this_build_descends_from() -> None:
+    # THE SECURITY PROPERTY OF THE WHOLE CACHE. On a hit BuildKit reuses the recorded layer
+    # without running the command, so whoever decides what is in the cache decides what is
+    # in the image. The publisher role trusts every branch of five repositories, so a
+    # shared cache tag would let a push to any of them place bytes in an image built from
+    # a reviewed commit, with every gate here still green -- they inspect the checkout and
+    # the Dockerfile, not the layers.
+    #
+    # What removes that is the candidate list: it is ancestry read from the gate job, and
+    # the publish job may only choose from it. A cache source that is not on the list is
+    # not reachable by any spelling, so this pins both halves.
+    verify_step = step(_job("verify"), CACHE_ANCESTORS_STEP)
+    assert verify_step["id"] == "cache_ancestors"
+    assert "list_cache_ancestors.py" in verify_step["run"]
+    assert '--repository-root "${GITHUB_WORKSPACE}/source"' in verify_step["run"]
+
+    resolve = step(_job("publish"), CACHE_SOURCE_STEP)
+    assert resolve["id"] == "cache_source"
+    assert "resolve_build_cache_source.py" in resolve["run"]
+    assert resolve["env"]["CACHE_ANCESTOR_TAGS"] == (
+        "${{ needs.verify.outputs.cache_ancestor_tags }}"
+    )
+    assert '--candidates "${CACHE_ANCESTOR_TAGS}"' in resolve["run"]
+
+    # The one value the build is allowed to read, and it is the resolver's output rather
+    # than anything the caller or the registry could name directly.
+    build = step(_job("publish"), "Build and push image")
+    assert build["env"]["CACHE_FROM"] == "${{ steps.cache_source.outputs.cache_from }}"
+    cache_references = re.findall(r"--cache-from[^\n]*", _executable(build["run"]))
+    assert cache_references == ['--cache-from "${CACHE_FROM}"']
+
+
+def test_the_cache_needs_no_permission_the_publisher_role_does_not_already_hold() -> None:
+    # DescribeImages is already one of the role's nine actions on this repository -- the
+    # pre-flight lookup makes the same call -- and importing a cache uses BatchGetImage,
+    # GetDownloadUrlForLayer and BatchCheckLayerAvailability, three more of the nine. The
+    # resolver reaches AWS through a tool rather than a run body, for the same reason the
+    # denial matrix does: DescribeImages names the registry id in its error text.
+    resolve = step(_job("publish"), CACHE_SOURCE_STEP)
+
+    assert aws_commands(resolve["run"]) == []
+    assert resolve["env"]["ECR_REPOSITORY"] == "${{ needs.verify.outputs.ecr_repository }}"
+    assert resolve["env"]["REGISTRY"] == "${{ steps.login.outputs.registry }}"
+    assert resolve["env"]["AWS_REGION"] == "${{ inputs.aws_region }}"
+
+
+def test_the_cache_is_written_inline_because_the_runner_has_no_other_exporter() -> None:
+    # Inline is the only cache export the default docker driver supports. Reaching
+    # type=registry or type=gha means a builder in a container, which does not load its
+    # result into the daemon -- so the creation time would have to be read from the
+    # registry after the push, and a failure there burns an immutable tag.
+    #
+    # Executable lines only. The comments beside the build name the two exporters this
+    # cannot use and why, which is the paragraph a reader needs and not a spelling the
+    # workflow reaches for.
+    executable = "\n".join(_executable(script) for _, script in _run_bodies(_load()))
+
+    assert "--build-arg BUILDKIT_INLINE_CACHE=1" in executable
+    assert "cache-to" not in executable
+    assert "type=gha" not in executable
+    assert "type=registry" not in executable
+
+
+def test_a_resumed_run_resolves_no_cache_because_it_runs_no_build() -> None:
+    resolve = step(_job("publish"), CACHE_SOURCE_STEP)
+    build = step(_job("publish"), "Build and push image")
+
+    assert resolve["if"] == build["if"] == "steps.preflight.outputs.image_digest == ''"
+
+
+def _build_environment(tmp_path: Path, cache_from: str) -> dict[str, str]:
+    return {
+        "RUNNER_TEMP": str(tmp_path),
+        "REGISTRY": "123456789012.dkr.ecr.us-east-1.amazonaws.com",
+        "ECR_REPOSITORY": "sbsandbox-intern-edullm-olmo-core",
+        "IMAGE_TAG": "a" * 12,
+        "BASE_REFERENCE": PUBLISHED_BASE_REFERENCE,
+        "DOCKERFILE_PATH": ".edullm/Dockerfile",
+        "BUILD_CONTEXT": ".",
+        "COMMIT_SHA": "a" * 40,
+        "CACHE_FROM": cache_from,
+        "SOURCE_URL": "https://example.invalid/edu-llm/OLMo-core",
+        "RUN_URL": "https://example.invalid/runs/1",
+    }
+
+
+def _run_build(tmp_path: Path, cache_from: str) -> str:
+    stub_bin = tmp_path / "bin"
+    write_stub(
+        stub_bin,
+        "docker",
+        'printf "%s\\n" "$*" >> "${RUNNER_TEMP}/docker-calls.txt"\n'
+        'if [[ "${1-} ${2-}" == "image inspect" ]]; then\n'
+        f'  echo "{PUBLISHED_IMAGE_CREATED}"\n'
+        "fi\n",
+    )
+    result = run_step_script(
+        step(_job("publish"), "Build and push image")["run"],
+        cwd=tmp_path,
+        env=_build_environment(tmp_path, cache_from),
+        stub_bin=stub_bin,
+    )
+    assert result.returncode == 0, result.stderr
+    return (tmp_path / "docker-calls.txt").read_text(encoding="utf-8")
+
+
+@pytest.mark.slow
+def test_no_cache_source_passes_no_argument_rather_than_an_empty_one(tmp_path: Path) -> None:
+    # An empty --cache-from is a reference to nothing, which docker reads as an error
+    # rather than as an absent flag. Every first build of a repository takes this path.
+    calls = _run_build(tmp_path, "")
+
+    assert "--cache-from" not in calls
+    assert "--build-arg BUILDKIT_INLINE_CACHE=1" in calls
+
+
+@pytest.mark.slow
+def test_a_resolved_cache_source_reaches_docker_exactly_once(tmp_path: Path) -> None:
+    reference = "123456789012.dkr.ecr.us-east-1.amazonaws.com/repo:bbbbbbbbbbbb"
+    calls = _run_build(tmp_path, reference)
+
+    assert calls.count(f"--cache-from {reference}") == 1
 
 
 def test_publish_job_takes_the_digest_from_an_ecr_read_back_not_the_local_build() -> None:
@@ -1341,6 +1487,7 @@ def test_every_run_step_declares_the_directory_its_tooling_lives_in() -> None:
         "verify:Verify the caller contract": None,
         "verify:Install platform tooling": "platform",
         "verify:Verify source identity": "platform",
+        f"verify:{CACHE_ANCESTORS_STEP}": "platform",
         "verify:Run research repository tests": "source",
         "deny:Verify the caller contract": None,
         "deny:Install platform tooling": "platform",
@@ -1354,6 +1501,7 @@ def test_every_run_step_declares_the_directory_its_tooling_lives_in() -> None:
         f"publish:{PREFLIGHT_STEP}": None,
         f"publish:{RESUME_STEP}": "platform",
         "publish:Log in to Amazon ECR": None,
+        f"publish:{CACHE_SOURCE_STEP}": "platform",
         "publish:Build and push image": "source",
         "publish:Read published digest from the registry": None,
         f"publish:{DIGEST_SUMMARY_STEP}": None,
