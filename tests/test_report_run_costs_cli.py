@@ -127,18 +127,25 @@ def lineage(
     return root
 
 
-def binding(team_id: str, *, lead: str | None = "ericrcwu001") -> TeamBinding:
+def binding(
+    team_id: str, *, lead: str | None = "ericrcwu001", members: tuple[str, ...] = ()
+) -> TeamBinding:
     """A bound team, optionally with nobody recorded as leading it.
 
     ``lead=None`` is reachable on the shipped roster and was not reachable here, which is
     the whole reason a team with no lead rendered as ``led by )`` for as long as it did.
     ``TeamBinding`` dropped its one-lead minimum on 2026-08-01 and this helper kept it.
+
+    ``members`` defaults to nobody, which is what most of these want: with no membership
+    recorded there is nothing to contradict, so the tests above stay about the rollup rather
+    than acquiring an opinion about who may claim what.
     """
     return TeamBinding.model_validate(
         {
             "team_id": team_id,
             "github_team_slug": team_id,
             "lead_logins": [] if lead is None else [lead],
+            "member_logins": list(members),
             "s3_namespace": f"sbsandbox-intern-{team_id}",
             "wandb_entity": f"edu-llm-{team_id}",
         }
@@ -279,6 +286,117 @@ def test_a_teams_unpriced_runs_are_counted_beside_its_figure(tmp_path: Path) -> 
 
     assert "$3.00 across 2 runs, 1 with no figure" in report
     assert "Runs with no figure, and why" in report
+
+
+# ---------------------------------------------------------------------------------------
+# What the section says about the claims the roster disagrees with
+# ---------------------------------------------------------------------------------------
+#
+# The report is the one surface carrying this, and `tools/report_spend.py` prints the figure
+# beside the same split without repeating the list. These are about it staying a report:
+# saying the size on the team's own line, naming the runs once, and never turning into
+# something that refuses or subtracts.
+
+
+def test_a_run_claimed_against_a_group_the_roster_disagrees_with_is_named_once(
+    tmp_path: Path,
+) -> None:
+    """What replaced the refusal #221 removed, at the place the loss actually lands.
+
+    ``philote-dev`` submitted the fixture record. Recorded on ``platform`` and claiming
+    ``memory-split``, this is exactly the case admission used to refuse from inside AWS
+    after a lead had already released the run.
+    """
+    report = report_for(
+        tmp_path,
+        teams=TeamBindingCatalog(
+            teams=(
+                binding("memory-split", members=("katiehehe",)),
+                binding("platform", members=("philote-dev",)),
+            )
+        ),
+        intents=[intent(RUN_A, team="memory-split")],
+        attempts=[attempt(RUN_A)],
+    )
+
+    assert report.count(RUN_A) == 2, "once in the section below, once in Every run"
+    assert (
+        "Claimed against a group the roster puts the submitter on a different one from"
+        in report
+    )
+    assert (
+        f"- `{RUN_A}` $3.00: philote-dev claimed memory-split and the roster records them "
+        "on platform" in report
+    )
+    assert "$3.00 of that, across 1 run, was claimed by somebody the roster records on " in (
+        report
+    )
+
+
+def test_the_section_is_absent_when_the_roster_disagrees_with_nothing(
+    tmp_path: Path,
+) -> None:
+    """A finding printed at zero is a heading a reader learns to skip.
+
+    The standing sentence about how the split is produced stays, because it is true every
+    time. The section naming runs appears only when there are runs to name.
+    """
+    report = report_for(
+        tmp_path,
+        teams=TeamBindingCatalog(teams=(binding("memory-split", members=("philote-dev",)),)),
+        intents=[intent(RUN_A, team="memory-split")],
+        attempts=[attempt(RUN_A)],
+    )
+
+    assert "a different one from" not in report
+    assert "was claimed by somebody the roster records" not in report
+    assert "nothing on the platform refuses a claim the roster disagrees with" in report
+
+
+def test_a_submitter_on_no_recorded_group_is_not_reported_as_misattributing(
+    tmp_path: Path,
+) -> None:
+    """Mutation: report every run whose ``team_verified`` would be false.
+
+    Most of the pilot has no recorded membership, so that reading would put nearly every run
+    on this page under a heading accusing its submitter of booking spend to somebody else's
+    group. ``tools/report_onboarding_readiness.py`` is where the missing roster lines are
+    reported, and the report says so rather than leaving the omission to be noticed.
+    """
+    report = report_for(
+        tmp_path,
+        teams=TeamBindingCatalog(teams=(binding("memory-split"),)),
+        intents=[intent(RUN_A, team="memory-split")],
+        attempts=[attempt(RUN_A)],
+    )
+
+    assert "a different one from" not in report
+
+
+def test_the_contradicted_spend_is_still_inside_the_team_total_it_is_reported_under(
+    tmp_path: Path,
+) -> None:
+    """Mutation: net the doubtful spend off the team's figure.
+
+    The rollup and the total are read side by side and nothing may go missing between them,
+    which is what ``test_bound_and_unbound_spend_add_up_to_what_was_priced`` guards one layer
+    down. A deduction here would also publish an attribution no record supports.
+    """
+    report = report_for(
+        tmp_path,
+        teams=TeamBindingCatalog(
+            teams=(
+                binding("memory-split", members=("katiehehe",)),
+                binding("platform", members=("philote-dev",)),
+            )
+        ),
+        intents=[intent(RUN_A, team="memory-split"), intent(RUN_B, team="memory-split")],
+        attempts=[attempt(RUN_A), attempt(RUN_B)],
+    )
+
+    assert "- memory-split (@memory-split, led by ericrcwu001): $6.00 across 2 runs" in report
+    assert "- platform (@platform, led by ericrcwu001): $0.00 across 0 runs" in report
+    assert "**2 runs priced, 0 not, $6.00 total.**" in report
 
 
 # ---------------------------------------------------------------------------------------

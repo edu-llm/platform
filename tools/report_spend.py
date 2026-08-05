@@ -17,10 +17,15 @@ for anything that wants to render them itself.
 **The account total and the per-team split are two different measurements and this does not
 pretend otherwise.** The total is real money from Cost Explorer for the whole account, which
 includes six other projects sharing ``sbsandbox``. The split is measured compute from this
-platform's lineage records, priced at the catalog rate.
-:mod:`edullm_platform.run_costs` explains why there is no third option: cost allocation tags
-cannot be activated from a linked account, and a Cost Explorer query grouped by
-``edullm:team`` returns the whole account's spend under the empty-value key.
+platform's lineage records, priced at the catalog rate, and grouped by the team each run's
+manifest claimed. :mod:`edullm_platform.run_costs` explains why there is no third option:
+cost allocation tags cannot be activated from a linked account, and a Cost Explorer query
+grouped by ``edullm:team`` returns the whole account's spend under the empty-value key.
+
+**AND THE SPLIT IS APPROXIMATE IN ONE MORE WAY THAN IT USED TO BE.** Nothing inside AWS has
+compared a claimed group against the roster since #221, so a run can be charged to a group
+its submitter is not on and nothing stops it. Each line therefore carries how much of it was
+claimed that way, which is the honest replacement for a sentence implying the split is exact.
 
 Exit codes follow the repository's convention. 0 reported, 2 the inputs could not be read.
 There is no 1: this tool judges nothing, and in particular a projection over the limit is
@@ -218,6 +223,13 @@ def read_team_shares(
     Three recorded runs claim ``tokenizer`` and two claim ``evaluation``, neither of which is
     a declared group, and spend nobody can route is the finding rather than the rounding
     error.
+
+    **A CLAIM ON A GROUP THAT DOES EXIST CAN ALSO BE WRONG, AND THAT IS CARRIED TOO.** Since
+    #221 nothing inside AWS refuses a submitter who names a group the roster records them
+    elsewhere from, so ``attribute_to_teams`` measures how much of each line was claimed that
+    way and :class:`~edullm_platform.spend.TeamShare` carries it into the section. An unbound
+    claim gets no such figure, because a group nothing binds cannot be one anybody is on and
+    the line above already says the whole of it is unroutable.
     """
     intents, every_attempt, _ = read_records(lineage_root)
     attempts = [
@@ -237,6 +249,8 @@ def read_team_shares(
             cost_usd=spend.cost_usd.quantize(CENTS),
             runs=spend.runs,
             unpriced_runs=spend.unpriced_runs,
+            contradicted_runs=spend.contradicted_runs,
+            contradicted_cost_usd=spend.contradicted_cost_usd.quantize(CENTS),
         )
         for spend in attribution.bound
     ) + tuple(
@@ -331,6 +345,8 @@ def _as_data(
                     "cost_usd": str(share.cost_usd),
                     "runs": share.runs,
                     "unpriced_runs": share.unpriced_runs,
+                    "contradicted_runs": share.contradicted_runs,
+                    "contradicted_cost_usd": str(share.contradicted_cost_usd),
                 }
                 for share in shares
             ]

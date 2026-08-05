@@ -190,6 +190,64 @@ def test_a_team_with_spend_and_no_figure_is_not_printed_as_idle() -> None:
     assert "memory-split: $0.00 across 4 runs, 4 with no figure" in section
 
 
+def test_the_split_says_how_much_of_it_the_roster_disagrees_with() -> None:
+    """Mutation: render the split without the contradicted figure.
+
+    Until #221 a run reaching an attempt record had had its claimed group checked against
+    the roster inside AWS. Nothing checks it now, so a line here is what a group was charged
+    rather than what a group ran, and a split that did not say so would go on reading as
+    exactly as precise as it was before. It states the size and nothing else: the runs are
+    named by ``tools/report_run_costs.py``, and printing them twice is two pages to keep in
+    step.
+    """
+    projection = project(AUGUST_DAYS, today=date(2026, 8, 4), limit_usd=LIMIT)
+
+    section = render_section(
+        projection,
+        team_shares=(
+            TeamShare(
+                team="memory-split",
+                cost_usd=Decimal("40.00"),
+                runs=4,
+                unpriced_runs=0,
+                contradicted_runs=1,
+                contradicted_cost_usd=Decimal("10.00"),
+            ),
+        ),
+        limit_source="tools/spend-limits.yaml",
+    )
+
+    assert (
+        "memory-split: $40.00 across 4 runs, of which $10.00 across 1 run was claimed by "
+        "somebody the roster records elsewhere" in section
+    )
+    assert "1 run above, carrying $10.00, was claimed against a group" in section
+    assert "what each group was charged rather than what each group ran" in section
+    assert "tools/report_run_costs.py` names the runs" in section
+    assert "It is a floor" in section
+
+
+def test_a_split_nothing_contradicts_carries_no_paragraph_about_it() -> None:
+    """A finding printed at zero is a paragraph a morning reader learns to skip.
+
+    The standing caveat above it stays, because how the figures are produced is true every
+    morning. The sentence about what happened this month appears only when something did.
+    """
+    projection = project(AUGUST_DAYS, today=date(2026, 8, 4), limit_usd=LIMIT)
+
+    section = render_section(
+        projection,
+        team_shares=(
+            TeamShare(team="memory-split", cost_usd=Decimal("40.00"), runs=4, unpriced_runs=0),
+        ),
+        limit_source="tools/spend-limits.yaml",
+    )
+
+    assert "claimed by somebody the roster records elsewhere" not in section
+    assert "It is a floor" not in section
+    assert "nothing on the platform checks against the roster any more" in section
+
+
 def test_the_limit_is_read_from_a_file_rather_than_written_into_the_code() -> None:
     """Mutation: hardcode the limit in :mod:`edullm_platform.spend`.
 

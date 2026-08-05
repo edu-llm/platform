@@ -49,6 +49,29 @@ catalog does not carry is reported under that name rather than folded into anyth
 because an unrecognised claim is a finding about the roster or about the form rather than a
 rounding error. Where the catalog binds no teams at all every claim lands there, and that
 is the answer rather than a fault.
+
+**AND A CLAIM THAT NAMES A REAL GROUP CAN STILL BE WRONG, WHICH IS NEWER AND IS WHY
+:class:`ContradictedClaim` EXISTS.** Until 2026-08-05 ``evaluate_authorization`` refused a
+submitter whose recorded group was not the group their manifest claimed, so a run that
+reached an attempt record had been checked. #221 removed that refusal, because it fired
+inside admission, downstream of the approval gate, where it could spend a lead's signature
+and never prevent any spend. What it left behind was ``team_verified`` on the decision
+record, which nothing read.
+
+So the split below is now approximate in a way it was not before, and the size of the
+approximation is computable from the same two inputs the split already has: the submitter on
+the intent record, and ``member_logins`` in ``config/organization.yaml``. Each bound team
+carries how much of its line was booked by somebody the roster records on a different group,
+and :attr:`TeamAttribution.contradicted` names those runs once. It is a report and not a
+gate: nothing here refuses anything, and a contradicted run is counted into its claimed
+team's total exactly as before, because moving it would be inventing an attribution nobody
+recorded.
+
+**THE FIGURE IS A FLOOR AND NOT A COUNT OF EVERY DOUBTFUL CLAIM.** A submitter the roster
+records on no group at all is not counted, because nothing contradicts them. Their runs also
+carry ``team_verified: false``, and ``tools/report_onboarding_readiness.py`` already names
+those people and says what it costs, so counting them again here would be one fact reported
+in two places under two spellings.
 """
 
 from __future__ import annotations
@@ -65,6 +88,7 @@ from edullm_platform.contracts.workload import ComputeProfile
 __all__ = [
     "SECONDS_PER_HOUR",
     "SPOT_PROFILE_SUFFIX",
+    "ContradictedClaim",
     "RunCost",
     "TeamAttribution",
     "TeamSpend",
@@ -233,6 +257,13 @@ class TeamSpend:
     cost_usd: Decimal
     runs: int
     unpriced_runs: int
+    #: How many of ``runs`` were booked by somebody the roster records on a different group.
+    #: Counted into ``runs`` and ``cost_usd`` as well, because this is a statement about how
+    #: reliable those two figures are rather than a subtraction from them.
+    contradicted_runs: int = 0
+    #: How much of ``cost_usd`` those runs carry. Unpriced ones are in ``contradicted_runs``
+    #: and contribute nothing here, for the reason :func:`total_priced` gives.
+    contradicted_cost_usd: Decimal = Decimal(0)
 
 
 @dataclass(frozen=True)
@@ -253,16 +284,48 @@ class UnboundTeamSpend:
 
 
 @dataclass(frozen=True)
-class TeamAttribution:
-    """Every bound team's spend, and every claim that matched none of them.
+class ContradictedClaim:
+    """One run booked against a real group the roster records its submitter elsewhere from.
 
-    Both sequences are ordered by spend, highest first, with the name breaking a tie. That
-    leaves the teams which spent nothing together at the end, where they read as a list of
-    quiet groups rather than as an interruption.
+    Named per run rather than only counted, because the count says the split is off and only
+    the run says by whose hand and by how much. All four fields are already in hand: the
+    first three come off the intent record and :attr:`recorded_teams` off
+    ``config/organization.yaml``, so nothing here needs a source the cost report was not
+    already reading.
+
+    :attr:`recorded_teams` is never empty. A submitter the roster places nowhere is not a
+    contradiction and is deliberately not one of these; the module docstring says where that
+    person is reported instead.
+    """
+
+    run_id: str
+    submitter: str
+    claimed_team: str
+    #: Every group the roster does record this submitter on, in catalog order.
+    recorded_teams: tuple[str, ...]
+    #: ``None`` where the run itself carries no figure, which is a spot run or a profile the
+    #: catalog does not price. The claim is still contradicted and still worth naming.
+    cost_usd: Decimal | None
+
+
+@dataclass(frozen=True)
+class TeamAttribution:
+    """Every bound team's spend, every claim that matched none of them, and what is doubtful.
+
+    ``bound`` and ``unbound`` are ordered by spend, highest first, with the name breaking a
+    tie. That leaves the teams which spent nothing together at the end, where they read as a
+    list of quiet groups rather than as an interruption.
+
+    ``contradicted`` is ordered by run id, because it is a list somebody works through
+    rather than one they read the top of.
     """
 
     bound: tuple[TeamSpend, ...]
     unbound: tuple[UnboundTeamSpend, ...]
+    #: Every run inside ``bound`` whose submitter the roster records on another group. It is
+    #: the same population the per-team ``contradicted_runs`` counts add up to, held once so
+    #: that a renderer wanting the names does not recompute the comparison.
+    contradicted: tuple[ContradictedClaim, ...] = ()
 
     @property
     def unbound_cost_usd(self) -> Decimal:
@@ -272,19 +335,30 @@ class TeamAttribution:
     def unbound_runs(self) -> int:
         return sum(entry.runs for entry in self.unbound)
 
+    @property
+    def contradicted_cost_usd(self) -> Decimal:
+        return sum((entry.cost_usd for entry in self.contradicted if entry.cost_usd), Decimal(0))
+
 
 @dataclass
 class _Tally:
     cost_usd: Decimal = Decimal(0)
     runs: int = 0
     unpriced_runs: int = 0
+    contradicted_runs: int = 0
+    contradicted_cost_usd: Decimal = Decimal(0)
 
-    def add(self, entry: RunCost) -> None:
+    def add(self, entry: RunCost, *, contradicted: bool = False) -> None:
         self.runs += 1
         if entry.cost_usd is None:
             self.unpriced_runs += 1
         else:
             self.cost_usd += entry.cost_usd
+        if not contradicted:
+            return
+        self.contradicted_runs += 1
+        if entry.cost_usd is not None:
+            self.contradicted_cost_usd += entry.cost_usd
 
 
 def attribute_to_teams(
@@ -300,14 +374,37 @@ def attribute_to_teams(
     matching it loosely would launder the misspellings this reconciliation exists to
     surface, and a run attributed to the wrong team is indistinguishable from a correctly
     attributed one.
+
+    **WHO MAY CLAIM A GROUP IS ASKED HERE AND REFUSED NOWHERE**, which the module docstring
+    argues at length. The comparison is ``TeamBinding.includes``, the same primitive
+    ``teams_for_member`` and ``cli.preflight._check_team`` are built on, so a roster edit
+    moves every reading of it together. It is asked only of a submitter the roster places
+    somewhere: somebody it places nowhere has nothing to be contradicted by, and answering
+    otherwise would report thirty-five people as misattributing spend for a line their lead
+    has not written yet.
     """
+    bound_by_id = {team.team_id: team for team in catalog.teams}
     bound_tallies = {team.team_id: _Tally() for team in catalog.teams}
     unbound_tallies: dict[str, _Tally] = {}
+    contradicted: list[ContradictedClaim] = []
     for entry in costs:
-        tally = bound_tallies.get(entry.team)
-        if tally is None:
-            tally = unbound_tallies.setdefault(entry.team, _Tally())
-        tally.add(entry)
+        claimed = bound_by_id.get(entry.team)
+        if claimed is None:
+            unbound_tallies.setdefault(entry.team, _Tally()).add(entry)
+            continue
+        recorded = catalog.teams_for_member(entry.submitter)
+        disputed = bool(recorded) and not claimed.includes(entry.submitter)
+        bound_tallies[entry.team].add(entry, contradicted=disputed)
+        if disputed:
+            contradicted.append(
+                ContradictedClaim(
+                    run_id=entry.run_id,
+                    submitter=entry.submitter,
+                    claimed_team=entry.team,
+                    recorded_teams=tuple(team.team_id for team in recorded),
+                    cost_usd=entry.cost_usd,
+                )
+            )
 
     bound = tuple(
         TeamSpend(
@@ -318,6 +415,8 @@ def attribute_to_teams(
             cost_usd=bound_tallies[team.team_id].cost_usd,
             runs=bound_tallies[team.team_id].runs,
             unpriced_runs=bound_tallies[team.team_id].unpriced_runs,
+            contradicted_runs=bound_tallies[team.team_id].contradicted_runs,
+            contradicted_cost_usd=bound_tallies[team.team_id].contradicted_cost_usd,
         )
         for team in catalog.teams
     )
@@ -337,4 +436,5 @@ def attribute_to_teams(
         unbound=tuple(
             sorted(unbound, key=lambda spend: (-spend.cost_usd, spend.claimed_team))
         ),
+        contradicted=tuple(sorted(contradicted, key=lambda claim: claim.run_id)),
     )
