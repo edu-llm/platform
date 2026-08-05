@@ -775,6 +775,39 @@ def test_the_program_asserts_the_uniform_byte_floor() -> None:
     assert "assert min(losses) / LN2 > 8.0" in training_program()
 
 
+def test_the_program_shifts_its_labels_because_olmo_core_does_not() -> None:
+    """THE FLOOR ABOVE CAUGHT THIS ONE FOR REAL. Mutation: pass ``labels=ids``.
+
+    ``Transformer.forward`` hands ``labels`` straight to the LM head. The shift lives in
+    ``olmo_core.data.utils.get_labels`` -- "labels are just input IDs shifted to the left
+    (first item is ignored)" -- which the trainer calls on the caller's behalf. This program
+    builds its own batch, so nothing calls it, and ``labels=ids`` asks the model to predict
+    token t from a context already containing token t. A causal model solves that copy in a
+    handful of steps and reports a number that is not a language-modelling loss.
+
+    It shipped that way and ran that way, and the floor is the only reason anybody knows:
+    run_019fd2bc on 2026-08-05 took bpb from 15.85 to 2.48 in twenty steps, through a floor
+    of 8.0. Nothing had reached the assertion before, because until ``botocore[crt]`` was in
+    the image every run died at the checkpoint write forty lines above it -- so a defect in
+    what the platform's only training program *computes* was being hidden by a defect in
+    whether it could *save*.
+
+    Written over the text rather than over a run, because the alternative costs a T4. The
+    pad value is asserted with the rest: ``-100`` is what ``get_labels`` uses and what the
+    loss ignores, and padding with a real token id would put one garbage prediction into
+    every sequence instead.
+    """
+    program = training_program()
+
+    assert (
+        "labels = torch.nn.functional.pad(ids[..., 1:], (0, 1, 0, 0), value=-100)" in program
+    )
+    assert "model(ids, labels=labels)" in program
+    assert "model(ids, labels=ids)" not in program, (
+        "unshifted labels make this a copy task, which the uniform-byte floor rejects"
+    )
+
+
 def test_the_program_refuses_to_train_in_anything_but_float32_on_this_card() -> None:
     """Mutation: leave the dtype to whatever the recipe defaults to.
 

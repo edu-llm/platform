@@ -346,9 +346,26 @@ losses = []
 # tokenizer to decode through, no network to reach the Hub over, and no conversion factor
 # anybody had to invent. Ids above 255 never occur; the vocabulary, the parameter count and
 # the memory footprint are unchanged.
+#
+# THE LABELS ARE SHIFTED HERE BECAUSE olmo_core DOES NOT SHIFT THEM, AND `labels=ids` IS THE
+# ONE MISTAKE THIS PROGRAM CANNOT SURVIVE MAKING QUIETLY. `Transformer.forward` hands labels
+# straight to the LM head; the shift lives in `olmo_core.data.utils.get_labels`, whose own
+# comment reads "labels are just input IDs shifted to the left (first item is ignored)" and
+# which the trainer calls on the caller's behalf. This program builds its batch itself, so
+# nothing calls it, and unshifted labels ask the model to predict token t from a context that
+# already contains token t. That is a copy, a causal model solves it in a handful of steps,
+# and the loss it reports is not a language-modelling loss at all.
+#
+# Measured, on run_019fd2bc: twenty steps took bpb from 15.85 to 2.48 -- below the eight bits
+# a uniform byte carries, which is the floor asserted at the bottom of this program and the
+# only reason the mistake was ever found. It had never been reached before, because until
+# botocore[crt] reached the image every run of this program died at the checkpoint write
+# forty lines above it. The pad value is the -100 that `get_labels` uses, so the last
+# position -- the one with no next token -- is ignored rather than predicted.
 for step in range(1, {steps} + 1):
     ids = torch.randint(0, 256, (2, 512), device=device, generator=generator)
-    output = model(ids, labels=ids)
+    labels = torch.nn.functional.pad(ids[..., 1:], (0, 1, 0, 0), value=-100)
+    output = model(ids, labels=labels)
     output.loss.backward()
     optimizer.step()
     optimizer.zero_grad(set_to_none=True)
