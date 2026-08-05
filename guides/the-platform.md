@@ -210,6 +210,22 @@ The flags are the fields the form asks for, and `check` and `submit` take the sa
 
 `status`, `logs` and `cancel` reach AWS, and the only identity allowed to read a Batch job lives in `cancel-run.yml`, so those three dispatch that workflow and wait for a runner. Tens of seconds, not a moment. `check` and `submit` do not.
 
+### Setting a team once
+
+You only have to pass `--team` when the roster cannot answer for you. It answers when `config/organization.yaml` puts you on exactly one declared group. It cannot when you are on two, and then every `check` and every `submit` is refused with `team_is_ambiguous` until you name one.
+
+Write the group you usually charge to into one file and you stop being asked.
+
+```
+mkdir -p ~/.config/edullm && echo pre-training > ~/.config/edullm/team
+```
+
+The file holds one team id on its first line and nothing else. There is no command that writes it, because there is nothing to write but the word. It goes in the same place on macOS, Linux and WSL, or under `XDG_CONFIG_HOME` if you have set one.
+
+This is yours and it is local. It is not reviewed configuration, it is read by nothing but your own `edullm`, and it does not travel with your code. `edullm check` prints the team it used and names this file on the same line, so a transcript still says where the team came from, and `--team` on the command line beats it for one run.
+
+**It fills the field in and it gets you nothing.** A default naming a group the roster does not put you on is refused exactly as typing that group would be, and one naming a group that does not exist is refused as an unregistered team. It saves keystrokes and changes no outcome.
+
 ## Keeping edullm current
 
 Run the install line again. `--force` makes it idempotent, so the one line installs, upgrades and repairs.

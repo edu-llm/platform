@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 
 from edullm_platform.cli.main import main
+from edullm_platform.cli.preferences import DEFAULT_TEAM_FILE, PREFERENCES_DIRECTORY
 from edullm_platform.cli.workspace import CommandResult
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -141,6 +142,34 @@ def write_spec(
     return path
 
 
+def config_home(cwd: Path) -> Path:
+    """The XDG config home :func:`invoke` gives one run, which is per-test and empty."""
+    return cwd / "_no-config-home"
+
+
+def default_team_path(cwd: Path) -> Path:
+    """Where a personal default would live under that config home.
+
+    Composed from the module's own constants rather than spelled here, so renaming the
+    directory or the file moves the tests with it rather than leaving them asserting against
+    a path nothing reads.
+    """
+    return config_home(cwd) / PREFERENCES_DIRECTORY / DEFAULT_TEAM_FILE
+
+
+def write_default_team(cwd: Path, contents: str) -> Path:
+    """Put a personal default where this run will find it, exactly as a researcher would.
+
+    Takes the whole file contents rather than a team id, because half of what is worth
+    testing here is what the reader does with a file somebody typed by hand: a trailing
+    newline, a blank first line, something left on a second line.
+    """
+    path = default_team_path(cwd)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(contents, encoding="utf-8")
+    return path
+
+
 def invoke(
     argv: list[str],
     *,
@@ -157,6 +186,12 @@ def invoke(
     already done would read that person's login out of their home directory, and the test
     for "nobody is logged in" would pass or fail depending on whose machine it ran on.
 
+    ``XDG_CONFIG_HOME`` is pointed at a second empty directory for the same reason, one layer
+    along. The personal default team lives under the config home, so a maintainer who has set
+    one for their own submissions would otherwise have every team assertion in this suite
+    answer with their preference instead of with the roster. A test that wants a default calls
+    :func:`write_default_team` first, which writes it into this same directory.
+
     ``--config-dir`` goes after the verb because that is where it lives: the root parser
     takes no option carrying a value, which is what lets a first word be read as a verb
     without parsing, and is what lets a retired name be answered with its replacement
@@ -169,6 +204,7 @@ def invoke(
     can recognise in the output.
     """
     monkeypatch.setenv("GH_CONFIG_DIR", str(cwd / "_no-gh-config"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home(cwd)))
     if login is None:
         monkeypatch.delenv("EDULLM_GITHUB_LOGIN", raising=False)
     else:
