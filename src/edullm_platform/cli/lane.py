@@ -51,10 +51,12 @@ __all__ = [
     "GPU_AMI_PARAMETER",
     "LANE_INSTANCE_PROFILE",
     "LANE_TAG_KEY",
+    "SESSION_PLUGIN",
     "WORKING_TIER_SETTINGS_PATH",
     "WORK_BUCKET",
     "LaneRequest",
     "WorkingTierSettings",
+    "agent_online_argv",
     "assume_lane_argv",
     "credentials_environment",
     "expires_at",
@@ -62,9 +64,15 @@ __all__ = [
     "instance_type_for",
     "lane_refusals",
     "load_working_tier_settings",
+    "missing_plugin_refusal",
+    "notebook_forward_argv",
     "person_from_caller_arn",
     "placement_warning",
+    "remote_command_argv",
+    "remote_script",
     "run_instances_argv",
+    "shell_session_argv",
+    "ssh_proxy_command",
     "working_prefix",
     "working_uri",
 ]
@@ -479,4 +487,130 @@ def run_instances_argv(
         "Instances[0].InstanceId",
         "--output",
         "text",
+    )
+
+
+#: The one thing that has to be on a researcher's laptop beyond the AWS CLI. It is a separate
+#: install and it is not optional: every session below goes through it.
+SESSION_PLUGIN: Final = "session-manager-plugin"
+
+
+def shell_session_argv(instance_id: str) -> tuple[str, ...]:
+    """A shell on the machine, with no document named.
+
+    The default is the account's own session preference, which is what somebody asking for a
+    shell means. Nothing is opened, nothing is forwarded and no key exists.
+    """
+    return ("aws", "ssm", "start-session", "--target", instance_id)
+
+
+def notebook_forward_argv(
+    instance_id: str, *, settings: WorkingTierSettings, local_port: int
+) -> tuple[str, ...]:
+    """A tunnel from a port on the laptop to Jupyter's port on the machine.
+
+    **NOTHING IS OPENED ON THE INSTANCE AND NOTHING IS EXPOSED.** Jupyter binds loopback there and
+    the bytes travel through the agent's outbound connection, so the security group keeps its zero
+    ingress rules and a notebook is never reachable from the internet. That is the whole reason
+    this is a forward rather than a port and a rule.
+    """
+    return (
+        "aws",
+        "ssm",
+        "start-session",
+        "--target",
+        instance_id,
+        "--document-name",
+        "AWS-StartPortForwardingSession",
+        "--parameters",
+        (f'{{"portNumber":["{settings.notebook_port}"],"localPortNumber":["{local_port}"]}}'),
+    )
+
+
+def remote_command_argv(instance_id: str, *, command: str) -> tuple[str, ...]:
+    """One command on the machine, with its output streaming back as it is written.
+
+    ``AWS-StartNonInteractiveCommand`` rather than ``ssm send-command``. SendCommand collects
+    output and returns it at the end, truncated at 24,000 characters unless somebody configures a
+    bucket for it, and ``edullm run``'s own sentence in the CLI is that it streams.
+    """
+    return (
+        "aws",
+        "ssm",
+        "start-session",
+        "--target",
+        instance_id,
+        "--document-name",
+        "AWS-StartNonInteractiveCommand",
+        "--parameters",
+        f'{{"command":["{command}"]}}',
+    )
+
+
+def agent_online_argv(instance_id: str) -> tuple[str, ...]:
+    """Whether Systems Manager has heard from this machine yet.
+
+    Asked of Systems Manager rather than of EC2, and the difference costs a confusing failure. An
+    instance passes its EC2 status checks a minute or two before the agent registers, so an EC2
+    reading says ready and the session then fails with "target not connected", which names
+    neither the wait nor the cause.
+    """
+    return (
+        "aws",
+        "ssm",
+        "describe-instance-information",
+        "--filters",
+        f"Key=InstanceIds,Values={instance_id}",
+        "--query",
+        "InstanceInformationList[0].PingStatus",
+        "--output",
+        "text",
+    )
+
+
+def ssh_proxy_command(instance_id: str) -> str:
+    """The one line that makes an editor over SSH work, printed rather than installed.
+
+    VS Code Remote-SSH and plain ``ssh`` both drive a ``ProxyCommand``, and this is the documented
+    one for Session Manager. It is printed because ``~/.ssh/config`` is a file this binary does not
+    own and may not be the only thing writing to.
+    """
+    return (
+        'ProxyCommand sh -c "aws ssm start-session --target '
+        f"{instance_id} --document-name AWS-StartSSHSession "
+        '--parameters portNumber=%p"'
+    )
+
+
+def missing_plugin_refusal() -> Refusal:
+    """What to say when the laptop has the AWS CLI and not the piece that carries a session."""
+    return Refusal(
+        code="session_plugin_missing",
+        detail=(
+            f"{SESSION_PLUGIN} is not on PATH. A lane session is a Systems Manager session rather "
+            "than SSH, which is what means there is no key to hold and no port open on the "
+            "machine, and the plugin is the piece of that which runs on your laptop. Install it "
+            "from the AWS documentation for the Session Manager plugin, then run this again. "
+            "Nothing was started and nothing is billing."
+        ),
+    )
+
+
+def remote_script(*, uri: str, project: str, command: str) -> str:
+    """What runs on the machine for one ``edullm run``, as one line of shell.
+
+    Three acts and the middle one is the researcher's. Sync the tree down, run what was asked,
+    sync back whatever it wrote. The status is captured between the second and the third, so a
+    command that failed still gets its output carried up, and it is printed last on a line the
+    verb parses, because ``start-session`` exits with the plugin's status rather than the remote
+    command's.
+    """
+    directory = f"/work/{project}"
+    return (
+        f"set -u; mkdir -p {directory}; "
+        f"aws s3 sync {uri} {directory} --only-show-errors; "
+        f"cd {directory}; "
+        f"({command}); status=$?; "
+        f"aws s3 sync {directory} {uri} --only-show-errors; "
+        f'echo "edullm-exit:$status"'
     )
