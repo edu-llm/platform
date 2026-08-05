@@ -86,9 +86,16 @@ EXPECTED_SIDS = frozenset(
         "ReadTheWandbKeyTheCheckValidates",
         "ReadAdmissionValidatorDeployedCode",
         "ReadLifecycleRecorderDeployedCode",
-        # Arrived with the expiry janitor in #248, and this list is how it was noticed rather
-        # than absorbed. A count or a subset assertion would have said nothing.
+        # These two arrived while this list was being written, from #248 and #253, and this
+        # list is how each was noticed rather than absorbed. A count or a subset assertion
+        # would have said nothing about either.
+        #
+        # #253 also shows the cost of equality and it is the cost worth paying: it and #251
+        # were both green and neither was rebased onto the other, so main went red for the
+        # minutes between them. A subset assertion would have stayed green and would also
+        # have stayed green if every grant below were deleted.
         "ReadExpiryJanitorDeployedCode",
+        "ReadNotifierDeployedCode",
         "ReadTheDeployedTemplateOfEachStack",
         "FindStacksNothingInTheRepositoryAccountsFor",
         "FindEveryResourceThisPlatformTagged",
