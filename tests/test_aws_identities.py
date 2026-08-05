@@ -130,7 +130,7 @@ def test_the_committed_roster_carries_a_table_the_contract_accepts() -> None:
     members = {member.normalized_github_login for member in inventory.members}
     for binding in inventory.aws_identities.roles:
         assert normalize_github_login(binding.github_login) in members, binding.role_name
-    # The account held 43 Intern-* roles on 2026-08-05 and nineteen are the roster's. A table
+    # The account held 43 Intern-* roles on 2026-08-05 and twenty are the roster's. A table
     # longer than the roster is a table with something in it that is not a person.
     assert len(inventory.aws_identities.roles) <= len(inventory.members)
 

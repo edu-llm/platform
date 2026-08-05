@@ -5,7 +5,7 @@ A CLEAN DAY.** The join runs from a launch event's session issuer role name, thr
 ``config/organization.yaml``'s ``aws_identities`` table, to a roster login. A role the table
 does not carry is not a roster principal as far as this can tell, so its launches are filtered
 out -- and a filtered launch produces no mismatch, no error and no trace. The account holds 43
-``Intern-*`` roles and nineteen of them are the roster's, so a missing row is the ordinary
+``Intern-*`` roles and twenty of them are the roster's, so a missing row is the ordinary
 state of this table rather than an exotic failure.
 
 **SO THIS REPORTS ITS DENOMINATOR AND :func:`render_section` PRINTS IT.** Every event lands in

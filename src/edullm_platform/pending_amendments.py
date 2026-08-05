@@ -531,15 +531,25 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "is the kind that deserves the most reading. OrganizationInventory gained "
                 "aws_identities, and contracts/bindings.py gained AwsRoleBinding, "
                 "ExcludedRole and AwsIdentityTable beside it; config/organization.yaml now "
-                "carries nineteen role bindings and one exclusion. Both files are in this "
+                "carries twenty role bindings and one exclusion. Both files are in this "
                 "zip. Nothing the validator decides reads any of it: the table is joined "
                 "against CloudTrail launch events by the morning message, which runs in the "
                 "audit and is not packaged anywhere. The field defaults to an empty table, so "
                 "every record and fixture written before it still parses, and admission "
                 "admits and refuses exactly what it did before."
+                "\n\n"
+                "TWENTY RATHER THAN NINETEEN, AND THE ONE THAT MOVED IS WORTH NAMING BECAUSE "
+                "IT IS A NUMBER TWO DOCUMENTS DISAGREED ABOUT. Intern-linjian.ni-sbsandbox "
+                "was held out of the table on the grounds that no roster name matches it, "
+                "which treated an answered question as open: the roster comment above ninLi0 "
+                "records the owner confirming on 2026-08-04 that the role is that person, and "
+                "that comment has been on main since the W&B accounts commit. Binding it "
+                "moves the count of roster members with no bound role from sixteen to "
+                "fifteen, which is the difference the build index and this table had between "
+                "them. Still nothing the validator reads."
             ),
             cleared_by="uv run python tools/release_lambda.py --function validator",
-            builds_to="33e4341205afd377a16d8973b57bd77db3d55e96bdebec97311e740439416f89",
+            builds_to="4a5febf3e7712519140672e6ae8219ee61c69707f3b55217ffa8b74782420769",
             released="d2c42173589e7c91ff20faeaa7b5b9f705f02e28214ad15fcf782964bf7bf3af",
             recorded_on=date(2026, 8, 5),
         ),

@@ -469,7 +469,7 @@ members:
 # and how many did not, and it names the unresolved ones that are named like people. Adding a
 # row here is the fix; the denominator is what tells you a row is missing.
 #
-# Read from the account on 2026-08-05: it holds 43 `Intern-*` roles and nineteen of them are
+# Read from the account on 2026-08-05: it holds 43 `Intern-*` roles and twenty of them are
 # the roster's. Two of the 43 are not people at all -- `Intern-p3math-olmo370-eval-20260731`
 # and `Intern-p3math-smoke-download-20260731` are task roles that happen to carry the prefix,
 # which is exactly why the prefix is a highlight in the report and never a filter. The rest
@@ -483,13 +483,23 @@ members:
 #     print('\n'.join(m.display_name or m.github_login for m in \
 #     load_yaml('config/organization.yaml', OrganizationInventory).members))"
 #
-# ONE ROLE IS DELIBERATELY NOT HERE AND IT IS WORTH SAYING WHICH.
-# `Intern-linjian.ni-sbsandbox` has no exact name on the roster and the only near match is
-# Eric Ni, whose given name may or may not be the one in the role. Binding it on that guess
-# would put one person's launches on another person's line, which is the worse of the two
-# failures: an unbound role is reported by name every morning it launches anything, and a
-# misbound one is reported as somebody else and looks correct. It stays out until a person
-# says which it is.
+# EVERY `Intern-*` ROLE THIS FILE COULD BIND IS BOUND, AND ONE OF THEM WAS ALMOST LEFT OUT.
+# An earlier draft of this block held `Intern-linjian.ni-sbsandbox` back, on the grounds that
+# no exact name matches it and the only near match is Eric Ni, whose given name may or may not
+# be the one in the role. That reasoning is sound and the conclusion was still wrong, because
+# it treated an answered question as open: the roster comment above `ninLi0` records the owner
+# confirming on 2026-08-04 that this role in AWS is that person, and it has been on `main`
+# since "Record the two W&B accounts that arrived". Binding on a guess would indeed be worse
+# than not binding -- a misbound role is reported as somebody else and looks correct, while an
+# unbound one is reported by name every morning it launches anything -- but this is not a
+# guess, and declining a confirmation is how a closed question gets re-asked forever.
+#
+# The count this changes is not decorative. With the role held back, sixteen of the
+# thirty-five roster members had no bound role; with it bound, fifteen do. Both figures were
+# in circulation across the documents, and the difference between them was this one line.
+# Nothing downstream carries either number: the morning message derives it by set difference
+# against this block and says so in the line it prints, so this file is the only place the
+# figure has to be right.
 aws_identities:
   # Sorted by role_name, matched on display_name because the role names are
   # `Intern-<first>.<last>-sbsandbox` and the roster is keyed on GitHub logins.
@@ -507,6 +517,9 @@ aws_identities:
     - {role_name: Intern-frank.gonzalez-sbsandbox, github_login: philote-dev}
     - {role_name: Intern-grant.matherne-sbsandbox, github_login: GMatherne}
     - {role_name: Intern-hiya.vyas-sbsandbox, github_login: hiyasvyas}
+    # Bound on the owner's 2026-08-04 confirmation rather than on the name, which does not
+    # match: the roster carries this person as Eric Ni. See the block comment above.
+    - {role_name: Intern-linjian.ni-sbsandbox, github_login: ninLi0}
     - {role_name: Intern-meric.xing-sbsandbox, github_login: meric233}
     - {role_name: Intern-nathan.zhao-sbsandbox, github_login: nzhao721}
     - {role_name: Intern-siddhartha.venkatayogi-sbsandbox, github_login: sidvenkatayogi}
