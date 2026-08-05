@@ -17,6 +17,14 @@ failure says nothing about whether it got as far as starting the run -- ``submit
 writes where a run went only after admission answers. Reading that as "not admitted" would
 make ``cancel`` refuse to stop a job that is running, so it reads as uncertain and
 dispatches, and there is a test below that will fail if anybody optimizes that away.
+
+**AND THE THIRD WAY TO BE UNCERTAIN IS NOT LIKE THE OTHER TWO, WHICH IS THE OTHER LINE THIS
+FILE NOW DRAWS.** Those two are uncertainties about a run that was found. A run id no recent
+dispatch carries is not found at all, and reading that as "ask AWS" is how a verb that looks
+read-only came to dispatch a workflow, spend a runner and sit for the poll ceiling over an
+id pasted from an old transcript. ``status`` and ``logs`` refuse it and name ``--ask-aws``;
+``cancel`` still asks, because refusing to stop a job that turns out to be running is worse
+than any runner. Three cases below hold each half of that.
 """
 
 from __future__ import annotations
@@ -35,7 +43,7 @@ from edullm_platform.cli.actions import (
     SUBMIT_WORKFLOW,
     report_ceiling_seconds,
 )
-from edullm_platform.cli.main import EXIT_OK, EXIT_REFUSED
+from edullm_platform.cli.main import EXIT_OK, EXIT_REFUSED, build_parser_and_verbs
 from tests.cli_support import PROJECT_ROOT, FakeRunner, failed, invoke, ok
 
 RUN_ID = "run_019fd2a1-4e07-7a3c-9d55-1b2f8c0e6a41"
@@ -189,8 +197,13 @@ def test_status_on_one_run_asks_the_workflow_to_look_and_never_to_stop(
     ``cancel-run.yml`` defaults ``stop`` to false, so an unset field is safe today and is
     safe because of a default in a file this binary does not own. Sending it explicitly is
     what makes "looking never stops anything" a property of the caller as well.
+
+    On an admitted run rather than an unfindable one, which is the only kind of run
+    ``status`` dispatches for now. This case used to lean on a GitHub where nothing could be
+    found, so a test about ``stop`` was also, silently, the test that held the behaviour
+    :func:`test_a_run_the_window_does_not_reach_is_refused_rather_than_asked_after` removes.
     """
-    runner = github()
+    runner = submission()
 
     code, out, _ = invoke(["status", RUN_ID], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
 
@@ -211,7 +224,7 @@ def test_logs_prints_the_tail_and_not_the_description_beside_it(
     make ``logs`` and ``status`` the same command. The tail is fifty lines by the workflow's
     own choice, and burying it under a table is how it stops being read.
     """
-    runner = github()
+    runner = submission()
 
     code, out, _ = invoke(["logs", RUN_ID], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
 
@@ -760,24 +773,133 @@ def test_logs_on_a_run_that_has_not_started_says_so_rather_than_printing_nothing
     assert "parked at an approval gate" in out
 
 
-def test_a_run_the_search_window_does_not_reach_behaves_exactly_as_it_did_before(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("verb", ["status", "logs"])
+def test_a_run_the_window_does_not_reach_is_refused_rather_than_asked_after(
+    verb: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The fast path's floor: it can add speed and may never remove an answer.
+    """**The only path in this binary that spent money on a guess, and it looked read-only.**
 
-    Mutation: refuse a run this could not find. GitHub keeps workflow runs and artifacts for
-    a bounded window, so an old run simply is not joinable to a dispatch -- and the run it
-    names may still be running in AWS. The only safe reading of "not found" is "ask AWS",
-    which is what every call did before this existed.
+    This used to dispatch, and the argument for that was the fast path's floor: it may add
+    speed and may never remove an answer, an old run is genuinely not joinable to a dispatch,
+    and the run may still be burning a GPU. Every clause of that is true and it is an
+    argument about ``cancel``, which is why ``cancel`` still does it and there is a case
+    below holding it there.
+
+    It is the wrong argument for a question. Pasting a run id out of a transcript older than
+    the artifact window into ``status`` is an ordinary thing to do, and what it bought was a
+    dispatched ``cancel-run.yml``, a runner, and up to the poll ceiling of a silent terminal
+    before answering about a run that ended last month. A malformed id was refused for
+    nothing, so the whole cost fell on ids that look right.
+
+    Mutation: dispatch anyway, on either verb. The expensive path stops being the default
+    and becomes a flag, which is the only shape that lets the cheap wrong answer be cheap.
     """
     runner = github()
 
-    code, out, _ = invoke(["status", RUN_ID], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
+    code, out, err = invoke([verb, RUN_ID], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
+
+    assert code == EXIT_REFUSED
+    assert runner.ran("gh", "workflow", "run") == []
+    assert "refused  run_id_not_found" in err
+    assert out == ""
+
+
+def test_the_refusal_says_a_run_it_cannot_find_may_still_be_a_real_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: say the run does not exist.
+
+    It might not, and it might have finished a month ago. Those are different facts and
+    nothing local can separate them, so the refusal that reports one of them as the other is
+    worse than the dispatch it replaced -- somebody told their run is gone stops looking for
+    it. What this has to carry instead is the window it searched, that a real run can sit
+    outside it, and the flag that buys the certain answer.
+    """
+    runner = github()
+
+    _, _, err = invoke(["status", RUN_ID], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
+    said = " ".join(err.split())
+    minutes = -(-int(report_ceiling_seconds()) // 60)
+
+    assert "carries this run id" in said
+    assert "may well be a real run" in said
+    assert "Nothing was dispatched" in said
+    assert f"--ask-aws to ask anyway, which dispatches {CANCEL_WORKFLOW}" in said
+    assert f"gives up after {minutes} minutes" in said
+
+
+@pytest.mark.parametrize("verb", ["status", "logs"])
+def test_ask_aws_buys_the_answer_the_refusal_named(
+    verb: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The remedy has to be a remedy, which means it reaches the same answer as before.
+
+    Mutation: refuse and offer nothing. AWS is the only thing that still knows what an old
+    run did, so a refusal with no way past it would take an answer away rather than move its
+    price onto whoever asked for it. What the flag restores is exactly the old path, dispatch
+    and all, and ``stop`` stays false on both verbs.
+    """
+    runner = github()
+
+    code, out, _ = invoke(
+        [verb, RUN_ID, "--ask-aws"], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch
+    )
+
+    assert code == EXIT_OK, out
+    assert runner.ran("gh", "workflow", "run") != []
+    assert dispatched_fields(runner)["stop"] == "false"
+    assert dispatched_fields(runner)["run_id"] == RUN_ID
+
+
+def test_cancel_still_asks_aws_about_a_run_it_cannot_find_and_takes_no_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**The half of the old behaviour that was right, kept where it was right.**
+
+    Mutation: refuse an unfindable id on ``cancel`` too, for symmetry. Symmetry is not the
+    property here. ``status`` and ``logs`` are questions and the worst a refusal costs is a
+    second command; ``cancel`` is an instruction, and an id the window does not reach may
+    name a job running now on eight A100s. Refusing to stop it leaves the researcher asking
+    somebody with an AWS credential, which is the arrangement this whole tool exists to
+    avoid. So ``cancel`` pays the runner every time and is offered no flag to opt out of it.
+    """
+    runner = github()
+
+    code, _, err = invoke(
+        ["cancel", RUN_ID, "--reason", "wrong corpus"],
+        runner=runner,
+        cwd=tmp_path,
+        monkeypatch=monkeypatch,
+    )
 
     assert code == EXIT_OK
     assert runner.ran("gh", "workflow", "run") != []
-    assert "carries this run id" in out
-    assert "| Status | `RUNNABLE` |" in out
+    assert dispatched_fields(runner)["stop"] == "true"
+    # Said before the wait rather than after it, so the reader knows why this one is slow.
+    assert "carries this run id" in err
+    assert "--ask-aws" not in build_parser_and_verbs()[1]["cancel"].format_usage()
+
+
+def test_an_uncertain_run_this_did_find_is_still_asked_after_without_a_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The three ways to be uncertain are not one way, and only one of them is a refusal.
+
+    Mutation: refuse every ``UNSURE``. An admission job that ended at an unknown point is an
+    uncertainty about a run this found -- there is a workflow run, a compiled manifest and a
+    page to link -- and ``submit-run.yml`` writes where a run went only after admission
+    answers, so it may have started something. Asking AWS is the honest next question there
+    and the researcher should not have to know a flag to get it. Finding nothing at all is
+    the only case where the dispatch was a guess.
+    """
+    runner = submission(conclusion="failure", admission="failure")
+
+    code, out, err = invoke(["status", RUN_ID], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
+
+    assert code == EXIT_OK, out + err
+    assert runner.ran("gh", "workflow", "run") != []
+    assert "run_id_not_found" not in err
+    assert "does not say whether it got as far as starting the run" in " ".join(out.split())
 
 
 def test_the_admission_job_is_named_the_way_the_workflow_names_it() -> None:

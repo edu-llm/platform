@@ -33,7 +33,7 @@ from typing import Any
 import pytest
 
 import edullm_platform.cli.main as cli
-from edullm_platform.cli.actions import CANCEL_WORKFLOW, SUBMIT_WORKFLOW
+from edullm_platform.cli.actions import ADMISSION_JOB, CANCEL_WORKFLOW, SUBMIT_WORKFLOW
 from edullm_platform.cli.main import (
     BUILT_TODAY,
     EXIT_INTERRUPTED,
@@ -106,33 +106,76 @@ def argv_for(verb: str) -> list[str]:
     return argv
 
 
+SUBMIT_RUN = 19407766
+CANCEL_RUN = 22001
+
+
 def a_platform(
     tmp_path: Path, *, cancel_conclusion: str = "success", gh: Any = None
 ) -> FakeRunner:
     """A checkout that can submit, and a GitHub answering every call the verbs make.
 
-    One fixture for all five verbs, because the cases below run over all five. The compiled
-    artifact is absent, which is the honest worst case for the run verbs and is what makes
-    each of them fall through to the dispatch rather than being answered from GitHub alone.
+    One fixture for all five verbs, because the cases below run over all five. The run the
+    verbs are pointed at is admitted -- a dispatch of ``submit-run.yml`` carrying the id, and
+    an admission job that succeeded -- which is what makes each of the three run verbs fall
+    through to the dispatch this file's 3-versus-2 cases are about.
+
+    **IT USED TO GET THERE BY ANSWERING "NOT FOUND" AND THAT WAS THE WRONG ROAD.** The
+    compiled artifact was absent, so no dispatch could be joined to the id and ``status``,
+    ``logs`` and ``cancel`` all fell through on the strength of not knowing. Two of those
+    three now refuse instead, which is a change about run ids and not about exit codes, and
+    it broke this file -- a file that is meant to be about exit codes. An admitted run is
+    also what the overwhelming majority of these invocations really are, so the fixture now
+    describes that rather than the one case with a verb-by-verb answer.
     """
     write_spec(tmp_path, workload="olmo-core-check", compute="gpu-1xt4")
     cancel_run = {
-        "id": 22001,
+        "id": CANCEL_RUN,
         "status": "completed",
         "conclusion": cancel_conclusion,
         "created_at": "2099-01-01T00:00:00Z",
-        "html_url": "https://github.com/edu-llm/platform/actions/runs/22001",
+        "html_url": f"https://github.com/edu-llm/platform/actions/runs/{CANCEL_RUN}",
     }
+    submit_run = {
+        "id": SUBMIT_RUN,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2099-01-01T00:00:00Z",
+        "html_url": f"https://github.com/edu-llm/platform/actions/runs/{SUBMIT_RUN}",
+    }
+
+    def api(argv: tuple[str, ...]) -> Any:
+        path = argv[-1]
+        if path.endswith(f"/{SUBMIT_RUN}/jobs"):
+            return ok(json.dumps({"jobs": [{"name": ADMISSION_JOB, "conclusion": "success"}]}))
+        if path.endswith(("/approvals", "/pending_deployments")):
+            return ok(json.dumps([]))
+        if SUBMIT_WORKFLOW in path:
+            return ok(json.dumps({"workflow_runs": [submit_run]}))
+        if path.endswith(str(CANCEL_RUN)):
+            return ok(json.dumps(cancel_run))
+        return ok(json.dumps({"workflow_runs": [cancel_run]}))
+
+    def download(argv: tuple[str, ...]) -> Any:
+        directory = Path(argv[argv.index("--dir") + 1])
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "compiled-submission.json").write_text(
+            json.dumps(
+                {
+                    "run_id": RUN_ID,
+                    "experiment": "an-experiment",
+                    "approval_class": "routine",
+                    "approving_environment": "run-approval-lead",
+                }
+            ),
+            encoding="utf-8",
+        )
+        return ok("")
+
     answers: dict[tuple[str, ...], Any] = dict(git_answers(tmp_path))
     answers[("gh", "workflow", "run")] = gh if gh is not None else ok("")
-    answers[("gh", "api")] = gh if gh is not None else (
-        lambda argv: ok(
-            json.dumps(cancel_run)
-            if argv[-1].endswith(str(cancel_run["id"]))
-            else json.dumps({"workflow_runs": [cancel_run]})
-        )
-    )
-    answers[("gh", "run", "download")] = gh if gh is not None else failed("no artifact")
+    answers[("gh", "api")] = gh if gh is not None else api
+    answers[("gh", "run", "download")] = gh if gh is not None else download
     answers[("gh", "run", "view")] = gh if gh is not None else ok("")
     return FakeRunner(answers)
 
@@ -361,6 +404,37 @@ def test_a_run_id_nobody_could_read_is_refused_by_every_verb_that_takes_one(
     assert code == EXIT_REFUSED
     assert "refused  run_id_not_well_formed" in err
     assert runner.ran("gh") == []
+
+
+@pytest.mark.parametrize("verb", ["status", "logs"])
+def test_a_run_id_nothing_recent_carries_is_a_second_refusal_with_a_second_code(
+    verb: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**A shape that is wrong and a run that is not here are two verdicts, not one.**
+
+    Both are 1, because both are what 1 means: a verdict on the run id, which is the second
+    thing ``MAINTAINING.md``'s table says a caller reading 1 should go and fix. What a script
+    needs on top of the number is which of the two happened, because the remedies are
+    different -- retype it, or pass ``--ask-aws`` -- and the codes are what carry that.
+
+    Mutation: give this one 0 after a dispatch, which is what shipped. A verb that looks
+    read-only spent a runner and could sit for eleven minutes over an id pasted out of an old
+    transcript, then exited 0 as though it had answered.
+    """
+    # Hex letters and not zeros, for the reason ``_abbreviates_a_run_id`` fills its template
+    # the same way: twelve digits in a row anywhere in this tree reads as an AWS account id,
+    # and ``tests/test_evidence.py`` refuses one.
+    unknown = "run_019fbbbb-bbbb-7bbb-8bbb-bbbbbbbbbbbb"
+    runner = a_platform(tmp_path)
+    argv = [word if word != RUN_ID else unknown for word in argv_for(verb)]
+
+    code, out, err = invoke([verb, *argv], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
+
+    assert code == EXIT_REFUSED
+    assert "refused  run_id_not_found" in err
+    assert "run_id_not_well_formed" not in err
+    assert runner.ran("gh", "workflow", "run") == []
+    assert out == ""
 
 
 @pytest.mark.parametrize("verb", sorted(BUILT_TODAY))

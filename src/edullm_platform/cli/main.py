@@ -34,12 +34,20 @@ alias would quietly undo that. So the old spelling costs one retry, and what it 
 sentence naming what ``check`` would do in the repository the person is standing in, which
 is the thing they were trying to find out.
 
-NOTHING IN THIS PACKAGE WRITES A POLICY NUMBER DOWN. Every ceiling, rate and bound that
-reaches a terminal is interpolated from the loaded configuration at the point of printing,
-and ``tests/test_cli_no_hardcoded_bounds.py`` fails the build if one is written out. The
-rule is structural because the alternative has already failed: the routine runtime bound
-has disagreed between the documents and ``config/policy.yaml`` three separate times, every
-one of them a second copy that was correct on the day it was typed.
+NOTHING IN THIS PACKAGE WRITES A POLICY NUMBER DOWN. Every ceiling, rate, bound and count
+that reaches a terminal is interpolated from the loaded configuration at the point of
+printing, and ``tests/test_cli_no_hardcoded_bounds.py`` fails the build if one is written
+out. The rule is structural because the alternative has already failed: the routine runtime
+bound has disagreed between the documents and ``config/policy.yaml`` three separate times,
+every one of them a second copy that was correct on the day it was typed.
+
+**AND A COUNT IS ONE OF THOSE, WHICH THIS FILE CLAIMED AND THE CHECK COULD NOT SEE.** The
+rule looked for digits, so "waiting at {environment}. Any of the nine approvers can release
+it" satisfied it while being wrong at one of the two gates it was printed for: nine is the
+union of ``admins`` and ``team_leads``, and ``run-approval-admin`` asks two people. A count
+is the one bound somebody reaches for a word to write, so the word form was both the
+likeliest spelling of the mistake and the only spelling nothing checked. The rule reads
+words now and the sentence is derived from the roster for the gate in hand.
 """
 
 from __future__ import annotations
@@ -88,6 +96,7 @@ from edullm_platform.cli.preflight import (
     working_tree_refusals,
 )
 from edullm_platform.cli.presentation import (
+    approvers_said,
     plain_decimal,
     render_preflight,
     render_refusals,
@@ -111,6 +120,7 @@ from edullm_platform.cli.workspace import (
     github_login,
     read_git_facts,
 )
+from edullm_platform.contracts.admission import ApprovalEnvironment
 from edullm_platform.contracts.identity import RUN_ID_REGEX
 
 __all__ = [
@@ -244,11 +254,13 @@ WHAT_A_VERB_DOES: Final = {
     ),
     "status": (
         "Names your recent submissions, or describes one run and asks AWS about it where "
-        "the answer has moved past what GitHub can say."
+        "the answer has moved past what GitHub can say. A run it cannot find among the "
+        "recent submissions is refused rather than asked about, unless --ask-aws says to."
     ),
     "logs": (
         "Prints the last lines one run printed, read out of the report "
-        f"{CANCEL_WORKFLOW} writes when it is asked to look at a run rather than to stop it."
+        f"{CANCEL_WORKFLOW} writes when it is asked to look at a run rather than to stop it. "
+        "A run it cannot find is refused rather than asked about, unless --ask-aws says to."
     ),
     "cancel": (
         f"Stops one admitted run by dispatching {CANCEL_WORKFLOW} with the reason you give, "
@@ -259,9 +271,21 @@ WHAT_A_VERB_DOES: Final = {
 #: The verbs that are settled and unbuilt, with the sentence each prints. Present so the
 #: binary can say "not built yet" rather than "invalid choice", which are different facts:
 #: one is a plan and the other is a typo.
+#:
+#: **NO SENTENCE HERE NAMES A FLAG, AND ``shell``'S DID.** These strings are the ``description``
+#: of a real subparser, so ``edullm shell --help`` printed "with --notebook for Jupyter" and
+#: then an options list holding ``--config-dir`` and ``--platform-repository`` and nothing
+#: else. A plan is an honest thing for a help page to carry and a flag name is not: the
+#: options list is the parser's own answer to "what may I type", and a description that
+#: contradicts it on the same page is wrong however unbuilt the verb is. The plan is the same
+#: plan, said without spelling a flag that does not exist yet.
+#:
+#: ``RETIRED`` still names ``shell --notebook``, deliberately. That path prints no options
+#: list and says in the same paragraph that neither spelling runs today, which is the whole
+#: of what this page was missing.
 NOT_BUILT_YET: Final = {
     "run": "ship this working tree to a machine and stream the output back",
-    "shell": "open an editor over SSH on a machine, with --notebook for Jupyter",
+    "shell": "open an editor over SSH on a machine, or a Jupyter notebook on the same one",
     "add": "teach the platform about a repository, dataset, shape, model or person",
     "ask": "ask for something for yourself, which produces a time-boxed grant",
 }
@@ -414,9 +438,11 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
 
     status = verb_parser("status", WHAT_A_VERB_DOES["status"])
     status.add_argument("run_id", nargs="?", help="one run; omit for your recent submissions")
+    _add_ask_aws(status)
 
     logs = verb_parser("logs", WHAT_A_VERB_DOES["logs"])
     logs.add_argument("run_id", help="the run to read")
+    _add_ask_aws(logs)
 
     cancel = verb_parser("cancel", WHAT_A_VERB_DOES["cancel"])
     cancel.add_argument("run_id", help="the run to stop")
@@ -448,6 +474,24 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
             **_PARSER_STYLE,
         )
     return parser, built
+
+
+def _add_ask_aws(parser: argparse.ArgumentParser) -> None:
+    """The opt-in that ``status`` and ``logs`` used to take without asking.
+
+    On the two verbs that only read and not on ``cancel``, which is the whole of the split
+    :func:`_unfindable_run_id` argues. ``cancel`` is an instruction rather than a question,
+    and refusing to stop a job that turns out to be running is worse than any runner.
+    """
+    parser.add_argument(
+        "--ask-aws",
+        action="store_true",
+        help=(
+            "ask AWS about a run this cannot find among the recent submissions. Dispatches "
+            f"{CANCEL_WORKFLOW}, which spends a runner and waits for it. A run this does "
+            "find is answered from GitHub either way."
+        ),
+    )
 
 
 def _no_such_verb(word: str) -> str:
@@ -854,7 +898,7 @@ def _check(
     preflight = _preflight(
         arguments, configuration, facts, spec, submitter, unscaffoldable=unscaffoldable
     )
-    print(render_preflight(preflight, policy=configuration.policy), end="", file=out)
+    print(render_preflight(preflight, configuration=configuration), end="", file=out)
     return EXIT_REFUSED if preflight.refused else EXIT_OK
 
 
@@ -968,7 +1012,7 @@ def _nothing_to_scaffold(
                 "make yourself: it lands across the registry, the workload catalog, the "
                 "submission form, an ECR stack and an IAM role no workflow may deploy. Ask "
                 f"for it by opening an issue on {PLATFORM_REPOSITORY} -- edullm add is the "
-                "verb that will one day do this and is not built yet. Registered today: "
+                "verb that will eventually do this and is not built yet. Registered today: "
                 f"{registered}."
             ),
         )
@@ -1062,11 +1106,29 @@ def _submit(
     if approval_class == "automatic":
         print("released automatically. Nothing is waiting on a person.", file=out)
     else:
-        print(
-            f"waiting at {environment}. Any of the nine approvers can release it.",
-            file=out,
-        )
+        print("\n".join(_wrapped(_waiting_said(environment, configuration), indent="")), file=out)
     return EXIT_OK
+
+
+def _waiting_said(environment: str, configuration: ReviewedConfiguration) -> str:
+    """Which gate holds this run, and how many people the roster says can release it.
+
+    THE COUNT IS DERIVED FROM THE ROSTER RATHER THAN WRITTEN, WHICH IT WAS NOT. This said
+    "any of the nine approvers can release it" whatever the gate. Nine is the union of
+    ``admins`` and ``team_leads`` and so happened to describe the lead gate; at
+    ``run-approval-admin`` two people can release and the sentence was wrong by seven, in
+    front of the submitter of the most expensive runs this platform takes.
+
+    The environment arrives as whatever the compile job wrote into the artifact, so it is
+    matched against the enum rather than trusted. A gate this binary does not recognise is
+    named and not counted: a count against the wrong gate is the defect being fixed here,
+    and inventing one for an unknown name would be the same mistake with a different cause.
+    """
+    try:
+        gate = ApprovalEnvironment(environment)
+    except ValueError:
+        return f"waiting at {environment or 'an approval gate'}."
+    return f"waiting at {gate.value}. {approvers_said(configuration.inventory, gate)}"
 
 
 def _say_whether_this_edullm_is_current(
@@ -1181,6 +1243,9 @@ def _status(
 
     _said_resolving(arguments.run_id, err)
     facts = read_run_facts(actions, arguments.run_id)
+    if not facts.was_found and not arguments.ask_aws:
+        print(render_refusals([_unfindable_run_id(facts)]), end="", file=err)
+        return EXIT_REFUSED
     print(render_run_facts(facts), end="", file=out)
     if not facts.needs_a_dispatch:
         return EXIT_OK
@@ -1216,6 +1281,9 @@ def _logs(
     )
     _said_resolving(arguments.run_id, err)
     facts = read_run_facts(actions, arguments.run_id)
+    if not facts.was_found and not arguments.ask_aws:
+        print(render_refusals([_unfindable_run_id(facts)]), end="", file=err)
+        return EXIT_REFUSED
     if not facts.needs_a_dispatch:
         # A run that never reached AWS printed nothing there. Dispatching would spend a
         # runner to be told that, and what came back would read as an empty log rather than
@@ -1484,6 +1552,47 @@ def _malformed_run_id(run_id: str) -> Refusal | None:
             f"leading {SHORTEST_RUN_ID} characters of that UUID are enough as long as no "
             "two of your recent runs share them. edullm status with no argument lists "
             "yours in the short form."
+        ),
+    )
+
+
+def _unfindable_run_id(facts: RunFacts) -> Refusal:
+    """A well-formed run id no recent dispatch carries, refused rather than guessed at.
+
+    **THIS IS THE ONE PATH IN THE BINARY THAT SPENT MONEY ON A GUESS.** ``status`` and
+    ``logs`` read ``UNSURE`` as "ask AWS", and a run id that cannot be found reads
+    ``UNSURE``. So pasting an id out of a transcript older than the artifact window into a
+    verb that looks read-only dispatched ``cancel-run.yml``, waited for a runner, and could
+    sit for the whole poll ceiling before answering about a run that finished last month. A
+    malformed id was refused for free, so the failure was specific to ids that look right,
+    which is every id anybody actually pastes.
+
+    **AND "NOT FOUND" IS NOT "DOES NOT EXIST", WHICH IS WHY THIS IS WORDED AS IT IS.** The
+    window is bounded and artifacts expire, so a real run that ran a month ago is not
+    joinable to a dispatch and is indistinguishable here from an id that was never minted.
+    Nothing local can tell those apart. What the refusal can do is say so rather than pick
+    one, name the window it did search, and name the flag that pays for the certain answer.
+    A reader gets three separable outcomes and a script gets three of them too: exit 1 with
+    ``run_id_not_well_formed`` for a shape that is wrong, exit 1 with ``run_id_not_found``
+    for a shape that is right and a run that is not here, and exit 0 with the run's facts
+    when it is.
+
+    **``cancel`` IS NOT GIVEN THIS AND MUST NOT BE.** The argument that put the old
+    behaviour there is correct for exactly one verb: refusing to stop a job that turns out
+    to be running is far worse than a wasted runner, and an id the window does not reach may
+    still name something burning a GPU. ``cancel`` is an instruction and pays the runner
+    every time. ``status`` and ``logs`` are questions, and the cheap wrong answer to a
+    question is a refusal that names the flag, not the whole poll ceiling in silence.
+    """
+    return Refusal(
+        code="run_id_not_found",
+        detail=(
+            f"{facts.because} Whether this one is older than the window or was never minted "
+            "at all is not something that can be told from here, and this does not guess: it "
+            "may well be a real run. Nothing was dispatched and nothing was waited for. Pass "
+            f"--ask-aws to ask anyway, which dispatches {CANCEL_WORKFLOW} for the one "
+            f"identity that may read a Batch job, spends a runner and gives up after "
+            f"{_ceiling_said()}."
         ),
     )
 
