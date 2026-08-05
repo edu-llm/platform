@@ -379,6 +379,26 @@ elapsed = time.time() - started
 # other way round. A reader that finds the marker knows the object beside it is whole, which
 # is what makes a checkpoint resumable rather than merely present. An interrupted write
 # leaves the payload uncertified and correctly unusable.
+#
+# step{{n}} AND NOT step-{{n}}, WHICH IS THE ONE CHARACTER THAT MADE FOUR RUNS' CHECKPOINTS
+# INVISIBLE. This program wrote a hyphen for months and nothing noticed, because the only
+# reader that would have complained is the survey and it recorded the miss as
+# `unparsed_directories: ["step-20"]` inside a record whose `checkpoints` list read empty.
+# Both layout matchers want `^step(\\d+)$` or `^checkpoint-(\\d+)$` and a hyphen after `step`
+# is neither, so the two runs the spine's done-condition was checked against compared clean
+# with no checkpoint field among the ten differences.
+#
+# THE MATCHERS ARE RIGHT AND THIS WAS WRONG, WHICH WAS MEASURED RATHER THAN ASSUMED.
+# OLMo-core's Checkpointer sets `CHECKPOINT_DIR = "step{{step}}"` and `find_checkpoints`
+# matches it with the same expression, so a real training run writes no hyphen and this one
+# was the only thing in the account that did. Read off the lineage store on 2026-08-05: 251
+# recorded checkpoints across 135 result records, every one of them `step{{n}}`, against four
+# records naming `step-20` and all four of them this program. Widening the matcher would have
+# been the cheap fix and it is the wrong one, because it would make the platform claim
+# OLMo-core can resume from a directory OLMo-core's own loader skips.
+#
+# The four already written are not fixed by this. Their objects stay where they are under a
+# name nothing reads, and the record that describes them stays empty.
 buffer = io.BytesIO()
 torch.save({{"step": {steps}, "model": model.state_dict()}}, buffer)
 payload = buffer.getvalue()
@@ -386,7 +406,7 @@ digest = "sha256:" + hashlib.sha256(payload).hexdigest()
 
 location = urlparse(prefix)
 bucket = location.netloc
-key = location.path.lstrip("/") + "checkpoints/step-{steps}/"
+key = location.path.lstrip("/") + "checkpoints/step{steps}/"
 s3 = boto3.client("s3")
 written = s3.put_object(
     Bucket=bucket,

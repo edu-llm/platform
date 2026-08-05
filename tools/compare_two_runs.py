@@ -8,8 +8,9 @@ JSON leaves and a hope; run through this it is a table and an exit code.
 Four exit codes, because there are four answers and no two of them may read alike:
 
 0   Every difference has a name, and every field that must be equal is on both sides and equal.
-1   Something differs that nothing explains, or a field the comparison requires is on one side
-    and not the other. A finding about the runs.
+1   Something differs that nothing explains, a field the comparison requires is on one side and
+    not the other, or a run wrote a checkpoint into a directory no layout could read. A finding
+    about the runs.
 2   The tree could not be read. Not a finding about the runs.
 3   The runs agree about everything that was compared, and something required was not compared:
     a field neither record carries. Not a finding about the runs either, and not a pass.
@@ -28,6 +29,22 @@ not, which is. This tool cannot tell those apart and does not pretend to; what i
 refuse to report either of them as agreement. A caller that wants only the first kind waived
 edits :data:`~edullm_platform.run_comparison.REQUIRED_FIELDS`, which is a deliberate act under
 review rather than a flag on a command line.
+
+**A CHECKPOINT DIRECTORY NOTHING COULD READ IS AN EXIT 1 AND NOT AN EXIT 3, AND THE
+DISTINCTION IS THE ONE THE PARAGRAPH ABOVE DRAWS.** Exit 3 exists for an absence this tool
+cannot attribute. This absence is attributed: the record names the directory in
+``checkpoint_survey.unparsed_directories``, the run demonstrably wrote objects into it, and
+the record therefore understates what the run produced. That is present, nameable and worth
+acting on, which is what exit 1 means here. Measured on ``run_019fd2c9`` and ``run_019fd2ca``,
+which each wrote 762 MB into ``step-20/`` and exited 0 through this tool over ten named
+differences, none of them a checkpoint field.
+
+**What is printed and does not change the exit code is the payload digest.** Every checkpoint
+in the store was recorded by a listing, and a listing cannot open the ``_SUCCESS`` that
+carries the digest of the bytes. So a checkpoint compared here was compared on its step, its
+size and a description of its listing, and two payloads that differ leave no trace in any of
+the three. That is the ordinary state of every record in the store rather than a defect in
+these two runs, so it is a caveat printed loudly and not a refusal.
 """
 
 from __future__ import annotations
@@ -42,10 +59,12 @@ from typing import Final
 
 from edullm_platform.run_comparison import (
     RECORD_PREFIXES,
+    CheckpointCoverage,
     ComparedField,
     RequiredFieldCoverage,
     TwoRunComparison,
     cause_for,
+    checkpoint_coverage,
     compare_runs,
     read_run,
     required_field_coverage,
@@ -111,7 +130,12 @@ def cell(value: str) -> str:
     return value.replace("|", "\\|")
 
 
-def render(comparison: TwoRunComparison, *, coverage: RequiredFieldCoverage) -> str:
+def render(
+    comparison: TwoRunComparison,
+    *,
+    coverage: RequiredFieldCoverage,
+    checkpoints: CheckpointCoverage,
+) -> str:
     lines = [
         "## Two runs of one submission",
         "",
@@ -129,6 +153,11 @@ def render(comparison: TwoRunComparison, *, coverage: RequiredFieldCoverage) -> 
         summary += (
             f" {len(comparison.unverified)} field(s) the comparison requires were not "
             "checked at all."
+        )
+    if checkpoints.is_blocked:
+        summary += (
+            f" {len(checkpoints.unreadable)} checkpoint directory(s) could not be read, so "
+            "no checkpoint was compared at all."
         )
     lines += ["", summary]
 
@@ -184,7 +213,55 @@ def render(comparison: TwoRunComparison, *, coverage: RequiredFieldCoverage) -> 
                 "holding the two records and the schema they were written against can."
             ),
         ]
+    lines += checkpoint_section(checkpoints)
     return "\n".join(lines) + "\n"
+
+
+def checkpoint_section(checkpoints: CheckpointCoverage) -> list[str]:
+    """What the checkpoint half of this comparison could not do, said rather than left blank.
+
+    Two headings and never both, because they describe the same absence at two depths and
+    printing both would bury the one that is a defect under the one that is routine.
+    """
+    if checkpoints.is_blocked:
+        return [
+            "",
+            "### THE CHECKPOINT COMPARISON DID NOT RUN",
+            "",
+            *(
+                f"- `{one.run_id}` wrote `{one.directory}`, which no layout could read a "
+                "checkpoint out of"
+                for one in checkpoints.unreadable
+            ),
+            "",
+            (
+                "A directory the recorder could not name a step for is a directory it "
+                "recorded no checkpoint from, so the record's `checkpoints` list is empty "
+                "and every checkpoint field in the table above is missing from both sides. "
+                "That reads exactly like two runs agreeing about their checkpoints and it "
+                "is the opposite: nothing was compared. The run wrote something, "
+                "`checkpoint_survey.objects_seen` says how much, and the layout it wrote it "
+                "in is the name above. Fix the layout or fix the matcher, and run this "
+                "again. Until then this comparison says nothing whatever about checkpoints."
+            ),
+        ]
+    if not checkpoints.compared:
+        return []
+    return [
+        "",
+        "### The checkpoint payloads were not compared, and could not have been",
+        "",
+        (
+            f"{checkpoints.compared} checkpoint(s) were compared on step, size and "
+            "`checksum`. That last one is not a digest of the payload. The lifecycle "
+            "recorder holds a listing grant and nothing that can open an object, so the "
+            "field carries a SHA-256 over the names and sizes the listing returned, and "
+            "two runs whose payloads differ in every byte record the same value in it. "
+            "The digest of the bytes is in the `_SUCCESS` beside each payload and is not "
+            "in the lineage record, so a table with no `checksum` row in it is not a "
+            "statement that the two checkpoints hold the same weights."
+        ),
+    ]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -226,6 +303,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     differences = compare_runs(left, right)
     coverage = required_field_coverage(left, right)
+    checkpoints = checkpoint_coverage(left, right)
     comparison = TwoRunComparison(
         schema_version=1,
         left=left.run_id,
@@ -241,15 +319,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             for one in differences
         ),
         unverified=coverage.unverified,
+        unreadable_checkpoints=checkpoints.unreadable,
     )
-    print(render(comparison, coverage=coverage), end="")
+    print(render(comparison, coverage=coverage, checkpoints=checkpoints), end="")
     if options.output:
         options.output.parent.mkdir(parents=True, exist_ok=True)
         options.output.write_text(comparison.model_dump_json(indent=2) + "\n", encoding="utf-8")
     # A finding about the runs outranks a gap in the comparison, because the first is
     # actionable and the second is a caveat on how much of the first was looked for. Both
     # are printed whichever wins; only one can be a return value.
-    if unexplained(differences) or coverage.missing:
+    #
+    # A checkpoint directory nothing could read is in the first group and not the second.
+    # It is not an absence this tool has to guess the cause of: the record names the
+    # directory, the survey says the run wrote objects into it, and the checkpoint half of
+    # the done-condition therefore did not happen. See the module docstring.
+    if unexplained(differences) or coverage.missing or checkpoints.is_blocked:
         return EXIT_DIFFERED
     if coverage.unverified:
         return EXIT_UNVERIFIED

@@ -971,7 +971,14 @@
       "module": "edullm_platform.run_comparison",
       "name": "TwoRunComparison",
       "schema_version": "1",
-      "structural_digest": "sha256:f68980a6ae7a884289de94fea97afe355ed1f5f00edebd4ce45cfc6b0c36cddb"
+      "structural_digest": "sha256:5446c3db520e70321ee0b2cb3b80c9afa9d335791632c5e6a1a0d9146c089869"
+    },
+    {
+      "base": false,
+      "module": "edullm_platform.run_comparison",
+      "name": "UnreadableCheckpoint",
+      "schema_version": "unversioned",
+      "structural_digest": "sha256:731cd28144b2745f7f07ad95f171977d29169ebedc9ac6db10689fb18f85e493"
     },
     {
       "base": false,

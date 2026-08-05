@@ -44,6 +44,10 @@ from edullm_platform.execution import (
     MAXIMUM_CONTAINER_OVERRIDES_BYTES,
     batch_submit_request,
 )
+from edullm_platform.lifecycle_projection import (
+    HUGGINGFACE_CHECKPOINT_DIRECTORY,
+    STEP_DIRECTORY,
+)
 from tests.fake_object_store import FakeObjectStore
 from tools.build_gpu_training_submission import (
     JOB_DEFINITION_PLACEHOLDER_DIGEST,
@@ -61,7 +65,7 @@ COMMIT = "b067a31e48c4038416d179fc85e5f12b05c8d2a9"
 BUCKET = "sbsandbox-intern-edullm-outputs"
 OUTPUTS_BUCKET = BUCKET
 RUN_ID = "run_019fab9d-d1d0-7009-935f-b0189a9c8a86"
-PREFIX = f"s3://{BUCKET}/teams/platform/runs/{RUN_ID}/checkpoints/step-20/"
+PREFIX = f"s3://{BUCKET}/teams/platform/runs/{RUN_ID}/checkpoints/step20/"
 PAYLOAD = b"the weights, or something the size of them"
 WRITTEN_AT = datetime(2026, 7, 29, 2, 14, 44, tzinfo=UTC)
 
@@ -234,7 +238,7 @@ def test_a_checkpoint_written_the_way_the_program_writes_one_reads_back_as_commi
     on either side turns COMMITTED into CORRUPT here rather than in the bucket.
     """
     store = FakeObjectStore()
-    base = f"teams/platform/runs/{RUN_ID}/checkpoints/step-20/"
+    base = f"teams/platform/runs/{RUN_ID}/checkpoints/step20/"
     digest = f"sha256:{hashlib.sha256(PAYLOAD).hexdigest()}"
 
     store.put_object(
@@ -299,9 +303,44 @@ def test_the_step_count_reaches_the_checkpoint_prefix_and_the_loop_together(step
     """
     program = training_program(steps=steps)
 
-    assert f"checkpoints/step-{steps}/" in program
+    assert f"checkpoints/step{steps}/" in program
     assert f"for step in range(1, {steps} + 1):" in program
     assert f'torch.save({{"step": {steps}' in program
+
+
+@pytest.mark.parametrize("steps", [1, 20, 500])
+def test_the_directory_this_program_writes_is_one_the_recorder_can_read_a_step_out_of(
+    steps: int,
+) -> None:
+    """THE ONE THAT WAS MISSING. Mutation: put the hyphen back in the checkpoint key.
+
+    That mutation shipped and ran four times. ``step-20`` matches neither
+    ``STEP_DIRECTORY`` nor ``HUGGINGFACE_CHECKPOINT_DIRECTORY``, so the lifecycle recorder
+    described no checkpoint, so the result record carried ``"checkpoints": []`` beside a
+    762 MB payload, and the spine's done-condition then compared two of those and exited 0
+    with no checkpoint field among the ten differences it named.
+
+    Asserted against the recorder's own patterns rather than against a literal, because a
+    literal here is the same class of thing that broke: two spellings in two files with
+    nothing between them. OLMo-core's own ``Checkpointer.CHECKPOINT_DIR`` is ``step{step}``
+    and ``find_checkpoints`` matches ``^step(\\d+)$``, so this is also the name a real
+    training run writes and the one a resume would look for.
+    """
+    program = training_program(steps=steps)
+    written = next(
+        line.split('"checkpoints/')[1].split('"')[0]
+        for line in program.splitlines()
+        if '"checkpoints/' in line
+    ).rstrip("/")
+
+    matched = STEP_DIRECTORY.fullmatch(written)
+    assert matched is not None, (
+        f"this program writes checkpoints/{written}/, which the lifecycle recorder cannot "
+        "read a step out of, so every run of it records an empty checkpoint list beside a "
+        "checkpoint it really wrote"
+    )
+    assert int(matched.group(1)) == steps
+    assert HUGGINGFACE_CHECKPOINT_DIRECTORY.fullmatch(written) is None
 
 
 # ---------------------------------------------------------------------------------------

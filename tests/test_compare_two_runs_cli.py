@@ -9,7 +9,7 @@ from typing import Any, Final
 
 import pytest
 
-from tests.test_run_comparison import LEFT, RIGHT, written
+from tests.test_run_comparison import LEFT, RIGHT, checkpoint, written
 from tools.compare_two_runs import (
     CELL_BUDGET,
     EXIT_DIFFERED,
@@ -264,6 +264,140 @@ def test_a_run_that_differs_outranks_a_field_that_was_never_checked(
     assert code == EXIT_DIFFERED
     assert "intent.manifest.wandb_project" in printed
     assert "NEITHER of these runs carries" in printed
+
+
+# ----------------------------------------------------------------------------------------
+# A checkpoint comparison that could not run
+# ----------------------------------------------------------------------------------------
+
+
+def wrote_where_nobody_looks(document: dict[str, Any]) -> None:
+    """The record the two spine runs actually carry: a survey naming what it skipped.
+
+    ``objects_seen`` and ``bytes_seen`` are the ones the fixture already has, and they are
+    the half that was never in doubt. The run wrote. What it wrote is under a directory
+    called ``step-20``, which matches neither ``^step(\\d+)$`` nor ``^checkpoint-(\\d+)$``,
+    so nothing described it and ``checkpoints`` stayed empty.
+    """
+    document["checkpoint_survey"]["unparsed_directories"] = ["step-20"]
+
+
+def test_a_checkpoint_comparison_that_could_not_run_says_so_and_does_not_exit_zero(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """THE REGRESSION GUARD. Mutation: make the layout matcher miss again.
+
+    This is the shape of ``test_a_clean_comparison_and_one_that_checked_fewer_fields_do_not
+    _read_alike`` one level down, and it is here because the defect it guards is worse.
+    That one was a required field neither record carried. This is the checkpoint, which is
+    the thing the spine exists to verify, and it passed clean on 2026-08-05 against
+    ``run_019fd2c9`` and ``run_019fd2ca``: ten differences, every one a run id, a clock or
+    an id Batch or GitHub minted, exit 0, and not one checkpoint field among them. Both
+    runs had written 762 MB.
+
+    Held against a clean pass, because a single report of the broken case has nothing in it
+    to assert on. No checkpoint row appears either way, the difference count is the same,
+    and the exit code was the same. The three assertions are that the table is unchanged --
+    so the fixture is not smuggling in an incidental difference -- that the two reports are
+    nonetheless different, and that the exit codes are not both zero.
+
+    TO SEE THIS GO RED, put the hyphen back. Revert
+    ``tools/build_gpu_training_submission.py`` to ``checkpoints/step-{steps}/`` and a run of
+    it records exactly the fixture below; delete the ``checkpoints.is_blocked`` term from
+    ``main`` and this asserts ``EXIT_DIFFERED == EXIT_MATCHED``.
+    """
+    clean, blind = tmp_path / "clean", tmp_path / "blind"
+    for root in (clean, blind):
+        written(root, LEFT)
+        written(root, RIGHT)
+    for run_id in (LEFT, RIGHT):
+        edited(blind, run_id, "result", wrote_where_nobody_looks)
+
+    matched, agreement = compared(clean, capsys)
+    blocked, alarm = compared(blind, capsys)
+
+    assert rows(alarm) == rows(agreement), "the fixture adds nothing the table was showing"
+    assert alarm != agreement, "so the only thing left to differ about is saying so"
+    assert (matched, blocked) == (EXIT_MATCHED, EXIT_DIFFERED)
+    assert "THE CHECKPOINT COMPARISON DID NOT RUN" in alarm
+    assert "step-20" in alarm
+    assert LEFT in alarm and RIGHT in alarm
+    assert "DID NOT RUN" not in agreement
+
+
+def test_the_directory_nobody_could_read_is_in_the_json_and_not_only_printed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: print the blocked checkpoint and leave it out of the document.
+
+    ``--output`` is what gets committed beside a done-condition and read months later by
+    somebody without the tree. A document recording ten named differences and nothing else
+    is a document that says the spine was checked, and the checkpoint half of it was not.
+    """
+    written(tmp_path, LEFT)
+    written(tmp_path, RIGHT)
+    for run_id in (LEFT, RIGHT):
+        edited(tmp_path, run_id, "result", wrote_where_nobody_looks)
+    report = tmp_path / "comparison.json"
+
+    code, _ = compared(tmp_path, capsys, output=str(report))
+
+    assert code == EXIT_DIFFERED
+    document = json.loads(report.read_text(encoding="utf-8"))
+    assert [
+        (one["run_id"], one["directory"]) for one in document["unreadable_checkpoints"]
+    ] == [(LEFT, "step-20"), (RIGHT, "step-20")]
+
+
+def test_a_comparison_that_walked_a_checkpoint_says_its_payload_was_not_compared(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: let a table with no `checksum` row stand for two identical checkpoints.
+
+    With the layout fixed, both spine runs record one checkpoint whose ``checksum`` is a
+    SHA-256 over the two object names and their sizes. Those are identical, so the field is
+    identical, so no row appears. The payloads are not identical -- ``1a3f1588...`` against
+    ``606e9ee2...`` in the markers -- and nothing in the record can show it. Silence about
+    a digest that was never read is the same defect as silence about a directory that was
+    never parsed, one level further in.
+    """
+    written(tmp_path, LEFT)
+    written(tmp_path, RIGHT)
+    for run_id in (LEFT, RIGHT):
+        edited(
+            tmp_path,
+            run_id,
+            "result",
+            lambda document, run_id=run_id: document.update(  # type: ignore[misc]
+                checkpoints=[checkpoint(run_id)]
+            ),
+        )
+
+    code, printed = compared(tmp_path, capsys)
+
+    assert code == EXIT_MATCHED
+    assert not [line for line in rows(printed) if ".checksum" in line]
+    assert "The checkpoint payloads were not compared" in printed
+    assert "1 checkpoint(s) were compared" in printed
+
+
+def test_a_pair_that_saved_nothing_is_not_told_its_payloads_went_uncompared(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: print the caveat unconditionally.
+
+    The fixture runs are check-shaped and wrote no checkpoints. Telling their reader that
+    no checkpoint payload was compared is true and is noise, and a caveat printed on every
+    comparison is one nobody reads by the third time.
+    """
+    written(tmp_path, LEFT)
+    written(tmp_path, RIGHT)
+
+    code, printed = compared(tmp_path, capsys)
+
+    assert code == EXIT_MATCHED
+    assert "were not compared" not in printed
+    assert "DID NOT RUN" not in printed
 
 
 def test_the_four_exit_codes_are_four_answers() -> None:
