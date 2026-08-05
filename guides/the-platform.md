@@ -95,6 +95,7 @@ A waiver lands in the run's manifest and the approving lead is told which check 
 | --- | --- | --- |
 | `math-frontload-100m-v1` | 0.1B | 3 |
 | `formal-proof-premises-500m-v2` | 0.5B | 12 |
+| `frontload-cl-10b-v1` | 10.1B | 53 |
 | `fineweb-edu-1b-v6` | 1.0B | 4 |
 | `fineweb2-phase0-equal-bpe-2b-v1` | 2.0B | 12 |
 | `fineweb2-phase0-equal-superbpe-2b-v1` | 2.0B | 12 |
