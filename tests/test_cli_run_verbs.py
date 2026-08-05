@@ -33,6 +33,7 @@ from edullm_platform.cli.actions import (
     CANCEL_WORKFLOW,
     PRINTED_RUN_ID,
     SUBMIT_WORKFLOW,
+    report_ceiling_seconds,
 )
 from edullm_platform.cli.main import EXIT_OK, EXIT_REFUSED
 from tests.cli_support import PROJECT_ROOT, FakeRunner, failed, invoke, ok
@@ -644,9 +645,34 @@ def test_an_admitted_run_falls_through_and_says_why_before_it_waits(
     assert code == EXIT_OK
     assert "hiya-vyas" in out
     assert "reading that from AWS needs a runner" in out
-    assert "waits for a runner: tens of seconds, not a moment." in err
+    said = " ".join(err.split())
+    assert "waits first for a runner and then for that workflow to finish" in said
     assert runner.ran("gh", "workflow", "run") != []
     assert "| Status | `RUNNABLE` |" in out
+
+
+def test_the_wait_names_its_own_ceiling_rather_than_promising_tens_of_seconds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: go back to "tens of seconds, not a moment".
+
+    That was true of the usual case and false of the one that matters. The two polls behind
+    this dispatch allow 57 seconds to find the run and 594 more to watch it finish, so the
+    worst case is close to eleven minutes of a terminal printing nothing, described by a
+    sentence promising under a minute. A reader who has been told a ceiling waits; a reader
+    who has been told the wrong one reaches for Ctrl-C at ninety seconds, which on ``cancel``
+    is the moment the stop is in flight.
+
+    The number is read off the poll parameters rather than compared against a literal here,
+    for the reason the whole ``no_hardcoded_bounds`` rule exists: a second copy agrees on
+    the day it is typed. Widen either poll and both the sentence and this move together.
+    """
+    runner = submission()
+
+    _, _, err = invoke(["logs", RUN_ID], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
+    minutes = -(-int(report_ceiling_seconds()) // 60)
+
+    assert f"gives up after {minutes} minutes" in " ".join(err.split())
 
 
 def test_an_admission_job_that_failed_is_uncertain_rather_than_not_admitted(
@@ -692,7 +718,7 @@ def test_cancelling_a_run_that_never_started_names_the_operation_that_would_stop
         pending=parked_at("run-approval-lead", reviewers=("grant-matherne",), yours=False),
     )
 
-    code, out, _ = invoke(
+    code, out, err = invoke(
         ["cancel", RUN_ID, "--reason", "wrong corpus"],
         runner=runner,
         cwd=tmp_path,
@@ -701,9 +727,13 @@ def test_cancelling_a_run_that_never_started_names_the_operation_that_would_stop
 
     assert code == EXIT_REFUSED
     assert runner.ran("gh", "workflow", "run") == []
-    assert "refused  nothing_admitted_to_stop" in out
-    assert f"gh run cancel {SUBMIT_RUN_ID}" in out
-    assert "an approval would still start it" in out
+    assert "refused  nothing_admitted_to_stop" in err
+    assert f"gh run cancel {SUBMIT_RUN_ID}" in err
+    assert "an approval would still start it" in err
+    # On stderr with this verb's other two refusals, and not on stdout where it used to be.
+    # A caller that has to read both streams to collect one verb's refusals cannot tell
+    # from the exit code which one carried this one.
+    assert out == ""
 
 
 def test_logs_on_a_run_that_has_not_started_says_so_rather_than_printing_nothing(

@@ -1,10 +1,20 @@
 """The verbs, and the argument parsing that reaches them.
 
-EXIT CODES FOLLOW THE REPOSITORY'S CONVENTION, WHICH IS ALSO THE WORKFLOW'S: 0 for a
-submission that stands, 1 for one that was refused on the merits, 2 for one nobody could
-judge. ``tools/compile_submission.py`` separates the last two and says why in its own
-header -- a refusal is a verdict a submitter can act on and an unreadable configuration is
-not -- and a CLI that collapsed them would send somebody to edit a spec that was fine.
+FOUR EXIT CODES AND THE SIGNAL ONE, AND EVERY PATH OUT OF THIS BINARY IS ONE OF THEM. 0 for
+a submission that stands, 1 for one refused on the merits, 2 for a tool nobody could drive,
+3 for a platform nobody could ask, and 130 for an interrupt. ``MAINTAINING.md`` carries the
+table and the argument; what matters here is that the five are exhaustive, so a verb that
+grows a new way to fail has to say which of them it is.
+
+WHY 2 AND 3 ARE NOT ONE CODE, WHICH IS THE ONLY ONE OF THE FIVE THAT IS NOT OBVIOUS. They
+were, and it made the first script anybody writes impossible. A mistyped flag and a GitHub
+that would not answer both exited 2, so a caller that wanted to sleep and try again had to
+either retry a typo forever or never retry anything. The caller's fault is worth reporting
+and the platform's is worth retrying, and no amount of reading stderr recovers a
+distinction the exit code threw away. ``tools/compile_submission.py`` makes the same
+separation between 1 and 2 for the same reason: a refusal is a verdict a submitter can act
+on and an unreadable configuration is not, and a CLI that collapsed them would send
+somebody to edit a spec that was fine.
 
 EVERY WORD THIS BINARY IS TYPED IS ONE OF THREE THINGS, AND THEY GET THREE ANSWERS.
 ``BUILT_TODAY`` is the governed-submission core -- ``check``, ``submit``, ``status``,
@@ -37,13 +47,13 @@ from __future__ import annotations
 import argparse
 import sys
 import textwrap
-from collections.abc import Sequence
-from datetime import UTC, datetime
+from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from difflib import get_close_matches
 from pathlib import Path
 from re import findall
-from typing import Final, TextIO
+from typing import Any, Final, TextIO
 
 from pydantic import ValidationError
 
@@ -60,6 +70,7 @@ from edullm_platform.cli.actions import (
     read_report_sections,
     read_run_facts,
     read_submission_runs,
+    report_ceiling_seconds,
 )
 from edullm_platform.cli.configuration import (
     ConfigurationUnreadableError,
@@ -102,11 +113,36 @@ from edullm_platform.cli.workspace import (
 )
 from edullm_platform.contracts.identity import RUN_ID_REGEX
 
-__all__ = ["EXIT_OK", "EXIT_REFUSED", "EXIT_UNUSABLE", "build_parser", "main"]
+__all__ = [
+    "EXIT_INTERRUPTED",
+    "EXIT_OK",
+    "EXIT_REFUSED",
+    "EXIT_UNREACHABLE",
+    "EXIT_UNUSABLE",
+    "build_parser",
+    "main",
+]
 
+#: It stands. Nothing was refused and nothing went wrong.
 EXIT_OK: Final = 0
+
+#: Refused on the merits, which is a verdict about the submission or the run id and is the
+#: only one of these a submitter can act on by editing something.
 EXIT_REFUSED: Final = 1
+
+#: The tool could not be driven, by input or by installation. A flag this verb does not
+#: take, a verb that is not built, a configuration that would not load, a missing ``gh``,
+#: or a contract this binary broke itself. Retrying it unchanged reaches the same place.
 EXIT_UNUSABLE: Final = 2
+
+#: The platform could not be asked. GitHub would not answer, ``gh`` could not dispatch, or
+#: the workflow that answers for AWS did not finish. Nobody judged anything, nothing here
+#: is anybody's fault, and this is the one of the five worth retrying.
+EXIT_UNREACHABLE: Final = 3
+
+#: Interrupted. 128 plus SIGINT, which is what a shell reports for a process killed by one
+#: and what a caller already tests for.
+EXIT_INTERRUPTED: Final = 130
 
 #: The fewest characters of a run id's UUID this will try to resolve, which is what the
 #: listing printed before it printed :data:`~edullm_platform.cli.actions.PRINTED_RUN_ID` of
@@ -114,6 +150,65 @@ EXIT_UNUSABLE: Final = 2
 #: them should stop working; below it an abbreviation names most of a week's runs and
 #: resolving one costs an artifact download per candidate for an answer nobody wants.
 SHORTEST_RUN_ID: Final = 8
+
+#: ``color=False`` on the Pythons that take it, and nothing at all on the ones that do not.
+#:
+#: **THE ONE PLACE THIS BINARY COULD HAVE WRITTEN AN ANSI ESCAPE, AND IT WOULD NOT HAVE
+#: BEEN OURS.** Nothing in this package emits colour, which is what makes a piped run and a
+#: terminal run the same bytes and leaves ``NO_COLOR`` with nothing to switch off. Python
+#: 3.14 changed that from underneath: ``ArgumentParser`` gained ``color``, it defaults to
+#: true, and argparse colourises both ``--help`` and its own error messages whenever
+#: ``_colorize.can_colorize`` says the stream can take it. That check is an ``isatty``, so
+#: the two runs stop agreeing on exactly the pages a person is likeliest to paste into a
+#: message. ``requires-python`` is ``>=3.12`` and ``uv tool install`` fetches whatever is
+#: newest where no suitable interpreter exists, so this is not hypothetical and it is not
+#: uniform: some researchers would see it and some would not.
+#:
+#: A dict spread rather than a version branch around ten constructor calls, because the
+#: kwarg is a hard ``TypeError`` on 3.12 and 3.13 and this file has to run on all three.
+_NO_ARGPARSE_COLOUR: Final[Mapping[str, Any]] = (
+    {"color": False} if sys.version_info >= (3, 14) else {}
+)
+
+
+class _PlainHelp(argparse.HelpFormatter):
+    """argparse's own help page, wrapped by the rule the rest of this binary wraps by.
+
+    ``HelpFormatter`` fills a description and a flag's help text with ``textwrap``'s
+    defaults, which break on hyphens. Every paragraph this package prints itself goes
+    through :func:`_wrapped` instead, which turns that off, and the reason is in that
+    function's docstring: a ``--fanout-index-parameter`` split across two lines is a flag
+    that does not exist, and a path split across two lines is a path nobody can copy. The
+    help page is the one place both of those are likeliest and was the one place still
+    doing it.
+    """
+
+    def _fill_text(self, text: str, width: int, indent: str) -> str:
+        return "\n".join(
+            textwrap.wrap(
+                text,
+                width,
+                initial_indent=indent,
+                subsequent_indent=indent,
+                break_on_hyphens=False,
+                break_long_words=False,
+            )
+        )
+
+    def _split_lines(self, text: str, width: int) -> list[str]:
+        collapsed = " ".join(text.split())
+        return textwrap.wrap(
+            collapsed, width, break_on_hyphens=False, break_long_words=False
+        )
+
+
+#: What every parser this file builds is constructed with. One mapping rather than ten
+#: argument lists, because a subparser argparse built with the root's settings and one
+#: without is a difference nobody sees until a help page is pasted somewhere.
+_PARSER_STYLE: Final[Mapping[str, Any]] = {
+    "formatter_class": _PlainHelp,
+    **_NO_ARGPARSE_COLOUR,
+}
 
 #: The five verbs that work, and the line each shows in ``--help`` and in the orientation a
 #: bare ``edullm`` prints. One table rather than two so those two can never drift.
@@ -123,6 +218,42 @@ BUILT_TODAY: Final = {
     "status": "what your runs are doing",
     "logs": "the last lines a run printed",
     "cancel": "stop a run",
+}
+
+#: What each built verb does, in the sentence its own ``--help`` opens with.
+#:
+#: A SECOND TABLE BESIDE ``BUILT_TODAY`` BECAUSE THEY ANSWER TWO QUESTIONS. That one is the
+#: line in a list of five, read by somebody choosing a verb, and it has to fit beside four
+#: others. This is the paragraph above the flags, read by somebody who has already chosen
+#: and wants to know what they are about to run. ``edullm check --help`` printed fifteen
+#: flags and never said what ``check`` was for, which made the most-read page in the tool
+#: the one page that answered nothing.
+#:
+#: The unbuilt verbs are not here. Theirs is derived from :data:`NOT_BUILT_YET` in
+#: :func:`build_parser_and_verbs`, so a plan cannot be described twice and differently, and
+#: the retired names carry theirs in :data:`RETIRED` for the same reason.
+WHAT_A_VERB_DOES: Final = {
+    "check": (
+        "Prices a submission from this working tree, lists every refusal that can be found "
+        f"without reaching a network, and writes a first {SPEC_PATH} where a registered "
+        "repository has none."
+    ),
+    "submit": (
+        f"Runs the checks check runs and then dispatches {SUBMIT_WORKFLOW}, waiting for the "
+        "run id the compile job mints unless --no-wait says not to."
+    ),
+    "status": (
+        "Names your recent submissions, or describes one run and asks AWS about it where "
+        "the answer has moved past what GitHub can say."
+    ),
+    "logs": (
+        "Prints the last lines one run printed, read out of the report "
+        f"{CANCEL_WORKFLOW} writes when it is asked to look at a run rather than to stop it."
+    ),
+    "cancel": (
+        f"Stops one admitted run by dispatching {CANCEL_WORKFLOW} with the reason you give, "
+        "which is what the run's history then records instead of a failure."
+    ),
 }
 
 #: The verbs that are settled and unbuilt, with the sentence each prints. Present so the
@@ -216,6 +347,7 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
         description=(
             "Submit and follow runs on the eduLLM platform without opening the Actions UI."
         ),
+        **_PARSER_STYLE,
     )
     # NAMES THE COMMIT AND NOT ONLY THE VERSION, BECAUSE THE VERSION CANNOT ANSWER THIS
     # ALONE. A release is cut per merge that touches the CLI or the configuration, so two
@@ -250,10 +382,20 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
     )
     verbs = parser.add_subparsers(dest="verb", required=True, metavar="verb")
 
-    check = verbs.add_parser("check", parents=[common], help=BUILT_TODAY["check"])
+    def verb_parser(name: str, description: str) -> argparse.ArgumentParser:
+        """One subparser, with the sentence that says what it is for."""
+        return verbs.add_parser(
+            name,
+            parents=[common],
+            help=BUILT_TODAY[name],
+            description=description,
+            **_PARSER_STYLE,
+        )
+
+    check = verb_parser("check", WHAT_A_VERB_DOES["check"])
     _add_submission_arguments(check)
 
-    submit = verbs.add_parser("submit", parents=[common], help=BUILT_TODAY["submit"])
+    submit = verb_parser("submit", WHAT_A_VERB_DOES["submit"])
     _add_submission_arguments(submit)
     submit.add_argument(
         "--no-wait",
@@ -270,13 +412,13 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
         ),
     )
 
-    status = verbs.add_parser("status", parents=[common], help=BUILT_TODAY["status"])
+    status = verb_parser("status", WHAT_A_VERB_DOES["status"])
     status.add_argument("run_id", nargs="?", help="one run; omit for your recent submissions")
 
-    logs = verbs.add_parser("logs", parents=[common], help=BUILT_TODAY["logs"])
+    logs = verb_parser("logs", WHAT_A_VERB_DOES["logs"])
     logs.add_argument("run_id", help="the run to read")
 
-    cancel = verbs.add_parser("cancel", parents=[common], help=BUILT_TODAY["cancel"])
+    cancel = verb_parser("cancel", WHAT_A_VERB_DOES["cancel"])
     cancel.add_argument("run_id", help="the run to stop")
     cancel.add_argument(
         "--reason",
@@ -294,9 +436,16 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
         "logs": logs,
         "cancel": cancel,
     }
-    for verb, description in NOT_BUILT_YET.items():
+    for verb, plan in NOT_BUILT_YET.items():
+        # THE SENTENCE IS THE PLAN'S, READ RATHER THAN REWRITTEN. An unbuilt verb's help
+        # page has one thing to say and it is already written down once; a second wording
+        # of it here would be the copy that survives after somebody builds the verb.
         built[verb] = verbs.add_parser(
-            verb, parents=[common], help=f"not built yet: {description}"
+            verb,
+            parents=[common],
+            help=f"not built yet: {plan}",
+            description=f"Not built yet. It would {plan}.",
+            **_PARSER_STYLE,
         )
     return parser, built
 
@@ -433,6 +582,47 @@ def _wrapped(text: str, *, indent: str = "  ") -> list[str]:
     )
 
 
+def _interrupted(dispatched: Sequence[str]) -> str:
+    """One line for a Ctrl-C, and the workflow it may have left running without a reader.
+
+    **THE SECOND SENTENCE IS THE WHOLE REASON THIS IS NOT A BARE "interrupted".** Every wait
+    this binary makes anybody sit through is after a dispatch, so the moment somebody is
+    most likely to reach for Ctrl-C is the moment something is already going. A message
+    that stopped at "interrupted" would read as "nothing happened", which is false in the
+    one case that costs a runner and a lead's approval. So the workflow is named, and the
+    verb that finds out what it did is named beside it.
+
+    Nothing is cancelled on the way out and nothing pretends to be. Stopping a dispatched
+    workflow is a second GitHub call this has no business making on a signal, and a message
+    that promised it and failed would be worse than the traceback this replaces.
+    """
+    if not dispatched:
+        return "\n".join(
+            [
+                "",
+                *_wrapped(
+                    "interrupted. Nothing was dispatched, so nothing is running that this "
+                    "started.",
+                    indent="",
+                ),
+                "",
+            ]
+        )
+    named = " and ".join(dict.fromkeys(dispatched))
+    return "\n".join(
+        [
+            "",
+            *_wrapped(
+                f"interrupted, and {named} was already dispatched. Ctrl-C did not stop it "
+                "and nothing here tried to. It is running on GitHub, it will finish on its "
+                "own, and edullm status names what it did.",
+                indent="",
+            ),
+            "",
+        ]
+    )
+
+
 def _add_submission_arguments(parser: argparse.ArgumentParser) -> None:
     """The fields a submission needs that are not properties of the code.
 
@@ -522,26 +712,78 @@ def main(
             file=stderr,
         )
         return EXIT_UNUSABLE
+    # HERE RATHER THAN IN THE PREFLIGHT, WHICH IS WHERE IT USED TO BE AND WHAT PUT ONE
+    # MISTAKE UNDER TWO EXIT CODES. `--attempts nope` is refused by argparse's `type=int`
+    # and exits 2; `--hours nope` was a refusal in the preflight and exited 1, because
+    # --hours is parsed by hand -- a bound that went through binary floating point is not
+    # the number the approver reads. Two spellings of one mistake answering a script two
+    # ways is the thing nobody can write a condition against, so the hand-rolled one is
+    # answered in the same class as the one argparse owns, and before any file is read.
+    unreadable = _unreadable_hours(getattr(arguments, "hours", None))
+    if unreadable is not None:
+        print(unreadable, end="", file=stderr)
+        return EXIT_UNUSABLE
 
+    # THE LEDGER THE INTERRUPT HANDLER READS, OWNED HERE BECAUSE THE HANDLER IS HERE.
+    # Whether a Ctrl-C left something running is the one thing the message below has to get
+    # right, and it is a fact each verb learns and then throws away.
+    dispatched: list[str] = []
     try:
         if verb == "check":
             return _check(arguments, runner=command_runner, out=stdout, err=stderr, cwd=here)
         if verb == "submit":
-            return _submit(arguments, runner=command_runner, out=stdout, err=stderr, cwd=here)
+            return _submit(
+                arguments,
+                runner=command_runner,
+                out=stdout,
+                err=stderr,
+                cwd=here,
+                dispatched=dispatched,
+            )
         if verb == "status":
-            return _status(arguments, runner=command_runner, out=stdout, err=stderr)
+            return _status(
+                arguments,
+                runner=command_runner,
+                out=stdout,
+                err=stderr,
+                dispatched=dispatched,
+            )
         if verb == "logs":
-            return _logs(arguments, runner=command_runner, out=stdout, err=stderr)
+            return _logs(
+                arguments,
+                runner=command_runner,
+                out=stdout,
+                err=stderr,
+                dispatched=dispatched,
+            )
         if verb == "cancel":
-            return _cancel(arguments, runner=command_runner, out=stdout, err=stderr)
+            return _cancel(
+                arguments,
+                runner=command_runner,
+                out=stdout,
+                err=stderr,
+                dispatched=dispatched,
+            )
+    except KeyboardInterrupt:
+        # CAUGHT BECAUSE IT IS NOT AN ``Exception`` AND SO SLIPPED PAST EVERYTHING BELOW.
+        # The handler two blocks down exists so that a researcher never meets a traceback,
+        # and it said so in its own comment while Ctrl-C during any wait printed one ending
+        # inside ``time.sleep``. It was worst in the one place it was likeliest: ``submit``
+        # waits only after it has already dispatched, so the traceback landed over a
+        # submission in flight and said nothing about it.
+        print(_interrupted(dispatched), end="", file=stderr)
+        return EXIT_INTERRUPTED
     except (ConfigurationUnreadableError, SpecUnreadableError, ToolMissingError) as exc:
         print(str(exc), file=stderr)
         return EXIT_UNUSABLE
     except GithubUnreachableError as exc:
         # Never EXIT_REFUSED. GitHub being unreachable says nothing about the submission,
-        # and the workflow makes the same separation in its own exit codes.
+        # and the workflow makes the same separation in its own exit codes. Never
+        # EXIT_UNUSABLE either, which is the correction: it shared that code with a
+        # mistyped flag, and a caller that wanted to sleep and try again could not tell
+        # the one worth retrying from the one that will fail identically forever.
         print(str(exc), file=stderr)
-        return EXIT_UNUSABLE
+        return EXIT_UNREACHABLE
     except AmbiguousRunIdError as exc:
         # Caught here rather than in each of the three verbs that resolve an id, because
         # the answer does not depend on which one asked: whichever it was cannot act until
@@ -756,6 +998,7 @@ def _submit(
     out: TextIO,
     err: TextIO,
     cwd: Path,
+    dispatched: list[str],
 ) -> int:
     configuration = _configuration(arguments)
     facts = read_git_facts(runner, cwd=cwd)
@@ -778,7 +1021,9 @@ def _submit(
             file=err,
         )
 
-    actions = PlatformActions(runner, repository=arguments.platform_repository)
+    actions = PlatformActions(
+        runner, repository=arguments.platform_repository, dispatched=dispatched
+    )
     _say_whether_this_edullm_is_current(
         runner, repository=arguments.platform_repository, err=err
     )
@@ -894,9 +1139,16 @@ def _submission_form(request: SubmissionRequest) -> dict[str, str]:
 
 
 def _status(
-    arguments: argparse.Namespace, *, runner: CommandRunner, out: TextIO, err: TextIO
+    arguments: argparse.Namespace,
+    *,
+    runner: CommandRunner,
+    out: TextIO,
+    err: TextIO,
+    dispatched: list[str],
 ) -> int:
-    actions = PlatformActions(runner, repository=arguments.platform_repository)
+    actions = PlatformActions(
+        runner, repository=arguments.platform_repository, dispatched=dispatched
+    )
     if arguments.run_id is None:
         submitter = github_login(runner, allow_network=True)
         runs = read_submission_runs(actions, actor=submitter)
@@ -948,13 +1200,20 @@ def _status(
 
 
 def _logs(
-    arguments: argparse.Namespace, *, runner: CommandRunner, out: TextIO, err: TextIO
+    arguments: argparse.Namespace,
+    *,
+    runner: CommandRunner,
+    out: TextIO,
+    err: TextIO,
+    dispatched: list[str],
 ) -> int:
     refusal = _malformed_run_id(arguments.run_id)
     if refusal is not None:
         print(render_refusals([refusal]), end="", file=err)
         return EXIT_REFUSED
-    actions = PlatformActions(runner, repository=arguments.platform_repository)
+    actions = PlatformActions(
+        runner, repository=arguments.platform_repository, dispatched=dispatched
+    )
     _said_resolving(arguments.run_id, err)
     facts = read_run_facts(actions, arguments.run_id)
     if not facts.needs_a_dispatch:
@@ -978,13 +1237,20 @@ def _logs(
 
 
 def _cancel(
-    arguments: argparse.Namespace, *, runner: CommandRunner, out: TextIO, err: TextIO
+    arguments: argparse.Namespace,
+    *,
+    runner: CommandRunner,
+    out: TextIO,
+    err: TextIO,
+    dispatched: list[str],
 ) -> int:
     refusal = _malformed_run_id(arguments.run_id)
     if refusal is not None:
         print(render_refusals([refusal]), end="", file=err)
         return EXIT_REFUSED
-    actions = PlatformActions(runner, repository=arguments.platform_repository)
+    actions = PlatformActions(
+        runner, repository=arguments.platform_repository, dispatched=dispatched
+    )
     _said_resolving(arguments.run_id, err)
     facts = read_run_facts(actions, arguments.run_id)
     if not facts.needs_a_dispatch:
@@ -997,6 +1263,14 @@ def _cancel(
         # REFUSED RATHER THAN OK, THOUGH NOTHING IS RUNNING. A run parked at a gate is not
         # stopped by having no Batch job: a lead can still release it, and it will start.
         # Exiting 0 would tell a script the run was seen to and leave it live.
+        #
+        # ON STDERR, WITH THE OTHER TWO REFUSALS THIS VERB CAN PRINT. It used to go to
+        # stdout while a malformed run id and an ambiguous one went to stderr, so a script
+        # reading one verb's refusals had to read both streams and could not tell from the
+        # code which one to look in. The rule the rest of the binary already follows is
+        # ``check``'s against ``submit``'s: a refusal is on stdout where the list of
+        # refusals is the answer that was asked for, and on stderr where it is why the
+        # command failed. Nothing was stopped here, so it is the second one.
         print(
             render_refusals(
                 [
@@ -1018,7 +1292,7 @@ def _cancel(
                 ]
             ),
             end="",
-            file=out,
+            file=err,
         )
         return EXIT_REFUSED
     return _drive_the_run_report(
@@ -1036,6 +1310,60 @@ def _cancel(
 def _because(facts: RunFacts) -> str:
     """The one-line explanation, wrapped the way every other paragraph here is."""
     return "\n".join(textwrap.wrap(facts.because, width=78)) + "\n"
+
+
+def _ceiling_said() -> str:
+    """How long a dispatch-and-read can run, rounded to the minute a reader would use.
+
+    Read off :func:`report_ceiling_seconds` rather than written out, for the reason
+    ``tests/test_cli_no_hardcoded_bounds.py`` fails the build over: a duration typed into a
+    sentence is correct on the day it is typed and stays that way after somebody widens the
+    poll it describes. Rounded up, because the promise a ceiling makes is an upper one.
+    """
+    minutes = -(-int(report_ceiling_seconds()) // 60)
+    return f"{minutes} minutes" if minutes != 1 else f"{minutes} minute"
+
+
+class _SignOfLife:
+    """A whole line on stderr once a minute while a wait runs, and nothing in between.
+
+    **NOT A SPINNER, AND THE DIFFERENCE IS THE PROPERTY THIS BINARY IS BUILT ON.** A spinner
+    is a carriage return and a cursor move, so a run piped into a file stops being the run a
+    terminal showed and a pasted transcript stops being what the next person sees. This
+    writes ordinary lines, in order, with no escape in them, so the bytes are the same
+    either way and there is still nothing for ``NO_COLOR`` to switch off.
+
+    On stderr, with the sentence that announced the wait, because it is not part of the
+    answer. A script reading a run's log tail off stdout gets the log tail.
+
+    A class rather than a closure so that the caller can read :attr:`elapsed` back. The two
+    polls behind one dispatch are two loops, and a clock that restarted between them would
+    print "1 minute so far" twice on a wait that had run for six.
+    """
+
+    def __init__(self, err: TextIO, *, every: float = 60.0) -> None:
+        self._err = err
+        self._every = every
+        self._said_at = 0.0
+        self.elapsed = 0.0
+
+    def __call__(self, elapsed: float) -> None:
+        self.elapsed = elapsed
+        if elapsed - self._said_at < self._every:
+            return
+        self._said_at = elapsed
+        print(f"still waiting, {elapsed_said(_ago(elapsed))} so far.", file=self._err)
+
+
+def _ago(seconds: float) -> datetime:
+    """The instant that many seconds back, so :func:`elapsed_said` can name the gap.
+
+    Going through a pair of instants rather than formatting the seconds here, because
+    ``elapsed_said`` is where this repository decides that a wait reads as ``38s`` under a
+    minute and ``1h11m`` over an hour, and a second opinion about that would show up as two
+    verbs disagreeing about what four minutes is called.
+    """
+    return datetime.now(UTC) - timedelta(seconds=seconds)
 
 
 def _drive_the_run_report(
@@ -1060,6 +1388,14 @@ def _drive_the_run_report(
     It is slow and saying so is part of the contract. A runner has to start, so this is tens
     of seconds where a transcript reads as instant. The alternative is an AWS credential on
     every laptop, which is the arrangement the whole design is an argument against.
+
+    **AND HOW SLOW IT CAN GET IS SAID TOO, WHICH IT WAS NOT.** The sentence promised tens of
+    seconds and the two polls behind it allow eleven minutes between them, so the one
+    invocation that ran long was the one whose only explanation was a lie. Nothing here
+    streams and nothing here is going to in this window; what an eleven minute worst case
+    needs instead is a reader who was told the ceiling before it started and is shown a
+    line a minute while it runs. Both numbers are read out of the poll parameters rather
+    than typed, because a number typed into a sentence is the copy nobody edits.
     """
     fields = {"run_id": run_id, "stop": "true" if stop else "false"}
     if reason is not None:
@@ -1076,22 +1412,37 @@ def _drive_the_run_report(
     if because:
         print(because, file=err)
     print(
-        f"asking AWS about {run_id}. This dispatches {CANCEL_WORKFLOW}, which holds the "
-        "only identity that may read a Batch job, so it waits for a runner: tens of "
-        "seconds, not a moment.",
+        "\n".join(
+            _wrapped(
+                f"asking AWS about {run_id}. This dispatches {CANCEL_WORKFLOW}, which holds "
+                "the only identity that may read a Batch job, so it waits first for a "
+                "runner and then for that workflow to finish. Usually well under a minute, "
+                f"and it gives up after {_ceiling_said()}. A line every minute says it is "
+                "still waiting.",
+                indent="",
+            )
+        ),
         file=err,
     )
     actions.dispatch(CANCEL_WORKFLOW, fields)
-    run = actions.wait_for_a_new_run(CANCEL_WORKFLOW, actor=None, after=dispatched_at)
+    waiting = _SignOfLife(err)
+    run = actions.wait_for_a_new_run(
+        CANCEL_WORKFLOW, actor=None, after=dispatched_at, waiting=waiting
+    )
     if run is None:
+        # NOT EXIT_UNUSABLE, WHICH IT WAS. Nothing about this is the caller's doing and
+        # running it again is the reasonable next move, which is the whole distinction
+        # between 2 and 3.
         print(
             "dispatched, and the workflow run it started could not be found within the "
             f"poll window. It is running; the {CANCEL_WORKFLOW} page carries its answer.",
             file=err,
         )
-        return EXIT_UNUSABLE
+        return EXIT_UNREACHABLE
     identifier = int(run["id"])
-    conclusion = actions.wait_for_completion(identifier)
+    conclusion = actions.wait_for_completion(
+        identifier, waiting=waiting, elapsed_already=waiting.elapsed
+    )
     report = read_report_sections(actions.job_log(identifier), headings)
     if report:
         print(report, file=out)
@@ -1101,7 +1452,13 @@ def _drive_the_run_report(
             f"reads. The whole of it is at {run.get('html_url')}.",
             file=err,
         )
-    return EXIT_OK if conclusion == "success" else EXIT_REFUSED
+    # **NOT EXIT_REFUSED, WHICH IS THE ONE THAT WAS ACTIVELY MISLEADING.** This is the
+    # reporting workflow's own conclusion, and it ends up here behind ``logs`` and
+    # ``status``, neither of which refuses anything at all. A reporting job that failed for
+    # its own reasons told a script a submission had been declined, which is a sentence
+    # about the submission and is false. What actually happened is that the platform could
+    # not be asked, so it lands with everything else that could not be asked.
+    return EXIT_OK if conclusion == "success" else EXIT_UNREACHABLE
 
 
 def _malformed_run_id(run_id: str) -> Refusal | None:
@@ -1287,9 +1644,6 @@ def _preflight(
             team_source=team_source,
         )
 
-    hours, hours_refusal = _decimal_hours(arguments.hours)
-    if hours_refusal is not None:
-        refusals.append(hours_refusal)
     request = SubmissionRequest(
         repository=arguments.repository or facts.repository or "",
         commit_sha=arguments.commit or facts.commit_sha,
@@ -1306,7 +1660,7 @@ def _preflight(
         # already lists under Not built yet as the grouping problem.
         wandb_project=arguments.wandb_project or team,
         command=spec.argv,
-        maximum_runtime_hours=hours,
+        maximum_runtime_hours=_decimal_hours(arguments.hours),
         maximum_attempts=arguments.attempts,
         fanout_size=arguments.fanout_size
         or (spec.fanout.size if spec.fanout is not None else None),
@@ -1425,27 +1779,47 @@ def _partial_request(
     )
 
 
-def _decimal_hours(text: str | None) -> tuple[Decimal | None, Refusal | None]:
+def _decimal_hours(text: str | None) -> Decimal | None:
     """``--hours`` as base-ten text, which is the shape the whole path carries it in.
 
     The workflow's own comment says why: a bound that went through binary floating point is
     not the number the approver reads. So it is parsed as a decimal here and formatted back
     to text before it reaches the form, and never becomes a float on the way.
+
+    Nothing for a value nobody can read, and no refusal either. :func:`_unreadable_hours`
+    answers that one in ``main``, before any of this runs, in the class argparse puts the
+    same mistake on ``--attempts`` into.
     """
     if text is None:
-        return None, None
+        return None
     try:
         parsed = Decimal(text)
     except InvalidOperation:
-        parsed = Decimal(0)
-    if not parsed.is_finite() or parsed <= 0:
-        return None, Refusal(
-            code="runtime_bound_not_a_number",
-            detail=(
-                f"--hours takes a positive base-ten number of hours and was given {text!r}. "
-                "Fractions are fine -- 0.5 is thirty minutes -- and the bound is what the "
-                "worst case multiplies, so lowering it is what moves a short run under the "
-                "automatic bound."
+        return None
+    return parsed if parsed.is_finite() and parsed > 0 else None
+
+
+def _unreadable_hours(text: str | None) -> str | None:
+    """The sentence for a ``--hours`` that is not a number, or nothing where it is one.
+
+    ARGPARSE'S OWN ANSWER TO THE SAME MISTAKE ON ``--attempts`` IS ONE UNWRAPPED LINE, AND
+    THIS IS NOT THAT ON PURPOSE. Matching its exit code is what a caller needs; matching
+    its brevity would throw away the two things a person needs, which are that a fraction
+    is allowed and what lowering the bound is good for. The code is the contract and the
+    prose is the courtesy, and they are not the same promise.
+    """
+    if text is None or _decimal_hours(text) is not None:
+        return None
+    return "\n".join(
+        [
+            "",
+            *_wrapped(
+                f"--hours takes a positive base-ten number of hours and was given {text!r}, "
+                "so nothing was read and nothing was dispatched. Fractions are fine, and "
+                "0.5 is thirty minutes. The bound is what the worst case multiplies, so "
+                "lowering it is what moves a short run under the automatic bound.",
+                indent="",
             ),
-        )
-    return parsed, None
+            "",
+        ]
+    )

@@ -132,6 +132,40 @@ byte-reproducible, so a second run should produce no diff:
 uv run python tools/export_schemas.py
 ```
 
+## What `edullm` exits with
+
+Four codes and the signal one. The number is the only part of the CLI a script can read
+without parsing prose, so it is a published interface under
+`docs-frank/reference/writing-releases-and-docs.md` and changing one is a major version.
+`src/edullm_platform/cli/main.py` declares them and `tests/test_cli_exit_codes.py` holds
+every verb to them, deriving the verbs from the parser rather than listing them.
+
+| Code | Meaning | What a caller should do |
+| --- | --- | --- |
+| 0 | it stands | carry on |
+| 1 | refused on the merits | read the refusal code, fix the submission or the run id |
+| 2 | the tool could not be driven, by input or by installation | fix the command, the configuration, or the install |
+| 3 | the platform could not be asked | sleep and try again |
+| 130 | interrupted | nothing, though a dispatched workflow is still running |
+
+**2 and 3 are the split worth understanding.** They were one code, and a retry loop is the
+first script anybody writes against this. A mistyped flag and a GitHub that would not answer
+both exited 2, so a caller either retried a typo forever or retried nothing. 2 is the
+caller's fault and repeating it reaches the same place. 3 is nobody's and repeating it is
+the reasonable next move.
+
+**1 means a verdict, and only a verdict.** `check` and `submit` refuse submissions, and all
+three run verbs refuse a run id they cannot read or cannot resolve. Nothing else may use it.
+A reporting workflow that failed for its own reasons used to exit 1 through `logs` and
+`status`, which refuse nothing, and it told a script a submission had been declined.
+
+**130 is 128 plus SIGINT**, which is what a shell reports for a process a signal killed.
+Ctrl-C during a wait prints one line and exits with it, and where a workflow was already
+dispatched that line names it, because nothing here cancels a dispatch on the way out.
+
+`tools/compile_submission.py` gives 0, 1 and 2 the same meanings inside the workflow, which
+is deliberate and is where the CLI took them from.
+
 ## Acceptance gate
 
 ```bash

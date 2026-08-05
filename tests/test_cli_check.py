@@ -13,12 +13,23 @@ assertion about what the platform would do rather than about a fixture.
 
 from __future__ import annotations
 
+import argparse
 import io
+import sys
 from pathlib import Path
 
 import pytest
 
-from edullm_platform.cli.main import EXIT_OK, EXIT_REFUSED, EXIT_UNUSABLE, main
+from edullm_platform.cli.main import (
+    BUILT_TODAY,
+    EXIT_OK,
+    EXIT_REFUSED,
+    EXIT_UNUSABLE,
+    NOT_BUILT_YET,
+    RETIRED,
+    build_parser_and_verbs,
+    main,
+)
 from edullm_platform.cli.preflight import Preflight
 from tests.cli_support import (
     SUBMITTER_ON_TWO_TEAMS,
@@ -776,3 +787,92 @@ def test_nothing_this_verb_does_reaches_the_network(
     assert runner.ran("gh") == []
     assert runner.ran("aws") == []
     assert {argv[0] for argv in runner.calls} == {"git"}
+
+
+# ---------------------------------------------------------------------------------------
+# --help, and the one thing that could put an ANSI escape in it
+# ---------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("verb", sorted({*BUILT_TODAY, *NOT_BUILT_YET}))
+def test_every_verb_says_what_it_is_for_before_it_lists_its_flags(verb: str) -> None:
+    """**The most-read page in the tool, and it answered the one question nobody asks.**
+
+    Mutation: drop the ``description`` from one subparser. ``edullm check --help`` printed a
+    usage line and fifteen flags and never said what ``check`` does, because the summary in
+    ``BUILT_TODAY`` shows only in the parent listing and a subparser with no description has
+    nothing to put above its options. Somebody who has already chosen the verb is past that
+    listing, so the page they open is the page with the answer missing from it.
+
+    Read off the parser rather than compared to a table here, so a tenth verb is covered on
+    the day it is added and a description cannot be asserted against its own copy.
+    """
+    parser = build_parser_and_verbs()[1][verb]
+
+    assert parser.description
+    assert parser.description.strip().endswith(".")
+    # Whitespace-normalised, because argparse wraps the description to the help page's
+    # width and asserting the unwrapped form would be asserting the wrap width.
+    assert " ".join(parser.description.split()) in " ".join(parser.format_help().split())
+
+
+@pytest.mark.parametrize("retired", sorted(RETIRED))
+def test_every_retired_name_still_carries_the_sentence_that_replaced_it(retired: str) -> None:
+    """The retired names have no subparser, and this is what stands in for one.
+
+    Mutation: leave one of them with a headline and no explanation. A name that was in a
+    guide last month is exactly the name somebody types, and "that is not a verb" without
+    the paragraph saying what absorbed it is the answer that sends them back to the guide.
+    """
+    replacement, headline, explanation = RETIRED[retired]
+
+    assert headline.strip().endswith(".")
+    assert len(explanation.split()) > 20
+    assert replacement is None or replacement in {*BUILT_TODAY, *NOT_BUILT_YET}
+
+
+def test_no_help_page_this_binary_prints_carries_an_ansi_escape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """**The property the whole tool rests on, against the one release that took it away.**
+
+    Nothing in this package emits colour, so a piped run and a terminal run are the same
+    bytes and ``NO_COLOR`` has nothing to switch off. Python 3.14 changed that from
+    underneath: ``ArgumentParser`` gained ``color``, it defaults to true, and argparse
+    colourises both ``--help`` and its own error messages whenever the stream can take it.
+    ``requires-python`` is ``>=3.12`` and ``uv tool install`` fetches whatever is newest
+    where nothing suitable exists, so some researchers would paste a coloured help page and
+    some would not, from installs that call themselves the same version.
+
+    ``PYTHON_COLORS=1`` is what makes this hold under pytest, where stdout is captured and
+    ``can_colorize`` would answer no on its own. It is the strongest form available: the
+    assertion below is that colour stays off where a reader asked for it, so it cannot pass
+    by nobody having asked. On 3.12 and 3.13 argparse ignores the variable and the case is
+    vacuous, which is why ``ci.yml`` runs 3.14.
+    """
+    monkeypatch.setenv("PYTHON_COLORS", "1")
+    parser, verbs = build_parser_and_verbs()
+    pages = [parser.format_help(), parser.format_usage()]
+    pages += [built.format_help() for built in verbs.values()]
+    pages += [built.format_usage() for built in verbs.values()]
+
+    assert not [page for page in pages if "\x1b[" in page]
+
+
+def test_that_check_can_see_a_colour_it_was_not_meant_to_see() -> None:
+    """The tripwire's own tripwire, on the version that has anything to trip over.
+
+    A test that colour is absent passes on a parser that could never produce it, which is
+    every parser on 3.13 and would be every parser on 3.14 if the environment variable above
+    stopped meaning anything. This builds a parser the ordinary way and asserts it does
+    colourise, so the case above is known to be measuring something.
+    """
+    if sys.version_info < (3, 14):
+        pytest.skip("argparse colourises nothing before 3.14")
+    plain = argparse.ArgumentParser(prog="edullm", description="Submit and follow runs.")
+    plain.add_argument("--experiment")
+
+    with pytest.MonkeyPatch.context() as patched:
+        patched.setenv("PYTHON_COLORS", "1")
+
+        assert "\x1b[" in plain.format_help()

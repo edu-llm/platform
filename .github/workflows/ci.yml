@@ -28,7 +28,16 @@ jobs:
       fail-fast: false
       matrix:
         # 3.12 is the declared floor in pyproject.toml; 3.13 is what maintainers run.
-        python-version: ["3.12", "3.13"]
+        #
+        # 3.14 IS HERE BECAUSE requires-python ALREADY LETS SOMEBODY INSTALL ON IT, AND ONE
+        # OF ITS CHANGES REACHES A RESEARCHER'S TERMINAL. `uv tool install` fetches whatever
+        # is newest on a machine with no suitable interpreter, so a share of the thirty-five
+        # installs are on it whether or not anybody decided that. It colourises argparse
+        # help and argparse's own error messages by default, which is the one thing that
+        # could put an ANSI escape in output this binary is otherwise entirely free of;
+        # main.py turns it off and tests/test_cli_check.py holds it off, and neither of
+        # those is worth anything on a matrix that never runs the version they are about.
+        python-version: ["3.12", "3.13", "3.14"]
     steps:
       # Two commits rather than the shallow default, for the last step in this job. On a
       # pull request actions/checkout leaves the merge commit at HEAD, so depth 2 brings

@@ -62,7 +62,19 @@ CREDENTIALED_NIGHTLY_JOBS = frozenset(
 
 #: The contexts pinned in branch protection on ``main``. They are job names, so renaming
 #: either one silently stops the protection matching anything.
+#:
+#: A SUBSET OF THE MATRIX RATHER THAN THE WHOLE OF IT, WHICH IT USED TO BE. The matrix also
+#: runs 3.14, because ``requires-python`` lets somebody install on it and ``uv tool
+#: install`` fetches whatever is newest, so it is a version researchers are on whether or
+#: not anybody chose it. Pinning it in branch protection is a decision for whoever
+#: administers the repository and is not one a test can make, so what this can hold is that
+#: the two that are pinned still exist under the names the protection spells.
 REQUIRED_CHECK_NAMES = {"checks (python 3.12)", "checks (python 3.13)"}
+
+#: The floor ``pyproject.toml`` declares, and the ceiling ``requires-python`` leaves open.
+#: Read here rather than derived from the matrix, because a matrix that lost a version
+#: would otherwise agree with itself.
+TESTED_PYTHON_VERSIONS = {"3.12", "3.13", "3.14"}
 
 #: What asks the suite for the expensive half. Duplicated from ``tests/proof_support.py``
 #: on purpose: this is the workflow's side of the contract, and a test that read the same
@@ -111,12 +123,12 @@ def test_the_required_checks_are_still_called_what_protection_calls_them() -> No
     checks = workflow["jobs"]["checks"]
 
     assert checks["name"] == "checks (python ${{ matrix.python-version }})"
-    assert set(checks["strategy"]["matrix"]["python-version"]) == {"3.12", "3.13"}
+    assert set(checks["strategy"]["matrix"]["python-version"]) == TESTED_PYTHON_VERSIONS
     rendered = {
         checks["name"].replace("${{ matrix.python-version }}", version)
         for version in checks["strategy"]["matrix"]["python-version"]
     }
-    assert rendered == REQUIRED_CHECK_NAMES
+    assert REQUIRED_CHECK_NAMES <= rendered
 
 
 def test_nothing_on_the_pull_request_path_is_unable_to_fail() -> None:
