@@ -71,11 +71,15 @@ from ..contracts.bindings import normalize_github_login
 from ..contracts.execution import ExecutionTargetCatalog
 from ..contracts.identity import RUN_ID_REGEX
 from ..contracts.inventory import OrganizationInventory
+from ..contracts.results import CheckpointListingOutcome
 from ..contracts.workload import WorkloadCatalog
 from ..lifecycle_projection import (
+    CHECKPOINT_DIR_VARIABLE,
     EVENTBRIDGE_BATCH_DETAIL_TYPE,
     EVENTBRIDGE_BATCH_SOURCE,
     OUTPUT_PREFIX_VARIABLE,
+    CheckpointLister,
+    checkpoints_under,
     container_variable,
 )
 
@@ -92,6 +96,7 @@ __all__ = [
     "TERMINAL_CELL_STATUSES",
     "Catalogs",
     "CellLister",
+    "CheckpointState",
     "IntentReader",
     "Outcome",
     "RunEndedFacts",
@@ -141,6 +146,11 @@ SECONDS_AN_HOUR: Final = Decimal(3600)
 #: back FAILED with whatever reason the caller of TerminateJob supplied, so cancellation is
 #: detected by the marker this platform writes and by nothing else.
 Outcome = Literal["succeeded", "failed", "cancelled"]
+
+#: Whether a run's checkpoint prefix was read, and what was under it. Three values rather
+#: than a boolean, because `nobody looked` and `nothing was there` are different sentences
+#: and only one of them is about the run.
+CheckpointState = Literal["written", "none", "unknown"]
 
 _TERMINAL: Final[Mapping[str, Outcome]] = {"SUCCEEDED": "succeeded", "FAILED": "failed"}
 
@@ -229,6 +239,11 @@ class RunEndedFacts:
     #: windows. None where the listing did not happen, which is a different sentence from an
     #: empty tuple: empty means every cell finished.
     failed_cell_indexes: tuple[int, ...] | None
+    #: Whether anything survived under this run's checkpoint prefix. ``unknown`` where no
+    #: lister was supplied and where the listing did not work, which is the direction to be
+    #: wrong in: telling somebody nothing was saved when the bytes may be in S3 is the one
+    #: wrong answer a failure message must not give.
+    checkpoint_state: CheckpointState
 
 
 def queue_name_of(detail: Mapping[str, Any]) -> str | None:
@@ -598,13 +613,43 @@ def _cells_spent(
     return seconds, measured, tuple(sorted(failed))
 
 
+def _checkpoint_state(
+    detail: Mapping[str, Any], *, lister: CheckpointLister | None
+) -> CheckpointState:
+    """What is under this run's checkpoint prefix, or that nobody looked.
+
+    Every failure is `unknown` and never `none`. `no checkpoint written` is a claim about the
+    run; `unknown` is a claim about the reader. Reporting the first when the second is true
+    tells somebody their eleven hours are gone when the bytes may be sitting in S3, and that
+    is the one wrong answer this message must not give.
+
+    Never raises, for the reason `checkpoints_under` never does: this runs while a message is
+    being built, and an exception here loses the whole message for a run that demonstrably
+    happened.
+    """
+    if lister is None:
+        return "unknown"
+    prefix = container_variable(detail, CHECKPOINT_DIR_VARIABLE)
+    if prefix is None:
+        return "unknown"
+    manifests, survey = checkpoints_under(lister, prefix=prefix)
+    if survey.outcome is not CheckpointListingOutcome.LISTED:
+        # The other five members each name a way the listing did not happen: nothing to list
+        # with, no prefix declared, a prefix in somebody else's bucket, a refusal, or more
+        # pages than the reader will follow. None of them is evidence that nothing was
+        # written, and only LISTED is the statement that the prefix was read and was bare.
+        return "unknown"
+    return "written" if manifests or survey.objects_seen > 0 else "none"
+
+
 def read_run_ended(
     envelope: Mapping[str, Any],
     *,
     catalogs: Catalogs,
     intent_reader: IntentReader | None = None,
-    cell_lister: CellLister | None = None,
     lineage_bucket: str | None = None,
+    cell_lister: CellLister | None = None,
+    checkpoint_lister: CheckpointLister | None = None,
 ) -> RunEndedFacts | None:
     """The facts one ended run's message needs, or None because no message is owed.
 
@@ -684,4 +729,5 @@ def read_run_ended(
         cells_succeeded=None if cells is None else cells[1],
         cells_measured=None if spent is None else spent[1],
         failed_cell_indexes=None if spent is None else spent[2],
+        checkpoint_state=_checkpoint_state(detail, lister=checkpoint_lister),
     )

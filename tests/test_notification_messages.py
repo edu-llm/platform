@@ -223,3 +223,27 @@ def test_a_fan_out_that_lost_nothing_does_not_say_zero_failed(catalogs: Catalogs
         "Aryan Verma · plan-b-phase0-100m-superbpe-eval · all 20 cells succeeded "
         "· $18.61 spent, $55.83 authorised on gpu-1xl40s."
     )
+
+
+@pytest.mark.parametrize(
+    ("state", "clause"),
+    [
+        ("written", "a checkpoint survived"),
+        ("none", "no checkpoint written"),
+        ("unknown", "whether a checkpoint survived is unknown"),
+    ],
+)
+def test_the_failed_message_says_what_survived(
+    catalogs: Catalogs, state: str, clause: str
+) -> None:
+    """A failure that saved a checkpoint and one that saved nothing carry the same status
+    and the same exit code, so only this clause distinguishes them."""
+    import dataclasses
+
+    envelope = json.loads((EVENTS / "batch-failed.sanitized.json").read_text(encoding="utf-8"))
+    facts = read_run_ended(envelope, catalogs=catalogs)
+    assert facts is not None
+
+    message = render_run_ended(dataclasses.replace(facts, checkpoint_state=state))
+
+    assert message.text.endswith(f"exit 1, {clause}.")

@@ -35,6 +35,7 @@ from typing import Final
 from .facts import RunEndedFacts
 
 __all__ = [
+    "CHECKPOINT_CLAUSES",
     "NAMED_CELLS",
     "RUNS_CHANNEL",
     "Message",
@@ -139,6 +140,13 @@ def _spent_only(facts: RunEndedFacts) -> str:
 #: line carrying a hundred and fifty numbers is a line nobody reads at all.
 NAMED_CELLS: Final = 10
 
+#: The one clause that distinguishes a failure that lost everything from one that did not.
+CHECKPOINT_CLAUSES: Final = {
+    "written": "a checkpoint survived",
+    "none": "no checkpoint written",
+    "unknown": "whether a checkpoint survived is unknown",
+}
+
 
 def _cell_clause(facts: RunEndedFacts) -> str:
     """How the array went, in the terms the eval group acts on.
@@ -232,6 +240,6 @@ def render_run_ended(facts: RunEndedFacts) -> Message:
         body = (
             f"{_spent_only(facts)}, nothing produced · died at "
             f"{duration(facts.seconds_spent)} on {_where(facts)}, {exit_clause}, "
-            "whether a checkpoint survived is unknown."
+            f"{CHECKPOINT_CLAUSES[facts.checkpoint_state]}."
         )
     return Message(channel=RUNS_CHANNEL, text=f"{_who(facts)} · {_which(facts)} · {body}")

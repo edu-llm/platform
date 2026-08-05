@@ -479,3 +479,73 @@ def test_an_array_child_owes_nobody_a_message(catalogs: Catalogs) -> None:
     sweep says nothing until its last cell lands.
     """
     assert read_run_ended(envelope("batch-array-child-failed"), catalogs=catalogs) is None
+
+
+class FakeLister:
+    """One page of a listing, which is the whole of what checkpoints_under asks for."""
+
+    def __init__(self, contents: list[dict[str, object]]) -> None:
+        self.contents = contents
+        self.prefixes: list[str] = []
+
+    def list_objects_v2(self, **arguments: object) -> dict[str, object]:
+        self.prefixes.append(str(arguments["Prefix"]))
+        return {"Contents": self.contents, "IsTruncated": False}
+
+
+def test_a_failed_run_that_wrote_a_checkpoint_says_written(catalogs: Catalogs) -> None:
+    lister = FakeLister(
+        [
+            {
+                "Key": (
+                    "teams/scratch/runs/run_019fd3cc-79a0-70f5-aa29-6db4a2061a61/"
+                    "checkpoints/step100/model.pt"
+                ),
+                "Size": 2048,
+                "LastModified": "2026-08-05T21:29:00+00:00",
+            }
+        ]
+    )
+    facts = read_run_ended(envelope("batch-failed"), catalogs=catalogs, checkpoint_lister=lister)
+
+    assert facts is not None
+    assert facts.checkpoint_state == "written"
+    assert lister.prefixes == [
+        "teams/scratch/runs/run_019fd3cc-79a0-70f5-aa29-6db4a2061a61/checkpoints/"
+    ]
+
+
+def test_a_failed_run_that_wrote_nothing_says_none(catalogs: Catalogs) -> None:
+    facts = read_run_ended(
+        envelope("batch-failed"), catalogs=catalogs, checkpoint_lister=FakeLister([])
+    )
+
+    assert facts is not None
+    assert facts.checkpoint_state == "none"
+
+
+def test_a_refused_listing_says_unknown_rather_than_none(catalogs: Catalogs) -> None:
+    """THE DIRECTION TO BE WRONG IN. Mutation: treat a refusal as an empty prefix.
+
+    `no checkpoint written` is a claim about the run. `unknown` is a claim about the reader.
+    Reporting the first when the second is true tells somebody their work is gone when it may
+    be sitting in S3, which is the one wrong answer this message must not give.
+    """
+
+    class RefusingLister:
+        def list_objects_v2(self, **arguments: object) -> dict[str, object]:
+            raise RuntimeError("AccessDenied")
+
+    facts = read_run_ended(
+        envelope("batch-failed"), catalogs=catalogs, checkpoint_lister=RefusingLister()
+    )
+
+    assert facts is not None
+    assert facts.checkpoint_state == "unknown"
+
+
+def test_no_lister_means_unknown_and_costs_nothing(catalogs: Catalogs) -> None:
+    facts = read_run_ended(envelope("batch-failed"), catalogs=catalogs)
+
+    assert facts is not None
+    assert facts.checkpoint_state == "unknown"
