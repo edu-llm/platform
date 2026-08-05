@@ -133,7 +133,11 @@ def form(**overrides: object) -> dict[str, object]:
         "repository": "OLMo-core",
         "commit_sha": COMMIT_SHA,
         "workload_profile": "olmo-core-check",
-        "dataset_release": "dolma-2026-07",
+        # `none` rather than dolma-2026-07, which the compile job refuses now that `retired`
+        # in config/datasets.yaml is enforced rather than only unlisted. Nothing here is
+        # about the dataset -- every case is a compute profile against capacity -- so the
+        # field holds the answer a run that reads no corpus would give.
+        "dataset_release": "none",
         "team": "data-prep",
         "wandb_project": "olmo-core-tokenize",
         "experiment": "placement-check",

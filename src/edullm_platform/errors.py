@@ -63,6 +63,7 @@ __all__ = [
     "ImageNotPublishedFromTheCommitError",
     "NoPublishedImageError",
     "ProcessPerDeviceError",
+    "RetiredDatasetReleaseError",
     "RetryWithoutACheckpointContractError",
     "SubmissionRefusedError",
     "SubmitterNotOnTheRosterError",
@@ -117,6 +118,23 @@ class SubmitterNotOnTheRosterError(SubmissionRefusedError):
 
 class WorkloadProfileRepositoryMismatchError(SubmissionRefusedError):
     reason_code: ClassVar[str] = "workload_profile_repository_mismatch"
+
+
+class RetiredDatasetReleaseError(SubmissionRefusedError):
+    """A registered corpus its owner has stopped naming as the one to use.
+
+    NAMED AFTER THE FORM FIELD RATHER THAN AFTER A POLICY CONDITION, WHICH IS THE WHOLE OF
+    WHERE THIS RULE LIVES. ``unregistered_dataset`` and ``dataset_is_not_a_corpus`` are
+    conditions ``config/policy.yaml`` denies outright, derived inside the admission
+    validator from its own packaged registry and refusable by nobody. This is neither. It
+    is refused twice before the approval gate -- on the laptop by ``edullm check`` and in
+    the credential-free compile job -- and it is liftable by the people who own the file
+    that sets the flag. ``retired_dataset_release`` reads beside
+    ``workload_profile_repository_mismatch`` for that reason and deliberately not beside
+    ``dataset_is_not_a_corpus``.
+    """
+
+    reason_code: ClassVar[str] = "retired_dataset_release"
 
 
 class RetryWithoutACheckpointContractError(SubmissionRefusedError):

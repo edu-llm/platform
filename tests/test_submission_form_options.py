@@ -74,10 +74,16 @@ from edullm_platform.contracts.manifest import RunManifest
 from edullm_platform.contracts.policy import ApprovalPolicy
 from edullm_platform.contracts.repository_registry import RepositoryRegistry
 from edullm_platform.contracts.workload import ComputeProfileResolutionError, WorkloadCatalog
-from edullm_platform.errors import UnregisteredWorkloadProfileError
+from edullm_platform.errors import (
+    RetiredDatasetReleaseError,
+    UnregisteredWorkloadProfileError,
+)
 from edullm_platform.execution import resolve_execution_target
 from edullm_platform.manifest_helpers import build_request_facts
-from edullm_platform.submission import _resolve_workload
+from edullm_platform.submission import (
+    _resolve_workload,
+    require_a_dataset_release_that_is_current,
+)
 from tools.build_gpu_training_submission import TOKENIZERS
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -749,18 +755,27 @@ def test_the_workload_profile_box_is_free_text_and_the_machine_box_is_not() -> N
     assert inputs["compute_profile"]["type"] == "choice"
 
 
-def denied_outright_for(dataset_release: str) -> tuple[str, ...]:
-    """Which conditions a submission naming this dataset trips, and nothing else about it.
+def refusals_for(dataset_release: str) -> tuple[str, ...]:
+    """Every refusal a submission naming this dataset meets, and nothing else about it.
 
-    The pair the compile job and admission both use, called the way both call it, so a name
-    this reports nothing for is a name neither of them refuses. ``build_request_facts``
-    derives ``dataset_registered`` and ``dataset_is_a_corpus`` from the registry and
-    ``denied_outright_conditions`` reads policy's list, which is the whole of what stands
-    between a dataset name and an approved run.
+    The functions the compile job and admission use, called the way they call them, so a
+    name this reports nothing for is a name neither of them refuses.
+    ``build_request_facts`` derives ``dataset_registered`` and ``dataset_is_a_corpus`` from
+    the registry and ``denied_outright_conditions`` reads policy's list.
+
+    **IT WAS THAT PAIR ALONE AND THAT STOPPED BEING THE WHOLE ANSWER**, which is this
+    helper doing its job rather than this helper being wrong. The pair is everything policy
+    denies outright, and a refusal does not have to be a policy condition to be a refusal:
+    ``require_a_dataset_release_that_is_current`` refuses a retired entry in the compile job
+    and on the laptop, before the approval gate and out of the same registry, and
+    deliberately not in ``denied_outright`` -- see that function for why. A derivation that
+    read only policy's list would now report a name as refused by nothing while the compile
+    job refuses it, which is the failure this whole module is written against, arriving
+    inside the measurement rather than inside the form.
 
     Everything unrelated to the dataset is held at a value nothing objects to -- a
     registered repository, a catalog workload, a priced profile, a cost of zero -- so that
-    the only condition this can report is the one being asked about.
+    the only refusal this can report is the one being asked about.
     """
     manifest = RunManifest(
         schema_version=1,
@@ -778,22 +793,26 @@ def denied_outright_for(dataset_release: str) -> tuple[str, ...]:
         checkpoint=None,
         fanout=None,
     )
+    datasets = load_yaml(PROJECT_ROOT / "config" / "datasets.yaml", DatasetRegistry)
     facts = build_request_facts(
         manifest,
         repositories=load_yaml(
             PROJECT_ROOT / "config" / "repositories.yaml", RepositoryRegistry
         ),
         catalog=workload_catalog(),
-        dataset_registry=load_yaml(
-            PROJECT_ROOT / "config" / "datasets.yaml", DatasetRegistry
-        ),
+        dataset_registry=datasets,
         estimated_cost_usd=Decimal(0),
     )
     policy = load_yaml(PROJECT_ROOT / "config" / "policy.yaml", ApprovalPolicy)
-    return denied_outright_conditions(facts, policy)
+    refused = list(denied_outright_conditions(facts, policy))
+    try:
+        require_a_dataset_release_that_is_current(dataset_release, datasets=datasets)
+    except RetiredDatasetReleaseError as refusal:
+        refused.append(type(refusal).reason_code)
+    return tuple(refused)
 
 
-def test_the_dataset_box_is_a_choice_because_seven_registered_names_are_refused_by_nothing() -> (
+def test_the_dataset_box_is_a_choice_because_five_registered_names_are_refused_by_nothing() -> (
     None
 ):
     """THE SECOND ASYMMETRY ON THIS FORM, AND THE ONE #232's REASONING DOES NOT REACH.
@@ -808,20 +827,30 @@ def test_the_dataset_box_is_a_choice_because_seven_registered_names_are_refused_
     The workload dropdown was holding back *unregistered names*, and those were already
     refused while compiling. This one is not. An unregistered dataset name is refused while
     compiling too, so on that alone the list would be redundant. What it is actually holding
-    back is *registered* names, and the platform refuses only some of them: a tokenizer or
-    the vendor mirror trips ``dataset_is_not_a_corpus`` by family, and everything else
-    registered is admitted. A retired release, a corpus whose tokenizer nothing here can
-    construct and a corpus that declares none are all resolvable, all trainable by family,
-    and all reach an approved run with nothing anywhere saying a word.
+    back is *registered* names, and the platform refuses only some of them. A corpus whose
+    tokenizer nothing here can construct, and one that declares none at all, are both
+    resolvable, both trainable by family, and both reach an approved run with nothing
+    anywhere saying a word. What a run picking one costs is a whole GPU allocation spent
+    reaching a container that cannot construct a model for the tokens it just resolved,
+    exiting 69, which is ``config/datasets.yaml``'s own description of that state.
 
-    So for those the option list is not a second lock. It is the only one, and
-    ``retired:`` has no other enforcement at all -- ``config/datasets.yaml`` says so in as
-    many words, that the flag "keeps admission's answer and removes the menu item".
+    So for those the option list is not a second lock. It is the only one.
 
-    That is ``compute_profile``'s argument rather than ``workload_profile``'s, and it bites
-    harder: an unprovisioned machine at least reaches ``no_execution_target``, late and
-    after somebody's signature. A retired corpus reaches a green run and an immutable
-    lineage record saying it read something nobody publishes.
+    **THIS SET HELD SEVEN AND HOLDS FIVE, WHICH IS THIS TEST WORKING RATHER THAN THIS TEST
+    WEAKENING.** ``dolma-2026-07`` and ``fineweb-edu-1b-v2`` left it because the refusal
+    they were waiting for got built. ``retired:`` used to have no enforcement anywhere --
+    ``config/datasets.yaml`` said so in as many words, that the flag "keeps admission's
+    answer and removes the menu item" -- and it now refuses in the compile job and on the
+    laptop, through ``require_a_dataset_release_that_is_current``. That is exactly what the
+    paragraph below promised would happen, and neither the set above nor this docstring
+    would have moved on their own: ``refusals_for`` had to learn about the new refusal
+    first, which is the edit that keeps this measuring the platform rather than measuring
+    policy's list.
+
+    Two of the five are the case that bites hardest and is easiest to miss.
+    ``lean4-mathlib-bytes-v3`` and ``math-memory-full-v1`` depend on
+    ``tokenizer/bytes-utf8``, which OLMo-core has no equivalent for, so the exclusion
+    resolves itself the day upstream grows one rather than needing a refusal built here.
 
     SELF-RETIRING IN THE DIRECTION THAT MATTERS. Build the missing refusals and this set
     shrinks; empty it and this test says so, at which point the list has become the second
@@ -843,14 +872,10 @@ def test_the_dataset_box_is_a_choice_because_seven_registered_names_are_refused_
     offered = set(options_for("dataset_release"))
 
     held_back_only_by_this_form = {
-        name
-        for name in registered
-        if name not in offered and not denied_outright_for(name)
+        name for name in registered if name not in offered and not refusals_for(name)
     }
 
     assert held_back_only_by_this_form == {
-        "dolma-2026-07",
-        "fineweb-edu-1b-v2",
         "frontload-cl-chat-sft-v1",
         "lean4-mathlib-bytes-v3",
         "math-memory-full-v1",
@@ -864,15 +889,34 @@ def test_the_dataset_box_is_a_choice_because_seven_registered_names_are_refused_
     )
 
 
+def test_the_two_names_this_set_lost_are_refused_rather_than_merely_unlisted() -> None:
+    """Mutation: shrink the set above and let the reason for the shrinking go unrecorded.
+
+    A derived set going down by two is the same shape whether a refusal was built or the
+    derivation stopped seeing one, and only one of those is progress. So the two names are
+    asserted on the other side of the move, under the code that now refuses them.
+
+    That code is deliberately not a condition ``config/policy.yaml`` denies outright, which
+    is why the assertion is on ``refusals_for`` rather than on
+    ``denied_outright_conditions``. ``require_a_dataset_release_that_is_current`` carries
+    the argument; the short of it is that a resume from a checkpoint written against a
+    retired corpus has to go on naming that corpus, and a refusal nobody can lift would
+    make naming a different one the only route.
+    """
+    for retired in ("dolma-2026-07", "fineweb-edu-1b-v2"):
+        assert refusals_for(retired) == ("retired_dataset_release",)
+    assert refusals_for("fineweb-edu-1b-v6") == ()
+
+
 def test_an_unregistered_dataset_is_refused_by_something_other_than_this_form() -> None:
     """The half that IS the workload case, asserted so the argument above stays honest.
 
     Nothing here claims the dropdown is load-bearing against a typo. A name nothing
     registers is refused while compiling, before the approval gate and before any credential
-    exists, exactly as an unregistered workload profile is -- so if the seven above ever
+    exists, exactly as an unregistered workload profile is -- so if the five above ever
     acquire refusals of their own, there is nothing left for the list to do.
     """
-    assert denied_outright_for("no-such-corpus-v9") == ("unregistered_dataset",)
+    assert refusals_for("no-such-corpus-v9") == ("unregistered_dataset",)
 
 
 def test_the_workload_refusal_names_every_entry_the_declared_repository_registers() -> None:

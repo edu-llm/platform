@@ -389,6 +389,95 @@ def test_is_a_trainable_corpus_separates_what_resolves_from_what_a_run_may_read(
     assert registry.is_a_trainable_corpus(NO_DATASET_ID) is True
 
 
+def test_is_retired_reads_the_flag_off_both_lists_and_answers_no_for_a_name_neither_holds() -> (
+    None
+):
+    """THE THIRD QUESTION, AND THE ONE THE FLAG WAS NEVER ASKED. Mutation: read ``retired``
+    off the published list alone, since that is where the interesting case is.
+
+    Two entries in the shipped registry set it and they are one of each kind, which is the
+    whole reason the predicate has to answer over both. ``dolma-2026-07`` is a release with
+    nothing published under it; ``fineweb-edu-1b-v2`` is a published corpus its owner has
+    superseded. A predicate that read one list would enforce the flag for half the entries
+    that carry it, which is worse than not enforcing it, because the half it missed would
+    look covered.
+
+    False for a name the registry does not hold, and that is the honest answer rather than a
+    fail-open default: ``is_registered`` already refuses an unknown identifier under a
+    condition policy denies outright, and reporting "not retired" about a name that is not
+    there answers the question that was asked.
+    """
+    registry = load_dataset_registry()
+
+    assert registry.is_retired("dolma-2026-07") is True
+    assert registry.is_retired("fineweb-edu-1b-v2") is True
+    assert registry.is_retired("fineweb-edu-1b-v6") is False
+    assert registry.is_retired(NO_DATASET_ID) is False
+    assert registry.is_retired("no-such-corpus-v9") is False
+
+    retired = {
+        name
+        for name in (*registry.release_ids, *registry.reference_ids)
+        if registry.is_retired(name)
+    }
+    assert retired == {"dolma-2026-07", "fineweb-edu-1b-v2"}, (
+        "the set of retired entries has moved. Each one is a fact only a corpus's owner "
+        "holds, so the reasoning beside it in config/datasets.yaml has to move with it"
+    )
+
+
+def test_a_retirement_is_answered_against_the_entry_rather_than_against_the_corpus() -> None:
+    """Mutation: retire by ``dataset_id``, which is how a person describes it out loud.
+
+    ``pretrain/fineweb-edu-1b`` is registered at v2 and at v6, both published, sealed and
+    frozen, and only v2 is retired. A predicate answering on the corpus would take the
+    current version off the form and out of every submission along with the superseded one,
+    which is the opposite of what the flag is for.
+
+    The replacement is derived from the same grouping, so the refusal can name v6 rather
+    than send a reader to the file. Empty for a release id is an ordinary answer and not a
+    lookup that failed: nothing was ever published under ``dolma-2026-07``, so there is no
+    sibling to point at and ``none`` is the honest replacement.
+    """
+    registry = load_dataset_registry()
+
+    assert registry.current_versions_of("fineweb-edu-1b-v2") == ("fineweb-edu-1b-v6",)
+    assert registry.current_versions_of("dolma-2026-07") == ()
+    assert registry.current_versions_of("no-such-corpus-v9") == ()
+
+
+def test_the_names_a_refusal_may_suggest_are_the_ones_no_check_refuses() -> None:
+    """Mutation: hand back everything registered, which is what the refusal used to print.
+
+    Three conditions and each one is an existing refusal rather than a judgement made in the
+    registry: registered, or ``unregistered_dataset`` denies it outright; in a trainable
+    family, or ``dataset_is_not_a_corpus`` does; not retired, which is the refusal that
+    arrived with this method. So every registered name this omits is a name something
+    refuses, and that is asserted here in both directions rather than against a list.
+
+    The five corpora that are trainable, current and off the form are deliberately kept, and
+    ``lean4-mathlib-bytes-v3`` is the worked example. Nothing in this platform refuses it --
+    what a run picking it meets is a container that cannot build a byte tokenizer and exits
+    69 -- so leaving it out would be this list claiming an enforcement that does not exist.
+    """
+    registry = load_dataset_registry()
+    usable = registry.names_a_run_may_still_use()
+    registered = registry.release_ids | registry.reference_ids
+
+    assert set(usable) <= registered
+    assert list(usable) == sorted(usable)
+    for name in registered:
+        refused = not registry.is_a_trainable_corpus(name) or registry.is_retired(name)
+        assert (name in usable) is not refused, (
+            f"{name} is {'suggested and refused' if refused else 'usable and withheld'}"
+        )
+    assert "lean4-mathlib-bytes-v3" in usable, (
+        "a corpus nothing refuses has been dropped from what a refusal may suggest, which "
+        "claims a refusal this platform does not make"
+    )
+    assert not {"smollm2-bpe-v1", "openai-prm800k-v1", "fineweb-edu-1b-v2"} & set(usable)
+
+
 def test_a_hand_written_manifest_naming_a_tokenizer_is_refused_rather_than_trained_on() -> None:
     """Mutation: keep the family test at the dropdown, where it started.
 

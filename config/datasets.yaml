@@ -29,7 +29,25 @@
 # registry meant to explain them. But nothing was ever bound to it and no run ever read one,
 # so a submitter picking it off the form records that their run read something it did not,
 # into a record that is immutable by design. `retired: true` keeps admission's answer and
-# removes the menu item.
+# stops a new run naming it.
+#
+# THAT SENTENCE USED TO END "AND REMOVES THE MENU ITEM", AND FOR A WHILE THE MENU ITEM WAS
+# THE WHOLE MECHANISM. Nothing outside the dropdown join read this flag, so both retired
+# names cleared `edullm check` with "no refusals", compiled as routine and were admitted --
+# measured on 2026-08-05 by running each of them through all three, rather than read out of
+# the code. A dropdown is a GitHub form validation and not an enforcement point, so the only
+# thing standing between a retired corpus and an immutable lineage record naming it was a
+# list of options. `require_a_dataset_release_that_is_current` in
+# src/edullm_platform/submission.py is the enforcement now: refused on the laptop by
+# `edullm check` and again in the credential-free compile job, both before the approval gate.
+#
+# IT IS DELIBERATELY NOT IN config/policy.yaml's denied_outright LIST, AND THAT FUNCTION
+# CARRIES THE ARGUMENT IN FULL. The short of it is that file's own test for the list --
+# a condition is denied outright when there is no approver for whom it is a judgement call --
+# and retirement fails it. "I am reproducing the v2 result and need the corpus that produced
+# it" is a statable reason a reader can act on, and a run resuming from a checkpoint written
+# against a retired corpus has to go on naming that corpus, because naming a current one to
+# get past a refusal writes the false record the rule exists to prevent.
 #
 # That flag and the tokenizer join described below answer the same question by different
 # means, and both are needed. `retired` is a fact about this entry that no computation can
@@ -37,17 +55,18 @@
 # The join is a fact about a corpus that does exist and whose tokenizer no workload can
 # construct, so it changes on its own when OLMo-core grows one.
 #
-# WHY SIXTEEN ENTRIES AND WHY EIGHT OF THEM REACH THE FORM. Every entry here is a promise the
-# corpus can be resolved; a dropdown option is the stronger promise that a run picking it
-# works. The six dolma2 corpora carry both, and so do fineweb-edu-1b at v6 on smollm2-bpe and
-# formal-proof-premises-500m at v2 on the vendored Qwen2.5 tokenizer. The other eight carry
-# only the first, and for three separate reasons -- a tokenizer nothing can build or none
-# declared at all, a version its owner has superseded, or a family a run must not train on.
-# All three gaps are computed rather than listed, so this comment cannot drift out of
-# agreement with the file.
+# WHY TWENTY-FOUR ENTRIES AND WHY THIRTEEN OF THEM REACH THE FORM. Every entry here is a
+# promise the corpus can be resolved; a dropdown option is the stronger promise that a run
+# picking it works. The seven dolma2 corpora carry both, and so do fineweb-edu-1b at v6 on
+# smollm2-bpe, formal-proof-premises-500m at v2 on the vendored Qwen2.5 tokenizer, and the
+# four fineweb2 corpora on the two gigatoken tokenizers. The other eleven carry only the
+# first, and for three separate reasons -- a tokenizer nothing can build or none declared at
+# all, a version its owner has superseded, or a family a run must not train on. All three
+# gaps are computed rather than listed, so this comment cannot drift out of agreement with
+# the file.
 #
 # NOT EVERY REGISTERED DATASET IS A CORPUS, WHICH IS NEW AND IS THE MOST IMPORTANT LINE HERE.
-# This list now carries two tokenizers, a verbatim vendor mirror and three sft conversation
+# This list now carries four tokenizers, a verbatim vendor mirror and three sft conversation
 # corpora, because dependents pin them by digest and admission has to be able to resolve what
 # a lineage record names. Being registered is not permission to train on one. A tokenizer
 # declares no partitions, so the reader hands back every object rather than a trainable split,
@@ -58,8 +77,9 @@
 # WHAT REFUSES THAT IS NOW A RULE AND USED TO BE AN ACCIDENT. Until this change `tokenizer`
 # was a required non-null field, and a tokenizer declares no tokenizer of its own, so the
 # entry simply could not be written. That refused the right thing for no reason, and it
-# evaporated the moment the field learned to hold null so the five entries above could exist.
-# The replacement is TRAINABLE_FAMILIES in src/edullm_platform/contracts/dataset_registry.py,
+# evaporated the moment the field learned to hold null so the eight entries above could
+# exist. The replacement is TRAINABLE_FAMILIES in
+# src/edullm_platform/contracts/dataset_registry.py,
 # an allowlist of the `dataset_id` families a run may name as its training corpus, holding
 # `pretrain` and `sft`. It is enforced at admission, where a manifest naming anything else is
 # denied outright under the `dataset_is_not_a_corpus` condition in config/policy.yaml, and
@@ -86,6 +106,8 @@
 # never published, so no chain in the data reaches from one to the other. Un-retiring v2 puts
 # two versions of one corpus on the form for a submitter to choose between on reference id
 # alone, and tests/test_submission_form_options.py fails rather than letting that happen.
+# What the refusal above adds is the case that test could never see: a submission naming v2
+# by a route that never touched the form at all.
 #
 # THE TWO fineweb ENTRIES PIN THE SAME DIGEST AND THAT IS NOT A COPY-PASTE ERROR.
 # tokens/manifest.json is byte identical under both prefixes, 1,793 bytes hashing to
@@ -115,11 +137,12 @@
 # and carries `bytes`, `objects`, `validated_at` and nothing else -- no `dataset_sha256` and no
 # `manifest_sha256` map at all, where every other seal in the bucket has both. What replaces
 # the missing second reading is stronger than it rather than weaker: b37b8954 appears in its
-# own dataset.json group and in the `depends_on` block of all six dolma2 corpora below, each
-# written by a different sealing pass on a different day, and all seven agree exactly. The
-# thing that is genuinely not attested is that any validator ever recomputed it, which is why
-# this paragraph exists. Re-sealing the tokenizer under the current shape is what would remove
-# the asterisk, and that is upstream's change to make.
+# own dataset.json group and in the `depends_on` block of all seven dolma2 corpora below, each
+# written by a different sealing pass on a different day, and all eight agree exactly. Read
+# live from the bucket again on 2026-08-05, because frontload-cl-10b joined the seven after
+# the reading that said six. The thing that is genuinely not attested is that any validator
+# ever recomputed it, which is why this paragraph exists. Re-sealing the tokenizer under the
+# current shape is what would remove the asterisk, and that is upstream's change to make.
 #
 # Their licences differ and several are honestly unknown. lean4-mathlib-bytes declares
 # Apache-2.0, openai-prm800k declares MIT, fineweb-edu-1b, math-frontload-100m and
@@ -133,17 +156,29 @@
 # basis nobody has established, which is a fact about the corpus and not a defect in the
 # record.
 #
-# EIGHT ARE REGISTERED HERE AND NOT OFFERED ON THE FORM, AND THAT IS DELIBERATE.
-# Three are refused by family, above: the two tokenizers and the verbatim vendor mirror.
-# math-sft-60m, pedagogy70-normal30 and frontload-cl-chat-sft are in a trainable family and declare no tokenizer at
-# all, honestly, because they are pre-tokenization conversation text, and `None` is not a key
-# in the TOKENIZERS map, so the same join that answers the question above answers this one.
-# lean4-mathlib-bytes and math-memory-full depend on `tokenizer/bytes-utf8`, and OLMo-core has
-# no byte tokenizer. TokenizerConfig offers dolma2, dolma2_sigdig, gpt_neox_olmo_dolma_v1_5,
-# gpt2 and from_hf, and nothing under olmo_core/data/ mentions bytes or utf8, measured on
-# 2026-08-02 against the checkout the training image builds from. A run picking either of
-# those two today reaches a container that cannot construct a model for the tokens it just
-# resolved and exits 69. The eighth is fineweb-edu-1b at v2, held off by `retired` alone.
+# ELEVEN ARE REGISTERED HERE AND NOT OFFERED ON THE FORM, AND THAT IS DELIBERATE.
+# Five are refused by family, above: the four tokenizers and the verbatim vendor mirror.
+# math-sft-60m, pedagogy70-normal30 and frontload-cl-chat-sft are in a trainable family and
+# declare no tokenizer at all, honestly, because they are pre-tokenization conversation text,
+# and `None` is not a key in the TOKENIZERS map, so the same join that answers the question
+# above answers this one. lean4-mathlib-bytes and math-memory-full depend on
+# `tokenizer/bytes-utf8`, and OLMo-core has no byte tokenizer. TokenizerConfig offers dolma2,
+# dolma2_sigdig, gpt_neox_olmo_dolma_v1_5, gpt2 and from_hf, and nothing under
+# olmo_core/data/ mentions bytes or utf8, measured on 2026-08-02 against the checkout the
+# training image builds from. A run picking either of those two today reaches a container
+# that cannot construct a model for the tokens it just resolved and exits 69. The eleventh is
+# fineweb-edu-1b at v2, which `retired` now refuses rather than merely unlists.
+#
+# ONLY SIX OF THE ELEVEN ARE REFUSED BY ANYTHING, AND KNOWING WHICH IS THE POINT OF SPLITTING
+# THEM UP LIKE THIS. The five family cases trip `dataset_is_not_a_corpus` and v2 trips
+# `retired_dataset_release`. The other five -- the three with no tokenizer and the two on
+# bytes-utf8 -- are admitted by every check this platform makes, and what a run picking one
+# meets is exit 69 in a container after the GPU has been paid for. They are off the form
+# because the dropdown answers "will this work" and they will not, and they stay in the
+# refusal `edullm check` prints for an unregistered name, because that sentence answers "what
+# may a submission name" and pretending otherwise would claim an enforcement that is not
+# there. tests/test_submission_form_options.py derives that set from the same functions the
+# compile job and admission use, so it shrinks on its own as those refusals get built.
 #
 # fineweb-edu-1b AT v6 USED TO BE ON THIS LIST AND IS THE WORKED EXAMPLE OF AN EXCLUSION
 # RETIRING ITSELF. It depends on `tokenizer/smollm2-bpe`, which always had an exact OLMo-core

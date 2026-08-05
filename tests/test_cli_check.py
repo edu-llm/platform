@@ -35,6 +35,8 @@ from edullm_platform.cli.main import (
 )
 from edullm_platform.cli.preflight import Preflight
 from edullm_platform.cli.presentation import config_source_said
+from edullm_platform.config import load_yaml
+from edullm_platform.contracts.dataset_registry import DatasetRegistry
 from tests.cli_support import (
     CONFIG_DIR,
     SUBMITTER_ON_TWO_TEAMS,
@@ -246,6 +248,84 @@ def test_a_corpus_that_is_registered_and_is_not_one_is_refused_as_itself(
     assert code == EXIT_REFUSED
     assert "refused  dataset_is_not_a_corpus" in out
     assert "unregistered_dataset" not in out
+
+
+@pytest.mark.parametrize("release", ["dolma-2026-07", "fineweb-edu-1b-v2"])
+def test_a_retired_release_is_refused_on_the_laptop_rather_than_merely_unlisted(
+    release: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """THE VERB THAT COST NOTHING AND WAS SAYING NOTHING. Mutation: leave `retired` to the
+    dropdown.
+
+    This printed "no refusals. edullm submit will dispatch this." for both retired names,
+    measured on 2026-08-05, and it was telling the truth about a platform in which the only
+    thing refusing them was a list of options on a GitHub form. A researcher who ran this
+    before dispatching learned nothing, and the reason it is worth saying here rather than
+    only in the compile job is that here it costs a fraction of a second and no queue wait.
+
+    Asserted on stdout with the code, because that is what a skill matches on and what a
+    researcher pastes to a colleague.
+    """
+    root, runner = checkout(tmp_path)
+
+    code, out, err = invoke(
+        ["check", "--dataset", release, "--experiment", "an-experiment"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_REFUSED
+    assert "refused  retired_dataset_release" in out
+    assert "no refusals" not in out
+    assert "config/datasets.yaml" in out
+    assert err == ""
+
+
+def test_the_unregistered_refusal_suggests_no_name_the_next_check_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#232'S CORRECTION, ASKED OF THE OTHER REFUSAL THAT WAS MAKING THE SAME MISTAKE.
+    Mutation: list every registered name, since all of them are real entries.
+
+    ``_resolve_workload`` records why the workload refusal stopped naming the whole catalog:
+    a name offered to somebody who has just been refused is a second refusal waiting, and
+    listing everything reproduces inside an error message the defect the dropdown tests
+    exist to keep off a menu. This refusal listed all twenty-four registered names, five of
+    which the very next check refuses by family and two of which are retired.
+
+    Derived from the registry in both directions rather than pinned to a list, so
+    registering a corpus does not move this test and building a refusal does. The tokenizers
+    and the vendor mirror are the live instances; the two retired names are the ones this
+    change added.
+    """
+    root, runner = checkout(tmp_path)
+    registry = load_yaml(CONFIG_DIR / "datasets.yaml", DatasetRegistry)
+
+    code, out, _ = invoke(
+        ["check", "--dataset", "no-such-corpus-v9", "--experiment", "an-experiment"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+
+    assert code == EXIT_REFUSED
+    assert "refused  unregistered_dataset" in out
+    # The refusal wraps, so the names are read out of the words rather than out of a line.
+    named = {word.strip(" ,.") for word in out.split()}
+    suggested = named & (registry.release_ids | registry.reference_ids)
+
+    assert suggested == set(registry.names_a_run_may_still_use()), (
+        "the refusal and the registry disagree about which names a submission could take. "
+        "A name suggested here that some check refuses is a second refusal waiting; a "
+        "usable name left out sends a researcher to config/datasets.yaml to find it"
+    )
+    for refused in ("smollm2-bpe-v1", "openai-prm800k-v1", "dolma-2026-07"):
+        assert refused not in suggested
+    assert "regmix-10b-v1" in suggested, (
+        "no usable corpus is suggested at all, so the comparison above is between two empty "
+        "sets and the refusal could say anything"
+    )
 
 
 def test_four_cards_and_a_command_that_starts_one_process_is_refused_by_name(

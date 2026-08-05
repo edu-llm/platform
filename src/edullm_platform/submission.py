@@ -77,6 +77,7 @@ from edullm_platform.contracts.workload import CostInputs, WorkloadCatalog, Work
 from edullm_platform.errors import (
     DeniedOutrightError,
     ExperimentNotASlugError,
+    RetiredDatasetReleaseError,
     RetryWithoutACheckpointContractError,
     SubmitterNotOnTheRosterError,
     TeamNotASlugError,
@@ -102,6 +103,7 @@ __all__ = [
     "compile_submission",
     "exceeded_routine_bounds",
     "render_approver_context",
+    "require_a_dataset_release_that_is_current",
     "require_registered_repository",
     "require_submitter_on_the_roster",
 ]
@@ -311,6 +313,92 @@ def require_registered_repository(
         "so there is no image for this run to have named. Adding an entry is a pull request "
         "against this repository, and it takes an ECR repository and a place on the "
         "publisher role with it."
+    )
+
+
+def require_a_dataset_release_that_is_current(
+    dataset_release: str, *, datasets: DatasetRegistry
+) -> None:
+    """Refuse a corpus the registry carries and its owner has stopped naming as current.
+
+    **THE FLAG HAD NO ENFORCEMENT ANYWHERE AND THE DROPDOWN WAS STANDING IN FOR ONE.**
+    ``retired`` has been set on ``dolma-2026-07`` and on ``pretrain/fineweb-edu-1b`` at v2
+    since each needed it, and until this function the only thing that read it was the join
+    computing the submission form's option list. Measured on 2026-08-05 rather than reasoned
+    about: both names clear ``edullm check`` with "no refusals", compile as routine, and are
+    admitted. ``config/datasets.yaml`` already said so, that the flag "keeps admission's
+    answer and removes the menu item" -- the menu item was the mechanism.
+
+    What that buys a wrong answer is not a wasted afternoon. ``dolma-2026-07`` had nothing
+    published under it and no run ever read one, so a run naming it finishes green and
+    leaves an intent record and a lineage attestation asserting it read a corpus that does
+    not exist, in documents that are immutable by design and cannot be corrected. v2 is the
+    quieter half of the same thing: it is real, so the record is true and the result is
+    against a version of the data its owner has superseded, which looks exactly like a
+    result against the current one.
+
+    **REFUSED BEFORE THE GATE AND NOT DENIED OUTRIGHT, WHICH IS A DECISION AND NOT AN
+    OVERSIGHT.** Adding ``dataset_is_retired`` to ``denied_outright`` in
+    ``config/policy.yaml`` is the obvious move and it is the wrong one, on that file's own
+    test. It denies a condition outright when "there is no approver for whom this is a
+    judgement call", and retirement is exactly a judgement somebody can make: the approver
+    context prints the dataset release by name, and "I am reproducing the v2 result and need
+    the corpus that produced it" is a statable reason a reader can act on. That is the
+    opposite of the tokenizer case beside it, which an approver cannot see from the request
+    and which reports nothing wrong afterwards either.
+
+    It also buys nothing the two pre-gate refusals do not. No submission reaches a record
+    without compiling, so the permanent record is prevented here just as completely; what
+    denied-outright would add is that nobody could ever lift it, and the same file records
+    what that cost the image-scan gate before policy v4 took it back out.
+
+    **AND IT IS THE RESUME CASE THAT SETTLES IT.** A run resuming from a checkpoint written
+    against a retired corpus has to keep naming that corpus, because naming a current one to
+    get past a refusal writes the false record this rule exists to prevent. A gate refusable
+    by nobody would make the dishonest answer the only one that works. Refused here, the
+    honest route stays open and is a reviewed line in ``config/datasets.yaml`` rather than a
+    silent bypass. Nothing in the tree needs it today -- Batch's second attempt is the same
+    job and never re-enters this path, and ``tools/build_gpu_training_submission.py``
+    dispatches ``--resume-from`` with ``dataset_release: none`` -- so this is scoping written
+    down before the case arrives rather than after.
+
+    **NARROWED TO WHAT NOTHING ELSE REFUSES**, which is what keeps the two sides of the
+    submission path saying one thing. This runs before compiling and the denied-outright
+    conditions are derived inside it, so a name that is both retired and not a corpus would
+    otherwise be reported as retired here and as the policy condition by ``edullm check``.
+    Policy owns the stronger verdict, so this stands aside for it.
+
+    A function beside :func:`compile_submission` rather than a check inside it, which is
+    where :func:`require_registered_repository` sits and for the reason recorded there:
+    ``test_a_submission_naming_a_repository_nothing_registers_is_refused_before_a_reviewer_is_asked``
+    holds the dataset and repository verdicts to one refusal path inside compiling, so that
+    policy keeps owning them, and a second check in that function would split it.
+    """
+    if not datasets.is_registered(dataset_release):
+        return
+    if not datasets.is_a_trainable_corpus(dataset_release):
+        return
+    if not datasets.is_retired(dataset_release):
+        return
+    current = datasets.current_versions_of(dataset_release)
+    instead = (
+        f"{', '.join(current)} is the version its owner names as current"
+        if current
+        else (
+            "nothing was ever published under it, so `none` is the true answer for a run "
+            "that reads no corpus"
+        )
+    )
+    raise RetiredDatasetReleaseError(
+        f"{dataset_release!r} is registered in config/datasets.yaml and is retired there, "
+        f"so it is not a corpus to start new work against: {instead}. Retirement is a fact "
+        "only the corpus's owner holds -- nothing computable separates a superseded version "
+        "from the current one -- which is why it is a flag rather than something this "
+        "platform derives. The entry stays registered so that every record naming it goes "
+        "on resolving; what it stops is a new run recording that it read this. If you are "
+        "reproducing an earlier result and need exactly this corpus, that is a case for "
+        "clearing the flag in a pull request rather than for naming a different one: a run "
+        "that names the corpus it did not read is the record this refusal exists to prevent."
     )
 
 

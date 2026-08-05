@@ -35,6 +35,18 @@ two sft conversation corpora, because dependents pin them by digest and the regi
 to carry what exists. Being registered is what lets a submission resolve one; it is not
 permission to train on one, and ``TRAINABLE_FAMILIES`` is where the difference is written
 down.
+
+:meth:`DatasetRegistry.is_retired` is the third, and it is the one ``retired`` never had. The
+flag has existed on both models since the first entry needed it, and until now the only thing
+that read it was the join computing the submission form's option list. So a retired corpus
+was held off the form and admitted by every check this platform makes -- measured rather than
+reasoned about, by running ``dolma-2026-07`` and ``fineweb-edu-1b-v2`` through ``edullm
+check``, ``tools/compile_submission.py`` and ``admit`` on 2026-08-05: no refusals, compiled
+routine, admitted. A dropdown is not an enforcement point, and a run that reached a green
+finish that way leaves an immutable lineage record naming a corpus nobody publishes.
+
+The predicate is here, in the contract both sides of the submission path already read, so
+that it cannot be answered one way on a laptop and another way in CI.
 """
 
 from __future__ import annotations
@@ -309,6 +321,99 @@ class DatasetRegistry(ContractModel):
         """
         reference = self.reference_for(dataset_id)
         return reference is None or reference.is_a_corpus_a_run_may_read
+
+    def is_retired(self, dataset_id: str) -> bool:
+        """Whether this entry is registered and is no longer the one to name.
+
+        THE THIRD QUESTION, AND THE ONE THE FLAG DID NOT USED TO BE ASKED. ``retired`` is set
+        on two entries and was read by one caller, the join in
+        ``tests/test_submission_form_options.py`` that computes the form's option list. So
+        the flag removed a menu item and enforced nothing, which
+        ``config/datasets.yaml`` says in as many words -- it "keeps admission's answer and
+        removes the menu item". Measured on 2026-08-05 rather than inferred: both retired
+        names clear ``edullm check``, compile routine and are admitted.
+
+        ASKED OVER BOTH LISTS, BECAUSE BOTH CARRY THE FLAG AND FOR THE SAME REASON. The two
+        entries that set it are one of each kind, and what they have in common is that
+        nothing computable separates them from an entry that is current --
+        ``dolma-2026-07`` has nothing published under it to look up, and
+        ``pretrain/fineweb-edu-1b`` at v2 shares a family, a tokenizer and a pinned digest
+        with the version that supersedes it.
+
+        False for anything this registry does not carry, and that is not a fail-open
+        default. An identifier nothing registers is already refused by :meth:`is_registered`
+        under a condition policy denies outright, and answering "not retired" for a name
+        that is not there is the honest answer to the question actually asked.
+
+        WHAT READS THIS IS THE SUBMISSION PATH AND NOTHING THAT READS A RECORD. A stored run
+        naming ``dolma-2026-07`` still resolves against this registry, because
+        :meth:`is_registered` is what resolution asks and retirement does not touch it. That
+        separation is the same one #214 and #228 landed for images and for verdicts:
+        today's roster must not retroactively refuse yesterday's run.
+        """
+        reference = self.reference_for(dataset_id)
+        if reference is not None:
+            return reference.retired
+        for entry in self.releases:
+            if entry.release_id == dataset_id:
+                return entry.retired
+        return False
+
+    def names_a_run_may_still_use(self) -> tuple[str, ...]:
+        """Every registered identifier a submission could name and not be refused for, sorted.
+
+        THE LIST A REFUSAL MAY SUGGEST, AND IT IS NARROWER THAN "REGISTERED". #232 made the
+        same correction to the workload refusal and ``_resolve_workload`` records why: a name
+        offered to somebody who has just been refused is a second refusal waiting, and
+        listing the whole registry reproduces inside an error message the exact defect the
+        dropdown tests exist to keep off a menu.
+
+        Three conditions, and each one is a refusal that already exists rather than a
+        judgement made here. Registered, or ``unregistered_dataset`` denies it outright. In a
+        trainable family, or ``dataset_is_not_a_corpus`` does. Not retired, which is the
+        refusal this change adds. Every registered name this omits is a name some check
+        refuses, and every name it keeps is one no check refuses -- so a refusal built from
+        it cannot suggest something that cannot be taken, and cannot go stale as the
+        registry grows.
+
+        Deliberately not narrowed to what the form offers. Five registered corpora are
+        trainable, current and off the dropdown because no tokenizer here can build theirs,
+        and nothing in this platform refuses one -- so naming them is honest about what a
+        submission may do, and omitting them would be this list claiming an enforcement that
+        does not exist. ``config/datasets.yaml`` carries what a run picking one meets
+        instead, which is a container that exits 69.
+        """
+        return tuple(
+            sorted(
+                name
+                for name in (*self.release_ids, *self.reference_ids)
+                if self.is_a_trainable_corpus(name) and not self.is_retired(name)
+            )
+        )
+
+    def current_versions_of(self, dataset_id: str) -> tuple[str, ...]:
+        """The un-retired reference ids registered against the same corpus, sorted.
+
+        What a retirement refusal can put in front of somebody instead of the name they
+        typed, when the registry knows one. ``pretrain/fineweb-edu-1b`` is carried at v2 and
+        v6, so a submission naming the retired v2 can be sent to v6 by name rather than to
+        the file to read.
+
+        Empty is an ordinary answer and not a lookup that failed. ``dolma-2026-07`` is a
+        release rather than a published corpus, so it has no ``dataset_id`` to group on and
+        nothing was ever published under it; the honest replacement for that one is ``none``,
+        which the refusal says for itself rather than deriving from here.
+        """
+        retired = self.reference_for(dataset_id)
+        if retired is None:
+            return ()
+        return tuple(
+            sorted(
+                entry.reference_id
+                for entry in self.published
+                if entry.dataset_id == retired.dataset_id and not entry.retired
+            )
+        )
 
     def reference_for(self, reference_id: str) -> PublishedDatasetReference | None:
         """Resolve a published corpus to the facts a reader needs. Published list only.
