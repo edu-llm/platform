@@ -17,13 +17,22 @@ on and an unreadable configuration is not, and a CLI that collapsed them would s
 somebody to edit a spec that was fine.
 
 EVERY WORD THIS BINARY IS TYPED IS ONE OF THREE THINGS, AND THEY GET THREE ANSWERS.
-``BUILT_TODAY`` is the governed-submission core -- ``check``, ``submit``, ``status``,
-``logs``, ``cancel`` -- and runs. ``NOT_BUILT_YET`` is the rest of what
-``docs-frank/reference/decisions.md`` settled on 2026-08-04, declared rather than absent so
-that the answer to ``edullm shell`` is a plan rather than a usage error. ``RETIRED`` is the
-names that were folded into those: ``dry-run`` and ``new`` into ``check``, ``activity``
-into bare ``status``, ``notebook`` into ``shell --notebook``, and ``results`` into looking
-at Weights and Biases. A typo is the fourth case and gets the nearest spelling and the list.
+``BUILT_TODAY`` is every verb ``docs-frank/reference/decisions.md`` settled on 2026-08-04
+and runs: the governed-submission core of ``check``, ``submit``, ``status``, ``logs`` and
+``cancel``, the two that file something with ``add`` and ``ask``, and the two ungated ones
+with ``run`` and ``shell``. ``NOT_BUILT_YET`` is empty as of the exploration route and stays
+because the next settled-and-unbuilt name has somewhere to be declared, which is what makes
+the answer to it a plan rather than a usage error. ``RETIRED`` is the names that were folded
+into those: ``dry-run`` and ``new`` into ``check``, ``activity`` into bare ``status``,
+``notebook`` into ``shell --notebook``, and ``results`` into looking at Weights and Biases.
+A typo is the fourth case and gets the nearest spelling and the list.
+
+TWO OF THOSE NINE ARE UNGATED AND THAT IS THE DESIGN RATHER THAN AN OMISSION. ``run`` and
+``shell`` call no part of ``run_preflight``: nothing they do is recorded, approved or citable,
+so the refusals that protect a record have nothing to protect here. ``cli/lane.py``'s header
+carries the argument and ``tests/test_lane_verdicts.py`` fails if either verb ever reaches
+that path. What they refuse instead is a closed set of four, all of them about a destination
+being unspellable rather than a permission being withheld.
 
 WHY THE RETIRED NAMES ARE REFUSED RATHER THAN ALIASED. Every transcript in
 ``docs-frank/working/terminal-mockups/`` types ``dry-run`` and ``new``, so accepting them
@@ -113,11 +122,14 @@ from edullm_platform.cli.lane import (
     lane_refusals,
     load_working_tier_settings,
     missing_plugin_refusal,
+    notebook_forward_argv,
     person_from_caller_arn,
     placement_warning,
     remote_command_argv,
     remote_script,
     run_instances_argv,
+    shell_session_argv,
+    ssh_proxy_command,
     working_uri,
 )
 from edullm_platform.cli.machine import (
@@ -257,9 +269,7 @@ class _PlainHelp(argparse.HelpFormatter):
 
     def _split_lines(self, text: str, width: int) -> list[str]:
         collapsed = " ".join(text.split())
-        return textwrap.wrap(
-            collapsed, width, break_on_hyphens=False, break_long_words=False
-        )
+        return textwrap.wrap(collapsed, width, break_on_hyphens=False, break_long_words=False)
 
 
 #: What every parser this file builds is constructed with. One mapping rather than ten
@@ -281,6 +291,7 @@ BUILT_TODAY: Final = {
     "add": "teach the platform about a repository, dataset, shape, model or person",
     "ask": "ask for something for yourself, which produces a time-boxed grant",
     "run": "ship this working tree to a machine and stream the output back",
+    "shell": "open a terminal on a machine of your own, or a notebook on the same one",
 }
 
 #: What each built verb does, in the sentence its own ``--help`` opens with.
@@ -334,6 +345,11 @@ WHAT_A_VERB_DOES: Final = {
         "runs the command you give after a bare -- and streams the output back. Nothing here "
         "is checked against the registry and nothing is recorded as a run that can be cited."
     ),
+    "shell": (
+        "Gives you a terminal on a machine of your own, or with --notebook a Jupyter you open "
+        "in a browser on your laptop. The same machine edullm run uses for this project, so "
+        "you can start something and then go and look at what it left."
+    ),
 }
 
 #: The verbs that are settled and unbuilt, with the sentence each prints. Present so the
@@ -351,9 +367,12 @@ WHAT_A_VERB_DOES: Final = {
 #: ``RETIRED`` still names ``shell --notebook``, deliberately. That path prints no options
 #: list and says in the same paragraph that neither spelling runs today, which is the whole
 #: of what this page was missing.
-NOT_BUILT_YET: Final = {
-    "shell": "open an editor over SSH on a machine, or a Jupyter notebook on the same one",
-}
+#: What ``docs-frank/reference/decisions.md`` settled on 2026-08-04 and nothing behind exists for
+#: yet. Empty as of the exploration route, which is the point rather than an oversight: every verb
+#: that document names is built. It stays because the next settled-and-unbuilt name has somewhere
+#: to be declared, and because the answer to a name in it is a plan rather than a usage error.
+#: :func:`_no_such_verb` reads it, and reads correctly when it is empty.
+NOT_BUILT_YET: Final[dict[str, str]] = {}
 
 #: The verbs that take a command for somebody else's program after a bare ``--``, and are
 #: therefore the ones :func:`_split_at_the_dashes` runs on. Named rather than inferred, because
@@ -374,6 +393,7 @@ def _split_at_the_dashes(tokens: Sequence[str]) -> tuple[list[str], tuple[str, .
         return tokens, ()
     at = tokens.index("--")
     return tokens[:at], tuple(tokens[at + 1 :])
+
 
 #: The names that were something and are now something else, and what to type instead.
 #:
@@ -564,9 +584,7 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
 
     ask = verb_parser("ask", WHAT_A_VERB_DOES["ask"])
     ask.add_argument("--kind", required=True, choices=sorted(ASK_KINDS), help="what kind of ask")
-    ask.add_argument(
-        "--title", required=True, help="one line, as somebody scanning would read it"
-    )
+    ask.add_argument("--title", required=True, help="one line, as somebody scanning would read it")
     ask.add_argument("--detail", help="what you want, and what you have already tried")
     ask.add_argument("--run", help="a run this is about, where it is about one")
     _add_json(ask)
@@ -579,6 +597,14 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
         help="the command to run, after a bare -- so its own flags reach it",
     )
 
+    shell = verb_parser("shell", WHAT_A_VERB_DOES["shell"])
+    _add_lane_arguments(shell)
+    shell.add_argument(
+        "--notebook",
+        action="store_true",
+        help="forward Jupyter to your laptop instead of opening a terminal",
+    )
+
     built: dict[str, argparse.ArgumentParser] = {
         "check": check,
         "submit": submit,
@@ -588,6 +614,7 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
         "add": add,
         "ask": ask,
         "run": run,
+        "shell": shell,
     }
     for verb, plan in NOT_BUILT_YET.items():
         # THE SENTENCE IS THE PLAN'S, READ RATHER THAN REWRITTEN. An unbuilt verb's help
@@ -792,8 +819,7 @@ def _interrupted(dispatched: Sequence[str]) -> str:
             [
                 "",
                 *_wrapped(
-                    "interrupted. Nothing was dispatched, so nothing is running that this "
-                    "started.",
+                    "interrupted. Nothing was dispatched, so nothing is running that this started.",
                     indent="",
                 ),
                 "",
@@ -1032,6 +1058,14 @@ def main(
         if verb == "run":
             arguments.command = list(after_the_dashes)
             return _run(arguments, runner=command_runner, out=stdout, err=stderr, cwd=here)
+        if verb == "shell":
+            return _shell(
+                arguments,
+                after_the_dashes,
+                runner=command_runner,
+                out=stdout,
+                err=stderr,
+            )
     except KeyboardInterrupt:
         # CAUGHT BECAUSE IT IS NOT AN ``Exception`` AND SO SLIPPED PAST EVERYTHING BELOW.
         # The handler two blocks down exists so that a researcher never meets a traceback,
@@ -1106,9 +1140,7 @@ def _check(
     configuration = _configuration(arguments)
     facts = read_git_facts(runner, cwd=cwd)
     submitter = github_login(runner, allow_network=False)
-    spec, scaffolded, unscaffoldable = _spec_for_checking(
-        arguments, configuration, facts, cwd=cwd
-    )
+    spec, scaffolded, unscaffoldable = _spec_for_checking(arguments, configuration, facts, cwd=cwd)
     if scaffolded is not None:
         # READ THE TREE AGAIN, BECAUSE THIS INVOCATION JUST CHANGED IT.
         #
@@ -1568,6 +1600,112 @@ def _run_needs_a_command() -> str:
     )
 
 
+# ---------------------------------------------------------------------------------------
+# shell
+# ---------------------------------------------------------------------------------------
+
+#: Where a forwarded notebook appears on the laptop. Different from the machine's own port so
+#: that a Jupyter the researcher is already running locally is not what they end up looking at,
+#: which is a confusion that costs half an hour and looks exactly like a working notebook.
+LOCAL_NOTEBOOK_PORT: Final = 8890
+
+
+def _shell(
+    arguments: argparse.Namespace,
+    after_the_dashes: Sequence[str],
+    *,
+    runner: CommandRunner,
+    out: TextIO,
+    err: TextIO,
+) -> int:
+    """A terminal on a machine of your own, or a notebook forwarded to your browser.
+
+    **NOTHING HERE CALLS ``run_preflight`` EITHER.** ``tests/test_lane_verdicts.py`` holds both
+    verbs to that, and the reason is the same one: nothing is recorded, approved or cited.
+    """
+    configuration = _configuration(arguments)
+    if after_the_dashes:
+        print(_shell_takes_no_command(after_the_dashes), end="", file=err)
+        return EXIT_UNUSABLE
+    session = _lane_session(arguments, configuration, runner=runner, err=err)
+    if isinstance(session, int):
+        return session
+
+    settings = load_working_tier_settings()
+    uri = working_uri(
+        team=session.request.team,
+        person=session.request.person,
+        project=session.request.project,
+    )
+    print(f"{session.machine} expires {session.expires_at}", file=out)
+    print(
+        "\n".join(
+            _wrapped(
+                f"Anything you want to keep goes in {uri}, which survives the machine. Nothing "
+                "here is recorded as citable, and nothing was checked.",
+                indent="",
+            )
+        ),
+        file=out,
+    )
+    if arguments.notebook:
+        print(
+            "\n".join(
+                _wrapped(
+                    f"Open http://localhost:{LOCAL_NOTEBOOK_PORT}/ once Jupyter is up on the "
+                    "machine. Nothing is listening anywhere else: the connection goes through "
+                    "Systems Manager, so the notebook is not on the internet. Ctrl-C closes it.",
+                    indent="",
+                )
+            ),
+            file=out,
+        )
+    else:
+        print(
+            "\n".join(
+                _wrapped(
+                    "For an editor over SSH, put this in your ssh config for a host of any "
+                    "name, then point the editor at that host:",
+                    indent="",
+                )
+            ),
+            file=out,
+        )
+        print(f"\n  {ssh_proxy_command(session.machine)}\n", file=out)
+    print(file=out)
+
+    opened = runner(
+        notebook_forward_argv(session.machine, settings=settings, local_port=LOCAL_NOTEBOOK_PORT)
+        if arguments.notebook
+        else shell_session_argv(session.machine),
+        env=session.environment,
+    )
+    print(opened.stdout, end="", file=out)
+    # THE SESSION'S OWN EXIT STATUS IS NOT THE RESEARCHER'S VERDICT AND IS NOT REPORTED AS ONE.
+    # A shell that the person left with Ctrl-D and a shell they left after a failed command exit
+    # the same way, and neither is a statement about anything. run reads a sentinel because it
+    # asked one question; this asked none.
+    return EXIT_OK
+
+
+def _shell_takes_no_command(given: Sequence[str]) -> str:
+    """Somebody typed the wrong verb for what they wanted, and the other one is one word away."""
+    return "\n".join(
+        [
+            "",
+            *_wrapped(
+                "shell opens a terminal and takes no command, so nothing was started. What you "
+                "typed after -- is what run is for, and it ships this directory to the machine "
+                "first and streams the output back.",
+                indent="",
+            ),
+            "",
+            f"  edullm run --project {'...'} --compute ... -- {' '.join(given)}",
+            "",
+        ]
+    )
+
+
 def _scaffolded_said(written: Path, facts: GitFacts) -> str:
     """Where the file went, and that it is the change the refusal below is about.
 
@@ -1736,9 +1874,7 @@ def _submit(
     )
     if not arguments.team:
         _say_where_the_team_came_from(preflight, err=err)
-    _say_whether_this_edullm_is_current(
-        runner, repository=arguments.platform_repository, err=err
-    )
+    _say_whether_this_edullm_is_current(runner, repository=arguments.platform_repository, err=err)
     dispatched_at = datetime.now(UTC)
     actions.dispatch(SUBMIT_WORKFLOW, _submission_form(preflight.request))
     print(f"dispatching {SUBMIT_WORKFLOW} ... queued", file=out)

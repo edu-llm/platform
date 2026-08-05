@@ -135,9 +135,7 @@ def test_the_configuration_line_says_when_the_copy_is_the_install_s_own(
     install; what decides the question is whether this is the copy the wheel carries, and
     that is a comparison rather than a spelling.
     """
-    assert config_source_said(PACKAGED_CONFIG_DIRECTORY).endswith(
-        "the copy this install carries"
-    )
+    assert config_source_said(PACKAGED_CONFIG_DIRECTORY).endswith("the copy this install carries")
     assert config_source_said(CONFIG_DIR) == f"checked against {CONFIG_DIR}"
 
 
@@ -776,9 +774,7 @@ def test_a_flag_with_no_near_spelling_still_says_which_verb_takes_none_of_it(
     assert "edullm check --help" in err
 
 
-def test_a_stray_word_is_not_called_a_flag(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_stray_word_is_not_called_a_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``check`` takes no positional argument, so a word is a different mistake.
 
     Mutation: run everything through the flag sentence. "pilot is not a flag check takes"
@@ -799,15 +795,25 @@ def test_an_unbuilt_verb_says_so_before_it_says_anything_about_a_flag(
 ) -> None:
     """Two true things, and the order between them is the whole of this test.
 
-    Mutation: check the flags first. ``edullm shell --wibble`` would be answered with the
-    flags ``shell`` takes, which is a conversation about a verb that does not exist yet.
+    Mutation: check the flags first. A verb that is settled and unbuilt would be answered with
+    the flags it takes, which is a conversation about a verb that does not exist yet.
+
+    **THE UNBUILT NAME IS SUPPLIED RATHER THAN PICKED OFF THE TABLE, BECAUSE THE TABLE IS NOW
+    EMPTY.** Every verb ``decisions.md`` settled is built as of the exploration route, and a
+    version of this case that drove whichever name happened to be unbuilt would have quietly
+    stopped running on the day the last one landed -- passing, and asserting nothing, which is
+    the shape this repository has now found seven times. The property is about anything in
+    ``NOT_BUILT_YET`` and not about a particular word, so a word is put there.
     """
     runner = FakeRunner({})
+    monkeypatch.setitem(NOT_BUILT_YET, "teleport", "put you on the machine without asking")
 
-    code, _, err = invoke(["shell", "--wibble"], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch)
+    code, _, err = invoke(
+        ["teleport", "--wibble"], runner=runner, cwd=tmp_path, monkeypatch=monkeypatch
+    )
 
     assert code == EXIT_UNUSABLE
-    assert "shell is not built yet." in err
+    assert "teleport is not built yet." in err
     assert "--wibble" not in err
 
 
@@ -863,7 +869,15 @@ def test_a_runtime_bound_no_arithmetic_can_carry_is_refused_rather_than_raised(
     root, runner = checkout(tmp_path)
 
     code, out, err = invoke(
-        ["check", "--dataset", "regmix-10b-v1", "--experiment", "an-experiment", "--hours", "1e400"],
+        [
+            "check",
+            "--dataset",
+            "regmix-10b-v1",
+            "--experiment",
+            "an-experiment",
+            "--hours",
+            "1e400",
+        ],
         runner=runner,
         cwd=root,
         monkeypatch=monkeypatch,
