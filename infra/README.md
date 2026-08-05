@@ -314,7 +314,7 @@ Two notes on the names in that table:
 - **The Phase 1 deployer stack (2).** The role
   `sbsandbox-intern-edullm-infra-deployer` was created from a laptop during Phase 1 under
   a stack name that was committed nowhere — not in `README.md`, not in `infra/`, not in
-  `tools/`, not in `proof/phase-1/`, and not in any commit message. It was recovered from
+  `tools/`, not in the acceptance evidence, and not in any commit message. It was recovered from
   the account on 2026-07-27 and is now in the table above:
   `sbsandbox-intern-edullm-infra-deployer-iam`. Guessing was not an option, because
   deploying the amended template under a new name fails on the role name already
@@ -864,8 +864,8 @@ account.
   error.
 
 Both were found the same way — by recapturing the deployed roles and comparing, not by
-anybody noticing. `proof/phase-3/deployed-role-drift.md` reports `ok` for all four Phase 3
-roles for the first time since the first of them was attached.
+anybody noticing. The drift comparison reported `ok` for all four Phase 3 roles for the
+first time since the first of them was attached.
 
 "Not by anybody noticing" is the part that has since been addressed, though only for one of
 the two shapes. `tools/verify_deployed_stacks.py` runs nightly and would have reported the

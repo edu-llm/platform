@@ -25,7 +25,7 @@ from edullm_platform.contracts.policy import (
 )
 from edullm_platform.contracts.repository_registry import RepositoryRegistry
 from edullm_platform.manifest_helpers import compute_manifest_cost_inputs
-from edullm_platform.phase0_gate import (
+from edullm_platform.operational_inventory import (
     expected_manifest_classification,
     request_facts_from_manifest,
 )

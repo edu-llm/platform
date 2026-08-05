@@ -324,14 +324,14 @@ def test_is_registered_answers_for_published_references_too() -> None:
     as the tidier design -- ``is_registered`` for admission's question, ``reference_for`` for
     resolving a corpus.
 
-    Offering the published corpora on the form is what made it wrong. ``phase0_gate`` denies
+    Offering the published corpora on the form is what made it wrong. ``operational_inventory`` denies
     a manifest outright with ``unregistered_dataset`` when this returns False, so a dropdown
     option backed only by the ``published`` list is a menu item whose sole outcome is a
     refusal -- and the refusal lands after the submission has been classified, routed and
     approved by a lead. That is the precise failure the form-options tests exist to prevent,
     arriving through the registry instead of through the YAML.
 
-    Widened here rather than at the two call sites, deliberately. ``phase0_gate`` and
+    Widened here rather than at the two call sites, deliberately. ``operational_inventory`` and
     ``manifest_helpers`` both ask this one question, and a third caller is a matter of time;
     asking each of them to remember to check a second list makes forgetting the default, and
     what forgetting produces is a denial after an approval rather than a visible error.

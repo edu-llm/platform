@@ -79,7 +79,7 @@ __all__ = [
 type Waiting = Callable[[float], None]
 
 #: The repository holding both workflows. Restated here rather than imported from
-#: ``phase0_gate``, which owns ``EXPECTED_GITHUB_ORG`` and ``EXPECTED_GITHUB_REPOSITORY``:
+#: ``operational_inventory``, which owns ``EXPECTED_GITHUB_ORG`` and ``EXPECTED_GITHUB_REPOSITORY``:
 #: importing a phase gate would pull the whole evidence and criteria graph into a binary
 #: whose ``--help`` should cost nothing. ``tests/test_cli_actions.py`` compares the two, so
 #: the copy cannot drift silently -- the same seam-test arrangement the queue names get.

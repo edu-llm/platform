@@ -22,7 +22,7 @@ from edullm_platform.manifest_helpers import (
     manifest_has_immutable_image,
     manifest_has_immutable_revision,
 )
-from edullm_platform.phase0_gate import REQUIRED_REPRESENTATIVE_MANIFESTS
+from edullm_platform.operational_inventory import REQUIRED_REPRESENTATIVE_MANIFESTS
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_FIXTURES_DIR = PROJECT_ROOT / "fixtures" / "manifests"

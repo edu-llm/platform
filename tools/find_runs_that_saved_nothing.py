@@ -27,7 +27,7 @@ a checkpoint is.
 
 **Why a tool rather than the recorder.** Putting it in the lifecycle recorder is the right
 long-term home and costs two things worth deciding separately: a ``ResultManifest`` field,
-which is a contract change that regenerates four proof bundles, and ``s3:ListBucket`` for a
+which is a contract change that moves a recorded structural digest, and ``s3:ListBucket`` for a
 Lambda role that today holds four ``PutObject`` grants and deliberately nothing else. Both
 are defensible and neither should be paid at the same time as finding out whether the check
 is worth having. This runs from a laptop or from the nightly workflow against credentials

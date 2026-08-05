@@ -50,11 +50,10 @@ __all__ = [
 # Frozen dataclasses rather than ContractModel subclasses, and deliberately so. Neither
 # of these is serialized, stored or sent anywhere -- a ResolvedImage lives between a
 # registry lookup and the manifest field it fills, and dies there.
-# proof_bundle.discover_contract_models() inventories every ContractModel subclass in the
-# package and records its structural digest in every committed proof bundle, so making
-# these contract models would move a cell in the Phase 0, 1, 2 and 3 bundles and force a
-# regeneration of four committed goldens in order to publish two shapes that never cross
-# a boundary.
+# contract_inventory.discover_contract_models() inventories every ContractModel subclass in
+# the package and records its structural digest in fixtures/goldens/contract-models.json,
+# so making these contract models would add two rows to a recorded inventory to publish two
+# shapes that never cross a boundary.
 @dataclass(frozen=True)
 class PublishedImage:
     """One image the registry holds for a commit.

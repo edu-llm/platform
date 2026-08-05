@@ -1319,8 +1319,8 @@ def test_the_manifest_names_an_image_even_though_the_form_no_longer_has_to() -> 
     The two fields answer different questions. A form may leave the image to be derived; a
     lineage record must never be able to say that the image a run used is unknown, and the
     field being required is the whole of how it cannot. Relaxing it would also move the
-    canonical hash, the schema version and the structural digests recorded in four
-    committed proof bundles, in order to express a state the record exists to exclude.
+    canonical hash, the schema version and the structural digest the contract inventory
+    records, to express a state the record exists to exclude.
     """
     field = RunManifest.model_fields["image_digest"]
     compiled = compile_payload(cpu_payload())

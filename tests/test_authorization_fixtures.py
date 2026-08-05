@@ -10,7 +10,7 @@ from edullm_platform.contracts.authorization import AuthorizationReason
 from edullm_platform.contracts.decision_matrix import AuthorizationScenario
 from edullm_platform.contracts.policy import ApprovalClass, ApprovalScope
 from edullm_platform.manifest_helpers import compute_manifest_maximum_cost
-from edullm_platform.phase0_gate import request_facts_from_manifest
+from edullm_platform.operational_inventory import request_facts_from_manifest
 from tests.policy_support import ROUTINE_RATE
 from tests.test_lifecycle import reverse_mapping_order
 from tests.test_manifest import (

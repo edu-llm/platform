@@ -61,7 +61,7 @@ fail.
 Read with ``yaml`` rather than through a contract model, which is the choice
 ``tests/test_capacity.py`` already made and recorded: placement belongs on ``ComputeProfile``
 beside ``provisioned``, and it is not there because that model's structural digest is recorded
-in five committed proof bundles. A pydantic model here would put a second, unversioned schema
+in fixtures/goldens/contract-models.json. A pydantic model here would put a second, unversioned schema
 in the tree for a fact that has a home waiting for it -- and it would move the contract
 inventory those five bundles record, which is a bundle regeneration for a config reader.
 """

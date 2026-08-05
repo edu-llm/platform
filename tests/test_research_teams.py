@@ -114,7 +114,7 @@ def test_every_team_a_committed_run_declared_is_declared_or_deliberately_retired
     roster and from the submission form, so nothing new can arrive under them; what is left is
     six committed fixtures that still name two of them. Those were not rewritten, for the same
     reason a lineage record is not: their canonical bytes are digest-pinned by
-    ``proof/phase-0/serialization-goldens.json``, so editing one breaks a recorded digest.
+    ``fixtures/goldens/contract-fixtures.json``, so editing one breaks a recorded digest.
 
     The allowance is bounded rather than open. It is exactly three names, asserted below, and
     it does not extend to the form, which is held to the declared ids alone by

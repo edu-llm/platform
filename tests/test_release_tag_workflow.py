@@ -306,9 +306,9 @@ def test_the_trigger_holds_no_module_the_cli_does_not_reach() -> None:
     matched = files_the_trigger_matches()
     unreachable = {
         "src/edullm_platform/checkpoints.py",
-        "src/edullm_platform/phase4_criteria.py",
-        "src/edullm_platform/proof_generator.py",
+        "src/edullm_platform/operational_inventory.py",
         "src/edullm_platform/run_comparison.py",
+        "src/edullm_platform/serialization_goldens.py",
         "src/edullm_platform/substrate.py",
         "config/capacity.yaml",
     }

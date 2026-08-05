@@ -71,7 +71,7 @@ class AuthorizationScenario(ContractModel):
         # A scenario states RequestFacts and no compute profile, so the rate classification
         # now also turns on has to be supplied by whoever evaluates the row. It is a
         # parameter rather than a field on this model because a field would change the
-        # model's structural digest, which four committed proof bundles record.
+        # model's structural digest, which fixtures/goldens/contract-models.json records.
         #
         # Every shipped scenario is about the roster and the approver, not about price, so
         # callers pass a rate below the ceiling and the rows keep classifying on the four

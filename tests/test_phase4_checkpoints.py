@@ -419,7 +419,7 @@ def test_a_crc32c_that_disagrees_with_the_marker_is_still_caught() -> None:
 def test_the_manifest_records_a_sha256_even_though_the_store_attested_a_crc32c() -> None:
     """``CheckpointManifest.checksum`` is typed ``Sha256Digest`` and must stay honest.
 
-    Widening the contract to admit a CRC32C would regenerate four proof bundles for a field
+    Widening the contract to admit a CRC32C would move a recorded structural digest for a field
     nothing reads as bytes; storing a CRC32C in a field named and patterned for a SHA-256
     would satisfy the type by lying about it. The marker carries a real SHA-256 of the
     payload, so that is what the manifest records.

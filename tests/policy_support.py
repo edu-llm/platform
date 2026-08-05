@@ -2,8 +2,8 @@
 
 ``classify_request`` gates a compute profile whose hourly rate is above
 :data:`~edullm_platform.contracts.policy.EXCEPTION_RATE_CEILING_USD_PER_HOUR`, and the rate
-cannot be read off ``RequestFacts`` -- that model's structural digest is recorded in four
-committed proof bundles, so it has no field for one. Every caller therefore passes a rate.
+cannot be read off ``RequestFacts`` -- that model's structural digest is recorded in the
+contract inventory, so it has no field for one. Every caller therefore passes a rate.
 
 Most tests here are about something else: which bound was crossed, which approver is
 sufficient, whether a fixture still classifies as it did. Those pass :data:`ROUTINE_RATE` and

@@ -77,7 +77,7 @@ __all__ = [
 ]
 
 #: Where a Phase 3 capture lives once somebody has read it and decided to commit it.
-#: Beside the account measurements rather than under ``proof/``: a bundle is generated and
+#: Beside the account measurements rather than beside a report: a report is generated and
 #: these are not.
 PHASE3_CAPTURE_DIR: Final = Path("fixtures") / "evidence" / "phase-3"
 RUNS_SUBDIR: Final = "runs"

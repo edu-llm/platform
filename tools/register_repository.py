@@ -189,13 +189,13 @@ FOLLOW_UPS: tuple[FollowUp, ...] = (
     FollowUp(
         summary="Re-record the publisher role golden digest",
         detail=(
-            "`uv run python tools/build_phase1_proof.py --regenerate-goldens`. The golden "
-            "is a canonical serialization of the template, so it moves whenever the "
-            "template does. Offline and needs no credential, and the regeneration is "
-            "deliberately a separate flag so a change to what a role may do cannot be "
-            "absorbed by re-running the generator."
+            "`uv run python tools/record_goldens.py --force`. The golden is a canonical "
+            "serialization of the template, so it moves whenever the template does. "
+            "Offline and needs no credential, and the re-recording is deliberately behind "
+            "a flag so a change to what a role may do cannot be absorbed by re-running the "
+            "tool."
         ),
-        paths=("tools/build_phase1_proof.py",),
+        paths=("tools/record_goldens.py",),
     ),
     FollowUp(
         summary="Release both Lambdas",

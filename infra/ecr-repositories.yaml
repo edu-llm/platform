@@ -14,7 +14,8 @@ Description: One ECR repository per registered research repository, for finished
 # 2026-08-05 that rule had removed 24 of the 47 distinct digests the lineage store names,
 # and those 24 were cited by 100 of 157 recorded runs -- every run before 2026-08-03, on the
 # busiest repository, which was building about 23 images a day and so held two days of
-# history. Twelve of the thirteen run ids cited in proof/ are among them.
+# history. Twelve of the thirteen run ids the deleted proof bundles cited were among them,
+# which is one of the three reasons that apparatus was removed on 2026-08-05.
 #
 # A LARGER NUMBER WOULD HAVE BEEN THE SAME RULE WITH A LATER FUSE. Fifty images is two days
 # here and would be two weeks somewhere quieter; any count, and any age, is a promise that

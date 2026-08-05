@@ -36,17 +36,6 @@ from workflow_support import WORKFLOWS_ROOT, load_workflow, unreal_context_refer
 WORKFLOW_PATH = WORKFLOWS_ROOT / "ci.yml"
 NIGHTLY_PATH = WORKFLOWS_ROOT / "nightly.yml"
 
-#: Each acceptance gate, by the job that runs it and the script it runs. The job ids say
-#: what the gate checks; they used to say which phase built it, which told a reader
-#: looking at a red cross nothing they needed. The script filenames are cited by the
-#: committed proof bundles as the command that reproduces a verdict, and by
-#: ``tools/validate_phase1.py``'s appearance here, so those do not get to change with the
-#: job names.
-GATE_JOBS = {
-    "contract-and-manifest-gate": "tools/validate_phase0.py",
-    "branch-to-image-gate": "tools/validate_phase1.py",
-}
-
 #: The scheduled jobs that read the account rather than the tree, and so the only ones that
 #: may mint an OIDC token. Named here rather than derived, because the point of the list is
 #: that a job joining it is a review of this line.
@@ -75,11 +64,6 @@ REQUIRED_CHECK_NAMES = {"checks (python 3.12)", "checks (python 3.13)"}
 #: Read here rather than derived from the matrix, because a matrix that lost a version
 #: would otherwise agree with itself.
 TESTED_PYTHON_VERSIONS = {"3.12", "3.13", "3.14"}
-
-#: What asks the suite for the expensive half. Duplicated from ``tests/proof_support.py``
-#: on purpose: this is the workflow's side of the contract, and a test that read the same
-#: constant from the same place would pass while the two had drifted apart.
-REPRODUCE_ENV = "EDULLM_REPRODUCE_PROOFS"
 
 
 def _load_workflow(path: Path = WORKFLOW_PATH) -> dict[str, Any]:
@@ -143,18 +127,19 @@ def test_nothing_on_the_pull_request_path_is_unable_to_fail() -> None:
         assert "continue-on-error" not in job, f"{job_id} cannot fail a build"
 
 
-def test_neither_acceptance_gate_still_runs_on_every_change() -> None:
-    # Stated as its own test rather than folded into the one above, because the two say
-    # different things: nothing in ci.yml may be informational, and these two in
-    # particular may not come back as informational jobs under new names.
-    text = WORKFLOW_PATH.read_text(encoding="utf-8")
+def test_no_workflow_runs_a_phase_acceptance_gate() -> None:
+    """Mutation: bring one of the six gate scripts back under a new job name.
 
-    for gate_script in GATE_JOBS.values():
-        assert gate_script not in text, (
-            f"{gate_script} is back on the pull-request path. It reads evidence that "
-            "expires, so it can only live there by being unable to fail, which is the "
-            "arrangement nightly.yml replaced."
-        )
+    The phase model the gates reported against was replaced by the slice plans, and their
+    evidence was void: twelve of the thirteen run ids the bundles cited named container
+    images an ECR lifecycle rule had already deleted. A gate reintroduced here would be a
+    green cross over a claim nothing can check.
+    """
+    for path in (WORKFLOW_PATH, NIGHTLY_PATH):
+        text = path.read_text(encoding="utf-8")
+        for phase in range(6):
+            assert f"tools/validate_phase{phase}.py" not in text
+            assert f"tools/build_phase{phase}_proof.py" not in text
 
 
 def test_the_nightly_run_is_scheduled_and_can_be_started_by_hand() -> None:
@@ -167,58 +152,6 @@ def test_the_nightly_run_is_scheduled_and_can_be_started_by_hand() -> None:
     crons = [entry["cron"] for entry in workflow["on"]["schedule"]]
     assert len(crons) == 1
     assert re.fullmatch(r"\d+ \d+ \* \* \*", crons[0]), "the schedule must be daily"
-
-
-def test_both_acceptance_gates_run_nightly_and_can_fail_the_run() -> None:
-    # The whole reason for moving them. A gate that reads expiring evidence cannot be a
-    # required check without blocking unrelated work the day the evidence lapses, and it
-    # is worth nothing as a job that cannot fail. Scheduled and failing is the third
-    # option, and it is the one that makes the expiry visible.
-    workflow = _load_workflow(NIGHTLY_PATH)
-
-    assert GATE_JOBS.keys() <= workflow["jobs"].keys()
-    for job_id, gate_script in GATE_JOBS.items():
-        job = workflow["jobs"][job_id]
-        commands = [step["run"] for step in job["steps"] if "run" in step]
-
-        assert [command for command in commands if gate_script in command] == [
-            f"uv run --frozen python {gate_script}"
-        ]
-        assert "continue-on-error" not in job, f"{job_id} must be able to fail the run"
-        assert "needs" not in job, f"{job_id} must not be skipped by a failure elsewhere"
-
-
-def test_each_gate_job_is_named_for_what_it_checks() -> None:
-    # The jobs were called "phase 0 gate" and "phase 1 gate", which named when the thing
-    # was built rather than what it checks. Somebody reading a red cross at 09:00 needs
-    # the second. The scripts keep their phase-numbered filenames because committed proof
-    # bundles cite them as the command that reproduces a verdict.
-    workflow = _load_workflow(NIGHTLY_PATH)
-
-    names = {job_id: workflow["jobs"][job_id]["name"] for job_id in GATE_JOBS}
-
-    assert names == {
-        "contract-and-manifest-gate": "contract and manifest compilation gate",
-        "branch-to-image-gate": "branch to image gate",
-    }
-    for job_id, name in names.items():
-        assert "phase" not in name, f"{job_id} is named for when it was built"
-        assert "informational" not in name, f"{job_id} is no longer informational"
-
-
-def test_the_nightly_run_reproduces_what_the_pull_request_path_skips() -> None:
-    # The pull-request suite skips the nested runs, so something has to perform them or
-    # the generators stop being exercised at all. This is that something, it runs the
-    # whole suite rather than a selection, and it asks for the expensive half by the same
-    # variable tests/proof_support.py reads.
-    workflow = _load_workflow(NIGHTLY_PATH)
-    job = workflow["jobs"]["proof-bundles-reproduce"]
-    steps = [step for step in job["steps"] if "run" in step and " pytest" in step["run"]]
-
-    assert len(steps) == 1
-    assert steps[0]["run"] == "uv run --frozen pytest -q"
-    assert steps[0]["env"] == {REPRODUCE_ENV: "1"}
-    assert "continue-on-error" not in job
 
 
 def test_only_the_jobs_that_read_the_account_can_reach_it() -> None:
@@ -284,7 +217,7 @@ def test_the_nightly_file_says_why_each_check_is_not_on_the_pull_request_path() 
     header = NIGHTLY_PATH.read_text(encoding="utf-8").split("\non:", 1)[0].lower()
 
     assert "continue-on-error" in header, "say why nothing here is informational"
-    assert "expire" in header, "say why the gates cannot sit on the pull-request path"
+    assert "account" in header, "say why these cannot sit on the pull-request path"
     assert "required" in header, "say what does block a merge"
     for job_id in _load_workflow(NIGHTLY_PATH)["jobs"]:
         assert job_id in header, f"{job_id} is not accounted for in the header"

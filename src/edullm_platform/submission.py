@@ -397,10 +397,10 @@ def compile_submission(
     # THE FORM'S IMAGE FIELD IS OPTIONAL AND THE MANIFEST'S IS NOT, AND THE ASYMMETRY IS
     # THE POINT. It is tempting to relax contracts/manifest.py to match the form and stop
     # having two spellings of one field. Two reasons not to, and the second is the real
-    # one. Mechanically, RunManifest is the model every phase's proof bundle records a
+    # one. Mechanically, RunManifest is the model the recorded contract inventory records a
     # structural digest for and the model the canonical hash is taken over, so making the
-    # field optional moves that hash, the schema version and a cell in four committed
-    # bundles. Substantively, what it would buy is the ability to express a run whose image
+    # field optional moves that hash, the schema version and a recorded digest.
+    # Substantively, what it would buy is the ability to express a run whose image
     # is unknown -- and the lineage record is the one document in this system that must
     # never be able to say that. A form may leave the image to be derived; a record of what
     # ran may not leave it undetermined. So the field is filled in here, from the

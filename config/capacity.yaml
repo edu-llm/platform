@@ -16,9 +16,9 @@
 # offering one again, so reinstating it is a change to the reader and that test together.
 #
 # WHY IT IS NOT A FIELD ON THE CATALOG'S PROFILES, WHICH IS WHERE IT BELONGS. ComputeProfile is
-# a contract model with extra="forbid", and its structural digest is recorded in five committed
-# proof bundles, so an `availability` field beside `provisioned` is a proof-bundle regeneration
-# rather than a config edit -- the same reason EXCEPTION_RATE_CEILING_USD_PER_HOUR sits in
+# a contract model with extra="forbid", and its structural digest is recorded in
+# fixtures/goldens/contract-models.json, so an `availability` field beside `provisioned` is a
+# re-record rather than a config edit -- the same reason EXCEPTION_RATE_CEILING_USD_PER_HOUR sits in
 # src/edullm_platform/contracts/policy.py instead of in config/policy.yaml, which carries the
 # same kind of pointer. When that happens, `places` folds into ComputeProfile and this goes away.
 #

@@ -1,32 +1,21 @@
 name: Nightly (the checks that are not about one change)
 
-# Nine checks that answer a question about the repository or about the account rather
+# Six checks that answer a question about the repository or about the account rather
 # than about a change, and that either cost too much or fail too unpredictably to sit on
 # the pull-request path. Nothing here is continue-on-error, and that is the whole point of
 # moving them: there is no alerting infrastructure, so a red scheduled run is the signal,
 # and a job that cannot go red is not one.
 #
-# Why each is here rather than in ci.yml:
+# THREE JOBS WERE REMOVED ON 2026-08-05 WITH THE APPARATUS THEY SERVED. proof-bundles-reproduce
+# reran the whole suite inside itself to reproduce a recorded suite result;
+# contract-and-manifest-gate and branch-to-image-gate ran the Phase 0 and Phase 1 acceptance
+# gates. The phase model those three reported against was replaced by the slice plans, and
+# twelve of the thirteen run ids the bundles cited named container images an ECR lifecycle
+# rule had already deleted. What the gates enforced that is still worth enforcing is in the
+# test suite: the nine configuration checks are tests/test_operational_inventory.py and the
+# recorded digests are tests/test_serialization_goldens.py, both on the pull-request path.
 #
-#   proof-bundles-reproduce — reproducing a recorded suite result runs the whole suite
-#     inside the suite. It cost 120s of a 235s serial run and re-executed tests the pull
-#     request had already run: every node id a generator selects is a test in this
-#     repository, and `checks (python 3.12)` runs the whole repository on the same
-#     commit. The half of the proof check that can catch something that check cannot —
-#     a citation that no longer resolves, criteria that disagree with their module,
-#     golden digests that no longer match the tree — is collection-only, costs about a
-#     second, and stayed on the pull request. tests/proof_support.py makes the argument
-#     in full.
-#
-#   contract-and-manifest-gate and branch-to-image-gate — they read captured AWS and
-#     GitHub evidence that expires after 30 days, so they can legitimately go red for
-#     reasons that have nothing to do with the change under review. As pull-request jobs
-#     they had to be
-#     continue-on-error for that reason, which made them unable to fail anything. Here,
-#     an expiry lands as a red scheduled run on an ordinary morning, which is what the
-#     comment in ci.yml wanted from them and never got. Both are also red whenever a
-#     criterion of theirs is a recorded gap; that is a statement about the phase, and it
-#     is a statement worth waking up to rather than one worth suppressing.
+# Why each of the six is here rather than in ci.yml:
 #
 #   checkpoint-reconciliation, wandb-credential, deployed-lambda-release,
 #     deployed-stack-templates and visibility-board — these five read the account, and that
@@ -39,7 +28,7 @@ name: Nightly (the checks that are not about one change)
 #     They also need an AWS identity, and putting one on the
 #     pull-request path would mean a fork's pull request runs with it in reach.
 #
-#   registered-dockerfiles — the ninth, and the only one whose subject is other people's
+#   registered-dockerfiles — the sixth, and the only one whose subject is other people's
 #     repositories. It reads the research repositories over the GitHub API to ask whether
 #     each registration's dockerfile_path is actually on the branch it names, which is a
 #     question no diff to this repository can answer: a registration goes stale when
@@ -49,7 +38,7 @@ name: Nightly (the checks that are not about one change)
 #     red -- and because a fork's pull request should not be able to spend this
 #     repository's API budget enumerating an organisation.
 #
-# ONE OF THE EIGHT IS NO LONGER ONLY A SIGNAL, AND THAT CHANGES WHAT A RED CROSS ON IT
+# ONE OF THE SIX IS NO LONGER ONLY A SIGNAL, AND THAT CHANGES WHAT A RED CROSS ON IT
 # COSTS. wandb-credential publishes its answer as an artifact, and submit-run.yml refuses a
 # submission on the strength of it -- because the role this job assumes is the only
 # GitHub-facing identity in the account holding secretsmanager:GetSecretValue on that
@@ -69,7 +58,7 @@ name: Nightly (the checks that are not about one change)
 # bring it with it, and each of those jobs says so by name rather than failing at the
 # credential step with an empty role.
 #
-# THAT ROLE DID NOT HOLD EVERYTHING THE EIGHTH JOB READS, AND THE JOB WAS RED FROM THE NIGHT
+# THAT ROLE DID NOT HOLD EVERYTHING THE VISIBILITY BOARD READS, AND THE JOB WAS RED FROM THE NIGHT
 # IT SHIPPED UNTIL 2026-08-04. Two grants were missing and either one alone was enough. The
 # visibility board reads what the account is running out of the resource tags every
 # submission sets, which needs tag:GetResources; and it prices those runs from the lineage
@@ -85,7 +74,7 @@ name: Nightly (the checks that are not about one change)
 #
 # THAT ROLE NOW HOLDS batch:ListJobs AND batch:DescribeJobs, AND NOTHING HERE READS THEM
 # YET. They were added for the placement check config/capacity.yaml's header asks for -- a
-# ninth job that recomputes that file's `places` verdict for each of the sixteen queues and
+# seventh job that recomputes that file's `places` verdict for each of the sixteen queues and
 # goes red where the account disagrees with what is committed. The grant landed first and
 # on purpose: this stack is applied by hand, so a job merged ahead of its permissions is
 # red from the night it ships, which is what the paragraph above is about.
@@ -94,9 +83,7 @@ name: Nightly (the checks that are not about one change)
 # grant can lapse and a credential can. What changed is that a gap is now a finding about
 # the account rather than the expected shape of an ordinary night.
 #
-# The contract rules the gates enforce are covered by the test suite in ci.yml, which is
-# what blocks a merge. Nothing here is a required check and nothing here should become
-# one: the two required contexts are `checks (python 3.12)` and `checks (python 3.13)`,
+# Nothing here is a required check and nothing here should become one: the two required contexts are `checks (python 3.12)` and `checks (python 3.13)`,
 # pinned in branch protection.
 
 on:
@@ -113,72 +100,6 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  proof-bundles-reproduce:
-    name: proof bundles reproduce
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
-        with:
-          python-version: "3.12"
-          enable-cache: true
-
-      - name: Install dependencies
-        run: uv sync --locked
-
-      # The whole suite, with the nested runs the pull-request path skips. Serial and
-      # not -n4: the reproduction spawns pytest children of its own, and the point of
-      # this job is the measurement rather than the minutes.
-      - name: Tests, reproducing every recorded suite result
-        env:
-          EDULLM_REPRODUCE_PROOFS: "1"
-        run: uv run --frozen pytest -q
-
-  contract-and-manifest-gate:
-    name: contract and manifest compilation gate
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
-        with:
-          python-version: "3.12"
-          enable-cache: true
-
-      - name: Install dependencies
-        run: uv sync --locked
-
-      # Reads committed records only. It needs no credentials and reaches no AWS API.
-      # The filename is cited by proof/phase-0 as the command that reproduces its
-      # verdict, so it is not renameable even though the job is.
-      - name: Run the acceptance gate
-        run: uv run --frozen python tools/validate_phase0.py
-
-  branch-to-image-gate:
-    name: branch to image gate
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
-        with:
-          python-version: "3.12"
-          enable-cache: true
-
-      - name: Install dependencies
-        run: uv sync --locked
-
-      # Reads committed records only. It needs no credentials and reaches no AWS API.
-      # The records of the one live publish run expire on 2026-08-25 and nothing renews
-      # them; when they lapse this job goes red, which is the intended behaviour and the
-      # reason it is here rather than on the pull-request path.
-      - name: Run the acceptance gate
-        run: uv run --frozen python tools/validate_phase1.py
-
   registered-dockerfiles:
     name: every registration names a Dockerfile that is there
     runs-on: ubuntu-latest

@@ -5,7 +5,7 @@ reading the acceptance evidence it produces. **A researcher never needs it** —
 required to submit a run and to understand what happens to it afterwards is in
 [`guides/the-platform.md`](guides/the-platform.md), and nothing there depends on anything
 here. What follows is what this repository contains, how to run its checks, and what each
-gate and proof bundle is claiming when it reports.
+check is claiming when it reports.
 
 Shared control plane for eduLLM research workloads. This repository holds the
 contracts that decide whether a compute run is valid and who may approve it, the
@@ -20,26 +20,24 @@ one that compiles a submission, routes it to an approval gate, and hands the app
 manifest to admission. Nine submissions have been through that path in the sandbox account,
 four on the CPU queue and five on the GPU one. Eight reached AWS Batch and ran; the ninth
 was refused at admission before anything was launched, which is also a result worth keeping.
-What each of the nine left behind is committed under `fixtures/evidence/` and rendered in
-`proof/`.
+What each of the nine left behind is committed under `fixtures/evidence/`.
 
 ## Layout
 
 | Path | Contents |
 | --- | --- |
 | `guides/` | The researcher-facing guides: submitting a run, and turning OLMo-core work into something this platform can run. The only files here a researcher needs |
-| `src/edullm_platform/` | The validation library: contracts, canonical hashing, config loading, evidence models, acceptance gate |
+| `src/edullm_platform/` | The validation library: contracts, canonical hashing, config loading, evidence models, the operational inventory checks |
 | `config/` | Reviewed bindings — organization roster, approval policy, repository registry, workload and compute catalog, execution targets |
 | `infra/` | CloudFormation for everything this platform deploys, plus the runbook for the procedures that need a laptop |
 | `.github/workflows/` | Publishing an image, and submitting a run for admission |
-| `fixtures/` | Representative run manifests, and sanitized captures of what the account did |
+| `fixtures/` | Representative run manifests, sanitized captures of what the account did, and the recorded digests of both |
 | `schemas/` | JSON Schemas generated from the models |
-| `proof/` | Phase acceptance bundles — what a reviewer reads instead of the test suite |
 | `tools/` | Maintainer scripts, run by hand |
 | `tests/` | The suite that keeps all of the above honest |
 
 The library is the single implementation. The submission workflow, the admission validator
-running inside AWS, and the acceptance gates all run these same contracts, rather than
+running inside AWS, and the test suite all run these same contracts, rather than
 reimplementing the rules.
 
 ## Commands
@@ -53,8 +51,7 @@ uv run ruff check .       # lint
 uv run mypy               # types
 ```
 
-`uv run pytest -q` runs every test and is the command every proof bundle asks a reviewer
-for. It is also the slowest way to run it. When the wait matters, run the whole suite in
+`uv run pytest -q` runs every test. It is also the slowest way to run it. When the wait matters, run the whole suite in
 parallel rather than running less of it:
 
 ```bash
@@ -166,198 +163,71 @@ dispatched that line names it, because nothing here cancels a dispatch on the wa
 `tools/compile_submission.py` gives 0, 1 and 2 the same meanings inside the workflow, which
 is deliberate and is where the CLI took them from.
 
-## Acceptance gate
+## The checks that read the shipped configuration
 
-```bash
-uv run python tools/validate_phase0.py
-```
+Two of them, both ordinary tests on the pull-request path, and both relocated on 2026-08-05
+out of an acceptance-gate apparatus that was deleted. The section they replace described six
+phase gates, five proof-bundle generators and a `proof/` directory. That model was replaced
+by the slice plans, its evidence was void because twelve of the thirteen run ids it cited
+named container images an ECR lifecycle rule had already deleted, and the platform's own
+Phase 1 study establishes that a rebuild never reproduces a digest, so nothing could recover
+them.
 
-Prints one JSON object with two clearly separate groups, and exits:
+### The nine operational inventory checks
 
-| Code | Meaning |
+`src/edullm_platform/operational_inventory.py`, run against the live tree by
+`tests/test_operational_inventory.py`. Each one asks whether the reviewed configuration is
+still the configuration that was reviewed.
+
+| Check | What it holds |
 | --- | --- |
-| `0` | both groups passed |
-| `1` | the gate ran and something in either group failed |
-| `2` | inputs could not be read or did not validate |
+| `inventory_ownership` | the admin and team-lead rosters are the recorded ones |
+| `inventory_pilots` | OLMo-core and dolma are the two pilot repositories |
+| `inventory_workload_coverage` | the catalog prices both a CPU shape and a GPU shape |
+| `inventory_approval_paths` | routine routes to a lead, exception includes an admin, and the six outright denials are all in policy |
+| `inventory_checkpoint_expectations` | a workload that allows retries declares a checkpoint contract |
+| `inventory_github_plan` | the captured plan is fresh and supports the controls this organization needs |
+| `inventory_aws_capacity` | the captured quotas are fresh, describe the sandbox in us-east-1, and cover the catalog |
+| `inventory_representative_manifests` | every fixture manifest names registered things and classifies as its filename says |
+| `inventory_cost_estimates` | every reviewed cost matches what the catalog computes, and a routine one stays inside the programme ceiling |
 
-`phase_criteria` are the thirteen Phase 0 acceptance criteria. Each one names the pytest
-node ids that are cited for it, and the gate **executes them** before reporting — it does
-not read coverage off a table. A criterion is one of exactly three things:
+Every check runs even after one fails, so a single run reports everything that needs
+attention. No check trusts a self-reported verdict. Capacity, for example, is recomputed
+from the quota records rather than read from a summary field.
 
-| Status | Meaning | Verdict |
+### The recorded digests
+
+Four sets, committed under `fixtures/goldens/` and recomputed against the tree on every run.
+
+| File | Subject | Read back by |
 | --- | --- | --- |
-| `covered` | cited tests prove it against the shipped configuration, and all of them pass | passes |
-| `deferred` | an explicit recorded decision, with a written reason and a written trigger for when it becomes live again | passes |
-| `gap` | anything else | **fails** |
+| `contract-fixtures.json` | the nine fixture manifests and authorization scenarios | `tests/test_serialization_goldens.py` |
+| `iam-role-templates.json` | what each of the nine committed IAM role templates grants | `tests/test_serialization_goldens.py` |
+| `admitted-runs.json` | the three committed pilot-run captures | `tests/test_serialization_goldens.py` |
+| `contract-models.json` | the structural digest of every contract model in the package | `tests/test_contract_inventory.py` |
 
-Whatever status the definition records, a criterion whose cited tests do not all exist and
-pass is reported as a `gap`. A node id pytest cannot collect is a gap too, which is what
-catches a cited test being renamed or deleted out from under the mapping.
+Each digests the parsed thing rather than the file, so reindenting is not drift and a value
+changing is. The role digests are taken over the projection the drift comparison acts on, so
+a reordered key does not fire and a widened statement does. Seven of the nine roles have no
+capture to compare against, which makes the recorded digest the only thing between a
+template widened in the meantime and nobody noticing. The three pilot captures name workload
+profiles that have since been retired and cannot be taken again.
 
-`operational_inventory_checks` are the nine roster, pilot, plan, quota, manifest, and cost
-checks. They are useful and they all still run, but they are **not** acceptance criteria —
-they predate the current definition of the phase. Their ids are prefixed `inventory_` so
-they cannot be mistaken for one, and passing all nine says nothing about whether Phase 0 is
-done. The overall verdict is the AND of both groups.
+The contract-model inventory is the one that reaches furthest. Sixteen models are exported
+to `schemas/` and re-derived on every CI run, and that inventory covers the other hundred
+and twenty-four. A moved structural digest means a field was added, removed, retyped or
+reconstrained, and every payload already written against the old shape is one the new shape
+may refuse. A lineage record in S3 cannot be rewritten.
 
-Every check and every criterion is evaluated even after one fails, so a single run reports
-everything that needs attention. No check trusts a self-reported verdict — capacity, for
-example, is recomputed from the quota records rather than read from a summary field.
-
-The criterion-to-test mapping lives in exactly one place,
-`src/edullm_platform/phase0_criteria.py`. The gate and the proof-bundle generator both
-import it, so the matrix in the bundle and the gate's verdict cannot disagree.
-
-### The later phases
-
-Each phase has a gate of its own, reading a definition of its own and applying the same
-three statuses through the same shared machinery in `src/edullm_platform/criteria.py`.
+Re-recording is deliberate and is a person's decision:
 
 ```bash
-uv run python tools/validate_phase1.py
-uv run python tools/validate_phase2.py
-uv run python tools/validate_phase3.py
-uv run python tools/validate_phase4.py
-uv run python tools/validate_phase5.py
+uv run python tools/record_goldens.py            # refuses to overwrite a drifted digest
+uv run python tools/record_goldens.py --force    # re-records, having read what moved
 ```
 
-All five exit `0` on a pass, `1` when the gate ran and a criterion failed, and `2` when the
-inputs could not be read. They report criteria only; the `operational_inventory_checks`
-group is Phase 0's and exists because that phase predates the current definition.
-
-**Phases 2 and 3 exit 1 today, and that is the report working rather than a broken gate.**
-All four deployed phases have run. Phase 2 reports thirteen of twenty-two criteria covered,
-one deferred and eight gaps; Phase 3 reports thirteen of nineteen covered and six gaps;
-Phase 4 reports nine of eleven covered and two deferred, with no gaps, and so exits 0. Run
-the gates for the current numbers — the ones above are what they printed when this paragraph
-was written, and a gate is the authority rather than this file.
-
-Two of those numbers moved on 2026-07-31 and they moved for different reasons, which is
-worth separating before anybody reads the trend as progress. Phase 2 closed a criterion by
-capturing something nobody had recorded: who is on the `team-leads` team, which is the
-effective reviewer list on the lead approval gate. Phase 4 reached 0 without any criterion
-being satisfied — one was transferred to a later phase that owns the mechanism it needs, and
-one became a deferral with a written trigger. A gate going green because work moved is a
-different event from a gate going green because work landed. Of these two it is Phase 4
-that went green, and it is the first kind: nothing about the account changed. Phase 2 is
-the second kind and its gate still exits 1, because closing one criterion out of nine left
-eight.
-
-**Phase 5 exits 0 with one criterion outstanding, and that is worth reading rather than
-skipping.** It reports fourteen of fifteen covered and one deferred, and both numbers moved on
-2026-07-31 when the pilot limitations page left this README on a standing decision about what
-this repository publishes. Criterion 11 used to assert that the page was here. It now asserts
-that the three things a submitter cannot afford to learn by being caught out — cancelling does
-not stop the job, a checkpoint omits optimizer state, `team` routes approval rather than
-granting permission — are printed on the summary every accepted submission ends on. That is a
-narrower promise than the page made, and it reaches everybody who submits rather than
-everybody who goes looking.
-
-Criterion 6 wants a GPU run claiming a team other than `platform` and writing a checkpoint.
-The mechanism exists and each half has been exercised separately, so it closes on one
-submission rather than on any work. Its deferral was withdrawn and re-granted inside the same
-day: the first grant was conditioned on the limitations page and lapsed when the page moved,
-and the second is conditioned on a warning printed to exactly the submissions it applies to,
-which a cited test fails if anybody removes. **Phase 5 established that the two-person path
-completes. It does not say anybody has run a research workload on this platform**: all three
-pilot runs were a print statement on the CPU profile.
-
-What the remaining gaps are about is worth knowing before reading them. They are not the
-submission path, which works end to end: they are captures nobody has taken and shapes of
-run nobody has aimed at a criterion yet. Each gap text says what was observed, what is
-missing, and what would close it. Recording them as deferrals instead would turn a gate
-green without anything changing in the account, which is exactly the move the three-status
-rule exists to make visible.
-
-That is the same sentence Phase 5's deferral has to answer, so the difference is worth
-naming rather than leaving to inference. A deferral needs a written reason and a written
-trigger, and it needs the work to be owned somewhere real; Phase 5's check has a phase, a
-position in it and no build item in front of it, and a gate that reports it prints both the
-reason and the trigger where a reviewer reads the verdict. A gap here has none of that, and
-relabelling one would be the move rather than an instance of it.
-
-One capability sits outside every gate, and no phase measures it: **stopping a job once it
-has started.** [Look at a run, or stop it](../../actions/workflows/cancel-run.yml) does it,
-on a role whose whole reach is describing jobs and stopping the ones this platform
-submitted. Cancelling the submission workflow is a different thing and stops nothing in AWS,
-which that workflow says where an operator will see it; what bounds a run nobody stops is
-the mandatory per-attempt timeout, which every submission carries and which has been
-observed stopping a real job. Phase 3's criteria do not carry cancellation, so its numbering
-skips 5, 6 and 7 where those checks used to be.
-
-## Proof bundle
-
-```bash
-uv run python tools/build_phase0_proof.py
-```
-
-Writes `proof/phase-0/`: summarised test counts, the recorded canonical digest of every
-fixture, an inventory of every contract model and its structural digest, and a matrix
-mapping each Phase 0 criterion to the tests cited for it by node id. Start at
-`proof/phase-0/README.md`.
-
-The generator runs every node id it cites and refuses to write a bundle citing a test
-pytest cannot collect, so the matrix cannot claim coverage it does not have. It also
-refuses to overwrite a recorded digest that has drifted; re-recording takes
-`--regenerate-goldens` and is meant to be reviewed alongside whatever caused the drift.
-The bundle is committed because a tripwire nobody can diff is not a tripwire.
-
-Phases 1, 2, 3 and 5 have generators of the same shape, writing `proof/phase-1/`,
-`proof/phase-2/`, `proof/phase-3/` and `proof/phase-5/`:
-
-```bash
-uv run python tools/build_phase1_proof.py
-uv run python tools/build_phase2_proof.py
-uv run python tools/build_phase3_proof.py
-uv run python tools/build_phase5_proof.py
-```
-
-Phases 1, 2 and 3 each record the canonical digest of what a committed IAM role template
-*grants* rather than of the file, so a reordered key does not fire and a widened statement
-does. Phase 5 aims the same tripwire somewhere else, because what can move underneath that
-phase is not a role: it digests each committed pilot-run capture, which is the only evidence
-that anybody other than the author has used this platform.
-
-All five count the suite the same way and each excludes all five generator test modules
-from its own verification run, so adding a generator moves a cell in every bundle. Any
-bundle recording four generator modules was written before Phase 5 had one and is stale.
-
-Counting the suite the same way is also why there is a sixth command, and it is the one to
-reach for when a change moves a digest and every bundle has to be rebuilt:
-
-```bash
-uv run python tools/build_all_proofs.py
-```
-
-Each generator verifies the tree by running the whole suite in a child pytest, and
-`run_full_suite` keeps that answer against the tree it measured so a second generator in the
-same process reuses it rather than measuring again. That memory is process-local on purpose,
-so five commands are five processes and the cache never fires: five separate invocations ran
-the whole suite five times over. One invocation runs it once and each phase's own targeted
-run after it. The five per-phase commands are unchanged and are still the right ones for a
-single bundle.
-
-Measured on 2026-08-04: 1,464s for the five commands against 697s for this one, writing the
-same 57 files byte for byte. Most of what remains is the five per-phase targeted runs at
-about 505s between them, and those are five different selections rather than one repeated,
-so there is no second multiplier left to remove.
-
-Nothing about a bundle's contents changes — this calls the same `build_bundle` with the same
-arguments — except that the five now record one `generated_at` rather than five a few minutes
-apart, because they now rest on one verification. Give the five commands and this one the
-same `--generated-at` and an `--output-root`, and the bundles they write compare equal.
-
-Phase 4 has an acceptance gate and no generator, so there is no `proof/phase-4/`. Its
-evidence is committed under `fixtures/evidence/phase-4/` and read by the tests the gate
-cites.
-
-The Phase 3 bundle is mostly full now and was mostly empty once. Its run documents —
-`batch-execution-evidence.md`, `log-stream-evidence.md`, `lineage-record-evidence.md`,
-`cancellation-and-timeout-evidence.md`, `deployed-role-drift.md` — are rendered from the
-captures under `fixtures/evidence/phase-3/`. Two are still generated saying why they are
-empty: `event-evidence.md`, which has no capture, and `rollback-evidence.md`, whose
-rehearsal has not been performed. A document omitted because there was nothing to put in it
-would make the phase look like it has fewer claims than it has.
+Review the digest diff in the same commit as the change that caused it. A drift that was not
+intended is a regression, and re-recording is the wrong repair.
 
 ## Captured evidence
 
@@ -376,25 +246,24 @@ grant pointing somewhere else cannot be mistaken for a local one. An identity th
 repository does not declare is not named at all, because in a shared sandbox account those
 are people.
 
-Records expire after 30 days so a stale reading cannot pass as current. When that
-happens the Phase 0 gate reports `evidence_stale`, and in Phase 1 the tests that read the
-committed captures fail, which takes the criteria citing them back to gaps and the
-gate to exit 1. Either way the remedy is a maintainer with credentials re-running the
-capture tool; nothing renews on its own. Re-capturing the run costs a read of the account
+Records expire after 30 days so a stale reading cannot pass as current. When that happens
+`tests/test_evidence.py` fails on the two top-level captures and the tests that read the
+per-directory captures fail on theirs, all of them on the pull-request path. The remedy is a
+maintainer with credentials re-running the capture tool. Nothing renews on its own. Re-capturing the run costs a read of the account
 rather than another publish: the image, its scan, the session and the refusals are all
 still in the registry and in CloudTrail, and what lapses is when somebody last looked.
 
 Each set of records is worth committing because something reads them. A deployed role is
 checked against the CloudFormation template that claims to describe it, in both
-directions, by `edullm_platform.role_drift`; see `proof/phase-1/deployed-role-drift.md`.
-The run records are checked against each other — a scan filed under another digest, a
+directions, by `edullm_platform.role_drift`; see `tests/test_phase1_role_drift.py`.
+The run records are checked against each other. A scan filed under another digest, a
 refusal on another tag or a matrix missing an action stops them counting as a record of
-this run; see `proof/phase-1/publisher-denial-matrix.md`.
+this run; see `tests/test_publisher_denials.py`.
 
 `fixtures/evidence/phase-1/rebuild/` is different in kind and does not expire. It holds
 the image configurations of one commit built several times from the same pinned base, and
 the analysis of where they diverge is a test rather than a paragraph. See
-`proof/phase-1/image-rebuild-comparison.md`.
+`tests/test_phase1_rebuild_comparison.py`.
 
 ## Open decisions
 
@@ -405,7 +274,7 @@ choice, and one that is not written down gets settled by accident by whoever fir
 over it. No entry may carry a recommendation, and an entry with fewer than two options is
 refused, so a question cannot become a decision by having its alternatives deleted.
 Answering one means deleting it from there and putting the answer where it is enforced.
-The register is rendered into `proof/phase-1/open-decisions.md`.
+`tests/test_open_decisions.py` holds the register to its own rules.
 
 Evidence is captured from a sandbox account and is labelled as such. A sandbox
 observation never attests production capacity.
