@@ -32,6 +32,27 @@ is per-attempt and keyed by an id Batch mints, so every leaf of it is an id or a
 it would add a document that can only produce noise. What it carries that is not noise is how
 many attempts there were, and two runs that needed different numbers of them are not the same
 run twice. So the count is compared and the records are not.
+
+**The checkpoint half of the done-condition had the same hole one level down, and it is what
+:class:`CheckpointCoverage` is for.** Every checkpoint leaf lives in a family, because its path
+carries a list index nobody can name in advance, and the note on
+:data:`REQUIRED_FIELD_FAMILIES` used to read an empty family as a run that wrote no
+checkpoints. That reading is available only when the record says the prefix was read and was
+bare. A run that wrote a checkpoint into a directory neither layout matched records the same
+empty list, and the two are opposite: the first is ordinary and the second is a checkpoint
+nothing here describes. ``checkpoint_survey.unparsed_directories`` is what tells them apart,
+so it is read here, and a directory in it is a finding rather than a family with no members.
+Measured on ``run_019fd2c9`` and ``run_019fd2ca``, which each wrote 762 MB into ``step-20/``
+and compared clean over ten named differences with no checkpoint field among them.
+
+**What is still not compared, and is now said rather than implied.**
+``result.checkpoints[].checksum`` is the only digest in the record and it is not a digest of
+the payload. Every checkpoint the lifecycle recorder writes takes it from
+``described_listing_checksum``, a SHA-256 over the names and sizes a listing returned, because
+the recorder holds ``s3:ListBucket`` and nothing that could open the ``_SUCCESS`` beside the
+payload. So two runs whose payloads genuinely differ record the same value in the one field
+named for a digest, and a comparison that stopped there would report the two checkpoints as
+agreeing. It says so instead.
 """
 
 from __future__ import annotations
@@ -50,19 +71,24 @@ from edullm_platform.contracts.base import ContractModel, require_ordered_sequen
 from edullm_platform.contracts.identity import RunId
 
 __all__ = [
+    "CHECKPOINT_URI",
     "IDENTICAL_FIELDS",
     "RECORD_PREFIXES",
     "REQUIRED_FIELDS",
     "REQUIRED_FIELD_FAMILIES",
+    "UNPARSED_DIRECTORY",
     "VARIANCE_CAUSES",
+    "CheckpointCoverage",
     "ComparedField",
     "FieldDifference",
     "RecordField",
     "RecordedRun",
     "RequiredFieldCoverage",
     "TwoRunComparison",
+    "UnreadableCheckpoint",
     "VarianceCause",
     "cause_for",
+    "checkpoint_coverage",
     "compare_runs",
     "flatten",
     "read_run",
@@ -72,6 +98,17 @@ __all__ = [
 
 #: The three prefixes walked leaf by leaf, in the order a reader wants them.
 RECORD_PREFIXES: Final[tuple[str, ...]] = ("intent", "decision", "result")
+
+#: The leaf a survey uses to name a directory under the checkpoint prefix that no layout
+#: matched. Asked of the flattened records rather than of a contract model, because
+#: everything else here reads a path and this has to read the same way.
+UNPARSED_DIRECTORY: Final = re.compile(
+    r"^result\.checkpoint_survey\.unparsed_directories\[\d+\]$"
+)
+
+#: The leaf that names one recorded checkpoint, counted so a report can say how many
+#: checkpoints it had to work with rather than leaving a reader to infer it from the table.
+CHECKPOINT_URI: Final = re.compile(r"^result\.checkpoints\[\d+\]\.uri$")
 
 
 class RecordField(ContractModel):
@@ -127,6 +164,47 @@ class RequiredFieldCoverage:
 
     missing: tuple[str, ...]
     unverified: tuple[str, ...]
+
+
+class UnreadableCheckpoint(ContractModel):
+    """One directory a run wrote that no layout could read a checkpoint out of.
+
+    A model rather than a pair of strings because it is recorded in the comparison document,
+    which is what a reader has months later. ``directory`` is the name the survey kept, and
+    the name is the whole value of it: ``checkpoint-32`` says HuggingFace in one glance and
+    ``step-20`` says a hyphen nobody's matcher wants, where a count says go and look.
+    """
+
+    run_id: RunId
+    directory: str = Field(min_length=1, max_length=256)
+
+
+@dataclass(frozen=True)
+class CheckpointCoverage:
+    """What the checkpoint half of a comparison did, as distinct from what its table shows.
+
+    **Both members exist because a checkpoint row that is not there reads exactly like two
+    runs agreeing about checkpoints, and there are two different reasons for it.**
+
+    ``unreadable`` is the one that is a defect. The run wrote objects into a directory the
+    recorder could not read a step out of, so the record describes no checkpoint, so every
+    member of the checkpoint families is absent from both sides and nothing is compared.
+    That is the case the whole spine exists to catch and it produced no output at all.
+
+    ``compared`` is how many checkpoint entries the comparison did walk. It is reported
+    even when it is the good number, because the sentence that goes with it is a caveat
+    that holds every time: the digest of the bytes is not in the record, so a checkpoint
+    was compared on its size, its step and a description of its listing, and not on what is
+    in it.
+    """
+
+    compared: int
+    unreadable: tuple[UnreadableCheckpoint, ...]
+
+    @property
+    def is_blocked(self) -> bool:
+        """Whether a checkpoint comparison was prevented rather than merely limited."""
+        return bool(self.unreadable)
 
 
 @dataclass(frozen=True)
@@ -196,15 +274,20 @@ VARIANCE_CAUSES: Final[tuple[VarianceCause, ...]] = (
         ),
     ),
     VarianceCause(
-        name="the checkpoint payload digest",
+        name="the description of one checkpoint's listing",
         pattern=re.compile(r"^result\.checkpoints\[\d+\]\.checksum$"),
         detail=(
-            "Floating-point reduction order on a GPU is not fixed by a seed, so two runs of "
-            "one program can write two payloads that differ in their last bits. This "
-            "platform has never claimed a workload is bit-reproducible and this comparison "
-            "does not start claiming it. The payload's SIZE is a different fact -- "
-            "torch.save writes a length fixed by shapes and dtypes -- and it is in "
-            "IDENTICAL_FIELDS, so a truncated checkpoint is still caught."
+            "NOT A DIGEST OF THE PAYLOAD, WHICH IS WHAT THIS CAUSE USED TO CLAIM IT WAS. "
+            "The lifecycle recorder holds s3:ListBucket and nothing that can open an "
+            "object, so lifecycle_projection.described_listing_checksum computes this over "
+            "the names and sizes the listing returned. Floating-point reduction order does "
+            "not move it and neither does anything else inside the bytes: two runs whose "
+            "payloads differ record the same value here, which is measured on "
+            "run_019fd2c9 and run_019fd2ca. What does move it is a checkpoint whose "
+            "objects were named or sized differently, which is worth excusing between two "
+            "runs of one submission for the same reason the size of a shard is. The "
+            "payload's own digest is in the _SUCCESS beside it and is not in this record, "
+            "so CheckpointCoverage says so rather than letting this row stand in for it."
         ),
     ),
     VarianceCause(
@@ -263,10 +346,18 @@ REQUIRED_FIELDS: Final[tuple[str, ...]] = (
 
 #: The required leaves whose paths the data decides: a list index, or a key set the record
 #: chooses. These cannot be enumerated in advance and so cannot be reported as absent from
-#: both records -- a family with no members is a run that wrote no checkpoints, which is a
-#: fact about the run and not a field that went missing. Every member a record does carry is
-#: still required to be present on the other side and equal, which is the part that catches
-#: a checkpoint appearing in one run and not the other.
+#: both records. Every member a record does carry is still required to be present on the
+#: other side and equal, which is the part that catches a checkpoint appearing in one run
+#: and not the other.
+#:
+#: A FAMILY WITH NO MEMBERS IS NOT ONE FACT, AND READING IT AS ONE IS WHAT LET A RUN THAT
+#: SAVED 762 MB PASS AS A RUN THAT SAVED NOTHING. This note used to say an empty checkpoint
+#: family was a run that wrote no checkpoints, and called that a fact about the run. It is
+#: available as a reading only when the record also says the prefix was read and held
+#: nothing. ``checkpoint_survey`` is what separates the two, and
+#: :func:`checkpoint_coverage` is what asks it, so the silence here is now only the silence
+#: of a run that genuinely saved nothing.
+
 REQUIRED_FIELD_FAMILIES: Final[tuple[re.Pattern[str], ...]] = (
     re.compile(r"^intent\.manifest\.command\[\d+\]$"),
     re.compile(r"^decision\.(cost|authorization)\.[a-z_]+$"),
@@ -311,6 +402,13 @@ class TwoRunComparison(ContractModel):
     unverified: Annotated[tuple[str, ...], BeforeValidator(require_ordered_sequence)] = Field(
         default=(), strict=False
     )
+    #: The directories a run wrote and no layout could read a checkpoint out of. Recorded
+    #: rather than only printed for the reason ``unverified`` is: a document listing
+    #: differences alone cannot say that the checkpoint half of this comparison never ran,
+    #: and that is the half the done-condition this tool serves is actually about.
+    unreadable_checkpoints: Annotated[
+        tuple[UnreadableCheckpoint, ...], BeforeValidator(require_ordered_sequence)
+    ] = Field(default=(), strict=False)
 
     @property
     def unexplained_paths(self) -> tuple[str, ...]:
@@ -393,6 +491,49 @@ def unexplained(differences: Sequence[FieldDifference]) -> tuple[str, ...]:
     return tuple(one.path for one in differences if cause_for(one.path) is None)
 
 
+def _unparsed_directories(run: RecordedRun) -> tuple[str, ...]:
+    """The directory names this run's survey could not read a step out of, in path order.
+
+    Values come back JSON-encoded, so they are decoded here. A value that is not a string
+    is skipped rather than rendered: the field is typed to a tuple of strings and anything
+    else is a record this function has nothing true to say about, where guessing would put
+    a fabricated directory name into a report somebody acts on.
+    """
+    names: list[str] = []
+    for path, value in sorted(run.field_map().items()):
+        if UNPARSED_DIRECTORY.fullmatch(path) is None:
+            continue
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(decoded, str) and decoded:
+            names.append(decoded)
+    return tuple(names)
+
+
+def checkpoint_coverage(left: RecordedRun, right: RecordedRun) -> CheckpointCoverage:
+    """How much of the checkpoint half of this comparison could run, and how much did.
+
+    THE COUNT IS OVER THE UNION AND NOT THE INTERSECTION, DELIBERATELY. A checkpoint one
+    run recorded and the other did not is already a row against ``<absent>``, so counting
+    it here as compared is not a second claim -- it is the number of checkpoint entries the
+    walk covered, which is what the caveat about the payload digest is scoped to.
+    """
+    return CheckpointCoverage(
+        compared=sum(
+            1
+            for path in set(left.field_map()) | set(right.field_map())
+            if CHECKPOINT_URI.fullmatch(path)
+        ),
+        unreadable=tuple(
+            UnreadableCheckpoint(run_id=run.run_id, directory=name)
+            for run in (left, right)
+            for name in _unparsed_directories(run)
+        ),
+    )
+
+
 def required_field_coverage(left: RecordedRun, right: RecordedRun) -> RequiredFieldCoverage:
     """How much of the required set these two records actually let a comparison check.
 
@@ -412,7 +553,9 @@ def required_field_coverage(left: RecordedRun, right: RecordedRun) -> RequiredFi
         missing=tuple(sorted(required & (left_paths ^ right_paths))),
         # Only a named path can reach this. A family's members are gathered from the two
         # records, so a family neither record populates contributes nothing to `required`
-        # and is silently uncheckable -- see the note on REQUIRED_FIELD_FAMILIES for why
-        # that is the honest answer for a list index rather than a second hole.
+        # and cannot be reported absent from here. That is the honest answer for a list
+        # index and it is not the whole answer for checkpoints, because an empty checkpoint
+        # family has one ordinary cause and one that is a defect. checkpoint_coverage is
+        # what separates them, and it reads a field this function does not.
         unverified=tuple(sorted(set(REQUIRED_FIELDS) - left_paths - right_paths)),
     )

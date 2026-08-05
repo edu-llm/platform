@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from edullm_platform.lifecycle_projection import described_listing_checksum
 from edullm_platform.run_comparison import (
     IDENTICAL_FIELDS,
     REQUIRED_FIELD_FAMILIES,
@@ -14,6 +15,7 @@ from edullm_platform.run_comparison import (
     RecordedRun,
     RecordField,
     cause_for,
+    checkpoint_coverage,
     compare_runs,
     flatten,
     read_run,
@@ -23,6 +25,34 @@ from edullm_platform.run_comparison import (
 
 LEFT = "run_019fcdf1-e3d7-7033-a2de-9320a987d72c"
 RIGHT = "run_019fce18-8684-70e9-86ab-b809f3cdfa4c"
+
+#: What the two spine runs each wrote, read off the outputs bucket on 2026-08-05: one
+#: ``model.pt`` and one ``_SUCCESS`` beside it, summing to the ``bytes_seen`` both records
+#: report.
+PAYLOAD_BYTES = 762_258_865
+MARKER_BYTES = 227
+
+#: What the recorder puts in ``checksum`` for a directory holding those two objects. Equal
+#: for both runs, because it is over the names and sizes rather than over the payload, and
+#: the payloads' own digests are ``sha256:1a3f1588...`` and ``sha256:606e9ee2...``.
+LISTING_CHECKSUM = described_listing_checksum(
+    [("_SUCCESS", MARKER_BYTES, "listing"), ("model.pt", PAYLOAD_BYTES, "listing")]
+)
+
+
+def checkpoint(run_id: str) -> dict[str, object]:
+    """One checkpoint entry as the lifecycle recorder writes it from a listing."""
+    prefix = f"s3://sbsandbox-intern-edullm-outputs/teams/platform/runs/{run_id}/checkpoints/"
+    return {
+        "schema_version": 1,
+        "uri": f"{prefix}step20/",
+        "step": 20,
+        "epoch": None,
+        "created_at": "2026-08-05T16:42:43.000000Z",
+        "size_bytes": PAYLOAD_BYTES + MARKER_BYTES,
+        "checksum": LISTING_CHECKSUM,
+        "success_marker_uri": f"{prefix}step20/_SUCCESS",
+    }
 
 #: The two runs happen at two times. Written as an explicit mapping rather than derived from
 #: the ids, because both of these real run ids end in the same character and a fixture that
@@ -222,6 +252,9 @@ def test_a_family_with_no_members_is_an_empty_collection_and_not_a_missing_field
     with no checkpoints is not a run whose checkpoint fields went missing. Reporting one
     would put a permanent unverified line on every check-shaped run in the store, which is
     the crying wolf that makes the section above worth reading.
+
+    The fixture's survey names no unparsed directory, which is what makes this the harmless
+    case. The test below is the same shape with one name in that field, and it is a finding.
     """
     written(tmp_path, LEFT)
     written(tmp_path, RIGHT)
@@ -230,6 +263,107 @@ def test_a_family_with_no_members_is_an_empty_collection_and_not_a_missing_field
 
     assert any(one.pattern.startswith("^result\\.checkpoints") for one in REQUIRED_FIELD_FAMILIES)
     assert not any(path.startswith("result.checkpoints") for path in coverage.unverified)
+
+
+# ----------------------------------------------------------------------------------------
+# A checkpoint nobody could parse
+# ----------------------------------------------------------------------------------------
+
+
+def test_a_run_that_saved_nothing_and_one_that_saved_where_nobody_looks_are_told_apart(
+    tmp_path: Path,
+) -> None:
+    """THE ONE THAT MATTERS HERE. Mutation: read an empty checkpoint family as one fact.
+
+    That is what shipped, in as many words: the note on ``REQUIRED_FIELD_FAMILIES`` said an
+    empty family was a run that wrote no checkpoints and called it a fact about the run.
+    For ``run_019fd2c9`` and ``run_019fd2ca`` it was false. Both wrote 762 MB into
+    ``step-20/``, both recorded ``"checkpoints": []``, and the reading the note offered was
+    the one thing the record could not support.
+
+    The two fixtures below differ in one field and in nothing else, so the assertion is
+    that the coverage tells them apart at all. Everything downstream -- the exit code, the
+    section in the report -- hangs off this being two answers rather than one.
+    """
+    bare, unread = tmp_path / "bare", tmp_path / "unread"
+    for root in (bare, unread):
+        written(root, LEFT)
+        written(root, RIGHT)
+    for run_id in (LEFT, RIGHT):
+        record = unread / "result" / f"{run_id}.json"
+        document = json.loads(record.read_text(encoding="utf-8"))
+        document["checkpoint_survey"]["unparsed_directories"] = ["step-20"]
+        record.write_text(json.dumps(document), encoding="utf-8")
+
+    saved_nothing = checkpoint_coverage(read_run(bare, LEFT), read_run(bare, RIGHT))
+    saved_somewhere = checkpoint_coverage(read_run(unread, LEFT), read_run(unread, RIGHT))
+
+    assert saved_nothing.unreadable == ()
+    assert saved_nothing.is_blocked is False
+    assert saved_somewhere.is_blocked is True
+    assert [(one.run_id, one.directory) for one in saved_somewhere.unreadable] == [
+        (LEFT, "step-20"),
+        (RIGHT, "step-20"),
+    ]
+    # And neither of them produced a difference row, which is why the count alone cannot be
+    # what a caller reads.
+    assert compare_runs(read_run(bare, LEFT), read_run(bare, RIGHT)) == compare_runs(
+        read_run(unread, LEFT), read_run(unread, RIGHT)
+    )
+
+
+def test_a_checkpoint_that_was_compared_is_counted_so_the_digest_caveat_can_be_scoped(
+    tmp_path: Path,
+) -> None:
+    """Mutation: report the caveat about payload digests on every comparison.
+
+    A pair of check-shaped runs wrote no checkpoints, and telling their reader that no
+    checkpoint payload was compared is true and useless. The count is what scopes the
+    sentence to a comparison that had checkpoints to say it about.
+    """
+    written(tmp_path, LEFT)
+    written(tmp_path, RIGHT)
+    for run_id in (LEFT, RIGHT):
+        record = tmp_path / "result" / f"{run_id}.json"
+        document = json.loads(record.read_text(encoding="utf-8"))
+        document["checkpoints"] = [checkpoint(run_id)]
+        record.write_text(json.dumps(document), encoding="utf-8")
+
+    coverage = checkpoint_coverage(read_run(tmp_path, LEFT), read_run(tmp_path, RIGHT))
+
+    assert coverage.compared == 1
+    assert coverage.is_blocked is False
+
+
+def test_the_only_digest_in_the_record_is_equal_for_two_checkpoints_that_are_not(
+    tmp_path: Path,
+) -> None:
+    """The measurement behind the caveat, held as a test so the caveat cannot be dropped.
+
+    ``checksum`` is the one field on a checkpoint named for a digest, and for anything the
+    lifecycle recorder wrote it is ``described_listing_checksum`` -- a SHA-256 over the
+    names and sizes a listing returned. The two spine runs wrote payloads whose SHA-256s
+    are ``1a3f1588...`` and ``606e9ee2...``, and because their object names and sizes are
+    identical this field is identical too. So the table shows no ``checksum`` row, and a
+    reader who took that as agreement about the weights would be wrong.
+    """
+    written(tmp_path, LEFT)
+    written(tmp_path, RIGHT)
+    for run_id in (LEFT, RIGHT):
+        record = tmp_path / "result" / f"{run_id}.json"
+        document = json.loads(record.read_text(encoding="utf-8"))
+        document["checkpoints"] = [checkpoint(run_id)]
+        record.write_text(json.dumps(document), encoding="utf-8")
+
+    differences = compare_runs(read_run(tmp_path, LEFT), read_run(tmp_path, RIGHT))
+
+    assert LISTING_CHECKSUM == described_listing_checksum(
+        [("_SUCCESS", 227, "listing"), ("model.pt", 762258865, "listing")]
+    )
+    assert not [one for one in differences if one.path.endswith(".checksum")]
+    assert checkpoint_coverage(
+        read_run(tmp_path, LEFT), read_run(tmp_path, RIGHT)
+    ).compared == 1
 
 
 def test_every_required_field_is_named_or_belongs_to_a_family_and_never_both() -> None:
