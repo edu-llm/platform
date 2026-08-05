@@ -4,6 +4,7 @@ from pydantic import BeforeValidator, Field, model_validator
 
 from .base import ContractModel, require_ordered_sequence
 from .bindings import (
+    AwsIdentityTable,
     GitHubLogin,
     RepositoryName,
     TeamBinding,
@@ -14,6 +15,7 @@ from .bindings import (
 from .results import WANDB_NAME_PATTERN
 
 __all__ = [
+    "AwsIdentityTable",
     "GitHubLogin",
     "OrganizationInventory",
     "PersonRef",
@@ -53,6 +55,12 @@ class OrganizationInventory(ContractModel):
         tuple[RepositoryName, ...], BeforeValidator(require_ordered_sequence)
     ] = Field(min_length=1, strict=False)
     team_bindings: TeamBindingCatalog = TeamBindingCatalog()
+    #: Which AWS role each roster member launches under, and which roles are known not to be
+    #: anybody's. Empty by default so that every record and fixture written before this field
+    #: existed still parses; an empty table is what would make the mismatch list the whole
+    #: account's, which is why tests/test_aws_identities.py asserts the committed file is not
+    #: one.
+    aws_identities: AwsIdentityTable = AwsIdentityTable()
 
     @model_validator(mode="after")
     def validate_inventory(self) -> Self:
@@ -79,6 +87,27 @@ class OrganizationInventory(ContractModel):
         ]
         if len(set(claimed)) != len(claimed):
             raise ValueError("a wandb username must not be claimed by two members")
+        # THE FOUR WAYS THE AWS TABLE CAN BE WRONG, AND ALL FOUR PRODUCE A LIST THAT IS
+        # QUIETLY SHORT RATHER THAN AN ERROR ANYBODY SEES. A role bound twice resolves by
+        # iteration order, so one person's launch lands on another person's line; a role in
+        # both lists is a person whose launches vanish into the exclusion, which is the exact
+        # failure the exclusion is written literally to avoid; and a login the roster has
+        # never heard of produces a mismatch attributed to nobody. Load time is the only
+        # place any of them can be caught before somebody reads a report built on them.
+        bound_roles = [binding.role_name for binding in self.aws_identities.roles]
+        if len(set(bound_roles)) != len(bound_roles):
+            raise ValueError("an AWS role name must be bound once")
+        excluded_names = self.aws_identities.excluded_role_names()
+        if len(set(excluded_names)) != len(excluded_names):
+            raise ValueError("an AWS role name must be excluded once")
+        if set(bound_roles) & set(excluded_names):
+            raise ValueError("an AWS role name must not be both bound and excluded")
+        bound_logins = {
+            normalize_github_login(binding.github_login)
+            for binding in self.aws_identities.roles
+        }
+        if bound_logins - set(normalized_members):
+            raise ValueError("every bound AWS role must be an organization member")
         return self
 
     def is_admin(self, github_login: str) -> bool:
