@@ -47,7 +47,7 @@
 # agreement with the file.
 #
 # NOT EVERY REGISTERED DATASET IS A CORPUS, WHICH IS NEW AND IS THE MOST IMPORTANT LINE HERE.
-# This list now carries two tokenizers, a verbatim vendor mirror and two sft conversation
+# This list now carries two tokenizers, a verbatim vendor mirror and three sft conversation
 # corpora, because dependents pin them by digest and admission has to be able to resolve what
 # a lineage record names. Being registered is not permission to train on one. A tokenizer
 # declares no partitions, so the reader hands back every object rather than a trainable split,
@@ -135,7 +135,7 @@
 #
 # EIGHT ARE REGISTERED HERE AND NOT OFFERED ON THE FORM, AND THAT IS DELIBERATE.
 # Three are refused by family, above: the two tokenizers and the verbatim vendor mirror.
-# math-sft-60m and pedagogy70-normal30 are in a trainable family and declare no tokenizer at
+# math-sft-60m, pedagogy70-normal30 and frontload-cl-chat-sft are in a trainable family and declare no tokenizer at
 # all, honestly, because they are pre-tokenization conversation text, and `None` is not a key
 # in the TOKENIZERS map, so the same join that answers the question above answers this one.
 # lean4-mathlib-bytes and math-memory-full depend on `tokenizer/bytes-utf8`, and OLMo-core has
@@ -245,6 +245,23 @@ published:
     version: v2
     manifest_sha256: "3adad2a090b62cb3815952b56254c9965afa1a082a4ab61028012727330d843b"
     tokenizer: tokenizer/qwen25-vendored
+  # Frontload-cl early-behavior-primer corpora. Digests read live 2026-08-05 from
+  # each group's manifest_sha256 in dataset.json and the matching map in _VALIDATED.json.
+  # The pretrain corpus is offered on the form (dolma2). The SFT conversations corpus is
+  # registered so admission can resolve it and lineage can name it, but stays off the form
+  # because tokenizer is null (pre-tokenization JSONL), same join as math-sft / pedagogy70.
+  - reference_id: frontload-cl-10b-v1
+    uri: "s3://edullm-data/pretrain/frontload-cl-10b/v1/"
+    dataset_id: pretrain/frontload-cl-10b
+    version: v1
+    manifest_sha256: "86936bebd4beeab04aa65a394588d0b300242c0fb6a04291fc7164e89337d708"
+    tokenizer: tokenizer/dolma2-bpe
+  - reference_id: frontload-cl-chat-sft-v1
+    uri: "s3://edullm-data/sft/frontload-cl-chat-sft/v1/"
+    dataset_id: sft/frontload-cl-chat-sft
+    version: v1
+    manifest_sha256: "e0158978a129e8e103854b762d430a1b3e508d74e6a383baa17501d7d47f5464"
+    tokenizer: null
   # Plan A scale gigatoken pair. Unreachable as a corpus by family; registered so UniMax /
   # Phase-0 corpora can pin them by digest and admission can resolve lineage. Digests read
   # live 2026-08-04 from files/ group + seal. Listed before lean4 so published reference_ids

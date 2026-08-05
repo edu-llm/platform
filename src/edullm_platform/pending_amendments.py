@@ -465,6 +465,9 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # the record as SKEWED rather than letting it stand. So the deletion is not tidiness. A
     # record left here would go on absorbing the next unexplained difference that happened
     # to arrive on the same pair of digests.
+    #
+    # This entry is the next cycle: org.yaml header rewrite plus frontload-cl corpora on
+    # top of the released zip.
     releases: tuple[PendingRelease, ...] = (
         PendingRelease(
             function="validator",
@@ -483,9 +486,12 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "that. So the deployed validator is not stale in any sense a submitter could "
                 "meet, and the release exists to keep the digest honest rather than to carry "
                 "a behaviour."
+                "\n\n"
+                "The same zip also packages config/datasets.yaml, which now registers "
+                "pretrain/frontload-cl-10b/v1 and sft/frontload-cl-chat-sft/v1."
             ),
-            cleared_by="tools/release_lambda.py --function validator",
-            builds_to="964018c4c91d7292c0099a1f6b4815b54dc00d0361bb7e3a86662633b4dbf59c",
+            cleared_by="uv run python tools/release_lambda.py --function validator",
+            builds_to="6f019ebbd25136b2b3eec8de6abf57ec4395c1b0f89cf897af222e0fb8ec1dd1",
             released="d2c42173589e7c91ff20faeaa7b5b9f705f02e28214ad15fcf782964bf7bf3af",
             recorded_on=date(2026, 8, 5),
         ),

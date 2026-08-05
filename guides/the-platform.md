@@ -100,6 +100,7 @@ A waiver lands in the run's manifest and the approving lead is told which check 
 | `fineweb2-phase0-equal-superbpe-2b-v1` | 2.0B | 12 |
 | `refhq-regmix-5p5b-v2` | 5.5B | 24 |
 | `regmix-10b-v1` | 10.0B | 41 |
+| `frontload-cl-10b-v1` | 10.1B | 53 |
 | `fineweb2-unimax-bpe-20b-v1` | 21.0B | 166 |
 | `fineweb2-unimax-superbpe-20b-v1` | 18.9B | 151 |
 | `olmo-original-30b-v1` | 31.3B | 120 |
