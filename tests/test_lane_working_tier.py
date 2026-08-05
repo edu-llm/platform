@@ -25,6 +25,11 @@ from edullm_platform.cli.lane import (
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SETTINGS_PATH = PROJECT_ROOT / "config" / "reports" / "working-tier.yaml"
 
+#: AWS's own documented example account. The one twelve-digit literal
+#: tests/test_evidence.py's tree-wide scan exempts, so an ARN written here with any other
+#: filler, zeroes included, fails that scan rather than this module.
+EXAMPLE_ACCOUNT = "123456789012"
+
 
 def test_the_prefix_is_team_then_person_and_ends_with_a_separator() -> None:
     """Mutation: reverse the two segments. Mutation: drop the trailing slash.
@@ -57,7 +62,7 @@ def test_the_person_is_recovered_from_a_broker_session() -> None:
     caller's, so a lane prefix built from it would not match what anybody expects to see.
     """
     arn = (
-        "arn:aws:sts::000000000000:assumed-role/Intern-frank.gonzalez-sbsandbox"
+        f"arn:aws:sts::{EXAMPLE_ACCOUNT}:assumed-role/Intern-frank.gonzalez-sbsandbox"
         "/broker-frank.gonzalez-1785873426"
     )
 
@@ -74,7 +79,7 @@ def test_a_session_that_is_already_in_the_lane_yields_no_person() -> None:
     layout nobody could navigate and which the role's write fence would then refuse. None is the
     honest answer and Task 2 is where it becomes a sentence.
     """
-    arn = "arn:aws:sts::000000000000:assumed-role/edullm-researcher/lane-mixlaw"
+    arn = f"arn:aws:sts::{EXAMPLE_ACCOUNT}:assumed-role/edullm-researcher/lane-mixlaw"
 
     assert person_from_caller_arn(arn) is None
 
@@ -86,7 +91,7 @@ def test_a_session_with_no_broker_prefix_still_yields_a_person() -> None:
     name the console chose, and refusing there would refuse the person most likely to be trying
     this for the first time.
     """
-    arn = "arn:aws:sts::000000000000:assumed-role/Intern-amy.lin-sbsandbox/console-session"
+    arn = f"arn:aws:sts::{EXAMPLE_ACCOUNT}:assumed-role/Intern-amy.lin-sbsandbox/console-session"
 
     assert person_from_caller_arn(arn) == "console-session"
 

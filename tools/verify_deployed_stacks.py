@@ -195,6 +195,7 @@ STACKS: Final = _stacks(
     ("sbsandbox-intern-edullm-notifier-iam", IAM_ROOT / "notifier-lambda-role.yaml"),
     ("sbsandbox-intern-edullm-notifications", INFRA_ROOT / "notifications.yaml"),
     ("sbsandbox-intern-edullm-work", INFRA_ROOT / "work-bucket.yaml"),
+    ("sbsandbox-intern-edullm-lane-instance-iam", IAM_ROOT / "lane-instance-role.yaml"),
 )
 
 
