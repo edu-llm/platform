@@ -23,6 +23,77 @@
       "title": "AttributionTag",
       "type": "object"
     },
+    "AwsIdentityTable": {
+      "additionalProperties": false,
+      "description": "Which roles are people's, and which roles are known not to be.\n\nTwo lists rather than one with a flag, because they are read at different points: the\nfirst is a join and the second is a subtraction, and a row that is in both is a person\nwhose launches vanish. :class:`~edullm_platform.contracts.inventory.OrganizationInventory`\nrefuses that.",
+      "properties": {
+        "excluded_roles": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ExcludedRole"
+          },
+          "title": "Excluded Roles",
+          "type": "array"
+        },
+        "roles": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AwsRoleBinding"
+          },
+          "title": "Roles",
+          "type": "array"
+        }
+      },
+      "title": "AwsIdentityTable",
+      "type": "object"
+    },
+    "AwsRoleBinding": {
+      "additionalProperties": false,
+      "description": "One AWS role name, and the roster login whose launches it makes.\n\nThis is the only place a person's AWS identity is written down anywhere in this platform.\nNothing else can supply it: the role tag reads the same on every role in the account, the\nOIDC subject is an email address and the roster is keyed on GitHub logins, and a session\ntag is exactly what an off-platform launch does not carry.",
+      "properties": {
+        "github_login": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9-]+$",
+          "title": "Github Login",
+          "type": "string"
+        },
+        "role_name": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9+=,.@_-]{1,64}$",
+          "title": "Role Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role_name",
+        "github_login"
+      ],
+      "title": "AwsRoleBinding",
+      "type": "object"
+    },
+    "ExcludedRole": {
+      "additionalProperties": false,
+      "description": "One role name whose launches are not a person's, and why.\n\nLITERAL, NEVER A PATTERN, AND THE REASON IS A FIELD RATHER THAN A COMMENT. A prefix here\nwould silently swallow the next role that happens to match it, which is the same class of\nfailure as a missing binding and harder to see, because a role nobody added still\ndisappears. A reason is required because an exclusion is a decision to stop looking at\nsomething, and one with no reason beside it cannot be re-judged later.",
+      "properties": {
+        "reason": {
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "role_name": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9+=,.@_-]{1,64}$",
+          "title": "Role Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role_name",
+        "reason"
+      ],
+      "title": "ExcludedRole",
+      "type": "object"
+    },
     "PersonRef": {
       "additionalProperties": false,
       "properties": {
@@ -200,6 +271,13 @@
       "minItems": 1,
       "title": "Admins",
       "type": "array"
+    },
+    "aws_identities": {
+      "$ref": "#/$defs/AwsIdentityTable",
+      "default": {
+        "excluded_roles": [],
+        "roles": []
+      }
     },
     "members": {
       "items": {

@@ -252,6 +252,49 @@ def pending_amendments() -> tuple[PendingAmendment, ...]:
                 ),
             ),
         ),
+        PendingAmendment(
+            role_name=DEPLOYER_ROLE_NAME,
+            reason=(
+                "The expiry janitor's stack is deployed by deploy-phase3-batch.yml and needs "
+                "two things this role does not hold yet: iam:PassRole on the two janitor "
+                "roles, because lambda:CreateFunction takes a role ARN, and the EventBridge "
+                "Scheduler verbs, because the schedule is a schedule rather than a rule. It "
+                "is a schedule because a rule targeting a Lambda needs an "
+                "AWS::Lambda::Permission and therefore lambda:AddPermission, which this role "
+                "withholds deliberately -- infra/batch-events.yaml met the same fork and "
+                "recorded the rule: a capability added rather than a restriction removed."
+            ),
+            cleared_by=(
+                "Applying sbsandbox-intern-edullm-infra-deployer-iam from a laptop with an SSO "
+                "session, per infra/README.md under 'The expiry janitor's stacks', and "
+                "re-taking the Phase 1 role capture. Until it is applied the CI deploy of "
+                "sbsandbox-intern-edullm-janitor is refused on CreateFunction, and the "
+                "refusal reads like a broken template rather than a missing grant."
+            ),
+            findings=(
+                RoleDriftFinding(
+                    direction=DriftDirection.NARROWER,
+                    element="inline policy 'deploy-phase2-admission-stacks' statement 8 resources",
+                    detail=(
+                        "the template declares resources the deployed role does not: "
+                        "arn:<partition>:iam::<account>:role/sbsandbox-intern-edullm-janitor-lambda, "
+                        "arn:<partition>:iam::<account>:role/sbsandbox-intern-edullm-janitor-schedule"
+                    ),
+                ),
+                RoleDriftFinding(
+                    direction=DriftDirection.NARROWER,
+                    element="inline policy 'deploy-phase3-batch-stacks'",
+                    detail=(
+                        "the template declares a statement the deployed role does not: Allow "
+                        "Action [scheduler:CreateSchedule, scheduler:DeleteSchedule, "
+                        "scheduler:GetSchedule, scheduler:ListTagsForResource, "
+                        "scheduler:TagResource, scheduler:UntagResource, "
+                        "scheduler:UpdateSchedule] Resource "
+                        "[arn:<partition>:scheduler:<region>:<account>:schedule/default/sbsandbox-intern-edullm-*]"
+                    ),
+                ),
+            ),
+        ),
     )
     declared = declared_role_templates()
     for amendment in amendments:
@@ -338,6 +381,10 @@ RELEASABLE_FUNCTIONS: Final[dict[str, ReleasableFunction]] = {
     "recorder": ReleasableFunction(
         display="lifecycle recorder",
         release_record="infra/lifecycle-recorder-release.yaml",
+    ),
+    "janitor": ReleasableFunction(
+        display="expiry janitor",
+        release_record="infra/expiry-janitor-release.yaml",
     ),
 }
 
@@ -577,8 +624,29 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "than eight, four tokenizers rather than two -- which is comment bytes in a "
                 "packaged config file again."
                 "\n\n"
-                "A fifth edit moved it again and this one does carry a behaviour, which is "
-                "why builds_to is 06a8b898 rather than the b1a068fa this record opened with. "
+                "A fifth edit joins them and it is a new field on a packaged contract, which "
+                "is the kind that deserves the most reading. OrganizationInventory gained "
+                "aws_identities, and contracts/bindings.py gained AwsRoleBinding, "
+                "ExcludedRole and AwsIdentityTable beside it; config/organization.yaml now "
+                "carries twenty role bindings and one exclusion. Both files are in this "
+                "zip. Nothing the validator decides reads any of it: the table is joined "
+                "against CloudTrail launch events by the morning message, which runs in the "
+                "audit and is not packaged anywhere. The field defaults to an empty table, so "
+                "every record and fixture written before it still parses, and admission "
+                "admits and refuses exactly what it did before."
+                "\n\n"
+                "TWENTY RATHER THAN NINETEEN, AND THE ONE THAT MOVED IS WORTH NAMING BECAUSE "
+                "IT IS A NUMBER TWO DOCUMENTS DISAGREED ABOUT. Intern-linjian.ni-sbsandbox "
+                "was held out of the table on the grounds that no roster name matches it, "
+                "which treated an answered question as open: the roster comment above ninLi0 "
+                "records the owner confirming on 2026-08-04 that the role is that person, and "
+                "that comment has been on main since the W&B accounts commit. Binding it "
+                "moves the count of roster members with no bound role from sixteen to "
+                "fifteen, which is the difference the build index and this table had between "
+                "them. Still nothing the validator reads."
+                "\n\n"
+                "A sixth edit moved it again and this one does carry a behaviour, which is "
+                "the reason builds_to has moved twice more since this record opened. "
                 "Registering edullm-p1 writes config/repositories.yaml and "
                 "config/workload-catalog.yaml, and the validator packages both. Until the "
                 "release is cut the deployed validator has never heard of the repository or "
@@ -590,8 +658,39 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "carries whatever the tree holds when it is built."
             ),
             cleared_by="uv run python tools/release_lambda.py --function validator",
-            builds_to="06a8b898718f22d8e8f875d6cb066fc37406cd070c000547c61728e284f6ce37",
+            builds_to="03d9396830a8b4bd8ac50e630b441f205533b26825b6341f9c72418e2f8be56c",
             released="d2c42173589e7c91ff20faeaa7b5b9f705f02e28214ad15fcf782964bf7bf3af",
+            recorded_on=date(2026, 8, 5),
+        ),
+        # THE RECORDER, WHICH THE ROSTER EDITS OF 2026-08-05 DID NOT MOVE AND THIS ONE DOES.
+        # The two zips were separated deliberately so that a config edit stopped touching
+        # this one: measured two ways, the validator reads seven config files and the
+        # recorder reads none, and the builders package exactly that. What moved here is not
+        # config at all. It is contracts/bindings.py and contracts/inventory.py, which this
+        # package imports through the manifest it validates on the way into a lineage record.
+        PendingRelease(
+            function="recorder",
+            reason=(
+                "contracts/bindings.py gained AwsRoleBinding, ExcludedRole and "
+                "AwsIdentityTable, and contracts/inventory.py gained an aws_identities field "
+                "on OrganizationInventory that defaults to an empty table. Both modules are "
+                "in this package because the recorder validates the manifest it writes."
+                "\n\n"
+                "Nothing the recorder reads or writes changes. It never loads "
+                "config/organization.yaml -- the split between the two builders exists "
+                "precisely so a roster edit stops touching this zip -- and the new field is "
+                "on a model this package imports rather than instantiates. Every lineage "
+                "record it writes is byte-identical to one the deployed bytes would have "
+                "written."
+                "\n\n"
+                "Recorded rather than left to be discovered because a stale recorder is the "
+                "quiet one: a stale validator refuses a submission and somebody reads the "
+                "refusal, and a stale recorder writes lineage that looks exactly like correct "
+                "lineage into immutable records."
+            ),
+            cleared_by="uv run python tools/release_lambda.py --function recorder",
+            builds_to="98bfb171fdfee26a4b36453c5a38d91a70fba799062a22af748385e1c9a899c9",
+            released="82d291969f3b7c3922ea4096387abb0cd121e78b036858a36bcfc54b775027e2",
             recorded_on=date(2026, 8, 5),
         ),
     )

@@ -1,0 +1,36 @@
+# What is actually deployed as the expiry janitor, recorded beside the template that names it.
+#
+# THE SAME TRIPWIRE THE OTHER TWO FUNCTIONS CARRY, AND THIS ONE HAS THE QUIETEST FAILURE OF THE
+# THREE. The validator's failure is loud: a submission is refused for a reason correct about the
+# deployed bytes and wrong about the account. The recorder's is quiet: lineage records that look
+# right and do not join. This function's is quieter still -- a janitor running code this tree
+# does not describe stops nothing, and a sweep that stops nothing is indistinguishable from a
+# quiet morning. The counts it prints are the only signal, and they are correct for whatever
+# bytes are running.
+#
+# The build is deterministic, so a rebuild that changed nothing produces the same digest and
+# needs no edit here. Releasing means running tools/release_lambda.py and updating both fields
+# below in the same commit as the change that caused them to move.
+#
+# It carries no configuration, so no edit under config/ moves this digest. What does move it is
+# a change to any module edullm_platform.janitor_handler imports -- which is
+# edullm_platform.expiry_janitor, edullm_platform.researcher_lane and the contracts package
+# beneath them, and nothing else.
+schema_version: 1
+s3_key: expiry-janitor/expiry-janitor.zip
+# NEVER UPLOADED. The zip below has been built and its digest is real; the object does not
+# exist in the artifacts bucket yet, so there is no version id to pin. The placeholder is
+# deliberate and is the repository's own pattern -- infra/batch-events.yaml carries the same
+# argument beside its own S3ObjectVersion: a placeholder fails at a named step where an omitted
+# property would have deployed something.
+#
+# The identical token appears in infra/expiry-janitor.yaml and is what the phase-3 workflow's
+# janitor step checks for before it tries to deploy, so that an unrelated dispatch is not
+# broken by a stack nobody can create yet. tests/test_janitor_infrastructure.py holds all three
+# together: the placeholder is in every one of them or in none, so the release that removes it
+# has to remove it everywhere.
+s3_object_version: PLACEHOLDER-UNTIL-THE-FIRST-UPLOAD
+# The 64 hex characters tools/build_janitor_lambda.py printed under "sha256". The build is
+# deterministic, so re-running it on an unchanged tree reproduces this exactly -- which is what
+# tests/test_janitor_package.py compares against.
+sha256: 11a0f7a07e266678ff19f57f793531dba410dbd7dd9c689c1082a2d87a5db6ac

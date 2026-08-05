@@ -272,15 +272,31 @@ def test_the_seventh_property_names_the_working_tier_and_fences_it_by_source_ide
     system-overview.md's "Where data lives" exists to prevent. The third pins the fence to one
     name, which lets that person write anywhere in the tier and everybody else nowhere, and a
     role deployed that way reports no error at all.
+
+    A FOURTH MUTATION IS WHY THE WORKING-TIER EXCEPTIONS ARE COMPARED AS A SET AND NOT SEARCHED
+    FOR. Adding arn:aws:s3:::edullm-work/* beside the fenced prefix rather than in place of it
+    survives every membership assertion, because the narrow entry is still there to find. It is
+    also the end of the fence: NotResource excuses a request that matches any one entry, so the
+    wide one alone permits the whole tier and the narrow one becomes decoration. That is the
+    shape this file's own header warns about, and it is only caught by comparing in both
+    directions. The rest of the list is deliberately not frozen -- the template says a bucket
+    added later and not listed is a write that fails, so the list is meant to grow -- and it is
+    the working tier alone that may hold exactly one entry.
     """
     entry = statement("DenyWorkingTierWritesOutsideYourOwnPrefix")
     excepted = as_list(entry["NotResource"])
+    into_the_tier = {one for one in excepted if WORKING_BUCKET in one}
     naming_the_tier = [one.get("Sid") for one in statements() if WORKING_BUCKET in json.dumps(one)]
 
     assert entry["Effect"] == "Deny"
     assert "Resource" not in entry
     assert "s3:PutObject" in set(as_list(entry["Action"]))
-    assert f"arn:aws:s3:::{WORKING_BUCKET}/*/${{aws:SourceIdentity}}/*" in excepted
+    assert into_the_tier == {f"arn:aws:s3:::{WORKING_BUCKET}/*/${{aws:SourceIdentity}}/*"}, (
+        "The working tier is excepted by something other than one person's own prefix, or by "
+        "that prefix and something wider beside it. A second exception naming the tier does "
+        "not narrow the first one, it replaces it: any request matching either entry escapes "
+        "the deny, so the widest entry present is the whole fence."
+    )
     assert naming_the_tier == ["DenyWorkingTierWritesOutsideYourOwnPrefix"], (
         "The working tier is named in no statement, or in more than one. Either the seventh "
         "property has been dropped and the exploration route's precondition is now false, or "

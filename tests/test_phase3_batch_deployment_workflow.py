@@ -53,6 +53,7 @@ COMPUTE_TEMPLATE = "infra/batch-compute.yaml"
 GPU_COMPUTE_TEMPLATE = "infra/batch-compute-gpu.yaml"
 GPU_SHAPES_TEMPLATE = "infra/batch-compute-gpu-shapes.yaml"
 EVENTS_TEMPLATE = "infra/batch-events.yaml"
+JANITOR_TEMPLATE = "infra/expiry-janitor.yaml"
 ADMISSION_TEMPLATE = "infra/admission-state-machine.yaml"
 
 ADMISSION_STACK = "sbsandbox-intern-edullm-phase2-admission"
@@ -83,6 +84,13 @@ DEPLOYMENT_ORDER = (
         GPU_SHAPES_TEMPLATE,
     ),
     ("Deploy Phase 3 batch events stack", "sbsandbox-intern-edullm-phase3-events", EVENTS_TEMPLATE),
+    # Nothing to do with Batch. It sweeps EC2 instances a person launched through
+    # edullm-researcher, and it is a step on this workflow because the deployer role's trust
+    # pins job_workflow_ref to three files -- a workflow of its own would need that trust
+    # amended by the very access the amendment grants. Anywhere in this list would do for
+    # ordering, since it depends on nothing here; it sits second-to-last because the state
+    # machine has to stay last.
+    ("Deploy the expiry janitor stack", "sbsandbox-intern-edullm-janitor", JANITOR_TEMPLATE),
     ("Deploy the amended admission state machine", ADMISSION_STACK, ADMISSION_TEMPLATE),
 )
 VALIDATE_STEP = "Upload and validate the CloudFormation templates"

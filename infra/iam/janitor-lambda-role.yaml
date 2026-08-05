@@ -1,0 +1,185 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Service role the expiry janitor runs as while it warns and stops machines the researcher lane launched.
+
+# STOPS, NEVER TERMINATES, AND THAT IS THE WHOLE SHAPE OF THIS ROLE.
+# docs-frank/reference/system-overview.md draws the janitor as stopping a machine at expiry, and
+# docs-frank/reference/decisions.md puts strictness on the irreversible half everywhere it
+# appears. A stopped instance keeps its root volume and restarts with one command; a terminated
+# one is gone, and the person whose work was on it has no recourse. The expiry exists so a
+# forgotten machine dies, not to punish anybody for forgetting.
+#
+# IT READS THE WHOLE ACCOUNT AND WRITES TO ALMOST NONE OF IT. ec2:DescribeInstances has no
+# resource type at all -- the request names no instance, so a policy that names one denies the
+# call -- which means the read is necessarily account-wide in a shared account. That is the cost
+# of the filter being tags rather than an inventory, and it is the right trade: the alternative
+# is a list of machines this platform believes it launched, which is exactly the kind of list
+# that goes stale and stops matching.
+#
+# What bounds the write is the two action grants below, each conditioned. It may set one tag
+# key and stop instances that already carry both governance tags. It may not terminate, may not
+# delete a volume, may not launch anything, may not remove a tag, and holds no s3: or batch:
+# action of any kind -- the component furthest from any gate should be able to do the least.
+
+Resources:
+  JanitorLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sbsandbox-intern-edullm-janitor-lambda
+      PermissionsBoundary:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/InternSandboxBoundary
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      # Inline rather than a customer-managed policy, for the reason every role here carries:
+      # InternSandboxBoundary denies iam:CreatePolicyVersion on every policy, so a managed
+      # policy is create-once and the first amendment fails permanently.
+      Policies:
+        - PolicyName: sweep-expired-lane-machines
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # No resource scope is possible. ec2:DescribeInstances authorizes against no
+              # resource, so "*" is the narrowest grant that exists and a policy naming an
+              # instance ARN denies the call outright. The same is true of every ec2:Describe*.
+              - Sid: ReadWhatIsRunning
+                Effect: Allow
+                Action: ec2:DescribeInstances
+                Resource: "*"
+              # ONE TAG KEY AND ONE ONLY. The condition is what stops a sweeper rewriting
+              # ExpiresAt, which would let it extend a machine's life on its own authority, and
+              # what stops it writing Project, which would let it adopt somebody else's machine
+              # into its own filter.
+              #
+              # ForAllValues rather than ForAnyValue: the first refuses a request carrying any
+              # key outside the list, the second would accept a request that carried the
+              # warning key alongside ExpiresAt.
+              #
+              # No ec2:DeleteTags. A janitor that can remove the warning it wrote can stop a
+              # machine and leave no evidence that it warned first, which is the one claim this
+              # component makes about itself.
+              - Sid: WriteTheWarningAndNothingElse
+                Effect: Allow
+                Action: ec2:CreateTags
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*
+                Condition:
+                  ForAllValues:StringEquals:
+                    aws:TagKeys:
+                      - edullm:expiry-warned-at
+              # STOP, CONDITIONED ON THE MACHINE BEING ONE OF OURS.
+              #
+              # aws:ResourceTag reads the tag on the instance being acted on, so this refuses a
+              # StopInstances against anything not carrying both governance tags -- which is the
+              # same filter the handler applies, expressed where it binds rather than where it
+              # is convenient. Two independent statements of one rule is deliberate here: the
+              # handler's filter is what makes the sweep correct, and this is what makes a bug
+              # in the handler unable to stop MCAT's instance.
+              #
+              # StringLike "?*" is the presence test, the same form the researcher role's trust
+              # policy uses: ? matches one character and * matches the rest, so it demands a
+              # non-empty value and fails when the key is absent.
+              - Sid: StopOnlyAMachineTheLaneLaunched
+                Effect: Allow
+                Action: ec2:StopInstances
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*
+                Condition:
+                  StringLike:
+                    aws:ResourceTag/Project: "?*"
+                    aws:ResourceTag/ExpiresAt: "?*"
+              # Lambda creates the function's own group on first invocation using this role;
+              # without it the function runs and logs nowhere, which on a component whose entire
+              # output is a log line is the failure hardest to notice.
+              - Sid: WriteThisFunctionsOwnLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/sbsandbox-intern-edullm-expiry-janitor:*
+
+  # THE SECOND ROLE, AND IT EXISTS TO AVOID REVERSING A WRITTEN DECISION.
+  #
+  # The obvious wiring for a five-minute sweep is an AWS::Events::Rule targeting the function,
+  # which needs an AWS::Lambda::Permission, which needs lambda:AddPermission on the deploying
+  # principal. infra/iam/infra-deployer-role.yaml excludes that action in as many words -- "the
+  # deployer creates the validator but may neither run it nor change who may run it" -- and
+  # infra/batch-events.yaml already met this fork and recorded the rule for it: a capability
+  # added rather than a restriction removed.
+  #
+  # So the schedule is an AWS::Scheduler::Schedule, which invokes its target by assuming a role
+  # it is passed rather than through a resource policy on the function. The deployer gains
+  # iam:PassRole on this role and the scheduler verbs, and gains nothing that lets it decide who
+  # may invoke a Lambda: lambda:AddPermission would let a deploy credential write Principal "*"
+  # into the janitor's resource policy, and this cannot. Passing this role anywhere else yields
+  # a role nothing can assume, because its trust names one service.
+  #
+  # It is here rather than in infra/expiry-janitor.yaml because it is a role, and every role in
+  # this repository is applied from a laptop. That is also why it is in the same stack as the
+  # role above: one laptop visit rather than two.
+  JanitorScheduleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sbsandbox-intern-edullm-janitor-schedule
+      PermissionsBoundary:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/InternSandboxBoundary
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+            # The confused-deputy condition EventBridge Scheduler documents for exactly this.
+            # Without it the service principal is trusted from any account's schedule.
+            #
+            # Fn::Sub rather than Ref, and the difference is not style. Every role in this
+            # repository is compared to its deployed self by edullm_platform.role_drift, which
+            # resolves a literal or a plain Fn::Sub and raises PolicyNotComparableError on
+            # anything else -- so a Ref here makes the role uncomparable, and it takes every
+            # other template-reading test in the suite down with it because they load the
+            # whole directory.
+            Condition:
+              StringEquals:
+                aws:SourceAccount:
+                  Fn::Sub: ${AWS::AccountId}
+      Policies:
+        - PolicyName: invoke-the-expiry-janitor
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # ONE VERB ON ONE FUNCTION. This role is what the schedule assumes, so its reach
+              # is the whole of what the schedule can do. Named in full rather than by the
+              # sbsandbox-intern-edullm-* prefix that the deployer's own function grants use: a
+              # prefix here would let a schedule created later invoke the admission validator or
+              # the lifecycle recorder, which is a way to run the gate on a timer.
+              - Sid: InvokeTheJanitorAndNothingElse
+                Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:sbsandbox-intern-edullm-expiry-janitor
+
+Outputs:
+  RoleName:
+    Value:
+      Ref: JanitorLambdaRole
+  RoleArn:
+    Value:
+      Fn::GetAtt:
+        - JanitorLambdaRole
+        - Arn
+  ScheduleRoleName:
+    Value:
+      Ref: JanitorScheduleRole
+  ScheduleRoleArn:
+    Value:
+      Fn::GetAtt:
+        - JanitorScheduleRole
+        - Arn

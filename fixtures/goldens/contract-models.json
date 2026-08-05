@@ -45,6 +45,27 @@
     {
       "base": false,
       "module": "edullm_platform.contracts.bindings",
+      "name": "AwsIdentityTable",
+      "schema_version": "unversioned",
+      "structural_digest": "sha256:7a675b8b280af69440e70cf2b43c821ce380a85d6de2667756792189cae1ed81"
+    },
+    {
+      "base": false,
+      "module": "edullm_platform.contracts.bindings",
+      "name": "AwsRoleBinding",
+      "schema_version": "unversioned",
+      "structural_digest": "sha256:16010325e0f1e20621c8e63606bfac13b6b8a0f42003a232546298d5be7bfbd3"
+    },
+    {
+      "base": false,
+      "module": "edullm_platform.contracts.bindings",
+      "name": "ExcludedRole",
+      "schema_version": "unversioned",
+      "structural_digest": "sha256:77d75e8edc2b6faf1fd18114e50fcf7951530001a925e5fac7003964838487ff"
+    },
+    {
+      "base": false,
+      "module": "edullm_platform.contracts.bindings",
       "name": "RepositoryBinding",
       "schema_version": "unversioned",
       "structural_digest": "sha256:acfb98fa6a3ecffb8258ab1ea4f150e721c0f1c067e067a701e61837a9fcfd6c"
@@ -222,7 +243,7 @@
       "module": "edullm_platform.contracts.inventory",
       "name": "OrganizationInventory",
       "schema_version": "unversioned",
-      "structural_digest": "sha256:290459e16dc7a20904900733cb19dcf1f957b148cc70f33e329c6cdd1a4904e4"
+      "structural_digest": "sha256:db252b2874c65d5c86faf0bc88a14fd63913d927ac816d35d3a3cdc181d4589a"
     },
     {
       "base": false,
@@ -426,6 +447,20 @@
       "name": "ServiceQuotasEvidence",
       "schema_version": "unversioned",
       "structural_digest": "sha256:e518f133eb4a8ac31d803a36ea7758ffcea2c82088ea80640db801b1f4859239"
+    },
+    {
+      "base": false,
+      "module": "edullm_platform.expiry_janitor",
+      "name": "ExpiryDecision",
+      "schema_version": "unversioned",
+      "structural_digest": "sha256:c4980e06e6473453822898bc2dba33f9f931adb87665d0876fdb9d40ab670f64"
+    },
+    {
+      "base": false,
+      "module": "edullm_platform.expiry_janitor",
+      "name": "TaggedInstance",
+      "schema_version": "unversioned",
+      "structural_digest": "sha256:8134bf6dc225c82ceeaec530cded8edcf0229b56f3b58b983c0f52cf3f7023ae"
     },
     {
       "base": false,
