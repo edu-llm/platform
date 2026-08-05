@@ -20,10 +20,14 @@ from pathlib import Path
 import pytest
 
 from edullm_platform.cli.actions import PLATFORM_REPOSITORY, SUBMIT_WORKFLOW
+from edullm_platform.cli.configuration import load_reviewed_configuration
 from edullm_platform.cli.main import EXIT_OK, EXIT_REFUSED
+from edullm_platform.cli.presentation import who_may_release
 from edullm_platform.cli.release import install_command, installed_version
+from edullm_platform.contracts.admission import ApprovalEnvironment
 from edullm_platform.submission import SubmissionInputs
 from tests.cli_support import (
+    CONFIG_DIR,
     PROJECT_ROOT,
     FakeRunner,
     failed,
@@ -306,6 +310,75 @@ def test_an_automatic_submission_is_told_nobody_is_waiting_on_a_person(
 
     assert code == EXIT_OK
     assert "released automatically. Nothing is waiting on a person." in out
+
+
+@pytest.mark.parametrize(
+    ("approval_class", "environment"),
+    [("routine", "run-approval-lead"), ("exception", "run-approval-admin")],
+)
+def test_how_many_can_release_is_counted_off_the_roster_for_the_gate_that_holds_it(
+    approval_class: str,
+    environment: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """**One sentence for two gates, and it was wrong by seven at the expensive one.**
+
+    This line said "Any of the nine approvers can release it" whatever the class. Nine is the
+    size of ``admins`` unioned with ``team_leads``, so it happened to describe
+    ``run-approval-lead`` on the day it was typed; ``run-approval-admin`` asks only the
+    admins. Exception runs are disproportionately the owner's, because he is the one
+    submitting on hardware that costs more than a lead may release, so the gate the number
+    was wrong about is the gate he reads.
+
+    Mutation: write either count down, or count one of the two lists. Both counts come from
+    ``holds_routine_approver_role`` and ``holds_exception_approver_role`` applied to the
+    roster, which is what admission applies inside AWS -- and the routine one is a union that
+    no field in ``config/policy.yaml`` states, so a reader counting ``team_leads`` alone lands
+    two short.
+    """
+    inventory = load_reviewed_configuration(CONFIG_DIR).inventory
+    expected = len(who_may_release(inventory, ApprovalEnvironment(environment)))
+    root, runner = submitting(
+        tmp_path,
+        compiled={
+            "run_id": "run_019fd2a1-4e07-7a3c-9d55-1b2f8c0e6a41",
+            "approval_class": approval_class,
+            "approving_environment": environment,
+        },
+    )
+
+    code, out, err = invoke(
+        ["submit", "--dataset", "regmix-10b-v1", "--experiment", "an-experiment"],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+    )
+    said = " ".join(out.split())
+
+    assert code == EXIT_OK, out + err
+    assert f"waiting at {environment}. {expected} people hold the role {environment}" in said
+    # The gate's own reviewer list is a GitHub setting in the organization and is in no file
+    # here, so the count is the roster's answer and has to be readable as the roster's.
+    assert "GitHub environment setting" in said
+
+
+def test_the_two_gates_are_not_told_the_same_number(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The tripwire's own tripwire: a derivation that ignored the gate would pass above.
+
+    Mutation: derive the count from the roster and not from the environment. Both cases above
+    would still hold, because both would be told whichever single number the derivation
+    produced, and the defect being fixed is precisely one number told to two gates.
+    """
+    inventory = load_reviewed_configuration(CONFIG_DIR).inventory
+    lead = who_may_release(inventory, ApprovalEnvironment.LEAD)
+    admin = who_may_release(inventory, ApprovalEnvironment.ADMIN)
+
+    assert len(admin) < len(lead)
+    assert set(admin) < set(lead)
+    assert who_may_release(inventory, ApprovalEnvironment.AUTOMATIC) == ()
 
 
 def test_the_workflow_it_dispatches_is_the_one_the_trust_policy_pins(

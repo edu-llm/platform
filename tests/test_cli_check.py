@@ -15,11 +15,14 @@ from __future__ import annotations
 
 import argparse
 import io
+import shutil
 import sys
 from pathlib import Path
+from re import findall
 
 import pytest
 
+from edullm_platform.cli.configuration import PACKAGED_CONFIG_DIRECTORY
 from edullm_platform.cli.main import (
     BUILT_TODAY,
     EXIT_OK,
@@ -31,7 +34,9 @@ from edullm_platform.cli.main import (
     main,
 )
 from edullm_platform.cli.preflight import Preflight
+from edullm_platform.cli.presentation import config_source_said
 from tests.cli_support import (
+    CONFIG_DIR,
     SUBMITTER_ON_TWO_TEAMS,
     SUBMITTER_TEAM,
     FakeRunner,
@@ -74,6 +79,64 @@ def test_check_reaches_no_network_at_all_however_stale_this_install_is(
     assert code == EXIT_OK, out + err
     assert runner.ran("gh") == []
     assert [argv[0] for argv in runner.calls] == ["git"] * len(runner.calls)
+
+
+@pytest.mark.parametrize("refused", [False, True])
+def test_check_names_the_configuration_that_answered_whichever_way_it_went(
+    refused: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**Two runs against two configurations printed the same bytes, and one was stale.**
+
+    ``configuration.directory`` appeared exactly once in the whole ``cli/`` package, in a
+    comment inside the spec file ``scaffold.py`` writes, so nothing a terminal showed said
+    which ``config/*.yaml`` had answered. The packaged copy beats a checkout's ``config/``
+    in the precedence order, which makes the maintainer standing in the platform tree the
+    person most likely to be validating against the wheel's frozen copy and the person the
+    output hid that from.
+
+    Mutation: print it only when the check passes. A stale validator's damage is a refusal
+    that is wrong, so the reader who most needs to know which files decided is the one
+    reading a refusal -- and that reader is also the common case.
+    """
+    root, runner = checkout(tmp_path, compute="gpu-1xa10g")
+    elsewhere = tmp_path / "another-config"
+    shutil.copytree(CONFIG_DIR, elsewhere)
+
+    code, out, err = invoke(
+        [
+            "check",
+            "--dataset",
+            "regmix-10b-v1" if not refused else "a-corpus-nothing-registers",
+            "--experiment",
+            "an-experiment",
+        ],
+        runner=runner,
+        cwd=root,
+        monkeypatch=monkeypatch,
+        config_dir=elsewhere,
+    )
+
+    assert code == (EXIT_REFUSED if refused else EXIT_OK), out + err
+    assert out.startswith(f"checked against {elsewhere}\n\n")
+    # No colour and no escape, here as everywhere: a piped check and a terminal check are
+    # the same bytes, which is what makes a pasted transcript what the next person sees.
+    assert "\x1b" not in out
+
+
+def test_the_configuration_line_says_when_the_copy_is_the_install_s_own(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The precedence trap named, rather than left to be read out of a path.
+
+    Mutation: print the path and nothing else. A ``site-packages`` path is a strong hint and
+    ``--config-dir`` can point anywhere, including at a copy that happens to live under an
+    install; what decides the question is whether this is the copy the wheel carries, and
+    that is a comparison rather than a spelling.
+    """
+    assert config_source_said(PACKAGED_CONFIG_DIRECTORY).endswith(
+        "the copy this install carries"
+    )
+    assert config_source_said(CONFIG_DIR) == f"checked against {CONFIG_DIR}"
 
 
 def test_a_clean_submission_is_cleared_and_priced_from_the_catalog(
@@ -385,6 +448,12 @@ def test_somebody_the_roster_has_never_heard_of_is_told_that_and_nothing_else(
     Mutation: report it after the workload or the dataset. A refusal naming a workload
     profile sends somebody who is not on the roster to correct a field that was never what
     stood in the way.
+
+    The count is the second line rather than the first now, and the line above it is the one
+    thing allowed there: which reviewed configuration produced the refusal. Everything
+    ``render_refusals`` argues about the count coming before the reasons still holds -- a
+    reader learns nothing was dispatched before they learn why -- and a false refusal from a
+    stale packaged copy is the case where the reader has to know which files answered.
     """
     root, runner = checkout(tmp_path)
 
@@ -395,9 +464,11 @@ def test_somebody_the_roster_has_never_heard_of_is_told_that_and_nothing_else(
         monkeypatch=monkeypatch,
         login="somebody-who-does-not-work-here",
     )
+    first, blank, rest = out.split("\n", 2)
 
     assert code == EXIT_REFUSED
-    assert out.startswith("1 refusal. Nothing was dispatched.")
+    assert first.startswith("checked against ") and blank == ""
+    assert rest.startswith("1 refusal. Nothing was dispatched.")
     assert "refused  submitter_not_in_roster" in out
 
 
@@ -814,6 +885,35 @@ def test_every_verb_says_what_it_is_for_before_it_lists_its_flags(verb: str) -> 
     # Whitespace-normalised, because argparse wraps the description to the help page's
     # width and asserting the unwrapped form would be asserting the wrap width.
     assert " ".join(parser.description.split()) in " ".join(parser.format_help().split())
+
+
+@pytest.mark.parametrize("verb", sorted({*BUILT_TODAY, *NOT_BUILT_YET}))
+def test_no_verb_describes_a_flag_its_own_parser_does_not_take(verb: str) -> None:
+    """**A help page is one page, and its two halves may not contradict each other.**
+
+    ``edullm shell --help`` described "open an editor over SSH on a machine, with --notebook
+    for Jupyter" and then listed ``--config-dir`` and ``--platform-repository``. ``shell`` is
+    unbuilt, so the sentence was a plan rather than a lie -- and it was still wrong, because
+    the options list under it is argparse's own answer to what may be typed and a reader has
+    no way to tell which half of one page to believe.
+
+    Mutation: describe a flag the verb does not take, on any verb. This is a rule about all
+    nine rather than a fixture for the one that broke it, because the pressure that produced
+    it is ordinary: the four unbuilt verbs carry a plan, and a plan is where a flag nobody
+    has written gets named first.
+
+    Both halves are read off the parser. The usage line is argparse's rendering of every
+    option the verb has, which is the same surface :func:`_nearest_flag` reads for the same
+    reason -- a hand-kept list of what each verb takes would be a second copy of the parser.
+    """
+    parser = build_parser_and_verbs()[1][verb]
+    named = set(findall(r"--[a-z][a-z0-9-]*", parser.description or ""))
+    taken = set(findall(r"--[a-z][a-z0-9-]*", parser.format_usage()))
+
+    assert named <= taken, (
+        f"edullm {verb} --help describes {sorted(named - taken)}, which its own options list "
+        "does not carry"
+    )
 
 
 @pytest.mark.parametrize("retired", sorted(RETIRED))

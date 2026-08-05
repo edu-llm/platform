@@ -544,6 +544,25 @@ class RunFacts:
     def needs_a_dispatch(self) -> bool:
         return self.admitted is not Admitted.NO
 
+    @property
+    def was_found(self) -> bool:
+        """Whether a dispatch in the search window carried this run id at all.
+
+        **THE OTHER TWO WAYS TO BE ``UNSURE`` ARE NOT THIS ONE, AND THE DIFFERENCE DECIDES
+        WHETHER A VERB MAY SPEND A RUNNER.** An admission job still running and one that
+        ended at an unknown point are both uncertainties *about a run this found*: there is
+        a workflow run, a compiled manifest and a page to link, and asking AWS is the honest
+        next question. Finding nothing is a different fact. It says only that the window
+        does not reach the id, which is equally true of a run that finished last month and
+        of an id that was never minted, and neither of those is worth the poll ceiling on a
+        verb that reads.
+
+        ``submission`` is the whole of the test because ``read_run_facts`` fills it in on
+        every branch but that one. A separate flag would be a second answer to a question
+        one field already answers, and the two could disagree.
+        """
+        return self.submission is not None
+
 
 def read_run_facts(
     actions: PlatformActions,

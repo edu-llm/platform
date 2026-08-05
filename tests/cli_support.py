@@ -148,6 +148,7 @@ def invoke(
     cwd: Path,
     monkeypatch: pytest.MonkeyPatch,
     login: str | None = SUBMITTER,
+    config_dir: Path = CONFIG_DIR,
 ) -> tuple[int, str, str]:
     """Run the CLI as a person would, with both streams captured and no ambient identity.
 
@@ -160,6 +161,12 @@ def invoke(
     takes no option carrying a value, which is what lets a first word be read as a verb
     without parsing, and is what lets a retired name be answered with its replacement
     rather than with argparse's list of choices.
+
+    ``config_dir`` is this repository's own ``config/`` unless a test says otherwise, for the
+    reason at the top of this module. The override exists for the one question that is about
+    the directory rather than about its contents: ``check`` now names which reviewed
+    configuration answered, and a case asserting that has to be able to point it somewhere it
+    can recognise in the output.
     """
     monkeypatch.setenv("GH_CONFIG_DIR", str(cwd / "_no-gh-config"))
     if login is None:
@@ -169,7 +176,7 @@ def invoke(
     out, err = io.StringIO(), io.StringIO()
     verb, *rest = argv
     code = main(
-        [verb, "--config-dir", str(CONFIG_DIR), *rest],
+        [verb, "--config-dir", str(config_dir), *rest],
         runner=runner,
         out=out,
         err=err,

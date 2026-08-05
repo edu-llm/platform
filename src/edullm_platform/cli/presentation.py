@@ -20,32 +20,51 @@ file this binary reads, so what is printed is the instance type and the device c
 are read.
 
 NO POLICY NUMBER IS WRITTEN ANYWHERE IN THIS PACKAGE, AND ``test_cli_no_hardcoded_bounds.py``
-is what keeps it that way. Every bound, rate and ceiling that reaches a terminal is
+is what keeps it that way. Every bound, rate, ceiling and count that reaches a terminal is
 interpolated out of the loaded configuration at the moment of printing, so the only way to
 change what ``edullm`` says a limit is is to change the file that is the limit. The rule is
 structural rather than a habit because the runtime bound has already disagreed between the
 documents and the configuration three separate times, and each of those was two copies that
-agreed on the day somebody wrote the second one.
+agreed on the day somebody wrote the second one. It reads a number spelled as an English word
+now, which it did not, and "any of the nine approvers can release it" is the copy that got in
+under it.
+
+AND ONE LINE HERE IS ABOUT THE FILES RATHER THAN THEIR CONTENTS. ``check`` resolves its
+configuration by four routes with the packaged copy beating a checkout's ``config/``, and
+until :func:`config_source_said` existed nothing printed said which had answered. Two runs
+against two configurations were byte-identical, which made the precedence rule invisible to
+the one reader placed to notice it had drifted.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from decimal import Decimal
+from pathlib import Path
 
 from edullm_platform.cli.actions import RunFacts, elapsed_said
+from edullm_platform.cli.configuration import PACKAGED_CONFIG_DIRECTORY, ReviewedConfiguration
 from edullm_platform.cli.preflight import DEFERRED_TO_SUBMIT, Preflight, Refusal
+from edullm_platform.contracts.admission import ApprovalEnvironment
+from edullm_platform.contracts.authorization import (
+    holds_exception_approver_role,
+    holds_routine_approver_role,
+)
 from edullm_platform.contracts.base import serialize_decimal
+from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.policy import ApprovalClass, ApprovalPolicy
 from edullm_platform.contracts.workload import ComputeProfile, WorkloadProfile
 from edullm_platform.execution import CONTAINER_SHAPES
 
 __all__ = [
+    "approvers_said",
+    "config_source_said",
     "plain_decimal",
     "render_preflight",
     "render_refusals",
     "render_run_facts",
     "render_run_listing",
+    "who_may_release",
 ]
 
 #: Where the second column starts. Wide enough for ``experiment`` and the longest label
@@ -53,18 +72,115 @@ __all__ = [
 LABEL_WIDTH = 18
 
 
-def render_preflight(preflight: Preflight, *, policy: ApprovalPolicy) -> str:
-    """The whole of what ``edullm check`` prints, refused or not."""
+def render_preflight(preflight: Preflight, *, configuration: ReviewedConfiguration) -> str:
+    """The whole of what ``edullm check`` prints, refused or not.
+
+    Takes the whole configuration rather than the policy alone, because two of the things
+    printed here are facts about which files answered: who may release at a gate is read off
+    the roster, and the first line names the directory all six came out of.
+    """
+    # One line and never wrapped, unlike every paragraph below it. It is a sentence and a
+    # path, the path is the whole point, and ``_wrap`` breaks at spaces -- so on the install
+    # this exists for, where the directory is a hundred characters of ``site-packages``, the
+    # wrapped form puts "checked against" alone on the first line and helps nobody. A
+    # terminal soft-wraps it and a pipe keeps it one line, which is what a reader greps.
+    source = config_source_said(configuration.directory)
     if preflight.refused:
-        return render_refusals(preflight.refusals)
+        return f"{source}\n\n{render_refusals(preflight.refusals)}"
     blocks = [
         _manifest_block(preflight),
         _cost_block(preflight),
-        _approval_block(preflight, policy),
+        _approval_block(preflight, configuration.policy, configuration.inventory),
         _deferred_block(),
         "no refusals. edullm submit will dispatch this.",
     ]
-    return "\n\n".join(block for block in blocks if block) + "\n"
+    return f"{source}\n\n" + "\n\n".join(block for block in blocks if block) + "\n"
+
+
+def config_source_said(directory: Path) -> str:
+    """Which reviewed configuration answered, on every ``check`` whether it refused or not.
+
+    **THE ONE PERSON THIS IS FOR IS THE ONE THE TOOL WAS HIDING IT FROM.** ``check`` resolves
+    its configuration by four routes and the packaged copy beats a checkout's ``config/``, so
+    a maintainer standing in the platform tree is normally validating against the wheel's
+    frozen copy rather than against the files he is editing. Before this line the two runs
+    printed identical bytes, which made the precedence rule invisible from a terminal to the
+    one reader placed to notice it had drifted.
+
+    ON THE REFUSAL PATH TOO, AND THAT IS THE COMMON CASE RATHER THAN THE THOROUGH ONE. A
+    stale validator's damage is a refusal that is wrong -- a profile it has not been told was
+    promoted, a dataset registered last week -- and a reader deciding whether to believe a
+    refusal is exactly the reader who needs to know which files produced it.
+
+    A path and no colour, like everything else here, so a piped run and a terminal run stay
+    the same bytes.
+    """
+    if directory == PACKAGED_CONFIG_DIRECTORY:
+        return f"checked against {directory}, the copy this install carries"
+    return f"checked against {directory}"
+
+
+def who_may_release(
+    inventory: OrganizationInventory, environment: ApprovalEnvironment
+) -> tuple[str, ...]:
+    """The roster entries holding the role this gate asks for, by the platform's own test.
+
+    Filtered through ``holds_routine_approver_role`` and ``holds_exception_approver_role``
+    rather than by counting ``admins`` and ``team_leads`` here, because those two functions
+    are what admission applies inside AWS. A second reading of the same two lists would agree
+    on the day it was written and stop agreeing the moment either role gained a source -- and
+    a routine run needs an admin *or* a lead, which is a union nothing in the policy file
+    states and which a reader counting one list would get wrong by two.
+
+    Empty for ``run-approval-automatic``. That is a real environment carrying a real branch
+    policy and no reviewer, so nobody releases one and the absent count is the answer rather
+    than a gap.
+    """
+    holds = {
+        ApprovalEnvironment.LEAD: holds_routine_approver_role,
+        ApprovalEnvironment.ADMIN: holds_exception_approver_role,
+    }.get(environment)
+    if holds is None:
+        return ()
+    return tuple(
+        member.github_login
+        for member in inventory.members
+        if holds(inventory, member.github_login)
+    )
+
+
+def approvers_said(inventory: OrganizationInventory, environment: ApprovalEnvironment) -> str:
+    """How many people may release at this gate, counted rather than written down.
+
+    **THE NUMBER THIS REPLACES WAS RIGHT AT ONE GATE BY COINCIDENCE AND WRONG BY SEVEN AT THE
+    OTHER.** Both call sites said "any of the nine approvers can release it" for every
+    non-automatic class. Nine is the size of ``admins`` unioned with ``team_leads``, so it
+    happened to describe ``run-approval-lead``; ``run-approval-admin`` asks only the admins,
+    of whom there are two, and an exception run is disproportionately the owner's because he
+    is the one submitting on the expensive shapes. A sentence that is accidentally true of the
+    cheap path and false of the expensive one is worse than no sentence.
+
+    **AND WHAT IT SAYS IS THE ROSTER'S ANSWER, NOT THE GATE'S, WHICH IS A DIFFERENT FACT.**
+    The reviewed configuration records who holds an approver role and admission enforces
+    exactly that. Which accounts the GitHub environment itself lists is a setting in the
+    organization -- ``run-approval-lead`` is gated by the ``team-leads`` team -- and it lives
+    in no file this repository carries. ``config/organization.yaml`` says so at length and
+    records that the two agreed when somebody last checked by hand. So the second sentence
+    names the gap rather than letting a count read as a promise about the gate, and this
+    stays a pure read of files already loaded: ``check`` answers with no network and must.
+    """
+    count = len(who_may_release(inventory, environment))
+    if not count:
+        return (
+            f"nobody releases a run at {environment.value}. It carries a deployment branch "
+            "policy and no reviewer."
+        )
+    people = "person holds" if count == 1 else "people hold"
+    return (
+        f"{count} {people} the role {environment.value} asks for. Which accounts that gate "
+        "itself lists is a GitHub environment setting rather than part of the reviewed "
+        "configuration, and nothing here reads it."
+    )
 
 
 def render_refusals(refusals: Sequence[Refusal]) -> str:
@@ -206,7 +322,9 @@ def _cost_block(preflight: Preflight) -> str:
     )
 
 
-def _approval_block(preflight: Preflight, policy: ApprovalPolicy) -> str:
+def _approval_block(
+    preflight: Preflight, policy: ApprovalPolicy, inventory: OrganizationInventory
+) -> str:
     approval_class = preflight.approval_class
     cost = preflight.cost
     if approval_class is None or cost is None or preflight.approving_environment is None:
@@ -230,17 +348,33 @@ def _approval_block(preflight: Preflight, policy: ApprovalPolicy) -> str:
         lines.extend(f"  {reason}" for reason in preflight.exceeded)
         return "\n".join(lines)
 
-    lines.extend(f"  {reason}" for reason in _why_not_automatic(preflight, policy))
+    lines.extend(
+        f"  {reason}"
+        for reason in _why_not_automatic(
+            preflight, policy, inventory, preflight.approving_environment
+        )
+    )
     return "\n".join(lines)
 
 
-def _why_not_automatic(preflight: Preflight, policy: ApprovalPolicy) -> list[str]:
+def _why_not_automatic(
+    preflight: Preflight,
+    policy: ApprovalPolicy,
+    inventory: OrganizationInventory,
+    environment: ApprovalEnvironment,
+) -> list[str]:
     """The sentence a routine run earns, which is always "here is what to change".
 
     Sixty-seven cents is the case this exists for. ``gpu-4xa10g``'s cheapest possible
     submission lands just over the automatic bound, so every submission on it costs a
     lead's attention -- and a submitter who is told the figure and the bound can see that
     at a glance where one told only the class cannot.
+
+    The last line is unreachable today and is kept, derived, for when it is not. A routine
+    class means the automatic test failed, and every way it can fail is one of the three
+    above -- but that is a property of ``classify_request`` rather than of this function, and
+    the version of this fallback that wrote a count down was wrong at one of the two gates
+    from the day it was written.
     """
     cost = preflight.cost
     assert cost is not None  # only called with a priced submission
@@ -258,7 +392,7 @@ def _why_not_automatic(preflight: Preflight, policy: ApprovalPolicy) -> list[str
             f"over the automatic bound: {plain_decimal(cost.maximum_runtime_hours)}h is not under "
             f"{plain_decimal(limits.automatic_below_runtime_hours)}h"
         )
-    return reasons or ["any of the nine approvers can release it"]
+    return reasons or [approvers_said(inventory, environment)]
 
 
 def _deferred_block() -> str:
