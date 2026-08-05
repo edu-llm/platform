@@ -39,6 +39,7 @@ from edullm_platform.phase5_capture import (
     released_by_another_person,
 )
 from edullm_platform.phase5_evidence import (
+    GITHUB_ACTIONS_APP_ID,
     LEAD_APPROVAL_REASON,
     AdmittedRunEvidence,
 )
@@ -343,35 +344,89 @@ def test_the_result_manifest_still_names_no_weights_and_biases_run() -> None:
 
 
 # ---------------------------------------------------------------------------------------
-# Criterion 10 -- a member cannot merge a workflow change without a code-owner review
+# Criterion 10 -- a member cannot merge a change the required checks have not passed
+#
+# This criterion used to read "a member cannot merge a workflow change without a code-owner
+# review", and the review was removed from `main` on 2026-08-05 on the owner's instruction:
+# `required_approving_review_count` went to zero and `require_code_owner_reviews` went off.
+# What the old criterion protected was that a change could not land without a second pair of
+# eyes. That property is gone by choice. What replaced it is that a change cannot land
+# without the tests passing, and with the review off the required checks are the whole of
+# what stands between a bad merge and `main` -- so they are what is asserted here.
 # ---------------------------------------------------------------------------------------
 
+#: What a merge to `main` waits on. Written out rather than derived from `ci.yml`, because
+#: the matrix there runs three interpreters and only these two are required: 3.14 reports
+#: and does not block. Deriving the pair would assert the branch requires a check it does
+#: not, and reading the required set out of the workflow that produces it would in any case
+#: be a check that cannot fail -- protection is configured in a browser, and the workflow
+#: knows nothing about which of its jobs somebody made required.
+REQUIRED_CHECKS = ("checks (python 3.12)", "checks (python 3.13)")
 
-def test_the_default_branch_requires_a_review_from_somebody_who_owns_the_code() -> None:
-    """Mutation: assert the review count alone.
 
-    A required review that any member may give is not the control this phase's write grant
-    rests on. Write access to this repository is merge access to five workflow files pinned
-    by name in three IAM trust policies, and to the source and configuration that ship
-    inside the released Lambda zips -- so the count and the code-owner rule are one control
-    and neither half is worth anything alone.
+def test_a_change_reaches_main_only_after_both_required_checks_report_green() -> None:
+    """Mutation: iterate the recorded checks and assert each carries the app id.
+
+    That reads as the same test and passes on a branch with no required checks at all,
+    which is precisely the state it exists to catch. So the two contexts are asserted by
+    name and the pins are asserted against them, rather than against whatever the record
+    happens to hold.
+
+    The app id is half of it. A required context is a string, and any token with write
+    access can post that string through the commit statuses API without a workflow running,
+    so a context required from anybody is a name rather than a test run. Pinned to
+    ``15368`` it can only be reported by a check run this repository's Actions started.
+
+    Force pushes and deletions are here because they are the way round a required check
+    rather than through it. A branch that can be rewritten does not need a merge.
     """
     protection = branch_protection()
 
     assert protection.branch == "main"
-    assert protection.required_approving_review_count >= 1
-    assert protection.require_code_owner_reviews
+    pinned = {check.context: check.app_id for check in protection.required_status_checks}
+    for context in REQUIRED_CHECKS:
+        assert context in pinned, (
+            f"{context} is no longer a required status check, so a red {context} merges; "
+            "with review off this is the only thing holding main"
+        )
+        assert pinned[context] == GITHUB_ACTIONS_APP_ID, (
+            f"{context} is required from app {pinned[context]}, so anything holding a "
+            "token with write access can satisfy it by posting the name"
+        )
+    assert not protection.allow_force_pushes
+    assert not protection.allow_deletions
 
 
-def test_the_control_binds_members_and_the_admins_may_still_bypass_it() -> None:
+def test_no_review_is_required_and_the_record_says_so_in_the_exact_number() -> None:
+    """Mutation: assert the count is not one.
+
+    Any value other than one passes that, including the two somebody sets while meaning to
+    turn the gate off, and including one restored later by a different route. The setting
+    is a browser click that leaves no artifact, so the number is asserted exactly. If this
+    is failing because review was deliberately turned back on, the decision record is what
+    changes first and this test follows it.
+    """
+    protection = branch_protection()
+
+    assert protection.required_approving_review_count == 0, (
+        "main now requires "
+        f"{protection.required_approving_review_count} approving reviews, which is not "
+        "what 'Review on `main` is not required, and the tests still are' records"
+    )
+    assert not protection.require_code_owner_reviews, (
+        "require_code_owner_reviews is back on, and a count of zero does not clear it -- "
+        "GitHub goes on asking for the owning reviewer, so the gate is half restored"
+    )
+
+
+def test_the_checks_bind_members_and_the_admins_may_still_bypass_them() -> None:
     """Mutation: assert ``enforce_admins``.
 
-    The unqualified statement -- nobody may merge a workflow change without a code-owner
-    review -- is false in this repository and asserting it would make the gate claim
-    something untrue. ``enforce_admins`` stays false by decision, because turning it on
-    makes every pull request the author writes wait on the one other code owner. The
-    criterion is therefore about a *member*, and this test records both halves so a reader
-    is not left to infer the second from the absence of an assertion.
+    The unqualified statement -- nobody may merge a change the checks have not passed -- is
+    false in this repository and asserting it would make the gate claim something untrue.
+    ``enforce_admins`` stays false by decision. The criterion is therefore about a *member*,
+    and this test records both halves so a reader is not left to infer the second from the
+    absence of an assertion.
     """
     protection = branch_protection()
 
@@ -379,11 +434,10 @@ def test_the_control_binds_members_and_the_admins_may_still_bypass_it() -> None:
         "enforce_admins was turned on, which is a stronger control than the criterion "
         "claims; the criterion should be widened rather than left understating the account"
     )
-    assert protection.required_status_checks, (
-        "a code-owner review with no required checks beside it lets a member merge a red "
-        "branch, which is the same bypass by another route"
+    assert protection.required_conversation_resolution, (
+        "conversation resolution went with the review, and it was the last thing making a "
+        "comment on a pull request cost the author anything"
     )
-    assert not protection.allow_force_pushes
 
 
 def test_every_path_a_released_lambda_packages_is_owned_by_a_code_owner() -> None:

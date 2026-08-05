@@ -47,13 +47,20 @@ from edullm_platform.evidence import (
 )
 
 __all__ = [
+    "GITHUB_ACTIONS_APP_ID",
     "LEAD_APPROVAL_REASON",
     "SELF_AUTHORIZED_REASONS",
     "AdmittedRunEvidence",
     "BranchProtectionEvidence",
     "PublishedImageEvidence",
+    "RequiredCheckEvidence",
     "RunAuthorizationEvidence",
 ]
+
+#: The GitHub App that reports a check run started by a workflow in this repository. Named
+#: here for the reason :data:`LEAD_APPROVAL_REASON` is: the check that reads it wants one
+#: spelling rather than a bare number sitting in a test with nothing to say what it is.
+GITHUB_ACTIONS_APP_ID: Final = 15368
 
 #: The reason code the entire two-person approval design exists to produce, and which had
 #: never been written in twenty-five dispatches. Named here so the check for it has one
@@ -209,6 +216,29 @@ class PublishedImageEvidence(FreshEvidenceModel):
         return self
 
 
+class RequiredCheckEvidence(ContractModel):
+    """One check a merge waits on, and the app entitled to report it.
+
+    The pair rather than the context alone, and the second half is what the record is worth.
+    A context is a string. A required context with nothing behind it is satisfied by
+    whatever posts that string, and any token with write access can post one through the
+    commit statuses API without a workflow running at all -- so a branch requiring
+    ``checks (python 3.12)`` from anybody requires a name rather than a test run.
+
+    ``app_id`` is optional because GitHub's older ``contexts`` list carries no app, and a
+    record that could not hold the absence would report an unpinned requirement and a
+    pinned one identically.
+    """
+
+    context: SecretFreeStr = Field(min_length=1)
+    app_id: int | None
+
+
+RequiredChecks = Annotated[
+    tuple[RequiredCheckEvidence, ...], BeforeValidator(require_ordered_sequence)
+]
+
+
 class BranchProtectionEvidence(FreshEvidenceModel):
     """How the default branch is protected, and who may go round it.
 
@@ -216,6 +246,13 @@ class BranchProtectionEvidence(FreshEvidenceModel):
     the consequence is that the criterion resting on this record is about what a *member*
     may do -- so the field that makes the criterion narrower than it sounds has to be in the
     evidence, where a reader will see it, rather than only in the prose beside it.
+
+    ``required_approving_review_count`` and ``require_code_owner_reviews`` are still
+    recorded, and both went to zero and false on 2026-08-05. They stay in the record
+    because a field that is captured and off is a statement about a control that is not
+    there, and a field that is absent is a statement about nothing. What holds this branch
+    now is :attr:`required_status_checks`, and the two read together are the whole of the
+    gate.
     """
 
     source: Literal["github"]
@@ -231,4 +268,21 @@ class BranchProtectionEvidence(FreshEvidenceModel):
     allow_force_pushes: bool
     allow_deletions: bool
     required_conversation_resolution: bool
-    required_status_checks: OrderedText = Field(strict=False)
+    required_status_checks: RequiredChecks = Field(strict=False)
+
+    @model_validator(mode="after")
+    def each_context_is_required_once_and_the_capture_is_sorted(self) -> Self:
+        """Contexts sorted and distinct, so the record is the same twice running.
+
+        A duplicate context is a capture that read the same requirement twice and would let
+        a reader count two gates where there is one. An unsorted list is a record whose
+        bytes move when nothing about the branch did, which puts noise in the diff a reader
+        of a committed capture is there to read.
+        """
+        contexts = [check.context for check in self.required_status_checks]
+        if contexts != sorted(set(contexts)):
+            raise ValueError(
+                "required status checks must be captured sorted by context and once each; "
+                f"got {contexts}"
+            )
+        return self
