@@ -52,18 +52,29 @@ image builds its data-parallel config in bfloat16 by default, so
 ``python .edullm/train_on_corpus.py "$EDULLM_RUN_ID"`` is a bfloat16 run carrying no
 bfloat16 token, and this guard accepts it on ``gpu-8xt4``.
 
-**THAT MISS IS BEING CLOSED IN THE IMAGE RATHER THAN HERE, WHICH IS THE RIGHT PLACE FOR IT.**
+**THAT MISS IS CLOSED IN THE IMAGE RATHER THAN HERE, WHICH IS THE RIGHT PLACE FOR IT.**
 Only the process that builds the config can see what the config says. ``edu-llm/OLMo-core``
-`#49 <https://github.com/edu-llm/OLMo-core/pull/49>`_ -- open and not merged as this is
-written -- has the entrypoint read its built config against the device's compute capability
-and exit 73 in the first seconds, before the process group, the model or a single step. So
-the run this guard cannot see is stopped by something that can, and accepting it here stays
-correct rather than becoming a hole somebody has to plug. What brings such a run back into
-*this* guard's view is writing the dtype into the command text --
-``train_module.dp_config.param_dtype=bfloat16``, or the ``--param-dtype`` that PR adds -- at
-which point it is refused before an instance is ever asked for. The refusal below says which
-of the two it checked, in as many words, because a guard that lets a submitter believe it
-covers more than it does is worse than one nobody relies on.
+`#49 <https://github.com/edu-llm/OLMo-core/pull/49>`_ merged on 2026-08-05 as ``7b73022``:
+``train_on_corpus.py`` reads its built config against every visible device's compute
+capability, and exits 73 in the first seconds -- before the process group, the model or a
+single step -- when a device is below 8.0 and the config asks for bfloat16. It also gained
+``--param-dtype``, whose ``float32`` is the answer on a T4. So the run this guard cannot see
+is stopped by something that can, and accepting it here stays correct rather than becoming a
+hole somebody has to plug.
+
+**WHAT THAT MERGE DOES NOT DO IS REACH A SUBMISSION THAT IS NOT BUILT FROM IT.** A run's
+image is derived from the commit the submission declares, which is the whole subject of
+:mod:`edullm_platform.image_resolution`, so an in-container check protects exactly the
+commits that carry it. Reading ``edu-llm/OLMo-core`` on 2026-08-05: twelve ``edullm/**``
+branches touched in the last three days each carry their own ``train_on_corpus.py`` without
+the check, and eight of those twelve launch a separate training entrypoint of their own that
+merging that one file would not touch either. This guard is what stands in front of them
+until they merge, and what brings such a run into its view is unchanged: writing the dtype
+into the command text, ``train_module.dp_config.param_dtype=bfloat16`` or
+``--param-dtype bfloat16``, at which point it is refused before an instance is ever asked
+for. The refusal below says which of the two it checked, in as many words, because a guard
+that lets a submitter believe it covers more than it does is worse than one nobody relies
+on.
 
 **NO WAIVER, WHICH IS WHERE THIS PARTS FROM ITS TWO NEIGHBOURS.**
 ``EDULLM_LAUNCH_CHECK=waived`` and ``EDULLM_CHECKPOINT_CHECK=waived`` both exist because the
@@ -356,8 +367,7 @@ _WHAT_WAS_CHECKED: Final = (
     "data-parallel config in bfloat16 by default, so a command that merely runs that program "
     "is a bfloat16 run this guard cannot see. Writing the dtype into the command is what "
     "brings it back into view: train_module.dp_config.param_dtype=bfloat16, or "
-    "--param-dtype bfloat16 where the image offers that flag, is read here and refused "
-    "before the run costs anything."
+    "--param-dtype bfloat16, is read here and refused before the run costs anything."
 )
 
 

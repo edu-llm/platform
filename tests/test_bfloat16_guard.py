@@ -281,8 +281,8 @@ def test_the_refusal_says_what_it_read_and_what_it_could_not() -> None:
     """Mutation: drop the sentence bounding the claim.
 
     THIS IS THE ASSERTION THAT KEEPS THE GUARD HONEST RATHER THAN THE ONE THAT MAKES IT WORK.
-    The platform's own image sets ``param_dtype=DType.bfloat16`` in ``train_on_corpus.py`` and
-    offers no flag for it, so the most common bfloat16 run in this account carries no
+    The platform's own image defaults ``param_dtype`` to ``DType.bfloat16`` in
+    ``train_on_corpus.py``, so the most common bfloat16 run in this account carries no
     bfloat16 token and is not refused. A submitter who has met this refusal once will
     otherwise conclude the platform knows which runs are bfloat16; it knows which commands
     say so, and the difference has to travel with the message.
@@ -306,18 +306,18 @@ def test_the_bfloat16_run_this_guard_cannot_see_is_accepted() -> None:
     an assertion on purpose" -- on the assumption that whatever closed the gap would make this
     acceptance wrong. Nothing did, because the gap was never closable from here: only the
     process that builds the config can see what the config says. ``edu-llm/OLMo-core`` #49,
-    open and not merged as this is written, has ``train_on_corpus.py`` read its built config
-    against the device's compute capability and exit 73 in the first seconds. Every clause
-    this test rests on survives that: the command below still carries no bfloat16 token, this
-    platform still cannot see inside a program, and accepting is still the right answer for a
-    guard that reads text.
+    merged on 2026-08-05, has ``train_on_corpus.py`` read its built config against the
+    device's compute capability and exit 73 in the first seconds. Every clause this test
+    rests on survives that: the command below still carries no bfloat16 token, this platform
+    still cannot see inside a program, and accepting is still the right answer for a guard
+    that reads text.
 
     What changes is the consequence rather than the verdict. Accepting here used to mean a job
     that was classified, released, admitted, billed and then died minutes in on the first
     kernel that wanted the format. It now means one the image refuses in seconds, before the
-    process group or a single step. Correct and cheap, where it used to be correct and
-    expensive -- and until that PR lands, and until each research branch merges it, still the
-    expensive kind.
+    process group or a single step -- on a commit that carries the check. A run's image is
+    built from the commit it declares, so on a research branch that has not merged that file
+    it is still the expensive kind.
     """
     allow(
         wrapped(
