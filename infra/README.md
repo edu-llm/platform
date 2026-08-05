@@ -2067,3 +2067,39 @@ aws logs filter-log-events \
 ```
 
 Anything other than `0` means every message is coming from the fallback.
+## The exploration route's stacks, in dependency order
+
+| # | Stack | Template | Roles or resources | Applied from |
+| --- | --- | --- | --- | --- |
+| 1 | `sbsandbox-intern-edullm-work` | `infra/work-bucket.yaml` | the `edullm-work` bucket | laptop |
+
+From a laptop, and it is not an IAM stack. `sbsandbox-intern-edullm-infra-deployer` scopes every
+S3 grant it holds to `arn:aws:s3:::sbsandbox-intern-edullm-*`, and the bucket is `edullm-work`, so
+CI is denied at `CreateBucket`. Widening that scope is itself a hand-applied IAM change, to let a
+pipeline create one bucket that is created once.
+
+### Deploying it
+
+```bash
+aws cloudformation deploy \
+  --stack-name sbsandbox-intern-edullm-work \
+  --template-file infra/work-bucket.yaml \
+  --profile sbsandbox \
+  --region us-east-1
+```
+
+Then read the account back rather than the template:
+
+```bash
+aws s3api get-bucket-lifecycle-configuration \
+  --bucket edullm-work \
+  --profile sbsandbox --region us-east-1
+
+aws s3api get-public-access-block \
+  --bucket edullm-work \
+  --profile sbsandbox --region us-east-1
+```
+
+Two rules must come back, `expire-working-objects` and `abort-incomplete-multipart-uploads`, and
+all four public-access flags must be true. No `--capabilities` flag, because the stack creates no
+named IAM resource.

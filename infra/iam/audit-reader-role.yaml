@@ -298,6 +298,7 @@ Resources:
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-run-preview-iam/*
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-notifier-iam/*
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-notifications/*
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-work/*
               # THE ONE WILDCARD RESOURCE IN THIS POLICY, AND IT IS FORCED RATHER THAN CHOSEN.
               # cloudformation:ListStacks has no resource type at all -- the request names no
               # stack, so there is nothing for a resource ARN to match and a policy that
