@@ -429,12 +429,39 @@ def admit(
         # platform was asked for capacity it does not have, which is a thing to record and
         # tell the submitter rather than a reason for the validator to fail the execution
         # and leave no decision behind.
+        #
+        # THIS BRANCH WAS PROPOSED FOR REMOVAL ON 2026-08-05 AND IS KEPT, WHICH IS WORTH
+        # THE PARAGRAPH BECAUSE THE PROPOSAL WAS RIGHT ABOUT EVERYTHING EXCEPT WHAT COMES
+        # AFTER IT. It has fired twice in 158 submissions, both on gpu-1xa10g, both past
+        # the approval gate and therefore both with somebody's signature already spent,
+        # and that is a fair description of a refusal in the wrong place.
+        #
+        # What it cannot be is removed, because there is nothing to fall through to.
+        # ``resolve_execution_target`` failing means no queue ARN and no job-definition
+        # ARN exist for this profile, so the alternative to refusing is this function
+        # raising and the state machine failing the execution with no decision record
+        # written -- the submitter gets less, the record gets nothing, and the account
+        # still cannot run the job. That is worse on every axis than the refusal.
+        #
+        # It is also already unreachable from the submission form, which is where the two
+        # refusals should have been prevented and now are. The compute_profile input is a
+        # `choice`, and tests/test_submission_form_options.py holds its option list equal
+        # in both directions to the set this resolver can answer for. What remains
+        # reachable is the case that actually produced both refusals: this zip carries its
+        # own copy of config/, so a profile promoted on main and not yet released to the
+        # validator resolves on the runner and fails here. No check before the gate can see
+        # that, because every check before the gate reads the fresh files. Cutting the
+        # release is the fix, and infra/README.md and tests/test_pending_releases.py are
+        # where that is enforced.
         return decide(
             reason=AdmissionReason.NO_EXECUTION_TARGET,
             detail=(
                 f"The submission was authorized and has nowhere to run: {exc.reason_code}. "
                 f"Compute profile {manifest.compute_profile!r} is registered and priced, "
-                "and no compute environment deployed by this platform backs it."
+                "and no compute environment deployed by this platform backs it. The "
+                "submission form does not offer a profile in this state, so the usual "
+                "cause is that this validator is running an older config/ than main: "
+                "check infra/admission-validator-release.yaml against the catalog."
             ),
             approval_class=approval_class,
             authorization=authorization,

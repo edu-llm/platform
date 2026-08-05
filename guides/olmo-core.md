@@ -99,11 +99,11 @@ A branch outside those names fails later, at submission, with `commit <sha> has 
 | Digest | Printed in the build's step summary. Leave `image_digest` blank and it is resolved from your commit |
 | Re-running a build | Resumes onto the existing image rather than failing |
 
-**A green build is not the last step, and this one has already cost an afternoon.** The registry scans every image it accepts, and a submission naming an image whose scan has not finished is refused. Measured across the fourteen most recent images, the scan finished a median of about one minute forty seconds after the push, and the slowest of them took 5m41s. Watch for it under **Vulnerabilities** on the package in the registry, and give it two minutes rather than ten.
+**A green build is not the last step, and this one has already cost an afternoon.** The registry scans every image it accepts, and a submission naming an image whose scan has not finished is routed to an admin instead of to your team lead. Measured across the fourteen most recent images, the scan finished a median of about one minute forty seconds after the push, and the slowest of them took 5m41s. Watch for it under **Vulnerabilities** on the package in the registry, and give it two minutes rather than ten.
 
 The scan is the short part of the wait. From pushing a commit to having a submittable image is eight to eleven minutes: six to eight of build for a 4.4 to 4.6 GB image, about a minute of gate jobs, then the scan. One measured example, run `30755029486`, started 15:44:27Z, image pushed 15:53:08Z, scan complete 15:54:45Z, 10m18s end to end.
 
-If you submit inside that window the refusal reads `image_scan_findings_unreviewed`, which says your image carries vulnerabilities nobody has signed off. That is usually not what happened. The scan had not finished, and the platform reported the wrong reason. Wait a few minutes and resubmit the same commit; nothing else about the submission needs changing.
+If you submit inside that window the run becomes an exception and waits on an admin, and the summary on the run page says the scan was still in progress rather than naming any vulnerability. Until 2026-08-05 this was refused outright and nobody could release it. It is now releasable, and the honest thing to do is not to ask: wait a few minutes and resubmit the same commit, because the scan will have finished and the run goes back to your team lead. Nothing else about the submission needs changing.
 
 ## Workload profiles
 
@@ -184,7 +184,9 @@ bash -lc 'python -m torch.distributed.run --nproc-per-node=4 --standalone .edull
 
 Set `--nproc-per-node` to the device count of the shape you picked. `torchrun`, `accelerate launch`, `deepspeed`, `mpirun` and `srun` all work.
 
-**The dtype override is on that line because of which of the ten rows above you can actually get.** `config/capacity.yaml`, measured on 2026-08-04 by asking EC2 for one instance of each, records `gpu-4xt4` and `gpu-8xt4` as the only multi-card shapes that place. The other eight returned insufficient capacity, which is every A10G, L4, L40S, A100 and H100 row in the table. Both survivors are T4, and **T4 has no bfloat16**; the section below is about that. `.edullm/train_on_corpus.py` builds its data-parallel config in bfloat16, so without the override that command is a bfloat16 run on hardware with no bfloat16, and it dies after the machine is billed. That holds on every multi-card shape it can currently land on, not just the eight-card one. Writing the dtype on the command rather than leaving it in code is also what lets the check below see it, so a wrong answer here is refused at submission instead of on the device. Single-card work is unaffected: `gpu-1xa10g` and `gpu-1xl4` both place and both have the format, which is why the command at the top of this guide carries no dtype.
+**The dtype override is on that line because of which of the ten rows above you can actually get.** `config/capacity.yaml`, measured on 2026-08-04 by asking EC2 for one instance of each, records `gpu-4xt4` and `gpu-8xt4` as the only multi-card shapes that place at an instant. Three more arrive after a wait. Both instant survivors are T4, and **T4 has no bfloat16**; the section below is about that. `.edullm/train_on_corpus.py` builds its data-parallel config in bfloat16, so without the override that command is a bfloat16 run on hardware with no bfloat16, and it dies after the machine is billed. Writing the dtype on the command rather than leaving it in code is also what lets the check below see it, so a wrong answer here is refused at submission instead of on the device. Single-card work is unaffected: `gpu-1xa10g` and `gpu-1xl4` both place and both have the format, which is why the command at the top of this guide carries no dtype.
+
+**That override is a fact about `train_on_corpus.py` and not about the platform.** Most of the `edullm/**` branches launch a training entrypoint of their own, and most of those exit 2 on the line above. The table in the bfloat16 section below says which take it.
 
 Leaving the launcher out used to be free and silent: the run trained on one device, billed for four, and exited zero. That is $136 for a quarter of the work over twenty-four hours. It is now refused at submission, and the refusal prints the corrected command. The same check catches too few ranks, too many ranks, and `torchrun` with no `--nproc-per-node` at all.
 
@@ -242,9 +244,28 @@ So treat the refusal as a backstop rather than a guarantee. If you are picking a
 | Sets bfloat16 in code any other way | **Accepted, and it will fail on the device** |
 | Uses fp16 with loss scaling, or fp32 | Fine, and what a T4 is for |
 
-**On a T4 the answer is float32, and float16 is a trap.** `--param-dtype float16` clears both this refusal and the one inside the container, because a T4 does have fp16 in hardware, but OLMo-core ships no gradient scaler: that route is fp16 with no loss scaling, so small gradients underflow to zero and the run trains worse than it looks. `--param-dtype float32`, or `train_module.dp_config.param_dtype=float32`, is the one that is simply correct.
+**On a T4 the answer is float32, and float16 is a trap.** `--param-dtype float16` clears both this refusal and the one inside the container, because a T4 does have fp16 in hardware, but OLMo-core ships no gradient scaler: that route is fp16 with no loss scaling, so small gradients underflow to zero and the run trains worse than it looks. float32 is the one that is simply correct. How you ask for it depends on what your command runs.
 
-**The second row is [OLMo-core#49](https://github.com/edu-llm/OLMo-core/pull/49), merged on 2026-08-05.** It does not reach a run of yours until your own commit carries it, because your image is built from the commit you declare. Every `edullm/**` branch has its own copy of `.edullm/train_on_corpus.py` with the dtype written into it, and most of the active ones launch a separate training entrypoint that sets bfloat16 again, which merging that one file would not touch. So the in-container check arrives on your branch when you merge `main` into it, and not before. Putting `train_module.dp_config.param_dtype=float32` on the command line works today on every branch that runs `train_on_corpus.py`, and is checked at submission, which is why the multi-GPU section above prints it.
+### Which entrypoint takes which spelling
+
+Read against the eight entrypoints the 28 `edullm/**` branches carry, on 2026-08-05. Three of the eight take a dtype off the command line and five exit 2 on one, so the line the section above prints is a remedy for three of them and a dead end for the rest.
+
+| Entrypoint | `--param-dtype float32` | `train_module.dp_config.param_dtype=float32` |
+| --- | --- | --- |
+| `.edullm/train_on_corpus.py` | yes | yes |
+| `.edullm/train_liv_arm.py` | no such flag | yes |
+| `.edullm/probe_group_words.py` | passed through | passed through, and `train_probe` is not an OLMo-core config |
+| `.edullm/curriculum_entrypoint.py` | **exit 2** | **exit 2** |
+| `.edullm/mixlaw_entrypoint.py` | **exit 2** | **exit 2** |
+| `.edullm/skillit_entrypoint.py` | **exit 2** | **exit 2** |
+| `.edullm/token_selection_entrypoint.py` | **exit 2** | **exit 2** |
+| `.edullm/train_skillit_370m.py` | **exit 2** | **exit 2** |
+
+`train_on_corpus.py` and `train_liv_arm.py` call `parse_known_args` and merge whatever is left over into the OLMo-core config, which is what makes a dotted override work. The five below them call `parse_args`, which rejects any argument the parser does not declare, and none of them declares a dtype. `curriculum_entrypoint.py` would still not take one if it did: it re-launches itself under `torchrun` with a fixed list of flags to forward.
+
+**If your entrypoint is one of the five, the command line is not the way and there is no waiver.** Three of them write `param_dtype=DType.bfloat16` into the training config in code, and the other two launch one that does. So on a T4 shape a run under any of them dies on the first kernel that needs the format, whatever your command says, and the submission check above cannot see it coming because there is no bfloat16 token to read. Two things work. Pick a shape whose card has bfloat16, which is every row in the multi-GPU table except the three T4 ones. Or change the dtype in your branch's copy of the entrypoint and submit that commit, which is a code change to your own repository rather than a platform one.
+
+**The second row of the table above is [OLMo-core#49](https://github.com/edu-llm/OLMo-core/pull/49), merged on 2026-08-05.** It does not reach a run of yours until your own commit carries it, because your image is built from the commit you declare. Every `edullm/**` branch has its own copy of `.edullm/train_on_corpus.py`, and merging that one file does not touch a separate entrypoint. So the in-container check arrives on your branch when you merge `main` into it, and not before, and it protects only the branches that run `train_on_corpus.py`.
 
 There is no waiver. The other two checks have one because the waived run still works; a waived bfloat16 run on a T4 does not.
 

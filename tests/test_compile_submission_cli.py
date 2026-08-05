@@ -72,9 +72,10 @@ def resolved(
     *,
     published: list[dict[str, str]] | None = None,
     image_scan: dict[str, Any] | None = None,
+    blocking_findings: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     """The document ``tools/resolve_published_image.py`` writes, in its own shape."""
-    return {
+    document: dict[str, Any] = {
         "published": (
             published
             if published is not None
@@ -82,6 +83,9 @@ def resolved(
         ),
         "image_scan": clean_scan() if image_scan is None else image_scan,
     }
+    if blocking_findings is not None:
+        document["blocking_findings"] = blocking_findings
+    return document
 
 
 def compile_form(
@@ -114,6 +118,8 @@ def compile_form(
             REPOSITORY_URL,
             "--output",
             str(output),
+            "--summary",
+            str(tmp_path / "approver-context.md"),
             "--run-id",
             RUN_ID,
         ]
@@ -121,6 +127,11 @@ def compile_form(
     compiled = json.loads(output.read_text(encoding="utf-8")) if output.exists() else {}
     assert isinstance(compiled, dict)
     return exit_code, compiled
+
+
+def approver_context(tmp_path: Path) -> str:
+    """What the reviewer would read, written by the same call the workflow makes."""
+    return (tmp_path / "approver-context.md").read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------------------
@@ -318,38 +329,98 @@ def test_a_clean_scan_compiles_where_an_absent_one_was_refused(tmp_path: Path) -
     assert compiled["approval_class"] == "routine"
 
 
-def test_an_image_carrying_a_blocking_finding_is_still_refused_before_a_reviewer(
+def test_an_image_carrying_a_blocking_finding_goes_to_the_admin_with_the_findings_named(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The other half. Mutation: read the summary and never let it deny anything.
+    """Policy v4. Mutation: route it to the lead gate, or route it and say nothing.
 
-    A summary nothing can refuse on is a number with no consequence attached, which is the
-    rubber-stamping failure the approver context already had to be designed against.
+    This was refused before a reviewer until 2026-08-05, which meant no approver could
+    release it and the only remedy on offer was editing a security file. It is an exception
+    now, so it reaches the admin gate and one person can decide.
+
+    What that costs if it is done badly is an approval given blind, which is worse than the
+    wall was. So the summary the approver reads has to carry the findings themselves, and
+    the section header is asserted as well as the counts: a sentence buried under the cost
+    table is one somebody scrolls past.
+    """
+    exit_code, compiled = compile_form(
+        tmp_path,
+        document=resolved(
+            image_scan=scan_with(critical=2, high=8),
+            # Two the shipped config/image-exceptions.yaml has never seen, so this is the
+            # unreviewed verdict rather than the reviewed one. The real base image's four
+            # criticals all carry a review, which is what makes them the wrong fixture here.
+            blocking_findings=[
+                {"vulnerability_id": "CVE-2026-90001", "package_name": "perl"},
+                {"vulnerability_id": "CVE-2026-90002", "package_name": "glibc"},
+            ],
+        ),
+    )
+
+    assert exit_code == EXIT_OK
+    assert compiled["approval_class"] == "exception"
+    assert compiled["approving_environment"] == "run-approval-admin"
+
+    summary = approver_context(tmp_path)
+    assert "## Unreviewed image scan findings" in summary
+    assert "2 findings at CRITICAL" in summary
+    assert "CVE-2026-90001 in perl" in summary
+    assert "CVE-2026-90002 in glibc" in summary
+    assert "config/image-exceptions.yaml" in summary
+    assert "Read this before releasing" in summary
+    # And on the log the submitter is already watching, for the same reason the placement
+    # warning is printed there as well as put in the summary.
+    assert "carry no recorded review" in capsys.readouterr().err
+
+
+def test_a_count_with_no_findings_behind_it_does_not_ask_the_admin_to_review_them(
+    tmp_path: Path,
+) -> None:
+    """The verdict the fixture above used to produce by accident, kept on purpose.
+
+    The registry counted four criticals and the resolve job handed over none of them. That
+    is not a set of findings nobody reviewed, it is a set this platform failed to read, and
+    the two send a reader to opposite places. It matters more now than it did as a refusal:
+    an admin can release this one, and the difference between "decide about these CVEs" and
+    "we could not fetch them" is the difference between a judgement and a rubber stamp.
     """
     exit_code, compiled = compile_form(
         tmp_path, document=resolved(image_scan=scan_with(critical=4, high=8))
     )
 
-    assert exit_code == EXIT_REFUSED
-    assert compiled == {}
-    assert "image_scan_findings_unreviewed" in capsys.readouterr().err
+    assert exit_code == EXIT_OK
+    assert compiled["approving_environment"] == "run-approval-admin"
+
+    summary = approver_context(tmp_path)
+    assert "did not read them all" in summary
+    assert "config/image-exceptions.yaml" not in summary
 
 
-def test_a_scan_that_had_not_finished_when_it_was_read_is_refused_rather_than_assumed(
+def test_a_scan_that_had_not_finished_when_it_was_read_says_so_rather_than_naming_a_cve(
     tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # Zero findings and a status of IN_PROGRESS are the same numbers as a clean scan and
-    # the opposite fact. ECR scans asynchronously after the push, so this is what a
-    # submission dispatched a few seconds after a build actually meets.
-    exit_code, _compiled = compile_form(
+    """Mutation: print the unreviewed-findings sentence for every unreviewed verdict.
+
+    Zero findings and a status of IN_PROGRESS are the same numbers as a clean scan and the
+    opposite fact. ECR scans asynchronously after the push, so this is what a submission
+    dispatched a few seconds after a build actually meets. It reaches the admin gate like
+    any other unreviewed digest, and the admin has to be told there is nothing to review
+    yet rather than handed a list of nothing: waiting is the answer here and a judgement is
+    the answer in the test above.
+    """
+    exit_code, compiled = compile_form(
         tmp_path,
         document=resolved(image_scan={**clean_scan(), "status": "IN_PROGRESS"}),
     )
 
-    assert exit_code == EXIT_REFUSED
-    assert "image_scan_findings_unreviewed" in capsys.readouterr().err
+    assert exit_code == EXIT_OK
+    assert compiled["approving_environment"] == "run-approval-admin"
+
+    summary = approver_context(tmp_path)
+    assert "scan as IN_PROGRESS rather than COMPLETE" in summary
+    assert "the scan has to finish first" in summary
+    assert "config/image-exceptions.yaml" not in summary
 
 
 def test_a_commit_with_nothing_published_is_refused_and_told_to_build_it(

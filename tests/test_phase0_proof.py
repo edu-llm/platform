@@ -428,6 +428,12 @@ def test_the_deferred_criteria_are_the_ones_the_tree_records() -> None:
     pull request that promoted it had no way to fail: the nightly carried the disagreement
     for two mornings instead. Nothing about which criteria are deferred needs a suite to
     have been re-run; only the rendering below does.
+
+    Criterion 9 is deferred again as of 2026-08-05, which is the same assertion doing the
+    same job in the other direction. The refusal that closed it was removed because it ran
+    past the approval gate and spent four leads' signatures without ever preventing spend.
+    Attribution is recorded rather than enforced again, the criterion says enforced, and
+    this line is what stops that being a quiet demotion.
     """
     deferred = [
         check
@@ -435,7 +441,7 @@ def test_the_deferred_criteria_are_the_ones_the_tree_records() -> None:
         if check.status is CriterionStatus.DEFERRED
     ]
 
-    assert [check.number for check in deferred] == ["10", "D1"]
+    assert [check.number for check in deferred] == ["9", "10", "D1"]
 
 
 @pytest.mark.slow

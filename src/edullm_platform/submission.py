@@ -733,6 +733,7 @@ def render_approver_context(
     inventory: OrganizationInventory,
     wandb_username: str | None = None,
     placement_note: str | None = None,
+    scan_note: str | None = None,
 ) -> str:
     """What the reviewer reads before deciding, as GitHub step-summary markdown.
 
@@ -747,6 +748,21 @@ def render_approver_context(
     markdown is the step summary on the run page, which is where both of them look -- and
     it sits above the table because a shape that may never start is worth knowing before
     the cost of running it.
+
+    ``scan_note`` is :func:`~edullm_platform.admission.image_scan_refusal_detail`'s sentence
+    for a digest whose registry findings carry no recorded review, and it is passed in for
+    the same reason: the verdict needs the summary, the findings and the exception registry,
+    and this function is given loaded configuration and reads no file.
+
+    **IT IS REQUIRED READING RATHER THAN A NOTE, WHICH IS WHY IT HAS A SECTION AND THE
+    PLACEMENT WARNING DOES NOT.** Until policy v4 an unreviewed digest was denied outright
+    and no approver could release one, so there was nothing for a person to decide and
+    nothing to show them. It is an exception now, which means an admin can release it, and
+    an approval given without the findings in front of the approver is worse than the gate
+    that refused everybody. The sentence names which of the four scan verdicts happened,
+    because only one of them is a judgement anybody can make: a scan that has not finished
+    and a set of findings this platform failed to read are both "come back later" rather
+    than "decide".
     """
     manifest = submission.manifest
     cost = submission.cost
@@ -819,12 +835,35 @@ def render_approver_context(
         lines.append("")
         if exceeded:
             lines.extend(f"- {reason}" for reason in exceeded)
-        else:
+        elif scan_note is None:
             lines.append(
                 "- No routine ceiling is exceeded; the submission is an exception because "
                 "one of its inputs is not registered."
             )
+        if not submission.facts.image_scan_reviewed:
+            lines.append(
+                "- The image carries registry scan findings with no recorded review, which "
+                "is the section below."
+            )
         lines.append("")
+
+    if scan_note is not None:
+        lines.extend(
+            [
+                "## Unreviewed image scan findings",
+                "",
+                scan_note,
+                "",
+                (
+                    "**Read this before releasing.** Until policy v4 this was refused "
+                    "outright and no approver could release it. Releasing it now is your "
+                    "judgement about this digest, recorded against your name. The sentence "
+                    "above says what would clear it instead, and three of the four things "
+                    "it can say are that nobody can review anything yet."
+                ),
+                "",
+            ]
+        )
 
     lines.extend(
         [

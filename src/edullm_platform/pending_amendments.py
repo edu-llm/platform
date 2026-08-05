@@ -456,7 +456,28 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # a diff in a reviewed pull request, and that the two digests beside the reason are not
     # guessable: they have to be read off a build and off the release record, and a reader
     # can rebuild the zip and check both.
-    releases: tuple[PendingRelease, ...] = ()
+    releases: tuple[PendingRelease, ...] = (
+        PendingRelease(
+            function="validator",
+            reason=(
+                "Two refusals were removed from the packaged half of the platform on "
+                "2026-08-05, so both config/policy.yaml and "
+                "contracts/authorization.py moved and the zip's digest with them. "
+                "evaluate_authorization no longer denies a mis-claimed team, which it did "
+                "four times and every time after a lead or an admin had already released "
+                "the run; policy is at v4 and no longer denies an unreviewed image scan "
+                "outright, so classify_request routes it to the admin gate and an admin can "
+                "release what they read. Until the release is cut the deployed validator "
+                "goes on refusing both, which is the previous behaviour rather than a "
+                "broken one: a mis-claimed team is refused after the gate as before, and an "
+                "unreviewed digest is refused rather than routed."
+            ),
+            cleared_by="tools/release_lambda.py --function validator",
+            builds_to="d2c42173589e7c91ff20faeaa7b5b9f705f02e28214ad15fcf782964bf7bf3af",
+            released="4a3dafe6d709ddc972282a4d69f9e948788350a058ff248e18a2cb17d92c9de1",
+            recorded_on=date(2026, 8, 5),
+        ),
+    )
     return one_record_per_function(releases)
 
 

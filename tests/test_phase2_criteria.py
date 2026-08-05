@@ -43,16 +43,19 @@ def test_the_definition_lists_every_check_the_phase_plan_names() -> None:
 
 def test_the_one_deferral_is_the_inherited_one_and_carries_its_trigger() -> None:
     # A deferral without a trigger is a gap wearing a deferral's label. This one is
-    # inherited from Phase 0 and its trigger is a configuration change, which is the
-    # property that makes it re-enter the gate on its own rather than when somebody
-    # remembers.
+    # inherited from Phase 0 and its trigger used to be a configuration change, which is the
+    # property that made it re-enter the gate on its own rather than when somebody
+    # remembered. The configuration change landed on 2026-08-01, the rule went live, and it
+    # was removed on 2026-08-05 for running past the approval gate. So the trigger is now a
+    # reader for team_verified rather than a roster edit, and this asserts the field the
+    # deferral actually turns on rather than the word its first version happened to use.
     deferred = [spec for spec in phase2_criteria() if spec.status is CriterionStatus.DEFERRED]
 
     assert len(deferred) == 1
     (wrong_team,) = deferred
     assert wrong_team.number == "4"
-    assert "member_logins" in (wrong_team.deferral_reason or "")
-    assert "member_logins" in (wrong_team.deferral_trigger or "")
+    assert "team_verified" in (wrong_team.deferral_reason or "")
+    assert "team_verified" in (wrong_team.deferral_trigger or "")
     assert not wrong_team.proving_node_ids
 
 

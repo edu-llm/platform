@@ -26,6 +26,7 @@ import pytest
 
 from edullm_platform import admission, admission_handler, submission
 from edullm_platform.config import load_yaml
+from edullm_platform.contracts.admission import ApprovalEnvironment
 from edullm_platform.contracts.image_scan import (
     ImageScanException,
     ImageScanExceptionRegistry,
@@ -946,9 +947,45 @@ def test_the_shipped_policy_blocks_on_criticals() -> None:
     assert ImageScanSeverity.CRITICAL in shipped_policy().image_scan.blocking_severities
 
 
-def test_the_shipped_policy_names_the_denial_condition() -> None:
-    """Without this the fact is computed, recorded, and never acted on."""
-    assert "image_scan_findings_unreviewed" in shipped_policy().denied_outright
+def test_the_shipped_policy_sends_an_unreviewed_scan_to_the_admin_gate() -> None:
+    """The gate after v4 softened it: an exception a person can release, not a wall.
+
+    Mutation: drop ``image_scan_reviewed`` from ``classify_request``'s exception test. It
+    came out of ``denied_outright`` on 2026-08-05 and that list is now the only thing left
+    holding the gate up, so a policy that names it nowhere and a classifier that ignores it
+    look identical from the config file. This asks the classifier.
+
+    Denied outright means refusable by nobody, so a wrong answer costs the whole route. It
+    fired twice, both against the owner self-approving, and config/image-exceptions.yaml
+    holds zero exceptions against sixteen reviewed findings, so the review process it was
+    forcing does not exist. What survives is that no lead can release one and the approver
+    is shown the findings by name.
+    """
+    policy = shipped_policy()
+    assert "image_scan_findings_unreviewed" not in policy.denied_outright
+
+    unreviewed = RequestFacts.model_validate(
+        {
+            "claimed_team": "memory-split",
+            "repository_registered": True,
+            "dataset_registered": True,
+            "dataset_is_a_corpus": True,
+            "compute_profile_registered": True,
+            "immutable_revision": True,
+            "immutable_image": True,
+            "image_scan_reviewed": False,
+            "estimated_cost_usd": "1",
+            "maximum_runtime_hours": "1",
+            "maximum_attempts": 1,
+        }
+    )
+    assert (
+        classify_request(unreviewed, policy.thresholds, hourly_rate_usd=ROUTINE_RATE)
+        is ApprovalClass.EXCEPTION
+    )
+    assert ApprovalEnvironment.for_approval_class(ApprovalClass.EXCEPTION) is (
+        ApprovalEnvironment.ADMIN
+    )
 
 
 def test_the_shipped_registry_covers_what_the_published_images_actually_carry() -> None:

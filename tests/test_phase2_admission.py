@@ -25,6 +25,7 @@ from edullm_platform.contracts.image_scan import (
     ImageScanVerdict,
     ReviewedVulnerability,
     ScanFinding,
+    image_scan_verdict,
 )
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.manifest import RunManifest
@@ -478,11 +479,8 @@ def test_an_input_that_cannot_be_resolved_is_denied_outright_and_the_condition_n
     )
 
 
-def scan_refusal(
-    *, counted: int, findings: tuple[ScanFinding, ...] | None, reviews: tuple[str, ...] = ()
-) -> str:
-    """The detail one image-scan refusal recorded, so two of them can be read side by side."""
-    registry = ImageScanExceptionRegistry(
+def reviews_for(identifiers: tuple[str, ...]) -> ImageScanExceptionRegistry:
+    return ImageScanExceptionRegistry(
         schema_version=1,
         reviewed_vulnerabilities=tuple(
             ReviewedVulnerability(
@@ -495,21 +493,110 @@ def scan_refusal(
                 recorded_by=ADMIN,
                 recorded_at=RECORDED_AT,
             )
-            for identifier in reviews
+            for identifier in identifiers
         ),
     )
+
+
+def scan_sentence(
+    *, counted: int, findings: tuple[ScanFinding, ...] | None, reviews: tuple[str, ...] = ()
+) -> str:
+    """What one unreviewed scan is described as, so two of them can be read side by side.
+
+    ASKED OF THE FUNCTION RATHER THAN OFF A DECISION RECORD, WHICH IS WHERE THIS SENTENCE
+    LIVES NOW. Until policy v4 it reached a reader only as the tail of a denied-outright
+    refusal detail, and reading it back off ``admit`` was the honest way to test it.
+    ``image_scan_findings_unreviewed`` is an exception rather than an outright denial now,
+    so the same sentence is what ``render_approver_context`` puts in front of the admin who
+    can release the run, and ``admit`` still appends it if any other denied-outright
+    condition fires beside a bad scan. One function, two readers, and this asks the
+    function.
+    """
+    policy = load_approval_policy()
+    registry = reviews_for(reviews)
+    summary = ImageScanSummary(
+        schema_version=1,
+        status=ImageScanStatus.COMPLETE,
+        scanned_at=RECORDED_AT,
+        critical=counted,
+    )
+    return image_scan_refusal_detail(
+        image_scan_verdict(
+            image_digest=UNMATCHED_DIGEST,
+            summary=summary,
+            policy=policy.image_scan,
+            registry=registry,
+            blocking_findings=findings,
+        ),
+        summary=summary,
+        policy=policy.image_scan,
+        registry=registry,
+        blocking_findings=findings,
+    )
+
+
+def test_an_unreviewed_image_is_an_exception_an_admin_can_release_rather_than_a_wall() -> None:
+    """Policy v4. Mutation: put image_scan_findings_unreviewed back in denied_outright.
+
+    Denied outright means refusable by nobody, so a wrong answer costs the whole route and
+    the remedy on offer is editing a security file. It fired twice, both times against the
+    owner self-approving as admin, and config/image-exceptions.yaml holds zero exceptions
+    against sixteen reviewed findings, so nobody was ever going to write one.
+
+    What the softening keeps is asserted beside what it drops. The digest still classifies
+    as an exception, so no lead can release it and the run reaches the admin gate; the
+    findings still come from the registry rather than from the submitter. What is new is
+    that the admin gate can say yes.
+    """
+    findings = tuple(
+        ScanFinding(vulnerability_id=identifier, package_name="perl")
+        for identifier in REVIEWED_CVES
+    )
     outcome = admit_submission(
-        image_scan_registry=registry,
+        approver=ADMIN,
+        approving_environment=ApprovalEnvironment.ADMIN,
+        image_scan_registry=ImageScanExceptionRegistry(schema_version=1),
         image_scan_summary=ImageScanSummary(
             schema_version=1,
             status=ImageScanStatus.COMPLETE,
             scanned_at=RECORDED_AT,
-            critical=counted,
+            critical=len(findings),
         ),
         image_scan_findings=findings,
     )
-    assert outcome.decision.reason is AdmissionReason.DENIED_OUTRIGHT
-    return outcome.decision.detail
+
+    assert outcome.decision.approval_class is ApprovalClass.EXCEPTION
+    assert outcome.decision.accepted is True
+    assert outcome.decision.reason is AdmissionReason.ACCEPTED
+
+
+def test_a_lead_still_cannot_release_an_image_whose_findings_nobody_reviewed() -> None:
+    """The half of the gate the softening does not touch.
+
+    ``classify_request`` refuses to call an unreviewed digest routine, so the lead gate is
+    the wrong gate for it and admission says so. Without this, "an approver can release it"
+    would quietly mean any approver.
+    """
+    findings = tuple(
+        ScanFinding(vulnerability_id=identifier, package_name="perl")
+        for identifier in REVIEWED_CVES
+    )
+    outcome = admit_submission(
+        approver=LEAD,
+        approving_environment=ApprovalEnvironment.LEAD,
+        image_scan_registry=ImageScanExceptionRegistry(schema_version=1),
+        image_scan_summary=ImageScanSummary(
+            schema_version=1,
+            status=ImageScanStatus.COMPLETE,
+            scanned_at=RECORDED_AT,
+            critical=len(findings),
+        ),
+        image_scan_findings=findings,
+    )
+
+    assert outcome.decision.accepted is False
+    assert outcome.decision.reason is AdmissionReason.APPROVAL_ENVIRONMENT_MISMATCH
+    assert ApprovalEnvironment.ADMIN.value in outcome.decision.detail
 
 
 def test_a_scan_this_platform_did_not_read_in_full_says_so_rather_than_blaming_a_reviewer(
@@ -522,7 +609,7 @@ def test_a_scan_this_platform_did_not_read_in_full_says_so_rather_than_blaming_a
     more of them could not have worked, because the findings that would have needed one
     were never fetched.
     """
-    detail = scan_refusal(
+    detail = scan_sentence(
         counted=13,
         findings=tuple(
             ScanFinding(vulnerability_id=identifier, package_name="perl")
@@ -543,7 +630,7 @@ def test_a_finding_nobody_reviewed_still_asks_for_a_review_and_names_it() -> Non
     no review against it and can say that recording one is what clears it. That sentence is
     true here and was false in the refusal above, which is the distinction being drawn.
     """
-    detail = scan_refusal(
+    detail = scan_sentence(
         counted=5,
         findings=tuple(
             ScanFinding(vulnerability_id=identifier, package_name="perl")
@@ -557,22 +644,23 @@ def test_a_finding_nobody_reviewed_still_asks_for_a_review_and_names_it() -> Non
     assert "did not read them all" not in detail
 
 
-def test_the_two_image_scan_refusals_do_not_read_the_same() -> None:
+def test_the_two_image_scan_verdicts_do_not_read_the_same() -> None:
     """Stated once, directly, because the two being indistinguishable is the defect.
 
-    Both refuse and both name ``image_scan_findings_unreviewed``, because that is the
-    condition policy denies on. What must differ is what the sentence after it asks the
-    reader to do.
+    Both are the same condition, so what must differ is what the sentence asks the reader to
+    do. That matters more since v4 rather than less: an admin who can release the run is
+    being asked to tell a set of findings nobody reviewed from a set this platform failed to
+    fetch, and only the first of those is a judgement anybody can make.
     """
     findings = tuple(
         ScanFinding(vulnerability_id=identifier, package_name="perl")
         for identifier in REVIEWED_CVES
     )
-    unread = scan_refusal(counted=13, findings=findings, reviews=REVIEWED_CVES)
-    unreviewed = scan_refusal(counted=4, findings=findings, reviews=REVIEWED_CVES[:3])
+    unread = scan_sentence(counted=13, findings=findings, reviews=REVIEWED_CVES)
+    unreviewed = scan_sentence(counted=4, findings=findings, reviews=REVIEWED_CVES[:3])
 
-    assert "image_scan_findings_unreviewed" in unread
-    assert "image_scan_findings_unreviewed" in unreviewed
+    assert "did not read them all" in unread
+    assert "carries no recorded review" in unreviewed
     assert unread != unreviewed
 
 

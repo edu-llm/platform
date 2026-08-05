@@ -681,6 +681,64 @@ def test_authorization_reason_values_are_stable_machine_readable_codes() -> None
     }
 
 
+def test_the_retired_claimed_team_reason_still_reads_back_off_a_stored_record() -> None:
+    """Mutation: delete the enum member now that nothing returns it.
+
+    Four decision records were written with this reason before the refusal was removed, one
+    of them committed under ``fixtures/evidence/``, and ``AuthorizationReasonValue`` parses
+    the stored string back through this enum. Deleting the member makes those four records
+    unreadable by the code that wrote them, which is the one thing an audit trail may not
+    do. The member is also where ``cli.preflight`` reads the word it refuses with, so the
+    spelling a submitter meets locally cannot drift from the spelling in the history.
+    """
+    stored = AuthorizationDecision.model_validate(
+        decision_payload(granted=False, reason="submitter_not_in_claimed_team")
+    )
+
+    assert stored.reason is AuthorizationReason.SUBMITTER_NOT_IN_CLAIMED_TEAM
+    assert stored.granted is False
+
+
+def test_no_evaluation_against_the_shipped_roster_reaches_the_claimed_team_reason() -> None:
+    """Mutation: put the refusal back for one class, or for one kind of approver.
+
+    Every recorded member, against a team they are not in, on all three approval classes and
+    with each of the three kinds of approver. None of it may refuse. Asserted as a sweep
+    rather than as one case because the branch used to sit above the automatic return and
+    below the roster checks, and a partial reinstatement would leave most of this file green.
+    """
+    inventory = load_organization_inventory()
+    policy = load_approval_policy()
+    recorded = sorted(
+        {
+            login
+            for team in inventory.team_bindings.teams
+            for login in team.member_logins + team.lead_logins
+        }
+    )
+    assert recorded, "the shipped roster records nobody, so this sweep proves nothing"
+
+    for submitter in recorded:
+        for request in (
+            automatic_facts(claimed_team=UNBOUND_TEAM),
+            routine_facts(claimed_team=UNBOUND_TEAM),
+            exception_facts(claimed_team=UNBOUND_TEAM),
+        ):
+            for approver in (None, LEAD_WITHOUT_ADMIN, ADMIN_WITHOUT_LEAD):
+                decision = evaluate_authorization(
+                    submitter,
+                    approver,
+                    request,
+                    policy,
+                    inventory,
+                    hourly_rate_usd=ROUTINE_RATE,
+                )
+                assert (
+                    decision.reason is not AuthorizationReason.SUBMITTER_NOT_IN_CLAIMED_TEAM
+                ), f"{submitter} claiming {UNBOUND_TEAM} was refused for the claim"
+                assert decision.team_verified is False
+
+
 def test_granting_reasons_partition_the_reason_vocabulary() -> None:
     assert GRANTING_REASONS == frozenset(
         {
@@ -750,12 +808,16 @@ def test_an_off_roster_submitter_is_refused_an_automatic_submission() -> None:
     assert decision.reason is AuthorizationReason.SUBMITTER_NOT_IN_ROSTER
 
 
-def test_an_automatic_submission_claiming_a_team_the_submitter_is_not_in_is_refused() -> None:
-    """The third roster check, which sits between the other two and is easy to lose.
+def test_an_automatic_submission_claiming_a_foreign_team_runs_and_records_the_claim() -> None:
+    """The two roster checks stay, and the third one is gone rather than reordered.
 
-    A member whose group is recorded may not book spend to a group they are not in, and an
-    automatic run is spend like any other. Refused for the claim rather than released
-    because it was cheap.
+    A member whose group is recorded and who names a different one is authorized, and the
+    decision record carries ``team_verified`` false. That flag is the whole of what a
+    mis-claimed team now produces.
+
+    Mutation: refuse it again. This branch used to sit between the two roster checks above,
+    it is the only reason in the enum that ever denied anybody, and every one of the four
+    denials was a real researcher whose approval a lead or an admin had already spent.
     """
     decision = evaluate_authorization(
         MEMORY_SPLIT_MEMBER,
@@ -766,8 +828,10 @@ def test_an_automatic_submission_claiming_a_team_the_submitter_is_not_in_is_refu
         hourly_rate_usd=ROUTINE_RATE,
     )
 
-    assert decision.granted is False
-    assert decision.reason is AuthorizationReason.SUBMITTER_NOT_IN_CLAIMED_TEAM
+    assert decision.granted is True
+    assert decision.reason is AuthorizationReason.AUTOMATIC_BELOW_APPROVAL_THRESHOLDS
+    assert decision.claimed_team == CURRICULUM_TEAM
+    assert decision.team_verified is False
 
 
 def test_a_run_over_the_automatic_bounds_still_needs_the_approver_it_always_did() -> None:
@@ -949,20 +1013,21 @@ def test_team_scope_reports_absent_bindings_distinctly_from_a_team_mismatch() ->
 
 
 @pytest.mark.parametrize("claimed_team", [CURRICULUM_TEAM, UNBOUND_TEAM])
-def test_attribution_is_enforced_against_the_shipped_roster(claimed_team: str) -> None:
-    """Mutation: check the claim against the catalog rather than against the submitter.
+def test_attribution_is_recorded_against_the_shipped_roster_and_not_enforced(
+    claimed_team: str,
+) -> None:
+    """Mutation: refuse a claim the roster contradicts, as this used to.
 
-    This test used to assert the opposite. Until 2026-08-01 the roster declared its groups
-    and recorded nobody in any of them, so every claim was unverifiable and every decision
-    carried ``team_verified: false``. Recording the assignments made enforcement live, and
-    the deferral on Phase 0 criterion 9 said in its own text that the line removing that
-    assertion is the line enforcement begins on. This is that line.
+    Both parameters are teams ``caiiris`` is not in. ``curriculum`` is a retired group name
+    the catalog no longer declares and ``not-a-team`` never existed. Neither is refused, and
+    both are recorded: the claim goes on the decision as it was made and ``team_verified``
+    says nothing established it.
 
-    Both parameters are teams ``caiiris`` is not in, and they fail for the same reason by
-    design. ``curriculum`` is a retired group name the catalog no longer declares and
-    ``not-a-team`` never existed, and neither is refused for being absent from the catalog.
-    Both are refused because the submitter is not recorded in them, which is the check the
-    roster comments describe: attribution is read off the submitter, never off the catalog.
+    The refusal that used to be here fired four times against real researchers and every
+    one of them already had an approval spent on it, because this function runs inside AWS
+    on the far side of the gate. The comparison itself did not go away. It happens on the
+    form, which offers eight declared ids, and in ``cli.preflight._check_team``, which asks
+    the same question through the same helper before anything is dispatched.
     """
     inventory = load_organization_inventory()
     assert inventory.team_bindings.teams != (), "the shipped roster declares its groups"
@@ -973,8 +1038,8 @@ def test_attribution_is_enforced_against_the_shipped_roster(claimed_team: str) -
         routine_facts(claimed_team=claimed_team),
         inventory=inventory,
     )
-    assert decision.granted is False
-    assert decision.reason is AuthorizationReason.SUBMITTER_NOT_IN_CLAIMED_TEAM
+    assert decision.granted is True
+    assert decision.reason is AuthorizationReason.ROUTINE_APPROVED_BY_LEAD_OR_ADMIN
     assert decision.claimed_team == claimed_team
     assert decision.team_verified is False
 
@@ -1041,7 +1106,12 @@ def test_a_submitter_naming_their_own_team_is_granted_and_recorded_verified() ->
     assert decision.team_verified is True
 
 
-def test_a_submitter_naming_another_teams_id_is_denied_despite_a_valid_lead_approval() -> None:
+def test_a_submitter_naming_another_teams_id_keeps_the_lead_approval_they_were_given() -> None:
+    """The refusal that spent four approvals, asserted as gone rather than merely absent.
+
+    A lead released this run. Nothing downstream of that signature may take it back over a
+    claim the same roster could have been read for before the gate opened.
+    """
     inventory = two_team_inventory()
     assert inventory.is_team_lead(MEMORY_SPLIT_LEAD) is True
     decision = decide(
@@ -1051,14 +1121,14 @@ def test_a_submitter_naming_another_teams_id_is_denied_despite_a_valid_lead_appr
         inventory=inventory,
     )
     assert decision.approval_class is ApprovalClass.ROUTINE
-    assert decision.granted is False
-    assert decision.reason is AuthorizationReason.SUBMITTER_NOT_IN_CLAIMED_TEAM
+    assert decision.granted is True
+    assert decision.reason is AuthorizationReason.ROUTINE_APPROVED_BY_LEAD_OR_ADMIN
     assert decision.claimed_team == CURRICULUM_TEAM
     assert decision.team_verified is False
     assert AuthorizationReason.SUBMITTER_NOT_IN_CLAIMED_TEAM not in GRANTING_REASONS
 
 
-def test_a_team_id_no_roster_defines_is_denied_the_same_way_as_a_foreign_team() -> None:
+def test_a_team_id_no_roster_defines_is_recorded_the_same_way_as_a_foreign_team() -> None:
     inventory = two_team_inventory()
     assert UNBOUND_TEAM not in {team.team_id for team in inventory.team_bindings.teams}
     decision = decide(
@@ -1067,12 +1137,17 @@ def test_a_team_id_no_roster_defines_is_denied_the_same_way_as_a_foreign_team() 
         routine_facts(claimed_team=UNBOUND_TEAM),
         inventory=inventory,
     )
-    assert decision.granted is False
-    assert decision.reason is AuthorizationReason.SUBMITTER_NOT_IN_CLAIMED_TEAM
+    assert decision.granted is True
     assert decision.team_verified is False
 
 
-def test_a_lead_self_authorizing_cannot_attribute_the_run_to_a_foreign_team() -> None:
+def test_the_verified_flag_is_the_only_thing_a_foreign_team_changes_for_a_lead() -> None:
+    """Two decisions differing in one field, which is what makes the flag load-bearing.
+
+    Mutation: stop computing ``team_verified`` and hard-code it. Nothing else in either
+    decision distinguishes a run whose attribution the roster confirms from one whose
+    attribution nothing established, so this field is the whole of the record.
+    """
     inventory = two_team_inventory()
     own_team = decide(
         MEMORY_SPLIT_LEAD,
@@ -1089,14 +1164,15 @@ def test_a_lead_self_authorizing_cannot_attribute_the_run_to_a_foreign_team() ->
     assert own_team.granted is True
     assert own_team.reason is AuthorizationReason.ROUTINE_SELF_AUTHORIZED
     assert own_team.team_verified is True
-    assert foreign_team.granted is False, (
-        "attribution is checked against the submitter's own membership, independently of who "
-        "holds the authority to approve"
+    assert foreign_team.granted is True
+    assert foreign_team.reason is AuthorizationReason.ROUTINE_SELF_AUTHORIZED
+    assert foreign_team.team_verified is False, (
+        "attribution is read off the submitter's own membership and recorded; the flag is "
+        "what a later reader has instead of a refusal"
     )
-    assert foreign_team.reason is AuthorizationReason.SUBMITTER_NOT_IN_CLAIMED_TEAM
 
 
-def test_an_admin_may_not_attribute_their_run_to_another_teams_budget() -> None:
+def test_an_admin_attributing_a_run_elsewhere_is_recorded_rather_than_refused() -> None:
     inventory = inventory_where_the_admin_belongs_to_memory_split()
     assert inventory.is_admin(TEAMLESS_ADMIN) is True
     assert {team.team_id for team in inventory.teams_for_member(TEAMLESS_ADMIN)} == {
@@ -1117,11 +1193,8 @@ def test_an_admin_may_not_attribute_their_run_to_another_teams_budget() -> None:
     assert own_team.granted is True
     assert own_team.reason is AuthorizationReason.EXCEPTION_SELF_APPROVED_BY_ADMIN
     assert own_team.team_verified is True
-    assert foreign_team.granted is False, (
-        "admin privilege is approval authority; it is not a licence to charge another team's "
-        "budget for the run"
-    )
-    assert foreign_team.reason is AuthorizationReason.SUBMITTER_NOT_IN_CLAIMED_TEAM
+    assert foreign_team.granted is True
+    assert foreign_team.reason is AuthorizationReason.EXCEPTION_SELF_APPROVED_BY_ADMIN
     assert foreign_team.team_verified is False
 
 

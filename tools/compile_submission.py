@@ -24,6 +24,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from edullm_platform.admission import image_scan_refusal_detail
 from edullm_platform.build_tooling import append_step_outputs
 from edullm_platform.canonical import canonical_json_bytes
 from edullm_platform.config import load_yaml
@@ -33,6 +34,7 @@ from edullm_platform.contracts.image_scan import (
     ImageScanExceptionRegistry,
     ImageScanSummary,
     ScanFinding,
+    image_scan_verdict,
 )
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.policy import ApprovalPolicy
@@ -256,6 +258,37 @@ def main(argv: list[str] | None = None) -> int:
     if placement_note is not None:
         print(placement_note, file=sys.stderr)
 
+    # WHAT THE APPROVER HAS TO READ NOW THAT ONE OF THEM CAN RELEASE THIS. Policy v4 moved
+    # image_scan_findings_unreviewed out of denied_outright, so an unreviewed digest is an
+    # exception rather than a refusal nobody could lift. classify_request still sends it to
+    # the admin gate. What was missing was the findings themselves: the admin was being
+    # asked to release a run whose only problem is a set of CVEs the page did not name.
+    #
+    # Derived from the same four-verdict function admission uses for its refusal text,
+    # rather than a second sentence written here, because three of those four verdicts are
+    # not a judgement anybody can make and telling them apart is the whole value of it. The
+    # provenance record is what this reads; admission re-derives all of it from ECR after
+    # the gate and fails closed on disagreement, so this can only understate.
+    scan_note = (
+        None
+        if submission.facts.image_scan_reviewed
+        else image_scan_refusal_detail(
+            image_scan_verdict(
+                image_digest=submission.manifest.image_digest,
+                summary=image_scan_summary,
+                policy=policy.image_scan,
+                registry=image_scan_registry,
+                blocking_findings=blocking_findings,
+            ),
+            summary=image_scan_summary,
+            policy=policy.image_scan,
+            registry=image_scan_registry,
+            blocking_findings=blocking_findings,
+        )
+    )
+    if scan_note is not None:
+        print(scan_note, file=sys.stderr)
+
     document = {
         "run_id": submission.run_id,
         "submitter": args.submitter,
@@ -280,6 +313,7 @@ def main(argv: list[str] | None = None) -> int:
                 inventory=inventory,
                 wandb_username=inventory.wandb_username_for(args.submitter),
                 placement_note=placement_note,
+                scan_note=scan_note,
             ),
             encoding="utf-8",
         )

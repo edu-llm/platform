@@ -498,11 +498,11 @@ def test_policy_yaml_validates_against_contract() -> None:
     project_root = Path(__file__).resolve().parents[1]
     config_path = project_root / "config" / "policy.yaml"
     policy = load_yaml(config_path, ApprovalPolicy)
-    # v3 since the automatic class landed: the two automatic_below_ bounds and a third
-    # route no person releases. Pinned rather than merely pattern-checked so that a policy
-    # change without a version bump fails here, which is the whole reason a decision record
-    # carries the version.
-    assert policy.policy_version == "v3"
+    # v4 since the image-scan gate moved out of denied_outright and into the exception
+    # class. Pinned rather than merely pattern-checked so that a policy change without a
+    # version bump fails here, which is the whole reason a decision record carries the
+    # version.
+    assert policy.policy_version == "v4"
     assert policy.thresholds.routine_maximum_cost_usd == Decimal(500)
     # Twenty-four since the runtime ceiling was measured against real work rather than
     # picked. Twelve made an exception of every sweep between sixteen and twenty hours, so
@@ -517,15 +517,19 @@ def test_policy_yaml_validates_against_contract() -> None:
     assert policy.routine_approver_role == "team_lead"
     assert policy.exception_approver_roles == ("platform_admin",)
     assert policy.image_scan.blocking_severities == (ImageScanSeverity.CRITICAL,)
+    # image_scan_findings_unreviewed came off this list in v4 and is deliberately absent
+    # rather than reordered. It is still a legal value of the field and still derived as a
+    # fact; what changed is that classify_request routes it to the admin gate instead of
+    # policy refusing it outright, so an admin who reads the findings can release the run.
     assert policy.denied_outright == (
         "unregistered_repository",
         "unregistered_dataset",
         "unregistered_compute_profile",
         "mutable_repository_revision",
         "mutable_image_reference",
-        "image_scan_findings_unreviewed",
         "dataset_is_not_a_corpus",
     )
+    assert "image_scan_findings_unreviewed" not in policy.denied_outright
 
 
 def test_approval_policy_requires_the_version_that_produced_a_decision() -> None:

@@ -685,10 +685,14 @@ def _check_team(
         ]
     if submitter is None:
         return []
-    # Asked exactly as ``evaluate_authorization`` asks it, including the part that makes it
-    # safe: membership is read per submitter, so somebody whose own membership is unrecorded
-    # is not refused a team. That branch is the reason this reads the same helper rather
-    # than comparing two lists here.
+    # THE ONLY PLACE THIS IS STILL ASKED OF A PERSON, WHICH IS WHY IT READS THE SHARED
+    # HELPER RATHER THAN COMPARING TWO LISTS HERE. ``evaluate_authorization`` used to ask it
+    # again inside AWS and refuse there; it does not, because that refusal landed past the
+    # approval gate and its only recorded effect was four researchers whose lead had already
+    # released them. What survives inside AWS is the ``team_verified`` flag on the decision
+    # record. So this is a laptop refusal costing two seconds, and the part that makes it
+    # safe is unchanged: membership is read per submitter, so somebody whose own membership
+    # is unrecorded is not refused a team.
     if inventory.teams_for_member(submitter) and not belongs_to_claimed_team(
         inventory, submitter=submitter, claimed_team=request.team
     ):
@@ -700,10 +704,12 @@ def _check_team(
                 code=AuthorizationReason.SUBMITTER_NOT_IN_CLAIMED_TEAM.value,
                 detail=(
                     f"the roster records {submitter} on {mine} and this submission claims "
-                    f"{request.team!r}. Authorization compares the two after the gate opens, "
-                    "so a mis-claimed team is an approval spent on a run admission refuses. "
-                    "Pass --team with one of yours, or add yourself to that group in "
-                    "config/organization.yaml."
+                    f"{request.team!r}. Team is what cost attribution groups on, so a run "
+                    "under a group you are not in is missing from that group's total and "
+                    "counted against one that did not do the work. Nothing inside AWS "
+                    "refuses this -- the decision record simply carries team_verified false "
+                    "-- so here is where it is worth saying. Pass --team with one of yours, "
+                    "or add yourself to that group in config/organization.yaml."
                 ),
             )
         ]

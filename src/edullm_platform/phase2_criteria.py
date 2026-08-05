@@ -256,22 +256,30 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
             supporting_node_ids=(
                 *_ids(
                     AUTHZ,
-                    "test_a_lead_self_authorizing_cannot_attribute_the_run_to_a_foreign_team",
+                    "test_the_verified_flag_is_the_only_thing_a_foreign_team_changes_for_a_lead",
+                ),
+                *_ids(
+                    AUTHZ,
+                    "test_no_evaluation_against_the_shipped_roster_reaches_the_claimed_team_reason",
                 ),
             ),
             deferral_reason=(
-                "No team in config/organization.yaml records a member_logins entry, so no "
-                "submitter's membership is knowable and the rule has nobody to reject. Every "
-                "decision records team_verified false in consequence, which is what makes the "
-                "unverified attribution visible in the audit trail rather than silent. The "
-                "teams themselves are declared; it is who is in them that nothing has ever "
-                "recorded. Carried forward from Phase 0's deferral of the same question."
+                "Deferred first because no team in config/organization.yaml recorded a "
+                "member_logins entry, so no submitter's membership was knowable and the rule "
+                "had nobody to reject. The assignments landed on 2026-08-01 and the rule went "
+                "live, and it was removed on 2026-08-05: it ran inside admission, downstream "
+                "of the approval gate, so a wrong-team run was refused only after a lead had "
+                "already released it. Four submissions met it and all four were real "
+                "researchers with an approval already spent. Every decision still records "
+                "team_verified, which is what makes an unverified attribution visible in the "
+                "audit trail rather than silent, and it is now the whole of the answer."
             ),
             deferral_trigger=(
-                "Recording member_logins in config/organization.yaml once each group's "
-                "assignments exist. Enforcement goes live with no code change, "
-                "team_verified starts reporting true, and this must be re-recorded as "
-                "covered or argued again."
+                "A reader for team_verified. It is false on 79 of the 158 decision records "
+                "written so far and nothing surfaces it on a schedule. A cost report that "
+                "lists the runs it is false on closes this as recorded. Refusing again would "
+                "have to happen before the approval gate, on the form or in edullm check, or "
+                "it buys the same nothing it bought the first time."
             ),
             scope_limits=(
                 (
