@@ -35,6 +35,7 @@ from typing import Final
 from .facts import RunEndedFacts
 
 __all__ = [
+    "NAMED_CELLS",
     "RUNS_CHANNEL",
     "Message",
     "duration",
@@ -133,6 +134,64 @@ def _spent_only(facts: RunEndedFacts) -> str:
     return f"{money(facts.spent_usd)} spent"
 
 
+#: How many failed cell indexes a message names before it stops counting them out. A sweep
+#: that lost most of its cells is one somebody opens the run id of and goes to look at, and a
+#: line carrying a hundred and fifty numbers is a line nobody reads at all.
+NAMED_CELLS: Final = 10
+
+
+def _cell_clause(facts: RunEndedFacts) -> str:
+    """How the array went, in the terms the eval group acts on.
+
+    `all 20 cells succeeded` rather than `20 of 20 succeeded, 0 failed`. A zero somebody has
+    to read past is a zero that stops being read.
+    """
+    total, failed = facts.cells_total, facts.cells_failed or 0
+    if failed == 0:
+        return f"all {total} cells succeeded"
+    return f"{facts.cells_succeeded} of {total} cells succeeded, {failed} failed"
+
+
+def _array_spend_clause(facts: RunEndedFacts) -> str:
+    """What a sweep cost, or which of the two ways that is not known.
+
+    THREE OUTCOMES AND NOT TWO, AND THE MIDDLE ONE IS THE POINT. A ceiling rendered where a
+    spend belongs reads exactly like a measurement and is several times the real figure, so
+    a sweep whose cells were not read says that rather than showing $55.83 in the slot the
+    money goes in. A sweep whose queue nothing prices has no ceiling either, and says the
+    one thing that covers both.
+    """
+    if facts.authorised_usd is None:
+        return money(None)
+    if facts.spent_usd is None:
+        return f"spend not read, {money(facts.authorised_usd)} authorised"
+    if facts.cells_measured != facts.cells_total:
+        return (
+            f"at least {money(facts.spent_usd)} spent over the {facts.cells_measured} cells "
+            f"that were read, {money(facts.authorised_usd)} authorised"
+        )
+    return f"{money(facts.spent_usd)} spent, {money(facts.authorised_usd)} authorised"
+
+
+def _failed_cell_clause(facts: RunEndedFacts) -> str:
+    """Which cells died, where that was read, and otherwise that it was not.
+
+    Empty for a sweep that lost nothing. There is nothing to name and a sentence saying so
+    is a sentence between the reader and the next message.
+    """
+    if (facts.cells_failed or 0) == 0:
+        return ""
+    if facts.failed_cell_indexes is None:
+        return " Which cells failed was not read."
+    named = facts.failed_cell_indexes[:NAMED_CELLS]
+    listed = ", ".join(str(index) for index in named)
+    if len(facts.failed_cell_indexes) > NAMED_CELLS:
+        return f" Cells {listed} failed, and {len(facts.failed_cell_indexes) - NAMED_CELLS} more."
+    if len(named) == 1:
+        return f" Cell {listed} is the one that failed."
+    return f" Cells {listed} failed."
+
+
 def render_run_ended(facts: RunEndedFacts) -> Message:
     """One ended run, as one line in the runs channel.
 
@@ -140,6 +199,25 @@ def render_run_ended(facts: RunEndedFacts) -> Message:
     urgent version of the same sentence, and splitting them into two events would be two
     subscriptions to the same fact.
     """
+    if facts.cells_total is not None:
+        # WHY THIS SAYS BOTH FIGURES AND HOW IT GETS THE FIRST ONE.
+        #
+        # The array parent's terminal event carries no attempts, so nothing in it says what
+        # twenty cells burned. The ceiling is in it, through the attempt timeout, the retry
+        # count and the array size. The spend is read from Batch, which has already moved
+        # every child to a terminal status by the time the parent goes terminal, and the
+        # failed indexes come off the child job ids in the same answer.
+        #
+        # No duration. `ran 9h45m` on a sweep would be the sum across cells that ran beside
+        # each other, which is not a wall clock anybody experienced and reads as one.
+        return Message(
+            channel=RUNS_CHANNEL,
+            text=(
+                f"{_who(facts)} · {_which(facts)} · {_cell_clause(facts)} · "
+                f"{_array_spend_clause(facts)} on {_where(facts)}."
+                f"{_failed_cell_clause(facts)}"
+            ),
+        )
     if facts.outcome == "succeeded":
         body = f"{_spend_clause(facts)} · ran {duration(facts.seconds_spent)} on {_where(facts)}."
     elif facts.outcome == "cancelled":

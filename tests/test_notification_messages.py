@@ -149,3 +149,77 @@ def test_the_wording_module_reaches_nothing_that_opens_a_socket() -> None:
     forbidden = {"urllib", "http", "socket", "boto3", "botocore", "requests"}
     assert not (imported & forbidden), f"the renderer reaches {sorted(imported & forbidden)}"
     assert "delivery" not in source
+
+
+def test_a_fan_out_posts_once_and_says_what_it_spent_and_which_cell_died(
+    catalogs: Catalogs,
+) -> None:
+    """It says spent as well as authorised, which the earlier version of this could not.
+
+    The parent event carries no attempts, so nothing in it says what twenty cells burned.
+    That is read from Batch, which has already moved every child to a terminal status by the
+    time the parent goes terminal. The index comes off the child job id in the same answer.
+    """
+    from tests.test_notification_facts import ARRAY_PARENT_JOB_ID, cells
+
+    envelope = json.loads(
+        (EVENTS / "batch-array-parent-failed.sanitized.json").read_text(encoding="utf-8")
+    )
+    facts = read_run_ended(envelope, catalogs=catalogs, cell_lister=cells(ARRAY_PARENT_JOB_ID))
+    assert facts is not None
+
+    message = render_run_ended(facts)
+
+    assert message.channel == RUNS_CHANNEL
+    assert message.text == (
+        "Aryan Verma · plan-b-phase0-100m-superbpe-eval · 19 of 20 cells succeeded, 1 failed "
+        "· $18.14 spent, $55.83 authorised on gpu-1xl40s. Cell 13 is the one that failed."
+    )
+
+
+def test_a_fan_out_whose_cells_were_not_read_says_so_rather_than_showing_a_ceiling(
+    catalogs: Catalogs,
+) -> None:
+    """MUTATION: FALL BACK TO THE CEILING AND CALL IT SPEND.
+
+    A ceiling rendered where a spend belongs is the one wrong answer this message must not
+    give, because $55.83 in the spend slot reads exactly like a measurement and is three
+    times the real figure. Unknown is said instead, and the failed cells go unnamed with it,
+    because the same call would have answered both.
+    """
+    message = rendered("batch-array-parent-failed", catalogs)
+
+    assert message.text == (
+        "Aryan Verma · plan-b-phase0-100m-superbpe-eval · 19 of 20 cells succeeded, 1 failed "
+        "· spend not read, $55.83 authorised on gpu-1xl40s. Which cells failed was not read."
+    )
+
+
+def test_a_fan_out_that_lost_nothing_does_not_say_zero_failed(catalogs: Catalogs) -> None:
+    from tests.test_notification_facts import ARRAY_PARENT_JOB_ID, FakeCellLister
+
+    envelope = json.loads(
+        (EVENTS / "batch-array-parent-failed.sanitized.json").read_text(encoding="utf-8")
+    )
+    envelope["detail"]["status"] = "SUCCEEDED"
+    envelope["detail"]["arrayProperties"]["statusSummary"] = {"SUCCEEDED": 20, "FAILED": 0}
+    lister = FakeCellLister(
+        {
+            "SUCCEEDED": [
+                {
+                    "jobId": f"{ARRAY_PARENT_JOB_ID}:{index}",
+                    "status": "SUCCEEDED",
+                    "startedAt": 1785965337885,
+                    "stoppedAt": 1785965337885 + 1_800_000,
+                }
+                for index in range(20)
+            ]
+        }
+    )
+    facts = read_run_ended(envelope, catalogs=catalogs, cell_lister=lister)
+    assert facts is not None
+
+    assert render_run_ended(facts).text == (
+        "Aryan Verma · plan-b-phase0-100m-superbpe-eval · all 20 cells succeeded "
+        "· $18.61 spent, $55.83 authorised on gpu-1xl40s."
+    )

@@ -322,3 +322,160 @@ def test_the_field_read_out_of_the_intent_record_is_one_the_contract_declares() 
     assert intent_key("run_019fd3cc-79a0-70f5-aa29-6db4a2061a61") == (
         "intent/run_019fd3cc-79a0-70f5-aa29-6db4a2061a61.json"
     )
+
+
+def test_an_array_parent_carries_the_cell_counts(catalogs: Catalogs) -> None:
+    facts = read_run_ended(envelope("batch-array-parent-failed"), catalogs=catalogs)
+
+    assert facts is not None
+    assert facts.cells_total == 20
+    assert facts.cells_failed == 1
+    assert facts.cells_succeeded == 19
+    assert facts.compute_profile == "gpu-1xl40s"
+
+
+def test_an_array_parent_prices_the_ceiling_across_every_cell(catalogs: Catalogs) -> None:
+    """The parent event carries no attempts, so there is no window in it to price.
+
+    What it does carry is the ceiling: the attempt timeout, the retry count and the array
+    size. gpu-1xl40s is $1.861 an hour, ninety minutes, one attempt, twenty cells.
+    """
+    facts = read_run_ended(envelope("batch-array-parent-failed"), catalogs=catalogs)
+
+    assert facts is not None
+    assert facts.authorised_usd == Decimal("55.83")
+
+
+def test_an_unread_fan_out_has_no_spend_rather_than_a_spend_of_zero(
+    catalogs: Catalogs,
+) -> None:
+    """MUTATION: PRICE THE UNREAD PARENT AT ZERO. It is the cheapest-looking wrong answer.
+
+    Twenty cells that each ran half an hour and a listing nobody made produce the same empty
+    attempts array. `$0.00 spent` reads as a sweep that cost nothing, which is a claim about
+    the run; None reads as a figure nobody has, which is a claim about the reader. Only the
+    second is true.
+    """
+    facts = read_run_ended(envelope("batch-array-parent-failed"), catalogs=catalogs)
+
+    assert facts is not None
+    assert facts.seconds_spent == 0
+    assert facts.spent_usd is None
+    assert facts.cells_measured is None
+    assert facts.failed_cell_indexes is None
+
+
+class FakeCellLister:
+    """One page per status, which is the whole of what the cell reader asks for."""
+
+    def __init__(self, by_status: dict[str, list[dict[str, object]]]) -> None:
+        self.by_status = by_status
+        self.arguments: list[dict[str, object]] = []
+
+    def list_jobs(self, **arguments: object) -> dict[str, object]:
+        self.arguments.append(dict(arguments))
+        return {"jobSummaryList": self.by_status.get(str(arguments["jobStatus"]), [])}
+
+
+def cells(parent: str) -> FakeCellLister:
+    """Nineteen cells that ran half an hour each, and cell 13 that died at fifteen minutes."""
+    return FakeCellLister(
+        {
+            "SUCCEEDED": [
+                {
+                    "jobId": f"{parent}:{index}",
+                    "status": "SUCCEEDED",
+                    "startedAt": 1785965337885,
+                    "stoppedAt": 1785965337885 + 1_800_000,
+                }
+                for index in range(20)
+                if index != 13
+            ],
+            "FAILED": [
+                {
+                    "jobId": f"{parent}:13",
+                    "status": "FAILED",
+                    "startedAt": 1785965337885,
+                    "stoppedAt": 1785965337885 + 900_000,
+                }
+            ],
+        }
+    )
+
+
+ARRAY_PARENT_JOB_ID = "77b6ed8a-6d2b-5f56-c540-cfb4e8f5545d"
+
+
+def test_a_read_fan_out_says_what_it_spent_and_which_cell_died(catalogs: Catalogs) -> None:
+    """WHAT THE PARENT EVENT COULD NOT SAY AND BATCH CAN. Mutation: drop the cell read.
+
+    Nineteen cells at 1800 seconds and one at 900 is 35,100 seconds, and gpu-1xl40s is
+    $1.8610 an hour, so the sweep cost $18.14 against a ceiling of $55.83. Neither figure is
+    derivable from the parent event, which carries an empty attempts array and a count.
+
+    Two calls rather than one, because ListJobs defaults to RUNNING when no status is given.
+    Both terminal statuses are asked for, and a terminal parent guarantees every child is in
+    one of them.
+    """
+    lister = cells(ARRAY_PARENT_JOB_ID)
+
+    facts = read_run_ended(
+        envelope("batch-array-parent-failed"), catalogs=catalogs, cell_lister=lister
+    )
+
+    assert facts is not None
+    assert facts.seconds_spent == 35100
+    assert facts.spent_usd == Decimal("18.14")
+    assert facts.authorised_usd == Decimal("55.83")
+    assert facts.cells_measured == 20
+    assert facts.failed_cell_indexes == (13,)
+    assert [call["jobStatus"] for call in lister.arguments] == ["SUCCEEDED", "FAILED"]
+    assert {call["arrayJobId"] for call in lister.arguments} == {ARRAY_PARENT_JOB_ID}
+
+
+def test_a_refused_cell_listing_leaves_the_spend_unknown_and_never_raises(
+    catalogs: Catalogs,
+) -> None:
+    """THE DIRECTION TO BE WRONG IN, and the same one Task 6 takes for checkpoints.
+
+    A listing that was refused is not evidence that a sweep was free. Every failure here is
+    an unknown spend and an unnamed set of cells, and none of them loses the message: the
+    counts are in the event and are worth posting on their own.
+    """
+
+    class RefusingLister:
+        def list_jobs(self, **arguments: object) -> dict[str, object]:
+            raise RuntimeError("AccessDeniedException")
+
+    facts = read_run_ended(
+        envelope("batch-array-parent-failed"), catalogs=catalogs, cell_lister=RefusingLister()
+    )
+
+    assert facts is not None
+    assert facts.spent_usd is None
+    assert facts.cells_measured is None
+
+
+def test_a_single_run_never_asks_batch_anything(catalogs: Catalogs) -> None:
+    """Mutation: read the cells for every run.
+
+    A run that is not an array carries its own attempts in the event, so the spend is already
+    exact and a Batch call would buy nothing and cost a request on every one of the nine
+    messages a day.
+    """
+    lister = cells(ARRAY_PARENT_JOB_ID)
+
+    read_run_ended(envelope("batch-succeeded"), catalogs=catalogs, cell_lister=lister)
+
+    assert lister.arguments == []
+
+
+def test_an_array_child_owes_nobody_a_message(catalogs: Catalogs) -> None:
+    """THE WHOLE FAN-OUT DECISION, AS ONE ASSERTION. Mutation: drop the index check.
+
+    A twenty-checkpoint sweep is one event with one result. At one message per cell the eval
+    group's normal workflow was fifty-seven of the ninety-two messages a day, and rolling it
+    up is what makes keeping the run-ended message affordable at all. It costs latency: the
+    sweep says nothing until its last cell lands.
+    """
+    assert read_run_ended(envelope("batch-array-child-failed"), catalogs=catalogs) is None

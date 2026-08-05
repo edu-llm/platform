@@ -84,11 +84,14 @@ __all__ = [
     "CENTS",
     "DEFAULT_LINEAGE_BUCKET",
     "LINEAGE_BUCKET_VARIABLE",
+    "MAXIMUM_CELL_PAGES",
     "ORGANIZATION_FILENAME",
     "SUBMITTER_FIELD",
     "TARGETS_FILENAME",
     "TEAM_VARIABLE",
+    "TERMINAL_CELL_STATUSES",
     "Catalogs",
+    "CellLister",
     "IntentReader",
     "Outcome",
     "RunEndedFacts",
@@ -146,6 +149,20 @@ _TERMINAL: Final[Mapping[str, Outcome]] = {"SUCCEEDED": "succeeded", "FAILED": "
 #: ``lifecycle_projection.CANCELLATION_REASON_MARKERS`` so the two cannot drift.
 CANCELLATION_MARKERS: Final = ("edullm:cancelled",)
 
+#: The two statuses an array's cells are in once their parent is terminal. Both are asked
+#: for because ``ListJobs`` answers about ``RUNNING`` when no status is given, which is the
+#: one status a finished sweep has none of. Asking for the other five as well would be five
+#: more requests for five empty answers.
+TERMINAL_CELL_STATUSES: Final = ("SUCCEEDED", "FAILED")
+
+#: How many pages of cells this will follow per status before giving up. A ceiling rather
+#: than an unbounded loop, for the reason ``lifecycle_projection.MAXIMUM_LISTING_PAGES``
+#: carries one: this runs inside an event handler with a timeout, and a store that kept
+#: handing back a token would spend the whole of it. Reaching it abandons the read rather
+#: than reporting what was seen so far, so the message says the spend was not read instead
+#: of naming a figure that is missing an arbitrary set of cells.
+MAXIMUM_CELL_PAGES: Final = 20
+
 
 @dataclass(frozen=True)
 class Catalogs:
@@ -201,6 +218,17 @@ class RunEndedFacts:
     cells_total: int | None
     cells_failed: int | None
     cells_succeeded: int | None
+    #: How many of an array's cells the Batch listing accounted for, and None where no
+    #: listing happened. Held apart from ``cells_total`` because they answer different
+    #: questions: the total is what the event says was submitted, and this is what was read.
+    #: Equal is the normal case and the message says a plain figure; short means the spend is
+    #: a floor and the message says so; None means nobody looked and the message says that
+    #: instead of showing a ceiling in the slot a measurement belongs in.
+    cells_measured: int | None
+    #: Which cells failed, taken off the child job ids in the same answer that carried the
+    #: windows. None where the listing did not happen, which is a different sentence from an
+    #: empty tuple: empty means every cell finished.
+    failed_cell_indexes: tuple[int, ...] | None
 
 
 def queue_name_of(detail: Mapping[str, Any]) -> str | None:
@@ -239,6 +267,20 @@ class IntentReader(Protocol):
     """
 
     def get_object(self, **arguments: Any) -> Any: ...
+
+
+class CellLister(Protocol):
+    """The one Batch call this module makes, described so mypy has something to check.
+
+    Reading the cells rather than the ``attempt/`` records under the same run id, and the
+    reason is a race rather than a preference. The recorder writes those records in answer
+    to the same events that drive this function, and the parent's terminal event is the last
+    to arrive: measured 2026-08-05, the final cell's record lands in the same second as the
+    parent's event or a second after it. Batch has no such race, because it moves an array
+    parent to a terminal status only once every child is already terminal.
+    """
+
+    def list_jobs(self, **arguments: Any) -> Any: ...
 
 
 def intent_key(run_id: str) -> str:
@@ -449,11 +491,119 @@ def _person(
     )
 
 
+def _cells(detail: Mapping[str, Any]) -> tuple[int, int, int] | None:
+    """Size, succeeded and failed for an array parent, or None because this is not one.
+
+    Batch distinguishes the two by which key it fills. A parent carries ``size`` and a
+    summary over its children; a child carries ``index`` and an empty summary. Reading the
+    presence of ``size`` rather than the absence of ``index`` is the direction that fails
+    safe: an array shape Batch adds later without an index would be treated as a child and
+    say nothing, rather than as a parent and say something wrong.
+    """
+    properties = detail.get("arrayProperties")
+    if not isinstance(properties, Mapping):
+        return None
+    size = properties.get("size")
+    if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
+        return None
+    summary = properties.get("statusSummary")
+    summary = summary if isinstance(summary, Mapping) else {}
+    succeeded = summary.get("SUCCEEDED")
+    failed = summary.get("FAILED")
+    return (
+        size,
+        succeeded if isinstance(succeeded, int) and not isinstance(succeeded, bool) else 0,
+        failed if isinstance(failed, int) and not isinstance(failed, bool) else 0,
+    )
+
+
+def _is_array_child(detail: Mapping[str, Any]) -> bool:
+    properties = detail.get("arrayProperties")
+    if not isinstance(properties, Mapping):
+        return False
+    index = properties.get("index")
+    return isinstance(index, int) and not isinstance(index, bool)
+
+
+def _cell_index(job_id: object) -> int | None:
+    """The cell's index, which is the suffix of its Batch job id.
+
+    ``<parent>:13`` is how Batch names the fourteenth child, and it is the only place the
+    index appears in a ``ListJobs`` summary. None for anything that does not parse, so a
+    shape Batch changes later costs the indexes and not the spend.
+    """
+    if not isinstance(job_id, str) or ":" not in job_id:
+        return None
+    suffix = job_id.rsplit(":", 1)[1]
+    return int(suffix) if suffix.isdigit() else None
+
+
+def _cells_spent(
+    lister: CellLister | None, *, array_job_id: object
+) -> tuple[int, int, tuple[int, ...]] | None:
+    """What an array's cells actually ran for, how many were read, and which ones failed.
+
+    None where no listing happened, and None rather than a zero for every way it can fail.
+    A sweep whose cells nobody read is not a sweep that cost nothing, and ``$0.00 spent`` is
+    the cheapest-looking wrong answer in the field's range.
+
+    Never raises, for the reason ``submitter_of`` never does. The cell counts are in the
+    event and are worth posting on their own, so a refused listing costs the message a figure
+    and never the message.
+    """
+    if lister is None or not isinstance(array_job_id, str) or not array_job_id:
+        return None
+    seconds = 0
+    measured = 0
+    failed: list[int] = []
+    try:
+        for status in TERMINAL_CELL_STATUSES:
+            arguments: dict[str, Any] = {"arrayJobId": array_job_id, "jobStatus": status}
+            for _page in range(MAXIMUM_CELL_PAGES):
+                answer = lister.list_jobs(**arguments)
+                for cell in answer.get("jobSummaryList") or []:
+                    if not isinstance(cell, Mapping):
+                        continue
+                    if status == "FAILED":
+                        index = _cell_index(cell.get("jobId"))
+                        if index is not None:
+                            failed.append(index)
+                    started, stopped = cell.get("startedAt"), cell.get("stoppedAt")
+                    if not isinstance(started, int) or not isinstance(stopped, int):
+                        continue
+                    if isinstance(started, bool) or isinstance(stopped, bool):
+                        continue
+                    if stopped < started:
+                        continue
+                    # COUNTED HERE AND NOT WHERE THE CELL WAS SEEN, so that `measured` means
+                    # priced rather than returned. A cell whose window Batch did not report
+                    # contributes nothing to the sum, and counting it would make the total
+                    # look complete while it was short by that cell's hours.
+                    measured += 1
+                    seconds += (stopped - started) // 1000
+                token = answer.get("nextToken")
+                if not isinstance(token, str) or not token:
+                    break
+                arguments["nextToken"] = token
+            else:
+                # The page ceiling, reached rather than exhausted. Abandoning the whole read
+                # is deliberate: a partial sum rendered as a spend is a figure missing an
+                # arbitrary set of cells and reads exactly like a complete one.
+                return None
+    except Exception:  # noqa: BLE001
+        # Broad because botocore's exception classes cannot be imported here and the set of
+        # ways a listing can fail is open. Narrowed by what it does rather than by what it
+        # catches, exactly as `checkpoints_under` is.
+        return None
+    return seconds, measured, tuple(sorted(failed))
+
+
 def read_run_ended(
     envelope: Mapping[str, Any],
     *,
     catalogs: Catalogs,
     intent_reader: IntentReader | None = None,
+    cell_lister: CellLister | None = None,
     lineage_bucket: str | None = None,
 ) -> RunEndedFacts | None:
     """The facts one ended run's message needs, or None because no message is owed.
@@ -464,9 +614,11 @@ def read_run_ended(
     into the dead-letter queue where a person is meant to find real failures.
 
     ``intent_reader`` defaults to ``None``, and without it the person is whatever
-    ``WANDB_USERNAME`` reverses to. Every test in this repository and
-    ``tools/render_notification.py`` take that path, which is what keeps the wording loop
-    free of a credential.
+    ``WANDB_USERNAME`` reverses to. ``cell_lister`` defaults to ``None`` as well, and without
+    it an array parent's spend is unknown rather than zero, because the parent event carries
+    no attempts and a sweep nobody read is not a sweep that cost nothing. Every test in this
+    repository and ``tools/render_notification.py`` take both defaults, which is what keeps
+    the wording loop free of a credential.
     """
     if envelope.get("source") != EVENTBRIDGE_BATCH_SOURCE:
         return None
@@ -481,11 +633,31 @@ def read_run_ended(
     outcome = _outcome(detail)
     if outcome is None:
         return None
+    if _is_array_child(detail):
+        # ONE MESSAGE PER ARRAY, AT COMPLETION, AND NEVER ONE PER CELL. A twenty-checkpoint
+        # sweep is one event with one result, and the result somebody acts on is how many
+        # cells failed. The parent's own terminal event arrives after every child's, so
+        # suppressing children here loses nothing and costs latency: the sweep says nothing
+        # until its last cell lands.
+        return None
+    cells = _cells(detail)
+    # ASKED ONLY FOR AN ARRAY PARENT, WHICH IS WHY THIS SITS BEHIND THE CELL CHECK. A run
+    # that is not an array carries its own attempts in the event, so its spend is already
+    # exact and a Batch call would buy nothing on every one of the nine messages a day.
+    spent = None if cells is None else _cells_spent(cell_lister, array_job_id=detail.get("jobId"))
 
     queue = queue_name_of(detail)
     profile = _profile_named_by(queue, catalogs.targets)
     rate = _rate_for(profile, catalogs.catalog)
     seconds = attempt_seconds(detail)
+
+    # WHICH SECONDS THE MONEY IS COMPUTED FROM, WHICH IS THE WHOLE OF THIS TASK. A single
+    # run's window is in its own event. An array parent's is not in its event at all, so it
+    # comes off the cells or it does not come at all: `spent_usd` is None where they were not
+    # read, and a message that cannot say what a sweep cost says so rather than showing the
+    # ceiling in the slot a measurement belongs in.
+    if cells is not None:
+        seconds = 0 if spent is None else spent[0]
 
     return RunEndedFacts(
         run_id=run_id,
@@ -503,11 +675,13 @@ def read_run_ended(
         compute_profile=profile,
         hourly_rate_usd=rate,
         seconds_spent=seconds,
-        spent_usd=_money(rate, seconds),
-        authorised_usd=_authorised(detail, rate, None),
+        spent_usd=None if (cells is not None and spent is None) else _money(rate, seconds),
+        authorised_usd=_authorised(detail, rate, None if cells is None else cells[0]),
         exit_code=_exit_code(detail),
         output_prefix=container_variable(detail, OUTPUT_PREFIX_VARIABLE),
-        cells_total=None,
-        cells_failed=None,
-        cells_succeeded=None,
+        cells_total=None if cells is None else cells[0],
+        cells_failed=None if cells is None else cells[2],
+        cells_succeeded=None if cells is None else cells[1],
+        cells_measured=None if spent is None else spent[1],
+        failed_cell_indexes=None if spent is None else spent[2],
     )
