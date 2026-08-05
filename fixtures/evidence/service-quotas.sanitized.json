@@ -23,163 +23,163 @@
   "quotas": [
     {
       "applied_value": 1152.0,
+      "compute_profile": "cpu-32vcpu",
       "quota_applied_at_level": "ACCOUNT",
       "quota_code": "L-1216C47A",
       "quota_name": "Running On-Demand Standard (A, C, D, H, I, M, R, T, Z) instances",
       "required_vcpus": 32,
       "service_code": "ec2",
-      "unit": "vCPU",
-      "workload_profile": "cpu-32vcpu"
+      "unit": "vCPU"
     },
     {
       "applied_value": 768.0,
+      "compute_profile": "gpu-1xt4",
       "quota_applied_at_level": "ACCOUNT",
       "quota_code": "L-DB2E81BA",
       "quota_name": "Running On-Demand G and VT instances",
       "required_vcpus": 4,
       "service_code": "ec2",
-      "unit": "vCPU",
-      "workload_profile": "gpu-1xt4"
+      "unit": "vCPU"
     },
     {
       "applied_value": 768.0,
+      "compute_profile": "gpu-4xt4",
       "quota_applied_at_level": "ACCOUNT",
       "quota_code": "L-DB2E81BA",
       "quota_name": "Running On-Demand G and VT instances",
       "required_vcpus": 48,
       "service_code": "ec2",
-      "unit": "vCPU",
-      "workload_profile": "gpu-4xt4"
+      "unit": "vCPU"
     },
     {
       "applied_value": 768.0,
+      "compute_profile": "gpu-8xt4",
       "quota_applied_at_level": "ACCOUNT",
       "quota_code": "L-DB2E81BA",
       "quota_name": "Running On-Demand G and VT instances",
       "required_vcpus": 96,
       "service_code": "ec2",
-      "unit": "vCPU",
-      "workload_profile": "gpu-8xt4"
+      "unit": "vCPU"
     },
     {
       "applied_value": 768.0,
+      "compute_profile": "gpu-1xa10g",
       "quota_applied_at_level": "ACCOUNT",
       "quota_code": "L-DB2E81BA",
       "quota_name": "Running On-Demand G and VT instances",
       "required_vcpus": 4,
       "service_code": "ec2",
-      "unit": "vCPU",
-      "workload_profile": "gpu-1xa10g"
+      "unit": "vCPU"
     },
     {
       "applied_value": 768.0,
+      "compute_profile": "gpu-4xa10g",
       "quota_applied_at_level": "ACCOUNT",
       "quota_code": "L-DB2E81BA",
       "quota_name": "Running On-Demand G and VT instances",
       "required_vcpus": 48,
       "service_code": "ec2",
-      "unit": "vCPU",
-      "workload_profile": "gpu-4xa10g"
+      "unit": "vCPU"
     },
     {
       "applied_value": 768.0,
+      "compute_profile": "gpu-8xa10g",
       "quota_applied_at_level": "ACCOUNT",
       "quota_code": "L-DB2E81BA",
       "quota_name": "Running On-Demand G and VT instances",
       "required_vcpus": 192,
       "service_code": "ec2",
-      "unit": "vCPU",
-      "workload_profile": "gpu-8xa10g"
+      "unit": "vCPU"
     },
     {
       "applied_value": 768.0,
+      "compute_profile": "gpu-1xl4",
       "quota_applied_at_level": "ACCOUNT",
       "quota_code": "L-DB2E81BA",
       "quota_name": "Running On-Demand G and VT instances",
       "required_vcpus": 4,
       "service_code": "ec2",
-      "unit": "vCPU",
-      "workload_profile": "gpu-1xl4"
+      "unit": "vCPU"
     },
     {
       "applied_value": 768.0,
+      "compute_profile": "gpu-4xl4",
       "quota_applied_at_level": "ACCOUNT",
       "quota_code": "L-DB2E81BA",
       "quota_name": "Running On-Demand G and VT instances",
       "required_vcpus": 48,
       "service_code": "ec2",
-      "unit": "vCPU",
-      "workload_profile": "gpu-4xl4"
+      "unit": "vCPU"
     },
     {
       "applied_value": 768.0,
+      "compute_profile": "gpu-8xl4",
       "quota_applied_at_level": "ACCOUNT",
       "quota_code": "L-DB2E81BA",
       "quota_name": "Running On-Demand G and VT instances",
       "required_vcpus": 192,
       "service_code": "ec2",
-      "unit": "vCPU",
-      "workload_profile": "gpu-8xl4"
+      "unit": "vCPU"
     },
     {
       "applied_value": 768.0,
+      "compute_profile": "gpu-1xl40s",
       "quota_applied_at_level": "ACCOUNT",
       "quota_code": "L-DB2E81BA",
       "quota_name": "Running On-Demand G and VT instances",
       "required_vcpus": 4,
       "service_code": "ec2",
-      "unit": "vCPU",
-      "workload_profile": "gpu-1xl40s"
+      "unit": "vCPU"
     },
     {
       "applied_value": 768.0,
+      "compute_profile": "gpu-4xl40s",
       "quota_applied_at_level": "ACCOUNT",
       "quota_code": "L-DB2E81BA",
       "quota_name": "Running On-Demand G and VT instances",
       "required_vcpus": 48,
       "service_code": "ec2",
-      "unit": "vCPU",
-      "workload_profile": "gpu-4xl40s"
+      "unit": "vCPU"
     },
     {
       "applied_value": 768.0,
+      "compute_profile": "gpu-8xl40s",
       "quota_applied_at_level": "ACCOUNT",
       "quota_code": "L-DB2E81BA",
       "quota_name": "Running On-Demand G and VT instances",
       "required_vcpus": 192,
       "service_code": "ec2",
-      "unit": "vCPU",
-      "workload_profile": "gpu-8xl40s"
+      "unit": "vCPU"
     },
     {
       "applied_value": 768.0,
+      "compute_profile": "gpu-1xh100",
       "quota_applied_at_level": "ACCOUNT",
       "quota_code": "L-417A185B",
       "quota_name": "Running On-Demand P instances",
       "required_vcpus": 16,
       "service_code": "ec2",
-      "unit": "vCPU",
-      "workload_profile": "gpu-1xh100"
+      "unit": "vCPU"
     },
     {
       "applied_value": 768.0,
+      "compute_profile": "gpu-8xa100",
       "quota_applied_at_level": "ACCOUNT",
       "quota_code": "L-417A185B",
       "quota_name": "Running On-Demand P instances",
       "required_vcpus": 96,
       "service_code": "ec2",
-      "unit": "vCPU",
-      "workload_profile": "gpu-8xa100"
+      "unit": "vCPU"
     },
     {
       "applied_value": 768.0,
+      "compute_profile": "gpu-8xh100",
       "quota_applied_at_level": "ACCOUNT",
       "quota_code": "L-417A185B",
       "quota_name": "Running On-Demand P instances",
       "required_vcpus": 192,
       "service_code": "ec2",
-      "unit": "vCPU",
-      "workload_profile": "gpu-8xh100"
+      "unit": "vCPU"
     }
   ],
   "region": "us-east-1",

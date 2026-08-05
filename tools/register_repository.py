@@ -11,15 +11,24 @@ subject pattern and the destination ARN, or three tests in
 "find the four places", and the finding is what took the afternoon. This writes all of them.
 
 **THE FOURTH AND FIFTH FILES ARE THE ONES A REGISTRATION USED TO SILENTLY OMIT.** A
-repository with no entry in ``config/workload-catalog.yaml`` never reaches the submission
-form's ``repository`` dropdown, so nothing can be submitted for it -- and unlike the three
-files above, nothing went red about it. The test that should have caught it compared the
-dropdown against *the registered repositories that have a workload profile*, which is a
-filter both sides went through, so a registration with no workload was absent from each and
-the comparison agreed. ``edullm-data`` sat in that state from the day it was registered:
-built, scanned, publishable, and impossible to name in a run. The catalog entry and the two
-dropdown options are written here for the same reason the ECR template is -- because
-leaving them to a follow-up is what produced the state this paragraph is about.
+repository with no entry in ``config/workload-catalog.yaml`` has nothing a run can name, so
+nothing can be submitted for it -- and unlike the three files above, nothing went red about
+it. The test that should have caught it compared the dropdown against *the registered
+repositories that have a workload profile*, which is a filter both sides went through, so a
+registration with no workload was absent from each and the comparison agreed.
+``edullm-data`` sat in that state from the day it was registered: built, scanned,
+publishable, and impossible to name in a run. The catalog entry and the ``repository``
+dropdown option are written here for the same reason the ECR template is -- because leaving
+them to a follow-up is what produced the state this paragraph is about.
+
+**IT USED TO WRITE A SECOND DROPDOWN OPTION AND NO LONGER HAS ONE TO WRITE.**
+``workload_profile`` was a ``choice`` enumerating the catalog, so registering a repository
+meant editing the submission workflow as well -- a file owned by two logins, because two IAM
+trust policies pin its filename with ``StringEquals``, against a catalog owned by the admins
+and all eight team leads. That input is free text now, so a catalog entry is selectable the
+moment it merges and the only thing this writes into the form is the repository option. What
+stops a typo is the refusal ``tools/compile_submission.py`` raises while compiling, which
+names the entries registered for the repository the submission declares.
 
 The bounds on the entry it writes are defaults rather than measurements, and it says so in
 the comment it leaves above them. One hour, one attempt and no checkpoint contract is the
@@ -225,21 +234,20 @@ FOLLOW_UPS: tuple[FollowUp, ...] = (
     FollowUp(
         summary="Decide the workload profile's real bounds, and add the rest of them",
         detail=(
-            "This change writes one entry in `config/workload-catalog.yaml` and offers it "
-            "on the submission form, so the registration is submittable rather than "
-            "decorative -- which is the part `edullm-data` went without. What it cannot "
-            "decide is the policy: the entry carries one hour, one attempt and no "
-            "checkpoint contract, which is the shape of every repository's first entry and "
-            "is right only for a check. A workload that trains needs a runtime bound under "
-            "the 24-hour ceiling in `config/policy.yaml`, and a second attempt is safe only "
-            "if the program resumes from `$EDULLM_CHECKPOINT_DIR` on its own. Add further "
-            "entries the same way, each with a matching option on the `workload_profile` "
-            "dropdown in `.github/workflows/submit-run.yml`."
+            "This change writes one entry in `config/workload-catalog.yaml`, so the "
+            "registration is submittable rather than decorative -- which is the part "
+            "`edullm-data` went without. What it cannot decide is the policy: the entry "
+            "carries one hour, one attempt and no checkpoint contract, which is the shape "
+            "of every repository's first entry and is right only for a check. A workload "
+            "that trains needs a runtime bound under the 24-hour ceiling in "
+            "`config/policy.yaml`, and a second attempt is safe only if the program resumes "
+            "from `$EDULLM_CHECKPOINT_DIR` on its own. Add further entries the same way, in "
+            "that one file: `workload_profile` is free text on the submission form, so an "
+            "entry is selectable as soon as it merges and no workflow edit is needed."
         ),
         paths=(
             "config/workload-catalog.yaml",
             "config/policy.yaml",
-            ".github/workflows/submit-run.yml",
         ),
     ),
 )
@@ -383,8 +391,8 @@ def workload_entry_text(workload: WorkloadProfile, reason: str) -> str:
         " ".join(
             (
                 f"{workload.name}: the first workload profile for {workload.repository}, "
-                "written with the registration because a repository with no entry here "
-                f"reaches no dropdown and no run can name it. {reason}"
+                "written with the registration because a repository with no entry here has "
+                f"nothing a run can name. {reason}"
             ).split()
         ),
         width=COMMENT_WIDTH,
@@ -431,11 +439,15 @@ def insert_form_option(
 
     THE POSITION IS COMPUTED RATHER THAN APPENDED, and that is the whole reason this is not
     ``insert_after_last_list_item``. ``tests/test_submission_form_options.py`` holds the
-    ``repository`` dropdown equal to the registry sorted case-insensitively and the
-    ``workload_profile`` dropdown equal to the offerable workloads sorted, so an option
-    added at the end of either list is a red test rather than a working form. The order the
-    lists are already in is checked first, so this refuses to guess a position in a list
-    that was not sorted to begin with.
+    ``repository`` dropdown equal to the registry sorted case-insensitively, so an option
+    added at the end of that list is a red test rather than a working form. The order the
+    list is already in is checked first, so this refuses to guess a position in a list that
+    was not sorted to begin with.
+
+    ONE CALLER NOW, WHERE THERE WERE TWO. This also wrote the ``workload_profile`` option,
+    which no longer exists: that input is free text, so a catalog entry needs no line here
+    to be selectable. The function stays general because ``repository`` is still a dropdown
+    and the anchoring it does is the part that was hard to get right.
 
     A comment block immediately above the item being displaced moves with it, since in this
     file those comments say what their entry runs and separating the two would attach each
@@ -771,11 +783,15 @@ def plan(
         catalog_before.rstrip("\n") + "\n" + workload_entry_text(workload, reason)
     )
 
+    # ONE DROPDOWN NOW, WHERE THIS WROTE TWO. ``workload_profile`` is free text on the form,
+    # so a catalog entry is selectable the moment it is merged and there is no option to
+    # keep in step with it. That is the point of the change rather than a side effect: this
+    # file is owned by two logins and ``config/workload-catalog.yaml`` by nine, so writing
+    # an option here is what put an owner on the path of every new workload profile. The
+    # ``repository`` dropdown stays, and stays written here, because a registration that
+    # reaches no dropdown reaches nothing.
     form_after = insert_form_option(
         form_before, "repository", entry.repository, key=str.lower
-    )
-    form_after = insert_form_option(
-        form_after, "workload_profile", workload.name, key=str
     )
 
     ecr_document = parse(ecr_path, ecr_before)
@@ -878,15 +894,15 @@ def verify(
     except (AttributeError, TypeError, KeyError, yaml.YAMLError) as error:
         raise SourceUnusable(f"submission_form_would_not_parse:{error}") from error
     offered_repositories = list(inputs["repository"]["options"])
-    offered_workloads = list(inputs["workload_profile"]["options"])
     if entry.repository not in offered_repositories:
         raise SourceUnusable("submission_form_does_not_offer_the_repository")
-    if workload.name not in offered_workloads:
-        raise SourceUnusable("submission_form_does_not_offer_the_workload")
     if offered_repositories != sorted(offered_repositories, key=str.lower):
         raise SourceUnusable("submission_form_repository_options_are_out_of_order")
-    if offered_workloads != sorted(offered_workloads):
-        raise SourceUnusable("submission_form_workload_options_are_out_of_order")
+    # Checked as a shape rather than as a list, because there is no list. A `choice` here
+    # would be an option this tool no longer writes, so the registration it just made would
+    # be unselectable and nothing else would say so.
+    if inputs["workload_profile"]["type"] != "string":
+        raise SourceUnusable("submission_form_workload_profile_is_not_free_text")
 
     template = yaml.safe_load(by_path[ECR_TEMPLATE_PATH])
     repositories = existing_repositories(template)

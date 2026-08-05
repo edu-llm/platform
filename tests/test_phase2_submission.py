@@ -674,13 +674,35 @@ def test_a_form_without_a_fanout_compiles_to_a_manifest_without_one() -> None:
 
 
 def test_an_unregistered_workload_profile_is_refused_and_the_catalog_is_quoted() -> None:
+    """THE REFUSAL THAT TOOK THE DROPDOWN'S PLACE, SO WHAT IT QUOTES IS THE WHOLE VALUE.
+
+    ``workload_profile`` is free text on the submission form. It was a ``choice``
+    enumerating the catalog, and that list was what stopped a typo -- but it also meant a
+    team lead who may merge a catalog entry could not merge the option that offered it, for
+    an IAM reason unrelated to workloads. So the refusal is now the only thing standing
+    where the menu did, and it has to say what could have been typed instead.
+
+    IT QUOTES THE ENTRIES FOR THE DECLARED REPOSITORY AND NOT THE WHOLE FILE, which is why
+    ``DOLMA_WORKLOAD`` is asserted absent here rather than present. This payload names
+    ``OLMo-core``; ``dolma-tokenize`` is written for a repository nothing registers, so
+    suggesting it would send a refused submitter to a second refusal -- the exact defect
+    ``tests/test_submission_form_options.py`` exists to keep off a menu, arriving inside an
+    error message instead.
+
+    THE TYPO IS A TYPO OF AN OLMo-core ENTRY NOW, WHERE IT USED TO BE
+    ``dolma-tokenize-enormous``. That name carries ``dolma-tokenize`` inside it, so the
+    assertion below could not tell a suggestion from an echo of what the submitter typed.
+    ``olmo-core-trian`` is also the mistake somebody actually makes on this payload.
+    """
     with pytest.raises(SubmissionRefusedError) as exc_info:
-        compile_payload(cpu_payload(workload_profile="dolma-tokenize-enormous"))
+        compile_payload(cpu_payload(workload_profile="olmo-core-trian"))
 
     message = str(exc_info.value)
-    assert "unregistered workload profile 'dolma-tokenize-enormous'" in message
-    assert DOLMA_WORKLOAD in message
+    assert "unregistered workload profile 'olmo-core-trian'" in message
     assert OLMO_WORKLOAD in message
+    assert CPU_WORKLOAD in message
+    assert "config/workload-catalog.yaml" in message
+    assert DOLMA_WORKLOAD not in message
 
 
 def test_an_unregistered_dataset_is_refused_before_a_reviewer_is_asked() -> None:

@@ -5,10 +5,22 @@ of them were free-text boxes. A researcher had to know that ``dolma-2026-07`` is
 id and that ``olmo-core-check`` is a workload profile, and a typo in either was a refusal
 after a human had already approved the submission.
 
-They are dropdowns now, and a dropdown is a promise: everything in this list works. That
-promise is what these tests keep. A ``choice`` input's options are static text in the
+Four of them are dropdowns now, and a dropdown is a promise: everything in this list works.
+That promise is what these tests keep. A ``choice`` input's options are static text in the
 workflow YAML with nothing behind them, so a registry entry added and not offered is
 invisible, and an option offered and not registered is a refusal wearing a menu item.
+
+**``workload_profile`` is the fifth and went back to free text, which is a different promise
+and not a weaker one.** The list was costing more than it bought:
+``config/workload-catalog.yaml`` is owned by the admins and all eight team leads, and
+``.github/workflows/submit-run.yml`` by two people, because two IAM trust policies pin its
+filename with ``StringEquals``. So a lead could merge a workload profile and could not merge
+the option that let anybody select it, and the equality this module used to assert between
+the two files was the second lock on the same door. What the dropdown was protecting against
+-- a name nothing registers -- is refused while the submission compiles, before the approval
+gate and before any credential exists. So the promise moved: the refusal has to name what
+could have been typed, and that is asserted here in both directions exactly as the option
+list was.
 
 **Two lists can promise a refusal, and they used to be one list checked twice.** A workload
 could name a repository nothing registers, or inherit a compute profile nothing backs.
@@ -24,10 +36,11 @@ now and names no machine, so a workload has one way of being wrong and the machi
 own, asserted directly against the list a submitter picks from.
 
 ``dolma-tokenize`` is the live instance of the first: there is no ECR repository for dolma
-and no image can be published for it, so it is deliberately absent from the dropdown. The
-second is demonstrated by whichever priced profile has no execution target, which is
-derived rather than named below, because which profiles are provisioned is a deployment
-fact that moves and a test naming one goes red for a promotion rather than for a defect.
+and no image can be published for it, so it is deliberately absent from what the refusal
+suggests. The second is demonstrated by whichever priced profile has no execution target,
+which is derived rather than named below, because which profiles are provisioned is a
+deployment fact that moves and a test naming one goes red for a promotion rather than for a
+defect.
 
 **``team`` is the fourth key and was the last one still open.** It is different from the
 other three in what a wrong value costs. An unregistered dataset or workload is refused at
@@ -57,7 +70,9 @@ from edullm_platform.contracts.execution import (
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.manifest import RunManifest
 from edullm_platform.contracts.workload import ComputeProfileResolutionError, WorkloadCatalog
+from edullm_platform.errors import UnregisteredWorkloadProfileError
 from edullm_platform.execution import resolve_execution_target
+from edullm_platform.submission import _resolve_workload
 from tools.build_gpu_training_submission import TOKENIZERS
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -89,6 +104,11 @@ UNSUBMITTABLE_BY_DESIGN: dict[str, str] = {}
 #: ``resolve_execution_target`` composes ARNs from whatever account it is handed and this
 #: test cares only about whether it can compose them at all, so no real account is needed.
 EXAMPLE_ACCOUNT_ID = "123456789012"
+
+#: What a submitter types into the ``workload_profile`` box to reach the refusal below. No
+#: catalog name is a substring of it and it is a substring of none, which the guard on the
+#: refusal comparison checks rather than assumes.
+UNREGISTERED_WORKLOAD = "no-such-thing"
 
 
 def form_inputs() -> dict[str, Any]:
@@ -138,21 +158,37 @@ def resolution_failure(compute_profile: str) -> str | None:
     return None
 
 
-def offerable_workloads() -> list[str]:
-    """Every workload a submitter could pick and have reach Batch, sorted.
+def workloads_for(repository: str) -> set[str]:
+    """Every catalog entry a submission naming this repository could compile with.
 
-    One condition now, and it is the only one a workload profile can still fail. Its
-    repository has to be registered, or there is no image to run. The second condition was
-    that the compute profile it inherited resolved to an execution target, and a workload
-    profile inherits nothing any more; that question is asked of the compute dropdown
-    below, where it is a fact about what the submitter picks rather than about what a
-    catalog entry once declared.
+    One condition, and it is the only one a workload profile can still fail: the entry has
+    to be written for the repository the submission declares, or ``compile_submission``
+    refuses the pair with ``workload_profile_repository_mismatch``. A registered repository
+    is implied rather than checked, because ``require_registered_repository`` runs first and
+    the repository field is still a dropdown.
     """
-    registered = {entry["repository"] for entry in registry("repositories.yaml")["repositories"]}
-    return sorted(
+    return {
         workload.name
         for workload in workload_catalog().workloads
-        if workload.repository in registered
+        if workload.repository == repository
+    }
+
+
+def workload_refusal(repository: str) -> str:
+    """What a submitter reads when the workload box holds a name nothing registers.
+
+    The same call the compile job makes, through the same function, so a name this reports
+    on is a name the submitter meets the identical refusal for. That is the pattern
+    ``resolution_failure`` above already follows for the compute profile, and it is what
+    makes this a claim about the submission path rather than about a string in a test.
+    """
+    try:
+        _resolve_workload(workload_catalog(), UNREGISTERED_WORKLOAD, repository=repository)
+    except UnregisteredWorkloadProfileError as refusal:
+        return str(refusal)
+    raise AssertionError(
+        f"{UNREGISTERED_WORKLOAD!r} resolved to a catalog entry, so this helper is "
+        "measuring a submission that compiles rather than the refusal it was written about"
     )
 
 
@@ -670,34 +706,124 @@ def test_no_option_on_the_team_dropdown_is_a_name_this_rename_retired() -> None:
     )
 
 
-def test_the_workload_dropdown_offers_only_workloads_whose_repository_is_registered() -> None:
-    """THE ONE THAT MATTERS. Mutation: offer every workload in the catalog.
+def test_the_workload_profile_box_is_free_text_and_the_machine_box_is_not() -> None:
+    """THE ONE ASYMMETRY ON THIS FORM, RECORDED SO THE NEXT READER DOES NOT TIDY IT AWAY.
+    Mutation: make ``workload_profile`` a choice again, or make ``compute_profile`` a string
+    for consistency with it.
 
-    ``dolma-tokenize`` is in the catalog and names a repository nothing registers.
-    Offering it would put a menu item in front of a researcher whose only possible outcome
-    is ``unregistered_repository`` at admission -- after they filled in eight fields and a
-    lead approved it.
+    A ``choice`` input is worth having when a wrong value is worse than an unavailable one.
+    That is true of the machine and was never true of the workload.
 
-    Written as a comparison rather than a list, so this fails in *both* directions. Register
-    dolma without adding its workload and the dropdown is missing something that now works;
-    offer a workload whose repository is still unregistered and the dropdown is promising
-    something that does not.
+    ``compute_profile`` earned its list on 2026-08-04. gpu-1xh100 and gpu-8xh100 came off it
+    because EC2 will not sell this account a p5, and the removal is what made those shapes
+    *unexpressible* rather than merely refusable: ``resolve_execution_target`` runs inside
+    admission, past the approval gate, so an unprovisioned profile reaching that far is
+    refused with ``no_execution_target`` having already spent somebody's signature. There is
+    no earlier refusal to fall back on, which is why the list is the mechanism.
 
-    The set it compares against used to carry a second condition, that the compute profile
-    the workload inherited had somewhere to run. There is no inherited profile to check, and
-    the machine is a field of its own on this form, so that half is asserted against the
-    compute dropdown in the test below rather than folded in here.
+    ``workload_profile`` had no such property to protect. Every unregistered name is refused
+    by ``tools/compile_submission.py`` in the compile job -- before the gate, before any
+    credential exists -- and the refusal names the alternatives, which the test below holds
+    it to. What the list cost is who may register a workload:
+    ``config/workload-catalog.yaml`` is owned by the admins and all eight team leads, and
+    ``.github/workflows/submit-run.yml`` by two people because two IAM trust policies pin
+    its filename with ``StringEquals``. So a lead could merge a catalog entry and could not
+    merge the line that let anybody select it.
+
+    THIS TEST REPLACES AN EQUALITY BETWEEN THE DROPDOWN AND THE CATALOG. That equality was
+    the other half of the same cost: a lead adding an entry made this module red and had
+    nowhere to fix it. What it was protecting -- that the catalog and what a researcher can
+    get through the form do not drift -- is asserted against the refusal instead, because
+    the refusal is what took the dropdown's place.
     """
-    registered = {entry["repository"] for entry in registry("repositories.yaml")["repositories"]}
+    inputs = form_inputs()
 
-    assert options_for("workload_profile") == offerable_workloads()
-    assert "dolma-tokenize" not in options_for("workload_profile"), (
-        "dolma has no registration and no ECR repository, so this workload cannot run; "
-        "when it is registered this assertion is what has to be deleted"
-    )
-    assert {
+    assert inputs["workload_profile"]["type"] == "string"
+    assert inputs["workload_profile"]["required"] is True
+    assert "options" not in inputs["workload_profile"]
+    assert inputs["compute_profile"]["type"] == "choice"
+
+
+def test_the_workload_refusal_names_every_entry_the_declared_repository_registers() -> None:
+    """THE ONE THAT MATTERS, ASKED WHERE THE ANSWER NOW LIVES. Mutation: list the whole
+    catalog in the refusal, or hard-code the names into it.
+
+    Trading a dropdown for a refusal is a good trade only while the refusal names what the
+    dropdown would have offered. So this is the equality that used to hold
+    ``options_for("workload_profile")`` against the catalog, moved onto the text a submitter
+    reads, and it still fails in both directions: an entry a lead adds and the refusal does
+    not name is a workload nobody can find, and a name in the refusal that the catalog does
+    not carry for this repository is a suggestion whose only outcome is another refusal.
+
+    ASKED PER REPOSITORY BECAUSE THE WHOLE CATALOG WAS NEVER THE ANSWER. The check
+    immediately after this one in ``compile_submission`` refuses a workload written for
+    another codebase, so seven of the nine entries would be a suggestion that cannot be
+    taken. That is the ``dolma-tokenize`` defect this module was written about, arriving
+    inside an error message instead of on a menu.
+
+    ``dolma-tokenize`` itself is the live instance and is asserted separately below, because
+    it cannot be reached from any repository the form offers at all.
+    """
+    catalog_names = {workload.name for workload in workload_catalog().workloads}
+    # Containment is how the comparison below reads the refusal, so a name that is a
+    # substring of another would make one of them unfalsifiable. No catalog name is one
+    # today; this is what notices the day somebody registers `olmo-core` beside
+    # `olmo-core-check`, rather than the comparison quietly weakening.
+    for name in catalog_names:
+        others = catalog_names - {name}
+        assert not any(name in other for other in others), (
+            f"{name!r} is a substring of another catalog entry, so a refusal naming the "
+            "other one reads as naming this one and the comparison below cannot fail"
+        )
+        assert name not in UNREGISTERED_WORKLOAD and UNREGISTERED_WORKLOAD not in name
+
+    for repository in sorted(registered_repositories()):
+        refusal = workload_refusal(repository)
+        named = {name for name in catalog_names if name in refusal}
+
+        assert named == workloads_for(repository), (
+            f"the refusal a submitter naming {repository} meets and "
+            "config/workload-catalog.yaml disagree about what could have been typed; the "
+            "form offers no list any more, so this refusal is the only thing that answers"
+        )
+        assert named, (
+            f"nothing is registered for {repository}, so the comparison above is between "
+            "two empty sets and the refusal could say anything"
+        )
+        assert "config/workload-catalog.yaml" in refusal, (
+            "the refusal names alternatives and not the file they live in, so a submitter "
+            "who wants a workload nobody has written cannot find where to add it"
+        )
+
+
+def test_no_workload_refusal_suggests_the_one_entry_nothing_can_run() -> None:
+    """Mutation: name every catalog entry in the refusal, since all of them are real.
+
+    ``dolma-tokenize`` is in the catalog and names a repository nothing registers, so there
+    is no image for it to run and no repository on the form it can be paired with. It was
+    kept off the dropdown for that reason and it has to stay out of the refusal for the same
+    one: a name offered to somebody who has just been refused is a second refusal waiting.
+
+    Written against the registry rather than against the word, so that registering dolma
+    resolves this on its own -- the entry becomes reachable, the comparison above starts
+    demanding it, and this assertion starts demanding its absence, and the two cannot both
+    be satisfied until somebody deletes this. That is the intent.
+    """
+    registered = registered_repositories()
+    unregistered = {
         workload.repository for workload in workload_catalog().workloads
-    } - registered == {"dolma"}
+    } - registered
+
+    assert unregistered == {"dolma"}, (
+        "the set of catalog repositories nothing registers has changed; a workload written "
+        "for one of them can be named by no submission the form can express"
+    )
+    for repository in sorted(registered):
+        assert "dolma-tokenize" not in workload_refusal(repository), (
+            "dolma has no registration and no ECR repository, so suggesting its workload "
+            "sends a refused submitter to a second refusal; when it is registered this "
+            "assertion is what has to be deleted"
+        )
 
 
 def test_every_compute_profile_the_form_offers_has_somewhere_to_run() -> None:
@@ -746,23 +872,25 @@ def test_every_compute_profile_the_form_offers_has_somewhere_to_run() -> None:
         )
 
 
-def test_a_workload_that_reads_a_corpus_is_offered_and_can_be_run_long_enough() -> None:
-    """Mutation: drop the training profile from the dropdown and leave the checks above.
+def test_a_workload_that_reads_a_corpus_is_reachable_and_can_be_run_long_enough() -> None:
+    """Mutation: drop the training profile from the catalog and leave the checks above.
 
     Every test around this one compares the two directions of a list, so all of them pass
-    on an empty dropdown -- offering nothing offers nothing unbacked. What none of them
-    says is that the one workload a researcher actually came here for is on the menu.
+    on an empty catalog -- naming nothing names nothing unbacked. What none of them says is
+    that the one workload a researcher actually came here for is findable.
 
-    One workload is for training rather than for proving the platform works, and it has to
-    be on the menu. ``olmo-core-train`` is the collapse of ``olmo-core-train-1gpu`` and
+    ``olmo-core-train`` is the collapse of ``olmo-core-train-1gpu`` and
     ``olmo-core-train-4gpu``, which carried identical bounds and differed only in a machine
     the form overrode, so the pair this test used to require is one entry and the machine is
     a separate field. Its bounds are twenty-four hours against the policy ceiling and two
     attempts, and it declares a checkpoint contract so the second attempt resumes instead of
     repeating the first at full price.
+
+    ASKED OF THE REFUSAL RATHER THAN OF A DROPDOWN, because there is no dropdown. A
+    submitter reaches this entry by typing its name, so what "findable" means now is that
+    somebody who typed something else is told about it.
     """
-    offered = options_for("workload_profile")
-    assert "olmo-core-train" in offered
+    assert "olmo-core-train" in workload_refusal("OLMo-core")
 
     workload = next(
         candidate
@@ -868,21 +996,28 @@ def test_the_form_spells_absence_nowhere_because_nothing_on_it_is_absent() -> No
     assert inputs["compute_profile"]["required"] is True
 
 
-def test_every_dropdown_field_has_no_free_text_twin() -> None:
+def test_every_registry_backed_field_has_no_second_input_for_the_same_value() -> None:
     """Mutation: keep the old string input beside the new choice one.
 
     Two inputs for one value is worse than either alone, because the workflow reads one and
     the researcher may have filled the other. The form has to have exactly one field per
     thing it asks for.
+
+    ``workload_profile`` is in the twin check and out of the ``choice`` check, and both
+    halves of that are deliberate. It is free text now for the reason recorded above, so
+    asserting its type here would be the second place that decision lives; a twin beside it
+    would be the same defect as ever, and a slightly worse one -- an ``_other`` box next to
+    a text box is a field whose only purpose is to be read by nothing.
     """
     inputs = form_inputs()
     names = list(inputs)
 
     assert len(names) == len(set(names))
     for field in ("repository", "workload_profile", "dataset_release", "team", "compute_profile"):
-        assert inputs[field]["type"] == "choice"
         assert f"{field}_name" not in inputs
         assert f"{field}_other" not in inputs
+    for field in ("repository", "dataset_release", "team", "compute_profile"):
+        assert inputs[field]["type"] == "choice"
 
 
 @pytest.mark.parametrize("field", ["commit_sha", "image_digest", "command", "wandb_project"])

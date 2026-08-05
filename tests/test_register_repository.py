@@ -276,15 +276,21 @@ def test_the_registration_is_submittable_and_not_merely_publishable(
     """THE HALF THAT USED TO BE LEFT UNDONE AND WENT UNNOTICED. Mutation: write the registry,
     the template and the publisher role, and stop.
 
-    A registration with no entry in ``config/workload-catalog.yaml`` is absent from the
-    submission form's ``repository`` dropdown, so no run can name it. That is invisible from
-    the three infrastructure files -- the image builds, the scan runs, the digest is
-    resolvable -- and it is the state ``edullm-data`` was registered in.
+    A registration with no entry in ``config/workload-catalog.yaml`` has nothing a run can
+    name, so a submission naming the repository is refused whatever else is in place. That
+    is invisible from the three infrastructure files -- the image builds, the scan runs, the
+    digest is resolvable -- and it is the state ``edullm-data`` was registered in.
 
-    Both dropdowns are read back in full rather than searched, because
-    ``tests/test_submission_form_options.py`` holds each to a sorted registry: the
-    ``repository`` list case-insensitively and the ``workload_profile`` list plainly. An
-    option appended to the end of either is a green tool and a red suite.
+    The ``repository`` dropdown is read back in full rather than searched, because
+    ``tests/test_submission_form_options.py`` holds it to the registry sorted
+    case-insensitively. An option appended to the end is a green tool and a red suite.
+
+    THE WORKLOAD IS CHECKED IN THE CATALOG AND NOT ON THE FORM, WHICH IS THE CHANGE. That
+    input is free text, so a catalog entry is selectable the moment it merges; what makes
+    the registration submittable is the entry existing, and there is no second list for it
+    to be missing from. The form is asserted to still be free text, because a ``choice``
+    here would make the entry this tool just wrote unselectable and nothing else would say
+    so.
     """
     record = run(tree, capsys).record
 
@@ -302,15 +308,14 @@ def test_the_registration_is_submittable_and_not_merely_publishable(
         (tree / ".github/workflows/submit-run.yml").read_text(encoding="utf-8")
     )[True]["workflow_dispatch"]["inputs"]
     repositories = list(inputs["repository"]["options"])
-    workloads = list(inputs["workload_profile"]["options"])
 
     assert "olmo-mixer" in repositories
-    assert "olmo-mixer-check" in workloads
     assert repositories == sorted(repositories, key=str.lower)
-    assert workloads == sorted(workloads)
     assert repositories == sorted(
         {entry.repository for entry in registry_of(tree).repositories}, key=str.lower
     )
+    assert inputs["workload_profile"]["type"] == "string"
+    assert "options" not in inputs["workload_profile"]
 
 
 def test_the_catalog_entry_says_which_of_its_numbers_nobody_measured(
@@ -387,14 +392,17 @@ def test_a_dropdown_option_lands_in_sorted_position_rather_than_at_the_end(
     """Mutation: append the option, which is what every other insertion here does.
 
     ``insert_after_last_list_item`` is right for the publisher role's three lists, whose
-    order carries nothing, and wrong for these two, which are compared against a sorted
-    registry. A name that sorts to the front is what tells the two apart: appending it
+    order carries nothing, and wrong for this one, which is compared against a sorted
+    registry. A name that sorts to the middle is what tells the two apart: appending it
     leaves a form that parses, offers the right set, and fails the equality the submission
     form tests hold it to.
 
-    The comment above the displaced option moves with it. In this file those comments say
-    what their entry runs, so an option inserted between a comment and its subject attaches
-    the sentence to the wrong workload.
+    ONE LIST NOW, AND THE OTHER HALF OF THIS TEST MOVED RATHER THAN WENT. It also inserted a
+    ``workload_profile`` option and asserted that the comment above the displaced entry
+    moved with it, which was demonstrable because every option on that list carried one.
+    There is no such list -- the input is free text -- so the comment behaviour is asserted
+    directly against ``insert_form_option`` in the test below, where it does not depend on
+    which dropdown happens to be commented today.
     """
     result = run(
         tree,
@@ -406,21 +414,58 @@ def test_a_dropdown_option_lands_in_sorted_position_rather_than_at_the_end(
     text = (tree / ".github/workflows/submit-run.yml").read_text(encoding="utf-8")
     inputs = yaml.safe_load(text)[True]["workflow_dispatch"]["inputs"]
     repositories = list(inputs["repository"]["options"])
-    workloads = list(inputs["workload_profile"]["options"])
 
-    # Both land in the middle, which is where appending and inserting differ. `nn-thing`
+    # It lands in the middle, which is where appending and inserting differ. `nn-thing`
     # sorts after `edullm-data` and before `OLMo-core` only under a case-insensitive key,
-    # so this also fails if the two lists are sorted by the same rule.
+    # so this also fails if the list is sorted plainly.
     assert repositories == sorted(repositories, key=str.lower)
-    assert workloads == sorted(workloads)
     assert repositories[repositories.index("nn-thing") + 1] == "OLMo-core"
-    assert workloads[workloads.index("nn-thing-check") + 1] == "olmo-core-check"
 
-    displaced = text.split("- olmo-core-check")[0].rsplit("- nn-thing-check", 1)[-1]
-    assert "One check entry where there were two" in displaced, (
-        "the new option was inserted between olmo-core-check and the comment explaining "
-        "what olmo-core-check is, so the sentence now introduces the wrong entry"
+    # The one comment on this list belongs to the list rather than to its first option, so
+    # it stays above the whole thing however far forward an option sorts.
+    heading = text.split("- edullm-alt-cl\n")[0]
+    assert "Sorted case-insensitively" in heading
+
+
+def test_a_comment_above_a_displaced_option_moves_with_the_option_it_describes() -> None:
+    """Mutation: insert at the item and leave the comment where it was.
+
+    A comment immediately above an option says what that option is, so an insertion between
+    the two attaches the sentence to the wrong entry -- a form that parses, offers the right
+    set, and lies to the next reader in a way no test of the parsed document can see.
+
+    ASSERTED ON A FRAGMENT RATHER THAN ON THE REAL FORM, and that is the change. It used to
+    be demonstrated on the ``workload_profile`` dropdown, whose every option carried a
+    comment; that input is free text now and ``repository`` carries one comment for the
+    whole list. So the behaviour would be untested exactly until somebody comments a
+    repository option, which is the moment it starts mattering again.
+    """
+    form = (
+        "on:\n"
+        "  workflow_dispatch:\n"
+        "    inputs:\n"
+        "      repository:\n"
+        "        type: choice\n"
+        "        options:\n"
+        "          - alpha\n"
+        "          # What gamma is, which is a sentence about gamma and about nothing else.\n"
+        "          - gamma\n"
     )
+
+    inserted = register_repository.insert_form_option(
+        form, "repository", "beta", key=str
+    )
+
+    displaced = inserted.split("- gamma")[0].rsplit("- beta", 1)[-1]
+    assert "What gamma is" in displaced, (
+        "beta was inserted between gamma and the comment explaining what gamma is, so the "
+        "sentence now introduces the wrong option"
+    )
+    # Read through the tool's own reader, which knows that PyYAML turns a bare `on:` into
+    # the boolean True. A comment moved into the wrong place can still leave a document that
+    # parses, so this says the result is the list it should be as well as reading right.
+    offered = register_repository.form_inputs_of(inserted)["repository"]["options"]
+    assert list(offered) == ["alpha", "beta", "gamma"]
 
 
 # ---------------------------------------------------------------------------------------

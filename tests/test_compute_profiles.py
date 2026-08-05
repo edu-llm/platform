@@ -380,7 +380,7 @@ def representative_quota_records() -> tuple[QuotaRecord, ...]:
                 ],
                 "unit": "vCPU",
                 "quota_applied_at_level": "ACCOUNT",
-                "workload_profile": profile.name,
+                "compute_profile": profile.name,
                 "required_vcpus": INSTANCE_EVIDENCE[profile.instance_type]["required_vcpus"],
             }
         )

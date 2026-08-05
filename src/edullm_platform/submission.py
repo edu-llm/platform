@@ -219,13 +219,46 @@ class CompiledSubmission:
     experiment: str
 
 
-def _resolve_workload(catalog: WorkloadCatalog, name: str) -> WorkloadProfile:
+def _resolve_workload(
+    catalog: WorkloadCatalog, name: str, *, repository: str
+) -> WorkloadProfile:
+    """The catalog entry a submission names, or a refusal saying what it could have named.
+
+    SCOPED TO THE DECLARED REPOSITORY BECAUSE THE WHOLE CATALOG IS NOT AN ANSWER TO THE
+    QUESTION. This listed every entry, and doing so reproduced inside a refusal the exact
+    defect ``tests/test_submission_form_options.py`` exists to keep out of a dropdown: a
+    name presented as a thing to pick whose only outcome is another refusal. Seven of the
+    nine were for other repositories, so typing one gets
+    ``workload_profile_repository_mismatch`` from the check immediately below, and
+    ``dolma-tokenize`` names a repository nothing registers, so it can never be submitted
+    for at all.
+
+    THIS IS WHAT THE FORM'S DROPDOWN USED TO BE, AND IT IS NOW THE ONLY THING PLAYING THAT
+    PART. ``.github/workflows/submit-run.yml`` made this input free text, because the
+    catalog is owned by the admins and all eight leads while that workflow is owned by two
+    people, so a lead could merge an entry nobody could then select. Trading a menu for a
+    refusal is only a good trade while the refusal names what the menu would have offered,
+    which is why ``test_submission_form_options.py`` asserts this text against the catalog
+    in both directions rather than asserting a list of options that no longer exists.
+    """
     for workload in catalog.workloads:
         if workload.name == name:
             return workload
-    registered = ", ".join(sorted(profile.name for profile in catalog.workloads))
+    for_this_repository = sorted(
+        profile.name for profile in catalog.workloads if profile.repository == repository
+    )
+    if not for_this_repository:
+        raise UnregisteredWorkloadProfileError(
+            f"unregistered workload profile {name!r}. config/workload-catalog.yaml "
+            f"registers no workload profile for {repository!r} at all, so no run can name "
+            "that repository until somebody adds one in a pull request."
+        )
+    registered = ", ".join(for_this_repository)
     raise UnregisteredWorkloadProfileError(
-        f"unregistered workload profile {name!r}; the catalog registers: {registered}"
+        f"unregistered workload profile {name!r}. config/workload-catalog.yaml registers "
+        f"these for {repository!r}: {registered}. Entries in that file for other "
+        "repositories are refused against this one, so change the repository field as well "
+        "if you meant one of those."
     )
 
 
@@ -341,7 +374,9 @@ def compile_submission(
     # manifest whose image nobody established.
     published_images: Sequence[PublishedImage] = (),
 ) -> CompiledSubmission:
-    workload = _resolve_workload(catalog, inputs.workload_profile)
+    workload = _resolve_workload(
+        catalog, inputs.workload_profile, repository=inputs.repository
+    )
     if workload.repository != inputs.repository:
         # TWO FIELDS THAT MUST AGREE, AND NOTHING COMPARED THEM. A submission naming
         # repository OLMo-core with workload profile dolma-tokenize-smoke was accepted,
