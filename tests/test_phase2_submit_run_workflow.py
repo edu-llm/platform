@@ -132,6 +132,9 @@ CANCELLED_STEP = "Record that a cancelled workflow stopped no compute"
 DENIALS_TOOL = "tools/verify_admission_denials.py"
 BATCH_DENIALS_TOOL = "tools/verify_batch_denials.py"
 RESOLVER_TOOL = "tools/resolve_published_image.py"
+#: What writes the run-id-to-workflow-run join at the moment the id exists. Nothing else can:
+#: the runs API does not expose dispatch inputs and `run-name` is evaluated before any job.
+INDEX_TOOL = "tools/publish_run_index.py"
 
 #: The W&B preflight, and the tool it deliberately does not run. The check that reads the
 #: secret is `tools/verify_wandb_credential.py`, and it runs in audit.yml under the one
@@ -314,7 +317,7 @@ def test_the_three_jobs_carry_exactly_these_permission_maps() -> None:
     assert "needs" not in workflow["jobs"]["deny-unapproved"]
 
 
-def test_the_workflow_declares_these_five_jobs_and_orders_them_this_way() -> None:
+def test_the_workflow_declares_these_six_jobs_and_orders_them_this_way() -> None:
     # The inventory, re-armed at five when the identify job arrived. A job added to this
     # file inherits the two trust policies that pin job_workflow_ref to it, so a new one is
     # a new principal for both the admission role and the image resolver -- which is why
@@ -327,15 +330,25 @@ def test_the_workflow_declares_these_five_jobs_and_orders_them_this_way() -> Non
     # either, because it holds no `id-token` permission and so cannot request the token an
     # AssumeRoleWithWebIdentity call needs -- the same absence the compile job's guarantee
     # rests on, asserted for this job below on the same reasoning.
+    #
+    # INDEX-THE-RUN IS THE SECOND, AND IT IS THE ONLY JOB HERE THAT WRITES TO THIS
+    # REPOSITORY. Same answer on the trust policies and the same absent `id-token`, which
+    # matters more for this one than for identify: it is the job holding `contents: write`,
+    # so a token it could also mint would give one job both a credential into the account
+    # and the ability to rewrite the record of what that credential did. Asserted just
+    # below rather than argued here.
     workflow = _load()
 
     assert list(workflow["jobs"]) == [
         "identify",
         "resolve",
         "compile",
+        "index-the-run",
         "deny-unapproved",
         "submit",
     ]
+    assert workflow["jobs"]["index-the-run"]["permissions"] == {"contents": "write"}
+    assert workflow["jobs"]["index-the-run"]["needs"] == ["identify", "compile"]
     assert workflow["jobs"]["resolve"]["permissions"] == {
         "contents": "read",
         "id-token": "write",
@@ -633,6 +646,7 @@ def test_the_tools_the_run_bodies_reach_for_exist_on_disk() -> None:
 
     assert referenced == [
         "tools/compile_submission.py",
+        INDEX_TOOL,
         RESOLVER_TOOL,
         DENIALS_TOOL,
         "tools/verify_approved_manifest.py",
@@ -673,9 +687,9 @@ def test_no_run_body_interpolates_a_github_expression() -> None:
 def test_every_run_body_enables_strict_bash() -> None:
     bodies = list(_run_bodies())
 
-    # Twenty since the W&B preflight arrived. Counted rather than sampled, so a body added
-    # without the strict line fails here instead of running past its first error.
-    assert len(bodies) == 20
+    # Twenty-four since the run index job arrived. Counted rather than sampled, so a body
+    # added without the strict line fails here instead of running past its first error.
+    assert len(bodies) == 24
     for name, script in bodies:
         assert script.startswith("set -euo pipefail\n"), name
 
@@ -2799,6 +2813,147 @@ def test_a_profile_this_checkout_cannot_resolve_is_reported_as_unknown(
     assert result.returncode == 0, result.stderr
     assert "| Batch job queue | `not resolvable from this checkout` |" in summary
     assert f"| Run id | `{RUN_ID}` |" in summary
+
+
+# ----------------------------------------------------------------------------------------
+# The join written at mint time, and the force push it feeds
+# ----------------------------------------------------------------------------------------
+
+
+def _index_step(name: str) -> str:
+    return step(_load()["jobs"]["index-the-run"], name)["run"]
+
+
+def test_the_run_name_carries_what_the_dispatch_knew_and_not_the_run_id() -> None:
+    """Mutation: put ${{ needs.compile.outputs.run_id }} in run-name.
+
+    It resolves to the empty string. `run-name` is evaluated when the run starts, before any
+    job exists, so a run id no job has minted yet cannot be in it -- and the failure is
+    silent: the runs list shows a title with a gap where the id should be, and nothing goes
+    red. What the line can carry is what the dispatch already said, which is what it does.
+    """
+    workflow = _load()
+
+    assert "run-name" in workflow, "the runs list shows the file name for every dispatch"
+    assert "run_id" not in workflow["run-name"]
+    assert "needs." not in workflow["run-name"]
+    for named in ("inputs.repository", "github.actor", "inputs.experiment"):
+        assert named in workflow["run-name"], named
+
+
+def test_the_index_is_written_before_the_approval_gate() -> None:
+    """Mutation: order the index job after submit, where the useful cases never reach it.
+
+    A submission refused at the gate, or left parked at one forever, writes no intent record
+    -- and the intent record is where every other copy of this join lives. Those are exactly
+    the runs a status query has nothing else to go on for, so the index has to be written on
+    the near side of the gate. Asserted through `needs` rather than through the order of the
+    keys in the file, because the keys do not order anything.
+    """
+    workflow = _load()
+
+    assert workflow["jobs"]["index-the-run"]["needs"] == ["identify", "compile"]
+    assert "index-the-run" not in workflow["jobs"]["submit"]["needs"]
+    assert "environment" not in workflow["jobs"]["index-the-run"]
+
+
+def test_the_index_job_cannot_obtain_an_aws_identity() -> None:
+    """Mutation: give it id-token: write, because every other job that does something has it.
+
+    This is the only job in this file holding a write into this repository. One that could
+    also mint a token would be able to reach the account and rewrite the record of what it
+    did there, which is the separation `audit.yml` makes for the same reason.
+    """
+    job = _load()["jobs"]["index-the-run"]
+
+    assert job["permissions"] == {"contents": "write"}
+    assert not [item for item in job["steps"] if "aws-actions/" in str(item.get("uses", ""))]
+
+
+def test_the_index_has_a_single_writer() -> None:
+    """Mutation: drop the concurrency group, or set cancel-in-progress.
+
+    The document is rewritten whole and force-pushed, so two submissions merging into it at
+    once each read the branch before the other wrote and the loser is a mapping nothing can
+    reconstruct. Cancelling in progress is the other half: a cancelled writer is a submission
+    that never reaches the index at all, which is the same loss arriving differently.
+    """
+    concurrency = _load()["jobs"]["index-the-run"]["concurrency"]
+
+    assert concurrency["group"] == "run-index"
+    assert concurrency["cancel-in-progress"] is False
+
+
+def test_a_branch_that_exists_and_carries_no_index_stops_the_job(tmp_path: Path) -> None:
+    """THE ONE THAT MATTERS. Mutation: treat a failed `git show` as an empty index.
+
+    The publish is a force push over a cumulative document, which is safe only while the
+    document is whole. A read that came back with nothing and a writer that carried on would
+    together push a one-entry index over every mapping the branch holds, and no search can
+    rebuild them -- writing them at mint time is precisely what having no search is for.
+    """
+    write_stub(
+        tmp_path / "bin",
+        "git",
+        """
+case "$1 $2" in
+  "ls-remote --exit-code") exit 0 ;;
+  "fetch origin") exit 0 ;;
+  "show FETCH_HEAD:run-index.json") exit 128 ;;
+esac
+exit 0
+""",
+    )
+
+    result = run_step_script(
+        _index_step("Read the index the branch already holds"),
+        cwd=tmp_path,
+        env={"INDEX_BRANCH": "machine/run-index"},
+        stub_bin=tmp_path / "bin",
+    )
+
+    assert result.returncode != 0
+    assert "run_index_branch_holds_no_index" in result.stderr
+
+
+def test_a_branch_that_does_not_exist_yet_is_the_first_entry(tmp_path: Path) -> None:
+    """The other side, so the step cannot pass the test above by refusing unconditionally.
+
+    A refusal here would mean the first submission after this ships can never be indexed,
+    and neither can any after it, because the branch is only ever created by this job.
+    """
+    write_stub(tmp_path / "bin", "git", 'test "$1 $2" = "ls-remote --exit-code" && exit 2\nexit 0')
+
+    result = run_step_script(
+        _index_step("Read the index the branch already holds"),
+        cwd=tmp_path,
+        env={"INDEX_BRANCH": "machine/run-index"},
+        stub_bin=tmp_path / "bin",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "first entry" in result.stdout
+    assert not (tmp_path / "run-index.json").exists(), (
+        "an empty file here is an unreadable index, which the tool then refuses to merge into"
+    )
+
+
+def test_the_index_is_force_pushed_and_the_readings_are_not() -> None:
+    """Mutation: append here, or force-push the readings branch to match.
+
+    They are opposites and each is right for its own document. This one is cumulative -- the
+    tool merges into everything the branch held -- so the tip carries every mapping and the
+    history behind it says nothing the tip does not. A reading is a different morning, and
+    with two sources that forget, last week is the only copy of last week.
+    """
+    publish = _index_step("Publish the index")
+    readings = step(
+        load_workflow(WORKFLOWS_ROOT / "audit.yml")["jobs"]["substrate-history"],
+        "Keep the reading on the machine/substrate branch",
+    )["run"]
+
+    assert "git push --force origin" in publish
+    assert "--force" not in readings.split("git push")[1]
 
 
 def test_the_form_does_not_offer_a_fanout_parallelism_box_at_all() -> None:

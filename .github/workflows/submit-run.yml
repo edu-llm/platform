@@ -1,5 +1,15 @@
 name: Submit a run
 
+# WHAT THIS LINE CAN AND CANNOT CARRY, BECAUSE THE OBVIOUS THING IT IS FOR IS THE ONE THING
+# IT CANNOT DO. `run-name` is evaluated when the run starts, before any job exists, so it
+# cannot carry the platform run id -- the compile job mints that, minutes later. What it can
+# carry is what the dispatch already said, which is enough to pick a run out of the list by
+# eye: who, which repository, and which experiment. The id-to-workflow-run join is written
+# by the index-the-run job below, at the moment the second half of it exists.
+run-name: >-
+  ${{ inputs.repository }} by ${{ github.actor }}${{ inputs.experiment && format(' — {0}',
+  inputs.experiment) || '' }}
+
 # The admission role trust policy pins job_workflow_ref to
 # edu-llm/platform/.github/workflows/submit-run.yml@refs/heads/main, and pins the subject
 # claim to :environment:run-approval-lead and :environment:run-approval-admin. Renaming or
@@ -684,6 +694,115 @@ jobs:
           path: ${{ runner.temp }}/compiled-submission.json
           if-no-files-found: error
           retention-days: 30
+
+  # THE ONE THING NOTHING ELSE CAN SUPPLY, WRITTEN AT THE MOMENT IT EXISTS. A workflow run
+  # does not expose the inputs it was dispatched with, and `run-name` is evaluated before any
+  # job runs, so there is no way to read a platform run id off the runs list. The CLI joins
+  # them today by downloading each recent dispatch's compiled manifest, newest first, over a
+  # bounded window -- which degrades exactly where it is needed most, because a run whose
+  # artifacts have aged out is unjoinable and those are the runs people ask about.
+  #
+  # BEFORE THE APPROVAL GATE, AND THAT IS DELIBERATE. A submission refused at the gate, or
+  # left parked at it, writes no intent record -- and the intent record is where every other
+  # copy of this join lives. Those are precisely the runs a status query has nothing else to
+  # go on for, so the index has to be written on the near side of the gate.
+  #
+  # NO id-token, SO THIS JOB CANNOT OBTAIN AN AWS IDENTITY. It is the only job in this file
+  # holding a write into this repository, and the audit makes the same separation for the
+  # same reason: a job that can reach the account and rewrite the record can publish a record
+  # of something that did not happen.
+  index-the-run:
+    name: Index the run id against the workflow run that minted it
+    runs-on: ubuntu-latest
+    needs: [identify, compile]
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    # ONE WRITER, BECAUSE THE PUBLISH IS A FORCE PUSH. The document is rewritten whole, so
+    # two submissions merging into it at once would each read the branch before the other
+    # wrote, and the loser would be a mapping nobody can reconstruct. Not cancel-in-progress:
+    # a cancelled writer is a submission that never reaches the index at all.
+    concurrency:
+      group: run-index
+      cancel-in-progress: false
+    steps:
+      - name: Check out the platform
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Install the platform tooling
+        env:
+          UV_VERSION: "0.11.32"
+        run: |
+          set -euo pipefail
+          pipx install "uv==${UV_VERSION}"
+          uv sync --locked
+
+      # THE FETCH IS THE DANGEROUS STEP AND IT IS WHY THE INDEX IS MERGED BY A TOOL. The
+      # document is cumulative and force-pushed, so a fetch that half-succeeded and a writer
+      # that started fresh would together publish a one-entry index over every mapping the
+      # branch holds. tools/publish_run_index.py refuses an existing file it cannot parse;
+      # what this step has to get right is that an absent file means the branch is new rather
+      # than that the fetch failed.
+      - name: Read the index the branch already holds
+        env:
+          INDEX_BRANCH: machine/run-index
+        run: |
+          set -euo pipefail
+          if ! git ls-remote --exit-code --heads origin "${INDEX_BRANCH}" > /dev/null 2>&1; then
+            echo "no index branch yet, so this run is the first entry"
+            exit 0
+          fi
+          git fetch origin "${INDEX_BRANCH}" --depth=1
+          if ! git show "FETCH_HEAD:run-index.json" > run-index.json; then
+            echo "run_index_branch_holds_no_index" >&2
+            echo "${INDEX_BRANCH} exists and carries no run-index.json. This job is the only" >&2
+            echo "thing that writes that branch and it always writes the file, so the branch" >&2
+            echo "was made by hand or truncated. Publishing now would force-push a one-entry" >&2
+            echo "index over whatever is there, and these mappings cannot be rebuilt." >&2
+            exit 1
+          fi
+          echo "the index holds $(wc -c < run-index.json) bytes"
+
+      - name: Add this run to the index
+        env:
+          RUN_ID: ${{ needs.compile.outputs.run_id }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
+          WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SUBMITTER: ${{ github.actor }}
+          RESEARCH_REPOSITORY: ${{ inputs.repository }}
+          COMMIT_SHA: ${{ needs.identify.outputs.commit_sha }}
+          TEAM: ${{ inputs.team }}
+          COMPUTE_PROFILE: ${{ inputs.compute_profile }}
+          APPROVAL_CLASS: ${{ needs.compile.outputs.approval_class }}
+          EXPERIMENT: ${{ inputs.experiment }}
+          FANOUT_SIZE: ${{ inputs.fanout_size }}
+        run: |
+          set -euo pipefail
+          uv run --frozen python tools/publish_run_index.py --index run-index.json
+
+      # FORCE-PUSHED, WHICH IS SAFE HERE AND WOULD NOT BE ON THE READING BRANCH. This
+      # document is cumulative -- the step above merged into everything the branch held -- so
+      # the tip carries every mapping and the history behind it is one commit per submission
+      # saying nothing the tip does not. The readings on machine/substrate are the opposite:
+      # each one is a different morning and last week is the only copy of last week, so that
+      # branch is appended to and never force-pushed.
+      - name: Publish the index
+        env:
+          INDEX_BRANCH: machine/run-index
+          RUN_ID: ${{ needs.compile.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch --orphan "${INDEX_BRANCH}-publish"
+          git add --force run-index.json
+          git commit -m "run index: ${RUN_ID}"
+          git push --force origin "HEAD:${INDEX_BRANCH}"
+        # RUN_ID in the message rather than the workflow run number, because the message is
+        # the only place a person reading the branch history sees which submission a commit
+        # was for.
 
   # This job exists in this file rather than in a file of its own, and it has to. The
   # admission role trust policy pins job_workflow_ref to this exact path with
