@@ -17,12 +17,12 @@ uv run python tools/build_phase2_proof.py
 
 | measure | count |
 | --- | --- |
-| collected by pytest | 4822 |
-| executed (excluding tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py, tests/test_phase5_proof.py) | 4629 |
-| passed | 4629 |
+| collected by pytest | 5474 |
+| executed (excluding tests/test_phase0_proof.py, tests/test_phase1_proof.py, tests/test_phase2_proof.py, tests/test_phase3_proof.py, tests/test_phase5_proof.py) | 5279 |
+| passed | 5275 |
 | failed | 0 |
 | errored | 0 |
-| skipped | 0 |
+| skipped | 4 |
 | pytest exit code | 0 |
 
 ## Targeted verification run
@@ -31,12 +31,12 @@ Every test node id cited by the negative-case matrix, plus every test in the mod
 
 | measure | count |
 | --- | --- |
-| selected node ids | 668 |
-| executed | 668 |
-| passed | 668 |
+| selected node ids | 675 |
+| executed | 675 |
+| passed | 674 |
 | failed | 0 |
 | errored | 0 |
-| skipped | 0 |
+| skipped | 1 |
 | pytest exit code | 0 |
 
 ## Per-module coverage
@@ -46,7 +46,7 @@ The test modules Phase 2 added, excluding the ones that invoke a gate or this ge
 | module | tests | result |
 | --- | --- | --- |
 | tests/test_capture_phase2_evidence_cli.py | 8 | pass |
-| tests/test_phase2_admission.py | 58 | pass |
+| tests/test_phase2_admission.py | 60 | pass |
 | tests/test_phase2_admission_denials.py | 106 | pass |
 | tests/test_phase2_admission_deployment_workflow.py | 20 | pass |
 | tests/test_phase2_admission_handler.py | 13 | pass |
@@ -58,7 +58,7 @@ The test modules Phase 2 added, excluding the ones that invoke a gate or this ge
 | tests/test_phase2_lambda_package.py | 11 | pass |
 | tests/test_phase2_lineage_evidence.py | 12 | pass |
 | tests/test_phase2_probe_tools.py | 35 | pass |
-| tests/test_phase2_submission.py | 97 | pass |
-| tests/test_phase2_submit_run_workflow.py | 121 | pass |
+| tests/test_phase2_submission.py | 98 | pass |
+| tests/test_phase2_submit_run_workflow.py | 124 | pass |
 
 **A green suite is not evidence that the path works.** Phase 1 shipped one over a workflow that could not complete a run, because every assertion compared the literal text of expressions rather than checking whether they named anything real. The counts above say the tests pass; `negative-case-matrix.md` says what they establish, which for eight of this phase's criteria is not the criterion.

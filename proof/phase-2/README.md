@@ -2,8 +2,8 @@
 
 Phase: phase-2
 Bundle schema version: 1
-Source commit: 648f74ee40c5f1470043aa707f2d3718f60687e3
-Generated: 2026-08-04T21:51:47+00:00
+Source commit: d684a333cecb7ffebf0b71fff03d78c8c4c151dd
+Generated: 2026-08-05T17:36:29+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 2 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase2_proof.py` at generation time. It is not done, and the Result table below says by how much.
 
@@ -44,14 +44,14 @@ This run evaluated 22 acceptance criteria: thirteen criteria are covered, one cr
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 4822 |
-| suite tests executed | 4629 |
-| suite passed | 4629 |
+| suite tests collected | 5474 |
+| suite tests executed | 5279 |
+| suite passed | 5275 |
 | suite failed | 0 |
 | suite errored | 0 |
-| suite skipped | 0 |
-| matrix node ids executed | 668 |
-| matrix node ids passed | 668 |
+| suite skipped | 4 |
+| matrix node ids executed | 675 |
+| matrix node ids passed | 674 |
 | matrix node ids failed | 0 |
 | phase criteria | 22 |
 | criteria COVERED | 13 (1, 5, 8, 9, 10, 13, 15, 16, 17, 18, 20, 21, 22) |
@@ -88,15 +88,15 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | file | digest |
 | --- | --- |
 | .github/workflows/deploy-phase2-admission.yml | sha256:b2f22ae639f6485e2ca00a36e1a56caa28b25c13e99d5a7858323c75789a960a |
-| .github/workflows/submit-run.yml | sha256:521512798bf193cdd950023e8f00bf08d79e1b03e315d11ba66b8b73d39fceca |
-| config/organization.yaml | sha256:93dbb74ea3f44c5b1bf9d00d505acfa888a6e78bf456550d0202989571d9c56a |
-| config/policy.yaml | sha256:093eb2bc7e52c1e452538928f3579bde26e6dd425018516b1211268c944247ad |
+| .github/workflows/submit-run.yml | sha256:d853bcecc717e10071358811ab58af959ec2d64121a0d928a9aff2a48ef50883 |
+| config/organization.yaml | sha256:744b222a89ad47bea8a2032922a7130560e15d4068e1908f82a0bca58c90c9de |
+| config/policy.yaml | sha256:ace2adf220cce9e540e01c8950a7f820e113aef191ce6139a4cee979e938a8d8 |
 | fixtures/authorization/admin-exception.yaml | sha256:c49db36e999df3cefd9d3e95127fe947479d121ca6b6b450839e9f0c8ae8144f |
 | fixtures/authorization/lead-self-authorization.yaml | sha256:4879d23dffb1ae9c3d81cdb35e382a1636b0642f75b7cc2afe0f8a54cebc562b |
 | fixtures/authorization/member-approval.yaml | sha256:d6da4e22145165f4233c7c150789d2eea7fb9a7d8cf8546e72812bb971bd4dc4 |
 | fixtures/evidence/phase-2/executions.sanitized.json | sha256:d4ca6d9a4038e99a3c820cc4f743f7cb197ecaaf9874454d2d8a7599ad508a85 |
 | fixtures/evidence/phase-2/github/environments.sanitized.json | sha256:dd6f5a4b580b4ff050d6bdcb4ce6f25867c36b0a2c9a466b95f87bfc52ad89b4 |
-| fixtures/evidence/phase-2/github/lead-team.sanitized.json | sha256:2ab12ab28a4758ea366fe53dcdcb26a57f17b3bde518a6d084358ddc4892856b |
+| fixtures/evidence/phase-2/github/lead-team.sanitized.json | sha256:51815b1180c677cb027d7f6feb2ef79537b0fd85658361436ca80363a2d88ad9 |
 | fixtures/evidence/phase-2/github/research-teams.sanitized.json | sha256:4264d167eecfb608eef45299892be2c3e02993b0c18087041628eba86c1ec405 |
 | fixtures/evidence/phase-2/github/secrets.sanitized.json | sha256:37e1a042d91f305983bd5d9bb56fb8600727329019328d56d82e0f2cd47fee0f |
 | fixtures/evidence/phase-2/lineage.sanitized.json | sha256:fa56d78a4ec30a6e7f8cf66ed1ca52c795f9061f5af4eb105b9ddeb190553b5f |
@@ -110,13 +110,13 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 | fixtures/evidence/phase-2/lineage/records/intent/run_019fa46a-5478-70ea-aab6-28de23c41f7f.json | sha256:89ad215366a6c1e6177e24a04de4db99f0687529175d9bccae39ef3dfadd4ba1 |
 | fixtures/evidence/phase-2/lineage/records/intent/run_019fa471-0173-7050-a41b-22ca01969b52.json | sha256:e1e6f323427445671f554e4af5d23ea7a2020b578d926d6e934d3144604be0ba |
 | fixtures/evidence/phase-2/lineage/records/intent/run_019fa4c0-390d-7081-b539-08d9ff6b58be.json | sha256:be35e6f2797c899e1a5b44544ed64d053b125f6d17cb47fb0cc6932f2fd976a5 |
-| fixtures/evidence/phase-2/roles/sbsandbox-intern-edullm-admission-lambda.sanitized.json | sha256:79efca9fc776a71276c5c2651f5fec6e5d6b5af6198e51aff6ec04f22d84b394 |
-| fixtures/evidence/phase-2/roles/sbsandbox-intern-edullm-admission-states.sanitized.json | sha256:7f5b2b17699b500aa4c81858713e023dc32c0c1b03cf17072fc767d4970bcf72 |
-| fixtures/evidence/phase-2/roles/sbsandbox-intern-edullm-admission.sanitized.json | sha256:793fc202cad5109496a22cea9edc5ae32ac2da7c06e5cc04e38ca46e02e259f3 |
-| infra/admission-state-machine.yaml | sha256:4f2ef573209d2fccc8a12c49fdbd2f2af3ba61ba571e52d8175273a522129b46 |
+| fixtures/evidence/phase-2/roles/sbsandbox-intern-edullm-admission-lambda.sanitized.json | sha256:33a4e773c591162ac2a5067ebedebf94ea8b2a58089f9e40d56457e2ddaa41b5 |
+| fixtures/evidence/phase-2/roles/sbsandbox-intern-edullm-admission-states.sanitized.json | sha256:624b00e68509bdc4661b1365c379bed20a819d8a92758c2ab30f386f07449068 |
+| fixtures/evidence/phase-2/roles/sbsandbox-intern-edullm-admission.sanitized.json | sha256:1ac1ab7573d18c4c0caee6883df08c0f45337483cbfe1d5151a549a7414445c9 |
+| infra/admission-state-machine.yaml | sha256:fae8eec515dee42a44a92748612ae6230b70a5c33d29fdf2f40137b84c249a9f |
 | infra/iam/admission-role.yaml | sha256:88e95f2909742310afaee41e0a695ceaff3fafe8a4dc3320033b6e76f71fcd79 |
-| infra/iam/admission-service-roles.yaml | sha256:3839b24f7500d43c9a6606909131c79c103d8ce8dcbdbc6e77ceae94cbc4f14b |
-| infra/iam/infra-deployer-role.yaml | sha256:b85b7f14c7a3b11da5f408bdaa7c60b42c7d8c81dbd2fa97953cb38d0c115a47 |
+| infra/iam/admission-service-roles.yaml | sha256:fe33723c6bfe71f39b72c8fa1ce80ea46889c5e0abede778f07a4bef9548602e |
+| infra/iam/infra-deployer-role.yaml | sha256:b8e466aef0a9308d1d5c3ba1ec0c1fdc0f4fb2ebe2e51d4beb548b75604ab312 |
 | infra/lineage-bucket.yaml | sha256:9bad0303f92659a47caa1fe57f1bf10c77a3b11a11a9f58f21b1c341befd761d |
 
 ## Known limitations

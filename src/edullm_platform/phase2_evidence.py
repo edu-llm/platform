@@ -24,19 +24,25 @@ written down. Recording "restricted to main" would lose exactly the distinction 
 criterion exists to check, so both flags and the named branches are kept separately.
 
 **A reviewer is a type and a name, and the type matters.** ``run-approval-lead`` lists one
-reviewer, the ``team-leads`` team, because eight leads exceed the six-slot cap and a team
-counts as one slot. A capture that flattened teams into their members would report eight
+reviewer, the ``team-leads`` team, because nine approvers exceed the six-slot cap and a team
+counts as one slot. A capture that flattened teams into their members would report nine
 reviewers and agree with the roster for the wrong reason -- and would go on agreeing after
 somebody replaced the team with six named users, which is a different control.
 
 **Who is in that team is therefore a second record, and until 2026-07-31 there was none.**
 Keeping the reviewer as a team is right and it leaves a question the environment capture
-cannot answer: one slot with eight people behind it, held in organization settings that no
+cannot answer: one slot with nine people behind it, held in organization settings that no
 file in this repository follows and that an owner can edit without leaving an artifact
 anywhere. A member added to the team becomes a reviewer on the lead gate, and every test
 reading the environment capture goes on passing. :class:`LeadTeamMembership` is the answer,
 and it carries the team's slug beside its members so a capture of some other team cannot be
 mistaken for this one.
+
+That happened again between 2026-07-31 and 2026-08-05, which is the argument for the record
+rather than against it. The team gained a ninth member and the committed capture went on
+reading eight, so the answer is only ever as current as the last capture. This organization
+is on the free plan, so ``orgs/edu-llm/audit-log`` answers 404 and a capture is the only way
+the question gets asked at all.
 
 Everything here is a :class:`~edullm_platform.evidence.FreshEvidenceModel`, so a record
 older than the freshness window refuses to load rather than reading as current. A GitHub
@@ -250,8 +256,8 @@ class LeadTeamMembership(FreshEvidenceModel):
 
     ``member_logins`` may be empty and that is not refused. A team with nobody in it is a
     lead gate no routine run can ever pass, which is a real state worth writing down
-    rather than a capture failure -- and the roster comparison reports it by naming all
-    eight leads as missing, which is louder than any refusal here would be.
+    rather than a capture failure -- and the roster comparison reports it by naming every
+    declared approver as missing, which is louder than any refusal here would be.
     """
 
     source: Literal["github"]

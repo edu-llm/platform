@@ -1,10 +1,19 @@
 admins:
   - philote-dev
   - BritishAmericqn
-# WHO MAY RELEASE A ROUTINE RUN, AND NOTHING ELSE DECIDES IT. inventory.is_team_lead reads
-# this list, and policy.yaml sets approval_scope to organization, so every name here can
-# release any team's routine submission. A name that has left is therefore a live approval
-# authority, and a lead who is absent cannot approve their own group's work.
+# WHO LEADS A RESEARCH GROUP. THIS LIST IS NOT THE WHOLE OF WHO MAY RELEASE A ROUTINE RUN,
+# AND READING IT AS THOUGH IT WERE IS THE MISTAKE THAT COST A DAY ON 2026-08-05.
+# holds_routine_approver_role is `is_admin(login) or is_team_lead(login)`, so the approvers
+# are `admins` above and this list together. policy.yaml sets approval_scope to
+# organization, so every one of them can release any team's routine submission. A name that
+# has left is therefore a live approval authority, and an approver who is absent cannot
+# release their own group's work.
+#
+# THIS LIST IS EXACTLY THE UNION OF team_bindings' lead_logins, AND A TEST HOLDS IT THERE.
+# tests/test_inventory.py fails a name here who leads no group, and fails a group naming a
+# lead who is not here. So a name is added to this list by giving somebody a group to lead,
+# and not by wanting them to be able to approve. Somebody who should approve without leading
+# a group goes in `admins`, which is where BritishAmericqn already is.
 #
 # VS-code-cloud replaced syz2026 as the Memory group's lead. Both halves of that mattered:
 # a Memory submission routed to its own lead was refused because the lead was not on this
@@ -14,20 +23,41 @@ admins:
 #
 # The GitHub `team-leads` team gates the run-approval-lead environment and is what actually
 # stops a job. It is not in this repository and does not follow this edit; changing it is an
-# owner action in the organization settings.
+# owner action in the organization settings. can_admins_bypass is false on that environment,
+# so membership of the team is the whole of what opens it. Being an admin here does not.
 #
-# The two agreed as of 2026-07-30, checked login by login with an empty symmetric difference.
-# They had not: this list dropped syz2026 for VS-code-cloud when the Memory group's lead
-# changed, and the GitHub team was not told for two days -- so somebody who leads no group
-# could release any team's routine run, and the lead who does could not release his own
-# group's. Nothing in this repository can notice that, which is why it is worth re-checking
-# by hand rather than trusting this comment:
+# WHAT THAT TEAM MUST CONTAIN IS `admins` PLUS THIS LIST, NOT THIS LIST. Nine logins, not
+# eight. An admin who is not on the team is somebody admission accepts as a routine approver
+# and the lead gate will never ask, and a login on the team who is in neither list opens the
+# gate and is then refused by admission with approver_lacks_lead_or_admin_role, which spends
+# an approval on a no.
 #
-#   gh api orgs/edu-llm/teams/team-leads/members --jq '.[].login' | sort
+# Both went wrong at once for two days ending 2026-07-30, when this list dropped syz2026 for
+# VS-code-cloud and the GitHub team was not told.
 #
-# Re-checked by hand on 2026-08-04: the GitHub team returns exactly the eight logins below
-# and the symmetric difference is empty. That is a fact about one morning and not a property
-# this repository can hold, which is why the paragraph above stays.
+# DO NOT RE-CHECK THIS BY HAND AND DO NOT RECORD THE RESULT HERE. That is what the two
+# comments this replaces did, on 2026-07-30 and again on 2026-08-04, and both were false
+# before anybody read them: BritishAmericqn was added to the GitHub team some time after
+# 2026-07-31 and neither hand-check saw it. A date in a comment records that somebody looked
+# once. It cannot say the answer is still true, and it is cited later as though it could.
+#
+# What checks it is fixtures/evidence/phase-2/github/lead-team.sanitized.json, a committed
+# capture of the team compared against `admins` plus this list in both directions by
+# tests/test_phase2_github_evidence.py. The capture expires after thirty days and then
+# refuses to load, which turns the suite red until somebody re-captures. That expiry is the
+# only thing that forces the question to be asked again, and thirty days is how long the
+# ninth member went unnoticed. Re-capture with:
+#
+#   uv run python tools/capture_phase2_evidence.py --target lead-team \
+#     --output-dir docs-frank/working/phase-2-evidence
+#
+# then copy the file into fixtures/evidence/phase-2/github/ and read the diff.
+#
+# A nightly job would be better and cannot be had. Reading orgs/edu-llm/teams/team-leads/
+# members needs the Members organization permission, the Actions GITHUB_TOKEN has no
+# organization permissions at all, and a stored PAT would be a repository secret that
+# test_the_repository_holds_no_secret_a_branch_could_read forbids by name. The audit log
+# would date a change and answers 404 on this organization's free plan.
 team_leads:
   - philote-dev
   - ericrcwu001
@@ -53,9 +83,17 @@ pilot_repositories:
 #
 # Three team_ids below are names this platform's own records already use, and they are the
 # three this file does not touch. `platform` is on 36 lineage records, `memory-split` on 22
-# and `data-prep` on 1, counted in the store on 2026-08-01, and those are also the only
-# three prefixes that exist under sbsandbox-intern-edullm-outputs/teams/. The GitHub team of
-# the same name was created to match, and github_team_slug is the join between the two.
+# and `data-prep` on 1, counted in the store on 2026-08-01, when they were also the only
+# three prefixes under sbsandbox-intern-edullm-outputs/teams/. The GitHub team of the same
+# name was created to match, and github_team_slug is the join between the two.
+#
+# THE PREFIX HALF OF THAT SENTENCE HAS SINCE STOPPED BEING TRUE, AND IT IS DATED RATHER THAN
+# CORRECTED BECAUSE THE COUNT IS WHAT MADE THE ARGUMENT. Six prefixes exist on 2026-08-05:
+# the three above plus input-core, post-training and scratch, which are runs arriving under
+# names this block declared. That is the file working rather than drifting, and it is
+# recorded because the original sentence reads as a standing claim about the bucket and is
+# not one. Nothing here counts prefixes at runtime, so the next reader gets a date and not a
+# number that has quietly re-scoped.
 #
 # THREE WERE RENAMED, AND RECORDS WRITTEN BEFORE THE RENAME STILL CARRY THE OLD NAMES.
 #

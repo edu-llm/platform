@@ -20,7 +20,7 @@ Three statuses exist and no more. **COVERED** means one or more cited tests prov
 | 6 | COVERED | 5 | 0 | Short commit SHAs are rejected. |
 | 7 | COVERED | 22 | 0 | Arbitrary IAM roles, queues, networking, instance types, and mounts are rejected. |
 | 8 | COVERED | 13 | 0 | Logical run IDs and attempt IDs cannot be confused. |
-| 9 | COVERED | 4 | 12 | Cross-team attribution fails; a submission naming a team the submitter does not belong to is rejected. Approver scope is a separate question and follows `approval_scope`. |
+| 9 | DEFERRED | 0 | 16 | Cross-team attribution fails; a submission naming a team the submitter does not belong to is rejected. Approver scope is a separate question and follows `approval_scope`. |
 | 10 | DEFERRED | 0 | 10 | Lead self-authorization succeeds only within the lead's bound team and policy. |
 | 11 | COVERED | 7 | 0 | A fan-out is priced across the whole submission, not per cell. |
 | 12 | COVERED | 8 | 0 | A fan-out whose total exceeds the routine ceiling classifies as an exception, so a costly sweep cannot be decomposed into routine single runs. |
@@ -32,6 +32,12 @@ Rows numbered 1 to 13 are the phase criteria. Rows numbered D-something are reco
 ## Deferred by explicit decision
 
 These wait on sub-team assignments. They are recorded here rather than omitted, no test in this bundle claims them as proved, and each one states the condition that makes it live again.
+
+### Check 9 (DEFERRED) — Cross-team attribution fails; a submission naming a team the submitter does not belong to is rejected. Approver scope is a separate question and follows `approval_scope`.
+
+The refusal that closed this ran inside admission, on the far side of the approval gate, so it could never prevent spend. It denied four submissions in 158 and every one of them already had a lead's or an admin's approval spent on it. It was removed on 2026-08-05 and what a mis-claimed team now produces is team_verified false on the decision record. The comparison is still made before the gate, by the form's dropdown and by edullm check, and neither of those is the statement above: a submitter dispatching the form by hand can name a group they are not in and be admitted.
+
+Live again when: Refusing again, before the gate. Nothing after the gate is worth anything, which is what the removal established. The half of this that was reachable without a refusal is done: tools/report_run_costs.py names every run charged to a declared group the roster records its submitter elsewhere from, and tools/report_spend.py carries the size of it beside the per-team split, so a claim nobody checked is now a figure somebody reads rather than a flag nothing surfaced. That is a report and it lifts nothing here: the statement above says a submission is rejected, and one dispatching the form by hand still is not.
 
 ### Check 10 (DEFERRED) — Lead self-authorization succeeds only within the lead's bound team and policy.
 
@@ -245,27 +251,35 @@ Proving tests (13), all executed and passing:
 
 ### Check 9 — Cross-team attribution fails; a submission naming a team the submitter does not belong to is rejected. Approver scope is a separate question and follows `approval_scope`.
 
-**Status: COVERED**
+**Status: DEFERRED**
+
+Deferred because:
+
+The refusal that closed this ran inside admission, on the far side of the approval gate, so it could never prevent spend. It denied four submissions in 158 and every one of them already had a lead's or an admin's approval spent on it. It was removed on 2026-08-05 and what a mis-claimed team now produces is team_verified false on the decision record. The comparison is still made before the gate, by the form's dropdown and by edullm check, and neither of those is the statement above: a submitter dispatching the form by hand can name a group they are not in and be admitted.
+
+Live again when:
+
+Refusing again, before the gate. Nothing after the gate is worth anything, which is what the removal established. The half of this that was reachable without a refusal is done: tools/report_run_costs.py names every run charged to a declared group the roster records its submitter elsewhere from, and tools/report_spend.py carries the size of it beside the per-team split, so a claim nobody checked is now a figure somebody reads rather than a flag nothing surfaced. That is a report and it lifts nothing here: the statement above says a submission is rejected, and one dispatching the form by hand still is not.
 
 Scope:
 
-- Attribution travels the whole path. RunManifest.team fills RequestFacts.claimed_team, which is required rather than defaulted so a caller cannot skip it, and every AuthorizationDecision records both the claimed team and whether membership was verified. Three states are distinguishable in the audit record: verified and correct (team_verified true), verified and wrong (denied with submitter_not_in_claimed_team), and not verifiable yet (team_verified false with an ordinary approval reason). Every shipped decision today is the third state.
-- Attribution is checked against the submitter's own membership and nothing else. It is independent of who approves, so a lead self-authorising and an admin self-approving an exception are both refused a team they do not belong to. It is also independent of the repository: RepositoryBinding exists but no rule derives a team from it.
+- Attribution travels the whole path. RunManifest.team fills RequestFacts.claimed_team, which is required rather than defaulted so a caller cannot skip it, and every AuthorizationDecision records both the claimed team and whether membership was verified. Two states are distinguishable in the audit record now rather than three: verified (team_verified true) and not verified (team_verified false), the second covering both a claim the roster contradicts and a submitter whose own membership nothing records. A reader who needs those apart has the roster and the claimed team on the same record and can compare them.
+- Attribution is read off the submitter's own membership and nothing else. It is independent of who approves, so a lead self-authorising and an admin self-approving an exception both record team_verified false for a team they do not belong to rather than being refused it. It is also independent of the repository: RepositoryBinding exists but no rule derives a team from it.
+- Four decision records carry reason submitter_not_in_claimed_team and the enum member is kept for them. Nothing produces it now, and cli.preflight reads the same member for the local refusal, so the word in the history and the word a submitter meets cannot drift apart.
 
-Proving tests (4), all executed and passing:
+No test proves this check.
 
-- `tests/test_authorization.py::test_attribution_is_enforced_against_the_shipped_roster[curriculum]`
-- `tests/test_authorization.py::test_attribution_is_enforced_against_the_shipped_roster[not-a-team]`
-- `tests/test_authorization.py::test_a_recorded_member_claiming_their_own_group_is_verified_on_the_shipped_roster`
-- `tests/test_authorization.py::test_every_recorded_member_may_claim_scratch`
-
-Supporting tests (12), all executed and passing, cited as evidence rather than as proof:
+Supporting tests (16), all executed and passing, cited as evidence rather than as proof:
 
 - `tests/test_authorization.py::test_a_submitter_naming_their_own_team_is_granted_and_recorded_verified`
-- `tests/test_authorization.py::test_a_submitter_naming_another_teams_id_is_denied_despite_a_valid_lead_approval`
-- `tests/test_authorization.py::test_a_team_id_no_roster_defines_is_denied_the_same_way_as_a_foreign_team`
-- `tests/test_authorization.py::test_a_lead_self_authorizing_cannot_attribute_the_run_to_a_foreign_team`
-- `tests/test_authorization.py::test_an_admin_may_not_attribute_their_run_to_another_teams_budget`
+- `tests/test_authorization.py::test_a_recorded_member_claiming_their_own_group_is_verified_on_the_shipped_roster`
+- `tests/test_authorization.py::test_attribution_is_recorded_against_the_shipped_roster_and_not_enforced[curriculum]`
+- `tests/test_authorization.py::test_attribution_is_recorded_against_the_shipped_roster_and_not_enforced[not-a-team]`
+- `tests/test_authorization.py::test_the_verified_flag_is_the_only_thing_a_foreign_team_changes_for_a_lead`
+- `tests/test_authorization.py::test_no_evaluation_against_the_shipped_roster_reaches_the_claimed_team_reason`
+- `tests/test_authorization.py::test_the_retired_claimed_team_reason_still_reads_back_off_a_stored_record`
+- `tests/test_authorization.py::test_every_recorded_member_may_claim_scratch`
+- `tests/test_cli_check.py::test_naming_a_team_the_roster_does_not_put_you_on_is_refused_before_the_gate`
 - `tests/test_policy.py::test_request_facts_require_an_explicit_claimed_team`
 - `tests/test_authorization.py::test_attribution_changes_no_classification_outcome[cpu-routine.yaml]`
 - `tests/test_authorization.py::test_attribution_changes_no_classification_outcome[gpu-exception.yaml]`

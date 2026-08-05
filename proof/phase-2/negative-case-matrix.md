@@ -4,7 +4,7 @@ The 22 Phase 2 acceptance criteria, mapped to the tests cited for each one by no
 
 This mapping is defined once, in `src/edullm_platform/phase2_criteria.py`. The acceptance gate reads the same definition and executes the same node ids, so this matrix and `tools/validate_phase2.py` cannot disagree.
 
-Verification run: 668 tests executed, 668 passed, 0 failed, 0 errored, pytest exit code 0.
+Verification run: 675 tests executed, 674 passed, 0 failed, 0 errored, pytest exit code 0.
 
 Three statuses exist and no more. **COVERED** means one or more cited tests prove the criterion as stated against the shipped configuration and all of them pass; the gate passes it. **DEFERRED** means an explicit recorded decision not to satisfy it yet, which requires both a written reason and a written trigger describing what makes it live again; the gate passes it. **GAP** is everything else, and the gate fails it. There is no in-between status, because an in-between status is what lets a gate be green and wrong at the same time.
 
@@ -15,7 +15,7 @@ Three statuses exist and no more. **COVERED** means one or more cited tests prov
 | 1 | COVERED | 1 | 3 | Lead self-authorization succeeds. |
 | 2 | GAP | 0 | 6 | Member submission without lead approval is rejected. |
 | 3 | GAP | 0 | 2 | Any team lead approval succeeds while approval_scope is organization. |
-| 4 | DEFERRED | 0 | 1 | Wrong-team lead approval is rejected. |
+| 4 | DEFERRED | 0 | 2 | Wrong-team lead approval is rejected. |
 | 5 | COVERED | 3 | 2 | Admin exception succeeds only through the admin path. |
 | 6 | GAP | 0 | 2 | Wrong repository, ref, audience, or manifest hash cannot assume or use the role. |
 | 7 | GAP | 0 | 2 | A job that omits the approval environment cannot assume the admission role, even from main. |
@@ -155,11 +155,11 @@ Supporting tests (2), all executed and passing, cited as evidence rather than as
 
 Deferred because:
 
-No team in config/organization.yaml records a member_logins entry, so no submitter's membership is knowable and the rule has nobody to reject. Every decision records team_verified false in consequence, which is what makes the unverified attribution visible in the audit trail rather than silent. The teams themselves are declared; it is who is in them that nothing has ever recorded. Carried forward from Phase 0's deferral of the same question.
+Deferred first because no team in config/organization.yaml recorded a member_logins entry, so no submitter's membership was knowable and the rule had nobody to reject. The assignments landed on 2026-08-01 and the rule went live, and it was removed on 2026-08-05: it ran inside admission, downstream of the approval gate, so a wrong-team run was refused only after a lead had already released it. Four submissions met it and all four were real researchers with an approval already spent. Every decision still records team_verified, which is what makes an unverified attribution visible in the audit trail rather than silent, and it is now the whole of the answer.
 
 Live again when:
 
-Recording member_logins in config/organization.yaml once each group's assignments exist. Enforcement goes live with no code change, team_verified starts reporting true, and this must be re-recorded as covered or argued again.
+A reader for team_verified. It is false on 79 of the 158 decision records written so far and nothing surfaces it on a schedule. A cost report that lists the runs it is false on closes this as recorded. Refusing again would have to happen before the approval gate, on the form or in edullm check, or it buys the same nothing it bought the first time.
 
 Scope:
 
@@ -169,9 +169,10 @@ THE PAGE THAT EXCHANGE NAMED IS GONE, AND THE PROTECTION SURVIVED IT SOMEWHERE E
 
 No test proves this check.
 
-Supporting tests (1), all executed and passing, cited as evidence rather than as proof:
+Supporting tests (2), all executed and passing, cited as evidence rather than as proof:
 
-- `tests/test_authorization.py::test_a_lead_self_authorizing_cannot_attribute_the_run_to_a_foreign_team`
+- `tests/test_authorization.py::test_the_verified_flag_is_the_only_thing_a_foreign_team_changes_for_a_lead`
+- `tests/test_authorization.py::test_no_evaluation_against_the_shipped_roster_reaches_the_claimed_team_reason`
 
 ### Check 5 — Admin exception succeeds only through the admin path.
 
@@ -256,12 +257,14 @@ Supporting tests (2), all executed and passing, cited as evidence rather than as
 Scope:
 
 - Enforced twice, and as of 2026-07-31 proved twice. evaluate_authorization returns self_approval_not_permitted_for_member against the shipped roster, which is the mechanism that holds regardless of GitHub's configuration. The second mechanism is that members are not reviewers on either environment, and that half was proved only for reviewers named as users until the capture below existed.
-- What was missing was the membership of one team, and it is now captured. test_no_member_who_is_not_a_lead_or_admin_reviews_either_gate establishes that every reviewer named as a user on either gate is a lead or an admin in config/organization.yaml. The lead gate names no users at all: its single reviewer is the team-leads team, because eight leads exceed the six reviewer slots and a team counts as one. Nothing recorded who was in that team, so a member added to it on GitHub became a reviewer on the lead gate and every test went on passing. fixtures/evidence/phase-2/github/lead-team.sanitized.json is that record, and the comparison against the roster is what now fails by name instead.
-- WHICH OF THOSE CITATIONS PROVE THE STATEMENT AND WHICH SUPPORT IT WAS SETTLED BY MUTATING THE CAPTURE RATHER THAN BY READING IT. Point team_slug at some other team and both roster comparisons stay green -- they compare a list of logins against a list of logins, and any team of leads satisfies them -- while only test_the_membership_captured_is_of_the_team_the_lead_gate_actually_names fails. That test is what ties the membership to this gate, so without it the other two are about a team rather than about the lead gate, which is why it is proving here rather than cited beside the proof. test_a_lead_the_roster_declares_is_never_locked_out_of_the_lead_gate is the one that stays supporting, and the reason is the statement rather than the test's strength: it establishes that the two lists agree, which is what licenses reading roster membership as gate membership, and it bears on whether a lead can be kept out rather than on whether a member can get in. Empty the captured membership and it is the only citation that fails, which is the right result for this criterion: a lead gate with nobody behind it releases nothing.
+- What was missing was the membership of one team, and it is now captured. test_no_member_who_is_not_a_lead_or_admin_reviews_either_gate establishes that every reviewer named as a user on either gate is a lead or an admin in config/organization.yaml. The lead gate names no users at all: its single reviewer is the team-leads team, because nine approvers exceed the six reviewer slots and a team counts as one. Nothing recorded who was in that team, so a member added to it on GitHub became a reviewer on the lead gate and every test went on passing. fixtures/evidence/phase-2/github/lead-team.sanitized.json is that record, and the comparison against the roster is what now fails by name instead.
+- WHAT THE TWO COMPARISONS COMPARE AGAINST WAS WRONG UNTIL 2026-08-05, AND THE WRONG SET WAS THE NARROW ONE. Both read team_leads, and admission admits an approver who is an admin or a lead, so the set the lead gate has to match is admins | team_leads. The gap is a real person: BritishAmericqn is an admin, leads no research group, and is a maintainer of the team-leads team. Read against team_leads he was drift, and the message said admission would refuse the run he released, which is the opposite of what holds_routine_approver_role returns for him. The repair that reading argues for is adding him to team_leads, and tests/test_inventory.py refuses an entry there who leads no group -- so the check pointed at a repair the roster's own invariant rejects. Both tests now ask holds_routine_approver_role rather than assembling the set, so neither can drift from what admission does, and the second direction gained a case it could not previously make: an admin off the team is a declared routine approver the lead gate will never ask.
+- WHICH OF THOSE CITATIONS PROVE THE STATEMENT AND WHICH SUPPORT IT WAS SETTLED BY MUTATING THE CAPTURE RATHER THAN BY READING IT. Point team_slug at some other team and both roster comparisons stay green -- they compare a list of logins against a list of logins, and any team of leads satisfies them -- while only test_the_membership_captured_is_of_the_team_the_lead_gate_actually_names fails. That test is what ties the membership to this gate, so without it the other two are about a team rather than about the lead gate, which is why it is proving here rather than cited beside the proof. test_an_approver_the_roster_declares_is_never_locked_out_of_the_lead_gate is the one that stays supporting, and the reason is the statement rather than the test's strength: it establishes that the two lists agree, which is what licenses reading roster membership as gate membership, and it bears on whether a lead can be kept out rather than on whether a member can get in. Empty the captured membership and it is the only citation that fails, which is the right result for this criterion: a lead gate with nobody behind it releases nothing.
 - Note that prevent_self_review is deliberately false on both environments, because leads self-authorizing and admins approving their own exceptions are both intended. The flag is not what enforces this, and a reader must not be left thinking it is.
 - THE OTHER FLAG IS WHAT THIS PROOF QUIETLY RESTS ON, SO IT IS CITED HERE AND NOT ONLY WHERE IT WAS FIRST WRITTEN DOWN. Every citation above bounds who may be asked to review. With can_admins_bypass true a repository admin releases a waiting deployment through Start all waiting jobs without being a reviewer at all and without leaving an approval record, so the reviewer lists would be an accurate description of a control nobody has to pass -- and GitHub grants repository admin in repository settings, independently of the admins list in config/organization.yaml, so nothing in the roster bounds who holds it. The capture records the flag false on all three environments and test_no_environment_lets_an_admin_release_without_a_reviewer pins it. If somebody turns it on, what still holds is the authorization half: the bypass leaves no approver for the submitting job to read, so admission refuses the run rather than attributing it to nobody.
-- How it was closed, since the previous entry here was a remedy rather than a record. tools/capture_phase2_evidence.py gained a lead-team target reading orgs/edu-llm/teams/team-leads/members, which writes the team's slug beside its logins so that a capture of some other team cannot be read as this one; a test pins that slug against the reviewer the lead gate actually names. The roster comparison runs in both directions as two tests rather than one, because the directions are different incidents with different fixes: a login on GitHub and not in the roster opens a gate admission will then refuse, and a login in the roster and not on GitHub is a lead the gate will never release, even for his own group's run. Both were live at once through the two-day window that ended on 2026-07-30, which config/organization.yaml records.
-- What a capture cannot do is notice a change while nobody is looking. This criterion rests on two captures rather than one and they were taken four days apart -- the environments on 2026-07-27 and the team membership on 2026-07-31 -- so it is a statement about two observed_at values, and the earlier one governs: each expires on its own freshness window, the environment capture lapses first, and the proof lapses with it rather than surviving on the newer record. In the interval between two captures a member added to the team-leads team is a reviewer on the lead gate and no test here fails. What stands behind the gate in that interval is unchanged: evaluate_authorization refuses the submission after the approval, so the run does not start, and the residual is that somebody held an approval authority nobody granted for as long as it took to re-capture.
+- How it was closed, since the previous entry here was a remedy rather than a record. tools/capture_phase2_evidence.py gained a lead-team target reading orgs/edu-llm/teams/team-leads/members, which writes the team's slug beside its logins so that a capture of some other team cannot be read as this one; a test pins that slug against the reviewer the lead gate actually names. The roster comparison runs in both directions as two tests rather than one, because the directions are different incidents with different fixes: a login on GitHub the roster does not authorize opens a gate admission will then refuse, and an authorized login absent from GitHub is somebody the gate will never ask, their own group's run included. Both were live at once through the two-day window that ended on 2026-07-30, which config/organization.yaml records.
+- THE INTERVAL BELOW STOPPED BEING HYPOTHETICAL ON 2026-08-05, WHICH IS WHY IT IS STILL WRITTEN DOWN RATHER THAN SOFTENED. BritishAmericqn was added to the team-leads team at some point after the 2026-07-31 capture and before 2026-08-05, and the capture went on reading eight. Two comments asserted a hand-check on 2026-08-04 finding an empty symmetric difference, and by 2026-08-05 that was false. The organization is on the free plan, so orgs/edu-llm/audit-log answers 404 and neither the day nor the person who made the change can be recovered. Re-capturing is the only thing that closes it, and the freshness window is the only thing that forces a re-capture.
+- What a capture cannot do is notice a change while nobody is looking. This criterion rests on two captures rather than one and they were taken days apart -- the environments on 2026-07-27 and the team membership on 2026-08-05 -- so it is a statement about two observed_at values, and the earlier one governs: each expires on its own freshness window, the environment capture lapses first, and the proof lapses with it rather than surviving on the newer record. In the interval between two captures a member added to the team-leads team is a reviewer on the lead gate and no test here fails. What stands behind the gate in that interval is unchanged: evaluate_authorization refuses the submission after the approval, so the run does not start, and the residual is that somebody held an approval authority nobody granted for as long as it took to re-capture.
 
 Proving tests (7), all executed and passing:
 
@@ -270,13 +273,13 @@ Proving tests (7), all executed and passing:
 - `tests/test_authorization.py::test_case_variants_of_a_member_login_are_recognized_as_self_approval[CaIiRiS-caIIris]`
 - `tests/test_phase2_github_evidence.py::test_no_member_who_is_not_a_lead_or_admin_reviews_either_gate`
 - `tests/test_phase2_github_evidence.py::test_the_membership_captured_is_of_the_team_the_lead_gate_actually_names`
-- `tests/test_phase2_github_evidence.py::test_only_a_lead_the_roster_declares_can_release_a_run_at_the_lead_gate`
+- `tests/test_phase2_github_evidence.py::test_only_an_approver_the_roster_declares_can_release_a_run_at_the_lead_gate`
 - `tests/test_phase2_github_evidence.py::test_no_environment_lets_an_admin_release_without_a_reviewer`
 
 Supporting tests (2), all executed and passing, cited as evidence rather than as proof:
 
 - `tests/test_authorization.py::test_plain_member_routine_run_approved_by_another_plain_member_is_denied`
-- `tests/test_phase2_github_evidence.py::test_a_lead_the_roster_declares_is_never_locked_out_of_the_lead_gate`
+- `tests/test_phase2_github_evidence.py::test_an_approver_the_roster_declares_is_never_locked_out_of_the_lead_gate`
 
 ### Check 10 — A submitter cannot influence their own classification to route to the weaker approval path.
 
@@ -397,8 +400,8 @@ Proving tests (6), all executed and passing:
 - `tests/test_phase2_github_evidence.py::test_no_member_who_is_not_a_lead_or_admin_reviews_either_gate`
 - `tests/test_phase2_github_evidence.py::test_the_lead_gate_is_reviewed_by_the_leads_team_rather_than_by_named_people`
 - `tests/test_phase2_github_evidence.py::test_the_membership_captured_is_of_the_team_the_lead_gate_actually_names`
-- `tests/test_phase2_github_evidence.py::test_only_a_lead_the_roster_declares_can_release_a_run_at_the_lead_gate`
-- `tests/test_phase2_github_evidence.py::test_a_lead_the_roster_declares_is_never_locked_out_of_the_lead_gate`
+- `tests/test_phase2_github_evidence.py::test_only_an_approver_the_roster_declares_can_release_a_run_at_the_lead_gate`
+- `tests/test_phase2_github_evidence.py::test_an_approver_the_roster_declares_is_never_locked_out_of_the_lead_gate`
 
 Supporting tests (2), all executed and passing, cited as evidence rather than as proof:
 

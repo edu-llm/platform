@@ -18,16 +18,27 @@ silent, and the whole authorization model assumes the two agree.
 
 **On the lead gate that comparison has to reach one level further, and until now it did
 not.** That gate's reviewer list names no people at all: its single reviewer is the
-``team-leads`` team, because eight leads exceed the six reviewer slots and a team counts
+``team-leads`` team, because the approvers exceed the six reviewer slots and a team counts
 as one. Nothing recorded who was in that team, so a member added to it on GitHub became a
 reviewer on the lead gate and every test in this module went on passing. The two
-membership tests below read ``lead-team.sanitized.json`` and compare it against
-``team_leads`` in both directions, as two tests rather than one, because the directions
-are different incidents with different fixes: a login on GitHub and not in the roster can
-open a gate that admission will then refuse, and a login in the roster and not on GitHub
-is a lead the lead gate will never release, even for his own group's run. Both were live
-at once during the two-day window that ended on 2026-07-30, which
+membership tests below read ``lead-team.sanitized.json`` and compare it against the
+roster in both directions, as two tests rather than one, because the directions are
+different incidents with different fixes: a login on GitHub the roster does not authorize
+can open a gate that admission will then refuse, and an authorized login absent from
+GitHub is somebody the lead gate will never ask, their own group's run included. Both
+were live at once during the two-day window that ended on 2026-07-30, which
 ``config/organization.yaml`` records in its own words.
+
+**What those two compare against is ``holds_routine_approver_role`` and not ``team_leads``,
+and the difference is what this module got wrong.** Admission admits an approver who is an
+admin *or* a lead, so the set the lead gate has to match is ``admins | team_leads`` -- the
+same union ``test_no_member_who_is_not_a_lead_or_admin_reviews_either_gate`` already builds
+for the reviewers named as users. Compared against ``team_leads`` alone, an admin on the
+team read as drift that admission would refuse, which is false: admission accepts him.
+Worse, the only edit that silences that reading is adding him to ``team_leads``, and
+``tests/test_inventory.py`` refuses an entry there who leads no group. So the check pointed
+at a repair its own roster would not accept. The set is asked of the function rather than
+assembled here, so it cannot drift from what admission does.
 """
 
 from __future__ import annotations
@@ -38,6 +49,9 @@ from pathlib import Path
 import pytest
 import yaml
 
+from edullm_platform.config import load_yaml
+from edullm_platform.contracts.authorization import holds_routine_approver_role
+from edullm_platform.contracts.inventory import OrganizationInventory, normalize_github_login
 from edullm_platform.phase2_evidence import (
     APPROVAL_ENVIRONMENT_NAMES,
     EnvironmentInventory,
@@ -77,6 +91,27 @@ def roster() -> dict[str, object]:
         (PROJECT_ROOT / "config" / "organization.yaml").read_text(encoding="utf-8")
     )
     return loaded
+
+
+@pytest.fixture(scope="module")
+def routine_approvers() -> frozenset[str]:
+    """Everybody admission will accept as the approver of a routine run, normalized.
+
+    Asked of ``holds_routine_approver_role`` rather than assembled from ``team_leads``,
+    because that function is what admission consults and this is therefore the set the lead
+    gate has to match. Assembling it here would be a second spelling of the rule, and the
+    two spellings would drift the way the two lists this module exists to compare already
+    did.
+
+    Iterating ``members`` reaches everybody: the inventory contract refuses an admin or a
+    lead who is not also a member, so no approver can be outside this loop.
+    """
+    inventory = load_yaml(PROJECT_ROOT / "config" / "organization.yaml", OrganizationInventory)
+    return frozenset(
+        member.normalized_github_login
+        for member in inventory.members
+        if holds_routine_approver_role(inventory, member.github_login)
+    )
 
 
 def test_all_three_approval_environments_exist_and_no_fourth_one_does(
@@ -236,51 +271,64 @@ def test_the_membership_captured_is_of_the_team_the_lead_gate_actually_names(
     )
 
 
-def test_only_a_lead_the_roster_declares_can_release_a_run_at_the_lead_gate(
+def test_only_an_approver_the_roster_declares_can_release_a_run_at_the_lead_gate(
     lead_team: LeadTeamMembership,
-    roster: dict[str, object],
+    routine_approvers: frozenset[str],
 ) -> None:
     # The direction that widens authority, and the hole this capture was added to close.
     # GitHub's team is what releases the deployment; config/organization.yaml is what
-    # admission reads afterwards. A login here and not there can open the lead gate on any
-    # team's routine run and is then refused at admission with
+    # admission reads afterwards. A login here the roster does not authorize can open the
+    # lead gate on any team's routine run and is then refused at admission with
     # approver_lacks_lead_or_admin_role -- the run is stopped, but somebody held approval
     # authority this repository never granted and nothing here could say who. That was
     # live for syz2026 through the two-day window ending 2026-07-30.
     #
-    # Case-insensitive, the way the admin gate's reviewers are compared just above. GitHub
-    # treats a login as case-insensitive, and an exact comparison would report drift that
-    # is not there while saying nothing about the drift that is.
-    declared = {str(login).lower() for login in roster["team_leads"]}
+    # THE COMPARISON IS AGAINST THE APPROVERS AND NOT AGAINST team_leads, WHICH IS THE
+    # CORRECTION RATHER THAN A WIDENING FOR CONVENIENCE. An admin approves a routine run
+    # without leading any group, so an admin on this team is the model working and not
+    # drift. Read against team_leads alone it was drift, and the message said admission
+    # would refuse the run, which is the opposite of what admission does. The repair that
+    # reading argues for is adding him to team_leads, and test_inventory.py refuses an
+    # entry there who leads no group -- so the check pointed at a repair the roster's own
+    # invariant would reject, which is worse than not checking.
+    #
+    # Case-insensitive through normalize_github_login, the way the admin gate's reviewers
+    # are compared above. GitHub treats a login as case-insensitive, and an exact
+    # comparison would report drift that is not there while saying nothing about the drift
+    # that is.
     undeclared = sorted(
-        login for login in lead_team.member_logins if login.lower() not in declared
+        login
+        for login in lead_team.member_logins
+        if normalize_github_login(login) not in routine_approvers
     )
 
     assert not undeclared, (
-        f"on GitHub's {lead_team.team_slug} team and not in config/organization.yaml's "
-        "team_leads, so each of these can release any team's routine run at the lead gate "
-        f"while admission refuses the submission it released: {undeclared}"
+        f"on GitHub's {lead_team.team_slug} team and neither an admin nor a team lead in "
+        "config/organization.yaml, so each of these can release any team's routine run at "
+        f"the lead gate while admission refuses the submission it released: {undeclared}"
     )
 
 
-def test_a_lead_the_roster_declares_is_never_locked_out_of_the_lead_gate(
+def test_an_approver_the_roster_declares_is_never_locked_out_of_the_lead_gate(
     lead_team: LeadTeamMembership,
-    roster: dict[str, object],
+    routine_approvers: frozenset[str],
 ) -> None:
     # The direction that withdraws authority the roster granted, which is a different
-    # incident with a different fix and therefore a different test. A login here and not
-    # on the team is a lead admission would accept and the gate will never release, so
-    # even his own group's routine run waits on somebody else -- which is what
-    # VS-code-cloud met through the same two-day window, from the other side of it.
-    on_github = {login.lower() for login in lead_team.member_logins}
-    absent = sorted(
-        str(login) for login in roster["team_leads"] if str(login).lower() not in on_github
-    )
+    # incident with a different fix and therefore a different test. A login the roster
+    # authorizes and the team omits is somebody admission would accept and the gate will
+    # never ask, so a routine run waits on somebody else -- which is what VS-code-cloud met
+    # through the same two-day window, from the other side of it.
+    #
+    # Admins are held to this too, and that is not incidental. The admin gate releases an
+    # exception; a routine run goes to the lead gate whoever approves it, so an admin off
+    # this team is a declared routine approver with no routine run he can actually release.
+    on_github = {normalize_github_login(login) for login in lead_team.member_logins}
+    absent = sorted(routine_approvers - on_github)
 
     assert not absent, (
-        "in config/organization.yaml's team_leads and not on GitHub's "
-        f"{lead_team.team_slug} team, so each of these is a lead this platform authorizes "
-        f"and the lead gate will never let through, their own group's run included: {absent}"
+        "an admin or team lead in config/organization.yaml and not on GitHub's "
+        f"{lead_team.team_slug} team, so each of these is somebody this platform authorizes "
+        f"to release a routine run and the lead gate will never ask: {absent}"
     )
 
 
