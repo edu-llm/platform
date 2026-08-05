@@ -121,12 +121,13 @@ CREDENTIALED_JOBS = (
 
 #: The functions the release check reads, and the templates that name them to
 #: CloudFormation. Read from the templates rather than spelled here, because the IAM grant
-#: is written against these names and a rename that missed one of the three places would be
-#: an access denial at 05:00 rather than a failure at review.
+#: is written against these names and a rename that missed one of the places would be an
+#: access denial at 05:00 rather than a failure at review.
 LAMBDA_TEMPLATES = (
     "admission-state-machine.yaml",
     "batch-events.yaml",
     "expiry-janitor.yaml",
+    "notifications.yaml",
 )
 
 #: What the repository variable is called, and what the role it names is called. Spelled here

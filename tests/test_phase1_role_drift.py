@@ -307,6 +307,10 @@ def test_the_deployer_projection_keeps_the_narrowed_wildcards_it_was_given(
         role_arn % "sbsandbox-intern-edullm-janitor-lambda",
         role_arn % "sbsandbox-intern-edullm-janitor-schedule",
         template_arn % ("scheduler", "schedule/default/sbsandbox-intern-edullm-*"),
+        # The runs channel, and the opposite property: one more whole role ARN and no new
+        # wildcard at all. The notifier's function, queue, rule and log group all fall inside
+        # entries already above, so naming the role it passes was the only edit it forced.
+        role_arn % "sbsandbox-intern-edullm-notifier-lambda",
         # The second exception, and the same cause in another service: an event source
         # mapping is addressed by a UUID Lambda assigns at creation, so the mapping's tag
         # read cannot be scoped by name either. It is the only action granted on it and it

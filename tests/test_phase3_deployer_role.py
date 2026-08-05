@@ -113,13 +113,17 @@ EC2_DESCRIBE_ACTIONS = frozenset(
     }
 )
 
-#: Seven whole role ARNs, in the order the template writes them. Written out here for the
+#: Eight whole role ARNs, in the order the template writes them. Written out here for the
 #: same reason they are written out there: a name that has to be typed twice cannot grow a
 #: wildcard on one side only.
 #:
 #: The middle three arrived with the GPU compute environment. Batch has no per-job role
 #: override, so a second job definition is the only way to give a container a different
 #: identity, and a second job definition needs its own execution and workload roles passed.
+#:
+#: The last arrived with the runs channel, and it is the second Lambda role
+#: ``lambda:CreateFunction`` passes. It reads one lineage prefix, lists one checkpoint
+#: prefix, lists Batch jobs in this region and reads one secret, and it writes nothing.
 PASS_ROLE_NAMES = [
     "sbsandbox-intern-edullm-batch-execution",
     "sbsandbox-intern-edullm-batch-workload",
@@ -128,6 +132,7 @@ PASS_ROLE_NAMES = [
     "sbsandbox-intern-edullm-batch-gpu-workload",
     "sbsandbox-intern-edullm-batch-gpu-instance",
     "sbsandbox-intern-edullm-lifecycle-lambda",
+    "sbsandbox-intern-edullm-notifier-lambda",
 ]
 
 #: Every EC2 resource type this role writes to, and the one place in it where a resource ARN

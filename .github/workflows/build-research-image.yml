@@ -834,3 +834,47 @@ jobs:
             echo
           } >> "${GITHUB_STEP_SUMMARY}"
           echo "The step summary carries the published digest for this commit."
+
+      # WHAT A RED BUILD SAYS, WHICH UNTIL NOW WAS NOTHING.
+      #
+      # GitHub emails the person who pushed when this run fails, and that email links to a
+      # page whose top is a list of steps rather than a reason. Nothing else tells anybody:
+      # no step here posts anywhere, none of the five callers does, the audit checks no
+      # build, and the CLI reads no build status. So a build can go red and stay red while
+      # the only signal is an email whose landing page explains nothing.
+      #
+      # This is not a second notification path. It is the first one's content. Posting to
+      # chat from here would need a webhook secret in each of the five research
+      # repositories that call this workflow, and this repository is forbidden one by name
+      # by test_the_repository_holds_no_secret_a_branch_could_read.
+      #
+      # `if: failure()` rather than `always()`. A notice printed on every green build is a
+      # notice nobody reads on the red one.
+      - name: Say what failed, where the failure notification lands
+        if: failure()
+        env:
+          FAILED_REPOSITORY: ${{ inputs.repository }}
+          FAILED_COMMIT: ${{ github.sha }}
+          FAILED_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## image_build_failed"
+            echo
+            echo "No image was published for this commit, so a submission naming it will be"
+            echo "refused at compile time with a message about a commit that published no"
+            echo "image. That refusal is correct and it is not the cause. This is."
+            echo
+            echo "| what | value |"
+            echo "| --- | --- |"
+            echo "| repository | \`${FAILED_REPOSITORY}\` |"
+            echo "| commit | \`${FAILED_COMMIT}\` |"
+            echo "| ref | \`${FAILED_REF}\` |"
+            echo
+            echo "Read the first red step above. The three that fail most are source"
+            echo "identity, the publisher denial matrix, and the build itself."
+            echo
+            echo "Re-running fixes nothing on its own. Fix the cause on your branch and push"
+            echo "again, or dispatch this build by hand once the fix is on the branch."
+          } >> "${GITHUB_STEP_SUMMARY}"
+          echo "image_build_failed" >&2

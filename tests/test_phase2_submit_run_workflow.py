@@ -2974,3 +2974,23 @@ def test_the_form_does_not_offer_a_fanout_parallelism_box_at_all() -> None:
 
     assert "fanout_parallelism" not in offered
     assert {"fanout_size", "fanout_index_parameter"} <= set(offered)
+
+
+def test_the_run_name_reads_in_the_same_voice_as_the_message_about_how_it_ended() -> None:
+    """Mutation: separate the clauses with an em dash, which is what this line arrived with.
+
+    Two plans wrote this key in the same week and the other one landed first, so what it
+    carries is settled there and asserted by
+    `test_the_run_name_carries_what_the_dispatch_knew_and_not_the_run_id` above. This is the
+    one claim that test does not make and that the runs channel depends on.
+
+    The house standard forbids an em dash, and every message
+    `edullm_platform.notifications.messages` renders separates its clauses with a middle dot.
+    A submission titled with one punctuation mark and reported on with another reads as two
+    systems talking about the same run, which is what a person scrolling a channel beside an
+    Actions list actually sees.
+    """
+    run_name = _load()["run-name"]
+
+    assert "—" not in run_name, "the house standard forbids an em dash"
+    assert " · " in run_name, "the separator is the one every notification already uses"

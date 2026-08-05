@@ -47,12 +47,18 @@ from tools.build_admission_lambda import (
 )
 from tools.build_janitor_lambda import JANITOR_CONFIG, JANITOR_ENTRYPOINT
 from tools.build_lifecycle_lambda import RECORDER_CONFIG, RECORDER_ENTRYPOINT
+from tools.build_notifier_lambda import NOTIFIER_CONFIG, NOTIFIER_ENTRYPOINT
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_ROOT = PROJECT_ROOT / PACKAGE_DIRECTORY
 CONFIG_ROOT = PROJECT_ROOT / "config"
 
-ENTRYPOINTS = (ADMISSION_ENTRYPOINT, RECORDER_ENTRYPOINT, JANITOR_ENTRYPOINT)
+ENTRYPOINTS = (
+    ADMISSION_ENTRYPOINT,
+    RECORDER_ENTRYPOINT,
+    JANITOR_ENTRYPOINT,
+    NOTIFIER_ENTRYPOINT,
+)
 
 #: What each builder declares it packages, beside the entrypoint it packages it for. The
 #: pairing is the thing under test: an entrypoint whose modules read a file its own builder
@@ -61,6 +67,7 @@ PACKAGED_CONFIG = (
     (ADMISSION_ENTRYPOINT, ADMISSION_CONFIG),
     (RECORDER_ENTRYPOINT, RECORDER_CONFIG),
     (JANITOR_ENTRYPOINT, JANITOR_CONFIG),
+    (NOTIFIER_ENTRYPOINT, NOTIFIER_CONFIG),
 )
 
 
@@ -302,3 +309,19 @@ def test_nothing_a_handler_carries_imports_a_module_by_name_at_runtime(entrypoin
         f"{entrypoint} carries modules that import by name at runtime, which no static or "
         f"load-time measurement can follow: {offenders}"
     )
+
+
+def test_the_notifier_carries_the_three_files_it_reads_and_no_others() -> None:
+    """Mutation: give the notifier the validator's configuration list.
+
+    The recorder reads nothing under config/ and is therefore immune to a roster edit. The
+    notifier cannot be: it resolves a W&B account to a person through organization.yaml, a
+    queue to a profile through execution-targets.yaml, and a profile to a rate through
+    workload-catalog.yaml. Three files rather than eight is the whole of the narrowing, and
+    a wider list would move this function's release digest for a policy it never opens.
+    """
+    assert NOTIFIER_CONFIG == frozenset(
+        {"organization.yaml", "workload-catalog.yaml", "execution-targets.yaml"}
+    )
+    assert NOTIFIER_CONFIG != ADMISSION_CONFIG
+    assert NOTIFIER_CONFIG != RECORDER_CONFIG
