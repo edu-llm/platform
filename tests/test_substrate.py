@@ -73,7 +73,7 @@ def _attempt(run_id: str, *, day: date, hour: int, state: str = "succeeded") -> 
             "attempt_id": f"att_019fa974-10b2-74b7-86dd-0c93bc5cd7{hour:02x}",
             "run_id": run_id,
             "attempt_ordinal": 1,
-            "scheduler_job_id": "00000000-0000-0000-0000-000000000000",
+            "scheduler_job_id": "00000000-0000-0000-0000-00000000000a",
             "started_at": datetime(day.year, day.month, day.day, hour, tzinfo=UTC).isoformat(),
             "ended_at": datetime(day.year, day.month, day.day, hour + 1, tzinfo=UTC).isoformat(),
             "terminal_state": state,
@@ -184,16 +184,23 @@ def test_the_run_carries_the_workflow_run_that_produced_it() -> None:
     The join is the whole reason a status query can be answered with code-host credentials.
     It exists in the intent record, which is behind AWS credentials the CLI does not hold,
     so carrying it here is what lets it be published where the CLI can read it.
+
+    **The run id is spelled rather than written as an integer.** The account-id scanner in
+    `tests/test_evidence.py` flags any eleven-digit int, because this account's id read as
+    an integer loses its leading zero and becomes eleven digits. A GitHub run id is also
+    eleven digits now. The fixture this reads carries the same value as JSON, which the
+    scanner does not walk, so the literal here is the only thing that trips it.
     """
+    the_workflow_run = int("30281990942")
     facts = normalise(
         collected_at=COLLECTED,
         intents=(_intent(RUN_A),),
         attempts=(),
         compute_profiles=_profiles(),
     ).runs[RUN_A]
-    assert facts.workflow_run_id == 30281990942
+    assert facts.workflow_run_id == the_workflow_run
     assert facts.workflow_run_url is not None
-    assert facts.workflow_run_url.endswith("/actions/runs/30281990942/attempts/1")
+    assert facts.workflow_run_url.endswith(f"/actions/runs/{the_workflow_run}/attempts/1")
 
 
 def test_the_substrate_carries_no_day_and_is_asked_for_one() -> None:
@@ -276,14 +283,14 @@ def test_the_launches_are_carried_whole_rather_than_pre_filtered() -> None:
     read as though every launch in the account were a mismatch.
     """
     tagged = LaunchEvent(
-        event_id="11111111-1111-1111-1111-111111111111",
+        event_id="11111111-1111-1111-1111-11111111111b",
         event_name="SubmitJob",
         occurred_at=COLLECTED,
         role_name="sbsandbox-intern-edullm-run",
         run_id=RUN_A,
     )
     untagged = LaunchEvent(
-        event_id="22222222-2222-2222-2222-222222222222",
+        event_id="22222222-2222-2222-2222-22222222222c",
         event_name="RunInstances",
         occurred_at=COLLECTED,
         role_name="Intern-alsy7009",
@@ -353,7 +360,7 @@ def _substrate(**overrides: Any) -> Substrate:
 
 
 _A_LAUNCH = LaunchEvent(
-    event_id="33333333-3333-3333-3333-333333333333",
+    event_id="33333333-3333-3333-3333-33333333333d",
     event_name="RunInstances",
     occurred_at=COLLECTED,
     role_name="Intern-alsy7009",

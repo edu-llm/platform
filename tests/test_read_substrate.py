@@ -343,7 +343,7 @@ def test_a_launch_feed_that_was_read_is_carried_whole(
     would make the denominator equal the numerator.
     """
     launch = LaunchEvent(
-        event_id="44444444-4444-4444-4444-444444444444",
+        event_id="44444444-4444-4444-4444-44444444444d",
         event_name="SubmitJob",
         occurred_at=datetime(2026, 8, 4, 9, tzinfo=UTC),
         role_name="sbsandbox-intern-edullm-run",
@@ -424,10 +424,17 @@ def test_nothing_printed_carries_an_account_id(
 
     A denial names the caller, and the caller is an assumed-role ARN carrying the account id.
     This report is read in a step summary that anybody with the repository can open.
+
+    **The id below is fabricated, and spelled rather than written.** A test that names the
+    account id it is looking for puts the account id in a tracked file, which is the
+    disclosure it exists to prevent. `tests/test_pilot_limitations.py` made that mistake on
+    2026-07-29 and says so in its own docstring. The masking under test keys off the shape of
+    an ARN and not off any particular value, so a fabricated id exercises it exactly.
     """
+    fabricated = "9" * 12
     denial = (
         "An error occurred (AccessDenied) when calling the ListObjectsV2 operation: User: "
-        "arn:aws:sts::056956104102:assumed-role/sbsandbox-intern-edullm-nightly-reader/x "
+        f"arn:aws:sts::{fabricated}:assumed-role/sbsandbox-intern-edullm-nightly-reader/x "
         "is not authorized to perform: s3:ListBucket"
     )
     calls: list[list[str]] = []
@@ -438,7 +445,7 @@ def test_nothing_printed_carries_an_account_id(
     assert read_substrate.main(["--region", "us-east-1"]) == 0
 
     printed = capsys.readouterr()
-    assert "056956104102" not in printed.out + printed.err
+    assert fabricated not in printed.out + printed.err
     assert AWS_ACCOUNT_ID_PLACEHOLDER in printed.out
 
 
