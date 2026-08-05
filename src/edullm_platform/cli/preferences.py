@@ -68,6 +68,13 @@ PREFERENCES_DIRECTORY = "edullm"
 #: no parser, no key, no quoting rule and no answer to "what else may I put in here" -- which
 #: is the question that turns a preference into a second configuration file. A second
 #: preference, if one is ever wanted, is a second decision rather than a line somebody adds.
+#:
+#: **AND THE DIRECTORY IS NOT EMPTY ON THE MACHINE THIS FEATURE IS FOR.** An earlier ORCD-era
+#: ``edullm`` already keeps a ``config.yaml``, a lock file beside it and a ``recovery/``
+#: directory under this same path on the owner's laptop. Nothing here reads any of them and
+#: nothing there reads this. A preference spelled as a key in a shared ``config.yaml`` would
+#: have landed inside a file another program owns, locks and rewrites; a file whose whole name
+#: is the preference cannot collide with one.
 DEFAULT_TEAM_FILE = "team"
 
 

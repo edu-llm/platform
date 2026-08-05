@@ -52,6 +52,21 @@ NOT_MY_TEAM = "pre-training"
 CHECK = ("check", "--dataset", "regmix-10b-v1", "--experiment", "an-experiment")
 
 
+def stated_file(home: Path) -> Path:
+    """The preference path for a stated home and a stated empty environment.
+
+    **BOTH HALVES HAVE TO BE STATED AND SAYING ONLY ONE OF THEM WROTE INTO A REAL HOME.** A
+    GitHub Actions runner exports ``XDG_CONFIG_HOME``, which is the whole point of reading it
+    and is also what beats the ``home`` argument, so a case that named a temporary home and
+    left the environment ambient resolved to ``/home/runner/.config/edullm/team`` and created
+    it. Locally it passed, because no laptop here sets the variable. Every case below goes
+    through this rather than through the two-argument call it is easy to write half of.
+    """
+    path = default_team_file(environ={}, home=home)
+    assert path is not None
+    return path
+
+
 def checkout(tmp_path: Path) -> tuple[Path, FakeRunner]:
     write_spec(tmp_path)
     return tmp_path, FakeRunner(git_answers(tmp_path))
@@ -320,8 +335,7 @@ def test_a_file_typed_by_hand_is_read_the_way_a_person_would_have_written_it(
     first line with anything on it is the rule, and an empty file is the same as no file.
     """
     home = tmp_path / "home"
-    path = default_team_file(home=home)
-    assert path is not None
+    path = stated_file(home)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(contents, encoding="utf-8")
 
@@ -339,6 +353,11 @@ def test_the_file_is_in_the_same_place_on_every_platform_this_supports(
     ``workspace._login_from_gh_config`` already reads it there. One rule means a researcher who
     works on a laptop and on WSL types the same path and reads the same refusal, and it means
     this needs no platform table to maintain and no dependency to resolve one.
+
+    The variable beats the home directory rather than filling in behind it, which is the whole
+    of what setting it means and is not academic: a GitHub Actions runner exports it, so a
+    reading that treated it as a fallback would put the file somewhere else on the one machine
+    this repository's own checks run on.
     """
     home = tmp_path / "home"
     elsewhere = tmp_path / "elsewhere"
@@ -359,8 +378,7 @@ def test_a_default_nobody_can_read_falls_back_to_the_roster(tmp_path: Path) -> N
     either way.
     """
     home = tmp_path / "home"
-    path = default_team_file(home=home)
-    assert path is not None
+    path = stated_file(home)
     # A directory where a file should be, which is the readable shape of an unreadable file
     # and needs no permission bit that a root-owned test runner would ignore.
     path.mkdir(parents=True)
