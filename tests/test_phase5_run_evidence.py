@@ -409,9 +409,9 @@ def test_no_review_is_required_and_the_record_says_so_in_the_exact_number() -> N
     protection = branch_protection()
 
     assert protection.required_approving_review_count == 0, (
-        "main now requires "
-        f"{protection.required_approving_review_count} approving reviews, which is not "
-        "what 'Review on `main` is not required, and the tests still are' records"
+        f"main now requires {protection.required_approving_review_count} approving "
+        "reviews, and it was set to zero on 2026-08-05 on the owner's instruction; a "
+        "count that moved without that decision moving is what this catches"
     )
     assert not protection.require_code_owner_reviews, (
         "require_code_owner_reviews is back on, and a count of zero does not clear it -- "
