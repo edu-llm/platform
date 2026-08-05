@@ -54,6 +54,26 @@ name: Cut a release when the CLI or the configuration changes
 # "you are current" this whole subsystem exists to prevent, so it is a red run and not a
 # skip. It clears with a one-line bump pull request.
 #
+# AND THE VERSION HAS TO BE THE NEXT ONE, NOT MERELY ONE NOBODY HAS USED. That is this
+# file's half of covering the push path, and it is here rather than in ci.yml because this
+# is where the push already is: the trigger above has already decided the merge is one a
+# release must carry, so this step needs no base commit and cannot have the failure the
+# pull-request check was fixed for. The checkout is complete, the releases API is already
+# read, and nothing else runs on a merge that could ask.
+#
+# The gap it closes is narrow and it is the one that cannot be undone. `ci.yml` asks the
+# same question before the merge; when that check does not run -- an administrator merging
+# past it, or its own read of the releases API failing and being treated as "no release
+# exists yet" -- a version already released still stops here, but 0.2.7 against a released
+# v0.2.2 did not. It was a version no release had, so it was tagged and published, leaving
+# four numbers that never existed and a `releases/latest` nobody chose. Unreleased work is
+# recoverable with a bump pull request; a published tag is not.
+#
+# NOT ON A DISPATCH, THOUGH. That handle exists for the morning several releases are
+# missing, which is exactly the state in which the declared version is several steps above
+# the last one cut. Holding a repair to the rule the ordinary path follows would take the
+# repair away.
+#
 # NO WHEEL IS BUILT AND NOTHING IS UPLOADED. `uv tool install git+...@<tag>` builds the
 # wheel on the researcher's own machine from the tagged source, so a release here is a tag,
 # a name and generated notes. No PyPI token, no signing key, no index, no new runner OS.
@@ -151,6 +171,12 @@ jobs:
       # the staleness comparison assumes and what tests/test_cli_install_command.py asserts.
       - name: Decide the version this merge releases
         id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Which of the two triggers started this, because the rule below applies to one
+          # of them. A push is the automated path and has a check in front of it; a
+          # dispatch is somebody repairing releases that were missed.
+          EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
           # BEFORE ANYTHING ELSE, BECAUSE THE ANNOTATED TAG BELOW NEEDS A TAGGER. A runner
@@ -192,8 +218,81 @@ jobs:
           SUMMARY
             exit 1
           fi
+          # READ ONCE, HERE, FOR BOTH THINGS IN THIS JOB THAT NEED IT. The rule below
+          # measures from the latest release and the note underneath it describes the range
+          # since the latest release, and two reads of one endpoint are two answers to a
+          # question that has one.
+          previous="$(gh release view --json tagName --jq .tagName 2>/dev/null || true)"
+          # A release whose tag has been deleted leaves a name nothing can reach, and
+          # `git diff` against it would kill the next step under `set -e`. Treated as no
+          # previous release, which says the configuration moved: a reader told to re-check
+          # config that did not move has lost a minute, and one not told about config that
+          # did move has an `edullm check` that disagrees with admission. It is also how a
+          # failed read of the releases API arrives here, which is deliberate for the same
+          # reason and is why nothing below turns an unanswered read into a refusal.
+          if [ -n "${previous}" ] \
+             && ! git rev-parse --verify --quiet "${previous}^{commit}" >/dev/null; then
+            previous=""
+          fi
+          # THE NEXT VERSION, AND NOT MERELY ONE NOBODY HAS USED. Reaching here with
+          # anything else means the pull-request check did not run or did not pass, and the
+          # cost of shrugging is a published tag: 0.2.7 above a released v0.2.2 leaves four
+          # numbers that never existed and a `releases/latest` nobody chose.
+          #
+          # Skipped on a dispatch, which is the handle for the morning several releases are
+          # missing -- the state in which the declared version is several steps above the
+          # last one cut, and the one repair this rule would take away.
+          if [ "${EVENT}" = "push" ] && [ -n "${previous}" ]; then
+            released="${previous#v}"
+            next_patch="$(python3 tools/next_version.py --next patch --of "${released}")"
+            next_minor="$(python3 tools/next_version.py --next minor --of "${released}")"
+            next_major="$(python3 tools/next_version.py --next major --of "${released}")"
+            if [ "${version}" != "${next_patch}" ] \
+               && [ "${version}" != "${next_minor}" ] \
+               && [ "${version}" != "${next_major}" ]; then
+              echo "::error::v${version} is not a patch, minor or major above the latest release ${previous}, so this merge would publish a tag nobody chose. Nothing is tagged. Declare the next version in a pull request; the step summary names the three commands and what each of them would produce."
+              cat >> "${GITHUB_STEP_SUMMARY}" <<SUMMARY
+          ## A version that is not the next one
+
+          This change touched the CLI or the reviewed configuration, so an installed
+          \`edullm\` would answer differently after it. But \`pyproject.toml\` declares
+          **${version}**, the latest release is **${previous}**, and that is not one step.
+          Tagging it would publish **v${version}** over numbers between the two that were
+          never cut, and \`releases/latest\` would name a version nobody chose.
+
+          A tag is the one thing here that cannot be taken back, so nothing was tagged.
+
+          \`Checks (CI)\` asks this same question on the pull request, before the merge.
+          Reaching here means it did not run, did not pass, or was merged past --
+          \`enforce_admins\` is off on this repository.
+
+          Nothing here can bump it either. This workflow cannot write to \`main\`: branch
+          protection requires a pull request, and pushing the bump anyway is the failure this
+          workflow spent seven merges producing.
+
+          **To release this work**, open an ordinary pull request that runs one of these and
+          commits what it writes.
+
+          \`\`\`bash
+          uv run python tools/next_version.py --bump patch   # ${next_patch}
+          uv run python tools/next_version.py --bump minor   # ${next_minor}
+          uv run python tools/next_version.py --bump major   # ${next_major}
+          \`\`\`
+
+          A minor is a new command, a new flag, a new optional spec field, or a new refusal
+          that can stop a submission which used to go through. A major is a flag or field
+          removed or given a new meaning, or a changed exit code. Anything else a re-install
+          fixes is a patch.
+
+          Each moves \`pyproject.toml\`, \`uv.lock\` and the pinned install line together.
+          Merging it cuts the release.
+          SUMMARY
+              exit 1
+            fi
+          fi
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
           echo "tag=v${version}" >> "${GITHUB_OUTPUT}"
+          echo "previous=${previous}" >> "${GITHUB_OUTPUT}"
 
       # A RELEASE AND NOT ONLY A TAG, deliberately. The CLI's probe reads
       # `repos/.../releases/latest`, which a bare tag does not create and which answers 404
@@ -218,11 +317,16 @@ jobs:
       # and `git describe` answers v0.2.0 here. `--generate-notes` builds its pull request
       # list against the previous *release*, so a headline computed from `git describe` would
       # have described a wider range than the list below it and claimed a configuration
-      # change the list did not show. The same tag is handed to both.
+      # change the list did not show. The same tag is handed to both -- and now to the step
+      # above as well, which reads it once and hands it down rather than asking again.
       - name: Cut the tag and the release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
+          # Empty when there is no previous release, when its tag has been deleted, or when
+          # the read of the releases API did not answer. All three mean the same thing to
+          # everything below: there is no range to describe, so describe none.
+          PREVIOUS: ${{ steps.version.outputs.previous }}
           # Held to what edullm_platform.cli.configuration actually opens by
           # tests/test_release_tag_workflow.py, which watches the loader rather than reading
           # this list. Restated here because a workflow cannot import anything.
@@ -235,21 +339,11 @@ jobs:
             config/workload-catalog.yaml
         run: |
           set -euo pipefail
-          previous="$(gh release view --json tagName --jq .tagName 2>/dev/null || true)"
-          # A release whose tag has been deleted leaves a name nothing can diff against, and
-          # `git diff` against it would kill this step under `set -e`. Treated as no previous
-          # release, which says the configuration moved: a reader told to re-check config
-          # that did not move has lost a minute, and one not told about config that did move
-          # has an `edullm check` that disagrees with admission.
-          if [ -n "${previous}" ] \
-             && ! git rev-parse --verify --quiet "${previous}^{commit}" >/dev/null; then
-            previous=""
-          fi
           # Split deliberately: CONFIGURATION_FILES is a list of six, none of which contains
           # a space or a glob character. Quoted, it would ask git for one path with five
           # spaces in its name, which matches nothing and reports every release as code-only.
           set -- ${CONFIGURATION_FILES}
-          if [ -z "${previous}" ] || ! git diff --quiet "${previous}" HEAD -- "$@"; then
+          if [ -z "${PREVIOUS}" ] || ! git diff --quiet "${PREVIOUS}" HEAD -- "$@"; then
             headline="**This release moves the reviewed configuration**, so \`edullm check\` answers differently after you re-install."
           else
             headline="This release changes code only. The reviewed configuration is unchanged."
@@ -270,8 +364,8 @@ jobs:
           # Unquoted on purpose, so that an empty value contributes no argument at all. A tag
           # name here is v followed by three integers, so there is nothing in it to split on.
           start_tag=""
-          if [ -n "${previous}" ]; then
-            start_tag="--notes-start-tag ${previous}"
+          if [ -n "${PREVIOUS}" ]; then
+            start_tag="--notes-start-tag ${PREVIOUS}"
           fi
 
           git tag -a "${TAG}" -m "${TAG}"

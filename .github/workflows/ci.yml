@@ -105,23 +105,86 @@ jobs:
       # somebody who has to run it would rather learn that alongside the test results than
       # instead of them.
       #
-      # IT FAILS OPEN ON ITS OWN MALFUNCTION, which is the right way round for this
-      # particular check. A pull request whose base it cannot identify is not evidence of
-      # anything, and blocking every merge in the repository on a step that has decided it
-      # is confused costs more than the thing it is protecting -- which release-tag.yml
-      # catches anyway, loudly, one merge later.
+      # IT FAILS CLOSED ON ITS OWN MALFUNCTION, which is the correction. It used to pass
+      # when it could not identify the base, on the argument that a confused step should
+      # not block every merge in the repository and that release-tag.yml catches it one
+      # merge later anyway. The second half of that was not true. That workflow refuses a
+      # version already released, so it catches the change that declared nothing; a change
+      # that declared 0.2.7 with v0.2.2 released is a version no release has, and it was
+      # tagged. Catching one of the two cases is luck rather than a check, and the case it
+      # missed is the one nothing afterwards can undo -- a tag is published the moment it
+      # is pushed.
+      #
+      # WHICH LEAVES THE COST OF REFUSING, AND IT IS PAID IN THE MESSAGE. A step that says
+      # "could not determine base" and stops arrives in front of somebody whose checkout is
+      # already misbehaving, so the refusal names both places it looked, why neither
+      # answered, the three things worth trying in order, and the two commands that answer
+      # the question by hand in the meantime. It also tries the base the event names before
+      # it refuses at all, which cannot introduce a flake: that fetch runs only on the path
+      # that was already going to refuse, so failing it changes nothing and passing it
+      # turns a refusal into a real comparison.
       - name: A change a release must carry declares a version no release has
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          # The second place the base can be read from, and not the same fact as HEAD^1.
+          # That one is a property of this checkout; this one is a property of the pull
+          # request, so a checkout that arrived without the parent can still be told which
+          # commit to go and get.
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
-          if ! git rev-parse --verify --quiet HEAD^1 >/dev/null; then
-            echo "no base commit to compare against, so nothing here can tell whether this"
-            echo "change is one a release has to carry. Skipping; release-tag.yml checks the"
-            echo "same thing on the merge."
-            exit 0
+          base="HEAD^1"
+          if ! git rev-parse --verify --quiet "${base}^{commit}" >/dev/null; then
+            git fetch --no-tags --quiet --depth=1 origin "${BASE_SHA}" 2>/dev/null || true
+            base="${BASE_SHA}"
+          fi
+          if ! git rev-parse --verify --quiet "${base}^{commit}" >/dev/null; then
+            {
+              echo "::error::this check cannot tell which commit this pull request is based on, so it cannot tell whether the change is one a release has to carry. It refuses rather than passing, because the version has to be declared before the merge and nothing after the merge can declare it."
+              echo
+              echo "WHAT IT COULD NOT DETERMINE. The base of this pull request, which is the"
+              echo "commit the change under review is the difference from. Both places it can be"
+              echo "read from came back with nothing."
+              echo
+              echo "  HEAD^1"
+              echo "      The first parent of the merge commit actions/checkout leaves at HEAD on"
+              echo "      a pull request. fetch-depth: 2 in this workflow is what brings it, and"
+              echo "      at the shallow default it is not there."
+              echo "  ${BASE_SHA:-(the event named no base commit)}"
+              echo "      github.event.pull_request.base.sha, fetched by name as a second"
+              echo "      attempt. That fetch did not answer either."
+              echo
+              echo "WHY THAT HAPPENS. The checkout is not the one this step was written for. A"
+              echo "re-run of a run whose merge commit has been rewritten since, a base branch"
+              echo "force-pushed while this run was starting, a fetch-depth that no longer"
+              echo "reaches the parent, or a runner that could not reach the remote."
+              echo
+              echo "WHY IT DOES NOT SIMPLY PASS. It used to, and that was the hole. A pull"
+              echo "request whose base was unreachable merged without ever being asked to declare"
+              echo "a version, and the workflow that tags the merge refuses only a version that is"
+              echo "already released -- so a version nobody chose was tagged, published, and told"
+              echo "every install to fetch it."
+              echo
+              echo "WHAT TO DO, IN THE ORDER WORTH TRYING."
+              echo
+              echo "  1. Re-run this job. A fresh checkout recomputes the merge commit, which is"
+              echo "     enough whenever this run started against a ref that has since moved."
+              echo "  2. Push to the branch, or rebase it on main. Either makes GitHub build a"
+              echo "     new merge commit for the checkout to find."
+              echo "  3. If this pull request conflicts with main, resolve the conflict. There is"
+              echo "     no merge commit to check out while there is one."
+              echo
+              echo "AND WHAT IT WOULD HAVE ASKED, so a reviewer can ask it by hand meanwhile. The"
+              echo "first has to be exactly one patch, minor or major above the second whenever"
+              echo "the change touches the CLI, a module the CLI imports, one of the six"
+              echo "configuration files it opens, or pyproject.toml."
+              echo
+              echo "  uv run python tools/next_version.py"
+              echo "  gh release view --json tagName --jq .tagName"
+            } >&2
+            exit 1
           fi
           # Read out of release-tag.yml rather than restated here. That workflow's push
           # trigger is the definition of "worth a release", Actions gives one workflow no
@@ -132,7 +195,7 @@ jobs:
           # space or a glob character. Quoted, it would ask git for one path with forty
           # spaces in its name, which matches nothing and passes everything.
           set -- ${paths}
-          touched="$(git diff --name-only HEAD^1 HEAD -- "$@")"
+          touched="$(git diff --name-only "${base}" HEAD -- "$@")"
           if [ -z "${touched}" ]; then
             echo "This change touches nothing an installed edullm would answer differently"
             echo "about, so it needs no version of its own."
