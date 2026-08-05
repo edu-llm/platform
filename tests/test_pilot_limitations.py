@@ -79,8 +79,8 @@ def test_the_readme_does_not_carry_the_section_the_record_says_it_lost() -> None
     because the defect it catches happened within the hour.** The section was removed, an
     editor with the file open wrote its buffer back, and the section returned -- while the
     criteria went on reporting that the page is private, the Phase 5 paragraph in that same
-    README went on saying the page was taken out, and the proof bundle went on recording
-    both. Nothing failed, because the only tests that read the section had just been deleted.
+    README went on saying the page was taken out, and the acceptance evidence went on
+    recording both. Nothing failed, because the only tests that read the section had just been deleted.
 
     A recorded absence needs a check as much as a recorded presence does. If the section comes
     back, this fails, which is the signal that the record and the tree disagree and somebody

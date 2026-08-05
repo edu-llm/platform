@@ -17,7 +17,7 @@ from edullm_platform.manifest_helpers import (
     compute_manifest_cost_inputs,
     compute_manifest_maximum_cost,
 )
-from edullm_platform.phase0_gate import (
+from edullm_platform.operational_inventory import (
     expected_manifest_classification,
     request_facts_from_manifest,
 )

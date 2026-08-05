@@ -30,7 +30,7 @@ are.** ``contracts/validation.py`` already refuses a command whose quoting was l
 whose first element cannot name a program, and this reads like a third member of that family.
 Three things separate it. It needs the device count, which is a fact about deployed compute
 that the contract layer has no business importing. It would move ``RunManifest``'s structural
-digest, which four committed proof bundles record. And it would retroactively refuse
+digest, which fixtures/goldens/contract-models.json records. And it would retroactively refuse
 ``fixtures/manifests/gpu-routine.yaml`` and ``gpu-exception.yaml``, whose canonical digests
 are recorded goldens -- a rule that invalidates records written before it existed is a rule
 that cannot be added to a hashed contract.

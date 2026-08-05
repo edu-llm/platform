@@ -36,7 +36,7 @@ bfloat16 is then a consequence rather than three claims that could disagree.
 
 **WHY NOT ON ``ComputeProfile``, WHERE IT BELONGS.** For the reason ``config/capacity.yaml``
 and :mod:`edullm_platform.placement` both record about ``places``: that model's structural
-digest is in five committed proof bundles, so a field beside ``provisioned`` is a bundle
+digest is in fixtures/goldens/contract-models.json, so a field beside ``provisioned`` is a
 regeneration rather than a config edit. ``ComputeProfile`` and
 :data:`~edullm_platform.execution.CONTAINER_SHAPES` are also both inside the admission
 Lambda's import closure, so either would turn this into a Lambda release for a rule that runs

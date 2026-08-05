@@ -97,7 +97,7 @@ __all__ = [
 ]
 
 #: Where a capture lives once somebody has read it and decided to commit it. Beside the
-#: Phase 0 evidence rather than under ``proof/``: a bundle is generated and this is not.
+#: other committed evidence, because this is a reading of the account rather than a report.
 ROLE_CAPTURE_DIR: Final = Path("fixtures") / "evidence" / "phase-1" / "roles"
 
 #: The partition and region the comparison is allowed to fold, which are the ones the
@@ -404,8 +404,8 @@ def only_a_pending_deploy_stands_in_the_way(
 # --------------------------------------------------------------------------------------
 
 #: Where the records of one completed publish run live once somebody has read them and
-#: decided to commit them. Beside the role captures rather than under ``proof/``, for the
-#: same reason: a bundle is generated and these are not.
+#: decided to commit them. Beside the role captures for the same reason: a report is
+#: generated and these are not.
 RUN_CAPTURE_DIR: Final = Path("fixtures") / "evidence" / "phase-1" / "run"
 DENIALS_SUBDIR: Final = "denials"
 

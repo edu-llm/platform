@@ -162,7 +162,7 @@ def described_checksum(entries: Sequence[tuple[str, int, str]]) -> str:
 
     ``CheckpointManifest.checksum`` is typed ``Sha256Digest``, and the digest S3 attests is
     now usually a CRC32C, which cannot go in that field. The tempting fixes are both bad:
-    widening the contract regenerates four proof bundles for a field nobody reads as bytes,
+    widening the contract moves a recorded structural digest for a field nobody reads as bytes,
     and storing a CRC32C in a field named and patterned for a SHA-256 satisfies the type
     only by lying about it.
 

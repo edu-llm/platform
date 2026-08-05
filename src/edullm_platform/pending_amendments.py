@@ -34,7 +34,7 @@ So the record lives here, the capture reader consults it, and the state gets its
 verdict: :attr:`~edullm_platform.phase1_capture.CaptureVerdict.PENDING_DEPLOY`.
 
 **Naming the state is not the same as excusing it.** A capture waiting on a deploy still
-does not hold, the criteria resting on it are still not certified, and the proof generator
+does not hold, the checks resting on it are still not satisfied, and the release tripwire
 still refuses to write a bundle. What changes is that the refusal can say which of the two
 things happened, and that a reader downstream can tell an expected difference from an
 unexplained one without guessing.

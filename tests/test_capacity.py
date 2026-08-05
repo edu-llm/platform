@@ -2,7 +2,7 @@
 
 Read with ``yaml.safe_load`` rather than through a contract model, deliberately. Placement
 belongs on ``ComputeProfile`` beside ``provisioned``, and it is not there because that model's
-structural digest is recorded in five committed proof bundles; adding a pydantic model
+structural digest is recorded in the contract inventory; adding a pydantic model
 elsewhere in ``edullm_platform`` would put a second, unversioned schema in the tree for a fact
 that has a home waiting for it. So the file is plain configuration and these are the checks a
 validator would otherwise do.

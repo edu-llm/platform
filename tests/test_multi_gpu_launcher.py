@@ -17,7 +17,7 @@ here rather than after the gate for exactly that reason.
 **Why not in the manifest contract, which is where the neighbouring command rules live.**
 ``contracts/validation.py`` already refuses a command that lost its quotes, and this looks
 like a third member of that family. It is not one. A model validator on ``RunManifest`` would
-change that model's structural digest, which four committed proof bundles record, and would
+change that model's structural digest, which the contract inventory records, and would
 retroactively refuse ``fixtures/manifests/gpu-routine.yaml`` and ``gpu-exception.yaml``, whose
 canonical digests are recorded goldens. It would also make the contract layer depend on
 ``CONTAINER_SHAPES``. The rule needs the device count and the contract layer has no business

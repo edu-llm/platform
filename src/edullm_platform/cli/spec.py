@@ -75,9 +75,10 @@ class SpecModel(BaseModel):
     """As strict as a contract and deliberately not one of them.
 
     ``ContractModel`` would be the obvious base and is the wrong one, because
-    ``proof_bundle.discover_contract_models`` records every subclass of it in four committed
-    proof bundles as a published claim about this repository's contracts. Those are the
-    models whose structural digest matters: payloads are written against them and stored
+    ``contract_inventory.discover_contract_models`` records every subclass of it in
+    ``fixtures/goldens/contract-models.json`` as a recorded claim about this repository's
+    contracts. Those are the models whose structural digest matters: payloads are written
+    against them and stored
     immutably, so a field added to one may refuse a record already in the lineage store.
     A spec is a file in somebody else's repository that this binary reads and rewrites; no
     stored payload is written against it and no digest is taken over it, so recording it
