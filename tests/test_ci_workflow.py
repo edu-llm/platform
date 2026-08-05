@@ -46,6 +46,7 @@ CREDENTIALED_NIGHTLY_JOBS = frozenset(
         "deployed-lambda-release",
         "deployed-stack-templates",
         "visibility-board",
+        "placement-verdicts",
     }
 )
 

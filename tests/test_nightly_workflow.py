@@ -75,12 +75,14 @@ WANDB_JOB = "wandb-credential"
 RELEASE_JOB = "deployed-lambda-release"
 STACKS_JOB = "deployed-stack-templates"
 BOARD_JOB = "visibility-board"
+PLACEMENT_JOB = "placement-verdicts"
 
 RECONCILE_TOOL = "tools/find_runs_that_saved_nothing.py"
 WANDB_TOOL = "tools/verify_wandb_credential.py"
 RELEASE_TOOL = "tools/verify_deployed_lambdas.py"
 STACKS_TOOL = "tools/verify_deployed_stacks.py"
 BOARD_TOOL = "tools/visibility_board.py"
+PLACEMENT_TOOL = "tools/verify_placement_verdicts.py"
 
 RECONCILE_STEP = "Reconcile what those runs actually wrote"
 WANDB_STEP = "Ask W&B whether it would accept the stored key"
@@ -88,12 +90,20 @@ WANDB_UPLOAD_STEP = "Publish what W&B said, for the submission preflight to read
 RELEASE_STEP = "Compare what AWS is running against what was released"
 STACKS_STEP = "Compare each deployed stack against the template main declares"
 BOARD_STEP = "Join what W&B, the account and the outputs bucket each say"
+PLACEMENT_STEP = "Recompute each placement verdict from the sixteen queues"
 GUARD_STEP = "Check the nightly reader role is deployed"
 
 #: Every job here that takes a credential. Each one is held to the same guard, the same
-#: role and the same refusal to be informational, so the list is what a sixth such job has
+#: role and the same refusal to be informational, so the list is what a seventh such job has
 #: to join rather than a set of tests it has to remember to be added to.
-CREDENTIALED_JOBS = (RECONCILE_JOB, WANDB_JOB, RELEASE_JOB, STACKS_JOB, BOARD_JOB)
+CREDENTIALED_JOBS = (
+    RECONCILE_JOB,
+    WANDB_JOB,
+    RELEASE_JOB,
+    STACKS_JOB,
+    BOARD_JOB,
+    PLACEMENT_JOB,
+)
 
 #: The two functions the release check reads, and the templates that name them to
 #: CloudFormation. Read from the templates rather than spelled here, because the IAM grant
@@ -905,6 +915,135 @@ def test_the_board_never_prints_an_account_id(workflow: dict[str, Any]) -> None:
     assert not ACCOUNT_LITERAL.search(source)
 
 
+# ----------------------------------------------------------------------------------------
+# The placement verdicts, against the sixteen queues
+# ----------------------------------------------------------------------------------------
+
+
+def placement_step(workflow: dict[str, Any]) -> str:
+    return step(workflow["jobs"][PLACEMENT_JOB], PLACEMENT_STEP)["run"]
+
+
+def run_placement(workflow: dict[str, Any], tmp_path: Path, *, exit_code: int) -> Any:
+    summary = tmp_path / "summary.md"
+    summary.touch()
+    stub = stub_tool(
+        tmp_path, exit_code=exit_code, report="| `gpu-8xl40s` | unreliably | queue |"
+    )
+    return run_step_script(
+        placement_step(workflow),
+        cwd=tmp_path,
+        env={"GITHUB_STEP_SUMMARY": str(summary)},
+        stub_bin=stub.parent,
+    )
+
+
+def test_the_nightly_recomputes_each_placement_verdict(workflow: dict[str, Any]) -> None:
+    """Mutation: keep the job and drop the step, or run it without capturing the report.
+
+    The grants #227 added were argued for on this job existing, so a workflow that holds the
+    permission and reads nothing with it is the state the header of this file spent two
+    paragraphs explaining it was in.
+    """
+    body = placement_step(workflow)
+
+    assert PLACEMENT_TOOL in body
+    assert "--output" in body, "the report is captured so it can be read after the failure"
+    assert "uv run --frozen python" in body
+
+
+def test_a_verdict_the_queues_contradict_fails_the_nightly(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    finished = run_placement(workflow, tmp_path, exit_code=1)
+
+    assert finished.returncode != 0
+    assert "placement_verdict_disagrees_with_the_account" in finished.stderr
+    # It reports and never rewrites, and the sentence saying so is where the reader is.
+    assert "Nothing was rewritten" in finished.stderr
+
+
+def test_queues_that_could_not_be_read_are_not_read_as_agreement(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    """Mutation: treat any non-zero exit as a disagreement.
+
+    Exit 2 says the queues were not read at all, which is never a statement that the file is
+    right. Reporting it as a disagreement sends somebody to re-measure a pool on the morning
+    the two Batch grants lapsed, and reporting it as a pass silently stops the check covering
+    anything -- which is exactly the state config/capacity.yaml's header describes this job
+    being in before the grants existed.
+    """
+    finished = run_placement(workflow, tmp_path, exit_code=2)
+
+    assert finished.returncode != 0
+    assert "placement_verdicts_unusable" in finished.stderr
+    assert "placement_verdict_disagrees_with_the_account" not in finished.stderr
+    assert "batch:ListJobs" in finished.stderr
+
+
+def test_verdicts_the_queues_support_pass(workflow: dict[str, Any], tmp_path: Path) -> None:
+    """The other side, so the step cannot pass this file by failing unconditionally."""
+    finished = run_placement(workflow, tmp_path, exit_code=0)
+
+    assert finished.returncode == 0, finished.stderr
+
+
+def test_the_placement_table_reaches_the_log_and_not_only_the_step_summary(
+    workflow: dict[str, Any], tmp_path: Path
+) -> None:
+    summary = tmp_path / "summary.md"
+    summary.touch()
+    stub = stub_tool(tmp_path, exit_code=1, report="gpu-8xl40s is recorded unreliably")
+
+    finished = run_step_script(
+        placement_step(workflow),
+        cwd=tmp_path,
+        env={"GITHUB_STEP_SUMMARY": str(summary)},
+        stub_bin=stub.parent,
+    )
+
+    assert "gpu-8xl40s is recorded unreliably" in finished.stdout
+    assert "gpu-8xl40s is recorded unreliably" in summary.read_text(encoding="utf-8")
+
+
+def test_the_placement_check_never_prints_an_account_id(workflow: dict[str, Any]) -> None:
+    """Every ARN in a Batch denial carries the account id, and this log is public."""
+    assert PLACEMENT_TOOL in scripts(workflow, PLACEMENT_JOB)
+    source = (PROJECT_ROOT / PLACEMENT_TOOL).read_text(encoding="utf-8")
+
+    assert "carries the account id" in source
+    assert not ACCOUNT_LITERAL.search(source)
+
+
+def test_the_placement_check_reads_only_grants_the_role_holds(role: dict[str, Any]) -> None:
+    """Mutation: reach for a read the role does not have, such as the scaling activities.
+
+    The autoscaling history is where a shape's refusals actually live, and it is the obvious
+    thing to want. It is not granted, and a tool that called for it would be red every night
+    with an exit 2 rather than reporting anything -- which is the failure the visibility board
+    spent its first weeks in and which this file's header exists to stop recurring.
+    """
+    granted = {
+        action
+        for statement in statements(role)
+        for action in (
+            statement["Action"]
+            if isinstance(statement["Action"], list)
+            else [statement["Action"]]
+        )
+    }
+    source = (PROJECT_ROOT / PLACEMENT_TOOL).read_text(encoding="utf-8")
+
+    assert {"batch:ListJobs", "batch:DescribeJobs"} <= granted
+    assert '"list-jobs"' in source and '"describe-jobs"' in source
+    for ungranted in ("describe-job-queues", "describe-scaling-activities", "describe-instances"):
+        assert ungranted not in source, (
+            f"{ungranted} is not a read this role holds, so calling it would make the job "
+            "unable to look rather than able to report"
+        )
+
+
 @pytest.mark.parametrize(
     ("job_id", "step_name"),
     [
@@ -913,6 +1052,7 @@ def test_the_board_never_prints_an_account_id(workflow: dict[str, Any]) -> None:
         (RELEASE_JOB, RELEASE_STEP),
         (STACKS_JOB, STACKS_STEP),
         (BOARD_JOB, BOARD_STEP),
+        (PLACEMENT_JOB, PLACEMENT_STEP),
     ],
 )
 def test_nothing_in_any_of_these_jobs_is_allowed_to_be_informational(
@@ -922,7 +1062,7 @@ def test_nothing_in_any_of_these_jobs_is_allowed_to_be_informational(
 
     It is the obvious response to a job that goes red on the first morning, and it turns the
     job into one that cannot say anything. The header of the workflow argues the point for
-    the three checks that were already there, and these are the fourth, fifth and sixth.
+    the three checks that were already there, and these are the fourth onwards.
     """
     job = workflow["jobs"][job_id]
 

@@ -1,6 +1,6 @@
 name: Nightly (the checks that are not about one change)
 
-# Six checks that answer a question about the repository or about the account rather
+# Seven checks that answer a question about the repository or about the account rather
 # than about a change, and that either cost too much or fail too unpredictably to sit on
 # the pull-request path. Nothing here is continue-on-error, and that is the whole point of
 # moving them: there is no alerting infrastructure, so a red scheduled run is the signal,
@@ -15,7 +15,7 @@ name: Nightly (the checks that are not about one change)
 # test suite: the nine configuration checks are tests/test_operational_inventory.py and the
 # recorded digests are tests/test_serialization_goldens.py, both on the pull-request path.
 #
-# Why each of the six is here rather than in ci.yml:
+# Why each of the seven is here rather than in ci.yml:
 #
 #   checkpoint-reconciliation, wandb-credential, deployed-lambda-release,
 #     deployed-stack-templates and visibility-board — these five read the account, and that
@@ -28,7 +28,14 @@ name: Nightly (the checks that are not about one change)
 #     They also need an AWS identity, and putting one on the
 #     pull-request path would mean a fork's pull request runs with it in reach.
 #
-#   registered-dockerfiles — the sixth, and the only one whose subject is other people's
+#   placement-verdicts — the sixth, and the one whose failure has no error attached to it
+#     anywhere. It reads the sixteen Batch queues and recomputes each `places` verdict in
+#     config/capacity.yaml, which records whether EC2 will sell this account a shape. That
+#     is a fact about the account's neighbours: a pool becomes obtainable because somebody
+#     else's job finished, so no diff to this repository can cause it and no pull-request
+#     check can catch it. It also needs an AWS identity, for the reason the five above give.
+#
+#   registered-dockerfiles — the seventh, and the only one whose subject is other people's
 #     repositories. It reads the research repositories over the GitHub API to ask whether
 #     each registration's dockerfile_path is actually on the branch it names, which is a
 #     question no diff to this repository can answer: a registration goes stale when
@@ -38,7 +45,7 @@ name: Nightly (the checks that are not about one change)
 #     red -- and because a fork's pull request should not be able to spend this
 #     repository's API budget enumerating an organisation.
 #
-# ONE OF THE SIX IS NO LONGER ONLY A SIGNAL, AND THAT CHANGES WHAT A RED CROSS ON IT
+# ONE OF THE SEVEN IS NO LONGER ONLY A SIGNAL, AND THAT CHANGES WHAT A RED CROSS ON IT
 # COSTS. wandb-credential publishes its answer as an artifact, and submit-run.yml refuses a
 # submission on the strength of it -- because the role this job assumes is the only
 # GitHub-facing identity in the account holding secretsmanager:GetSecretValue on that
@@ -48,18 +55,18 @@ name: Nightly (the checks that are not about one change)
 # repairing the key is not finished until this workflow is dispatched again: nothing else
 # writes a newer verdict, and a refusal is honoured until one does.
 #
-# The five assume sbsandbox-intern-edullm-nightly-reader, which can read the lineage
+# The six assume sbsandbox-intern-edullm-nightly-reader, which can read the lineage
 # records, what the runs wrote, one secret, the deployed digest of the two admission
-# functions and the deployed template of each stack, and holds no write anywhere in the
-# account.
+# functions, the deployed template of each stack and the jobs on each Batch queue, and holds
+# no write anywhere in the account.
 # infra/iam/nightly-reader-role.yaml argues each grant; the short version is that a check
 # able to change what it is checking can produce its own all-clear. The role is applied
 # from a laptop like every IAM stack here, so a fresh clone of this repository does not
 # bring it with it, and each of those jobs says so by name rather than failing at the
 # credential step with an empty role.
 #
-# THAT ROLE DID NOT HOLD EVERYTHING THE VISIBILITY BOARD READS, AND THE JOB WAS RED FROM THE NIGHT
-# IT SHIPPED UNTIL 2026-08-04. Two grants were missing and either one alone was enough. The
+# THAT ROLE DID NOT HOLD EVERYTHING THE VISIBILITY BOARD READS, AND THAT JOB WAS RED FROM THE
+# NIGHT IT SHIPPED UNTIL 2026-08-04. Two grants were missing and either one alone was enough. The
 # visibility board reads what the account is running out of the resource tags every
 # submission sets, which needs tag:GetResources; and it prices those runs from the lineage
 # store's attempt/ prefix, which the role granted on neither the fetch nor the listing while
@@ -72,18 +79,42 @@ name: Nightly (the checks that are not about one change)
 # are only in the attempt records, and sync_bucket raises on a refused prefix rather than
 # skipping it, so that refusal cost the whole cost mapping and not the attempt half of it.
 #
-# THAT ROLE NOW HOLDS batch:ListJobs AND batch:DescribeJobs, AND NOTHING HERE READS THEM
-# YET. They were added for the placement check config/capacity.yaml's header asks for -- a
-# seventh job that recomputes that file's `places` verdict for each of the sixteen queues and
-# goes red where the account disagrees with what is committed. The grant landed first and
-# on purpose: this stack is applied by hand, so a job merged ahead of its permissions is
-# red from the night it ships, which is what the paragraph above is about.
+# THE batch:ListJobs AND batch:DescribeJobs GRANTS #227 ADDED NOW HAVE THE READER THEY WERE
+# ADDED FOR. placement-verdicts is that job. The grant landed first and on purpose, and the
+# order was checked against the live role before the job was written rather than assumed:
+# this stack is applied by hand, so a job merged ahead of its permissions is red from the
+# night it ships, which is what the paragraph above is about.
 #
 # The board still exits 2 and this job still goes red if a source cannot be read, because a
 # grant can lapse and a credential can. What changed is that a gap is now a finding about
 # the account rather than the expected shape of an ordinary night.
 #
-# Nothing here is a required check and nothing here should become one: the two required contexts are `checks (python 3.12)` and `checks (python 3.13)`,
+# A DISAGREEMENT ABOUT A COMPUTE PROFILE IS WORTH A RED SCHEDULED RUN, AND THE REASON IS THE
+# ONE config/capacity.yaml OPENS WITH: THE FAILURE IT CATCHES HAS NO ERROR ATTACHED TO IT. A
+# shape that has quietly become obtainable throws nothing, logs nothing and fails nothing.
+# The submission path goes on printing "may not place" over a pool that is running jobs, and
+# the only symptom is submitters deciding not to submit, which is not a thing any system
+# here can observe. That file has taken eight corrections and not one of them was found by
+# somebody doubting an entry; they were found because a person went and enumerated the
+# queues. This is that enumeration, on a schedule.
+#
+# It is also a job that cannot go red for a reason nobody can act on, which is the other
+# half of deserving the alarm. It reports a disagreement only where the account's evidence
+# is conclusive on its own: a job started on a shape recorded as unplaceable, or the median
+# job on a shape recorded as prompt waited past the limit that queue itself cancels a
+# waiting job at, or an entry credits a queue nothing has ever been submitted to. It does
+# not compare medians, so the drift from 89 minutes to 61 that this file's header describes
+# passes in silence. There is no expiring evidence behind it and nothing outside the account
+# to go stale.
+#
+# Making it informational instead was the alternative and it is the one thing that would not
+# work. A continue-on-error job cannot fail anything, which is the state the two acceptance
+# gates spent on the pull-request path before they were moved here and then deleted with the
+# apparatus they served, and an unread report about a file nobody doubts is how the entries
+# stayed wrong for two days with three nodes alive.
+#
+# Nothing here is a required check and nothing here should become one: the two required
+# contexts are `checks (python 3.12)` and `checks (python 3.13)`,
 # pinned in branch protection.
 
 on:
@@ -540,5 +571,88 @@ jobs:
             echo "the_three_records_of_a_run_disagree" >&2
             echo "A run is in one of the three sources and not the others. The board above" >&2
             echo "says which runs and which way each disagreement runs." >&2
+            exit 1
+          fi
+
+  placement-verdicts:
+    name: the recorded placement verdicts are ones the queues support
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check the nightly reader role is deployed
+        env:
+          ROLE_ARN: ${{ vars.AWS_NIGHTLY_READER_ROLE_ARN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${ROLE_ARN}" ]]; then
+            echo "nightly_reader_role_not_deployed" >&2
+            echo "AWS_NIGHTLY_READER_ROLE_ARN is unset, so this job has no identity to assume." >&2
+            echo "The role is infra/iam/nightly-reader-role.yaml, applied from a laptop like" >&2
+            echo "every IAM stack here. See infra/README.md for the stack name and the" >&2
+            echo "repository variable it needs." >&2
+            exit 1
+          fi
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
+        with:
+          role-to-assume: ${{ vars.AWS_NIGHTLY_READER_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # WHAT THIS CATCHES IS THE ACCOUNT'S NEIGHBOURS, NOT A DIFF. config/capacity.yaml
+      # records whether EC2 will sell this account each of seventeen shapes, and every one of
+      # the eight times it has been wrong it said a machine could not be had when it could.
+      # The instrument that produced those eight was a one-shot pool probe; the instrument
+      # that overturned them every time was a Batch queue that kept asking. This reads the
+      # queues.
+      #
+      # It writes nothing. The file is nine tenths reviewed prose, and a bot editing it would
+      # need a write credential, a pull-request path and a surgical anchored substitution --
+      # three new failure points bought to save one hand edit. The role this assumes holds no
+      # write anywhere in the account, which is the same argument from the other side.
+      #
+      # The exit code is translated here rather than left to the tool, which is the
+      # visibility board's arrangement and not the release job's. The report is markdown meant
+      # for the step summary, so this step has a body whatever else it does, and the two
+      # non-zero exits send a reader to different places: 1 is a disagreement and sends them
+      # to a compute profile, 2 is a grant or a credential. Somebody who cannot tell those
+      # apart goes re-measuring a pool on the morning a role lapsed.
+      - name: Recompute each placement verdict from the sixteen queues
+        run: |
+          set -uo pipefail
+          status=0
+          uv run --frozen python tools/verify_placement_verdicts.py --output placement.md || status=$?
+
+          if [[ -s placement.md ]]; then
+            cat placement.md >> "${GITHUB_STEP_SUMMARY}"
+            cat placement.md
+          fi
+
+          if [[ "${status}" -eq 2 ]]; then
+            echo "placement_verdicts_unusable" >&2
+            echo "The queues were not read, so no verdict was recomputed and this run says" >&2
+            echo "nothing about config/capacity.yaml either way. The error above says which" >&2
+            echo "read was refused; a denial is usually batch:ListJobs or batch:DescribeJobs," >&2
+            echo "granted in infra/iam/nightly-reader-role.yaml and applied by hand." >&2
+            exit 1
+          fi
+          if [[ "${status}" -ne 0 ]]; then
+            echo "placement_verdict_disagrees_with_the_account" >&2
+            echo "A shape's recorded 'places' verdict is not one its queue supports. The" >&2
+            echo "table above says what each queue shows and which way the disagreement" >&2
+            echo "runs. Nothing was rewritten: the edit is a person's, in a pull request." >&2
             exit 1
           fi
