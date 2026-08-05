@@ -1,0 +1,324 @@
+"""What one Batch state change says about a run, before anybody words it.
+
+Every case here reads a committed fixture rather than a dictionary built in the test. The
+fixtures are real events with the account id masked, so a field this reader depends on
+cannot quietly stop being in the envelope AWS actually sends.
+
+The two readers that are not the envelope are filled with fakes, so nothing here needs a
+credential and nothing here reaches the account. What the fakes stand in for is checked
+against the real thing in the plan's own findings rather than at test time, because a test
+that needed the bucket would be a test nobody runs.
+"""
+
+from __future__ import annotations
+
+import io
+import json
+from decimal import Decimal
+from pathlib import Path
+
+import pytest
+
+from edullm_platform.notifications.facts import Catalogs, RunEndedFacts, read_run_ended
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+EVENTS = PROJECT_ROOT / "fixtures" / "events"
+
+
+@pytest.fixture(scope="module")
+def catalogs() -> Catalogs:
+    return Catalogs.load(PROJECT_ROOT / "config")
+
+
+def envelope(name: str) -> dict[str, object]:
+    return json.loads((EVENTS / f"{name}.sanitized.json").read_text(encoding="utf-8"))
+
+
+def test_a_succeeded_run_yields_the_person_the_experiment_and_the_money(
+    catalogs: Catalogs,
+) -> None:
+    facts = read_run_ended(envelope("batch-succeeded"), catalogs=catalogs)
+
+    assert facts is not None
+    assert facts.run_id == "run_019fd3cc-79a0-70f5-aa29-6db4a2061a61"
+    assert facts.outcome == "succeeded"
+    assert facts.person == "Aryan Verma"
+    assert facts.team == "scratch"
+    assert facts.experiment == "plan-b-phase0-100m-superbpe-eval"
+    assert facts.compute_profile == "gpu-1xa10g"
+    assert facts.queue_name == "sbsandbox-intern-edullm-gpu"
+    assert facts.seconds_spent == 63
+    assert facts.exit_code == 0
+    assert facts.cells_total is None
+
+
+def test_the_spent_figure_is_the_attempt_window_against_the_catalog_rate(
+    catalogs: Catalogs,
+) -> None:
+    """The join the relay has to do before it posts, and the reason it cannot forward.
+
+    gpu-1xa10g is $1.0060 an hour in config/workload-catalog.yaml and the attempt ran
+    63 seconds, so the run cost under two cents. Forwarding the event as it arrives carries
+    neither figure.
+    """
+    facts = read_run_ended(envelope("batch-succeeded"), catalogs=catalogs)
+
+    assert facts is not None
+    assert facts.hourly_rate_usd == Decimal("1.0060")
+    assert facts.spent_usd == Decimal("0.02")
+
+
+def test_the_authorised_figure_is_the_bound_the_approval_bought(catalogs: Catalogs) -> None:
+    """Two hours at one attempt on one cell, which is what the job definition asked for."""
+    facts = read_run_ended(envelope("batch-succeeded"), catalogs=catalogs)
+
+    assert facts is not None
+    assert facts.authorised_usd == Decimal("2.01")
+
+
+def test_a_failed_run_carries_its_exit_code_and_its_window(catalogs: Catalogs) -> None:
+    facts = read_run_ended(envelope("batch-failed"), catalogs=catalogs)
+
+    assert facts is not None
+    assert facts.outcome == "failed"
+    assert facts.exit_code == 1
+    assert facts.seconds_spent == 2520
+    assert facts.spent_usd == Decimal("0.70")
+
+
+def test_a_run_that_has_not_ended_owes_nobody_a_message(catalogs: Catalogs) -> None:
+    """Mutation: return facts for every state.
+
+    Three of the six states a run passes through are not endings, and a message on each of
+    them is three messages per run in a channel that gets nine a day.
+    """
+    assert read_run_ended(envelope("batch-running"), catalogs=catalogs) is None
+
+
+def test_an_event_from_somewhere_else_owes_nobody_a_message(catalogs: Catalogs) -> None:
+    """Mutation: trust the envelope.
+
+    The rule is one deploy away from being widened and the queue is reachable by anything
+    with permission to write to it, so the source is checked here as well as in the pattern.
+    """
+    foreign = envelope("batch-succeeded") | {"source": "aws.ec2"}
+
+    assert read_run_ended(foreign, catalogs=catalogs) is None
+
+
+def test_a_job_whose_name_is_not_a_run_id_owes_nobody_a_message(catalogs: Catalogs) -> None:
+    document = envelope("batch-succeeded")
+    document["detail"]["jobName"] = "somebody-elses-job"  # type: ignore[index]
+
+    assert read_run_ended(document, catalogs=catalogs) is None
+
+
+def test_a_run_the_envelope_names_nobody_for_has_no_person_without_a_reader(
+    catalogs: Catalogs,
+) -> None:
+    """Five of the thirty-five have no wandb_username, so their runs carry no name in the
+    envelope, and with no reader there is nowhere else to look.
+
+    Said rather than guessed. Naming the team as though it were a person, or falling back
+    to the run id, would put a wrong name on a message about somebody's money. The next
+    test is the one that closes the gap for those five.
+    """
+    document = envelope("batch-succeeded")
+    document["detail"]["container"]["environment"] = [  # type: ignore[index]
+        entry
+        for entry in document["detail"]["container"]["environment"]  # type: ignore[index]
+        if entry["name"] != "WANDB_USERNAME"
+    ]
+    facts = read_run_ended(document, catalogs=catalogs)
+
+    assert facts is not None
+    assert facts.person is None
+
+
+class FakeIntentReader:
+    """One object, returned under whatever key is asked for. The whole of the S3 seam."""
+
+    def __init__(self, body: bytes | None = None, raises: Exception | None = None) -> None:
+        self.body = body
+        self.raises = raises
+        self.arguments: list[dict[str, object]] = []
+
+    def get_object(self, **arguments: object) -> dict[str, object]:
+        self.arguments.append(dict(arguments))
+        if self.raises is not None:
+            raise self.raises
+        return {"Body": io.BytesIO(self.body or b"")}
+
+
+def test_the_intent_record_names_one_of_the_five_the_envelope_cannot(
+    catalogs: Catalogs,
+) -> None:
+    """THE WHOLE REASON THIS READER EXISTS. Mutation: drop the intent read.
+
+    BritishAmericqn is one of the five roster members with no wandb_username, so every run
+    they submit carries no person-shaped value in the envelope at all. The intent record
+    carries their GitHub login, and the roster carries a display name against every login it
+    holds, so the record answers for thirty-five where the envelope answers for thirty.
+    """
+    document = envelope("batch-succeeded")
+    document["detail"]["container"]["environment"] = [  # type: ignore[index]
+        entry
+        for entry in document["detail"]["container"]["environment"]  # type: ignore[index]
+        if entry["name"] != "WANDB_USERNAME"
+    ]
+    reader = FakeIntentReader(b'{"submitter": "BritishAmericqn"}')
+
+    facts = read_run_ended(document, catalogs=catalogs, intent_reader=reader)
+
+    assert facts is not None
+    assert facts.person == "Benjamin Royston"
+    assert reader.arguments == [
+        {
+            "Bucket": "sbsandbox-intern-edullm-lineage",
+            "Key": "intent/run_019fd3cc-79a0-70f5-aa29-6db4a2061a61.json",
+        }
+    ]
+
+
+def test_the_key_is_derived_from_the_job_name_so_nothing_is_listed(
+    catalogs: Catalogs,
+) -> None:
+    """Mutation: search the prefix instead.
+
+    The job name is the run id and the key is that id, so this costs one GetObject. A reader
+    that listed would need s3:ListBucket on the lineage store, which is the grant that lets
+    something enumerate every run this platform has ever admitted.
+    """
+    reader = FakeIntentReader(b'{"submitter": "aryanjverma"}')
+
+    read_run_ended(envelope("batch-succeeded"), catalogs=catalogs, intent_reader=reader)
+
+    assert [set(call) for call in reader.arguments] == [{"Bucket", "Key"}]
+
+
+def test_the_record_wins_where_the_two_sources_disagree(catalogs: Catalogs) -> None:
+    """The envelope says aryan-jaden-verma and the record says somebody else.
+
+    They agree in practice. Where they cannot, the sealed record is the one admission wrote
+    and the environment variable is an attribution the submission path set, so the record is
+    what a message about somebody's money should carry.
+    """
+    reader = FakeIntentReader(b'{"submitter": "ericrcwu001"}')
+
+    facts = read_run_ended(
+        envelope("batch-succeeded"), catalogs=catalogs, intent_reader=reader
+    )
+
+    assert facts is not None
+    assert facts.person == "Eric Wu"
+
+
+@pytest.mark.parametrize(
+    "reader",
+    [
+        FakeIntentReader(raises=RuntimeError("AccessDenied")),
+        FakeIntentReader(raises=RuntimeError("NoSuchKey")),
+        FakeIntentReader(b"not json"),
+        FakeIntentReader(b'{"submitter": ""}'),
+        FakeIntentReader(b"{}"),
+    ],
+)
+def test_a_read_that_did_not_work_falls_back_and_never_raises(
+    catalogs: Catalogs, reader: FakeIntentReader
+) -> None:
+    """MUTATION: LET THE READ RAISE. Every one of these dead-letters a message otherwise.
+
+    A refusal, an absent record, a body that is not JSON, an empty submitter, a record with
+    no submitter at all. None of them is a reason to lose a message about a run that
+    happened, and every one of them leaves the envelope's own answer in place.
+    """
+    facts = read_run_ended(
+        envelope("batch-succeeded"), catalogs=catalogs, intent_reader=reader
+    )
+
+    assert facts is not None
+    assert facts.person == "Aryan Verma"
+
+
+def test_a_queue_no_execution_target_names_leaves_the_money_unknown(
+    catalogs: Catalogs,
+) -> None:
+    """The rule matches sixteen queues and config/execution-targets.yaml names fourteen.
+
+    An unmatched queue is a fact rather than a crash. Raising here would dead-letter the
+    delivery for a run that demonstrably happened, and a message saying the cost is unknown
+    is worth more than no message.
+    """
+    document = envelope("batch-succeeded")
+    document["detail"]["jobQueue"] = (  # type: ignore[index]
+        "arn:aws:batch:us-east-1:<aws-account-id>:job-queue/somebody-elses-queue"
+    )
+    facts = read_run_ended(document, catalogs=catalogs)
+
+    assert facts is not None
+    assert facts.compute_profile is None
+    assert facts.hourly_rate_usd is None
+    assert facts.spent_usd is None
+    assert facts.queue_name == "somebody-elses-queue"
+
+
+def test_the_facts_are_frozen() -> None:
+    """Mutation: make the dataclass mutable.
+
+    A renderer that can edit its own inputs is a renderer whose output depends on the order
+    the messages were built in.
+    """
+    assert RunEndedFacts.__dataclass_params__.frozen is True
+
+
+def test_the_cancellation_marker_is_the_one_the_recorder_reads() -> None:
+    """Mutation: change one of the two spellings.
+
+    Both modules decide whether a FAILED job was really a cancellation, and they must decide
+    it the same way. Restated rather than imported so each module reads on its own, and
+    compared here so the copies cannot drift into two answers.
+    """
+    from edullm_platform.lifecycle_projection import CANCELLATION_REASON_MARKERS
+    from edullm_platform.notifications.facts import CANCELLATION_MARKERS
+
+    assert CANCELLATION_MARKERS == CANCELLATION_REASON_MARKERS
+
+
+def test_the_lineage_bucket_is_the_one_the_recorder_writes_to() -> None:
+    """Mutation: rename one of the two.
+
+    The recorder puts the intent record's neighbours in this bucket and this reads one out
+    of it. Two spellings with nothing between them is how a reader ends up asking a bucket
+    that does not exist and reporting it as a run nobody submitted.
+    """
+    from edullm_platform.lifecycle_handler import (
+        DEFAULT_LINEAGE_BUCKET as RECORDER_BUCKET,
+    )
+    from edullm_platform.lifecycle_handler import (
+        LINEAGE_BUCKET_VARIABLE as RECORDER_VARIABLE,
+    )
+    from edullm_platform.notifications.facts import (
+        DEFAULT_LINEAGE_BUCKET,
+        LINEAGE_BUCKET_VARIABLE,
+    )
+
+    assert DEFAULT_LINEAGE_BUCKET == RECORDER_BUCKET
+    assert LINEAGE_BUCKET_VARIABLE == RECORDER_VARIABLE
+
+
+def test_the_field_read_out_of_the_intent_record_is_one_the_contract_declares() -> None:
+    """THE READ IS UNTYPED AND THIS IS WHAT STANDS IN FOR THE TYPE. Mutation: misspell it.
+
+    facts.py reads the record as JSON rather than as an IntentRecord, so that a whole
+    RunManifest does not enter this function's zip and so that a manifest field the message
+    never reads cannot fail validation and dead-letter it. What that gives up is the
+    compiler noticing a renamed field, and this is what replaces it. The key is derived the
+    same way admission answers it back to the state machine, so that is compared too.
+    """
+    from edullm_platform.contracts.admission import IntentRecord
+    from edullm_platform.notifications.facts import SUBMITTER_FIELD, intent_key
+
+    assert SUBMITTER_FIELD in IntentRecord.model_fields
+    assert intent_key("run_019fd3cc-79a0-70f5-aa29-6db4a2061a61") == (
+        "intent/run_019fd3cc-79a0-70f5-aa29-6db4a2061a61.json"
+    )
