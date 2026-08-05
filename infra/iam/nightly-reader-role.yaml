@@ -337,6 +337,22 @@ Resources:
                   StringEquals:
                     aws:RequestedRegion:
                       Fn::Sub: ${AWS::Region}
+              # What was launched, as against what the platform recorded launching. The
+              # mismatch arm of the instruments needs a feed the platform does not write,
+              # or it can only compare the platform's records with themselves.
+              #
+              # LookupEvents takes no resource, so the region condition is the whole of the
+              # bound. It reads the ninety-day management-event history, which is already
+              # visible to anyone who can read the account, and it cannot start, stop or
+              # relabel anything.
+              - Sid: LookUpLaunchEvents
+                Effect: Allow
+                Action: cloudtrail:LookupEvents
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion:
+                      Fn::Sub: ${AWS::Region}
               # DELIBERATELY ABSENT, and each for its own reason rather than as a list.
               #
               # Every write. This role exists to describe the account and a check that can
