@@ -55,23 +55,28 @@ directions and in order.
 from __future__ import annotations
 
 import shlex
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
 
+from edullm_platform.admission import denied_outright_conditions
 from edullm_platform.config import load_yaml
-from edullm_platform.contracts.dataset_registry import TRAINABLE_FAMILIES
+from edullm_platform.contracts.dataset_registry import TRAINABLE_FAMILIES, DatasetRegistry
 from edullm_platform.contracts.execution import (
     ExecutionTargetCatalog,
     UnbackedComputeProfileError,
 )
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.manifest import RunManifest
+from edullm_platform.contracts.policy import ApprovalPolicy
+from edullm_platform.contracts.repository_registry import RepositoryRegistry
 from edullm_platform.contracts.workload import ComputeProfileResolutionError, WorkloadCatalog
 from edullm_platform.errors import UnregisteredWorkloadProfileError
 from edullm_platform.execution import resolve_execution_target
+from edullm_platform.manifest_helpers import build_request_facts
 from edullm_platform.submission import _resolve_workload
 from tools.build_gpu_training_submission import TOKENIZERS
 
@@ -742,6 +747,132 @@ def test_the_workload_profile_box_is_free_text_and_the_machine_box_is_not() -> N
     assert inputs["workload_profile"]["required"] is True
     assert "options" not in inputs["workload_profile"]
     assert inputs["compute_profile"]["type"] == "choice"
+
+
+def denied_outright_for(dataset_release: str) -> tuple[str, ...]:
+    """Which conditions a submission naming this dataset trips, and nothing else about it.
+
+    The pair the compile job and admission both use, called the way both call it, so a name
+    this reports nothing for is a name neither of them refuses. ``build_request_facts``
+    derives ``dataset_registered`` and ``dataset_is_a_corpus`` from the registry and
+    ``denied_outright_conditions`` reads policy's list, which is the whole of what stands
+    between a dataset name and an approved run.
+
+    Everything unrelated to the dataset is held at a value nothing objects to -- a
+    registered repository, a catalog workload, a priced profile, a cost of zero -- so that
+    the only condition this can report is the one being asked about.
+    """
+    manifest = RunManifest(
+        schema_version=1,
+        repository="OLMo-core",
+        commit_sha="1" * 40,
+        image_digest="sha256:" + "a" * 64,
+        dataset_release=dataset_release,
+        command=["python", "-m", "olmo_core.data.tokenize"],
+        team="platform",
+        wandb_project="onboarding",
+        workload_profile="olmo-core-check",
+        compute_profile="cpu-32vcpu",
+        maximum_runtime_hours="1",
+        maximum_attempts=1,
+        checkpoint=None,
+        fanout=None,
+    )
+    facts = build_request_facts(
+        manifest,
+        repositories=load_yaml(
+            PROJECT_ROOT / "config" / "repositories.yaml", RepositoryRegistry
+        ),
+        catalog=workload_catalog(),
+        dataset_registry=load_yaml(
+            PROJECT_ROOT / "config" / "datasets.yaml", DatasetRegistry
+        ),
+        estimated_cost_usd=Decimal(0),
+    )
+    policy = load_yaml(PROJECT_ROOT / "config" / "policy.yaml", ApprovalPolicy)
+    return denied_outright_conditions(facts, policy)
+
+
+def test_the_dataset_box_is_a_choice_because_seven_registered_names_are_refused_by_nothing() -> (
+    None
+):
+    """THE SECOND ASYMMETRY ON THIS FORM, AND THE ONE #232's REASONING DOES NOT REACH.
+    Mutation: make ``dataset_release`` free text by analogy with ``workload_profile``.
+
+    The bottleneck is real and identical: registering a corpus takes
+    ``config/datasets.yaml``, owned by nine, and this workflow file, owned by two. That is
+    the exact two-file shape #232 removed for workload profiles, and reasoning from it to
+    this field is the obvious move. It is wrong, and what makes it wrong is not the cost --
+    which is the same -- but what the list is holding back.
+
+    The workload dropdown was holding back *unregistered names*, and those were already
+    refused while compiling. This one is not. An unregistered dataset name is refused while
+    compiling too, so on that alone the list would be redundant. What it is actually holding
+    back is *registered* names, and the platform refuses only some of them: a tokenizer or
+    the vendor mirror trips ``dataset_is_not_a_corpus`` by family, and everything else
+    registered is admitted. A retired release, a corpus whose tokenizer nothing here can
+    construct and a corpus that declares none are all resolvable, all trainable by family,
+    and all reach an approved run with nothing anywhere saying a word.
+
+    So for those the option list is not a second lock. It is the only one, and
+    ``retired:`` has no other enforcement at all -- ``config/datasets.yaml`` says so in as
+    many words, that the flag "keeps admission's answer and removes the menu item".
+
+    That is ``compute_profile``'s argument rather than ``workload_profile``'s, and it bites
+    harder: an unprovisioned machine at least reaches ``no_execution_target``, late and
+    after somebody's signature. A retired corpus reaches a green run and an immutable
+    lineage record saying it read something nobody publishes.
+
+    SELF-RETIRING IN THE DIRECTION THAT MATTERS. Build the missing refusals and this set
+    shrinks; empty it and this test says so, at which point the list has become the second
+    lock #232 was about and can go. Register a corpus that is offered and the set does not
+    move. The names are derived rather than listed, so nothing here needs editing when one
+    is added -- only when what refuses it changes.
+    """
+    # Asked before the options are read rather than after, because ``options_for`` refuses
+    # a field that is not a choice and would report the mutation as a missing list.
+    assert form_inputs()["dataset_release"]["type"] == "choice", (
+        "every name below compiles clean, classifies routine and is admitted, so the option "
+        "list is the only thing that refuses them"
+    )
+
+    document = registry("datasets.yaml")
+    registered = [entry["reference_id"] for entry in document.get("published", [])] + [
+        entry["release_id"] for entry in document["releases"]
+    ]
+    offered = set(options_for("dataset_release"))
+
+    held_back_only_by_this_form = {
+        name
+        for name in registered
+        if name not in offered and not denied_outright_for(name)
+    }
+
+    assert held_back_only_by_this_form == {
+        "dolma-2026-07",
+        "fineweb-edu-1b-v2",
+        "frontload-cl-chat-sft-v1",
+        "lean4-mathlib-bytes-v3",
+        "math-memory-full-v1",
+        "math-sft-60m-v1",
+        "pedagogy70-normal30-v1",
+    }, (
+        "the set of registered datasets that nothing refuses has moved. If it shrank, a "
+        "refusal was built and the argument for this being a choice is weaker by exactly "
+        "that name; if it is empty, this field can be free text on #232's reasoning. If it "
+        "grew, something registered became reachable that nothing checks."
+    )
+
+
+def test_an_unregistered_dataset_is_refused_by_something_other_than_this_form() -> None:
+    """The half that IS the workload case, asserted so the argument above stays honest.
+
+    Nothing here claims the dropdown is load-bearing against a typo. A name nothing
+    registers is refused while compiling, before the approval gate and before any credential
+    exists, exactly as an unregistered workload profile is -- so if the seven above ever
+    acquire refusals of their own, there is nothing left for the list to do.
+    """
+    assert denied_outright_for("no-such-corpus-v9") == ("unregistered_dataset",)
 
 
 def test_the_workload_refusal_names_every_entry_the_declared_repository_registers() -> None:
