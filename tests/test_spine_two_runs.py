@@ -197,11 +197,24 @@ def test_the_record_says_what_matched_and_not_only_what_differed(
     Every name in ``REQUIRED_FIELDS`` is either in ``agreed`` or is one of the two
     absences the comparison reports, so this asserts the set rather than a count. A
     required field that stopped being examined would drop out of both and be caught here.
+
+    **Asserted as equality in both directions, because the subset this used to assert
+    could not fail in the direction the list actually moves.** ``accounted`` is read out
+    of a frozen record and ``REQUIRED_FIELDS`` is read out of today's code, so a subset
+    gets easier to satisfy every time a name leaves the list -- and a name leaving the
+    list is exactly how the comparison silently stops covering something. Mutation:
+    delete any entry from ``REQUIRED_FIELDS``. Under ``<=`` the whole file stays green
+    while ``compare_two_runs.py`` quietly stops requiring that field of any future pair;
+    under ``==`` the deleted name is left over in ``accounted`` and this goes red.
+
+    The other direction is not slack either. A field added to ``REQUIRED_FIELDS`` after
+    this record was captured is a field the committed evidence says nothing about, and
+    the honest answer to that is a re-capture rather than a test that shrugs.
     """
     agreed = {one.path for one in recorded.agreed}
     accounted = agreed | set(recorded.comparison.unverified)
 
-    assert set(REQUIRED_FIELDS) <= accounted
+    assert set(REQUIRED_FIELDS) == accounted
     assert recorded.comparison.unverified == ()
 
 
