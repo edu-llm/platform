@@ -33,6 +33,13 @@ tag was never activated. So the account total is real money from Cost Explorer a
 beneath it is measured compute from this platform's own lineage, and the two do not add up.
 They are printed as two separate statements for that reason rather than reconciled into one
 table that would imply they are the same quantity.
+
+**AND THE SPLIT NAMES ONE MORE THING IT CANNOT PROMISE, WHICH IS NEW SINCE 2026-08-05.** The
+group a run is charged to is the group its manifest claimed. #221 removed the only thing that
+compared that claim against the roster inside AWS, on the grounds that it fired past the
+approval gate and so wasted approvals without ever preventing spend. So a line here is what a
+group was charged and not what a group ran, and :class:`TeamShare` carries the size of the
+difference rather than leaving the reader to assume there is none.
 """
 
 from __future__ import annotations
@@ -93,12 +100,25 @@ class TeamShare:
     ``unpriced_runs`` travels with the figure because a team whose month was entirely spot
     work has a real spend and no number for it, and a share printed at zero beside a busy
     team would read as an idle one.
+
+    ``contradicted_runs`` travels with it for the same kind of reason and a newer one. Since
+    #221 nothing on the platform refuses a submitter who claims a group the roster records
+    them elsewhere from, so a line here is what a group was charged rather than what it ran.
+    Carrying the size of that gap is what stops the split implying a precision it stopped
+    having. :mod:`edullm_platform.run_costs` computes it and argues it, and
+    ``tools/report_run_costs.py`` is the one place the runs behind it are named.
     """
 
     team: str
     cost_usd: Decimal
     runs: int
     unpriced_runs: int
+    #: How many of ``runs`` a submitter claimed whom the roster records on another group,
+    #: and how much of ``cost_usd`` they carry. Counted into both rather than deducted: this
+    #: says how reliable the line is, and netting it off would publish an attribution no
+    #: record supports.
+    contradicted_runs: int = 0
+    contradicted_cost_usd: Decimal = Decimal(0)
 
 
 @dataclass(frozen=True)
@@ -225,8 +245,9 @@ def _team_lines(shares: Sequence[TeamShare] | None) -> list[str]:
             "tags are refused in a linked "
             "account, so grouping Cost Explorer by `edullm:team` puts every dollar under the "
             "empty key. These numbers exclude instance start-up, idle time, storage and "
-            "transfer, so they are smaller than the bill by construction and are the right "
-            "thing to compare teams with."
+            "transfer, so they are smaller than the bill by construction. A line is the "
+            "group each run's manifest claimed, which nothing on the platform checks against "
+            "the roster any more."
         ),
         "",
     ]
@@ -237,10 +258,52 @@ def _team_lines(shares: Sequence[TeamShare] | None) -> list[str]:
         note = f", {share.unpriced_runs} with no figure" if share.unpriced_runs else ""
         lines.append(
             f"- {share.team}: {_money(share.cost_usd)} across {share.runs} "
-            f"run{'' if share.runs == 1 else 's'}{note}"
+            f"run{'' if share.runs == 1 else 's'}{note}{_contradicted_note(share)}"
         )
     lines.append("")
+    lines += _precision_lines(shares)
     return lines
+
+
+def _contradicted_note(share: TeamShare) -> str:
+    """What part of one line was booked by somebody the roster puts on another group."""
+    if not share.contradicted_runs:
+        return ""
+    return (
+        f", of which {_money(share.contradicted_cost_usd)} across "
+        f"{share.contradicted_runs} run{'' if share.contradicted_runs == 1 else 's'} was "
+        "claimed by somebody the roster records elsewhere"
+    )
+
+
+def _precision_lines(shares: Sequence[TeamShare]) -> list[str]:
+    """How far the split can be trusted, said once and only where it is not trivially true.
+
+    Printed only when something is actually contradicted, unlike the caveat above it, and
+    that difference is deliberate. The paragraph above describes how the figures are
+    produced and is true every morning. This one describes what happened this month, and a
+    standing sentence about a thing that did not happen is how a reader learns to skip the
+    line that matters.
+
+    It states the size and stops. The runs are named by ``tools/report_run_costs.py`` and by
+    nothing else, because one fact enumerated in two reports is two reports to keep in step.
+    """
+    runs = sum(share.contradicted_runs for share in shares)
+    if not runs:
+        return []
+    money = sum((share.contradicted_cost_usd for share in shares), Decimal(0))
+    return [
+        (
+            f"{runs} run{'s' if runs != 1 else ''} above, carrying {_money(money)}, "
+            f"{'were' if runs != 1 else 'was'} claimed against a group the roster records "
+            "the submitter on a different one from. Nothing refuses that any more, so each "
+            "one is counted where it was claimed and the split is what each group was "
+            "charged rather than what each group ran. `tools/report_run_costs.py` names the "
+            "runs. It is a floor: a submitter the roster records on no group at all "
+            "contradicts nothing and is not counted here."
+        ),
+        "",
+    ]
 
 
 def render_section(

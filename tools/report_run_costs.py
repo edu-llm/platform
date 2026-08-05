@@ -18,6 +18,16 @@ is now ``input-core``, and two claim ``evaluation``, which was never declared at
 team that ran nothing is reported at zero, and spend claiming a team the catalog does not bind
 is reported under the name it claimed.
 
+**AND THE SPLIT NOW SAYS HOW APPROXIMATE IT IS, WHICH IT DID NOT HAVE TO BEFORE.** #221
+removed the refusal that stopped a submitter claiming a group the roster records them
+elsewhere from. It fired inside admission, past the approval gate, so it never prevented any
+spend and only ever wasted a lead's signature. What replaced it was ``team_verified`` on the
+decision record, and nothing read that, which left this report quietly less reliable than it
+read. :func:`~edullm_platform.run_costs.attribute_to_teams` measures the doubt instead. Each
+team's line carries how much of it was claimed by somebody the roster puts elsewhere, and the
+section beneath the split names those runs. It refuses nothing, pages nobody, and moves no
+spend between groups.
+
 Exit codes follow the repository's convention: 0 reported, 2 the inputs could not be read.
 There is no 1, because this tool judges nothing and so has nothing to refuse.
 """
@@ -45,7 +55,9 @@ from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.lifecycle import SchedulerAttempt
 from edullm_platform.contracts.workload import WorkloadCatalog
 from edullm_platform.run_costs import (
+    ContradictedClaim,
     RunCost,
+    TeamAttribution,
     TeamSpend,
     UnboundTeamSpend,
     aggregate,
@@ -197,7 +209,19 @@ def _bound_line(spend: TeamSpend) -> str:
         f"{_runs(spend.runs, spend.unpriced_runs)}"
     )
     tags = ", ".join(f"{tag.key}={tag.value}" for tag in spend.attribution_tags)
-    return f"{line} [{tags}]" if tags else line
+    if tags:
+        line = f"{line} [{tags}]"
+    if spend.contradicted_runs:
+        # On the team's own line rather than only in the section below, because a lead
+        # reading their group's figure is the person the doubt is about and they may never
+        # scroll. The claimed total is repeated rather than netted off: subtracting would
+        # publish a number no record supports.
+        line += (
+            f". ${_plain(spend.contradicted_cost_usd)} of that, across "
+            f"{_runs(spend.contradicted_runs)}, was claimed by somebody the roster records "
+            "on another group"
+        )
+    return line
 
 
 def _unbound_line(spend: UnboundTeamSpend) -> str:
@@ -215,6 +239,13 @@ def by_team(costs: Sequence[RunCost], teams: TeamBindingCatalog) -> list[str]:
         "is one this platform has been told about rather than whatever was typed into the "
         "submission form. A bound team that ran nothing appears at zero, because a group "
         "having gone quiet is worth reading."
+    )
+    lines.append("")
+    lines.append(
+        "Which group a run is charged to is the group its manifest claimed, and since "
+        "2026-08-05 nothing on the platform refuses a claim the roster disagrees with. So "
+        "these figures are what each group was charged rather than what each group ran, and "
+        "the gap between the two is measured below rather than left to be assumed."
     )
     lines.append("")
     if attribution.bound:
@@ -242,7 +273,55 @@ def by_team(costs: Sequence[RunCost], teams: TeamBindingCatalog) -> list[str]:
         lines.append("")
         lines += [_unbound_line(spend) for spend in attribution.unbound]
         lines.append("")
+
+    lines += _contradicted_lines(attribution)
     return lines
+
+
+def _contradicted_line(claim: ContradictedClaim) -> str:
+    figure = "no figure" if claim.cost_usd is None else f"${_plain(claim.cost_usd)}"
+    return (
+        f"- `{claim.run_id}` {figure}: {claim.submitter} claimed {claim.claimed_team} and "
+        f"the roster records them on {', '.join(claim.recorded_teams)}"
+    )
+
+
+def _contradicted_lines(attribution: TeamAttribution) -> list[str]:
+    """The runs that make the split above approximate, named once and refusing nothing.
+
+    Named here and nowhere else. ``tools/report_spend.py`` prints the same figure beside the
+    same split because it is the same split, and it does not repeat this list: a reader who
+    wants the runs comes here, and one fact enumerated in two reports is two reports to keep
+    in step.
+    """
+    if not attribution.contradicted:
+        return []
+    counted = len(attribution.contradicted)
+    return [
+        "### Claimed against a group the roster puts the submitter on a different one from",
+        "",
+        (
+            f"{_runs(counted)} above, carrying "
+            f"${_plain(attribution.contradicted_cost_usd)}, "
+            f"{'names' if counted == 1 else 'name'} a declared group whose "
+            "member list does not carry the person who submitted them. Until 2026-08-05 "
+            "admission refused these, from inside AWS and after a lead had already released "
+            "the run, so it never prevented the spend and only ever wasted the approval. "
+            "The refusal is gone and this is what replaced it. Nothing here stops a run, "
+            "and each one is still counted in its claimed team's total above, because "
+            "moving it would attribute spend to a group that did not ask for it."
+        ),
+        "",
+        (
+            "It is a floor. A submitter the roster records on no group at all is not listed, "
+            "because nothing contradicts them, and `tools/report_onboarding_readiness.py` "
+            "already names those people. `edullm check` still refuses this locally, before "
+            "anything is spent, which is the cheap place to ask."
+        ),
+        "",
+        *[_contradicted_line(claim) for claim in attribution.contradicted],
+        "",
+    ]
 
 
 def render(costs: Sequence[RunCost], *, teams: TeamBindingCatalog, unparsed: int) -> str:

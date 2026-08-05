@@ -361,13 +361,15 @@ def phase0_criteria(references: Sequence[FixtureReference]) -> tuple[CriterionSp
                 "form by hand can name a group they are not in and be admitted."
             ),
             deferral_trigger=(
-                "Something reading team_verified. The flag is on every decision record and "
-                "false on 79 of the 158 written so far, and no report surfaces it: the "
-                "nightly does not, and tools/build_phase2_proof.py and "
-                "tools/build_phase5_proof.py print it per run in documents nobody reads on "
-                "a schedule. A cost report that lists runs whose attribution nothing "
-                "established closes this as recorded. Refusing again closes it as enforced, "
-                "and would have to happen before the gate to be worth anything."
+                "Refusing again, before the gate. Nothing after the gate is worth anything, "
+                "which is what the removal established. The half of this that was reachable "
+                "without a refusal is done: tools/report_run_costs.py names every run "
+                "charged to a declared group the roster records its submitter elsewhere "
+                "from, and tools/report_spend.py carries the size of it beside the per-team "
+                "split, so a claim nobody checked is now a figure somebody reads rather than "
+                "a flag nothing surfaced. That is a report and it lifts nothing here: the "
+                "statement above says a submission is rejected, and one dispatching the form "
+                "by hand still is not."
             ),
             supporting_node_ids=(
                 (

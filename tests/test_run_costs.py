@@ -207,12 +207,14 @@ def binding(
     return TeamBinding.model_validate(payload)
 
 
-def spend(run_id: str, team: str, *, usd: str | None = "10.0000") -> RunCost:
+def spend(
+    run_id: str, team: str, *, usd: str | None = "10.0000", submitter: str = "nzhao721"
+) -> RunCost:
     """One run's cost, built directly so that these are about the rollup and not the rate."""
     return RunCost(
         run_id=run_id,
         team=team,
-        submitter="nzhao721",
+        submitter=submitter,
         workload_profile="olmo-core-train-1gpu",
         compute_profile="gpu-1xa10g",
         attempts=1,
@@ -383,3 +385,198 @@ def test_bound_and_unbound_spend_add_up_to_what_was_priced() -> None:
 
     tallied = sum((entry.cost_usd for entry in attribution.bound), Decimal(0))
     assert tallied + attribution.unbound_cost_usd == total_priced(costs)
+
+
+# ---------------------------------------------------------------------------------------
+# How much of the split was claimed by somebody the roster records on another group
+# ---------------------------------------------------------------------------------------
+#
+# #221 removed the only thing that compared a claimed group against the roster inside AWS.
+# It fired past the approval gate, so it never prevented spend and only ever wasted a
+# lead's signature, and what it left behind was `team_verified` on the decision record with
+# nothing reading it. These are about the split saying how far it can be trusted, and about
+# the three ways that measurement could quietly become either a gate or a fiction.
+
+
+def rostered(team_id: str, *, members: tuple[str, ...]) -> TeamBinding:
+    return binding(team_id, member_logins=list(members))
+
+
+def test_a_claim_the_roster_contradicts_is_counted_and_the_run_is_named() -> None:
+    """The whole of what replaced the refusal, and it has to carry the run.
+
+    A count says the split is off. Only the run says by whose hand, on which group, and by
+    how much, and those are what somebody fixes a roster line or a habit from.
+    """
+    catalog = TeamBindingCatalog(
+        teams=(
+            rostered("memory-split", members=("katiehehe",)),
+            rostered("curriculum", members=("nzhao721",)),
+        )
+    )
+
+    attribution = attribute_to_teams(
+        [spend("run_a", "memory-split", usd="4.0000", submitter="nzhao721")],
+        catalog=catalog,
+    )
+
+    memory = next(entry for entry in attribution.bound if entry.team_id == "memory-split")
+    assert (memory.contradicted_runs, memory.contradicted_cost_usd) == (1, Decimal("4.0000"))
+    claim = attribution.contradicted[0]
+    assert (claim.run_id, claim.submitter, claim.claimed_team) == (
+        "run_a",
+        "nzhao721",
+        "memory-split",
+    )
+    assert claim.recorded_teams == ("curriculum",)
+    assert claim.cost_usd == Decimal("4.0000")
+
+
+def test_a_contradicted_run_stays_in_the_total_it_was_claimed_against() -> None:
+    """Mutation: deduct the contradicted spend, or move it onto the submitter's own group.
+
+    Both invent an attribution no record supports. The run was charged to the group its
+    manifest named and nothing since has said otherwise, so moving it would put spend on a
+    lead's line that their group did not ask for. This reports how far the figure can be
+    trusted and changes the figure by nothing.
+    """
+    catalog = TeamBindingCatalog(
+        teams=(
+            rostered("memory-split", members=("katiehehe",)),
+            rostered("curriculum", members=("nzhao721",)),
+        )
+    )
+
+    attribution = attribute_to_teams(
+        [
+            spend("run_a", "memory-split", usd="4.0000", submitter="nzhao721"),
+            spend("run_b", "memory-split", usd="1.0000", submitter="katiehehe"),
+        ],
+        catalog=catalog,
+    )
+
+    memory = next(entry for entry in attribution.bound if entry.team_id == "memory-split")
+    curriculum = next(entry for entry in attribution.bound if entry.team_id == "curriculum")
+    assert (memory.cost_usd, memory.runs) == (Decimal("5.0000"), 2)
+    assert (curriculum.cost_usd, curriculum.runs) == (Decimal(0), 0)
+
+
+def test_a_submitter_the_roster_places_nowhere_contradicts_nothing() -> None:
+    """Mutation: count every run whose ``team_verified`` would be false.
+
+    ``team_verified`` is false in two unlike cases, and only one of them is a claim anybody
+    can dispute. Somebody the roster records on no group is not misattributing spend, they
+    are waiting on a lead to write one line, and ``tools/report_onboarding_readiness.py``
+    already names them. Counting them here would report most of the pilot as booking spend
+    to groups they are not on, which is both false and the fastest way to make the real
+    number unreadable.
+    """
+    catalog = TeamBindingCatalog(teams=(rostered("memory-split", members=("katiehehe",)),))
+
+    attribution = attribute_to_teams(
+        [spend("run_a", "memory-split", usd="4.0000", submitter="unrostered-person")],
+        catalog=catalog,
+    )
+
+    assert attribution.contradicted == ()
+    assert attribution.bound[0].contradicted_runs == 0
+    assert attribution.bound[0].cost_usd == Decimal("4.0000")
+
+
+def test_a_lead_of_the_claimed_group_is_on_it_for_this_purpose() -> None:
+    """``TeamBinding.includes`` reads leads and members, and that is the shared primitive.
+
+    A lead is not usually in ``member_logins`` and is unmistakably on the group. Asking
+    ``member_logins`` alone here would report every lead's own run as misattributed, and it
+    would also be a second spelling of a comparison ``cli.preflight._check_team`` and
+    ``teams_for_member`` already make one way.
+    """
+    catalog = TeamBindingCatalog(
+        teams=(
+            binding("memory-split", leads=("ericrcwu001",), member_logins=["katiehehe"]),
+            rostered("curriculum", members=("nzhao721",)),
+        )
+    )
+
+    attribution = attribute_to_teams(
+        [spend("run_a", "memory-split", usd="4.0000", submitter="ericrcwu001")],
+        catalog=catalog,
+    )
+
+    assert attribution.contradicted == ()
+
+
+def test_a_contradicted_run_with_no_figure_is_counted_without_adding_money() -> None:
+    """Mutation: skip the unpriced ones, or total them as zero into the money.
+
+    A spot run carries no honest figure and the claim on it is contradicted just the same.
+    Dropping it understates how much of the split is doubtful. Summing a zero into the money
+    is the mistake ``total_priced`` refuses everywhere else, so it is refused here too.
+    """
+    catalog = TeamBindingCatalog(
+        teams=(
+            rostered("memory-split", members=("katiehehe",)),
+            rostered("curriculum", members=("nzhao721",)),
+        )
+    )
+
+    attribution = attribute_to_teams(
+        [spend("run_a", "memory-split", usd=None, submitter="nzhao721")],
+        catalog=catalog,
+    )
+
+    memory = next(entry for entry in attribution.bound if entry.team_id == "memory-split")
+    assert (memory.contradicted_runs, memory.contradicted_cost_usd) == (1, Decimal(0))
+    assert memory.unpriced_runs == 1
+    assert attribution.contradicted[0].cost_usd is None
+    assert attribution.contradicted_cost_usd == Decimal(0)
+
+
+def test_a_claim_on_a_group_nothing_binds_is_not_reported_as_a_contradiction() -> None:
+    """Mutation: run the membership comparison over the unbound claims too.
+
+    Nobody is on a group the catalog does not carry, so every unbound claim would answer
+    yes and the finding would swamp the one this measures. The unbound section already says
+    the whole of that spend is unroutable, which is the stronger statement.
+    """
+    catalog = TeamBindingCatalog(teams=(rostered("curriculum", members=("nzhao721",)),))
+
+    attribution = attribute_to_teams(
+        [spend("run_a", "tokenizer", usd="4.0000", submitter="nzhao721")], catalog=catalog
+    )
+
+    assert attribution.contradicted == ()
+    assert [entry.claimed_team for entry in attribution.unbound] == ["tokenizer"]
+
+
+def test_the_per_team_counts_and_the_named_runs_describe_one_population() -> None:
+    """Mutation: build the list and the counters from two passes that can disagree.
+
+    The section prints both, so two readings of one fact sitting on the same page is the
+    shape of error that gets argued about rather than found.
+    """
+    catalog = TeamBindingCatalog(
+        teams=(
+            rostered("memory-split", members=("katiehehe",)),
+            rostered("curriculum", members=("nzhao721",)),
+        )
+    )
+
+    attribution = attribute_to_teams(
+        [
+            spend("run_c", "memory-split", usd="4.0000", submitter="nzhao721"),
+            spend("run_a", "curriculum", usd="2.0000", submitter="katiehehe"),
+            spend("run_b", "curriculum", usd="1.0000", submitter="nzhao721"),
+        ],
+        catalog=catalog,
+    )
+
+    assert sum(entry.contradicted_runs for entry in attribution.bound) == len(
+        attribution.contradicted
+    )
+    assert sum(
+        (entry.contradicted_cost_usd for entry in attribution.bound), Decimal(0)
+    ) == attribution.contradicted_cost_usd
+    assert [claim.run_id for claim in attribution.contradicted] == ["run_a", "run_c"], (
+        "ordered by run id, because it is a list somebody works through"
+    )
