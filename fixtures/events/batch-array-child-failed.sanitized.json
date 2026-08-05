@@ -7,7 +7,7 @@
   "time": "2026-08-05T21:30:01Z",
   "region": "us-east-1",
   "detail": {
-    "jobName": "run_019fd400-0000-7000-8000-000000000001",
+    "jobName": "run_019fd400-0000-7000-8000-00000000ce11",
     "jobId": "77b6ed8a-6d2b-5f56-c540-cfb4e8f5545d:13",
     "jobQueue": "arn:aws:batch:us-east-1:<aws-account-id>:job-queue/sbsandbox-intern-edullm-gpu-1xl40s",
     "status": "FAILED",
@@ -28,10 +28,10 @@
     ],
     "container": {
       "environment": [
-        {"name": "EDULLM_RUN_ID", "value": "run_019fd400-0000-7000-8000-000000000001"},
+        {"name": "EDULLM_RUN_ID", "value": "run_019fd400-0000-7000-8000-00000000ce11"},
         {"name": "EDULLM_TEAM", "value": "scratch"},
-        {"name": "EDULLM_OUTPUT_PREFIX", "value": "s3://sbsandbox-intern-edullm-outputs/teams/scratch/runs/run_019fd400-0000-7000-8000-000000000001/"},
-        {"name": "EDULLM_CHECKPOINT_DIR", "value": "s3://sbsandbox-intern-edullm-outputs/teams/scratch/runs/run_019fd400-0000-7000-8000-000000000001/checkpoints/"},
+        {"name": "EDULLM_OUTPUT_PREFIX", "value": "s3://sbsandbox-intern-edullm-outputs/teams/scratch/runs/run_019fd400-0000-7000-8000-00000000ce11/"},
+        {"name": "EDULLM_CHECKPOINT_DIR", "value": "s3://sbsandbox-intern-edullm-outputs/teams/scratch/runs/run_019fd400-0000-7000-8000-00000000ce11/checkpoints/"},
         {"name": "WANDB_ENTITY", "value": "eduLLM"},
         {"name": "WANDB_PROJECT", "value": "plan-b-phase0"},
         {"name": "WANDB_RUN_GROUP", "value": "plan-b-phase0-100m-superbpe-eval"},

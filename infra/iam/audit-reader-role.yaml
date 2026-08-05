@@ -195,7 +195,7 @@ Resources:
                 Action: secretsmanager:GetSecretValue
                 Resource:
                   Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sbsandbox-intern-edullm-wandb-api-key-*
-              # THE DIGEST OF THE CODE THESE TWO FUNCTIONS ARE ACTUALLY RUNNING. The release
+              # THE DIGEST OF THE CODE THESE THREE FUNCTIONS ARE ACTUALLY RUNNING. The release
               # record committed beside each template says what was released, and the two
               # release tripwires hold each record against a zip built from the tree. Neither
               # says anything about the account, so a function deployed out of band or a
@@ -207,14 +207,15 @@ Resources:
               # wider grant: GetFunction answers with a presigned URL to the deployed
               # artifact, so a job holding it could fetch the code rather than describe it.
               #
-              # Two statements naming two ARNs rather than one statement wildcarded to
-              # `function:*`. This is a shared sandbox account with sixteen other teams in it,
-              # and a wildcard would let a job nobody watches dispatch enumerate every
-              # function's configuration -- environment variable names, role ARNs, layer
-              # versions -- to answer a question about two of them. The names are the ones
-              # `infra/admission-state-machine.yaml` and `infra/batch-events.yaml` declare, and
-              # tests/test_audit_workflow.py reads them from those templates rather than
-              # restating them, so a rename that misses this file fails at review.
+              # One statement per ARN rather than one statement wildcarded to `function:*`.
+              # This is a shared sandbox account with sixteen other teams in it, and a
+              # wildcard would let a job nobody watches dispatch enumerate every function's
+              # configuration -- environment variable names, role ARNs, layer versions -- to
+              # answer a question about three of them. The names are the ones
+              # `infra/admission-state-machine.yaml`, `infra/batch-events.yaml` and
+              # `infra/notifications.yaml` declare, and tests/test_audit_workflow.py reads them
+              # from those templates rather than restating them, so a rename that misses this
+              # file fails at review.
               #
               # Unqualified, with no `:*` for versions or aliases. The check asks about
               # $LATEST, which is what the state machine and the events rule invoke, and a
@@ -234,6 +235,15 @@ Resources:
                 Action: lambda:GetFunctionConfiguration
                 Resource:
                   Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:sbsandbox-intern-edullm-expiry-janitor
+              # The one whose deployed bytes are hardest to doubt from the outside. A notifier
+              # running old code posts a message that is wrong about the money, nothing
+              # compares it to anything, and the only reader is a person who reads it once and
+              # believes it.
+              - Sid: ReadNotifierDeployedCode
+                Effect: Allow
+                Action: lambda:GetFunctionConfiguration
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:sbsandbox-intern-edullm-notifier
               # WHAT EACH STACK IS ACTUALLY DEPLOYED FROM. Every check in this repository
               # compares the repository against itself; nothing compared the account against
               # the repository, and the stacks under infra/iam/ are applied by hand from
@@ -286,6 +296,8 @@ Resources:
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-audit-reader-iam/*
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-phase5-image-resolver-iam/*
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-run-preview-iam/*
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-notifier-iam/*
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-notifications/*
               # THE ONE WILDCARD RESOURCE IN THIS POLICY, AND IT IS FORCED RATHER THAN CHOSEN.
               # cloudformation:ListStacks has no resource type at all -- the request names no
               # stack, so there is nothing for a resource ARN to match and a policy that

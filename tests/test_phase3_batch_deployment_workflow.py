@@ -54,6 +54,7 @@ GPU_COMPUTE_TEMPLATE = "infra/batch-compute-gpu.yaml"
 GPU_SHAPES_TEMPLATE = "infra/batch-compute-gpu-shapes.yaml"
 EVENTS_TEMPLATE = "infra/batch-events.yaml"
 JANITOR_TEMPLATE = "infra/expiry-janitor.yaml"
+NOTIFICATIONS_TEMPLATE = "infra/notifications.yaml"
 ADMISSION_TEMPLATE = "infra/admission-state-machine.yaml"
 
 ADMISSION_STACK = "sbsandbox-intern-edullm-phase2-admission"
@@ -82,6 +83,15 @@ DEPLOYMENT_ORDER = (
         "Deploy the remaining GPU shapes stack",
         "sbsandbox-intern-edullm-phase4-gpu-shapes",
         GPU_SHAPES_TEMPLATE,
+    ),
+    # Before the events stack for the same reason the GPU compute stack is: the rule's second
+    # target names the queue this creates, EventBridge does not check that an SQS target
+    # exists at PutTargets time, and the wrong order deploys perfectly and drops every
+    # notification until somebody notices a channel that has gone quiet.
+    (
+        "Deploy the notifier stack",
+        "sbsandbox-intern-edullm-notifications",
+        NOTIFICATIONS_TEMPLATE,
     ),
     ("Deploy Phase 3 batch events stack", "sbsandbox-intern-edullm-phase3-events", EVENTS_TEMPLATE),
     # Nothing to do with Batch. It sweeps EC2 instances a person launched through
@@ -557,7 +567,7 @@ def test_every_run_body_is_strict_about_failures_and_unset_variables() -> None:
     # reporting the deploy failure, which is indistinguishable from the diagnostic having
     # found nothing to say.
     #
-    # Seven deploys, plus: the dispatch gate, validate, the failure diagnostic, the two
+    # Eight deploys, plus: the dispatch gate, validate, the failure diagnostic, the two
     # verifications, the tooling install, the queue enumeration, the queue view, and the
     # per-run report. The second verification arrived with the GPU shapes stack and is its
     # own step rather than thirteen more expectations bolted onto the first. The install and

@@ -33,18 +33,23 @@ from release_lambda import (
 )
 
 
-def test_both_lambdas_are_released_by_default() -> None:
+def test_every_lambda_is_released_by_default() -> None:
     """Mutation: default to the validator, which is the one people think of.
 
-    ``build_package`` copies ``config/*.yaml`` into whatever zip it builds, and the
-    lifecycle recorder is built through that same function -- so a catalog edit moves the
-    recorder's digest even though nothing it does reads the catalog. That surprised somebody
-    once already and cost a red tripwire on main, so releasing both is the default and
+    ``build_package`` copies ``config/*.yaml`` into whatever zip it builds, and the other two
+    functions are built through that same function -- so a catalog edit moves their digests
+    even though nothing either of them does reads the catalog. That surprised somebody once
+    already and cost a red tripwire on main, so releasing all of them is the default and
     releasing one is the case that has to be spelled out.
+
+    The notifier is the third and it is the one this reasoning bites hardest on, because it
+    is the only one that does read config: a roster edit changes which name appears on a
+    message, so its digest moves for reasons a reader can see as well as for reasons only
+    the builder can.
     """
     parser_default = main.__doc__  # keeps the import used if the assert below is edited out
     assert parser_default is None or isinstance(parser_default, str)
-    assert set(FUNCTIONS) == {"validator", "recorder", "janitor"}
+    assert set(FUNCTIONS) == {"validator", "recorder", "janitor", "notifier"}
 
 
 def test_a_substitution_that_matches_nothing_refuses_rather_than_writing(tmp_path: Path) -> None:

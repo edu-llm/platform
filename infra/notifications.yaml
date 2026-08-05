@@ -1,0 +1,272 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: The path a Batch job state change takes to become a message somebody reads.
+
+# A SECOND TARGET ON AN EXISTING RULE, AND A SECOND QUEUE BEHIND IT.
+#
+# infra/batch-events.yaml already carries a rule matching Batch job state changes across all
+# sixteen of this platform's queues, and it had one target. This adds the second half of that
+# fan-out: a queue of its own, a function of its own, and alarms of its own.
+#
+# Two queues rather than two consumers on one. SQS delivers a message to one consumer, so a
+# single queue with two functions polling it would give each event to whichever polled first
+# and the other would never see it. A second target is how EventBridge fans out.
+#
+# The queues are separate for a second reason that outlives the first. The recorder's failures
+# and the notifier's mean different things. A lineage record that was never written is a hole
+# in an audit trail that cannot be corrected afterwards. A message nobody received is a message
+# nobody received. Sharing a dead-letter queue would put both in one place with one alarm.
+#
+# The rule ARN this stack's queue policy conditions on is derived from the rule's name rather
+# than imported across stacks, so there is no export to create and no deletion order to get
+# right. The name is the one infra/batch-events.yaml sets, and
+# tests/test_notifications_infrastructure.py compares the two spellings.
+
+Resources:
+  # ------------------------------------------------------------------------------------
+  # The two queues
+  # ------------------------------------------------------------------------------------
+  NotifierQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: sbsandbox-intern-edullm-notifier
+      # Six times the function timeout, which is what AWS recommends and what the event
+      # source mapping enforces a floor on. Set below it, a message becomes visible again
+      # while the notifier is still working, a second invocation posts the same line, and the
+      # channel gets it twice with nothing reporting an error. Unlike the recorder, nothing
+      # here refuses a duplicate: there is no conditional write, because nothing is written.
+      VisibilityTimeout: 360
+      MessageRetentionPeriod: 345600
+      RedrivePolicy:
+        deadLetterTargetArn:
+          Fn::GetAtt:
+            - NotifierDeadLetterQueue
+            - Arn
+        # Three, where the recorder takes five. A message that could not be posted three times
+        # is one the webhook is refusing rather than one that hit a throttle, and a
+        # notification is worth much less late than a lineage record is. Getting it into the
+        # dead-letter queue faster is what makes the alarm below arrive while somebody can
+        # still act on the run it was about.
+        maxReceiveCount: 3
+
+  # Where a message that was never sent ends up. Fourteen days, the maximum, because the whole
+  # point of it being here is that nobody is watching in real time.
+  NotifierDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: sbsandbox-intern-edullm-notifier-dlq
+      MessageRetentionPeriod: 1209600
+
+  # A resource policy rather than an IAM entity, so this template needs no stack capability.
+  # Both queues are listed because EventBridge writes to both: the notifier queue as the
+  # rule's second target, and the dead-letter queue when it cannot.
+  #
+  # The two conditions are not redundant. aws:SourceArn pins which rule may write, so another
+  # rule in this account cannot feed the notifier; aws:SourceAccount pins the account, which
+  # closes the confused-deputy path where a rule in somebody else's account names our queue.
+  NotifierQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - Ref: NotifierQueue
+        - Ref: NotifierDeadLetterQueue
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowOurBatchLifecycleRuleToDeliver
+            Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource:
+              - Fn::GetAtt:
+                  - NotifierQueue
+                  - Arn
+              - Fn::GetAtt:
+                  - NotifierDeadLetterQueue
+                  - Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn:
+                  Fn::Sub: arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:rule/sbsandbox-intern-edullm-batch-lifecycle
+              StringEquals:
+                aws:SourceAccount:
+                  Ref: AWS::AccountId
+
+  # ------------------------------------------------------------------------------------
+  # The function
+  # ------------------------------------------------------------------------------------
+  NotifierFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: sbsandbox-intern-edullm-notifier
+      Description: Turns one Batch job state change into one message naming the person, the experiment and the money.
+      Runtime: python3.12
+      Handler: edullm_platform.notifier_handler.handler
+      Role:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-notifier-lambda
+      # S3ObjectVersion is what makes a code change a CloudFormation change. Without it,
+      # re-uploading a new zip to the same key leaves this resource byte-identical, the change
+      # set comes back empty, and `deploy --no-fail-on-empty-changeset` reports success while
+      # the old code keeps running.
+      #
+      # The value below is produced by tools/build_notifier_lambda.py and uploaded by the
+      # procedure in infra/README.md. Changing the code means running that procedure again and
+      # editing this line, which is the diff a reviewer sees.
+      #
+      # REPLACE THE PLACEHOLDER BEFORE THE FIRST DEPLOY. It is deliberately not a plausible
+      # version id: a placeholder fails loudly at a named step, where an omitted property
+      # would deploy something.
+      Code:
+        S3Bucket: sbsandbox-intern-edullm-artifacts
+        S3Key: notifier/notifier.zip
+        S3ObjectVersion: REPLACE_WITH_THE_UPLOADED_OBJECT_VERSION
+      Environment:
+        Variables:
+          # A NAME AND NEVER A VALUE. A Slack incoming webhook carries its whole credential in
+          # the URL path, so a variable holding one is plaintext in this template, in the
+          # console and in get-function-configuration, and this repository is public. The
+          # secret is created by hand; infra/README.md carries the command.
+          EDULLM_WEBHOOK_SECRET_ID: sbsandbox-intern-edullm-runs-webhook
+          # Where Lambda unpacks the zip. The three reviewed files the notifier reads are
+          # packaged into it by tools/build_notifier_lambda.py.
+          EDULLM_CONFIG_DIRECTORY: /var/task/config
+          # Where the intent records are, which is where the submitter comes from. Named here
+          # as well as in the role, and a test compares the two: a mismatch is an AccessDenied
+          # on every message, swallowed by the fallback, showing up only as a channel where
+          # nobody is ever named. The same variable the recorder reads, under the same
+          # spelling, so a deployment pointing one at a different bucket points both.
+          EDULLM_LINEAGE_BUCKET: sbsandbox-intern-edullm-lineage
+      # Sixty seconds against a function that makes one secret read, one object read, up to
+      # two Batch listings, one bucket listing and one HTTPS POST with a five-second timeout
+      # of its own. The queue's visibility timeout above is six times this and has to be
+      # changed with it.
+      Timeout: 60
+      MemorySize: 512
+
+  NotifierEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn:
+        Fn::GetAtt:
+          - NotifierQueue
+          - Arn
+      FunctionName:
+        Ref: NotifierFunction
+      Enabled: true
+      # One event per invocation. A larger batch is cheaper and wrong here for the reason it
+      # is wrong for the recorder: a partial failure in a batch of ten either redelivers all
+      # ten, which posts nine messages twice, or needs per-message verdicts. Batch size one
+      # makes the retry unit the event, which is the unit that maps to one message.
+      BatchSize: 1
+      # Zero, so a message is not held back waiting for a batch that will never fill. A
+      # notification that arrives a minute late for batching reasons is a notification that
+      # arrives after the person has moved on.
+      MaximumBatchingWindowInSeconds: 0
+      # THE HANDLER RETURNS A PARTIAL-FAILURE LIST, SO THE MAPPING HAS TO HONOUR ONE. Lambda
+      # ignores that return value entirely unless this is declared: without it a returned list
+      # is an ordinary successful return, every message in the batch is deleted, and the ones
+      # that failed are lost with no retry and no dead-letter.
+      #
+      # At BatchSize 1 the two configurations behave identically, and that coincidence is
+      # exactly why this is configured rather than argued away. The next person to raise the
+      # batch size would change one number and turn a lossless path into a lossy one.
+      FunctionResponseTypes:
+        - ReportBatchItemFailures
+
+  # ------------------------------------------------------------------------------------
+  # Alarms
+  # ------------------------------------------------------------------------------------
+  #
+  # THE WHOLE FAILURE MODE OF THIS COMPONENT IS SILENCE, WHICH LOOKS EXACTLY LIKE A QUIET WEEK.
+  # An image build sat unnoticed because nothing said anything, and a notifier that has stopped
+  # saying anything is the same defect one level up. These three are what tell the difference.
+  #
+  # None of them can stop a run and none of them is in the path of one. A red alarm here means
+  # nobody was told about a run, never that a run did not happen.
+
+  # Anything at all in the dead-letter queue means at least one run ended and nobody was told.
+  # There is no acceptable non-zero level. Missing data is not breaching, because an empty
+  # queue publishes no datapoints and an alarm that read that as a breach would fire
+  # continuously while nothing was wrong.
+  NotifierDeadLetterDepthAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: sbsandbox-intern-edullm-notifier-dead-letters
+      AlarmDescription: A run ended and no message was posted about it, so somebody was not told.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value:
+            Fn::GetAtt:
+              - NotifierDeadLetterQueue
+              - QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+  # The half that fires first. A notifier that has stopped consuming leaves messages ageing in
+  # its queue before the third retry sends the first one to the dead-letter queue. Ten minutes
+  # of ageing is well past anything normal, since a message is posted in seconds.
+  NotifierBacklogAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: sbsandbox-intern-edullm-notifier-backlog
+      AlarmDescription: Run endings are queued and nothing is posting them, so the channel is behind.
+      Namespace: AWS/SQS
+      MetricName: ApproximateAgeOfOldestMessage
+      Dimensions:
+        - Name: QueueName
+          Value:
+            Fn::GetAtt:
+              - NotifierQueue
+              - QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 600
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+  # A notifier that raises is one whose events go round the retry loop, so this overlaps the
+  # two above on purpose: it fires earlier and it names the cause. The other two say nobody was
+  # told; this one says the notifier is what broke. A webhook refusing every POST looks like
+  # this.
+  NotifierErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: sbsandbox-intern-edullm-notifier-errors
+      AlarmDescription: The notifier is failing to turn Batch state changes into messages.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value:
+            Ref: NotifierFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+Outputs:
+  QueueUrl:
+    Value:
+      Ref: NotifierQueue
+  QueueArn:
+    Value:
+      Fn::GetAtt:
+        - NotifierQueue
+        - Arn
+  DeadLetterQueueArn:
+    Value:
+      Fn::GetAtt:
+        - NotifierDeadLetterQueue
+        - Arn
+  FunctionName:
+    Value:
+      Ref: NotifierFunction

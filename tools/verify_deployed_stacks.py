@@ -192,6 +192,8 @@ STACKS: Final = _stacks(
     ("sbsandbox-intern-edullm-audit-reader-iam", IAM_ROOT / "audit-reader-role.yaml"),
     ("sbsandbox-intern-edullm-phase5-image-resolver-iam", IAM_ROOT / "image-resolver-role.yaml"),
     ("sbsandbox-intern-edullm-run-preview-iam", IAM_ROOT / "run-preview-role.yaml"),
+    ("sbsandbox-intern-edullm-notifier-iam", IAM_ROOT / "notifier-lambda-role.yaml"),
+    ("sbsandbox-intern-edullm-notifications", INFRA_ROOT / "notifications.yaml"),
 )
 
 

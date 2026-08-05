@@ -115,6 +115,14 @@ FUNCTIONS = {
         release_record=PROJECT_ROOT / "infra" / "expiry-janitor-release.yaml",
         tripwire="tests/test_janitor_package.py",
     ),
+    "notifier": Function(
+        name="notifier",
+        builder="tools/build_notifier_lambda.py",
+        s3_key="notifier/notifier.zip",
+        template=PROJECT_ROOT / "infra" / "notifications.yaml",
+        release_record=PROJECT_ROOT / "infra" / "notifier-release.yaml",
+        tripwire="tests/test_notifications_infrastructure.py",
+    ),
 }
 
 

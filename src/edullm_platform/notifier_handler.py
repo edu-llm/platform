@@ -126,11 +126,25 @@ def _envelope(record: Mapping[str, Any]) -> Mapping[str, Any]:
 
 
 def _webhook_endpoint() -> str:
-    """The URL, read once per cold start from the secret the environment names.
+    """The URL, read from the secret the environment names, on every invocation.
 
     Read here rather than passed in a template variable, because a Slack incoming webhook
     carries its whole credential in the URL and a template variable is plaintext in
     CloudFormation, in the console and in `get-function-configuration`.
+
+    EVERY INVOCATION AND NOT ONCE PER CONTAINER, WHICH IS THE ONE THING TO PRESERVE HERE.
+    Caching it in a module-level global is the obvious optimisation and it is what makes a
+    rotation silently ineffective: `put-secret-value` keeps the ARN, so nothing about the
+    deployed function changes, and a warm container would go on posting to the URL that was
+    just revoked until Lambda happened to recycle it. That is a notifier that has stopped
+    reaching anybody while every alarm reads normal, because Slack answers a retired webhook
+    with a 404 rather than a timeout and the retries dead-letter quietly at three.
+
+    The cost is one GetSecretValue per run ending, which is a handful a day.
+
+    Nothing here ever puts the value in an exception. The message below says the value is
+    withheld and means it: the endpoint is the credential, so a message quoting the thing it
+    is complaining about would put the webhook in CloudWatch.
     """
     import boto3  # type: ignore[import-not-found]  # in the runtime, not in pyproject
 

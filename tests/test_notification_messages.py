@@ -84,7 +84,15 @@ def test_a_run_nothing_could_name_a_submitter_for_says_so_rather_than_naming_the
     facts = read_run_ended(envelope, catalogs=catalogs)
     assert facts is not None
 
-    assert render_run_ended(facts).text.startswith("Somebody this message could not name · ")
+    # Equality on the whole line rather than on the opening clause. A prefix assertion is the
+    # check-that-cannot-fail shape this codebase has now found seven times: it goes green on a
+    # message whose remaining three clauses came out empty, which is exactly the failure a
+    # renderer produces when the facts behind it are missing, and missing facts is the very
+    # situation this case is about.
+    assert render_run_ended(facts).text == (
+        "Somebody this message could not name · plan-b-phase0-100m-superbpe-eval · "
+        "$0.02 spent, $2.01 authorised · ran 1m on gpu-1xa10g."
+    )
 
 
 def test_a_run_whose_queue_nothing_prices_says_the_cost_is_unknown(
@@ -225,6 +233,36 @@ def test_a_fan_out_that_lost_nothing_does_not_say_zero_failed(catalogs: Catalogs
     )
 
 
+def test_the_wording_loop_prints_the_delivered_text_and_needs_no_credential(
+    catalogs: Catalogs,
+) -> None:
+    """THE TOOL THE OWNER ITERATES ON WORDING WITH, HELD TO PRINTING WHAT IS DELIVERED.
+
+    Mutation: have the tool build its own sentence, or reach for a client. Either turns the
+    loop into a preview of something other than the message, which is worse than no preview:
+    a wording change would then be reviewed against text nothing sends.
+
+    Equality against `render_run_ended` rather than against a literal, so this cannot pass by
+    agreeing with a copy of the wording that went stale. The literals are asserted once each,
+    above.
+    """
+    import subprocess
+    import sys
+
+    fixture = EVENTS / "batch-succeeded.sanitized.json"
+    finished = subprocess.run(
+        [sys.executable, "tools/render_notification.py", "--event", str(fixture)],
+        capture_output=True,
+        text=True,
+        cwd=PROJECT_ROOT,
+        env={"PATH": "/usr/bin:/bin", "PYTHONPATH": str(PROJECT_ROOT / "src")},
+        check=False,
+    )
+
+    assert finished.returncode == 0, finished.stderr
+    assert rendered("batch-succeeded", catalogs).text in finished.stdout
+
+
 @pytest.mark.parametrize(
     ("state", "clause"),
     [
@@ -237,7 +275,12 @@ def test_the_failed_message_says_what_survived(
     catalogs: Catalogs, state: str, clause: str
 ) -> None:
     """A failure that saved a checkpoint and one that saved nothing carry the same status
-    and the same exit code, so only this clause distinguishes them."""
+    and the same exit code, so only this clause distinguishes them.
+
+    Equality on the whole line rather than on the ending, for the reason the case above
+    gives: a suffix assertion passes on a message that lost everything before the clause it
+    is looking at, and what comes before here is who spent how much.
+    """
     import dataclasses
 
     envelope = json.loads((EVENTS / "batch-failed.sanitized.json").read_text(encoding="utf-8"))
@@ -246,4 +289,7 @@ def test_the_failed_message_says_what_survived(
 
     message = render_run_ended(dataclasses.replace(facts, checkpoint_state=state))
 
-    assert message.text.endswith(f"exit 1, {clause}.")
+    assert message.text == (
+        "Aryan Verma · plan-b-phase0-100m-superbpe-eval · $0.70 spent, nothing produced · "
+        f"died at 42m on gpu-1xa10g, exit 1, {clause}."
+    )

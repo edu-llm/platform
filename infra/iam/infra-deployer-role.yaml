@@ -810,17 +810,28 @@ Resources:
                 Action: lambda:ListTags
                 Resource:
                   Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:event-source-mapping:*
-              # Seven whole role ARNs, and they must stay whole. A prefix --
+              # Eight whole role ARNs, and they must stay whole. A prefix --
               # sbsandbox-intern-edullm-* -- would let this role pass any role that ever
               # takes such a name, including one created in a later phase with permissions
               # nobody weighed against a deploy credential; passing a role is how a
-              # principal lends its own limits away. Naming each one means an eighth is a
+              # principal lends its own limits away. Naming each one means a ninth is a
               # visible edit to this file rather than something a new role name inherits.
               #
               # THE PHASE 4 EDIT IS WHAT THAT SENTENCE WAS FOR. This list said four when it
               # was written, and it predicted "one created in Phase 4". The three that
               # arrived are the GPU trio in infra/iam/batch-gpu-roles.yaml, and they are
               # here because a reader weighed them, not because their names matched.
+              #
+              # THE EIGHTH ARRIVED THE SAME WAY, with infra/notifications.yaml. Same verb
+              # and the same argument: lambda:CreateFunction takes a role ARN, so the
+              # deployer must be allowed to pass it, and naming it out in full keeps a ninth
+              # a visible edit here rather than something a new role name inherits.
+              #
+              # What that role may do is read one queue, read one secret, read the intent/
+              # prefix of the lineage store, list one prefix of the outputs bucket, list the
+              # cells of an array job in this region, and write its own log group. Every one
+              # of those is a read. It can write nothing anywhere, and it holds no batch:
+              # action that can start, cancel or stop a job.
               #
               # Which call needs which:
               #   - batch:CreateComputeEnvironment passes an instance role, through the
@@ -829,10 +840,11 @@ Resources:
               #   - batch:RegisterJobDefinition passes an execution role and a workload
               #     role, which is where a container's two identities are fixed. There are
               #     two job definitions, so there are two of each;
-              #   - lambda:CreateFunction passes the lifecycle recorder's role. That verb
-              #     is granted by the Phase 2 policy above and is not repeated here.
+              #   - lambda:CreateFunction passes the lifecycle recorder's role and the
+              #     notifier's. That verb is granted by the Phase 2 policy above and is not
+              #     repeated here.
               #
-              # The blast radius is bounded on the other side too: each of these seven is
+              # The blast radius is bounded on the other side too: each of these eight is
               # trusted only by the single AWS service its own trust policy names, so
               # passing one anywhere else yields a role that cannot be assumed.
               - Effect: Allow
@@ -845,6 +857,7 @@ Resources:
                   - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-workload
                   - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-batch-gpu-instance
                   - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-lifecycle-lambda
+                  - Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/sbsandbox-intern-edullm-notifier-lambda
 
 Outputs:
   RoleName:
