@@ -77,11 +77,18 @@ name: Nightly (the checks that are not about one change)
 # tools/report_run_costs.py synced it. Both are granted now, in one deploy, and the job
 # reports a verdict rather than a gap.
 #
-# Neither had a substitute. Enumerating the queues needs batch:ListJobs and
-# batch:DescribeJobs, which that template omits deliberately, and the lineage records say
-# what this platform submitted rather than what the account is running. The durations are
-# only in the attempt records, and sync_bucket raises on a refused prefix rather than
+# Neither had a substitute. Enumerating the queues sees only what this platform submitted
+# to the sixteen queues it created, and the lineage records are narrower still, so neither
+# answers what the account is running -- which is the gap the board reports. The durations
+# are only in the attempt records, and sync_bucket raises on a refused prefix rather than
 # skipping it, so that refusal cost the whole cost mapping and not the attempt half of it.
+#
+# THAT ROLE NOW HOLDS batch:ListJobs AND batch:DescribeJobs, AND NOTHING HERE READS THEM
+# YET. They were added for the placement check config/capacity.yaml's header asks for -- a
+# ninth job that recomputes that file's `places` verdict for each of the sixteen queues and
+# goes red where the account disagrees with what is committed. The grant landed first and
+# on purpose: this stack is applied by hand, so a job merged ahead of its permissions is
+# red from the night it ships, which is what the paragraph above is about.
 #
 # The board still exits 2 and this job still goes red if a source cannot be read, because a
 # grant can lapse and a credential can. What changed is that a gap is now a finding about

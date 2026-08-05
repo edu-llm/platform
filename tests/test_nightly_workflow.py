@@ -1024,11 +1024,21 @@ def test_the_role_can_read_and_cannot_write(role: dict[str, Any]) -> None:
         "cloudformation:ListStacks",
         "tag:GetResources",
         "cloudtrail:LookupEvents",
+        "batch:ListJobs",
+        "batch:DescribeJobs",
     }
     for action in granted:
         assert not any(fragment in action for fragment in MUTATING_ACTION_FRAGMENTS), action
         assert action.startswith(
-            ("s3:", "secretsmanager:", "lambda:", "cloudformation:", "tag:", "cloudtrail:")
+            (
+                "s3:",
+                "secretsmanager:",
+                "lambda:",
+                "cloudformation:",
+                "tag:",
+                "cloudtrail:",
+                "batch:",
+            )
         ), action
         assert "*" not in action, action
 
@@ -1067,6 +1077,15 @@ def test_the_role_can_read_and_cannot_write(role: dict[str, Any]) -> None:
     ):
         assert forbidden not in granted
 
+    # The adjacent actions on the queue grants, and the reason they need naming here rather
+    # than being left to the substring pass: not one of Submit, Cancel or Terminate is a
+    # fragment in MUTATING_ACTION_FRAGMENTS, so all three would read as harmless to it. Each
+    # is a write to a queue this role exists to describe, and the placement check is the
+    # sharpest case of the rule -- a check that can cancel a job can decide for itself that
+    # the shape it is measuring does not place.
+    for forbidden in ("batch:SubmitJob", "batch:CancelJob", "batch:TerminateJob"):
+        assert forbidden not in granted
+
     assert all(statement["Effect"] == "Allow" for statement in statements(role))
 
 
@@ -1077,8 +1096,8 @@ def test_no_grant_reaches_a_whole_bucket_or_every_secret(role: dict[str, Any]) -
     harmless here: the lineage store holds every run's records and Secrets Manager holds
     everybody's credentials, so an unscoped read is an exfiltration path with a schedule.
 
-    THREE STATEMENTS ARE EXEMPT AND ALL THREE ARE NAMED RATHER THAN PATTERN-MATCHED, so a
-    fourth cannot arrive by widening a resource to `*` and calling these three precedent. The
+    FOUR STATEMENTS ARE EXEMPT AND ALL FOUR ARE NAMED RATHER THAN PATTERN-MATCHED, so a
+    fifth cannot arrive by widening a resource to `*` and calling these four precedent. The
     assertion runs the other way round as well -- exactly these Sids hold a wildcard and no
     others -- because an exemption list that is only a filter grows silently.
 
@@ -1090,7 +1109,9 @@ def test_no_grant_reaches_a_whole_bucket_or_every_secret(role: dict[str, Any]) -
     `tag:GetResources` is the same shape and is the wider disclosure of the two, since it
     answers with the ARNs and tags of resources in this region. It is what makes the account
     side of `tools/visibility_board.py` readable at all, and there is no narrower substitute:
-    the alternative is `batch:ListJobs`, which this role omits deliberately.
+    `batch:ListJobs` is granted below and is not one, because it enumerates a named queue and
+    so sees only what this platform submitted to the sixteen queues it created, which is the
+    half of the comparison the board already has.
 
     `cloudtrail:LookupEvents` takes no resource either, and the region condition is the whole
     of its bound. It reads the ninety-day management-event history, which is the only feed
@@ -1099,11 +1120,20 @@ def test_no_grant_reaches_a_whole_bucket_or_every_secret(role: dict[str, Any]) -
     exists to stop. It is a wider disclosure than the other two, since an event carries the
     caller and the parameters of the call, and it stays because the alternative is a report
     that cannot see a launch nobody recorded.
+
+    `batch:ListJobs` and `batch:DescribeJobs` share one statement and neither has a resource
+    type: the service authorization reference gives both an empty resource column, so the
+    jobQueue ListJobs takes and the job ids DescribeJobs takes are request parameters IAM
+    cannot match an ARN against. Confining this to the sixteen queues in
+    `config/execution-targets.yaml` is not a narrowing somebody declined to write. What it
+    discloses is the job records of this region, which is the price already paid for the
+    tagging read above.
     """
     unscopable = {
         "FindStacksNothingInTheRepositoryAccountsFor",
         "FindEveryResourceThisPlatformTagged",
         "LookUpLaunchEvents",
+        "ReadTheQueuesThePlacementVerdictNeeds",
     }
     assert {
         statement["Sid"]
@@ -1134,24 +1164,35 @@ def test_no_grant_reaches_a_whole_bucket_or_every_secret(role: dict[str, Any]) -
     )
 
 
-@pytest.mark.parametrize("action", ["cloudformation:ListStacks", "tag:GetResources"])
+@pytest.mark.parametrize(
+    "sid",
+    [
+        "FindStacksNothingInTheRepositoryAccountsFor",
+        "FindEveryResourceThisPlatformTagged",
+        "LookUpLaunchEvents",
+        "ReadTheQueuesThePlacementVerdictNeeds",
+    ],
+)
 def test_each_unscopable_grant_is_confined_to_the_region_this_platform_deploys_in(
-    role: dict[str, Any], action: str
+    role: dict[str, Any], sid: str
 ) -> None:
     """Mutation: drop the condition, since the action cannot be scoped anyway.
 
-    It is the only narrowing either action admits and it is a small one, which is a reason to
-    write down what it buys rather than a reason to leave it off. The region lock permits
-    us-east-1 and us-east-2 and everything this platform has is in the first, so a read of
-    the second is one nothing here asks for.
+    It is the only narrowing any of these actions admits and it is a small one, which is a
+    reason to write down what it buys rather than a reason to leave it off. The region lock
+    permits us-east-1 and us-east-2 and everything this platform has is in the first, so a
+    read of the second is one nothing here asks for.
 
-    Both grants rather than one, because the tagging read is the wider of the two and
-    arrived second. A condition that covers the older statement and not the newer is the
-    ordinary way a rule like this stops applying.
+    EVERY UNSCOPABLE GRANT RATHER THAN THE TWO THIS STARTED WITH, and parametrised by Sid
+    rather than by action because the newest of them holds two actions in one statement and
+    an equality test against a single action string silently matches nothing. The rule this
+    encodes was already written here -- a condition that covers the older statement and not
+    the newer is the ordinary way a rule like this stops applying -- and it had already
+    stopped applying to `cloudtrail:LookupEvents`, which is the widest of the four and was
+    never on the list. Naming the same four Sids the exemption test names is what keeps the
+    two from drifting: a statement cannot be exempted from scoping without landing here.
     """
-    found = [
-        statement for statement in statements(role) if statement["Action"] == action
-    ]
+    found = [statement for statement in statements(role) if statement["Sid"] == sid]
 
     assert len(found) == 1
     assert found[0]["Condition"] == {

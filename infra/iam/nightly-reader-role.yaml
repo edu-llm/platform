@@ -310,10 +310,14 @@ Resources:
               # account is trivially absent from the account side, so the board reported the
               # comparison as unanswered rather than reporting it wrongly -- which is right,
               # and which also meant the job exited 2 and went red on every night it has run.
-              # There is no substitute. Enumerating the queues would need batch:ListJobs and
-              # batch:DescribeJobs, which this role omits for the reason given below, and the
-              # lineage records say what this platform submitted rather than what the account
-              # is running, which is precisely the difference the board exists to report.
+              # There is no substitute for the board's purpose. The queue grants below arrived
+              # later and answer a different question: batch:ListJobs enumerates the jobs on a
+              # named queue, so it sees the sixteen queues this platform created and nothing
+              # the account ran anywhere else, which is precisely the gap the board exists to
+              # report. The lineage records are narrower still -- they say what this platform
+              # submitted rather than what the account is running. Only the tagging API answers
+              # across the whole region, so this grant stays even now that the queues are
+              # readable.
               #
               # THE SECOND WILDCARD RESOURCE, AND FORCED FOR THE SAME REASON AS THE FIRST.
               # tag:GetResources names no resource in the request, so a policy naming one
@@ -348,6 +352,58 @@ Resources:
               - Sid: LookUpLaunchEvents
                 Effect: Allow
                 Action: cloudtrail:LookupEvents
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion:
+                      Fn::Sub: ${AWS::Region}
+              # WHAT EACH QUEUE DID WITH THE JOBS PUT ON IT, WHICH IS THE ONE THING
+              # config/capacity.yaml's `places` COLUMN IS AND NOTHING ELSE MEASURES. That file
+              # records, per profile, whether EC2 will sell this account the shape -- and its
+              # own header counts eight entries that were wrong, every one of them wrong in
+              # the same direction, because the answer was inferred from whatever instrument
+              # somebody happened to reach for. The header's conclusion is that the verdict is
+              # worth recomputing nightly and the median is not, and these two actions are the
+              # whole of what that recompute needs: list a queue's jobs, describe the ones it
+              # returns, and compare the verdict that falls out against the committed one.
+              #
+              # THE GRANT IS THE REASON THAT CHECK DOES NOT EXIST YET, WHICH IS WHY IT ARRIVES
+              # BEFORE THE CHECK RATHER THAN WITH IT. This role held neither action, this
+              # stack is applied by hand from a laptop, and a scheduled job merged against a
+              # role that has not been re-applied is red from the night it ships until
+              # somebody remembers -- which is the exact state the header of
+              # .github/workflows/nightly.yml records the visibility board spending its first
+              # weeks in. So the two halves are deliberately separated: the grant lands and is
+              # deployed, and the job that uses it is written against a role that already has
+              # it.
+              #
+              # THE THIRD AND FOURTH WILDCARD RESOURCES, AND FORCED FOR THE REASON THE FIRST
+              # TWO ARE. Neither action has a resource type. The service authorization
+              # reference lists batch:ListJobs and batch:DescribeJobs with an empty resource
+              # column and no service condition keys, so although ListJobs takes a jobQueue
+              # parameter and DescribeJobs takes job ids, IAM has nothing to match a resource
+              # ARN against and a policy naming one denies the call outright. Confining this
+              # to the sixteen queues in config/execution-targets.yaml is not a narrowing
+              # somebody declined to write, it is not expressible.
+              #
+              # aws:RequestedRegion is therefore the whole of the bound, as it is on the three
+              # grants above. What it discloses is the job records of this region: ids, names,
+              # statuses, timestamps and the queue each sat on, for every job in the account
+              # rather than only this platform's. That is wider than the rest of this policy
+              # and it is the same price already paid for tag:GetResources, which answers with
+              # every tagged ARN in the region.
+              #
+              # BOTH ARE READS IN THE STRICTEST SENSE AND THE ADJACENT WRITES STAY ABSENT.
+              # batch:SubmitJob, batch:CancelJob and batch:TerminateJob are the actions a
+              # queue-reading credential would reach for next, and a check able to cancel a
+              # job is a check able to decide the shape it is measuring does not place. The
+              # rule is the one the whole policy is written to and it does not bend for the
+              # check that finally needed the queues.
+              - Sid: ReadTheQueuesThePlacementVerdictNeeds
+                Effect: Allow
+                Action:
+                  - batch:ListJobs
+                  - batch:DescribeJobs
                 Resource: "*"
                 Condition:
                   StringEquals:
@@ -406,11 +462,17 @@ Resources:
               # board decides what the account ran by reading tags; a check able to write one
               # could add or remove the tag that puts a run on its own report.
               #
-              # Every batch:, states: and logs: action. The board asks what the account ran
-              # and answers it from the tagging API, which reports an ARN and its tags and
-              # nothing about a job's state or its logs. Reaching the queues or the state
-              # machine would be a way to touch a run without anybody dispatching anything,
-              # and it is a wider grant than the question needs.
+              # Every batch: action except the two read above, and every states: and logs:
+              # action. That sentence used to cover the whole batch: prefix, and the two
+              # exceptions are argued for beside the grant: recomputing config/capacity.yaml's
+              # `places` column means reading what each queue did with its jobs, and no other
+              # source in the account holds it. What stays absent is the rest of the prefix,
+              # and batch:SubmitJob, batch:CancelJob and batch:TerminateJob are the three that
+              # matter -- each is a way to touch a run without anybody dispatching anything,
+              # and a check that can cancel a job can decide the shape it is measuring does
+              # not place. The state machine and the logs are untouched: the placement verdict
+              # is a job's status and its queue, which DescribeJobs answers, and neither
+              # states: nor logs: is a narrower way to ask.
 
 Outputs:
   RoleName:
