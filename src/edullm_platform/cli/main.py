@@ -86,6 +86,7 @@ from edullm_platform.cli.configuration import (
     find_config_directory,
     load_reviewed_configuration,
 )
+from edullm_platform.cli.preferences import read_default_team
 from edullm_platform.cli.preflight import (
     Preflight,
     Refusal,
@@ -1068,6 +1069,8 @@ def _submit(
     actions = PlatformActions(
         runner, repository=arguments.platform_repository, dispatched=dispatched
     )
+    if not arguments.team:
+        _say_where_the_team_came_from(preflight, err=err)
     _say_whether_this_edullm_is_current(
         runner, repository=arguments.platform_repository, err=err
     )
@@ -1129,6 +1132,27 @@ def _waiting_said(environment: str, configuration: ReviewedConfiguration) -> str
     except ValueError:
         return f"waiting at {environment or 'an approval gate'}."
     return f"waiting at {gate.value}. {approvers_said(configuration.inventory, gate)}"
+
+
+def _say_where_the_team_came_from(preflight: Preflight, *, err: TextIO) -> None:
+    """The team and its origin, on a submit that did not type one.
+
+    **THE ONLY ORIGIN THAT LEAVES NO TRACE IS THE ONE THIS EXISTS FOR.** A ``--team`` is in
+    the command itself, so a transcript six weeks old still says who chose it. A team that
+    came out of a personal default is in a file on one laptop, and a transcript of the
+    submission that spent the money would otherwise show a group nobody in it typed and no
+    way to tell where it came from. The roster's own answer is printed beside it rather than
+    suppressed, because the reader's question is "where did this team come from" and "from
+    the roster" is an answer to it.
+
+    On stderr with the staleness line, because it is not the answer anybody asked for, and
+    before the dispatch rather than after it, because a person who reads it and disagrees
+    still has the moment before a runner starts. It cannot refuse and it cannot wait.
+    """
+    if not preflight.team_source or not preflight.request.team:
+        return
+    said = f"charging this to {preflight.request.team}, {preflight.team_source}."
+    print("\n".join(_wrapped(said, indent="")), file=err)
 
 
 def _say_whether_this_edullm_is_current(
@@ -1739,7 +1763,7 @@ def _preflight(
     team, team_source, team_refusal = (
         (arguments.team, "named on the command line", None)
         if arguments.team
-        else resolve_team(configuration, submitter=submitter)
+        else resolve_team(configuration, submitter=submitter, default=read_default_team())
     )
     if team_refusal is not None:
         refusals.append(team_refusal)

@@ -64,6 +64,7 @@ from pydantic import ValidationError
 from edullm_platform.admission import denied_outright_conditions
 from edullm_platform.checkpoint_commands import require_a_save_folder_a_retry_can_find
 from edullm_platform.cli.configuration import ReviewedConfiguration
+from edullm_platform.cli.preferences import DefaultTeam
 from edullm_platform.cli.workspace import GitFacts
 from edullm_platform.contracts.admission import ApprovalEnvironment
 from edullm_platform.contracts.authorization import (
@@ -451,7 +452,10 @@ def working_tree_refusals(facts: GitFacts) -> list[Refusal]:
 
 
 def resolve_team(
-    configuration: ReviewedConfiguration, *, submitter: str | None
+    configuration: ReviewedConfiguration,
+    *,
+    submitter: str | None,
+    default: DefaultTeam | None = None,
 ) -> tuple[str | None, str, Refusal | None]:
     """Which team this run is charged to, when the submitter did not name one.
 
@@ -465,11 +469,26 @@ def resolve_team(
     would notice going wrong: it bills a lead's own group for work they did as a member of
     somebody else's.
 
+    **A PERSONAL DEFAULT IS READ FIRST AND IS NOT A FOURTH VARIANT OF THAT.** It is not the
+    platform picking, because the person picked, once, in a file with their name on the
+    directory. It beats the roster rather than backing it up, for the same reason ``--team``
+    does: the roster's single answer is an inference and a default is a statement, and a
+    default that lost to an inference would be a preference that worked only where nothing
+    else had an opinion. It loses to ``--team``, so the ordering is what somebody typed, then
+    what they wrote down, then what the roster can derive.
+
+    **IT PREFILLS AND IT BYPASSES NOTHING.** The value goes on to ``_check_team`` exactly as a
+    typed one does, so a default naming a group the roster does not put the submitter on is
+    refused here by ``submitter_not_in_claimed_team`` and, past the gate, recorded with
+    ``team_verified`` false. Setting a preference buys fewer keystrokes and no outcome.
+
     ``scratch`` is excluded from the count rather than from the answer. Every one of the
     thirty-five is in it and the guides send every new person there, so counting it would
     make everybody ambiguous; it is still what somebody on no declared group gets, because
     that is what it is for.
     """
+    if default is not None and default.team:
+        return default.team, f"your default, in {default.path}", None
     if submitter is None:
         return None, "", None
     declared = tuple(
@@ -485,6 +504,19 @@ def resolve_team(
             f"the roster puts you on no declared group, so this is {SCRATCH_TEAM}",
             None,
         )
+    # THE REFUSAL NAMES THE DEFAULT BECAUSE THIS IS THE MOMENT SOMEBODY WANTS ONE. Anybody
+    # reading this line is on two declared groups and is going to read it again on the next
+    # command and on every command after that. One sentence, and it is the address of the
+    # file and nothing more: a refusal that explained the whole arrangement would be
+    # documentation printed at somebody who is trying to submit a run.
+    write_it_down = (
+        ""
+        if default is None
+        else (
+            f" Writing one of them into {default.path} answers this for every later run, "
+            "and --team still overrides it."
+        )
+    )
     return (
         None,
         "",
@@ -495,7 +527,7 @@ def resolve_team(
                 "group this run is charged to is not something the roster can answer. Team "
                 "is what cost attribution groups on and what decides which lead is asked, "
                 "so it is asked rather than guessed: pass --team with one of those, or "
-                f"--team {SCRATCH_TEAM} for anything you will not keep."
+                f"--team {SCRATCH_TEAM} for anything you will not keep.{write_it_down}"
             ),
         ),
     )
