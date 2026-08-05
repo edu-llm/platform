@@ -89,6 +89,10 @@ EXPECTED_SIDS = frozenset(
         # Arrived with the expiry janitor in #248, and this list is how it was noticed rather
         # than absorbed. A count or a subset assertion would have said nothing.
         "ReadExpiryJanitorDeployedCode",
+        # Arrived with the notifier in #253. It reached main red, because #253 added the
+        # statement and #251 rewrote this list from a base that predated it, and each pull
+        # request was green against its own base. Nothing in a merge compares the two.
+        "ReadNotifierDeployedCode",
         "ReadTheDeployedTemplateOfEachStack",
         "FindStacksNothingInTheRepositoryAccountsFor",
         "FindEveryResourceThisPlatformTagged",
