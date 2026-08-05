@@ -650,7 +650,23 @@ def test_the_phase3_policy_reaches_no_service_the_phase_does_not_deploy() -> Non
     granted = actions(PHASE3_POLICY_NAME)
     services = {action.split(":", 1)[0] for action in granted}
 
-    assert services == {"batch", "cloudwatch", "ec2", "events", "iam", "lambda", "logs", "sqs"}
+    # ``scheduler`` is EventBridge Scheduler, which is a different service from EventBridge
+    # rules with its own ARN space, and it is here because infra/expiry-janitor.yaml uses a
+    # schedule rather than a rule: a rule targeting a Lambda would need lambda:AddPermission,
+    # which the Phase 2 policy withholds. infra/batch-events.yaml recorded the rule for that
+    # fork -- a capability added rather than a restriction removed -- and this is the second
+    # time it has been applied.
+    assert services == {
+        "batch",
+        "cloudwatch",
+        "ec2",
+        "events",
+        "iam",
+        "lambda",
+        "logs",
+        "scheduler",
+        "sqs",
+    }
     assert not any("*" in action for action in granted)
     assert not ACCOUNT_LITERAL.search(TEMPLATE_PATH.read_text(encoding="utf-8"))
 

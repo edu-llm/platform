@@ -74,6 +74,7 @@ on:
       - infra/batch-compute-gpu.yaml
       - infra/batch-compute-gpu-shapes.yaml
       - infra/batch-events.yaml
+      - infra/expiry-janitor.yaml
       - infra/admission-state-machine.yaml
 
 permissions:
@@ -264,6 +265,12 @@ jobs:
             --template-url https://s3.${AWS_REGION}.amazonaws.com/sbsandbox-intern-edullm-artifacts/cloudformation-templates/batch-events.yaml
           aws s3api put-object \
             --bucket sbsandbox-intern-edullm-artifacts \
+            --key cloudformation-templates/expiry-janitor.yaml \
+            --body infra/expiry-janitor.yaml
+          aws cloudformation validate-template \
+            --template-url https://s3.${AWS_REGION}.amazonaws.com/sbsandbox-intern-edullm-artifacts/cloudformation-templates/expiry-janitor.yaml
+          aws s3api put-object \
+            --bucket sbsandbox-intern-edullm-artifacts \
             --key cloudformation-templates/admission-state-machine.yaml \
             --body infra/admission-state-machine.yaml
           aws cloudformation validate-template \
@@ -378,6 +385,40 @@ jobs:
           aws cloudformation deploy \
             --stack-name sbsandbox-intern-edullm-phase3-events \
             --template-file infra/batch-events.yaml \
+            --s3-bucket sbsandbox-intern-edullm-artifacts \
+            --s3-prefix cloudformation-templates/checksummed \
+            --no-fail-on-empty-changeset
+
+      # THE EXPIRY JANITOR, WHICH IS NOTHING TO DO WITH BATCH AND IS HERE ANYWAY. It sweeps EC2
+      # instances a person launched through edullm-researcher, on a schedule rather than on an
+      # event. It is a step on this file because the deployer role's trust pins
+      # job_workflow_ref to three files with StringEquals, and a new workflow file would need
+      # that trust amended by the AWS access the amendment exists to grant -- infra/README.md
+      # calls that a door that only opens from inside.
+      #
+      # No --capabilities: nothing in this template is IAM. The role it names is applied from a
+      # laptop as sbsandbox-intern-edullm-janitor-iam, and this stack fails on CreateFunction
+      # until the deployer carries iam:PassRole for it -- also a laptop deploy. See
+      # infra/README.md, the researcher lane table.
+      #
+      # IT SKIPS WHILE THE CODE OBJECT HAS NEVER BEEN UPLOADED, and that is the whole of the
+      # guard below. The template pins a placeholder S3ObjectVersion because the zip has been
+      # built and never uploaded, so deploying it would fail -- and failing here would break
+      # every unrelated dispatch of this workflow for a stack nobody can create yet. The skip
+      # is loud rather than silent, tools/verify_deployed_stacks.py reports the stack as
+      # declared and not deployed for as long as it lasts, and tests/test_janitor_package.py
+      # refuses to let the guard outlive the placeholder it checks for.
+      - name: Deploy the expiry janitor stack
+        if: inputs.describe_run == ''
+        run: |
+          set -euo pipefail
+          if grep -q 'S3ObjectVersion: PLACEHOLDER-UNTIL-THE-FIRST-UPLOAD' infra/expiry-janitor.yaml; then
+            echo "::notice::the expiry janitor's zip has never been uploaded, so this stack is skipped. Release it from a laptop with tools/release_lambda.py --function janitor, and land the version id and digest it writes."
+            exit 0
+          fi
+          aws cloudformation deploy \
+            --stack-name sbsandbox-intern-edullm-janitor \
+            --template-file infra/expiry-janitor.yaml \
             --s3-bucket sbsandbox-intern-edullm-artifacts \
             --s3-prefix cloudformation-templates/checksummed \
             --no-fail-on-empty-changeset

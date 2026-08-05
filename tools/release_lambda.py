@@ -107,6 +107,14 @@ FUNCTIONS = {
         release_record=PROJECT_ROOT / "infra" / "lifecycle-recorder-release.yaml",
         tripwire="tests/test_phase3_lifecycle_package.py",
     ),
+    "janitor": Function(
+        name="expiry janitor",
+        builder="tools/build_janitor_lambda.py",
+        s3_key="expiry-janitor/expiry-janitor.zip",
+        template=PROJECT_ROOT / "infra" / "expiry-janitor.yaml",
+        release_record=PROJECT_ROOT / "infra" / "expiry-janitor-release.yaml",
+        tripwire="tests/test_janitor_package.py",
+    ),
 }
 
 

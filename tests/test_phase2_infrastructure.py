@@ -787,10 +787,15 @@ def test_deployer_passrole_names_both_service_roles_and_never_a_prefix() -> None
 
     assert len(pass_role) == 1
     assert pass_role[0]["Effect"] == "Allow"
-    assert pass_role[0]["Resource"] == [STATES_ROLE_ARN, LAMBDA_ROLE_ARN]
+    # The two the admission stack needs, and then the expiry janitor's two. The janitor's
+    # stack is deployed by the Phase 3 workflow and its grants land in this Phase 2 statement
+    # because iam:PassRole is granted once for the whole role rather than per phase.
+    assert pass_role[0]["Resource"][:2] == [STATES_ROLE_ARN, LAMBDA_ROLE_ARN]
     assert [arn.rsplit("/", 1)[1] for arn in resource_arns(pass_role[0]["Resource"])] == [
         STATES_ROLE_NAME,
         LAMBDA_ROLE_NAME,
+        "sbsandbox-intern-edullm-janitor-lambda",
+        "sbsandbox-intern-edullm-janitor-schedule",
     ]
     assert not [arn for arn in resource_arns(pass_role[0]["Resource"]) if "*" in arn]
 

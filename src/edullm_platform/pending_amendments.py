@@ -202,7 +202,51 @@ def pending_amendments() -> tuple[PendingAmendment, ...]:
     # side, so say which it is in the text. The lasting fix for that particular gap is not
     # here: tests/test_phase2_infrastructure.py now measures the rendered policy against
     # IAM's cap, so a document the account will refuse fails before anybody deploys it.
-    amendments: tuple[PendingAmendment, ...] = ()
+    amendments: tuple[PendingAmendment, ...] = (
+        PendingAmendment(
+            role_name=DEPLOYER_ROLE_NAME,
+            reason=(
+                "The expiry janitor's stack is deployed by deploy-phase3-batch.yml and needs "
+                "two things this role does not hold yet: iam:PassRole on the two janitor "
+                "roles, because lambda:CreateFunction takes a role ARN, and the EventBridge "
+                "Scheduler verbs, because the schedule is a schedule rather than a rule. It "
+                "is a schedule because a rule targeting a Lambda needs an "
+                "AWS::Lambda::Permission and therefore lambda:AddPermission, which this role "
+                "withholds deliberately -- infra/batch-events.yaml met the same fork and "
+                "recorded the rule: a capability added rather than a restriction removed."
+            ),
+            cleared_by=(
+                "Applying sbsandbox-intern-edullm-infra-deployer-iam from a laptop with an SSO "
+                "session, per infra/README.md under 'The expiry janitor's stacks', and "
+                "re-taking the Phase 1 role capture. Until it is applied the CI deploy of "
+                "sbsandbox-intern-edullm-janitor is refused on CreateFunction, and the "
+                "refusal reads like a broken template rather than a missing grant."
+            ),
+            findings=(
+                RoleDriftFinding(
+                    direction=DriftDirection.NARROWER,
+                    element="inline policy 'deploy-phase2-admission-stacks' statement 8 resources",
+                    detail=(
+                        "the template declares resources the deployed role does not: "
+                        "arn:<partition>:iam::<account>:role/sbsandbox-intern-edullm-janitor-lambda, "
+                        "arn:<partition>:iam::<account>:role/sbsandbox-intern-edullm-janitor-schedule"
+                    ),
+                ),
+                RoleDriftFinding(
+                    direction=DriftDirection.NARROWER,
+                    element="inline policy 'deploy-phase3-batch-stacks'",
+                    detail=(
+                        "the template declares a statement the deployed role does not: Allow "
+                        "Action [scheduler:CreateSchedule, scheduler:DeleteSchedule, "
+                        "scheduler:GetSchedule, scheduler:ListTagsForResource, "
+                        "scheduler:TagResource, scheduler:UntagResource, "
+                        "scheduler:UpdateSchedule] Resource "
+                        "[arn:<partition>:scheduler:<region>:<account>:schedule/default/sbsandbox-intern-edullm-*]"
+                    ),
+                ),
+            ),
+        ),
+    )
     declared = declared_role_templates()
     for amendment in amendments:
         if amendment.role_name not in declared:
@@ -288,6 +332,10 @@ RELEASABLE_FUNCTIONS: Final[dict[str, ReleasableFunction]] = {
     "recorder": ReleasableFunction(
         display="lifecycle recorder",
         release_record="infra/lifecycle-recorder-release.yaml",
+    ),
+    "janitor": ReleasableFunction(
+        display="expiry janitor",
+        release_record="infra/expiry-janitor-release.yaml",
     ),
 }
 

@@ -36,6 +36,7 @@ TOOL = PROJECT_ROOT / "tools" / "verify_deployed_lambdas.py"
 
 VALIDATOR = "sbsandbox-intern-edullm-admission-validator"
 RECORDER = "sbsandbox-intern-edullm-lifecycle-recorder"
+JANITOR = "sbsandbox-intern-edullm-expiry-janitor"
 
 #: A digest of the right shape that is not either recorded one. Written out rather than
 #: derived, so a test that stopped comparing anything cannot pass by comparing a value to
@@ -375,6 +376,10 @@ def test_a_disagreement_outranks_a_call_that_could_not_be_made(
         {
             VALIDATOR: (0, as_aws_reports_it(SOME_OTHER_DIGEST) + "\n", ""),
             RECORDER: (255, "", DENIED),
+            # The third function's answer is the boring one deliberately: this test is about
+            # which of two findings decides the exit code, and a third finding would make the
+            # precedence it asserts a statement about three.
+            JANITOR: (0, as_aws_reports_it(recorded[JANITOR]) + "\n", ""),
         },
     )
 
@@ -528,7 +533,7 @@ def test_the_deployed_name_is_read_from_the_template_that_declares_it(module: An
         for function in module.FUNCTIONS.values()
     }
 
-    assert names == {VALIDATOR, RECORDER}
+    assert names == {VALIDATOR, RECORDER, JANITOR}
 
 
 @pytest.mark.parametrize(
@@ -595,7 +600,7 @@ def test_every_function_the_release_tool_can_release_is_checked(module: Any) -> 
     import release_lambda
 
     assert module.FUNCTIONS is release_lambda.FUNCTIONS
-    assert set(module.FUNCTIONS) == {"validator", "recorder"}
+    assert set(module.FUNCTIONS) == {"validator", "recorder", "janitor"}
 
 
 def test_the_object_version_comparison_is_owned_by_the_release_tripwires() -> None:
