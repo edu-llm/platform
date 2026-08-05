@@ -66,7 +66,7 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Final
 
-from .errors import ProcessPerDeviceError, SubmissionRefusedError
+from .errors import ProcessPerDeviceError, TensorParallelFlagIgnoredError
 from .execution import CONTAINER_SHAPES
 
 __all__ = [
@@ -538,7 +538,7 @@ def require_a_tensor_parallel_flag_vllm_reads(command: Sequence[str]) -> None:
         if not word.startswith(f"{TENSOR_PARALLEL_SHORT_FORM}="):
             continue
         value = word[len(TENSOR_PARALLEL_SHORT_FORM) + 1 :]
-        raise SubmissionRefusedError(
+        raise TensorParallelFlagIgnoredError(
             f"{word!r} is accepted by the harness and then silently ignored: ProviderConfig "
             "has no tensor_parallel_size field and ProviderConfig.from_dict drops keys it does "
             "not know, so this run would boot one device and be billed for every card on the "
