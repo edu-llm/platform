@@ -31,6 +31,15 @@ a finding about the reader, and a job whose exit code carries both meanings pick
 The outcome is a value on the record rather than a line in :attr:`Substrate.gaps` alone, because
 a gap list is advisory and a view that renders runs and launches without consulting it would
 render "nothing happened" and "nobody looked" identically.
+
+**THE READING IS WRITTEN DOWN BECAUSE TWO OF THE SOURCES FORGET.** Batch drops a job about a
+week after it ends and CloudWatch keeps a run's stdout for ninety days, so a reading taken today
+and thrown away is evidence that cannot be recovered tomorrow. :func:`as_document` and
+:func:`from_document` are the serialisation the capture uses, and they are here rather than in
+the collector because reading the account and writing a file are different acts and only the
+second one has to round-trip. The one property the format exists to preserve is the one the rest
+of this module is arranged around: ``null`` is a source nobody read and ``[]`` is a source that
+answered and held nothing, and JSON is happy to confuse them if nobody insists.
 """
 
 from __future__ import annotations
@@ -39,7 +48,7 @@ from collections.abc import Iterable, Mapping, Sequence, Sized
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Final
+from typing import Any, Final
 
 from edullm_platform.contracts.admission import IntentRecord
 from edullm_platform.contracts.lifecycle import SchedulerAttempt
@@ -55,14 +64,24 @@ __all__ = [
     "SOURCE_OUTCOMES",
     "SOURCE_READ",
     "STATE_SOURCES",
+    "SUBSTRATE_FORMAT_VERSION",
     "UNKNOWN_STATE",
     "AttemptFacts",
     "LaunchEvent",
     "RunFacts",
     "SourceGap",
     "Substrate",
+    "SubstrateFormatError",
+    "as_document",
+    "from_document",
     "normalise",
 ]
+
+#: What the capture writes into every document it produces. A reader that met a document from a
+#: newer writer would otherwise interpret whatever fields it happened to recognise and report
+#: the rest as absent, which is the collapse this whole module refuses: a field nobody wrote and
+#: a field nobody could read are not the same thing.
+SUBSTRATE_FORMAT_VERSION: Final = 1
 
 #: What ``state_source`` may say. ``live`` is a Batch reading, ``attempt`` a terminal lineage
 #: record, ``intent`` a submission with nothing after it, and ``unread`` the case where the
@@ -395,4 +414,160 @@ def normalise(
             "live": _outcome(live_states),
         },
         gaps=tuple(gaps),
+    )
+
+
+class SubstrateFormatError(ValueError):
+    """A document this tree cannot read, which is never a reading that found nothing."""
+
+
+def _money(value: Decimal | None) -> str | None:
+    """A figure as the text of it, because JSON's number is a float and money is not.
+
+    ``Decimal("87.83")`` through a float is ``87.83000000000000185...``, and a cost that
+    changes in its eleventh place between the capture and the page it is read on is a bug
+    somebody spends an afternoon on. The text round-trips exactly.
+    """
+    return None if value is None else str(value)
+
+
+def as_document(substrate: Substrate) -> dict[str, Any]:
+    """One reading, as the JSON-shaped mapping the capture commits.
+
+    ``launches`` is ``null`` when CloudTrail was not read and a list when it was, including
+    an empty one -- which is the distinction the whole module is arranged around and the one
+    a serialisation is most likely to lose, because a writer that skipped an empty list and a
+    reader that defaulted a missing key to ``[]`` would each look reasonable alone.
+    """
+    return {
+        "format_version": SUBSTRATE_FORMAT_VERSION,
+        "collected_at": substrate.collected_at.isoformat(),
+        "source_outcomes": dict(substrate.source_outcomes),
+        "gaps": [
+            {"source": gap.source, "reason": gap.reason, "unanswered": gap.unanswered}
+            for gap in substrate.gaps
+        ],
+        "launches": None
+        if substrate.launches is None
+        else [
+            {
+                "event_id": launch.event_id,
+                "event_name": launch.event_name,
+                "occurred_at": launch.occurred_at.isoformat(),
+                "role_name": launch.role_name,
+                "run_id": launch.run_id,
+            }
+            for launch in substrate.launches
+        ],
+        "runs": {
+            run_id: {
+                "run_id": facts.run_id,
+                "submitter": facts.submitter,
+                "team": facts.team,
+                "experiment": facts.experiment,
+                "repository": facts.repository,
+                "commit_sha": facts.commit_sha,
+                "image_digest": facts.image_digest,
+                "workload_profile": facts.workload_profile,
+                "compute_profile": facts.compute_profile,
+                "wandb_project": facts.wandb_project,
+                "fanout_size": facts.fanout_size,
+                "submitted_at": facts.submitted_at.isoformat(),
+                "approving_environment": facts.approving_environment,
+                "workflow_run_id": facts.workflow_run_id,
+                "workflow_run_url": facts.workflow_run_url,
+                "attempts": [
+                    {
+                        "attempt_id": attempt.attempt_id,
+                        "ordinal": attempt.ordinal,
+                        "started_at": attempt.started_at.isoformat(),
+                        "ended_at": attempt.ended_at.isoformat(),
+                        "terminal_state": attempt.terminal_state,
+                    }
+                    for attempt in facts.attempts
+                ],
+                "state": facts.state,
+                "state_source": facts.state_source,
+                "seconds": str(facts.seconds),
+                "cost_usd": _money(facts.cost_usd),
+                "unpriced_reason": facts.unpriced_reason,
+            }
+            for run_id, facts in substrate.runs.items()
+        },
+    }
+
+
+def from_document(document: Mapping[str, Any]) -> Substrate:
+    """The inverse of :func:`as_document`, refusing a format this tree does not know.
+
+    The version check is not ceremony. A reader that took whatever fields it recognised out
+    of a newer document would report the fields it did not recognise as absent, and absent is
+    the one meaning nothing here is allowed to invent.
+    """
+    version = document.get("format_version")
+    if version != SUBSTRATE_FORMAT_VERSION:
+        raise SubstrateFormatError(
+            f"this tree reads substrate format {SUBSTRATE_FORMAT_VERSION} and the document "
+            f"declares {version!r}"
+        )
+    launches = document.get("launches")
+    runs = document.get("runs") or {}
+    return Substrate(
+        collected_at=datetime.fromisoformat(str(document["collected_at"])),
+        runs={
+            str(run_id): RunFacts(
+                run_id=str(facts["run_id"]),
+                submitter=str(facts["submitter"]),
+                team=str(facts["team"]),
+                experiment=facts["experiment"],
+                repository=str(facts["repository"]),
+                commit_sha=str(facts["commit_sha"]),
+                image_digest=str(facts["image_digest"]),
+                workload_profile=str(facts["workload_profile"]),
+                compute_profile=str(facts["compute_profile"]),
+                wandb_project=str(facts["wandb_project"]),
+                fanout_size=facts["fanout_size"],
+                submitted_at=datetime.fromisoformat(str(facts["submitted_at"])),
+                approving_environment=str(facts["approving_environment"]),
+                workflow_run_id=facts["workflow_run_id"],
+                workflow_run_url=facts["workflow_run_url"],
+                attempts=tuple(
+                    AttemptFacts(
+                        attempt_id=str(attempt["attempt_id"]),
+                        ordinal=int(attempt["ordinal"]),
+                        started_at=datetime.fromisoformat(str(attempt["started_at"])),
+                        ended_at=datetime.fromisoformat(str(attempt["ended_at"])),
+                        terminal_state=str(attempt["terminal_state"]),
+                    )
+                    for attempt in facts["attempts"]
+                ),
+                state=str(facts["state"]),
+                state_source=str(facts["state_source"]),
+                seconds=Decimal(str(facts["seconds"])),
+                cost_usd=None if facts["cost_usd"] is None else Decimal(str(facts["cost_usd"])),
+                unpriced_reason=facts["unpriced_reason"],
+            )
+            for run_id, facts in runs.items()
+        },
+        launches=None
+        if launches is None
+        else tuple(
+            LaunchEvent(
+                event_id=str(launch["event_id"]),
+                event_name=str(launch["event_name"]),
+                occurred_at=datetime.fromisoformat(str(launch["occurred_at"])),
+                role_name=str(launch["role_name"]),
+                run_id=launch["run_id"],
+            )
+            for launch in launches
+        ),
+        source_outcomes=dict(document["source_outcomes"]),
+        gaps=tuple(
+            SourceGap(
+                source=str(gap["source"]),
+                reason=str(gap["reason"]),
+                unanswered=str(gap["unanswered"]),
+            )
+            for gap in document.get("gaps") or ()
+        ),
     )

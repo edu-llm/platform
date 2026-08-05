@@ -2,6 +2,10 @@
 .superpowers/
 docs-frank/
 
+# Written by tools/read_substrate.py --write on a laptop. The scheduled run commits its copy
+# to the machine/substrate branch instead; see .github/workflows/audit.yml.
+/substrate/
+
 # Python artifacts
 __pycache__/
 *.py[cod]

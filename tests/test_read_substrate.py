@@ -16,6 +16,7 @@ is replaced and the replacement records what it was asked for.
 
 from __future__ import annotations
 
+import json
 import shutil
 import sys
 from datetime import UTC, datetime
@@ -447,6 +448,113 @@ def test_nothing_printed_carries_an_account_id(
     printed = capsys.readouterr()
     assert fabricated not in printed.out + printed.err
     assert AWS_ACCOUNT_ID_PLACEHOLDER in printed.out
+
+
+def test_a_reading_is_written_down_whole_rather_than_only_printed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: print the report and write nothing, which is what this tool used to do.
+
+    Batch forgets a job about a week after it ends and CloudWatch keeps a run's stdout for
+    ninety days. A reading nobody wrote down is a question that becomes unanswerable rather
+    than one that is merely unanswered, and the printed summary is a count of runs rather
+    than the runs.
+    """
+    destination = tmp_path / "nested" / "2026-07-28.json"
+    assert (
+        read_substrate.main(
+            ["--lineage-root", str(RECORDS), "--offline", "--write", str(destination)]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    document = json.loads(destination.read_text(encoding="utf-8"))
+    assert THE_RUN in document["runs"]
+    assert document["runs"][THE_RUN]["workflow_run_id"] is not None
+
+
+def test_the_sources_that_did_not_answer_are_in_the_file_and_not_only_in_the_log(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: write the runs and drop the gaps, since the runs are the interesting part.
+
+    Next week's reader of this file has the same problem today's reader of the log has: a
+    source that held nothing and a source nobody could reach leave the same absence behind.
+    The log is gone by then and the file is what is left, so the file carries both.
+    """
+    destination = tmp_path / "reading.json"
+    assert (
+        read_substrate.main(
+            ["--lineage-root", str(RECORDS), "--offline", "--write", str(destination)]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    document = json.loads(destination.read_text(encoding="utf-8"))
+    assert document["launches"] is None, "an unread launch feed must not be written as empty"
+    assert document["source_outcomes"]["launch"] == SOURCE_NOT_READ
+    assert BATCH_GAP.source in {gap["source"] for gap in document["gaps"]}
+
+
+def test_nothing_is_written_when_the_reading_could_not_be_taken(
+    tmp_path: Path, profiles: tuple[object, ...], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: write the file before the collection, or write an empty one on failure.
+
+    A dated file holding no runs is a claim that the platform ran nothing that day, committed
+    to a branch whose whole purpose is being believed later. The absence of a file is the
+    honest record of a morning nobody could read the store.
+    """
+    destination = tmp_path / "reading.json"
+    assert (
+        read_substrate.main(
+            [
+                "--lineage-root",
+                str(tmp_path / "nothing-here"),
+                "--offline",
+                "--write",
+                str(destination),
+            ]
+        )
+        == 2
+    )
+    capsys.readouterr()
+
+    assert not destination.exists()
+
+
+def test_the_written_reading_carries_no_account_id(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: mask the printed report and write the document unmasked.
+
+    The gaps carry the CLI's own denial text, which names the assumed-role ARN, and this file
+    is committed to a branch of a public repository. Masking the log and not the file would
+    put the id somewhere permanent while the place it was removed from expires.
+
+    The id below is fabricated and spelled rather than written, for the reason the sibling
+    test gives: naming a real one here would be the disclosure this asserts against.
+    """
+    fabricated = "8" * 12
+    denial = (
+        "An error occurred (AccessDenied) when calling the ListObjectsV2 operation: User: "
+        f"arn:aws:sts::{fabricated}:assumed-role/sbsandbox-intern-edullm-audit-reader/x "
+        "is not authorized to perform: s3:ListBucket"
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(read_substrate, "aws", _recorder(calls, fails="attempt", stderr=denial))
+    monkeypatch.setattr(read_substrate, "read_experiments", _no_experiments)
+    monkeypatch.setattr(read_substrate, "_launch_reader", lambda: None)
+
+    destination = tmp_path / "reading.json"
+    assert read_substrate.main(["--region", "us-east-1", "--write", str(destination)]) == 0
+    capsys.readouterr()
+
+    written = destination.read_text(encoding="utf-8")
+    assert fabricated not in written
+    assert AWS_ACCOUNT_ID_PLACEHOLDER in written
 
 
 def test_the_report_names_every_source_and_what_each_one_did(

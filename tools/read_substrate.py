@@ -38,6 +38,13 @@ reported as the launch feed not having been read, in the reader's own words, bec
 substrate that reported an empty mismatch list would be describing an account nobody looked at.
 Nothing here needs editing when that module lands: it is found by name.
 
+**READING IS NOT PUBLISHING, AND ``--write`` IS THE HALF THAT STOPS EVIDENCE DECAYING.** Two of
+the four sources forget. Batch drops a job about a week after it ends and CloudWatch keeps a
+run's stdout for ninety days, so a reading taken and thrown away is a question that becomes
+unanswerable rather than merely unanswered. Publishing can wait for somebody to decide what a
+page should say; the reading cannot wait for that decision, so this writes the whole reading --
+gaps included -- and leaves what to make of it to whatever reads the file.
+
 Exit codes follow the repository's convention: 0 reported, 2 the inputs could not be read. There
 is no 1, because this tool judges nothing and so has nothing to refuse.
 """
@@ -46,6 +53,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import json
 import sys
 import tempfile
 from collections.abc import Iterable, Mapping, Sequence
@@ -75,6 +83,7 @@ from edullm_platform.substrate import (
     LaunchEvent,
     SourceGap,
     Substrate,
+    as_document,
     normalise,
 )
 
@@ -91,6 +100,7 @@ __all__ = [
     "read_launches",
     "read_lineage",
     "stage_prefixes",
+    "write_reading",
 ]
 
 EXIT_OK = 0
@@ -415,7 +425,28 @@ def build_parser() -> argparse.ArgumentParser:
     # SSO session that is not there.
     parser.add_argument("--profile", default=None)
     parser.add_argument("--region", default="us-east-1")
+    parser.add_argument(
+        "--write",
+        type=Path,
+        default=None,
+        help="write the reading here as JSON, so that a source which forgets does not",
+    )
     return parser
+
+
+def write_reading(substrate: Substrate, destination: Path) -> None:
+    """Put one reading on disk, whole, including the sources that did not answer.
+
+    A PARTIAL READING IS STILL WORTH KEEPING AND A REFUSED ONE IS STILL WORTH DATING. Two of
+    the four sources forget: Batch drops a job about a week after it ends and CloudWatch keeps
+    a run's stdout for ninety days, so a morning nobody wrote down is a morning nobody can go
+    back to. The gaps go into the file for the same reason they go onto a page -- next week's
+    reader has to be able to tell a source that held nothing from one nobody could reach, and
+    a file holding only what answered cannot.
+    """
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    document = json.dumps(as_document(substrate), indent=2, sort_keys=True) + "\n"
+    destination.write_text(_masked(document), encoding="utf-8")
 
 
 def report(substrate: Substrate) -> list[str]:
@@ -462,6 +493,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         except (ReportInputError, CaptureFailedError, OSError, ValueError) as error:
             print(f"substrate_not_read: {_masked(str(error))}", file=sys.stderr)
             return EXIT_UNUSABLE
+        # Written before the report is printed, because the file is the part that survives
+        # the runner and the printed lines are the part somebody reads today.
+        if options.write is not None:
+            write_reading(substrate, options.write)
         print("\n".join(report(substrate)))
     return EXIT_OK
 

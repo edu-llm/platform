@@ -37,9 +37,14 @@ from edullm_platform.substrate import (
     SOURCE_OUTCOMES,
     SOURCE_READ,
     SOURCES,
+    SUBSTRATE_FORMAT_VERSION,
     LaunchEvent,
+    RunFacts,
     SourceGap,
     Substrate,
+    SubstrateFormatError,
+    as_document,
+    from_document,
     normalise,
 )
 
@@ -462,3 +467,94 @@ def test_the_read_flags_cannot_disagree_with_the_outcome_they_summarise() -> Non
         field.name in {"attempts_read", "experiments_read"}
         for field in dataclasses.fields(Substrate)
     )
+
+
+# --------------------------------------------------------------------------------------
+# Writing the reading down, because two of the sources forget
+#
+# Batch drops a job about a week after it ends and CloudWatch keeps a run's stdout for
+# ninety days, so a reading taken and thrown away is evidence nobody can recover. What these
+# assert is the shape of the document rather than that the writer agrees with the reader: a
+# round trip alone would pass for a pair that lost the same field in both directions.
+# --------------------------------------------------------------------------------------
+
+
+def test_a_figure_is_written_as_text_rather_than_as_a_number() -> None:
+    """Mutation: leave the Decimal to json's float, or to int(seconds).
+
+    `Decimal("87.83")` through a float comes back as 87.83000000000000185, and a cost that
+    moves in its eleventh place between the reading and the page it is read on is an
+    afternoon somebody spends looking for arithmetic that is fine.
+    """
+    document = as_document(_substrate(attempts=(_attempt(RUN_A, day=date(2026, 8, 4), hour=9),)))
+    written = document["runs"][RUN_A]
+    assert isinstance(written["seconds"], str)
+    assert Decimal(written["seconds"]) == Decimal(3600)
+    assert isinstance(written["cost_usd"], str)
+    assert Decimal(written["cost_usd"]) > 0
+    # And exactly, not approximately: the text is the digits the reading held, so what comes
+    # back out of json is the same Decimal rather than the nearest float to it.
+    recovered = from_document(json.loads(json.dumps(document))).runs[RUN_A]
+    assert (
+        recovered.cost_usd
+        == _substrate(attempts=(_attempt(RUN_A, day=date(2026, 8, 4), hour=9),))
+        .runs[RUN_A]
+        .cost_usd
+    )
+
+
+def test_a_document_this_tree_cannot_read_is_refused_rather_than_partly_read() -> None:
+    """Mutation: read whatever fields are recognised and default the rest.
+
+    A field a newer writer added and this reader skipped comes back absent, and absent is the
+    one meaning this module never lets anything invent. The version is the only thing that
+    can tell a reader it is looking at a document it does not understand.
+    """
+    document = as_document(_substrate())
+    assert document["format_version"] == SUBSTRATE_FORMAT_VERSION
+    with pytest.raises(SubstrateFormatError, match="format"):
+        from_document({**document, "format_version": SUBSTRATE_FORMAT_VERSION + 1})
+
+
+@pytest.mark.parametrize("source", sorted(THREE_OUTCOMES))
+def test_a_reading_survives_being_written_down_and_read_back(source: str) -> None:
+    """Mutation: any field dropped from as_document, or any default invented in from_document.
+
+    Parametrised over the sources so that all three outcomes of each go through the format
+    rather than only the one a hand-written example happens to hold.
+    """
+    for arguments in THREE_OUTCOMES[source]:
+        original = _substrate(**arguments)
+        assert from_document(json.loads(json.dumps(as_document(original)))) == original
+
+
+@pytest.mark.parametrize("source", sorted(THREE_OUTCOMES))
+def test_an_unread_source_is_still_unread_after_a_round_trip(source: str) -> None:
+    """THE ONE THE FORMAT EXISTS FOR. Mutation: write an unread launch feed as `[]`.
+
+    JSON is happy to confuse the two and each half of the confusion looks reasonable alone: a
+    writer that skips a null, or a reader that defaults a missing key to the empty list. Two
+    readings that differ only in whether anybody looked are compared here after the trip, so
+    a format that collapses them fails rather than quietly publishing a clean morning.
+    """
+    _, empty, unread = THREE_OUTCOMES[source]
+    was_empty = from_document(as_document(_substrate(**empty)))
+    was_unread = from_document(as_document(_substrate(**unread)))
+    assert was_empty.outcome(source) == SOURCE_EMPTY
+    assert was_unread.outcome(source) == SOURCE_NOT_READ
+    assert was_empty != was_unread
+
+
+def test_the_document_carries_every_field_a_status_query_would_need() -> None:
+    """Mutation: write the four columns the daily page renders and drop the rest.
+
+    The reading is written down so that the run index can be published from it without a
+    second ingestion, and a run index missing the workflow-run join is one that cannot answer
+    the question it exists for. Asserted as an exact set against the record's own fields, so
+    a field added to `RunFacts` and forgotten here fails rather than silently not being
+    captured.
+    """
+    document = as_document(_substrate(attempts=(_attempt(RUN_A, day=date(2026, 8, 4), hour=9),)))
+    assert set(document["runs"][RUN_A]) == {field.name for field in dataclasses.fields(RunFacts)}
+    assert document["runs"][RUN_A]["workflow_run_id"] is not None
+    assert document["runs"][RUN_A]["attempts"][0]["ordinal"] == 1
