@@ -32,6 +32,9 @@ from typing import Any
 import pytest
 
 from edullm_platform.admission_denials import ADMISSION_DENIED_ACTIONS, ADMISSION_PROBE_LESSONS
+from edullm_platform.config import load_yaml
+from edullm_platform.contracts.inventory import OrganizationInventory
+from edullm_platform.contracts.policy import ApprovalPolicy
 from edullm_platform.criteria import CriterionSpec, CriterionStatus
 from edullm_platform.evidence import FRESHNESS_WINDOW
 from edullm_platform.open_decisions import open_decisions
@@ -60,6 +63,7 @@ from tools.build_phase2_proof import (
     hex_checksum,
     known_limitations,
     main,
+    matrix_rows,
     phase2_criteria,
     read_captures,
     verify_repository,
@@ -605,6 +609,35 @@ def test_the_secret_document_records_names_and_could_not_record_a_value(
 # --------------------------------------------------------------------------------------
 # The authorization matrix and the denial matrix
 # --------------------------------------------------------------------------------------
+
+
+def test_each_derived_refusal_is_earned_by_the_thing_its_row_varies() -> None:
+    """The negative rows are only worth reading while one change each is what refuses them.
+
+    ``matrix_rows`` promises a row that varies exactly one actor, and on 2026-08-02 the
+    exception row stopped keeping it. It paired the *member-approval* submitter with the
+    *admin-exception* request, which was harmless while cross-team attribution was
+    unenforced and stopped being harmless the moment criterion 9 was covered: the claimed
+    team no longer matched the submitter, so attribution refused the row before the
+    approver's role was ever reached and the matrix lost ``approver_lacks_admin_role``
+    entirely.
+
+    Asked here rather than only of the rendered bundle, because the bundle needs the nested
+    runs and this needs a roster and a policy. The nightly carried this for two mornings
+    while every pull-request check stayed green.
+    """
+    policy = load_yaml(PROJECT_ROOT / "config" / "policy.yaml", ApprovalPolicy)
+    inventory = load_yaml(PROJECT_ROOT / "config" / "organization.yaml", OrganizationInventory)
+
+    _, derived = matrix_rows(PROJECT_ROOT, policy, inventory)
+    reasons = {row.label: row.decision.reason.value for row in derived}
+
+    assert reasons["exception, approved by a lead who is not an admin"] == (
+        "approver_lacks_admin_role"
+    )
+    assert reasons["member submits, another member approves"] == "approver_lacks_lead_or_admin_role"
+    assert reasons["member submits, approver is off the roster"] == "approver_not_in_roster"
+    assert reasons["submitter is off the roster"] == "submitter_not_in_roster"
 
 
 @pytest.mark.slow

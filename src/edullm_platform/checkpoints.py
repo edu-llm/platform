@@ -640,6 +640,16 @@ def _listing(store: CheckpointStore, *, bucket: str, key: str) -> list[Mapping[s
         arguments["ContinuationToken"] = token
 
 
+def _uncertified_payloads(store: CheckpointStore, *, bucket: str, key: str) -> tuple[str, ...]:
+    """Every object at this prefix that is not the marker, in the order the store listed them."""
+    names = [
+        str(entry["Key"]).removeprefix(key)
+        for entry in _listing(store, bucket=bucket, key=key)
+        if str(entry.get("Key", "")).startswith(key)
+    ]
+    return tuple(name for name in names if name and name != MARKER_OBJECT)
+
+
 def _sole_payload(store: CheckpointStore, *, bucket: str, key: str) -> str | None:
     """The one object at this prefix that is not the marker, when the marker does not say.
 
@@ -650,15 +660,31 @@ def _sole_payload(store: CheckpointStore, *, bucket: str, key: str) -> str | Non
     two candidate payloads and a marker that names neither is a checkpoint nobody can say
     the shape of.
     """
-    names = [
-        str(entry["Key"]).removeprefix(key)
-        for entry in _listing(store, bucket=bucket, key=key)
-        if str(entry.get("Key", "")).startswith(key)
-    ]
-    candidates = [name for name in names if name and name != MARKER_OBJECT]
+    candidates = _uncertified_payloads(store, bucket=bucket, key=key)
     if len(candidates) != 1:
         return None
     return candidates[0]
+
+
+#: How many payload names an UNCOMMITTED detail lists before it summarises the rest. Enough
+#: to recognise the write from a log line, short of pasting a directory into a Slack message.
+_NAMED_PAYLOADS: Final = 3
+
+
+def _uncommitted_detail(payloads: Sequence[str]) -> str:
+    if len(payloads) == 1:
+        return (
+            f"{payloads[0]} is present and no {MARKER_OBJECT} certifies it, so the write "
+            "that produced it did not finish"
+        )
+    shown = ", ".join(sorted(payloads)[:_NAMED_PAYLOADS])
+    if len(payloads) > _NAMED_PAYLOADS:
+        shown += f" and {len(payloads) - _NAMED_PAYLOADS} more"
+    return (
+        f"{len(payloads)} objects are present ({shown}) in neither loader's layout, and no "
+        f"{MARKER_OBJECT} certifies any of them, so nothing here says which is a checkpoint "
+        "or that the write that produced it finished"
+    )
 
 
 def _olmo_core_checkpoint(
@@ -890,8 +916,12 @@ def inspect_checkpoint(store: CheckpointStore, *, prefix: str) -> CheckpointInsp
         foreign = _huggingface_checkpoint(store, bucket=bucket, key=key)
         if foreign is not None:
             return foreign
-        payload_name = _sole_payload(store, bucket=bucket, key=key)
-        if payload_name is None:
+        # Counted rather than resolved to a single name. _sole_payload answers only for a
+        # prefix holding exactly one object, and reading its None as "empty" is the same
+        # false accusation the two branches above exist to prevent: run_019fcaae left four
+        # uncertified tars here and was reported as having stored nothing at all.
+        payloads = _uncertified_payloads(store, bucket=bucket, key=key)
+        if not payloads:
             return CheckpointInspection(
                 prefix=prefix,
                 state=CheckpointState.ABSENT,
@@ -900,10 +930,7 @@ def inspect_checkpoint(store: CheckpointStore, *, prefix: str) -> CheckpointInsp
         return CheckpointInspection(
             prefix=prefix,
             state=CheckpointState.UNCOMMITTED,
-            detail=(
-                f"{payload_name} is present and no {MARKER_OBJECT} certifies it, so the write "
-                "that produced it did not finish"
-            ),
+            detail=_uncommitted_detail(payloads),
         )
 
     payload_name = marker.get("payload")

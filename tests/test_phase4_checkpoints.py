@@ -773,6 +773,44 @@ def test_a_huggingface_checkpoint_is_not_reported_as_an_empty_prefix() -> None:
     assert "nothing is stored at this prefix" not in inspected.detail
 
 
+def a_run_that_wrote_several_uncertified_payloads() -> FakeStore:
+    """The shape run_019fcaae-3e79-70f8-908a-952c04a4d459 left in S3 on 2026-08-03.
+
+    Four tar files at the prefix root, 1,117,562,880 bytes each, in neither loader's layout
+    and with nothing certifying any of them. Reproduced at a size that fits a test, because
+    what is being asserted is the count and not the bytes.
+    """
+    store = FakeStore()
+    directory = PREFIX.split(f"{BUCKET}/", maxsplit=1)[1]
+    for name in ("impl3x5_aT8.tar", "impl3x5_bT1.tar", "impl3x5_bT2.tar", "impl3x5_bT451.tar"):
+        store.put(directory + name, PAYLOAD)
+    return store
+
+
+def test_several_uncertified_payloads_are_not_reported_as_an_empty_prefix() -> None:
+    """The same false accusation as the HuggingFace case, arriving through the other door.
+
+    ``_sole_payload`` answers only for a prefix holding exactly one non-marker object, so a
+    prefix holding four came back ABSENT, "nothing is stored at this prefix". The nightly
+    then filed 4.5 GiB of tars under "Wrote nothing", whose prose tells the owner they left
+    the prefix empty and probably forgot ``--save-folder``. One object earns UNCOMMITTED and
+    four earned a denial that the objects exist, which is the reading that is hardest to
+    argue with and the one most likely to be believed.
+
+    Mutation: fold the count back into ``_sole_payload``'s None. The state returns to ABSENT
+    and the report's most confident sentence becomes its least true one. Note that the run
+    is still a finding either way -- nothing here is resumable and the job stays red. What
+    changes is whether the sentence beside it is accurate.
+    """
+    inspected = inspect_checkpoint(a_run_that_wrote_several_uncertified_payloads(), prefix=PREFIX)
+
+    assert inspected.state is CheckpointState.UNCOMMITTED
+    assert inspected.manifest is None
+    assert "nothing is stored at this prefix" not in inspected.detail
+    assert "4 objects" in inspected.detail
+    assert "impl3x5_aT8.tar" in inspected.detail
+
+
 def test_a_huggingface_checkpoint_is_never_offered_as_resumable() -> None:
     """The other half, and the one that would be worse to get wrong than the bug it replaces.
 
