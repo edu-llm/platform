@@ -412,14 +412,14 @@ def test_the_three_states_are_three_sections_rather_than_two() -> None:
     assert report.index("run_b") < report.index("run_c")
 
 
-def test_a_fragment_exits_non_zero_so_the_nightly_can_gate_on_it(
+def test_a_fragment_exits_non_zero_so_the_audit_can_gate_on_it(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Mutation: keep exiting non-zero only for a prefix that is empty.
 
-    The exit code is the whole of the signal the nightly job reads. A run that wrote a
+    The exit code is the whole of the signal the audit reads. A run that wrote a
     fragment is no more resumable than one that wrote nothing, so an exit of zero here would
     put the check in the workflow and leave it unable to fail for the case it was added for.
     """
@@ -488,7 +488,7 @@ def write_result(root: Path, run_id: str, outcome: str) -> None:
 def test_a_run_the_platform_recorded_as_failed_is_listed_and_not_held_against_anything() -> None:
     """THE ONE THAT MATTERS. Mutation: judge every contracted run, whatever it ended as.
 
-    That is what this did, and it is why the nightly was red on fourteen runs that had
+    That is what this did, and it is why the audit was red on fourteen runs that had
     nothing to do with checkpointing. They died at ``wandb.init()`` on a credential that was
     wrong until it was rotated, inside the checkpointer's own teardown, and on an evaluator
     fetching a file that is not served over HTTP. All three are recorded as failures with an
@@ -556,7 +556,7 @@ def test_a_run_with_no_result_record_has_not_finished_and_is_not_judged() -> Non
 def test_with_no_result_records_at_all_every_run_is_judged_as_before() -> None:
     """Mutation: treat "no result tree" as "no run succeeded", which passes every night.
 
-    The nightly reader role cannot read ``result/`` until the stack is applied from a laptop,
+    The audit reader role cannot read ``result/`` until the stack is applied from a laptop,
     so this is the state the check runs in today. A report that answered a missing permission
     by knowing less and going green would be the silent failure it exists to find, turned on
     itself. ``outcome_known`` is what keeps the two apart.
@@ -586,7 +586,7 @@ def test_the_absence_of_a_result_tree_is_not_the_same_as_an_empty_one(tmp_path: 
     assert _load_outcomes(tmp_path) == {RUN_ID: AttemptTerminalState.SUCCEEDED}
 
 
-def test_a_failed_run_does_not_fail_the_nightly_but_a_succeeded_one_does(
+def test_a_failed_run_does_not_fail_the_audit_but_a_succeeded_one_does(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -880,7 +880,7 @@ def test_a_run_cannot_be_acknowledged_twice() -> None:
 
 
 def test_the_repositorys_own_list_names_runs_and_states_why() -> None:
-    """The file the nightly actually reads, held to what makes it defensible.
+    """The file the audit actually reads, held to what makes it defensible.
 
     Read here rather than trusted, because the entries are the whole of the argument that
     this is an adjudication and not a date cutoff written one line at a time.
@@ -889,7 +889,7 @@ def test_the_repositorys_own_list_names_runs_and_states_why() -> None:
 
     assert acknowledgements.acknowledgements, (
         "the list is empty, so either the historical run was resolved another way or the "
-        "path moved and the nightly is reading nothing"
+        "path moved and the audit is reading nothing"
     )
     for entry in acknowledgements.acknowledgements:
         assert "EDULLM_CHECKPOINT_DIR" in entry.reason or "--dry-run" in entry.reason, (

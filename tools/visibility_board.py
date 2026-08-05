@@ -60,7 +60,7 @@ all. A team that has not run yet is a team that has not run yet, so an empty lis
 recorded as zero prefixes and never as a failure.
 
 **WHAT THE BUCKET SIDE CANNOT SEE, SAID OUT LOUD RATHER THAN LEFT AS A SURPRISE.** This lists
-``teams/{team}/runs/`` and nothing else, because that is the shape the nightly reader role's
+``teams/{team}/runs/`` and nothing else, because that is the shape the audit reader role's
 ``s3:prefix`` condition permits and a request for ``teams/`` is denied outright. Anything a
 team wrote elsewhere in the bucket is therefore invisible here, and that is not hypothetical.
 On 2026-08-02 the bucket held 1504 objects, 260 of which are outside that shape, 256 of them
@@ -95,7 +95,7 @@ artifact. ``tools/wandb_reconciliation.py`` holds the reasoning, including why t
 recomputed into this report rather than written back beside the record it is about.
 
 **THE ACCOUNT SIDE NEEDS A GRANT, AND THE ROLE NOW HOLDS IT.**
-``infra/iam/nightly-reader-role.yaml`` grants ``tag:GetResources``, region-conditioned and
+``infra/iam/audit-reader-role.yaml`` grants ``tag:GetResources``, region-conditioned and
 with no adjacent write, which is what makes the account side readable at all. It did not
 until 2026-08-04, and this board exited 2 on every night before that, because there is no
 substitute read: the role holds no ``batch:`` action deliberately, and the lineage records
@@ -273,7 +273,7 @@ ERROR_CODE: Final = re.compile(r"An error occurred \(([A-Za-z]+)\)")
 ACCESS_DENIED_CODES: Final = frozenset({"AccessDenied", "AccessDeniedException"})
 
 #: The exact statement the account side of this board is read under, and the one to paste back
-#: if it ever goes missing. ``infra/iam/nightly-reader-role.yaml`` carries it
+#: if it ever goes missing. ``infra/iam/audit-reader-role.yaml`` carries it
 #: character-for-character and ``tests/test_visibility_board.py`` holds the two together, so
 #: this is a quotation of the live grant rather than a request for one. It stays quoted in the
 #: report because a refusal now means the role drifted or the credential lapsed, and the first
@@ -296,20 +296,20 @@ BINDING_PREFIX: Final = "binding"
 #: What this board syncs and cannot report without. ``intent`` and ``attempt`` are the cost
 #: report's own two, and ``result`` is where a W&B reference lives -- the checkpoint
 #: reconciliation already syncs that one, so the reader role already grants it and this costs
-#: no IAM change. ``tests/test_nightly_workflow.py`` derives the grant it expects from this
+#: no IAM change. ``tests/test_audit_workflow.py`` derives the grant it expects from this
 #: tuple rather than restating it, which is what stopped ``attempt/`` being missing for
 #: months.
 REQUIRED_LINEAGE_PREFIXES: Final = (*LINEAGE_PREFIXES, RESULT_PREFIX)
 
 #: What it syncs and survives being refused, in a call of its own so that one denial does not
 #: take the required prefixes with it. ``binding/`` is the second account-side source and the
-#: nightly reader role does not hold it yet, so a refusal here is the expected answer today
+#: audit reader role does not hold it yet, so a refusal here is the expected answer today
 #: rather than a finding -- the board reports the narrower horizon and quotes the statement
 #: below. It is separated from the required set rather than folded in because a prefix whose
 #: absence removes a source is a different thing from one whose absence stops the report.
 DEGRADING_LINEAGE_PREFIXES: Final = (BINDING_PREFIX,)
 
-#: What ``infra/iam/nightly-reader-role.yaml`` needs so the second account-side source can be
+#: What ``infra/iam/audit-reader-role.yaml`` needs so the second account-side source can be
 #: read, quoted rather than described for the reason :data:`MISSING_TAG_GRANT` is quoted: the
 #: value of naming an IAM change in a 05:00 report is that whoever applies it pastes a
 #: reviewed string instead of reconstructing one from a sentence.
@@ -623,7 +623,7 @@ class Board:
         REPORTED AND NOT GATED, WHICH IS A DECISION RATHER THAN AN OVERSIGHT. This is a real
         disagreement and it is one nobody can repair: the lineage store refuses any write to
         a key that exists, so the 28 records that carry a false reference will carry it for
-        ever. Folding it into :attr:`disagrees` would hold the nightly red permanently over a
+        ever. Folding it into :attr:`disagrees` would hold the audit red permanently over a
         condition with no remedy, and a job that is red every morning is a job whose next
         real finding arrives unread -- which is the argument
         ``tools/find_runs_that_saved_nothing.py`` makes at length beside its own
@@ -708,7 +708,7 @@ def team_runs_prefix(team: str) -> str:
 
     Three places answered this question once and two of them agreed, which is the whole
     argument in :func:`output_prefix`. Composing the string here would make this the fourth,
-    and the IAM condition the nightly reader role lists under is written against exactly this
+    and the IAM condition the audit reader role lists under is written against exactly this
     shape, so a board that drifted from it would fail as an access denial at 05:00 rather than
     as anything a reader could diagnose.
     """
@@ -722,7 +722,7 @@ def _masked(text: str) -> str:
     ``edullm_platform.evidence.redact_aws_account_ids`` is the sanctioned mask and is not used
     here, for the reason ``tools/verify_deployed_stacks.py`` gives beside its own copy of this
     function. That one raises on text that also carries another credential shape, which is
-    right for a capture somebody is about to commit and wrong for a nightly report, where a
+    right for a capture somebody is about to commit and wrong for an audit report, where a
     traceback in place of a board would report nothing at all on the one morning the account
     held something unexpected. The same expression is reused so the mask cannot be stepped
     around differently here than anywhere else.
@@ -1069,7 +1069,7 @@ def read_output_prefixes(
 ) -> tuple[tuple[OutputPrefix, ...], tuple[str, ...]]:
     """Every run directory under each team, and the teams whose listing was refused.
 
-    One listing per team rather than one listing of ``teams/``. The nightly reader role's
+    One listing per team rather than one listing of ``teams/``. The audit reader role's
     ``s3:ListBucket`` grant carries ``StringLike`` on ``s3:prefix`` of ``teams/*/runs/*``, so a
     request for ``teams/`` sends a prefix that does not match and is denied outright, while
     ``teams/{team}/runs/`` matches with the trailing wildcard covering the empty string. The
@@ -1681,7 +1681,7 @@ def _wandb_key(options: argparse.Namespace) -> str:
     The environment first because a person running this by hand usually already has one
     exported and should not need an AWS session to read a board. The secret is what the
     scheduled run uses, and it is the same value ``tools/verify_wandb_credential.py`` checks
-    every night, so a board that cannot reach W&B and a nightly that reports the key as
+    every night, so a board that cannot reach W&B and an audit that reports the key as
     refused are the same finding rather than two.
     """
     exported = os.environ.get("WANDB_API_KEY", "").strip()
@@ -1731,10 +1731,10 @@ def _collect(options: argparse.Namespace) -> Board:
                 detail=(
                     f"{error}. "
                     + (
-                        "The nightly reader role is granted the statement below, so a "
+                        "The audit reader role is granted the statement below, so a "
                         "denial is a finding rather than the expected answer: either the "
                         "deployed role has drifted from "
-                        "`infra/iam/nightly-reader-role.yaml` or the credential is not the "
+                        "`infra/iam/audit-reader-role.yaml` or the credential is not the "
                         "one this job means to be using. Compare the two with "
                         "`tools/verify_deployed_stacks.py`, and re-apply the stack from a "
                         "laptop as `infra/README.md` describes if they disagree. There is "
@@ -1812,7 +1812,7 @@ def _collect(options: argparse.Namespace) -> Board:
                     detail=(
                         f"{_masked(str(error))}. The message says which prefix, and every "
                         "prefix `tools/report_run_costs.py:LINEAGE_PREFIXES` names is one "
-                        "the nightly reader role is granted, so this is a finding rather "
+                        "the audit reader role is granted, so this is a finding rather "
                         "than the expected answer. `attempt/` was the expected answer until "
                         "the grant was added: the role held `intent/` and `result/` while "
                         "the board synced `intent/` and `attempt/`, and it was refused every "
@@ -1830,7 +1830,7 @@ def _collect(options: argparse.Namespace) -> Board:
             )
 
         # A call of its own, after the required prefixes, because this one is allowed to be
-        # refused. The nightly reader role does not hold `binding/` yet, and folding it into
+        # refused. The audit reader role does not hold `binding/` yet, and folding it into
         # the sync above would mean one expected denial taking the cost figures, the result
         # records and the reconciliation down with it -- which is precisely what `attempt/`
         # did to the cost mapping for months.
@@ -1854,7 +1854,7 @@ def _collect(options: argparse.Namespace) -> Board:
                     reason="binding_records_not_read",
                     detail=(
                         f"{_masked(str(error))}. This is the expected answer today: "
-                        "`infra/iam/nightly-reader-role.yaml` grants `intent/`, `attempt/` "
+                        "`infra/iam/audit-reader-role.yaml` grants `intent/`, `attempt/` "
                         "and `result/` and not `binding/`, so the account side is the "
                         "tagging API alone and its window is whatever Batch still lists -- "
                         "roughly a week for a finished job. Two edits close it. Paste the "
@@ -1914,7 +1914,7 @@ def build_parser() -> argparse.ArgumentParser:
             "anything that wants to count"
         ),
     )
-    # No default profile. The nightly runs on an assumed role and passes none, and a default
+    # No default profile. The audit runs on an assumed role and passes none, and a default
     # of `sbsandbox` would send it looking for an SSO session that is not there.
     parser.add_argument("--profile", default=None)
     parser.add_argument("--region", default="us-east-1")

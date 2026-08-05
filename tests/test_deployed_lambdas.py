@@ -49,7 +49,7 @@ SOME_OTHER_DIGEST = "5" * 64
 DENIED = (
     "An error occurred (AccessDeniedException) when calling the GetFunctionConfiguration "
     "operation: User: arn:aws:sts::123456789012:assumed-role/"
-    "sbsandbox-intern-edullm-nightly-reader/session is not authorized to perform: "
+    "sbsandbox-intern-edullm-audit-reader/session is not authorized to perform: "
     "lambda:GetFunctionConfiguration on resource: "
     "arn:aws:lambda:us-east-1:123456789012:function:"
     "sbsandbox-intern-edullm-admission-validator"
@@ -162,7 +162,7 @@ def test_the_call_asks_lambda_for_the_configuration_and_nothing_else(
 ) -> None:
     """Mutation: reach for get-function, which returns a presigned download of the code.
 
-    The configuration call answers the whole question and is the only action the nightly
+    The configuration call answers the whole question and is the only action the audit
     reader role is granted. Widening it to `lambda:GetFunction` would hand a scheduled job
     a link to the deployed artifact, which is a different power than reading a digest.
     """
@@ -332,7 +332,7 @@ def test_a_call_that_failed_is_read_as_neither_agreement_nor_disagreement(
     assert "AccessDeniedException" in err
     # The remedy is a grant rather than a release, so the template that carries it is
     # named where the failure is read.
-    assert "nightly-reader-role.yaml" in err
+    assert "audit-reader-role.yaml" in err
 
 
 def test_a_denial_does_not_put_the_account_id_in_the_log(
@@ -633,7 +633,7 @@ def test_the_tool_exposes_a_parser(module: Any) -> None:
     parser = module.build_parser()
 
     assert parser.parse_args([]).profile is None, (
-        "the nightly runs on an assumed role and passes no profile, so a default here "
+        "the audit runs on an assumed role and passes no profile, so a default here "
         "would send it looking for a laptop's SSO session"
     )
     assert parser.parse_args([]).region == "us-east-1"

@@ -54,9 +54,9 @@ from edullm_platform.contracts.results import output_prefix
 from edullm_platform.execution import CONTAINER_SHAPES, WANDB_ENTITY, batch_submit_request
 from edullm_platform.submission import SubmissionInputs
 from edullm_platform.wandb_preflight import (
-    NIGHTLY_VERDICT_ARTIFACT,
-    NIGHTLY_VERDICT_FILENAME,
-    NIGHTLY_WORKFLOW,
+    AUDIT_VERDICT_ARTIFACT,
+    AUDIT_VERDICT_FILENAME,
+    AUDIT_WORKFLOW,
 )
 from tests.test_manifest import load_representative_manifest
 from tools.resolve_published_image import RESOLVER_ECR_ACTIONS
@@ -66,14 +66,14 @@ WORKFLOW_PATH = WORKFLOWS_ROOT / "submit-run.yml"
 BUILD_WORKFLOW_PATH = WORKFLOWS_ROOT / "build-research-image.yml"
 
 #: The other half of the preflight, and the reason it is read from here rather than only
-#: from tests/test_nightly_workflow.py. The property that matters spans the two files: this
+#: from tests/test_audit_workflow.py. The property that matters spans the two files: this
 #: workflow refuses a submission on a verdict that one publishes, and nothing in GitHub or
 #: CloudFormation connects them. A test that only ever looked at one side would let a
 #: rename on the other turn the preflight permanently inert without failing.
-NIGHTLY_PATH = WORKFLOWS_ROOT / NIGHTLY_WORKFLOW
-NIGHTLY_WANDB_JOB = "wandb-credential"
-NIGHTLY_CHECK_STEP = "Ask W&B whether it would accept the stored key"
-NIGHTLY_UPLOAD_STEP = "Publish what W&B said, for the submission preflight to read"
+AUDIT_PATH = WORKFLOWS_ROOT / AUDIT_WORKFLOW
+AUDIT_WANDB_JOB = "wandb-credential"
+AUDIT_CHECK_STEP = "Ask W&B whether it would accept the stored key"
+AUDIT_UPLOAD_STEP = "Publish what W&B said, for the submission preflight to read"
 
 TRUST_POLICY_PATH = PROJECT_ROOT / "infra" / "iam" / "admission-role.yaml"
 LINEAGE_TEMPLATE_PATH = PROJECT_ROOT / "infra" / "lineage-bucket.yaml"
@@ -134,7 +134,7 @@ BATCH_DENIALS_TOOL = "tools/verify_batch_denials.py"
 RESOLVER_TOOL = "tools/resolve_published_image.py"
 
 #: The W&B preflight, and the tool it deliberately does not run. The check that reads the
-#: secret is `tools/verify_wandb_credential.py`, and it runs in nightly.yml under the one
+#: secret is `tools/verify_wandb_credential.py`, and it runs in audit.yml under the one
 #: role in this account that holds `secretsmanager:GetSecretValue` and can be assumed from
 #: GitHub. This workflow reads the verdict that produces, so the preflight adds no AWS call
 #: and no permission -- which is why it contributes nothing to the enumeration below.
@@ -692,7 +692,7 @@ def _aws_reaching_calls() -> list[tuple[str, tuple[str, ...]]]:
     about.
 
     The W&B preflight contributes nothing, and that is a property rather than an oversight.
-    It reads a verdict published by nightly.yml through the ``actions: read`` this job
+    It reads a verdict published by audit.yml through the ``actions: read`` this job
     already holds for the approvals endpoint, so it reaches no AWS API at all.
     """
     calls: list[tuple[str, tuple[str, ...]]] = []
@@ -1322,7 +1322,7 @@ def test_the_preflight_holds_no_aws_identity_and_needs_no_new_permission() -> No
     assert submit["permissions"]["actions"] == "read"
 
 
-def test_the_verdict_the_preflight_reads_is_the_one_the_nightly_publishes() -> None:
+def test_the_verdict_the_preflight_reads_is_the_one_the_audit_publishes() -> None:
     """Reads both workflows and the module they share. Mutation: rename either side.
 
     Two files and one artifact, connected by a name written in three places and by nothing
@@ -1332,26 +1332,26 @@ def test_the_verdict_the_preflight_reads_is_the_one_the_nightly_publishes() -> N
     silently. So the names come out of ``edullm_platform.wandb_preflight`` and both
     workflows are held to them here.
     """
-    published = step(load_workflow(NIGHTLY_PATH)["jobs"][NIGHTLY_WANDB_JOB], NIGHTLY_UPLOAD_STEP)
+    published = step(load_workflow(AUDIT_PATH)["jobs"][AUDIT_WANDB_JOB], AUDIT_UPLOAD_STEP)
     preflight = step(_job("submit"), WANDB_PREFLIGHT_STEP)
 
-    assert published["with"]["name"] == NIGHTLY_VERDICT_ARTIFACT
-    assert published["with"]["path"].endswith(NIGHTLY_VERDICT_FILENAME)
+    assert published["with"]["name"] == AUDIT_VERDICT_ARTIFACT
+    assert published["with"]["path"].endswith(AUDIT_VERDICT_FILENAME)
     # if: always(), or the refusal -- the one verdict this exists to act on -- is the only
     # one that never gets published, because the step above it exits 1 on exactly that.
     assert published["if"] == "always()"
-    assert NIGHTLY_WORKFLOW == NIGHTLY_PATH.name
+    assert AUDIT_WORKFLOW == AUDIT_PATH.name
     # And the preflight names neither, because both come out of the module rather than out
     # of the run body. A literal here would be a fourth place to keep in step.
-    assert NIGHTLY_VERDICT_ARTIFACT not in preflight["run"]
+    assert AUDIT_VERDICT_ARTIFACT not in preflight["run"]
 
 
 def test_the_check_behind_the_verdict_reads_the_key_the_containers_are_given() -> None:
-    """Reads the nightly, the tool and the container shapes.
+    """Reads the audit, the tool and the container shapes.
 
     The preflight is only worth what the check behind it is worth, and a check aimed at a
     different secret from the one ECS injects would pass while every container failed --
-    worse than no check, because it moves the diagnosis further away. The nightly passes no
+    worse than no check, because it moves the diagnosis further away. The audit passes no
     ``--secret-name``, so the tool default is what is used, and this holds that default
     against every secret the job definitions inject.
 
@@ -1362,7 +1362,7 @@ def test_the_check_behind_the_verdict_reads_the_key_the_containers_are_given() -
     injected = {
         secret for shape in CONTAINER_SHAPES.values() for _variable, secret in shape.secrets
     }
-    nightly = step(load_workflow(NIGHTLY_PATH)["jobs"][NIGHTLY_WANDB_JOB], NIGHTLY_CHECK_STEP)
+    checked = step(load_workflow(AUDIT_PATH)["jobs"][AUDIT_WANDB_JOB], AUDIT_CHECK_STEP)
 
     assert injected, "no container shape injects a secret, so this test is measuring nothing"
     for secret in sorted(injected):
@@ -1370,20 +1370,20 @@ def test_the_check_behind_the_verdict_reads_the_key_the_containers_are_given() -
             f"the check reports on {default} and a container is given {secret}, so the "
             "verdict and the container are about two different values"
         )
-    assert WANDB_CREDENTIAL_TOOL in nightly["run"]
-    assert "--secret-name" not in nightly["run"]
+    assert WANDB_CREDENTIAL_TOOL in checked["run"]
+    assert "--secret-name" not in checked["run"]
 
 
 def test_the_entity_the_verdict_is_about_is_the_one_the_containers_are_told() -> None:
-    """Reads the nightly, the tool and the submit request. Mutation: pass --expect-entity.
+    """Reads the audit, the tool and the submit request. Mutation: pass --expect-entity.
 
     The nine failures were not a missing key. The log said a key was configured and W&B
     still refused it, which is what a key belonging to another entity looks like -- so the
     check that matters is the entity W&B resolves the key to, and it has to be the entity
     the container is told to log into. The tool defaults to ``execution.WANDB_ENTITY`` and
-    the nightly passes no override, so there is one answer rather than two.
+    the audit passes no override, so there is one answer rather than two.
     """
-    script = step(load_workflow(NIGHTLY_PATH)["jobs"][NIGHTLY_WANDB_JOB], NIGHTLY_CHECK_STEP)["run"]
+    script = step(load_workflow(AUDIT_PATH)["jobs"][AUDIT_WANDB_JOB], AUDIT_CHECK_STEP)["run"]
     told = {
         entry["Name"]: entry["Value"]
         for entry in batch_submit_request(
@@ -1480,14 +1480,14 @@ def test_a_verdict_that_refused_the_key_stops_the_run_before_anything_is_allocat
     assert "torch distributed error" in summary
     # And the one thing a submitter can do about a refusal they have already repaired. A
     # measured refusal is honoured at any age, so nothing clears it but a newer measurement.
-    assert "dispatch the nightly workflow" in summary
+    assert "dispatch the audit workflow" in summary
 
 
 @pytest.mark.parametrize(
     ("reason", "exit_code"),
     [
         # No run has published one yet, which is the state this lands in and stays in until
-        # the first nightly after it merges.
+        # the first audit after it merges.
         ("wandb_verdict_not_published", 2),
         # The newest was written before the verdict field existed, or by an --offline run.
         ("wandb_verdict_unreadable", 2),
@@ -1502,7 +1502,7 @@ def test_a_question_nobody_answered_is_not_reported_as_a_bad_key(
 ) -> None:
     """THE CASE THIS STEP SHIPS IN, AND THE ONE MOST LIKELY TO BE GOT WRONG.
 
-    This file lands before the first nightly that can publish anything at all, so on the
+    This file lands before the first audit that can publish anything at all, so on the
     day it merges every dispatch meets the first row above. Failing then would take the
     platform down in order to add a check to it, which is the hazard *Why IAM is
     laptop-only* in infra/README.md is about in different clothes.

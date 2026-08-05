@@ -1,14 +1,14 @@
 """Where each automated check lives, and what stops it drifting back.
 
 There are two workflows and the split between them is the point. ``ci.yml`` runs on every
-change and everything in it can fail a build. ``nightly.yml`` runs on a schedule and holds
+change and everything in it can fail a build. ``audit.yml`` runs on a schedule and holds
 the checks that answer a question about the repository or about the account rather than
 about the change: the two acceptance gates, which read evidence that expires; the
 reproduction of the recorded suite results, which runs the suite inside the suite; and two
 that read the account, where the thing being described was true before the change existed.
 
 What those last two need and the first three do not is an AWS identity, so the permission
-to mint one is declared per job here rather than for the file. ``tests/test_nightly_workflow.py``
+to mint one is declared per job here rather than for the file. ``tests/test_audit_workflow.py``
 holds the two checks themselves; this module holds the split.
 
 Both gates were pull-request jobs and both were ``continue-on-error``, because a gate that
@@ -19,7 +19,7 @@ lapse until 2026-08-25, so the arrangement has never been tested; when it is, th
 report a red cross that merges anyway, which is a thing a reviewer learns to scroll past.
 A scheduled run that can actually fail does the job that comment wanted done, so these
 tests now pin the opposite arrangement — nothing in ``ci.yml`` may be informational, and
-nothing in ``nightly.yml`` may be either.
+nothing in ``audit.yml`` may be either.
 
 This module names the gate commands, so the textual marker that finds gate-invoking test
 modules matches it and it is listed in ``REENTRANT_TEST_MODULES``. It never starts a gate;
@@ -34,12 +34,12 @@ from typing import Any
 from workflow_support import WORKFLOWS_ROOT, load_workflow, unreal_context_references
 
 WORKFLOW_PATH = WORKFLOWS_ROOT / "ci.yml"
-NIGHTLY_PATH = WORKFLOWS_ROOT / "nightly.yml"
+AUDIT_PATH = WORKFLOWS_ROOT / "audit.yml"
 
 #: The scheduled jobs that read the account rather than the tree, and so the only ones that
 #: may mint an OIDC token. Named here rather than derived, because the point of the list is
 #: that a job joining it is a review of this line.
-CREDENTIALED_NIGHTLY_JOBS = frozenset(
+CREDENTIALED_AUDIT_JOBS = frozenset(
     {
         "checkpoint-reconciliation",
         "wandb-credential",
@@ -73,7 +73,7 @@ def _load_workflow(path: Path = WORKFLOW_PATH) -> dict[str, Any]:
 
 def test_every_expression_names_something_that_actually_exists() -> None:
     assert unreal_context_references(WORKFLOW_PATH) == []
-    assert unreal_context_references(NIGHTLY_PATH) == []
+    assert unreal_context_references(AUDIT_PATH) == []
 
 
 def test_the_test_job_runs_every_test_and_groups_the_workers() -> None:
@@ -119,7 +119,7 @@ def test_the_required_checks_are_still_called_what_protection_calls_them() -> No
 def test_nothing_on_the_pull_request_path_is_unable_to_fail() -> None:
     # continue-on-error on a pull-request job means the job reports a red cross that
     # merges anyway, which reads to everybody as a check and to GitHub as nothing. Both
-    # jobs that had it are now in nightly.yml, where they can fail.
+    # jobs that had it are now in audit.yml, where they can fail.
     workflow = _load_workflow()
 
     assert workflow["on"]["push"] == {"branches": ["main"]}
@@ -136,18 +136,18 @@ def test_no_workflow_runs_a_phase_acceptance_gate() -> None:
     images an ECR lifecycle rule had already deleted. A gate reintroduced here would be a
     green cross over a claim nothing can check.
     """
-    for path in (WORKFLOW_PATH, NIGHTLY_PATH):
+    for path in (WORKFLOW_PATH, AUDIT_PATH):
         text = path.read_text(encoding="utf-8")
         for phase in range(6):
             assert f"tools/validate_phase{phase}.py" not in text
             assert f"tools/build_phase{phase}_proof.py" not in text
 
 
-def test_the_nightly_run_is_scheduled_and_can_be_started_by_hand() -> None:
+def test_the_audit_is_scheduled_and_can_be_started_by_hand() -> None:
     # The schedule is what makes an expiry surface without anybody asking. The manual
     # trigger is what makes the job usable the morning it goes red, when the question is
     # whether a fix worked and waiting a day is not an answer.
-    workflow = _load_workflow(NIGHTLY_PATH)
+    workflow = _load_workflow(AUDIT_PATH)
 
     assert "workflow_dispatch" in workflow["on"]
     crons = [entry["cron"] for entry in workflow["on"]["schedule"]]
@@ -169,11 +169,11 @@ def test_only_the_jobs_that_read_the_account_can_reach_it() -> None:
     # that started re-capturing live evidence -- which is exactly what somebody would be
     # tempted to put in a scheduled job -- cannot mint a token without adding a permissions
     # block, and adding one fails here.
-    workflow = _load_workflow(NIGHTLY_PATH)
+    workflow = _load_workflow(AUDIT_PATH)
 
     assert workflow["permissions"] == {"contents": "read"}
     for job_id, job in workflow["jobs"].items():
-        if job_id in CREDENTIALED_NIGHTLY_JOBS:
+        if job_id in CREDENTIALED_AUDIT_JOBS:
             assert job["permissions"] == {"contents": "read", "id-token": "write"}, job_id
             continue
         assert "permissions" not in job, f"{job_id} reads committed records and needs none"
@@ -188,7 +188,7 @@ def test_no_scheduled_job_takes_a_secret_or_names_the_account() -> None:
     # Unchanged in force by the two credentialed jobs. Both assume a role by OIDC and read
     # its ARN from a repository variable, so there is still no long-lived credential in
     # this file and still no account id to read off it.
-    workflow_text = NIGHTLY_PATH.read_text(encoding="utf-8")
+    workflow_text = AUDIT_PATH.read_text(encoding="utf-8")
 
     assert not re.search(r"\$\{\{[^}]*secrets\.", workflow_text)
     assert not re.search(r"(?<!\d)\d{12}(?!\d)", workflow_text)
@@ -208,17 +208,17 @@ def test_the_pull_request_path_cannot_reach_aws_or_a_secret_either() -> None:
     assert not re.search(r"(?<!\d)\d{12}(?!\d)", workflow_text)
 
 
-def test_the_nightly_file_says_why_each_check_is_not_on_the_pull_request_path() -> None:
+def test_the_audit_says_why_each_check_is_not_on_the_pull_request_path() -> None:
     # The reasoning lives in the file because the arrangement looks like an oversight
     # from the outside: five checks nobody has to pass in order to merge. The next
     # person to notice should find the argument rather than reconstruct it.
     #
     # Read off the workflow rather than from a list here, so a job added later has to be
     # argued for in the header instead of merely not being on a list somebody forgot.
-    header = NIGHTLY_PATH.read_text(encoding="utf-8").split("\non:", 1)[0].lower()
+    header = AUDIT_PATH.read_text(encoding="utf-8").split("\non:", 1)[0].lower()
 
     assert "continue-on-error" in header, "say why nothing here is informational"
     assert "account" in header, "say why these cannot sit on the pull-request path"
     assert "required" in header, "say what does block a merge"
-    for job_id in _load_workflow(NIGHTLY_PATH)["jobs"]:
+    for job_id in _load_workflow(AUDIT_PATH)["jobs"]:
         assert job_id in header, f"{job_id} is not accounted for in the header"

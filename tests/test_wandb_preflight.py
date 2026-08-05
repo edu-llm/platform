@@ -1,4 +1,4 @@
-"""What a submission does about the last W&B credential verdict the nightly published.
+"""What a submission does about the last W&B credential verdict the audit published.
 
 The decision is a pure function of the published report and the clock, which is deliberate:
 the surrounding tool talks to the GitHub API and nothing about how a stale acceptance is
@@ -20,12 +20,12 @@ import pytest
 from workflow_support import write_stub
 
 from edullm_platform.wandb_preflight import (
+    AUDIT_BRANCH,
+    AUDIT_VERDICT_ARTIFACT,
+    AUDIT_VERDICT_FILENAME,
+    AUDIT_WORKFLOW,
     CHECKED_AT_FIELD,
     FRESHNESS,
-    NIGHTLY_BRANCH,
-    NIGHTLY_VERDICT_ARTIFACT,
-    NIGHTLY_VERDICT_FILENAME,
-    NIGHTLY_WORKFLOW,
     VERDICT_FIELD,
     Outcome,
     Verdict,
@@ -66,8 +66,8 @@ def test_a_recent_acceptance_lets_the_submission_through() -> None:
 def test_a_refusal_stops_the_submission() -> None:
     """THE ONE THAT MATTERS, and the one this whole change exists to make possible.
 
-    Before it, a key W&B had already refused made the nightly red and stopped nothing: the
-    header of nightly.yml says there is no alerting and a red scheduled run is the entire
+    Before it, a key W&B had already refused made the audit red and stopped nothing: the
+    header of audit.yml says there is no alerting and a red scheduled run is the entire
     signal, so every dispatch went on allocating a GPU against a credential nobody could
     use, and eight of the nine failures that produced were filed as torch bugs.
     """
@@ -83,7 +83,7 @@ def test_a_refusal_is_honoured_however_old_it_is() -> None:
 
     The asymmetry is the design rather than an oversight. A measured refusal does not stop
     being one because a schedule slipped, and the only thing that should clear it is a newer
-    measurement -- which is one dispatch of the nightly, and is what infra/README.md tells
+    measurement -- which is one dispatch of the audit, and is what infra/README.md tells
     whoever repairs the key to do.
     """
     answer = decide(report=published("refused", age=FRESHNESS * 10), now=NOW)
@@ -94,7 +94,7 @@ def test_a_refusal_is_honoured_however_old_it_is() -> None:
 def test_an_acceptance_older_than_the_bound_establishes_nothing() -> None:
     """Mutation: keep trusting it, or refuse on it. Both are wrong in opposite directions.
 
-    Trusting it forever means a nightly that quietly stopped running leaves a check that
+    Trusting it forever means an audit that quietly stopped running leaves a check that
     reports a pass from an unbounded past. Refusing on it makes every submission depend on
     the health of a scheduled workflow with six other jobs in it, which is the coupling the
     exit-code separation exists to avoid.
@@ -129,14 +129,14 @@ def test_an_outage_at_the_check_is_not_a_bad_key() -> None:
 def test_no_published_verdict_lets_the_submission_through() -> None:
     """THE STATE THIS SHIPS IN. Mutation: fail closed on a missing verdict.
 
-    Nothing has published one until the first nightly after this merges, so failing closed
+    Nothing has published one until the first audit after this merges, so failing closed
     here would refuse every submission on the platform in order to add a check to them.
     """
     answer = decide(report=None, now=NOW)
 
     assert answer.outcome is Outcome.NOT_ESTABLISHED
     assert answer.reason == "wandb_verdict_not_published"
-    assert NIGHTLY_WORKFLOW in answer.sentence
+    assert AUDIT_WORKFLOW in answer.sentence
 
 
 @pytest.mark.parametrize(
@@ -200,7 +200,7 @@ def stub_gh(tmp_path: Path, *, runs: list[int], reports: dict[int, str]) -> None
     """A ``gh`` that answers the two calls this tool makes and refuses everything else."""
     cases = "\n".join(
         f"  {run_id}) printf %s {report!r} > "
-        f'"${{destination}}/{NIGHTLY_VERDICT_FILENAME}"; exit 0;;'
+        f'"${{destination}}/{AUDIT_VERDICT_FILENAME}"; exit 0;;'
         for run_id, report in reports.items()
     )
     listed = "\\n".join(str(run_id) for run_id in runs)
@@ -253,7 +253,7 @@ def test_the_tool_separates_a_finding_from_an_unanswered_question() -> None:
 def test_the_tool_reads_the_newest_run_that_actually_published_one(tmp_path: Path) -> None:
     """Mutation: read only the newest run, or the newest artifact of any branch.
 
-    A nightly that failed before its check ran publishes nothing, and the answer from the
+    An audit that failed before its check ran publishes nothing, and the answer from the
     night before is then genuinely the newest one anybody has. Falling back to it is right;
     the freshness bound is what stops the fallback going on for ever.
     """
@@ -265,7 +265,7 @@ def test_the_tool_reads_the_newest_run_that_actually_published_one(tmp_path: Pat
 
     assert finished.returncode == 1, finished.stderr
     answer = json.loads(finished.stdout)
-    assert answer["nightly_run_id"] == 200
+    assert answer["audit_run_id"] == 200
     assert answer["reason"] == "wandb_credential_would_be_refused"
 
 
@@ -279,16 +279,16 @@ def test_a_run_nobody_published_a_verdict_from_is_not_a_verdict(tmp_path: Path) 
 def test_the_tool_asks_only_for_runs_on_the_branch_the_role_is_pinned_to() -> None:
     """Mutation: drop the branch filter, which looks like a tidiness detail and is not.
 
-    ``sbsandbox-intern-edullm-nightly-reader`` pins its subject to ``ref:refs/heads/main``,
-    so a dispatch of the nightly from a branch cannot assume it and cannot read the secret
+    ``sbsandbox-intern-edullm-audit-reader`` pins its subject to ``ref:refs/heads/main``,
+    so a dispatch of the audit from a branch cannot assume it and cannot read the secret
     at all. A verdict from one would be a statement produced by a tool somebody edited on
     that branch, about a value it never saw.
     """
     source = TOOL.read_text(encoding="utf-8")
 
     assert "branch={branch}" in source
-    assert load().build_parser().get_default("branch") == NIGHTLY_BRANCH
-    assert NIGHTLY_BRANCH == "main"
+    assert load().build_parser().get_default("branch") == AUDIT_BRANCH
+    assert AUDIT_BRANCH == "main"
 
 
 def test_the_tool_makes_no_aws_call_and_names_no_aws_identity() -> None:
@@ -304,4 +304,4 @@ def test_the_tool_makes_no_aws_call_and_names_no_aws_identity() -> None:
     assert "boto3" not in source
     assert "secretsmanager" not in source.replace("secretsmanager:GetSecretValue", "")
     assert '"aws"' not in source
-    assert NIGHTLY_VERDICT_ARTIFACT in source or "NIGHTLY_VERDICT_ARTIFACT" in source
+    assert AUDIT_VERDICT_ARTIFACT in source or "AUDIT_VERDICT_ARTIFACT" in source

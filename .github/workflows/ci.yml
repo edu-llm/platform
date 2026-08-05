@@ -2,7 +2,7 @@ name: Checks (CI)
 
 # Everything here can fail a build, and everything here answers a question about the
 # change under review. What used to sit below the test job and could not fail a build —
-# the two acceptance gates — now lives in nightly.yml, where it is load-bearing. See the
+# the two acceptance gates — now lives in audit.yml, where it is load-bearing. See the
 # argument at the top of that file before moving either of them back.
 #
 # pull_request (not pull_request_target) is deliberate: fork pull requests run with a

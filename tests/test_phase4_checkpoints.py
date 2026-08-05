@@ -757,7 +757,7 @@ def test_a_huggingface_checkpoint_is_not_reported_as_an_empty_prefix() -> None:
 
     Two runs measured on 2026-08-02 wrote opposite amounts to S3, nothing and 200,371,840
     bytes, and this reader described both the same way: ABSENT, "nothing is stored at this
-    prefix". The nightly then put the second one under "Wrote nothing" and told its owner
+    prefix". The audit then put the second one under "Wrote nothing" and told its owner
     they had probably forgotten to pass ``--save-folder``. They had not.
 
     Mutation: delete the ``_huggingface_checkpoint`` call from ``inspect_checkpoint``. The
@@ -791,7 +791,7 @@ def test_several_uncertified_payloads_are_not_reported_as_an_empty_prefix() -> N
     """The same false accusation as the HuggingFace case, arriving through the other door.
 
     ``_sole_payload`` answers only for a prefix holding exactly one non-marker object, so a
-    prefix holding four came back ABSENT, "nothing is stored at this prefix". The nightly
+    prefix holding four came back ABSENT, "nothing is stored at this prefix". The audit
     then filed 4.5 GiB of tars under "Wrote nothing", whose prose tells the owner they left
     the prefix empty and probably forgot ``--save-folder``. One object earns UNCOMMITTED and
     four earned a denial that the objects exist, which is the reading that is hardest to

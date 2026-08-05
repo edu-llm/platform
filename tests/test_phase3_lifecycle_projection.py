@@ -1317,7 +1317,7 @@ def test_objects_in_a_layout_no_matcher_reads_are_counted_and_named() -> None:
     """The case the survey exists for, and the one a count alone would leave unactionable.
 
     Something is under the prefix and nothing here understands it. The count says the run
-    saved; the directory names say what wrote it, which is what turns a nightly finding
+    saved; the directory names say what wrote it, which is what turns an audit finding
     into a one-line diagnosis rather than a trip to the bucket.
     """
     lister = FakeLister(

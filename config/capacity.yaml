@@ -132,20 +132,18 @@
 # WHAT IS WORTH AUTOMATING IS THE VERDICT AND NOT THE MEDIAN, WHICH IS A SMALLER THING THAN IT
 # SOUNDS. No submitter has ever chosen differently between a median of 89 minutes and one of
 # 61; what changes a decision is `places`, and every error this file has made has been in that
-# column. So the check worth having is a nightly job that reads the sixteen queues, recomputes
-# each verdict, and goes red when one disagrees with what is recorded here. It reports and
+# column. So the check worth having reads the sixteen queues, recomputes each verdict, and
+# goes red when one disagrees with what is recorded here. It reports and
 # writes nothing: a bot editing a reviewed file that is nine tenths comment would need a write
 # credential, a pull request path and a surgical substitution to avoid destroying the prose,
 # which is three failure points bought to save one edit.
 #
-# IT IS NOT BUILT, AND THE REASON IS A GRANT RATHER THAN THE CODE. The nightly reader role
-# holds no batch:ListJobs and no batch:DescribeJobs; infra/iam/nightly-reader-role.yaml omits
-# them deliberately and .github/workflows/nightly.yml says so where the visibility board
-# explains why it reads resource tags instead. That stack is applied by hand from a laptop, so
-# the job would be red from the night it shipped until somebody applied it, which is the exact
-# state that workflow's header records the visibility board spending its first weeks in. The
-# recommendation is therefore: add the two grants, then add the job. Until the first half
-# happens the second is machinery that reports nothing.
+# IT IS BUILT, AND IT IS THE `placement-verdicts` JOB OF .github/workflows/audit.yml. It was
+# blocked on a grant rather than on the code: the audit reader role held neither
+# batch:ListJobs nor batch:DescribeJobs, and that stack is applied by hand from a laptop, so a
+# job merged ahead of its permissions is red from the night it ships. #227 added the two
+# grants and deployed them, and the job was written afterwards against a role that already
+# held them. infra/iam/audit-reader-role.yaml argues both beside the statement.
 #
 # UNKNOWN IS NOT A VALUE, AND THAT IS THE POINT. Every profile in the catalog appears here
 # exactly once, so promoting a shape is an edit here as well. A file listing only the scarce

@@ -60,7 +60,7 @@ UNMAPPED_STACK = "sbsandbox-intern-edullm-phase6-inference"
 #: `test_a_denial_does_not_put_the_account_id_in_the_log` holds the tool to.
 DENIED = (
     "An error occurred (AccessDenied) when calling the GetTemplate operation: User: "
-    "arn:aws:sts::123456789012:assumed-role/sbsandbox-intern-edullm-nightly-reader/session "
+    "arn:aws:sts::123456789012:assumed-role/sbsandbox-intern-edullm-audit-reader/session "
     "is not authorized to perform: cloudformation:GetTemplate on resource: "
     "arn:aws:cloudformation:us-east-1:123456789012:stack/"
     "sbsandbox-intern-edullm-phase4-gpu-iam/9d1f0a10"
@@ -602,7 +602,7 @@ def test_a_refused_template_read_is_neither_agreement_nor_disagreement(
     assert "AccessDenied" in err
     # The remedy is a grant rather than a deploy, so the template carrying it is named where
     # the failure is read.
-    assert "nightly-reader-role.yaml" in err
+    assert "audit-reader-role.yaml" in err
 
 
 def test_a_denial_does_not_put_the_account_id_in_the_log(
@@ -939,7 +939,7 @@ def test_the_tool_exposes_a_parser(module: Any) -> None:
     parser = module.build_parser()
 
     assert parser.parse_args([]).profile is None, (
-        "the nightly runs on an assumed role and passes no profile, so a default here would "
+        "the audit runs on an assumed role and passes no profile, so a default here would "
         "send it looking for a laptop's SSO session"
     )
     assert parser.parse_args([]).region == "us-east-1"

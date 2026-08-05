@@ -1,10 +1,16 @@
-name: Nightly (the checks that are not about one change)
+name: The audit (what the platform recorded, against what is actually there)
 
-# Seven checks that answer a question about the repository or about the account rather
-# than about a change, and that either cost too much or fail too unpredictably to sit on
-# the pull-request path. Nothing here is continue-on-error, and that is the whole point of
-# moving them: there is no alerting infrastructure, so a red scheduled run is the signal,
-# and a job that cannot go red is not one.
+# THE AUDIT HOLDS WHAT THIS PLATFORM RECORDED AGAINST WHAT IS ACTUALLY THERE, AND GOES RED
+# WHEN THE TWO DISAGREE. That is the one thing the seven checks below have in common, and
+# it is why none of them belongs on the pull-request path. Each asks about the account, or
+# about somebody else's repository, rather than about a change -- so no diff can cause what
+# it finds, no diff can be blamed for it, and a check that ran per pull request would be
+# asking a question the diff in front of it cannot answer.
+#
+# Nothing here is continue-on-error, and that is the whole point of the arrangement. There
+# is no alerting infrastructure, so a red run is the signal, and a job that cannot go red is
+# not one. It runs at 05:00 so that a disagreement is waiting rather than arriving
+# mid-morning, which is a property of the schedule and not what the file is for.
 #
 # THREE JOBS WERE REMOVED ON 2026-08-05 WITH THE APPARATUS THEY SERVED. proof-bundles-reproduce
 # reran the whole suite inside itself to reproduce a recorded suite result;
@@ -55,11 +61,11 @@ name: Nightly (the checks that are not about one change)
 # repairing the key is not finished until this workflow is dispatched again: nothing else
 # writes a newer verdict, and a refusal is honoured until one does.
 #
-# The six assume sbsandbox-intern-edullm-nightly-reader, which can read the lineage
+# The six assume sbsandbox-intern-edullm-audit-reader, which can read the lineage
 # records, what the runs wrote, one secret, the deployed digest of the two admission
 # functions, the deployed template of each stack and the jobs on each Batch queue, and holds
 # no write anywhere in the account.
-# infra/iam/nightly-reader-role.yaml argues each grant; the short version is that a check
+# infra/iam/audit-reader-role.yaml argues each grant; the short version is that a check
 # able to change what it is checking can produce its own all-clear. The role is applied
 # from a laptop like every IAM stack here, so a fresh clone of this repository does not
 # bring it with it, and each of those jobs says so by name rather than failing at the
@@ -127,7 +133,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: nightly
+  group: audit
   cancel-in-progress: false
 
 jobs:
@@ -182,15 +188,15 @@ jobs:
       # Before the credential step, because configure-aws-credentials meets an empty role
       # with "Credentials could not be loaded", which reads as broken federation and sends
       # the reader to the OIDC configuration rather than to a stack nobody applied.
-      - name: Check the nightly reader role is deployed
+      - name: Check the audit reader role is deployed
         env:
-          ROLE_ARN: ${{ vars.AWS_NIGHTLY_READER_ROLE_ARN }}
+          ROLE_ARN: ${{ vars.AWS_AUDIT_READER_ROLE_ARN }}
         run: |
           set -euo pipefail
           if [[ -z "${ROLE_ARN}" ]]; then
-            echo "nightly_reader_role_not_deployed" >&2
-            echo "AWS_NIGHTLY_READER_ROLE_ARN is unset, so this job has no identity to assume." >&2
-            echo "The role is infra/iam/nightly-reader-role.yaml, applied from a laptop like" >&2
+            echo "audit_reader_role_not_deployed" >&2
+            echo "AWS_AUDIT_READER_ROLE_ARN is unset, so this job has no identity to assume." >&2
+            echo "The role is infra/iam/audit-reader-role.yaml, applied from a laptop like" >&2
             echo "every IAM stack here. See infra/README.md for the stack name and the" >&2
             echo "repository variable it needs." >&2
             exit 1
@@ -208,7 +214,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
         with:
-          role-to-assume: ${{ vars.AWS_NIGHTLY_READER_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_AUDIT_READER_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
       # The whole intent tree, because the report is handed no list of run ids and an
@@ -224,7 +230,7 @@ jobs:
           # All of them or none. A half-synced result tree reads as runs that never
           # finished, which would quietly stop asking about the runs that did, so a refusal
           # here removes the directory and the report judges every run as it did before.
-          # The nightly reader role does not hold result/ until the stack in infra/README.md
+          # The audit reader role does not hold result/ until the stack in infra/README.md
           # is applied from a laptop, so a denial is the expected answer for now.
           if ! aws s3 sync "s3://${LINEAGE_BUCKET}/result/" lineage/result/ --only-show-errors; then
             echo "note: could not read result/, so every contracted run will be judged"
@@ -284,15 +290,15 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Check the nightly reader role is deployed
+      - name: Check the audit reader role is deployed
         env:
-          ROLE_ARN: ${{ vars.AWS_NIGHTLY_READER_ROLE_ARN }}
+          ROLE_ARN: ${{ vars.AWS_AUDIT_READER_ROLE_ARN }}
         run: |
           set -euo pipefail
           if [[ -z "${ROLE_ARN}" ]]; then
-            echo "nightly_reader_role_not_deployed" >&2
-            echo "AWS_NIGHTLY_READER_ROLE_ARN is unset, so this job has no identity to assume." >&2
-            echo "The role is infra/iam/nightly-reader-role.yaml, applied from a laptop like" >&2
+            echo "audit_reader_role_not_deployed" >&2
+            echo "AWS_AUDIT_READER_ROLE_ARN is unset, so this job has no identity to assume." >&2
+            echo "The role is infra/iam/audit-reader-role.yaml, applied from a laptop like" >&2
             echo "every IAM stack here. See infra/README.md for the stack name and the" >&2
             echo "repository variable it needs." >&2
             exit 1
@@ -310,7 +316,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
         with:
-          role-to-assume: ${{ vars.AWS_NIGHTLY_READER_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_AUDIT_READER_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
       # WHAT THIS CATCHES IS A ROTATION, NOT A TRAINING BUG. The value before the one
@@ -380,15 +386,15 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Check the nightly reader role is deployed
+      - name: Check the audit reader role is deployed
         env:
-          ROLE_ARN: ${{ vars.AWS_NIGHTLY_READER_ROLE_ARN }}
+          ROLE_ARN: ${{ vars.AWS_AUDIT_READER_ROLE_ARN }}
         run: |
           set -euo pipefail
           if [[ -z "${ROLE_ARN}" ]]; then
-            echo "nightly_reader_role_not_deployed" >&2
-            echo "AWS_NIGHTLY_READER_ROLE_ARN is unset, so this job has no identity to assume." >&2
-            echo "The role is infra/iam/nightly-reader-role.yaml, applied from a laptop like" >&2
+            echo "audit_reader_role_not_deployed" >&2
+            echo "AWS_AUDIT_READER_ROLE_ARN is unset, so this job has no identity to assume." >&2
+            echo "The role is infra/iam/audit-reader-role.yaml, applied from a laptop like" >&2
             echo "every IAM stack here. See infra/README.md for the stack name and the" >&2
             echo "repository variable it needs." >&2
             exit 1
@@ -406,7 +412,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
         with:
-          role-to-assume: ${{ vars.AWS_NIGHTLY_READER_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_AUDIT_READER_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
       # WHAT THIS CATCHES IS A DEPLOYMENT, NOT A DIFF. Two committed tripwires compare each
@@ -441,15 +447,15 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Check the nightly reader role is deployed
+      - name: Check the audit reader role is deployed
         env:
-          ROLE_ARN: ${{ vars.AWS_NIGHTLY_READER_ROLE_ARN }}
+          ROLE_ARN: ${{ vars.AWS_AUDIT_READER_ROLE_ARN }}
         run: |
           set -euo pipefail
           if [[ -z "${ROLE_ARN}" ]]; then
-            echo "nightly_reader_role_not_deployed" >&2
-            echo "AWS_NIGHTLY_READER_ROLE_ARN is unset, so this job has no identity to assume." >&2
-            echo "The role is infra/iam/nightly-reader-role.yaml, applied from a laptop like" >&2
+            echo "audit_reader_role_not_deployed" >&2
+            echo "AWS_AUDIT_READER_ROLE_ARN is unset, so this job has no identity to assume." >&2
+            echo "The role is infra/iam/audit-reader-role.yaml, applied from a laptop like" >&2
             echo "every IAM stack here. See infra/README.md for the stack name and the" >&2
             echo "repository variable it needs." >&2
             exit 1
@@ -467,7 +473,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
         with:
-          role-to-assume: ${{ vars.AWS_NIGHTLY_READER_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_AUDIT_READER_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
       # WHAT THIS CATCHES IS AN APPLY, NOT A DIFF. Every other check in this repository
@@ -500,15 +506,15 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Check the nightly reader role is deployed
+      - name: Check the audit reader role is deployed
         env:
-          ROLE_ARN: ${{ vars.AWS_NIGHTLY_READER_ROLE_ARN }}
+          ROLE_ARN: ${{ vars.AWS_AUDIT_READER_ROLE_ARN }}
         run: |
           set -euo pipefail
           if [[ -z "${ROLE_ARN}" ]]; then
-            echo "nightly_reader_role_not_deployed" >&2
-            echo "AWS_NIGHTLY_READER_ROLE_ARN is unset, so this job has no identity to assume." >&2
-            echo "The role is infra/iam/nightly-reader-role.yaml, applied from a laptop like" >&2
+            echo "audit_reader_role_not_deployed" >&2
+            echo "AWS_AUDIT_READER_ROLE_ARN is unset, so this job has no identity to assume." >&2
+            echo "The role is infra/iam/audit-reader-role.yaml, applied from a laptop like" >&2
             echo "every IAM stack here. See infra/README.md for the stack name and the" >&2
             echo "repository variable it needs." >&2
             exit 1
@@ -526,7 +532,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
         with:
-          role-to-assume: ${{ vars.AWS_NIGHTLY_READER_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_AUDIT_READER_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
       # WHAT THIS CATCHES IS A RUN NOBODY CAN ACCOUNT FOR, AND THE UNION IS NOT THE POINT.
@@ -583,15 +589,15 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Check the nightly reader role is deployed
+      - name: Check the audit reader role is deployed
         env:
-          ROLE_ARN: ${{ vars.AWS_NIGHTLY_READER_ROLE_ARN }}
+          ROLE_ARN: ${{ vars.AWS_AUDIT_READER_ROLE_ARN }}
         run: |
           set -euo pipefail
           if [[ -z "${ROLE_ARN}" ]]; then
-            echo "nightly_reader_role_not_deployed" >&2
-            echo "AWS_NIGHTLY_READER_ROLE_ARN is unset, so this job has no identity to assume." >&2
-            echo "The role is infra/iam/nightly-reader-role.yaml, applied from a laptop like" >&2
+            echo "audit_reader_role_not_deployed" >&2
+            echo "AWS_AUDIT_READER_ROLE_ARN is unset, so this job has no identity to assume." >&2
+            echo "The role is infra/iam/audit-reader-role.yaml, applied from a laptop like" >&2
             echo "every IAM stack here. See infra/README.md for the stack name and the" >&2
             echo "repository variable it needs." >&2
             exit 1
@@ -609,7 +615,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
         with:
-          role-to-assume: ${{ vars.AWS_NIGHTLY_READER_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_AUDIT_READER_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
       # WHAT THIS CATCHES IS THE ACCOUNT'S NEIGHBOURS, NOT A DIFF. config/capacity.yaml
@@ -646,7 +652,7 @@ jobs:
             echo "The queues were not read, so no verdict was recomputed and this run says" >&2
             echo "nothing about config/capacity.yaml either way. The error above says which" >&2
             echo "read was refused; a denial is usually batch:ListJobs or batch:DescribeJobs," >&2
-            echo "granted in infra/iam/nightly-reader-role.yaml and applied by hand." >&2
+            echo "granted in infra/iam/audit-reader-role.yaml and applied by hand." >&2
             exit 1
           fi
           if [[ "${status}" -ne 0 ]]; then

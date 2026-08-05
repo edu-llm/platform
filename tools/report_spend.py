@@ -4,7 +4,7 @@
 ``docs-frank/reference/system-overview.md`` describes a morning message and an
 ``activity/YYYY-MM-DD.md`` in this repository carrying what ran, by whom and at what cost.
 Nothing in ``tools/`` or ``.github/workflows/`` produces either one today: the closest thing
-running is ``tools/visibility_board.py``, which the nightly writes to a step summary and
+running is ``tools/visibility_board.py``, which the audit writes to a step summary and
 which answers a different question. So rather than inventing a second activity generator
 that would have to be merged with the real one later, this computes the spend section and
 hands it back as markdown. When the activity generator exists it calls
@@ -310,7 +310,7 @@ def spend_section(
     section, because a total with no breakdown is still the number somebody asked for.
 
     THAT DEGRADATION IS NOT LICENCE FOR THE REFUSAL. This said the lineage records lived in
-    a prefix the nightly reader role did not hold, which was true of that role and never
+    a prefix the audit reader role did not hold, which was true of that role and never
     true of this tool: nothing in ``.github/workflows/`` runs this, so it runs from a laptop
     on an SSO session that can read the whole bucket. The role's gap was real and belonged
     to ``tools/visibility_board.py``, which does run on the schedule; it has since been

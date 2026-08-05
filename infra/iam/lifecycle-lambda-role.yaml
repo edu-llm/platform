@@ -62,7 +62,7 @@ Resources:
               # so the Resource cannot narrow it and the prefix condition is the whole of
               # the narrowing. Drop the Condition and this enumerates every key in the
               # outputs bucket, which is every team's output rather than the checkpoints of
-              # the run being recorded. infra/iam/nightly-reader-role.yaml gives that same
+              # the run being recorded. infra/iam/audit-reader-role.yaml gives that same
               # reasoning beside both of its listings and is the precedent this matches.
               #
               # The pattern is the value the projection actually sends. list_objects_v2 is

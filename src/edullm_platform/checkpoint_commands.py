@@ -11,7 +11,7 @@ that was not told where to save uses its own default, which for the OLMo-core ex
 ``/tmp/{run_name}`` -- local disk on a machine that stops existing when the job ends. The run
 trains for its full twelve hours, writes checkpoints nobody can reach, exits zero, and is
 recorded as an unqualified success. ``run_019fbce3-ce4b-7067-b8c7-c2cf25e6b667`` is that
-shape in the account, and the nightly reconciliation is the only thing that ever said so --
+shape in the account, and the audit's reconciliation is the only thing that ever said so --
 hours after the money was spent, and with nothing left to repair.
 
 **The rule this closes was already half-held.** ``compile_submission`` refuses more than one

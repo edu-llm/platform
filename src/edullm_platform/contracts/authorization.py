@@ -155,7 +155,7 @@ def evaluate_authorization(
     # false on 79 of the 158 written so far, and it is now the only thing a mismatched
     # claim produces. Read it to find a run whose attribution nothing established;
     # ``tools/build_phase2_proof.py`` and ``tools/build_phase5_proof.py`` already print it
-    # per run, and the nightly report does not surface it yet.
+    # per run, and the audit's report does not surface it yet.
     #
     # ASKED OF THIS SUBMITTER, NOT OF THE FILE, and that stays true of the flag as it was
     # of the refusal. It read ``bool(inventory.team_bindings.teams)`` once, so the first

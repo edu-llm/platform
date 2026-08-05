@@ -489,9 +489,16 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "\n\n"
                 "The same zip also packages config/datasets.yaml, which now registers "
                 "pretrain/frontload-cl-10b/v1 and sft/frontload-cl-chat-sft/v1."
+                "\n\n"
+                "And it packages the two comment lines the rename of the scheduled workflow "
+                "reworded, one in config/organization.yaml and one in "
+                "contracts/authorization.py. The nightly is the audit; nothing parses either "
+                "line. All three edits are one release rather than three, because a zip "
+                "carries whatever the tree holds when it is built, and three records "
+                "describing one difference would mean two of them describing nothing."
             ),
             cleared_by="uv run python tools/release_lambda.py --function validator",
-            builds_to="6f019ebbd25136b2b3eec8de6abf57ec4395c1b0f89cf897af222e0fb8ec1dd1",
+            builds_to="bf6534e1022e772f47dba0d99c131919c3e5d48784d3c7dfcce63e499ddfe155",
             released="d2c42173589e7c91ff20faeaa7b5b9f705f02e28214ad15fcf782964bf7bf3af",
             recorded_on=date(2026, 8, 5),
         ),

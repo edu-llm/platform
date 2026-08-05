@@ -36,7 +36,7 @@ mis-claimed by anybody -- were named as people charging work to other groups' bu
 not always a verdict and what this reports for a run that has none.
 
 The third prefix is read for that and for nothing else. ``decision/`` is not in
-:data:`LINEAGE_PREFIXES`, which is the pair the nightly board's role is granted and the pair
+:data:`LINEAGE_PREFIXES`, which is the pair the audit board's role is granted and the pair
 ``tools/read_substrate.py`` and ``tools/report_team_assignments.py`` stage; widening that
 constant would ask a scheduled reader for a grant it does not hold and does not need.
 
@@ -88,7 +88,7 @@ LINEAGE_PREFIXES = ("intent", "attempt")
 
 #: The prefix carrying what admission concluded, which this report reads and the other
 #: callers of :data:`LINEAGE_PREFIXES` do not. Held apart from that constant rather than
-#: appended to it, because the nightly reader role grants ``intent``, ``attempt`` and
+#: appended to it, because the audit reader role grants ``intent``, ``attempt`` and
 #: ``result`` object by object, ``sync_bucket`` raises on a prefix it is refused, and a
 #: scheduled board that asks for this one would lose its whole cost mapping over a grant it
 #: has no use for.

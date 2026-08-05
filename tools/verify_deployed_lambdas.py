@@ -308,9 +308,9 @@ def _refusal(function_name: str, status: int, stderr: str) -> DeployedLambdaFind
         "deployed_lambda_unreadable",
         f"asking Lambda about {function_name} was refused with {named}"
         f"(the CLI exited {status}), so what is deployed has not been read and this run "
-        "says nothing about it either way. A denial here is usually the grant: the nightly "
+        "says nothing about it either way. A denial here is usually the grant: the audit "
         "reader needs lambda:GetFunctionConfiguration on this function, which "
-        "infra/iam/nightly-reader-role.yaml declares and which is applied from a laptop "
+        "infra/iam/audit-reader-role.yaml declares and which is applied from a laptop "
         "like every IAM stack in infra/README.md. The full message is not printed because "
         "it names the calling and resource ARNs, and both carry the account id.",
         code=EXIT_UNUSABLE,
@@ -358,7 +358,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="all",
         help="which to check; both by default, because one config edit releases both",
     )
-    # No default profile. The nightly runs on an assumed role and passes none, and a
+    # No default profile. The audit runs on an assumed role and passes none, and a
     # default of `sbsandbox` would send it looking for an SSO session that is not there.
     parser.add_argument("--profile", default=None)
     parser.add_argument("--region", default="us-east-1")

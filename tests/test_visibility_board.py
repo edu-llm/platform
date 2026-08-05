@@ -81,7 +81,7 @@ from edullm_platform.contracts.execution import BatchJobBinding
 from edullm_platform.contracts.results import OUTPUTS_BUCKET, output_prefix
 
 EXECUTION = PROJECT_ROOT / "src" / "edullm_platform" / "execution.py"
-ROLE_PATH = IAM_ROOT / "nightly-reader-role.yaml"
+ROLE_PATH = IAM_ROOT / "audit-reader-role.yaml"
 
 #: Three run ids off the account, so that a fixture cannot pass by being shaped unlike
 #: anything real. The first two are runs whose W&B name is the literal ``$EDULLM_RUN_ID`` and
@@ -643,7 +643,7 @@ def test_the_bucket_is_listed_under_the_prefix_shape_the_role_can_list(
 ) -> None:
     """Mutation: list `teams/` once instead of one prefix per team.
 
-    It is the obvious simplification and it is denied. The nightly reader role conditions
+    It is the obvious simplification and it is denied. The audit reader role conditions
     `s3:ListBucket` with `StringLike` on `teams/*/runs/*`, so a request whose prefix is
     `teams/` matches nothing and comes back as an access denial at 05:00. One call per team
     sends `teams/{team}/runs/`, which the trailing wildcard covers.
@@ -860,7 +860,7 @@ def test_the_statement_reaches_the_report_rather_than_only_the_source() -> None:
 
     A grant named in a comment in a Python file is a grant nobody applies. The gap section is
     what a reader sees at 05:00, so the statement is rendered into it in a fenced block, ready
-    to paste under the policy in `infra/iam/nightly-reader-role.yaml`.
+    to paste under the policy in `infra/iam/audit-reader-role.yaml`.
     """
     report = render(build_board(wandb_runs=[], resources=None, outputs=[], gaps=[a_gap()]))
 
@@ -1125,7 +1125,7 @@ def test_a_binding_tree_that_is_not_there_raises_rather_than_reading_as_no_runs(
 def test_the_degrading_prefix_is_not_one_the_board_cannot_run_without() -> None:
     """Mutation: declare `binding/` in both lists, so the sync asks for it twice.
 
-    The two sets mean opposite things to `tests/test_nightly_workflow.py`: everything in the
+    The two sets mean opposite things to `tests/test_audit_workflow.py`: everything in the
     required set has to be granted, and everything in the degrading set is allowed to be and
     is not required to be. A prefix in both would be asserted to be granted and permitted
     not to be, which is a check that cannot fail.
@@ -1327,7 +1327,7 @@ def test_the_machine_readable_answer_is_written_when_asked_for(
     assert [entry["run_id"] for entry in written["observations"]] == [NAMED_RUN]
 
 
-def test_the_nightly_reader_role_holds_the_statement_this_report_quotes() -> None:
+def test_the_audit_reader_role_holds_the_statement_this_report_quotes() -> None:
     """Mutation: change one of the two spellings of the grant and leave the other.
 
     This test used to assert the opposite. It was the tripwire for the morning the IAM
@@ -1374,7 +1374,7 @@ def test_the_nightly_reader_role_holds_the_statement_this_report_quotes() -> Non
     assert "tag:GetResources" in granted, (
         "the role no longer holds the tagging read, so the account side of this board is "
         "unreadable and every night is an exit 2. Re-apply "
-        "infra/iam/nightly-reader-role.yaml from a laptop."
+        "infra/iam/audit-reader-role.yaml from a laptop."
     )
     assert [statement for statement in statements if statement == quoted] == [quoted], (
         "the template's tagging statement is not the one the report quotes. Whoever pastes "

@@ -825,7 +825,7 @@ def test_a_caller_that_reads_no_decision_records_says_nothing_rather_than_false(
     """Mutation: default ``decisions`` to something, or ``team_verified`` to ``False``.
 
     ``tools/visibility_board.py`` and :mod:`edullm_platform.substrate` price runs without
-    opening the ``decision/`` prefix, and the nightly role that the first of those runs under
+    opening the ``decision/`` prefix, and the audit role that the first of those runs under
     is not granted it. A false there would be a finding invented out of a prefix nobody read.
     """
     priced = run_costs(

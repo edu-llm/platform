@@ -1,11 +1,11 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: GitHub Actions role for the nightly checks that read the account and change nothing in it.
+Description: GitHub Actions role for the audit, which reads the account to compare it with what the platform recorded, and writes nothing anywhere.
 
 Resources:
-  NightlyReaderRole:
+  AuditReaderRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: sbsandbox-intern-edullm-nightly-reader
+      RoleName: sbsandbox-intern-edullm-audit-reader
       PermissionsBoundary:
         Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/InternSandboxBoundary
       MaxSessionDuration: 3600
@@ -13,14 +13,14 @@ Resources:
       #
       # Every OIDC role here pins `job_workflow_ref` with `StringEquals` to one workflow
       # file, which is deliberate and is what makes each role's blast radius readable off
-      # the file that can assume it. The consequence is that a token minted for nightly.yml
-      # matches none of them, so a nightly check needing AWS has no identity at all -- and
+      # the file that can assume it. The consequence is that a token minted for audit.yml
+      # matches none of them, so an audit check needing AWS has no identity at all -- and
       # the two checks that need one, checkpoint reconciliation and the W&B credential,
       # could not run.
       #
       # Widening an existing role's `job_workflow_ref` to a list was the smaller diff and
       # the worse change. The admission role can start an execution and the canceller can
-      # stop any job on either queue; adding nightly.yml to either would put those powers
+      # stop any job on either queue; adding audit.yml to either would put those powers
       # behind a scheduled workflow that nobody watches dispatch. This role is instead
       # scoped by what it can do: read a named set of things and nothing else in the
       # account, where every member of that set is argued for beside the statement below.
@@ -33,7 +33,7 @@ Resources:
       # refs/heads/main is the only ref in the subject, and a schedule cannot present
       # another one: GitHub runs a scheduled workflow on the default branch. So the same
       # condition that pins the file also means a branch cannot borrow this role by adding
-      # a job to nightly.yml and dispatching it from the branch.
+      # a job to audit.yml and dispatching it from the branch.
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -45,7 +45,7 @@ Resources:
             Condition:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
-                token.actions.githubusercontent.com:job_workflow_ref: edu-llm/platform/.github/workflows/nightly.yml@refs/heads/main
+                token.actions.githubusercontent.com:job_workflow_ref: edu-llm/platform/.github/workflows/audit.yml@refs/heads/main
                 token.actions.githubusercontent.com:repository_owner_id: "306859726"
                 token.actions.githubusercontent.com:repository_id: "1311508598"
                 token.actions.githubusercontent.com:sub: repo:edu-llm@306859726/platform@1311508598:ref:refs/heads/main
@@ -53,7 +53,7 @@ Resources:
       # denies iam:CreatePolicyVersion, so a managed policy could be created once and never
       # amended.
       Policies:
-        - PolicyName: read-what-the-nightly-checks-ask-about
+        - PolicyName: read-what-the-audit-asks-about
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
@@ -87,7 +87,7 @@ Resources:
               # carry, so this widens what the role can see by a prefix rather than by a
               # kind of thing.
               #
-              # ``tests/test_nightly_workflow.py`` now derives the required prefix set from
+              # ``tests/test_audit_workflow.py`` now derives the required prefix set from
               # the workflow and from that constant instead of restating it, so this list
               # and the tools cannot drift apart again without a red review.
               - Sid: ReadIntentRecords
@@ -213,7 +213,7 @@ Resources:
               # function's configuration -- environment variable names, role ARNs, layer
               # versions -- to answer a question about two of them. The names are the ones
               # `infra/admission-state-machine.yaml` and `infra/batch-events.yaml` declare, and
-              # tests/test_nightly_workflow.py reads them from those templates rather than
+              # tests/test_audit_workflow.py reads them from those templates rather than
               # restating them, so a rename that misses this file fails at review.
               #
               # Unqualified, with no `:*` for versions or aliases. The check asks about
@@ -244,7 +244,7 @@ Resources:
               # would silently extend it to whatever a later phase deploys under a matching
               # name, and the point of the check is that a new stack is noticed rather than
               # absorbed. The list is the same one STACKS declares in
-              # tools/verify_deployed_stacks.py, which tests/test_nightly_workflow.py reads
+              # tools/verify_deployed_stacks.py, which tests/test_audit_workflow.py reads
               # rather than restates, so a stack added to one and not the other fails at
               # review instead of as a denial at 05:00.
               #
@@ -275,7 +275,7 @@ Resources:
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-phase4-gpu-shapes/*
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-dataset-validator-iam/*
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-run-canceller-iam/*
-                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-nightly-reader-iam/*
+                  - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-audit-reader-iam/*
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-phase5-image-resolver-iam/*
                   - Fn::Sub: arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/sbsandbox-intern-edullm-run-preview-iam/*
               # THE ONE WILDCARD RESOURCE IN THIS POLICY, AND IT IS FORCED RATHER THAN CHOSEN.
@@ -363,7 +363,7 @@ Resources:
               # own header counts eight entries that were wrong, every one of them wrong in
               # the same direction, because the answer was inferred from whatever instrument
               # somebody happened to reach for. The header's conclusion is that the verdict is
-              # worth recomputing nightly and the median is not, and these two actions are the
+              # worth recomputing every night and the median is not, and these two actions are
               # whole of what that recompute needs: list a queue's jobs, describe the ones it
               # returns, and compare the verdict that falls out against the committed one.
               #
@@ -372,7 +372,7 @@ Resources:
               # stack is applied by hand from a laptop, and a scheduled job merged against a
               # role that has not been re-applied is red from the night it ships until
               # somebody remembers -- which is the exact state the header of
-              # .github/workflows/nightly.yml records the visibility board spending its first
+              # .github/workflows/audit.yml records the visibility board spending its first
               # weeks in. So the two halves are deliberately separated: the grant lands and is
               # deployed, and the job that uses it is written against a role that already has
               # it.
@@ -414,18 +414,18 @@ Resources:
               # Every write. This role exists to describe the account and a check that can
               # change what it is checking can manufacture its own all-clear. It is the one
               # property of this role worth holding to a test, and
-              # tests/test_nightly_workflow.py does.
+              # tests/test_audit_workflow.py does.
               #
               # s3:GetObject on the rest of the lineage store, which is now decision/,
               # binding/, events/ and submission-failure/ rather than "everything but
-              # intent". Nothing scheduled in nightly.yml reads any of the four: the
+              # intent". Nothing scheduled in audit.yml reads any of the four: the
               # reconciliation joins intent to result, and the board joins intent to attempt.
               # This paragraph claimed the result records were withheld long after they were
               # granted, which is the drift the derived check below now makes impossible to
               # repeat silently.
               #
               # s3:DeleteObject, for the reason the GPU workload role omits it. Checkpoints
-              # are kept because nothing on this platform can remove one, and a nightly job
+              # are kept because nothing on this platform can remove one, and an audit
               # holding the delete would be the first identity able to tidy up the evidence.
               #
               # secretsmanager:PutSecretValue, UpdateSecret and DeleteSecret. The check
@@ -477,9 +477,9 @@ Resources:
 Outputs:
   RoleName:
     Value:
-      Ref: NightlyReaderRole
+      Ref: AuditReaderRole
   RoleArn:
     Value:
       Fn::GetAtt:
-        - NightlyReaderRole
+        - AuditReaderRole
         - Arn
