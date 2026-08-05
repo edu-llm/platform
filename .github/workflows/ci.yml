@@ -30,7 +30,15 @@ jobs:
         # 3.12 is the declared floor in pyproject.toml; 3.13 is what maintainers run.
         python-version: ["3.12", "3.13"]
     steps:
+      # Two commits rather than the shallow default, for the last step in this job. On a
+      # pull request actions/checkout leaves the merge commit at HEAD, so depth 2 brings
+      # its two parents with it and HEAD^1 is the base branch -- which makes the diff
+      # against it the change under review and nothing else. Two commits, not the whole
+      # history: this runs twice per pull request and the cost is the point of not
+      # reaching for fetch-depth: 0.
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
 
       - name: Install uv
         uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
@@ -65,3 +73,117 @@ jobs:
         run: |
           uv run --frozen python tools/export_schemas.py
           git diff --exit-code schemas
+
+      # THE HALF OF release-tag.yml THAT HAS TO HAPPEN BEFORE A MERGE, NOT AFTER IT.
+      #
+      # That workflow tags whatever `project.version` declares and cannot bump it, because
+      # the bump is a commit and only a pull request may put a commit on main -- it spent
+      # seven merges failing to push one past branch protection. So the version a change
+      # will be released as has to be declared by the pull request making the change, and
+      # this is what makes that true without depending on anybody remembering it.
+      #
+      # The file the workflow's header rejected this idea in was arguing against a check
+      # that "is forgotten in exactly the hotfix where the config change is most urgent".
+      # It was arguing against discipline. This is a required check inside a required job,
+      # so it is not forgotten; it is passed, or it is deliberately bypassed by an
+      # administrator -- and release-tag.yml goes red on the merge when it is, which is the
+      # second half of the same guard.
+      #
+      # AND IT IS WHERE A MINOR BECOMES SAYABLE. The version has to be one of the three
+      # steps above the latest release and the author picks which, so `--bump minor` is a
+      # thing somebody can do and the tree records that they did. What it will not accept is
+      # silence: a change that reaches an installed CLI and declares nothing fails here
+      # rather than being handed a patch nobody chose.
+      #
+      # THE LATEST RELEASE AND NOT THE BASE BRANCH is what the three steps are measured
+      # from, because those two can disagree and did. v0.2.1 was cut from a branch by hand
+      # while this workflow was broken, so `releases/latest` named it while main's
+      # pyproject.toml still declared 0.2.0, and a patch above the base branch would have
+      # been a version already released.
+      #
+      # LAST IN THE JOB ON PURPOSE. Failing it means one command and one commit, and
+      # somebody who has to run it would rather learn that alongside the test results than
+      # instead of them.
+      #
+      # IT FAILS OPEN ON ITS OWN MALFUNCTION, which is the right way round for this
+      # particular check. A pull request whose base it cannot identify is not evidence of
+      # anything, and blocking every merge in the repository on a step that has decided it
+      # is confused costs more than the thing it is protecting -- which release-tag.yml
+      # catches anyway, loudly, one merge later.
+      - name: A change a release must carry declares a version no release has
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if ! git rev-parse --verify --quiet HEAD^1 >/dev/null; then
+            echo "no base commit to compare against, so nothing here can tell whether this"
+            echo "change is one a release has to carry. Skipping; release-tag.yml checks the"
+            echo "same thing on the merge."
+            exit 0
+          fi
+          # Read out of release-tag.yml rather than restated here. That workflow's push
+          # trigger is the definition of "worth a release", Actions gives one workflow no
+          # way to share a list with another, and a second copy nothing compares is how the
+          # two drift until a change merges having never been asked to declare a version.
+          paths="$(uv run --frozen python tools/release_paths.py | tr '\n' ' ')"
+          # Split deliberately: these are directories and files, none of which contains a
+          # space or a glob character. Quoted, it would ask git for one path with forty
+          # spaces in its name, which matches nothing and passes everything.
+          set -- ${paths}
+          touched="$(git diff --name-only HEAD^1 HEAD -- "$@")"
+          if [ -z "${touched}" ]; then
+            echo "This change touches nothing an installed edullm would answer differently"
+            echo "about, so it needs no version of its own."
+            exit 0
+          fi
+          declared="$(uv run --frozen python tools/next_version.py)"
+          latest="$(gh release view --json tagName --jq .tagName 2>/dev/null || true)"
+          if [ -z "${latest}" ]; then
+            echo "No release exists yet, so ${declared} is the first one and there is nothing"
+            echo "here to measure it against."
+            exit 0
+          fi
+          released="${latest#v}"
+          for size in patch minor major; do
+            candidate="$(uv run --frozen python tools/next_version.py --next "${size}" --of "${released}")"
+            if [ "${declared}" = "${candidate}" ]; then
+              echo "This change will be released as v${declared} when it merges, a ${size}"
+              echo "above ${latest}."
+              exit 0
+            fi
+          done
+          {
+            echo "::error::pyproject.toml declares ${declared}, which is not a patch, minor or major above the latest release ${latest}. Run 'uv run python tools/next_version.py --bump <size>' and commit the result."
+            echo
+            echo "This change touches:"
+            echo "${touched}" | sed 's/^/  /'
+            echo
+            echo "Those are the paths a release has to carry -- the CLI's own modules, the"
+            echo "modules it imports, and the configuration files it opens -- so an installed"
+            echo "edullm answers differently once this merges. The latest release is"
+            echo "${latest} and pyproject.toml declares ${declared}, which is not one step"
+            echo "above it."
+            echo
+            echo "Nothing after the merge can fix that. release-tag.yml tags what"
+            echo "pyproject.toml declares and cannot bump it: the bump is a commit, and"
+            echo "branch protection means only a pull request may put one on main. This"
+            echo "pull request is the pull request."
+            echo
+            echo "Pick the size this change is, run it, and commit what it writes."
+            echo
+            for size in patch minor major; do
+              candidate="$(uv run --frozen python tools/next_version.py --next "${size}" --of "${released}")"
+              echo "  uv run python tools/next_version.py --bump ${size}   # ${candidate}"
+            done
+            echo
+            echo "A minor is a new command, a new flag, a new optional spec field, or a new"
+            echo "refusal that can stop a submission which used to go through. A major is a"
+            echo "flag or field removed or given a new meaning, or a changed exit code."
+            echo "Anything else a re-install fixes is a patch."
+            echo
+            echo "Each moves pyproject.toml, uv.lock and the pinned install line together."
+            echo "Commit all three."
+          } >&2
+          exit 1

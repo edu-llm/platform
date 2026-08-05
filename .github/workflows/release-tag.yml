@@ -8,16 +8,51 @@ name: Cut a release when the CLI or the configuration changes
 # shapes off the form, and a CLI from before it will price an H100 run, call it valid, and
 # spend a lead's approval on a submission admission then refuses.
 #
-# So it is automatic, and the paths below are the definition of "worth a release": the code
-# that decides a refusal, the configuration that decides it, and the file the version lives
-# in. A merge touching none of them changes nothing an installed CLI would answer
-# differently, and cutting a release for it would teach people that the version moving
-# means nothing -- which is where this started.
+# THE PATHS BELOW ARE THE SURFACE AN INSTALLED CLI CAN OBSERVE, AND NOTHING WIDER. They used
+# to be `src/edullm_platform/**`, `config/**` and `pyproject.toml`, which is the whole
+# platform and the whole control plane. Twelve of the sixteen merges before this one matched
+# that list and six of them changed nothing an installed `edullm` would answer differently:
+# #195, #198, #201, #202, #206 and #207 moved a proof generator, a capacity table nothing in
+# the CLI opens, a checkpoint reader, a run comparator and an account reader. Each one would
+# have moved `releases/latest` and told thirty-five machines they were behind, which is how
+# a staleness warning stops being read.
 #
-# WHAT IT COSTS IS ONE BOT COMMIT PER QUALIFYING MERGE, and that is the cheaper of the two
-# available mistakes. The alternative is a required-check that fails a pull request touching
-# those paths without a version bump; it costs no commit and is forgotten in exactly the
-# hotfix where the config change is most urgent and least reviewed.
+# So the list is the CLI's own package, every module it transitively imports, the six
+# configuration files it opens, and the file its version lives in. It is written out rather
+# than globbed because the two directories it reaches into hold modules it does not import,
+# and tests/test_release_tag_workflow.py derives the same set from the import graph and from
+# watching the loader open files. A new import either lands here or fails the suite, and the
+# failure prints the block to paste.
+#
+# THIS WORKFLOW TAGS AND IT DOES NOT WRITE. That is the correction, and the reason for it is
+# that the previous arrangement could not work and had not worked since #201. It computed
+# the next patch version, committed the bump to pyproject.toml and uv.lock, and pushed that
+# commit to main -- which branch protection refuses, in as many words:
+#
+#     remote: - Changes must be made through a pull request.
+#     remote: - 2 of 2 required status checks are expected.
+#
+# Seven merges in a row failed on that line. `releases/latest` went on naming a tag cut
+# before all of them, so the automation written to keep the install line current was the
+# thing keeping it stale. The protection is not the problem: it is the only thing between an
+# agent and an unreviewed change to main, and it is not weakened, bypassed or exempted here.
+#
+# WHICH LEAVES THE BUMP TO A PULL REQUEST, AND THAT IS BETTER THAN IT SOUNDS. `ci.yml` will
+# not let a change to the paths below merge unless it declares a version one step above the
+# latest release, so the bump lands inside the pull request that earns it -- reviewed, and
+# with the four gates run over it. It is also the only arrangement in which a minor or a
+# major is expressible at all: a bot that computes the next patch can only ever say "another
+# one", and #199 added a refusal that can stop a submission which used to go through and got
+# a patch because nothing could give it anything else.
+#
+# SO THE ONLY WAY THIS STEP FAILS IS THE ONE WORTH BEING LOUD ABOUT. A merge that changed
+# the CLI or the configuration and still declares a released version means the pull-request
+# check was bypassed -- enforce_admins is off on this repository -- or two pull requests
+# bumped to the same number and raced. Both leave real work unreleased, and the failure
+# mode of saying nothing is that `releases/latest` goes on naming the older tag while every
+# installed CLI compares equal to it and is told it is current. That is precisely the false
+# "you are current" this whole subsystem exists to prevent, so it is a red run and not a
+# skip. It clears with a one-line bump pull request.
 #
 # NO WHEEL IS BUILT AND NOTHING IS UPLOADED. `uv tool install git+...@<tag>` builds the
 # wheel on the researcher's own machine from the tagged source, so a release here is a tag,
@@ -27,19 +62,68 @@ on:
   push:
     branches: [main]
     paths:
-      - "src/edullm_platform/**"
-      - "config/**"
+      - "src/edullm_platform/cli/**"
+      - "src/edullm_platform/__init__.py"
+      - "src/edullm_platform/admission.py"
+      - "src/edullm_platform/canonical.py"
+      - "src/edullm_platform/checkpoint_commands.py"
+      - "src/edullm_platform/config.py"
+      - "src/edullm_platform/contracts/__init__.py"
+      - "src/edullm_platform/contracts/admission.py"
+      - "src/edullm_platform/contracts/authorization.py"
+      - "src/edullm_platform/contracts/base.py"
+      - "src/edullm_platform/contracts/bindings.py"
+      - "src/edullm_platform/contracts/dataset.py"
+      - "src/edullm_platform/contracts/dataset_registry.py"
+      - "src/edullm_platform/contracts/execution.py"
+      - "src/edullm_platform/contracts/identity.py"
+      - "src/edullm_platform/contracts/image.py"
+      - "src/edullm_platform/contracts/image_scan.py"
+      - "src/edullm_platform/contracts/inventory.py"
+      - "src/edullm_platform/contracts/lifecycle.py"
+      - "src/edullm_platform/contracts/manifest.py"
+      - "src/edullm_platform/contracts/policy.py"
+      - "src/edullm_platform/contracts/repository_registry.py"
+      - "src/edullm_platform/contracts/results.py"
+      - "src/edullm_platform/contracts/source_identity.py"
+      - "src/edullm_platform/contracts/validation.py"
+      - "src/edullm_platform/contracts/vocabulary.py"
+      - "src/edullm_platform/contracts/workload.py"
+      - "src/edullm_platform/errors.py"
+      - "src/edullm_platform/execution.py"
+      - "src/edullm_platform/image_resolution.py"
+      - "src/edullm_platform/launchers.py"
+      - "src/edullm_platform/manifest_helpers.py"
+      - "src/edullm_platform/precision.py"
+      - "src/edullm_platform/submission.py"
+      - "config/datasets.yaml"
+      - "config/image-exceptions.yaml"
+      - "config/organization.yaml"
+      - "config/policy.yaml"
+      - "config/repositories.yaml"
+      - "config/workload-catalog.yaml"
       - "pyproject.toml"
+  # The handle this workflow did not have on the morning it was needed. Seven releases were
+  # missed while it was broken, and the only way to cut them once it was fixed would have
+  # been a commit to main whose sole purpose was to touch a path in the list above. A
+  # release that was missed is exactly the state somebody has to be able to repair by hand,
+  # and dispatching costs no commit and changes nothing about what gets tagged: the steps
+  # below read the ref they were dispatched at, the same way they read the ref that was
+  # pushed.
+  workflow_dispatch:
 
 # contents: write is the whole of it, and it is why this is its own file rather than a job
 # in ci.yml -- that workflow declares contents: read and runs on pull_request, including
 # from forks. Nothing here runs on a pull request and nothing here reads one.
+#
+# It is also, now, the *only* write this workflow makes: a tag and a release. Neither is
+# protected on this repository -- there are no rulesets and no tag protection -- and
+# neither touches refs/heads/main, which is the ref that is.
 permissions:
   contents: write
 
 # Serialized rather than cancelled. Two merges landing a minute apart must produce two
-# releases; cancelling the first would leave its commit on main with no tag pointing at it
-# and the version already bumped past it.
+# releases; cancelling the first would leave its commit on main with no tag pointing at it.
 concurrency:
   group: release-tag
   cancel-in-progress: false
@@ -49,53 +133,64 @@ jobs:
     name: tag and release
     runs-on: ubuntu-latest
     steps:
-      # fetch-depth: 0 because the decision below is "does this tag already exist", and
-      # the shallow default fetches no tags at all -- which would read as "no tag exists"
-      # every time and try to cut the same one on every merge.
+      # fetch-depth: 0 for two reasons, and the shallow default defeats both. The decision
+      # below is "does this tag already exist", and a shallow fetch brings no tags at all --
+      # which would read as "no tag exists" every time and try to cut one that is already
+      # there. The notes then ask what has moved since the previous release, which needs the
+      # history between that tag and here.
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      # TWO CASES, AND THE SECOND ONE IS WHAT MAKES THE FIRST RELEASE POSSIBLE.
+      # WHAT PYPROJECT.TOML SAYS IS WHAT GETS TAGGED, and nothing here writes it.
       #
-      # If no tag matches the declared version, the version is ahead of the tags: either
-      # somebody bumped it by hand in this pull request -- a minor or major bump, which is
-      # a statement nobody should have to fight this workflow to make -- or this is the
-      # first run and there are no tags at all. Both want the same thing: tag what is here.
-      #
-      # Otherwise the declared version has already been released, so this merge is an
-      # ordinary one and earns the next patch. The bump is committed to main before the tag
-      # is cut, so the tag points at a tree whose pyproject.toml says what the tag says. An
-      # install from that tag then reports a version equal to its own tag, which is what
-      # the staleness comparison assumes and what a test asserts.
+      # The version is a literal in a file, so only a commit can move it and only a pull
+      # request can put a commit on main. That is the whole shape of this workflow: the
+      # pull request declares the version its change will be released as, and this tags it.
+      # An install from that tag then reports a version equal to its own tag, which is what
+      # the staleness comparison assumes and what tests/test_cli_install_command.py asserts.
       - name: Decide the version this merge releases
         id: version
         run: |
           set -euo pipefail
-          # UNCONDITIONALLY, AND BEFORE THE BRANCH, BECAUSE THE ANNOTATED TAG IN THE NEXT
-          # STEP NEEDS A TAGGER TOO. A runner has no configured identity and its hostname
-          # has no domain, so git's auto-detected address is bogus and `git tag -a` --
-          # which asks for the identity in strict mode, exactly as `git commit` does --
-          # dies with "unable to auto-detect email address". Setting this only inside the
-          # bump branch would leave the no-bump path, which is the path the *first*
-          # release takes, failing at the one step that cannot be retried by hand.
-          # Local config, so it survives into the next step through .git/config.
+          # BEFORE ANYTHING ELSE, BECAUSE THE ANNOTATED TAG BELOW NEEDS A TAGGER. A runner
+          # has no configured identity and its hostname has no domain, so git's
+          # auto-detected address is bogus and `git tag -a` -- which asks for the identity
+          # in strict mode, exactly as `git commit` does -- dies with "unable to
+          # auto-detect email address". Local config, so it survives into the next step
+          # through .git/config.
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           version="$(python3 tools/next_version.py)"
           if git rev-parse --verify --quiet "refs/tags/v${version}" >/dev/null; then
-            version="$(python3 tools/next_version.py --bump)"
-            # uv.lock too, and it is not housekeeping: the lock records the root
-            # distribution's own version, `uv sync --locked` refuses when that disagrees
-            # with pyproject.toml, and that is the first step of every CI job. This commit
-            # goes to main with no pull request in front of it, so a bump that moved only
-            # one of the two would leave main red for whoever opened the next one.
-            git add pyproject.toml uv.lock
-            git commit -m "Release v${version}"
-            git push origin HEAD:main
-            echo "bumped=true" >> "${GITHUB_OUTPUT}"
-          else
-            echo "bumped=false" >> "${GITHUB_OUTPUT}"
+            # Said twice on purpose: ::error:: puts it at the top of the run, and the step
+            # summary is what somebody sees without opening a log.
+            echo "::error::v${version} is already released, so this change has no release to cut. Bump project.version in a pull request."
+            cat >> "${GITHUB_STEP_SUMMARY}" <<SUMMARY
+          ## Nothing to release, and something to release
+
+          This change touched the CLI or the reviewed configuration, so an installed
+          \`edullm\` would answer differently after it. But \`pyproject.toml\` still declares
+          **${version}**, and **v${version}** is already released -- so there is no new
+          version to tag, and this change will reach nobody until there is.
+
+          Nothing here can bump it. This workflow cannot write to \`main\`: branch protection
+          requires a pull request, and pushing the bump anyway is the failure this workflow
+          spent seven merges producing.
+
+          **To release it**, open an ordinary pull request that runs one of these and commits
+          what it writes.
+
+          \`\`\`bash
+          uv run python tools/next_version.py --bump patch
+          uv run python tools/next_version.py --bump minor
+          uv run python tools/next_version.py --bump major
+          \`\`\`
+
+          Each moves \`pyproject.toml\`, \`uv.lock\` and the pinned install line together.
+          Merging it cuts the release.
+          SUMMARY
+            exit 1
           fi
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
           echo "tag=v${version}" >> "${GITHUB_OUTPUT}"
@@ -105,20 +200,56 @@ jobs:
       # for a repository that has tags and no releases -- so tagging alone would leave the
       # probe permanently unable to answer, which it reads as "say nothing".
       #
-      # WHETHER config/ MOVED IS THE FIRST LINE OF THE NOTES, because it is the one thing a
-      # reader needs and the one thing generated notes cannot infer. A release that changed
-      # only code costs a researcher nothing to skip; one that moved the reviewed
-      # configuration is a release after which their `edullm check` and the platform
-      # answer the same question differently.
+      # WHETHER THE CONFIGURATION MOVED IS THE FIRST LINE OF THE NOTES, because it is the one
+      # thing a reader needs and the one thing generated notes cannot infer. A release that
+      # changed only code costs a researcher nothing to skip; one that moved the reviewed
+      # configuration is a release after which their `edullm check` and the platform answer
+      # the same question differently.
+      #
+      # THE SIX FILES THE CLI OPENS AND NOT `config/`. That directory holds capacity tables,
+      # execution targets and generated reports the CLI never reads, and v0.2.1 said the
+      # reviewed configuration had moved when the only file that changed was
+      # config/capacity.yaml. Everybody who re-installed on that sentence did it for nothing,
+      # which is the same currency the staleness warning is spent in.
+      #
+      # ONE RANGE FOR BOTH HALVES OF THE NOTE. The previous release is read from the releases
+      # API rather than from `git describe`, because those two can disagree and did: v0.2.1
+      # was cut from a branch, so it is `releases/latest` and it is not an ancestor of main,
+      # and `git describe` answers v0.2.0 here. `--generate-notes` builds its pull request
+      # list against the previous *release*, so a headline computed from `git describe` would
+      # have described a wider range than the list below it and claimed a configuration
+      # change the list did not show. The same tag is handed to both.
       - name: Cut the tag and the release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
-          BEFORE: ${{ github.event.before }}
+          # Held to what edullm_platform.cli.configuration actually opens by
+          # tests/test_release_tag_workflow.py, which watches the loader rather than reading
+          # this list. Restated here because a workflow cannot import anything.
+          CONFIGURATION_FILES: >-
+            config/datasets.yaml
+            config/image-exceptions.yaml
+            config/organization.yaml
+            config/policy.yaml
+            config/repositories.yaml
+            config/workload-catalog.yaml
         run: |
           set -euo pipefail
-          if git rev-parse --verify --quiet "${BEFORE}^{commit}" >/dev/null \
-             && ! git diff --quiet "${BEFORE}" HEAD -- config/; then
+          previous="$(gh release view --json tagName --jq .tagName 2>/dev/null || true)"
+          # A release whose tag has been deleted leaves a name nothing can diff against, and
+          # `git diff` against it would kill this step under `set -e`. Treated as no previous
+          # release, which says the configuration moved: a reader told to re-check config
+          # that did not move has lost a minute, and one not told about config that did move
+          # has an `edullm check` that disagrees with admission.
+          if [ -n "${previous}" ] \
+             && ! git rev-parse --verify --quiet "${previous}^{commit}" >/dev/null; then
+            previous=""
+          fi
+          # Split deliberately: CONFIGURATION_FILES is a list of six, none of which contains
+          # a space or a glob character. Quoted, it would ask git for one path with five
+          # spaces in its name, which matches nothing and reports every release as code-only.
+          set -- ${CONFIGURATION_FILES}
+          if [ -z "${previous}" ] || ! git diff --quiet "${previous}" HEAD -- "$@"; then
             headline="**This release moves the reviewed configuration**, so \`edullm check\` answers differently after you re-install."
           else
             headline="This release changes code only. The reviewed configuration is unchanged."
@@ -133,12 +264,19 @@ jobs:
           uv tool install --force git+https://github.com/${GITHUB_REPOSITORY}@${TAG}
           \`\`\`
 
-          \`uv tool upgrade\` does not work for a tool installed from git: it answers \`Nothing to upgrade\` whatever the state of the install, including with \`--reinstall\`. The line above is the upgrade.
+          \`uv tool upgrade\` does not work for a tool installed from git. It answers \`Nothing to upgrade\` whatever the state of the install, including with \`--reinstall\`. The line above is the upgrade.
           EOF
+
+          # Unquoted on purpose, so that an empty value contributes no argument at all. A tag
+          # name here is v followed by three integers, so there is nothing in it to split on.
+          start_tag=""
+          if [ -n "${previous}" ]; then
+            start_tag="--notes-start-tag ${previous}"
+          fi
 
           git tag -a "${TAG}" -m "${TAG}"
           git push origin "${TAG}"
           gh release create "${TAG}" \
             --title "${TAG}" \
             --notes-file "${RUNNER_TEMP}/notes.md" \
-            --generate-notes
+            --generate-notes ${start_tag}

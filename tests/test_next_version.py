@@ -18,6 +18,7 @@ from tools.next_version import (
     VersionUnreadableError,
     main,
     next_patch_version,
+    next_version,
     read_lock_version,
     read_name,
     read_version,
@@ -35,7 +36,36 @@ def test_the_patch_component_is_what_moves() -> None:
     assert next_patch_version("1.0.0") == "1.0.1"
 
 
-@pytest.mark.parametrize("version", ["0.2", "0.2.0rc1", "0.2.0+local", "v0.2.0", "2026.08.04.1"])
+def test_a_wider_bump_zeroes_everything_below_it() -> None:
+    """Mutation: increment the component and leave the ones under it.
+
+    ``0.2.1`` to ``0.3.1`` reads as a minor, sorts as one, and is a tag nobody can account
+    for a year later, because the seven patches it implies were never cut. This is the half
+    of semantic versioning that is easy to get wrong by hand, which is the argument for the
+    size being an argument to a tool rather than an edit to a line.
+    """
+    assert next_version("0.2.1", "minor") == "0.3.0"
+    assert next_version("0.2.1", "major") == "1.0.0"
+    assert next_version("1.4.7", "minor") == "1.5.0"
+    assert next_version("1.4.7", "major") == "2.0.0"
+    assert next_version("0.2.1") == "0.2.2", "a size nobody names is a patch"
+
+
+def test_a_size_that_is_not_one_of_the_three_is_refused() -> None:
+    """Mutation: fall through to a patch.
+
+    ``--bump minro`` is caught by argparse, but the same string reaches here from
+    ``ci.yml``'s loop over the sizes, and a typo that silently produced a patch would make
+    the check accept a version nobody asked for and report it as the size they did ask for.
+    """
+    with pytest.raises(VersionUnreadableError):
+        next_version("0.2.1", "enormous")
+
+
+@pytest.mark.parametrize(
+    "version",
+    ["0.2", "0.2.0rc1", "0.2.0+local", "v0.2.0", "2026.08.04.1", "2026.08.04", "0.02.1"],
+)
 def test_a_version_no_tag_could_be_cut_from_is_refused(version: str) -> None:
     """Mutation: fall back to appending ``.1``, or to PEP 440's full grammar.
 
@@ -142,10 +172,20 @@ def test_a_lock_that_does_not_name_the_root_package_is_refused() -> None:
         )
 
 
-def test_reading_and_bumping_are_the_two_things_the_workflow_asks_for(
+def test_the_read_a_workflow_makes_and_the_bump_a_person_makes(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The exact two invocations in ``release-tag.yml``, including that a read writes nothing."""
+    """The two invocations, and they are made by different things now.
+
+    ``release-tag.yml`` runs the read and nothing else: it tags what ``pyproject.toml``
+    declares and has no way to write it, because writing it means a commit on ``main`` and
+    branch protection allows those only through a pull request. The bump is the other
+    invocation, run by whoever opens that pull request.
+
+    That a read writes nothing is the load-bearing half here. A read with a side effect
+    would have the tagging workflow modifying its own checkout on every merge, and the
+    next thing it does is decide whether a tag matching that version already exists.
+    """
     pyproject = tmp_path / "pyproject.toml"
     pyproject.write_text('[project]\nname = "x"\nversion = "0.2.0"\n', encoding="utf-8")
     lock = tmp_path / "uv.lock"
@@ -162,21 +202,93 @@ def test_reading_and_bumping_are_the_two_things_the_workflow_asks_for(
     assert read_lock_version(lock.read_text(encoding="utf-8"), distribution="x") == "0.2.1"
 
 
+def test_asking_what_a_size_would_produce_writes_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The invocation ``ci.yml`` makes three times per pull request that earns a release.
+
+    It asks what each of the three sizes would produce from the latest release and compares
+    the answers with what the branch declares. A question with a side effect would have a
+    required check rewriting the tree it is checking, and the next thing that job does is
+    hand that tree to nothing at all -- so the damage would first appear as a diff nobody
+    can account for in whatever ran next.
+
+    ``--of`` is what makes the question answerable at all. The latest release is a tag, not
+    a line in this checkout, so the version the three sizes step from is named on the
+    command line rather than read off disk.
+    """
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text('[project]\nname = "x"\nversion = "0.2.2"\n', encoding="utf-8")
+
+    assert main(["--pyproject", str(pyproject), "--next", "minor"]) == 0
+    assert capsys.readouterr().out == "0.3.0\n"
+
+    assert main(["--pyproject", str(pyproject), "--next", "patch", "--of", "0.9.4"]) == 0
+    assert capsys.readouterr().out == "0.9.5\n"
+
+    assert read_version(pyproject.read_text(encoding="utf-8")) == "0.2.2"
+
+
+def test_a_named_version_no_tag_could_be_cut_from_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: let ``--of`` through unparsed.
+
+    What reaches it is a tag name with the ``v`` taken off by a shell parameter expansion,
+    and a repository whose latest release is a date or a pre-release would have the check
+    comparing against something that is not a version. Two, because the question is
+    unanswerable rather than answered no.
+    """
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text('[project]\nname = "x"\nversion = "0.2.2"\n', encoding="utf-8")
+
+    assert main(["--pyproject", str(pyproject), "--next", "patch", "--of", "2026.08.04"]) == 2
+    assert capsys.readouterr().out == ""
+
+
+def test_a_bump_names_the_size_it_makes(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """WHAT #199 COULD NOT SAY. Mutation: ignore the argument and bump the patch.
+
+    Only the patch component ever moved, because the workflow computed the next patch on
+    every qualifying merge and would have walked over a hand-written minor. #199 added a
+    refusal that stops a submission which used to go through, which the house standard calls
+    a minor in as many words, and it shipped as part of a patch with sixty other merges.
+    """
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text('[project]\nname = "x"\nversion = "0.2.2"\n', encoding="utf-8")
+    lock = tmp_path / "uv.lock"
+    lock.write_text('[[package]]\nname = "x"\nversion = "0.2.2"\n', encoding="utf-8")
+
+    assert main(["--pyproject", str(pyproject), "--bump", "minor"]) == 0
+    assert capsys.readouterr().out == "0.3.0\n"
+    assert read_version(pyproject.read_text(encoding="utf-8")) == "0.3.0"
+    assert read_lock_version(lock.read_text(encoding="utf-8"), distribution="x") == "0.3.0"
+
+    assert main(["--pyproject", str(pyproject), "--bump", "major"]) == 0
+    assert capsys.readouterr().out == "1.0.0\n"
+    assert read_version(pyproject.read_text(encoding="utf-8")) == "1.0.0"
+    assert read_lock_version(lock.read_text(encoding="utf-8"), distribution="x") == "1.0.0"
+
+
 def test_a_bump_of_the_real_files_leaves_a_tree_the_rest_of_the_suite_accepts(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """THE WHOLE POINT, AND THE ONLY TEST THAT EXERCISES A BUMP ON THE ACTUAL FILES.
 
-    ``release-tag.yml`` runs this bump and pushes the result to ``main`` directly. There is
-    no pull request, so nothing runs CI on that commit before it lands and the first person
-    to find out is whoever opens the next one and gets a red build they cannot explain.
-
-    Two invariants elsewhere in the suite are coupled to ``project.version`` and both used
-    to break on a bump: ``uv.lock`` records the root version and ``uv sync --locked`` --
-    the first line of every CI job -- refuses a disagreement, and
-    ``tests/test_cli_install_command.py`` holds ``pyproject.toml``'s pinned install line to
-    the declared version. Asserted here against copies of the real files, because the
+    Three files move on a bump and two of them are files nobody editing a version thinks
+    about. ``uv.lock`` records the root version and ``uv sync --locked`` -- the first line
+    of every CI job -- refuses a disagreement; ``tests/test_cli_install_command.py`` holds
+    ``pyproject.toml``'s pinned install line to the declared version. Both used to break on
+    a bump, and both are asserted here against copies of the real files, because the
     minimal fixtures above would keep passing if either coupling were reintroduced.
+
+    A bump now lands in an ordinary pull request, so a tree this leaves half-written is
+    caught by the same four gates as anything else rather than after the fact. That is the
+    argument for this test being cheap rather than for it being unnecessary: what it
+    protects is the one-command promise the failure message in ``ci.yml`` makes, and a
+    command that needs a follow-up nobody mentioned is a command people stop trusting.
     """
     from edullm_platform.cli.actions import PLATFORM_REPOSITORY
     from edullm_platform.cli.release import install_command

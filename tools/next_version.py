@@ -1,4 +1,4 @@
-"""Read ``project.version``, and write the next patch version back over it.
+"""Read ``project.version``, and write the next version back over it.
 
 WHY A TOOL RATHER THAN A SED LINE IN THE WORKFLOW. The version this prints becomes a tag,
 a GitHub release, and the string every installed CLI compares itself against, so a
@@ -9,23 +9,38 @@ and ``tests/test_next_version.py`` is where the cases live.
 **AND IT MOVES ``uv.lock`` IN THE SAME BREATH, WHICH IS NOT A TIDINESS.** The lock records
 the root distribution's own version, ``uv sync --locked`` fails when that disagrees with
 ``pyproject.toml``, and that command is the first step of every CI job here. A bump that
-wrote only ``pyproject.toml`` would be pushed straight to ``main`` by ``release-tag.yml``
-with no pull request in front of it, and the next person to open one would find a red
-build they did not cause and cannot fix from their branch. So the two files move together
-or neither does.
+wrote only ``pyproject.toml`` would go red on the first line CI runs, which is the state
+this repository was already in once when ``project.version`` first moved off ``0.1.0``. So
+the two files move together or neither does.
 
 The lock is edited by anchored substitution rather than by running ``uv lock``, for one
-reason beyond keeping this stdlib-only: a resolver on a release runner would have to reach
-every dependency including the git ones, and a release is not the moment to discover that
-an unrelated upstream moved. ``uv lock`` writes exactly the line this writes -- verified by
-running it -- and this cannot write anything else.
+reason beyond keeping this stdlib-only: a resolver would have to reach every dependency
+including the git ones, and finding out that an unrelated upstream moved is not what
+somebody bumping a version asked for. ``uv lock`` writes exactly the line this writes --
+verified by running it -- and this cannot write anything else.
 
-The patch component and only the patch component. A minor or major bump is a statement
-about what changed and nobody should be able to make it by merging; the workflow that
-calls this cuts a release per merge touching the CLI or the configuration, which is a
-volume no human judgement can keep up with. Where somebody does want to say more than
-"another one", they edit ``project.version`` in the pull request and the workflow tags what
-they wrote rather than bumping past it.
+**WHO RUNS THIS, AND WHY IT IS NOT A WORKFLOW ANY MORE.** ``release-tag.yml`` used to call
+this on every qualifying merge and push the result straight to ``main``. It could not:
+branch protection refuses a push to ``main``, in as many words, and five merges in a row
+failed on that line while ``releases/latest`` went on naming a tag from before all of them.
+The version is a literal in a file, so only a commit can move it and only a pull request
+can put a commit on ``main`` -- which makes this a command a person runs on a branch, and
+the bump something a reviewer sees. ``ci.yml`` fails a pull request that changes what an
+installed CLI answers while leaving ``project.version`` at a version already released, so
+running this is not something anybody has to remember.
+
+**ALL THREE SIZES, BECAUSE FOR A YEAR ONLY ONE OF THEM WAS REACHABLE.** This wrote the patch
+component and nothing else, and the workflow that called it computed the next patch on every
+qualifying merge, so a minor was a thing somebody had to hand-edit past a bot that would
+overwrite it. #199 added a refusal that stops a submission which used to go through, which
+the house standard calls a minor in as many words, and it was released as ``0.2.0`` with
+everything else. ``--bump minor`` and ``--bump major`` are the whole of the fix: the size is
+an argument the author of the change chooses, it lands as a reviewed line in the diff, and
+``ci.yml`` refuses a change that declares no size at all rather than picking one for them.
+
+A bare ``--bump`` is still a patch. It is what the great majority of releases here are, and
+the alternative -- a required argument -- makes the common case noisier to buy nothing,
+because a patch is also what a reader of the diff sees when the argument is left off.
 
 Deliberately stdlib only, and deliberately not a TOML *writer*. ``tomllib`` reads and
 cannot write; every writer reformats the file, and this file is nine tenths comment. So the
@@ -42,9 +57,12 @@ import tomllib
 from pathlib import Path
 
 __all__ = [
+    "SIZES",
     "VERSION_PATTERN",
+    "build_parser",
     "lock_version_pattern",
     "next_patch_version",
+    "next_version",
     "read_lock_version",
     "read_name",
     "read_version",
@@ -52,6 +70,11 @@ __all__ = [
     "rewrite_pinned_tag",
     "rewrite_version",
 ]
+
+#: The three statements a version bump can make, in the order they widen. Written here
+#: rather than in ``build_parser`` so that ``ci.yml``, which asks this tool what each of them
+#: would produce, iterates the same three names argparse accepts.
+SIZES = ("patch", "minor", "major")
 
 #: ``version = "0.2.0"`` at the start of a line, which is the only place hatchling reads it
 #: from and the only line this may touch. Anchored to the line start so a version inside a
@@ -61,7 +84,15 @@ VERSION_PATTERN = re.compile(r'^version\s*=\s*"(?P<version>[^"]+)"\s*$', re.MULT
 #: Three dotted integers and nothing else. Narrower than PEP 440 on purpose: the tag is
 #: ``v`` plus this, and a release tag with a local version or a pre-release segment in it
 #: is a comparison the CLI's probe would have to be taught, for a release nobody here cuts.
-SEMANTIC_VERSION = re.compile(r"^(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)$")
+#:
+#: No leading zero on any component, which is semantic versioning's own rule and is load
+#: bearing here rather than pedantry. ``\d+`` accepts ``2026.08.04``, and the next patch of
+#: that is ``2026.8.5`` -- a version this tool invented, that is not the one it was handed,
+#: and that nothing downstream would question. Reachable from a shell now that ``--of``
+#: takes a version off a command line rather than out of a parsed file.
+SEMANTIC_VERSION = re.compile(
+    r"^(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)$"
+)
 
 
 class VersionUnreadableError(RuntimeError):
@@ -140,8 +171,9 @@ def rewrite_pinned_tag(text: str, *, was: str, now: str) -> str:
     ``pyproject.toml`` carries the install line pinned to the declared version, and
     ``tests/test_cli_install_command.py`` asserts the two agree -- deliberately, because the
     line being wrong and unread for the whole life of the project is what that file exists
-    about. A bump that moved the declaration and left the pin would fail that test on
-    ``main``, with no pull request in front of it and nobody's change to blame.
+    about. A bump that moved the declaration and left the pin would leave the pull request
+    making it red on a test about a line nobody edited, which is a confusing half hour;
+    moving both here is what keeps the bump a one-command change.
 
     Substituting the pin rather than regenerating the line, because regenerating it means
     knowing how it is spelled, and there is exactly one place that knows: this runs from a
@@ -150,17 +182,32 @@ def rewrite_pinned_tag(text: str, *, was: str, now: str) -> str:
     return text.replace(f"@v{was}", f"@v{now}")
 
 
-def next_patch_version(version: str) -> str:
-    """``0.2.0`` to ``0.2.1``. Refuses anything it cannot increment unambiguously."""
+def next_version(version: str, size: str = "patch") -> str:
+    """``0.2.0`` to ``0.2.1``, ``0.3.0`` or ``1.0.0``. Refuses anything ambiguous.
+
+    A wider bump zeroes everything below it, which is the half of semantic versioning that
+    is easy to get wrong by hand: ``0.2.1`` to ``0.3.1`` reads as a minor and sorts as one,
+    and the tag it produces is one nobody can explain a year later.
+    """
+    if size not in SIZES:
+        raise VersionUnreadableError(f"{size!r} is not one of {', '.join(SIZES)}")
     matched = SEMANTIC_VERSION.fullmatch(version)
     if matched is None:
         raise VersionUnreadableError(
-            f"{version!r} is not major.minor.patch, so there is no next patch version. "
+            f"{version!r} is not major.minor.patch, so there is no next {size} version. "
             "Releases here are tagged v<version> and compared as three integers."
         )
-    return (
-        f"{matched['major']}.{matched['minor']}.{int(matched['patch']) + 1}"
-    )
+    major, minor, patch = (int(matched[part]) for part in ("major", "minor", "patch"))
+    if size == "major":
+        return f"{major + 1}.0.0"
+    if size == "minor":
+        return f"{major}.{minor + 1}.0"
+    return f"{major}.{minor}.{patch + 1}"
+
+
+def next_patch_version(version: str) -> str:
+    """``0.2.0`` to ``0.2.1``. Kept as its own name because it is the overwhelming case."""
+    return next_version(version, "patch")
 
 
 def rewrite_version(text: str, version: str) -> str:
@@ -179,9 +226,20 @@ def rewrite_version(text: str, version: str) -> str:
     return VERSION_PATTERN.sub(f'version = "{version}"', text, count=1)
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """Named this because ``tests/test_workflow_tool_arguments.py`` looks for the name.
+
+    That module builds the parser of every tool a workflow runs and checks the flags the
+    workflow passes against it, and it finds the parser by calling ``build_parser``. Built
+    inside ``main`` this parser was invisible to it, and the invocation that has been in
+    ``release-tag.yml`` since it was written went unchecked for the same reason -- it was
+    spelled ``python3``, which that module's pattern does not match either. Both are the
+    kind of gap whose first symptom is a workflow failing at argparse in a job that has
+    already done something.
+    """
     parser = argparse.ArgumentParser(
-        description="Print project.version, or bump its patch component and print the new one."
+        description="Print project.version, the version a bump of a given size would "
+        "produce, or write that version back over it."
     )
     parser.add_argument("--pyproject", type=Path, default=Path("pyproject.toml"))
     parser.add_argument(
@@ -192,18 +250,51 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--bump",
-        action="store_true",
-        help="write the next patch version back to the file before printing it",
+        nargs="?",
+        const="patch",
+        choices=SIZES,
+        default=None,
+        help="write the next version of this size back to the file before printing it; "
+        "a bare --bump is a patch",
     )
-    arguments = parser.parse_args(argv)
+    parser.add_argument(
+        "--next",
+        choices=SIZES,
+        default=None,
+        dest="next_size",
+        help="print the version a bump of this size would produce, and write nothing",
+    )
+    parser.add_argument(
+        "--of",
+        default=None,
+        help="the version --next steps from; defaults to the declared one",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    arguments = build_parser().parse_args(argv)
     lock_path = (
         arguments.lock if arguments.lock is not None else arguments.pyproject.parent / "uv.lock"
     )
+    # --next --of asks a question about a version somebody names, which is how `ci.yml` finds
+    # out what each of the three sizes would produce from the latest release. Nothing is read
+    # off disk for it, because the latest release is a tag and not a file in this checkout.
+    if arguments.next_size is not None and arguments.of is not None:
+        try:
+            print(next_version(arguments.of, arguments.next_size))
+        except VersionUnreadableError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        return 0
     text = arguments.pyproject.read_text(encoding="utf-8")
     try:
         version = read_version(text)
-        if arguments.bump:
-            was, version = version, next_patch_version(version)
+        if arguments.next_size is not None:
+            print(next_version(version, arguments.next_size))
+            return 0
+        if arguments.bump is not None:
+            was, version = version, next_version(version, arguments.bump)
             # BOTH REWRITES ARE COMPUTED BEFORE EITHER IS WRITTEN. A half-applied bump is a
             # tree whose two files disagree, which is precisely the state that fails
             # `uv sync --locked` -- so the failure mode of guarding against it must not be
