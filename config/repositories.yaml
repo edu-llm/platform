@@ -72,3 +72,16 @@ repositories:
     base_image_digest: sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
     dockerfile_path: .edullm/Dockerfile
     build_context: .
+  # open-instruct: Post-training's home. decisions.md, 'Post-training goes to
+  # open-instruct', settles that GRPO and SFT recipes migrate here rather than onto
+  # branches of OLMo-core: it already sits on olmo-eval-full's exact vLLM line, so the
+  # move removes a version line rather than adding one, and it keeps post-training in
+  # the same dependency universe as the evaluation that scores its checkpoints.
+  - repository: open-instruct
+    github_repository_id: 1319413372
+    default_branch: main
+    ecr_repository: sbsandbox-intern-edullm-open-instruct
+    base_image_repository: docker.io/library/python
+    base_image_digest: sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+    dockerfile_path: .edullm/Dockerfile
+    build_context: .

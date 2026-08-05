@@ -51,6 +51,7 @@ on:
           - edullm-data
           - OLMo-core
           - olmo-eval-full
+          - open-instruct
           - open-instruct-scored-rewards
       commit_sha:
         description: "Branch, tag or commit. Use main for a first run."
