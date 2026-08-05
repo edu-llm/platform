@@ -1,0 +1,249 @@
+{
+  "agreed": [
+    {
+      "path": "attempt_count",
+      "value": "1"
+    },
+    {
+      "path": "intent.manifest_sha256",
+      "value": "\"sha256:4bbf6ffb274d98fa0c20a3317c1b2650779adcc35491245b622ccf44cbe7e1b9\""
+    },
+    {
+      "path": "intent.submitter",
+      "value": "\"philote-dev\""
+    },
+    {
+      "path": "intent.approving_environment",
+      "value": "\"run-approval-automatic\""
+    },
+    {
+      "path": "intent.manifest.repository",
+      "value": "\"OLMo-core\""
+    },
+    {
+      "path": "intent.manifest.commit_sha",
+      "value": "\"0562640c86c33f8eec0db81678cfd08a819b616e\""
+    },
+    {
+      "path": "intent.manifest.image_digest",
+      "value": "\"sha256:3e8b0c10adaf101ec3854b12e0ccc7de8344dfac678e08b545020243bfc8dfcd\""
+    },
+    {
+      "path": "intent.manifest.workload_profile",
+      "value": "\"olmo-core-check\""
+    },
+    {
+      "path": "intent.manifest.compute_profile",
+      "value": "\"gpu-1xt4\""
+    },
+    {
+      "path": "intent.manifest.dataset_release",
+      "value": "\"none\""
+    },
+    {
+      "path": "intent.manifest.team",
+      "value": "\"platform\""
+    },
+    {
+      "path": "intent.manifest.wandb_project",
+      "value": "\"edullm-platform-smoke\""
+    },
+    {
+      "path": "intent.manifest.maximum_runtime_hours",
+      "value": "\"0.5\""
+    },
+    {
+      "path": "intent.manifest.maximum_attempts",
+      "value": "1"
+    },
+    {
+      "path": "intent.workflow_run.run_repository",
+      "value": "\"edu-llm/platform\""
+    },
+    {
+      "path": "intent.workflow_run.workflow_repository",
+      "value": "\"edu-llm/platform\""
+    },
+    {
+      "path": "intent.workflow_run.workflow_path",
+      "value": "\".github/workflows/submit-run.yml\""
+    },
+    {
+      "path": "intent.workflow_run.workflow_ref",
+      "value": "\"refs/heads/main\""
+    },
+    {
+      "path": "intent.workflow_run.run_attempt",
+      "value": "1"
+    },
+    {
+      "path": "decision.accepted",
+      "value": "true"
+    },
+    {
+      "path": "decision.reason",
+      "value": "\"accepted\""
+    },
+    {
+      "path": "decision.detail",
+      "value": "\"Admitted as automatic under policy v4, released by run-approval-automatic and authorized as automatic_below_approval_thresholds.\""
+    },
+    {
+      "path": "decision.policy_version",
+      "value": "\"v4\""
+    },
+    {
+      "path": "decision.approval_class",
+      "value": "\"automatic\""
+    },
+    {
+      "path": "decision.approving_environment",
+      "value": "\"run-approval-automatic\""
+    },
+    {
+      "path": "decision.manifest_sha256",
+      "value": "\"sha256:4bbf6ffb274d98fa0c20a3317c1b2650779adcc35491245b622ccf44cbe7e1b9\""
+    },
+    {
+      "path": "result.outcome",
+      "value": "\"succeeded\""
+    },
+    {
+      "path": "result.exit_code",
+      "value": "0"
+    },
+    {
+      "path": "result.retention_class",
+      "value": "\"standard\""
+    },
+    {
+      "path": "result.wandb_run.entity",
+      "value": "\"eduLLM\""
+    },
+    {
+      "path": "result.wandb_run.project",
+      "value": "\"edullm-platform-smoke\""
+    },
+    {
+      "path": "result.checkpoint_survey.outcome",
+      "value": "\"listed\""
+    },
+    {
+      "path": "result.checkpoint_survey.objects_seen",
+      "value": "2"
+    }
+  ],
+  "checkpoint_payloads": {
+    "differing_bytes": 716708889,
+    "first_differing_offset": 30080,
+    "left_crc32c": "UmCGRQ==",
+    "left_size_bytes": 762258865,
+    "measured_by": "both objects downloaded whole and compared byte by byte on 2026-08-05, against the digest each run's own _SUCCESS recorded",
+    "right_crc32c": "2G9ejw==",
+    "right_size_bytes": 762258865
+  },
+  "comparison": {
+    "compared_at": "2026-08-05T21:00:27Z",
+    "differences": [
+      {
+        "cause": "the instant a record was written",
+        "left": "\"2026-08-05T20:34:26.184850Z\"",
+        "path": "decision.recorded_at",
+        "right": "\"2026-08-05T20:35:41.397802Z\""
+      },
+      {
+        "cause": "the run id",
+        "left": "\"run_019fd3a1-d2f8-70e5-b453-2743c4400c35\"",
+        "path": "decision.run_id",
+        "right": "\"run_019fd3a2-fa48-706d-9d77-9b2e262f7f63\""
+      },
+      {
+        "cause": "the instant a record was written",
+        "left": "\"2026-08-05T20:34:26.184850Z\"",
+        "path": "intent.recorded_at",
+        "right": "\"2026-08-05T20:35:41.397802Z\""
+      },
+      {
+        "cause": "the run id",
+        "left": "\"run_019fd3a1-d2f8-70e5-b453-2743c4400c35\"",
+        "path": "intent.run_id",
+        "right": "\"run_019fd3a2-fa48-706d-9d77-9b2e262f7f63\""
+      },
+      {
+        "cause": "the GitHub Actions run that dispatched it",
+        "left": "31044576704",
+        "path": "intent.workflow_run.run_id",
+        "right": "31044687044"
+      },
+      {
+        "cause": "the attempt id",
+        "left": "\"att_019fd3a5-a4ec-7135-8c5b-452012dae24b\"",
+        "path": "result.attempt_id",
+        "right": "\"att_019fd3a7-63ce-758b-8ed3-8e7d0c4ccaca\""
+      },
+      {
+        "cause": "the instant a checkpoint was written",
+        "left": "\"2026-08-05T20:38:19.000000Z\"",
+        "path": "result.checkpoints[0].created_at",
+        "right": "\"2026-08-05T20:40:14.000000Z\""
+      },
+      {
+        "cause": "a prefix carrying the run id",
+        "left": "\"s3://sbsandbox-intern-edullm-outputs/teams/platform/runs/run_019fd3a1-d2f8-70e5-b453-2743c4400c35/checkpoints/step20/_SUCCESS\"",
+        "path": "result.checkpoints[0].success_marker_uri",
+        "right": "\"s3://sbsandbox-intern-edullm-outputs/teams/platform/runs/run_019fd3a2-fa48-706d-9d77-9b2e262f7f63/checkpoints/step20/_SUCCESS\""
+      },
+      {
+        "cause": "a prefix carrying the run id",
+        "left": "\"s3://sbsandbox-intern-edullm-outputs/teams/platform/runs/run_019fd3a1-d2f8-70e5-b453-2743c4400c35/checkpoints/step20/\"",
+        "path": "result.checkpoints[0].uri",
+        "right": "\"s3://sbsandbox-intern-edullm-outputs/teams/platform/runs/run_019fd3a2-fa48-706d-9d77-9b2e262f7f63/checkpoints/step20/\""
+      },
+      {
+        "cause": "the instant a record was written",
+        "left": "\"2026-08-05T20:38:20.491000Z\"",
+        "path": "result.completed_at",
+        "right": "\"2026-08-05T20:40:15.842000Z\""
+      },
+      {
+        "cause": "a prefix carrying the run id",
+        "left": "\"s3://sbsandbox-intern-edullm-outputs/teams/platform/runs/run_019fd3a1-d2f8-70e5-b453-2743c4400c35/\"",
+        "path": "result.output_prefixes[0]",
+        "right": "\"s3://sbsandbox-intern-edullm-outputs/teams/platform/runs/run_019fd3a2-fa48-706d-9d77-9b2e262f7f63/\""
+      },
+      {
+        "cause": "the run id",
+        "left": "\"run_019fd3a1-d2f8-70e5-b453-2743c4400c35\"",
+        "path": "result.run_id",
+        "right": "\"run_019fd3a2-fa48-706d-9d77-9b2e262f7f63\""
+      },
+      {
+        "cause": "the W&B run id, which is the platform run id",
+        "left": "\"run_019fd3a1-d2f8-70e5-b453-2743c4400c35\"",
+        "path": "result.wandb_run.run_id",
+        "right": "\"run_019fd3a2-fa48-706d-9d77-9b2e262f7f63\""
+      }
+    ],
+    "left": "run_019fd3a1-d2f8-70e5-b453-2743c4400c35",
+    "right": "run_019fd3a2-fa48-706d-9d77-9b2e262f7f63",
+    "schema_version": 1,
+    "unreadable_checkpoints": [],
+    "unverified": []
+  },
+  "does_not_establish": [
+    "The two runs are not the same computation, and this establishes only that their records agree. Their checkpoint payloads are the same 762,258,865 bytes long and S3 attests a different CRC32C for each. 716,708,889 of those bytes differ, which is 94 per cent of the file, and the first difference is at offset 30,080, so the two agree across the archive header and then diverge. The losses diverge from the first step. That is ordinary floating-point reduction order on a GPU and not a defect. This platform has never claimed a workload is bit-reproducible.",
+    "Nothing about the platform comparing checkpoint payloads, because it cannot. result.checkpoints[].checksum is a SHA-256 over the names and sizes a listing returned rather than a digest of the bytes, so both runs record one value in it and no checksum row appears in the comparison. That silence is not agreement. Closing it needs a read grant the lifecycle recorder deliberately does not hold.",
+    "Nothing about a multi-hour run. Each of these took about seven seconds of compute over twenty steps, inside a container alive for about twenty-five seconds.",
+    "Nothing about a fan-out. Both runs are one cell on one instance.",
+    "Nothing about a resume from a checkpoint. Both runs wrote one and neither read one back to continue from.",
+    "Nothing about a real corpus. The workload draws random bytes from a uniform distribution and its dataset release is none, so no data reached it through the airlock.",
+    "Nothing about the retry path. Each run took exactly one attempt, so no attempt after the first has ever been part of a comparison."
+  ],
+  "environment": "sandbox",
+  "establishes": "Two dispatches of one submission on gpu-1xt4, eighty-four seconds apart from a form that did not change between them, produced two lineage records differing only in fields a named cause explains. Both compiled to one manifest digest, both were classified automatic and released by nobody, and both finished succeeded with exit code 0. Each wrote one checkpoint at step 20 that the recorder could read, so the checkpoint fields are inside the comparison rather than absent from it.",
+  "lineage_bucket": "sbsandbox-intern-edullm-lineage",
+  "manifest_sha256": "sha256:4bbf6ffb274d98fa0c20a3317c1b2650779adcc35491245b622ccf44cbe7e1b9",
+  "observed_at": "2026-08-05T21:00:27Z",
+  "schema_version": 1,
+  "source": "aws"
+}
