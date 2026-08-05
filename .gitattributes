@@ -1,0 +1,36 @@
+# What line endings a committed file has, decided here rather than by whoever last saved it.
+#
+# WHAT THIS COST BEFORE IT EXISTED. A pull request arrived with three files rewritten in
+# Windows line endings. Nothing in them had changed except the invisible byte at the end of
+# every line, so a thirty-two line change was a 1,795 line diff, every reviewer read it as a
+# rewrite, and it conflicted with everything else open against the same files. At least one
+# researcher works from WSL, where an editor or a `git config core.autocrlf true` inherited
+# from a Windows install does this without being asked, so it recurs until something in the
+# repository decides the answer.
+#
+# `text=auto eol=lf` is that decision, and the two halves do different jobs. `text=auto`
+# lets git detect which files are text and normalise them to LF in the object database on
+# the way in, so a CRLF working copy commits as LF whatever the contributor's
+# `core.autocrlf` says. `eol=lf` fixes what is written back out on checkout, so nothing
+# converts them to CRLF again on the next clone. Without the second, a Windows checkout gets
+# CRLF working files and the next editor that rewrites one puts the diff back.
+#
+# WHY IT COVERS EVERYTHING RATHER THAN A LIST OF SUFFIXES. Every tracked file in this
+# repository is text -- 292 Python, 133 JSON, 58 YAML, 8 Markdown, and the lock, the two
+# TOML files and the two `py.typed` markers -- and the checked-in evidence and fixture JSON
+# is exactly the kind of generated file a list of source extensions would have missed. A
+# suffix list is also a thing somebody has to remember to extend, and the day it is not
+# extended is the day the next 1,795 line diff arrives. git's own detection is what decides
+# whether a file is text, so a binary added later is left alone without this needing an
+# entry for it.
+#
+# NOTHING IN THE TREE MOVES WHEN THIS LANDS. Every tracked file was already LF, checked
+# before this was written, so this changes no committed byte and fixes no existing damage.
+# It is a guard against the next one, and the guard is the whole of what it is for.
+#
+# WHAT IT DOES NOT COVER, SAID SO THAT NOBODY READS MORE INTO IT. It says nothing about
+# trailing whitespace, about a missing final newline, or about the encoding of a file, and
+# it does not reformat anything already committed. It also does not reach a file a
+# contributor has forced to be binary with a `-text` attribute of their own, which no file
+# here has.
+* text=auto eol=lf

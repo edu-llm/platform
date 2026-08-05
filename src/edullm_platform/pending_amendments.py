@@ -467,7 +467,12 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # to arrive on the same pair of digests.
     #
     # This entry is the next cycle: org.yaml header rewrite plus frontload-cl corpora on
-    # top of the released zip.
+    # top of the released zip, and it has been extended rather than joined by a second
+    # record. `one_record_per_function` refuses two entries for one zip, and it is right to:
+    # a zip carries whatever the tree holds when it is built, so there is one difference
+    # between the account and this tree however many changes went into it, and a second
+    # record would be describing nothing. Extending means `builds_to` moves and the reason
+    # gains a paragraph, which is what a reviewer needs to see.
     releases: tuple[PendingRelease, ...] = (
         PendingRelease(
             function="validator",
@@ -496,9 +501,25 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "line. All three edits are one release rather than three, because a zip "
                 "carries whatever the tree holds when it is built, and three records "
                 "describing one difference would mean two of them describing nothing."
+                "\n\n"
+                "A fourth edit joined them before this was cut, and it is the one worth "
+                "reading carefully because it looks like a behaviour change and is not. "
+                "`retired` in config/datasets.yaml is enforced now rather than only removing "
+                "a menu item: DatasetRegistry grew is_retired, names_a_run_may_still_use and "
+                "current_versions_of, and contracts/dataset_registry.py is a module this zip "
+                "carries. What reads them is the submission path -- `edullm check` and "
+                "tools/compile_submission.py, both before the approval gate -- and neither "
+                "is in this package. The refusal is deliberately not a condition "
+                "config/policy.yaml denies outright, so build_request_facts derives no new "
+                "fact, denied_outright_conditions gains no new condition, and the validator "
+                "this release deploys admits and refuses exactly what the one before it did. "
+                "The header of config/datasets.yaml was recounted in the same change -- "
+                "twenty-four published entries rather than sixteen, eleven not offered rather "
+                "than eight, four tokenizers rather than two -- which is comment bytes in a "
+                "packaged config file again."
             ),
             cleared_by="uv run python tools/release_lambda.py --function validator",
-            builds_to="bf6534e1022e772f47dba0d99c131919c3e5d48784d3c7dfcce63e499ddfe155",
+            builds_to="b1a068fa1ec000d2594b8d2416356edb268f3d86db19717f9208104218248bee",
             released="d2c42173589e7c91ff20faeaa7b5b9f705f02e28214ad15fcf782964bf7bf3af",
             recorded_on=date(2026, 8, 5),
         ),

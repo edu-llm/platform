@@ -52,6 +52,7 @@ from edullm_platform.submission import (
     SubmissionInputs,
     compile_submission,
     render_approver_context,
+    require_a_dataset_release_that_is_current,
     require_registered_repository,
     require_submitter_on_the_roster,
 )
@@ -227,6 +228,15 @@ def main(argv: list[str] | None = None) -> int:
         # repository with no profile at all the refusal names the profile instead. Asked
         # here, the submitter is told which field is wrong and where the list lives.
         require_registered_repository(inputs.repository, repositories=repositories)
+        # And one field further along again. This is the check the submission form was
+        # standing in for: `retired` in config/datasets.yaml removed a menu item and
+        # enforced nothing, so a dispatch reaching this job by any route other than the
+        # dropdown compiled clean, classified routine and was admitted. Asked here rather
+        # than added to policy's denied-outright list, for the reasons
+        # require_a_dataset_release_that_is_current sets out -- chiefly that a resume from
+        # a checkpoint written against a retired corpus has to keep naming that corpus, and
+        # a refusal nobody can lift would make lying about it the only route.
+        require_a_dataset_release_that_is_current(inputs.dataset_release, datasets=registry)
         submission = compile_submission(
             inputs,
             run_id=args.run_id or new_run_id(),

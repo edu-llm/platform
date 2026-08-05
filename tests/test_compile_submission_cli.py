@@ -23,6 +23,10 @@ from typing import Any
 
 import pytest
 
+from edullm_platform.config import load_yaml
+from edullm_platform.contracts.dataset_registry import DatasetRegistry
+from edullm_platform.errors import RetiredDatasetReleaseError
+from edullm_platform.submission import require_a_dataset_release_that_is_current
 from tools.compile_submission import EXIT_OK, EXIT_REFUSED, EXIT_UNUSABLE, main
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -55,7 +59,13 @@ def form(**overrides: object) -> dict[str, object]:
         "repository": "OLMo-core",
         "commit_sha": COMMIT_SHA,
         "workload_profile": "olmo-core-check",
-        "dataset_release": "dolma-2026-07",
+        # `none` rather than dolma-2026-07, and the change is the subject of one case below
+        # rather than a detail. `retired` in config/datasets.yaml used to remove a menu item
+        # and enforce nothing, so this default named a retired release through every case in
+        # this module and compiled clean each time. The compile job refuses it now. Nothing
+        # here is about the dataset, so the field holds the answer a run that reads no
+        # corpus would give.
+        "dataset_release": "none",
         "team": "data-prep",
         "wandb_project": "olmo-core-tokenize",
         "experiment": "dolma-tokenization",
@@ -282,6 +292,126 @@ def test_a_registered_repository_with_no_workload_is_refused_for_the_workload(
     reported = capsys.readouterr().err
     assert "olmo-core-check" in reported
     assert "config/repositories.yaml" not in reported
+
+
+# ---------------------------------------------------------------------------------------
+# Which dataset a submission may name
+# ---------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("retired", "instead"),
+    [("dolma-2026-07", "`none`"), ("fineweb-edu-1b-v2", "fineweb-edu-1b-v6")],
+)
+def test_a_retired_release_is_refused_here_rather_than_only_kept_off_the_form(
+    retired: str,
+    instead: str,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """THE HOLE THIS CLOSED, ASSERTED AT THE JOB EVERY SUBMISSION GOES THROUGH. Mutation:
+    take the check out and rely on the dropdown.
+
+    Both names are registered, both were held off the submission form by ``retired`` in
+    config/datasets.yaml, and until this check existed both compiled clean and classified
+    routine. Measured that way rather than reasoned about: on 2026-08-05 each of them
+    cleared ``edullm check`` with "no refusals", compiled as routine here, and was admitted.
+    The option list was the only thing refusing them, and a ``choice`` input is GitHub
+    validating a form rather than this platform enforcing a rule -- so a dispatch arriving
+    by any other route reached a green run and an immutable record naming a corpus nobody
+    publishes.
+
+    Parameterised over both because they are the two halves of one flag and the harm is
+    different at each. ``dolma-2026-07`` had nothing published under it ever, so the record
+    a run leaves is false. ``fineweb-edu-1b-v2`` is real and sealed, so the record is true
+    and the result is against a version its owner superseded, which looks exactly like a
+    result against the current one.
+
+    The replacement is asserted because a refusal that names no alternative sends a
+    submitter back to the registry to work one out, and the registry knows: v6 is the only
+    un-retired entry on ``pretrain/fineweb-edu-1b``, and nothing was ever published under
+    the release id at all.
+    """
+    exit_code, compiled = compile_form(tmp_path, payload=form(dataset_release=retired))
+
+    assert exit_code == EXIT_REFUSED
+    assert compiled == {}
+    reported = capsys.readouterr().err
+    assert "retired" in reported
+    assert instead in reported
+    assert "config/datasets.yaml" in reported
+
+
+def test_the_retired_refusal_does_not_send_a_resume_to_name_a_corpus_it_did_not_read() -> (
+    None
+):
+    """THE SCOPING, ASSERTED ON THE TEXT BECAUSE THE TEXT IS THE WHOLE OF IT. Mutation:
+    shorten the refusal to "pick the current version instead".
+
+    A run resuming from a checkpoint written against a retired corpus has to go on naming
+    that corpus. Naming the current one to get past a refusal writes exactly the false
+    lineage record this rule exists to prevent, so a refusal that recommends it would be
+    causing the harm it was built to stop.
+
+    That is also the argument for where this rule lives. It is refused before the approval
+    gate and it is not a ``denied_outright`` condition, so the honest route stays open: the
+    flag is a reviewed line in config/datasets.yaml that a pull request can clear, where a
+    condition policy denies outright is refusable by nobody at all.
+
+    Nothing in the tree needs that route today, which is worth saying rather than leaving
+    to be discovered. Batch's second attempt is the same job with the same run id and never
+    re-enters the submission path, and ``tools/build_gpu_training_submission.py`` dispatches
+    ``--resume-from`` with ``dataset_release: none``. This is scoping written down before
+    the case arrives.
+    """
+    registry = load_yaml(CONFIG_DIR / "datasets.yaml", DatasetRegistry)
+
+    with pytest.raises(RetiredDatasetReleaseError) as refusal:
+        require_a_dataset_release_that_is_current("fineweb-edu-1b-v2", datasets=registry)
+
+    assert "reproducing an earlier result" in str(refusal.value)
+    assert "clearing the flag in a pull request" in str(refusal.value)
+    assert "names the corpus it did not read" in str(refusal.value)
+
+
+def test_a_dataset_the_family_rule_refuses_is_left_to_policy_rather_than_named_retired(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Mutation: refuse every retired entry here, whatever else is wrong with it.
+
+    This check runs before compiling and the denied-outright conditions are derived inside
+    it, so a name that is both retired and not a corpus would be reported one way here and
+    the other way by ``edullm check``, which collects every refusal and asks policy first.
+    Two spellings of one submission's problem is the failure ``cli/preflight.py``'s own
+    docstring warns about, arriving through ordering rather than through a code.
+
+    So the retirement check stands aside for anything policy already owns, and a tokenizer
+    is the live instance: no tokenizer entry is retired today, and the guard is what keeps
+    the two sides agreeing if one ever is.
+    """
+    exit_code, _ = compile_form(tmp_path, payload=form(dataset_release="smollm2-bpe-v1"))
+
+    assert exit_code == EXIT_REFUSED
+    reported = capsys.readouterr().err
+    assert "dataset_is_not_a_corpus" in reported
+    assert "retired" not in reported
+
+
+def test_the_version_its_owner_calls_current_compiles(tmp_path: Path) -> None:
+    """Mutation: refuse the whole corpus rather than the retired version of it.
+
+    ``pretrain/fineweb-edu-1b`` is registered twice and only one of the two entries is
+    retired, so a refusal reaching the corpus rather than the entry would take a corpus off
+    the form as well as off the registry. This is the direction the parameterised test above
+    cannot fail in.
+    """
+    exit_code, compiled = compile_form(
+        tmp_path, payload=form(dataset_release="fineweb-edu-1b-v6")
+    )
+
+    assert exit_code == EXIT_OK
+    assert compiled["manifest"]["dataset_release"] == "fineweb-edu-1b-v6"
 
 
 # ---------------------------------------------------------------------------------------

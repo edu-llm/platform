@@ -145,38 +145,46 @@ on:
       # unregistered workload name is refused while the submission compiles, so removing the
       # options changed who could merge a registration and nothing a submitter could reach.
       # An unregistered *dataset* name is refused there too -- but an unregistered name is
-      # not what this list is holding back. Eleven registered entries are deliberately not
-      # offered, and only four of them are refused anywhere: the tokenizers and the vendor
-      # mirror trip `dataset_is_not_a_corpus`, by family, at all three checks. The other
-      # seven are admitted. Measured on 2026-08-05 by running each of them through
-      # `edullm check`, through `tools/compile_submission.py`, and through admission:
+      # not what this list is holding back. Twelve registered entries are deliberately not
+      # offered, and seven of them are refused elsewhere: the four tokenizers and the vendor
+      # mirror trip `dataset_is_not_a_corpus` by family, at all three checks, and the two
+      # retired entries trip `retired_dataset_release` at the two checks before the approval
+      # gate. The other five are admitted. Measured on 2026-08-05 by running each of them
+      # through `edullm check`, through `tools/compile_submission.py`, and through
+      # admission:
       #
-      #   dolma-2026-07, fineweb-edu-1b-v2                 retired
       #   lean4-mathlib-bytes-v3, math-memory-full-v1      tokenizer/bytes-utf8
       #   math-sft-60m-v1, pedagogy70-normal30-v1,         no tokenizer declared
       #     frontload-cl-chat-sft-v1
       #
-      # Every one of those compiles clean, classifies routine, and is admitted. Nothing
-      # downstream says a word. A run naming one of the first two writes into an immutable
-      # lineage record that it read a corpus nobody publishes any more, or picks between two
-      # versions of one corpus on reference id alone. A run naming one of the next two spends
-      # its whole allocation reaching a container that cannot construct a model for the
-      # tokens it just resolved, and exits 69. So this list is not a second lock on a locked
-      # door; for those seven it is the only lock there is, and `retired:` in
-      # config/datasets.yaml has no other enforcement anywhere -- that file says so in as
-      # many words, that the flag "keeps admission's answer and removes the menu item".
+      # Every one of those five compiles clean, classifies routine, and is admitted. Nothing
+      # downstream says a word. A run naming one spends its whole allocation reaching a
+      # container that cannot construct a model for the tokens it just resolved, and exits
+      # 69. So this list is not a second lock on a locked door; for those five it is the
+      # only lock there is.
       #
       # That is the compute_profile argument rather than the workload_profile one, and it is
       # stronger here than there: an unprovisioned machine at least reaches
-      # `no_execution_target`, late and expensively. A retired corpus reaches a green run.
+      # `no_execution_target`, late and expensively.
       #
-      # WHAT WOULD CHANGE THE ANSWER, so this is a decision rather than a preference.
-      # Build the refusals -- admission denying a `retired` entry, and a corpus whose
-      # tokenizer nothing can construct refused while compiling -- and the seven become
-      # refusable rather than merely unlistable, at which point this can be free text on
-      # exactly #232's reasoning. Until then the option list is the enforcement.
-      # tests/test_submission_form_options.py holds that measurement, and goes red when it
-      # stops being true in either direction.
+      # THE SET WAS SEVEN WHEN THIS WAS WRITTEN AND IS FIVE, WHICH IS WHAT THE LAST
+      # PARAGRAPH SAID WOULD HAPPEN. It said the answer would change when the refusals were
+      # built, and named `retired` as one of the two. `retired:` had no enforcement anywhere
+      # -- config/datasets.yaml said so in as many words, that the flag "keeps admission's
+      # answer and removes the menu item" -- and it is now refused by
+      # `require_a_dataset_release_that_is_current`, on the laptop and in the compile job.
+      # So `dolma-2026-07` and `fineweb-edu-1b-v2` left the set, this list stopped being the
+      # only thing standing between either of them and an immutable lineage record, and
+      # nothing about the options moved.
+      #
+      # WHAT WOULD CHANGE THE ANSWER AGAIN, so this stays a decision rather than a
+      # preference. The remaining half is a corpus whose tokenizer nothing here can
+      # construct, refused while compiling; build that and the five become refusable rather
+      # than merely unlistable, at which point this can be free text on exactly #232's
+      # reasoning. Until then the option list is the enforcement for them.
+      # tests/test_submission_form_options.py holds that measurement, derived from the same
+      # functions the compile job and admission use, and goes red when it stops being true
+      # in either direction.
       dataset_release:
         description: "Which corpus this run reads. Pick none if it reads nothing."
         required: true

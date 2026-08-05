@@ -11,6 +11,7 @@ is the submitter on the roster               ``submission.require_submitter_on_t
 is the repository registered                 ``submission.require_registered_repository``
 is the submitter on the team they named      ``contracts.authorization.belongs_to_claimed_team``
 is the dataset registered, and a corpus      ``contracts.dataset_registry.DatasetRegistry``
+is the dataset still the current one         ``submission.require_a_dataset_release_that_is_current``
 is the compute profile real and provisioned  ``contracts.workload.resolve_compute_profile_for_execution``
 does the command start one process per card  ``launchers.require_a_process_for_every_device``
 does it save where a retry will look         ``checkpoint_commands.require_a_save_folder_a_retry_can_find``
@@ -86,6 +87,7 @@ from edullm_platform.contracts.workload import (
 from edullm_platform.errors import (
     ExperimentNotASlugError,
     NoPublishedImageError,
+    RetiredDatasetReleaseError,
     RetryWithoutACheckpointContractError,
     SubmissionRefusedError,
     UnregisteredWorkloadProfileError,
@@ -96,6 +98,7 @@ from edullm_platform.manifest_helpers import build_request_facts, compute_manife
 from edullm_platform.precision import require_bfloat16_only_where_the_hardware_has_it
 from edullm_platform.submission import (
     exceeded_routine_bounds,
+    require_a_dataset_release_that_is_current,
     require_registered_repository,
     require_submitter_on_the_roster,
 )
@@ -657,21 +660,21 @@ def _check_dataset(
 ) -> list[Refusal]:
     registry = configuration.datasets
     if not registry.is_registered(request.dataset_release):
-        offered = ", ".join(
-            sorted(
-                {
-                    *(entry.reference_id for entry in registry.published if not entry.retired),
-                    *(entry.release_id for entry in registry.releases if not entry.retired),
-                }
-            )
-        )
+        # WHAT A REFUSAL MAY SUGGEST IS NARROWER THAN WHAT THE REGISTRY CARRIES, AND THIS
+        # LISTED THE REGISTRY. Twenty-four names, five of which the very next check refuses
+        # by family, so a submitter correcting a typo could pick one and meet
+        # `dataset_is_not_a_corpus` on the next run. That is the defect #232 took out of the
+        # workload refusal, sitting inside this one, and the fix is the same: the registry
+        # answers which names survive every check, so this cannot suggest one that does not.
+        offered = ", ".join(registry.names_a_run_may_still_use())
         return [
             Refusal(
                 code="unregistered_dataset",
                 detail=(
                     f"{request.dataset_release!r} is not a release config/datasets.yaml "
-                    f"carries. Offered: {offered}. Naming a corpus the registry has never "
-                    "heard of is denied outright, so this never reaches a reviewer."
+                    f"carries. Registered and still usable: {offered}. Naming a corpus the "
+                    "registry has never heard of is denied outright, so this never reaches "
+                    "a reviewer."
                 ),
             )
         ]
@@ -692,6 +695,18 @@ def _check_dataset(
                 ),
             )
         ]
+    # THE THIRD, AND THE ONE THAT USED TO BE ANSWERED BY A DROPDOWN. Asked over again here
+    # rather than caught, because there is no exception to catch on this path: the compile
+    # job raises it beside compiling and a laptop has nothing to call that would.
+    # ``require_a_dataset_release_that_is_current`` is the same predicate on the same
+    # registry, and its docstring carries the argument for refusing here instead of adding a
+    # condition policy denies outright.
+    try:
+        require_a_dataset_release_that_is_current(
+            request.dataset_release, datasets=registry
+        )
+    except RetiredDatasetReleaseError as exc:
+        return [Refusal(code=type(exc).reason_code, detail=str(exc))]
     return []
 
 
