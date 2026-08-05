@@ -2,8 +2,8 @@
 
 Phase: phase-0
 Bundle schema version: 1
-Source commit: ed2cf68cc29d26c71826f7bc66ef734547e385e5
-Generated: 2026-08-05T04:10:49+00:00
+Source commit: d684a333cecb7ffebf0b71fff03d78c8c4c151dd
+Generated: 2026-08-05T17:40:16+00:00
 
 This bundle exists so that a reviewer can decide whether Phase 0 is done without reading the test suite. Everything it claims was executed by `uv run python tools/build_phase0_proof.py` at generation time.
 
@@ -18,18 +18,18 @@ This bundle exists so that a reviewer can decide whether Phase 0 is done without
 
 | measure | value |
 | --- | --- |
-| suite tests collected | 5244 |
-| suite tests executed | 5049 |
-| suite passed | 5049 |
+| suite tests collected | 5474 |
+| suite tests executed | 5279 |
+| suite passed | 5275 |
 | suite failed | 0 |
 | suite errored | 0 |
-| suite skipped | 0 |
+| suite skipped | 4 |
 | matrix node ids executed | 254 |
 | matrix node ids passed | 254 |
 | matrix node ids failed | 0 |
 | phase criteria | 13 |
-| criteria COVERED | 12 (1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13) |
-| criteria DEFERRED | 1 (10) |
+| criteria COVERED | 11 (1, 2, 3, 4, 5, 6, 7, 8, 11, 12, 13) |
+| criteria DEFERRED | 2 (9, 10) |
 | criteria GAP (each one fails the gate) | 0 |
 | related recorded deferrals | 1 (D1) |
 | fixtures with recorded digests | 9 |
@@ -88,8 +88,8 @@ Digests of the files this bundle was generated from, so a reviewer can confirm t
 
 | file | digest |
 | --- | --- |
-| config/organization.yaml | sha256:93dbb74ea3f44c5b1bf9d00d505acfa888a6e78bf456550d0202989571d9c56a |
-| config/policy.yaml | sha256:093eb2bc7e52c1e452538928f3579bde26e6dd425018516b1211268c944247ad |
+| config/organization.yaml | sha256:744b222a89ad47bea8a2032922a7130560e15d4068e1908f82a0bca58c90c9de |
+| config/policy.yaml | sha256:ace2adf220cce9e540e01c8950a7f820e113aef191ce6139a4cee979e938a8d8 |
 | config/workload-catalog.yaml | sha256:e3a5fd4ab03d74866a9d7c5307a14e36639d30aea3553205d569a06989ae7e9a |
 | fixtures/authorization/admin-exception.yaml | sha256:c49db36e999df3cefd9d3e95127fe947479d121ca6b6b450839e9f0c8ae8144f |
 | fixtures/authorization/lead-self-authorization.yaml | sha256:4879d23dffb1ae9c3d81cdb35e382a1636b0642f75b7cc2afe0f8a54cebc562b |

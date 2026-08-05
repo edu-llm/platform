@@ -465,7 +465,31 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # the record as SKEWED rather than letting it stand. So the deletion is not tidiness. A
     # record left here would go on absorbing the next unexplained difference that happened
     # to arrive on the same pair of digests.
-    releases: tuple[PendingRelease, ...] = ()
+    releases: tuple[PendingRelease, ...] = (
+        PendingRelease(
+            function="validator",
+            reason=(
+                "The header of config/organization.yaml was rewritten on 2026-08-05, and "
+                "config/organization.yaml is one of the seven files in ADMISSION_CONFIG, so "
+                "comment bytes are packaged bytes. The header claimed team_leads was the "
+                "whole of who may release a routine run, and that a hand-check had found it "
+                "equal to the GitHub team-leads team. holds_routine_approver_role is "
+                "is_admin or is_team_lead, so the approvers are admins and team_leads "
+                "together, and the GitHub team holds exactly those nine. Neither list moved."
+                "\n\n"
+                "Nothing the validator reads changed and no admission decision moves with "
+                "this. admins, team_leads, every team binding and every member entry are "
+                "byte-identical; what changed is the prose above them and nothing parses "
+                "that. So the deployed validator is not stale in any sense a submitter could "
+                "meet, and the release exists to keep the digest honest rather than to carry "
+                "a behaviour."
+            ),
+            cleared_by="tools/release_lambda.py --function validator",
+            builds_to="964018c4c91d7292c0099a1f6b4815b54dc00d0361bb7e3a86662633b4dbf59c",
+            released="d2c42173589e7c91ff20faeaa7b5b9f705f02e28214ad15fcf782964bf7bf3af",
+            recorded_on=date(2026, 8, 5),
+        ),
+    )
     return one_record_per_function(releases)
 
 

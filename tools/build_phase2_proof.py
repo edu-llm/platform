@@ -745,12 +745,13 @@ def render_approval_gate(evidence: CommittedEvidence, checks: Sequence[Criterion
                     "organization state no file in this repository follows. "
                     f"`{LEAD_TEAM_PATH}` is that record: "
                     f"{spell(len(lead_team.member_logins))} logins in "
-                    f"`{lead_team.team_slug}`, compared against `team_leads` in "
-                    "`config/organization.yaml` in both directions rather than flattened into "
-                    "the reviewer list above, which would agree with the roster for the wrong "
-                    "reason. It was taken on a later day than the environment capture, and the "
-                    "expiry quoted above is the earlier of the two: a criterion resting on both "
-                    "is only as current as the older one."
+                    f"`{lead_team.team_slug}`, compared in both directions against the "
+                    "approvers `config/organization.yaml` declares -- its admins and its team "
+                    "leads together, which is the set `holds_routine_approver_role` admits -- "
+                    "rather than flattened into the reviewer list above, which would agree "
+                    "with the roster for the wrong reason. It was taken on a later day than "
+                    "the environment capture, and the expiry quoted above is the earlier of "
+                    "the two: a criterion resting on both is only as current as the older one."
                 ),
                 "",
                 (

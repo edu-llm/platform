@@ -13,7 +13,7 @@ What scopes this table is where code sits today, not a record of what the phase 
 | AdmissionExecutionInventory | edullm_platform.phase2_evidence | record | unversioned | no | sha256:8193d6d263e3e888b068b9aa36bcaf2dfe5b88ee7d5cbeb70f32481e3de076e1 |
 | EnvironmentInventory | edullm_platform.phase2_evidence | record | unversioned | no | sha256:a496a853cb96ec9f456ebc6fd2c62bca2cbd09221f5e63e1099b13966e9f06d0 |
 | EnvironmentReviewer | edullm_platform.phase2_evidence | record | unversioned | no | sha256:2d2d86e7f72a582de3961f38e82b5bdb4e88cc262c5a95deeab864c5ce3417f6 |
-| LeadTeamMembership | edullm_platform.phase2_evidence | record | unversioned | no | sha256:fcf1ab4981bb9d42b15966eebdd656a42617c7bec19816df63a6fff58158c8cc |
+| LeadTeamMembership | edullm_platform.phase2_evidence | record | unversioned | no | sha256:3b0ba7c9b7d6aa5639b6a96b13b758325661fd4fa3e341b68664d42efde91ac1 |
 | LineageInventory | edullm_platform.phase2_evidence | record | unversioned | no | sha256:44fdfa6f1ce14ce085bf18add6364911b6e4ddb95d2915f865c545319c7526b3 |
 | LineageObject | edullm_platform.phase2_evidence | record | unversioned | no | sha256:e8b3a5a7c45fa505cd8a7a2f3d2a8df3cf482684a693d8b96404488ac9773d06 |
 | ProtectedEnvironment | edullm_platform.phase2_evidence | record | unversioned | no | sha256:3d60181d51ce862aa4b65d8d7cbe3da760a50552e10328d96ef5894bc735f692 |

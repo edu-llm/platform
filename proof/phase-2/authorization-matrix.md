@@ -24,8 +24,8 @@ Built from the committed scenarios' own request facts, changing exactly one thin
 | member submits, another member approves | `caiiris` (member) | `GMatherne` (member) | routine | refused | `approver_lacks_lead_or_admin_role` | yes |
 | member submits, approver is off the roster | `caiiris` (member) | `not-a-member` (not on the roster) | routine | refused | `approver_not_in_roster` | yes |
 | submitter is off the roster | `not-a-member` (not on the roster) | `ericrcwu001` (lead) | routine | refused | `submitter_not_in_roster` | no |
-| exception, approved by a lead who is not an admin | `caiiris` (member) | `ericrcwu001` (lead) | exception | refused | `submitter_not_in_claimed_team` | no |
-| lead self-authorizes, attributing the run to another team | `VS-code-cloud` (lead) | — | routine | refused | `submitter_not_in_claimed_team` | no |
+| exception, approved by a lead who is not an admin | `nzhao721` (member) | `ericrcwu001` (lead) | exception | refused | `approver_lacks_admin_role` | yes |
+| lead self-authorizes, attributing the run to another team | `VS-code-cloud` (lead) | — | routine | granted | `routine_self_authorized` | no |
 
 ## The last row, and why it is a deferral rather than a failure
 

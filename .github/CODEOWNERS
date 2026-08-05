@@ -12,9 +12,12 @@
 # validator's own source and the policy it enforces uncovered, so a change to the
 # authorization rules needed one approving review from anybody holding write.
 #
-# CONFIG IS OWNED MORE WIDELY THAN THE REST, AND ONLY CONFIG. 84 of the last 99 commits on
-# main touched a path owned here and 29 of them touched config, counted on 2026-08-04
-# against the first-parent diff of each commit. Branch protection sets
+# CONFIG IS OWNED MORE WIDELY THAN THE REST, AND ONLY CONFIG. 84 of the 99 first-parent
+# commits on main ending at b73cdd7 touched a path owned here and 29 of them touched config,
+# counted on 2026-08-04. The window is anchored to a commit rather than left as "the last
+# 99", which slides: measured the same way on 2026-08-05 it reads 85 and 23, so the sentence
+# would have gone on asserting two numbers nobody had measured. The proportion is what the
+# argument rests on and it has held. Branch protection sets
 # require_code_owner_reviews with required_approving_review_count 1, and all 36
 # collaborators already hold write or better. So the review queue for eight research teams
 # was two people, and the largest single thing they were queueing on was config: profiles,
@@ -27,13 +30,29 @@
 # or a workflow file is not like that: the failure is a run that cannot assume a role, in
 # an account no test here can see. Those stay with the two.
 #
-# THE EIGHT LOGINS ARE SPELLED OUT RATHER THAN NAMED AS @edu-llm/team-leads, on purpose.
-# They are config/organization.yaml's `team_leads` list, and the comment at the top of that
-# file records what happens when the two disagree: the GitHub team went two days out of
-# step with the roster after the Memory group changed lead, and nothing in this repository
-# could notice. The two agree today, login for login. Naming the team here would make this
-# file silently follow the next disagreement; naming the people makes a change to who
-# reviews config a change somebody commits.
+# THE NINE LOGINS ARE SPELLED OUT RATHER THAN NAMED AS @edu-llm/team-leads, on purpose, and
+# nine is `admins` plus `team_leads` in config/organization.yaml rather than the eight in
+# `team_leads`. That is the set holds_routine_approver_role admits, so the people who may
+# review a config change are the people who may release a routine run.
+# test_config_is_owned_by_the_admins_and_exactly_the_recorded_team_leads derives this line
+# from the roster and fails on a name added to one and not the other.
+#
+# The reason for logins rather than the team is not that the two agree today. It is that a
+# team's membership is edited in organization settings and appears in no commit, so naming
+# the team would hand ownership of config to whoever an owner adds, silently. Two earlier
+# versions of this comment asserted the two agreed, dated the check, and were used to
+# justify the arrangement. Both were false when read: the GitHub team gained a ninth member
+# some time after 2026-07-31 and no hand-check caught it.
+#
+# That incident is the argument for spelling the logins out rather than against it. Nobody
+# committed anything, and had this line said @edu-llm/team-leads the right to review config
+# would have moved with it. As it happens the ninth member is BritishAmericqn, already named
+# below as an admin, so this line did not move. The next one need not be an admin.
+#
+# What compares the two is not a comment. fixtures/evidence/phase-2/github/lead-team
+# .sanitized.json is a committed capture of the GitHub team, checked against the roster in
+# both directions by tests/test_phase2_github_evidence.py and expiring after thirty days.
+# config/organization.yaml's header says how to re-take it and why a nightly job cannot.
 /.github/CODEOWNERS @philote-dev @BritishAmericqn
 /.github/workflows/** @philote-dev @BritishAmericqn
 /infra/** @philote-dev @BritishAmericqn

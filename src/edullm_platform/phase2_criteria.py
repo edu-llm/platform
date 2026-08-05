@@ -500,7 +500,7 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 ),
                 *_ids(
                     GITHUB,
-                    "test_only_a_lead_the_roster_declares_can_release_a_run_at_the_lead_gate",
+                    "test_only_an_approver_the_roster_declares_can_release_a_run_at_the_lead_gate",
                 ),
                 *_ids(GITHUB, "test_no_environment_lets_an_admin_release_without_a_reviewer"),
             ),
@@ -508,7 +508,7 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                 *_ids(AUTHZ, "test_plain_member_routine_run_approved_by_another_plain_member_is_denied"),
                 *_ids(
                     GITHUB,
-                    "test_a_lead_the_roster_declares_is_never_locked_out_of_the_lead_gate",
+                    "test_an_approver_the_roster_declares_is_never_locked_out_of_the_lead_gate",
                 ),
             ),
             scope_limits=(
@@ -525,12 +525,29 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                     "test_no_member_who_is_not_a_lead_or_admin_reviews_either_gate establishes "
                     "that every reviewer named as a user on either gate is a lead or an admin "
                     "in config/organization.yaml. The lead gate names no users at all: its "
-                    "single reviewer is the team-leads team, because eight leads exceed the "
-                    "six reviewer slots and a team counts as one. Nothing recorded who was in "
-                    "that team, so a member added to it on GitHub became a reviewer on the "
+                    "single reviewer is the team-leads team, because nine approvers exceed "
+                    "the six reviewer slots and a team counts as one. Nothing recorded who was "
+                    "in that team, so a member added to it on GitHub became a reviewer on the "
                     "lead gate and every test went on passing. "
                     "fixtures/evidence/phase-2/github/lead-team.sanitized.json is that record, "
                     "and the comparison against the roster is what now fails by name instead."
+                ),
+                (
+                    "WHAT THE TWO COMPARISONS COMPARE AGAINST WAS WRONG UNTIL 2026-08-05, AND "
+                    "THE WRONG SET WAS THE NARROW ONE. Both read team_leads, and admission "
+                    "admits an approver who is an admin or a lead, so the set the lead gate "
+                    "has to match is admins | team_leads. The gap is a real person: "
+                    "BritishAmericqn is an admin, leads no research group, and is a maintainer "
+                    "of the team-leads team. Read against team_leads he was drift, and the "
+                    "message said admission would refuse the run he released, which is the "
+                    "opposite of what holds_routine_approver_role returns for him. The repair "
+                    "that reading argues for is adding him to team_leads, and "
+                    "tests/test_inventory.py refuses an entry there who leads no group -- so "
+                    "the check pointed at a repair the roster's own invariant rejects. Both "
+                    "tests now ask holds_routine_approver_role rather than assembling the set, "
+                    "so neither can drift from what admission does, and the second direction "
+                    "gained a case it could not previously make: an admin off the team is a "
+                    "declared routine approver the lead gate will never ask."
                 ),
                 (
                     "WHICH OF THOSE CITATIONS PROVE THE STATEMENT AND WHICH SUPPORT IT WAS "
@@ -542,7 +559,7 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                     "fails. That test is what ties the membership to this gate, so without it "
                     "the other two are about a team rather than about the lead gate, which is "
                     "why it is proving here rather than cited beside the proof. "
-                    "test_a_lead_the_roster_declares_is_never_locked_out_of_the_lead_gate is "
+                    "test_an_approver_the_roster_declares_is_never_locked_out_of_the_lead_gate is "
                     "the one that stays supporting, and the reason is the statement rather "
                     "than the test's strength: it establishes that the two lists agree, which "
                     "is what licenses reading roster membership as gate membership, and it "
@@ -581,17 +598,30 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                     "cannot be read as this one; a test pins that slug against the reviewer "
                     "the lead gate actually names. The roster comparison runs in both "
                     "directions as two tests rather than one, because the directions are "
-                    "different incidents with different fixes: a login on GitHub and not in "
-                    "the roster opens a gate admission will then refuse, and a login in the "
-                    "roster and not on GitHub is a lead the gate will never release, even for "
-                    "his own group's run. Both were live at once through the two-day window "
-                    "that ended on 2026-07-30, which config/organization.yaml records."
+                    "different incidents with different fixes: a login on GitHub the roster "
+                    "does not authorize opens a gate admission will then refuse, and an "
+                    "authorized login absent from GitHub is somebody the gate will never ask, "
+                    "their own group's run included. Both were live at once through the "
+                    "two-day window that ended on 2026-07-30, which config/organization.yaml "
+                    "records."
+                ),
+                (
+                    "THE INTERVAL BELOW STOPPED BEING HYPOTHETICAL ON 2026-08-05, WHICH IS WHY "
+                    "IT IS STILL WRITTEN DOWN RATHER THAN SOFTENED. BritishAmericqn was added "
+                    "to the team-leads team at some point after the 2026-07-31 capture and "
+                    "before 2026-08-05, and the capture went on reading eight. Two comments "
+                    "asserted a hand-check on 2026-08-04 finding an empty symmetric "
+                    "difference, and by 2026-08-05 that was false. The organization is on the "
+                    "free plan, so orgs/edu-llm/audit-log answers 404 and neither the day nor "
+                    "the person who made the change can be recovered. Re-capturing is the only "
+                    "thing that closes it, and the freshness window is the only thing that "
+                    "forces a re-capture."
                 ),
                 (
                     "What a capture cannot do is notice a change while nobody is looking. "
                     "This criterion rests on two captures rather than one and they were taken "
-                    "four days apart -- the environments on 2026-07-27 and the team membership "
-                    "on 2026-07-31 -- so it is a statement about two observed_at values, and "
+                    "days apart -- the environments on 2026-07-27 and the team membership on "
+                    "2026-08-05 -- so it is a statement about two observed_at values, and "
                     "the earlier one governs: each expires on its own freshness window, the "
                     "environment capture lapses first, and the proof lapses with it rather "
                     "than surviving on the newer record. In the interval between two captures "
@@ -851,8 +881,8 @@ def phase2_criteria() -> tuple[CriterionSpec, ...]:
                     GITHUB,
                     "test_the_membership_captured_is_of_the_team_the_lead_gate_actually_names",
                 ),
-                *_ids(GITHUB, "test_only_a_lead_the_roster_declares_can_release_a_run_at_the_lead_gate"),
-                *_ids(GITHUB, "test_a_lead_the_roster_declares_is_never_locked_out_of_the_lead_gate"),
+                *_ids(GITHUB, "test_only_an_approver_the_roster_declares_can_release_a_run_at_the_lead_gate"),
+                *_ids(GITHUB, "test_an_approver_the_roster_declares_is_never_locked_out_of_the_lead_gate"),
             ),
             supporting_node_ids=(
                 *_ids(GITHUB, "test_all_three_approval_environments_exist_and_no_fourth_one_does"),
