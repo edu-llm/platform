@@ -26,6 +26,11 @@ from edullm_platform.cli.release import DISTRIBUTION, TAG_PATTERN, install_comma
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT = PROJECT_ROOT / "pyproject.toml"
+RELEASE_TAG_WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "release-tag.yml"
+
+#: Written as an escape rather than as itself, so this file can name the character it
+#: forbids without carrying one.
+EM_DASH = "\u2014"
 
 #: What uv is being asked to do. Spelled once so the rule below can quote it rather than
 #: three assertions each carrying their own copy.
@@ -118,6 +123,23 @@ def test_the_declared_version_is_a_version_a_tag_can_be_cut_from() -> None:
     which fails silently in the direction of "you are current".
     """
     assert TAG_PATTERN.fullmatch(f"v{declared_version()}")
+
+
+def test_the_release_note_this_project_publishes_carries_no_em_dash() -> None:
+    """Mutation: put the character back into the heredoc that composes the note.
+
+    That heredoc is delivered verbatim as the body of every release this workflow cuts,
+    and a release note is read at one moment -- after ``edullm submit`` has told
+    somebody their install is behind. So a house rule about published prose is a rule
+    about this file before it is a rule about anything else, and the em dash is the one
+    rule with a single character to look for. Asserted over the whole file rather than
+    the heredoc alone: the comments here are quoted in review and the step names are
+    read off the Actions tab, so there is no part of it worth exempting.
+    """
+    assert EM_DASH not in RELEASE_TAG_WORKFLOW.read_text(encoding="utf-8"), (
+        f"{RELEASE_TAG_WORKFLOW.name} carries an em dash, so every release note cut "
+        "from it carries one too. Write the sentence with a full stop instead."
+    )
 
 
 def test_the_version_has_moved_off_the_one_that_never_moved() -> None:

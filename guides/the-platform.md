@@ -38,11 +38,11 @@ Ask for all three through the [access request](https://github.com/edu-llm/platfo
 
 | Field | What it decides |
 | --- | --- |
-| `repository`, `commit_sha` | What code runs. The commit must already have an image — see *Building your image* in your repository's guide |
+| `repository`, `commit_sha` | What code runs. The commit must already have an image. See *Building your image* in your repository's guide |
 | `workload_profile` | The time limit, the retry limit and the checkpoint contract, together. Not the machine |
 | `compute_profile` | The machine. Required, and the field that decides what your run costs |
 | `team` | Who reviews it, and the S3 prefix your output lands under. Closed dropdown: `platform`, `memory-split`, `input-core`, `pre-training`, `post-training`, `data-prep`, `eval-inference`, `scratch` |
-| `experiment` | Groups related runs — a sweep, an ablation, a week. Free text, registers nothing, and what the cost view groups by |
+| `experiment` | Groups related runs, such as a sweep, an ablation or a week. Free text, registers nothing, and what the cost view groups by |
 | `dataset_release` | The corpus your job reads. `none` if it reads none |
 | `command` | What the container runs. No shell: the first word must be a program name, and the line must not be wrapped in outer quotes |
 | `wandb_project` | Where the run reports |
@@ -50,14 +50,14 @@ Ask for all three through the [access request](https://github.com/edu-llm/platfo
 
 ## Choosing a machine
 
-`compute_profile` is a closed dropdown of every shape with a queue behind it, and it is the most expensive field on the form by two orders of magnitude — $0.53 an hour at one end and $55.04 at the other. Nothing infers it from what you are running, and nothing refuses a small job on a large machine.
+`compute_profile` is a closed dropdown of every shape with a queue behind it, and it is the most expensive field on the form by two orders of magnitude. The range runs from $0.53 an hour to $55.04. Nothing infers it from what you are running, and nothing refuses a small job on a large machine.
 
 | You are | Pick |
 | --- | --- |
 | Doing anything for the first time | `cpu-32vcpu` |
 | Checking your code sees a GPU | `gpu-1xa10g` |
 | Training, one device | `gpu-1xa10g` |
-| Training, several devices | A `4x` or `8x` shape, and start one process per device — see your repository's guide |
+| Training, several devices | A `4x` or `8x` shape, and start one process per device. See your repository's guide |
 
 **This used to say to leave the field alone, and that advice was wrong the whole time it was there.** The workload profile appeared to name a machine and the form outranked it silently, so a run labelled `olmo-core-train-1gpu` could land on eight H100s and nothing anywhere said so. The catalog no longer claims a machine and this field is required, so you are asked once rather than defaulted somewhere you did not choose.
 
@@ -65,9 +65,9 @@ Your image is unaffected by this field. It is built from your commit for one arc
 
 ## Approval
 
-**A run estimated under 5 USD that asks for under an hour starts on its own.** No lead, no wait. It is still recorded and still attributed to you, and you still have to be on the roster and running registered code — what you skip is the queue, not the checks. Both halves have to hold: four hours at 50 cents waits, and one hour at 8 USD waits. So does any fan-out, whatever it costs, because a sweep is worth a person's eyes on the total before sixty-four machines start.
+**A run estimated under 5 USD that asks for under an hour starts on its own.** No lead, no wait. It is still recorded and still attributed to you, and you still have to be on the roster and running registered code. What you skip is the queue, not the checks. Both halves have to hold: four hours at 50 cents waits, and one hour at 8 USD waits. So does any fan-out, whatever it costs, because a sweep is worth a person's eyes on the total before sixty-four machines start.
 
-Everything else waits for a person. Any of the eight team leads can release any group's run, so you are not blocked on one individual — but nobody is paged, so if a run has been waiting, ask.
+Everything else waits for a person. Any of the eight team leads can release any group's run, so you are not blocked on one individual. But nobody is paged, so if a run has been waiting, ask.
 
 If you are approving, it is not a formality. Before you release a run you are shown its cost, its machine, the team it is booked to, whether the submitter will be attributed, and whether it waived any check.
 
@@ -77,7 +77,7 @@ Every run gets an id like `run_019fbce3-…`. That one string is the name of the
 
 ## Guards and waivers
 
-The platform refuses commands that contradict the run you asked for. Each guard exists because it cost somebody a real run — asking for four GPUs and starting one process trains on a quarter of the machine, bills for all of it, and exits zero.
+The platform refuses commands that contradict the run you asked for. Each guard exists because it cost somebody a real run. Asking for four GPUs and starting one process trains on a quarter of the machine, bills for all of it, and exits zero.
 
 Override by putting a token in the command, which records the decision rather than routing around the check:
 
@@ -87,7 +87,7 @@ bash -lc 'EDULLM_LAUNCH_CHECK=waived python benchmarks/memory.py --batch 64'
 
 There are two of them today and they are spelled the same way on purpose: `EDULLM_LAUNCH_CHECK=waived` for a multi-GPU machine running one process, and `EDULLM_CHECKPOINT_CHECK=waived` for a run that promised a checkpoint and saves somewhere the platform will not look. A command can carry both.
 
-A waiver lands in the run's manifest and the approving lead is told which check was waived. What it does not do is make the underlying thing work — a waived checkpoint run that loses its machine starts from nothing.
+A waiver lands in the run's manifest and the approving lead is told which check was waived. What it does not do is make the underlying thing work. A waived checkpoint run that loses its machine starts from nothing.
 
 ## The corpora
 
@@ -162,11 +162,11 @@ bash -lc 'python train.py --seed "$AWS_BATCH_JOB_ARRAY_INDEX" --save-folder "$ED
 | See a specific run | Give it the run id. You can look at anybody's |
 | Stop a run | Tick **stop** and give a reason. Your own, any time; admins can stop anyone's |
 
-You get the status, why it is not running if it is not, the exit code, and the CloudWatch log stream name. Batch reports `RUNNABLE` both for a job waiting on a machine and for one asking for more machine than exists — the reason beside the status is what tells those apart. A queued job bills nothing, but nobody is watching the queue, so ask if yours has not started within an hour.
+You get the status, why it is not running if it is not, the exit code, and the CloudWatch log stream name. Batch reports `RUNNABLE` both for a job waiting on a machine and for one asking for more machine than exists. The reason beside the status is what tells those apart. A queued job bills nothing, but nobody is watching the queue, so ask if yours has not started within an hour.
 
 **Pressing cancel on Submit a run is not this.** That stops the workflow and leaves the job running. Come here with the run id instead.
 
-The reason you give is recorded, so the run's history says it was cancelled rather than that it failed. Anything already written stays, checkpoints included — so stopping a run to fix its command does not throw away the hours it already did.
+The reason you give is recorded, so the run's history says it was cancelled rather than that it failed. Anything already written stays, checkpoints included, so stopping a run to fix its command does not throw away the hours it already did.
 
 ## From a terminal
 
@@ -176,7 +176,7 @@ The same loop without the Actions UI. One binary:
 uv tool install --force git+https://github.com/edu-llm/platform
 ```
 
-You need [uv](https://docs.astral.sh/uv/) and a `gh` that is logged in — `gh auth login`. Nothing else. `edullm` drives `git` and `gh` rather than holding a credential of its own, so it can do what you can do and nothing more, and there is still no AWS account anywhere in this.
+You need [uv](https://docs.astral.sh/uv/) and a `gh` that is logged in with `gh auth login`. Nothing else. `edullm` drives `git` and `gh` rather than holding a credential of its own, so it can do what you can do and nothing more, and there is still no AWS account anywhere in this.
 
 Then, from a checkout of the repository you work in:
 
@@ -184,7 +184,7 @@ Then, from a checkout of the repository you work in:
 edullm check --experiment onboarding --dataset none --team scratch
 ```
 
-**`check` is the half that happens on your laptop, and it is the one to lean on.** It writes a first `.edullm/run.yaml` if the repository has none, then prices what you are about to submit and lists every refusal — the same refusals admission makes, decided against the reviewed configuration your install carries. It opens no connection and answers in about a fifth of a second, so it is a thing to run while you are still editing rather than once at the end. It works on a login node with no egress.
+**`check` is the half that happens on your laptop, and it is the one to lean on.** It writes a first `.edullm/run.yaml` if the repository has none, then prices what you are about to submit and lists every refusal. They are the same refusals admission makes, decided against the reviewed configuration your install carries. It opens no connection and answers in about a fifth of a second, so it is a thing to run while you are still editing rather than once at the end. It works on a login node with no egress.
 
 ```
 worst case
@@ -206,15 +206,15 @@ no refusals. edullm submit will dispatch this.
 | `edullm logs <run-id>` | The last lines that run printed |
 | `edullm cancel <run-id> --reason ...` | Stops it. The reason is required, and is recorded |
 
-The flags are the fields the form asks for, and `check` and `submit` take the same ones. What is a property of the code — the command, the workload profile, a suggested machine — lives in `.edullm/run.yaml` and travels with it in git; what a run costs today is typed on the command line, because one commit run by two people belongs to two teams.
+The flags are the fields the form asks for, and `check` and `submit` take the same ones. The command, the workload profile and a suggested machine are properties of the code, so they live in `.edullm/run.yaml` and travel with it in git; what a run costs today is typed on the command line, because one commit run by two people belongs to two teams.
 
-`status`, `logs` and `cancel` reach AWS, and the only identity allowed to read a Batch job lives in `cancel-run.yml` — so those three dispatch that workflow and wait for a runner. Tens of seconds, not a moment. `check` and `submit` do not.
+`status`, `logs` and `cancel` reach AWS, and the only identity allowed to read a Batch job lives in `cancel-run.yml`, so those three dispatch that workflow and wait for a runner. Tens of seconds, not a moment. `check` and `submit` do not.
 
 ## Keeping edullm current
 
 Run the install line again. `--force` makes it idempotent, so the one line installs, upgrades and repairs.
 
-**Do not reach for `uv tool upgrade`.** For a tool installed from git it answers `Nothing to upgrade` whatever state your install is in — with `--reinstall` too — so the obvious command tells you that you are current when you are months behind.
+**Do not reach for `uv tool upgrade`.** For a tool installed from git it answers `Nothing to upgrade` whatever state your install is in, and `--reinstall` does not change that, so the obvious command tells you that you are current when you are months behind.
 
 The reviewed configuration travels inside the install, which is what stops a config change bricking every `edullm` in the field, and means an old install is checking against an old copy. `edullm submit` asks for the current release before it dispatches and says so if yours is not it. It never refuses on that: a release is cut most days, so being a little behind is the normal state, and admission re-derives every verdict from inside AWS regardless.
 

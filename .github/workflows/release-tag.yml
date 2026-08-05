@@ -127,7 +127,7 @@ jobs:
           cat > "${RUNNER_TEMP}/notes.md" <<EOF
           ${headline}
 
-          Install, upgrade or repair — one idempotent line does all three:
+          Install, upgrade or repair. One idempotent line does all three.
 
           \`\`\`bash
           uv tool install --force git+https://github.com/${GITHUB_REPOSITORY}@${TAG}
