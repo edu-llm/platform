@@ -9,13 +9,15 @@ import pytest
 
 from edullm_platform.run_comparison import (
     IDENTICAL_FIELDS,
+    REQUIRED_FIELD_FAMILIES,
+    REQUIRED_FIELDS,
     RecordedRun,
     RecordField,
     cause_for,
     compare_runs,
     flatten,
-    identical_fields_missing,
     read_run,
+    required_field_coverage,
     unexplained,
 )
 
@@ -149,6 +151,13 @@ def test_a_difference_no_cause_explains_is_reported_as_unexplained(tmp_path: Pat
     assert "result.wandb_run.project" in unexplained(differences)
 
 
+def without(run: RecordedRun, *paths: str) -> RecordedRun:
+    """One run's records with some leaves gone, the way a schema change leaves them."""
+    return run.model_copy(
+        update={"fields": tuple(field for field in run.fields if field.path not in paths)}
+    )
+
+
 def test_the_manifest_digest_is_required_to_be_present_and_equal(tmp_path: Path) -> None:
     """Mutation: check only that nothing differs.
 
@@ -159,18 +168,82 @@ def test_the_manifest_digest_is_required_to_be_present_and_equal(tmp_path: Path)
     written(tmp_path, LEFT)
     written(tmp_path, RIGHT)
     left = read_run(tmp_path, LEFT)
-    stripped = left.model_copy(
-        update={
-            "fields": tuple(
-                field for field in left.fields if field.path != "intent.manifest_sha256"
-            )
-        }
+    right = read_run(tmp_path, RIGHT)
+
+    stripped = required_field_coverage(without(left, "intent.manifest_sha256"), right)
+    assert stripped.missing == ("intent.manifest_sha256",)
+    assert stripped.unverified == ()
+
+    whole = required_field_coverage(left, right)
+    assert whole.missing == ()
+    assert whole.unverified == ()
+
+
+def test_a_required_field_neither_run_carries_is_unverified_and_not_agreement(
+    tmp_path: Path,
+) -> None:
+    """THE ONE THAT MATTERS. Mutation: gather the required paths from the records.
+
+    That is what this did, and it is a check that cannot fail in the case it was written
+    for. Requiring only the paths at least one record carries means a field dropped from
+    BOTH sides is never in the required set, is never looked at, and produces no difference
+    -- so the report reads exactly like agreement. Measured against the lineage store on
+    2026-08-04, a July pair passed with five required fields unexamined, ``result.exit_code``
+    among them.
+
+    Absent from both is its own answer and not either of the other two. It is not a
+    difference: nothing was compared, so nothing can be said to differ. It is not agreement
+    for the same reason.
+    """
+    written(tmp_path, LEFT)
+    written(tmp_path, RIGHT)
+    gone = ("result.exit_code", "result.wandb_run.entity", "result.wandb_run.project")
+    left = without(read_run(tmp_path, LEFT), *gone)
+    right = without(read_run(tmp_path, RIGHT), *gone)
+
+    coverage = required_field_coverage(left, right)
+
+    assert coverage.unverified == tuple(sorted(gone))
+    # And not folded into the other answer, which would report two runs as differing over a
+    # field neither of them has -- wrong about the runs, and wrong on every historical pair.
+    assert coverage.missing == ()
+    assert compare_runs(left, right) == compare_runs(
+        read_run(tmp_path, LEFT), read_run(tmp_path, RIGHT)
     )
 
-    assert identical_fields_missing(stripped, read_run(tmp_path, RIGHT)) == (
-        "intent.manifest_sha256",
-    )
-    assert identical_fields_missing(left, read_run(tmp_path, RIGHT)) == ()
+
+def test_a_family_with_no_members_is_an_empty_collection_and_not_a_missing_field(
+    tmp_path: Path,
+) -> None:
+    """Mutation: report a required family that matched nothing as unverified.
+
+    ``result.checkpoints[N].size_bytes`` is required of every checkpoint a run wrote, and
+    the fixture runs wrote none. There is no honest count of what is absent there: a run
+    with no checkpoints is not a run whose checkpoint fields went missing. Reporting one
+    would put a permanent unverified line on every check-shaped run in the store, which is
+    the crying wolf that makes the section above worth reading.
+    """
+    written(tmp_path, LEFT)
+    written(tmp_path, RIGHT)
+
+    coverage = required_field_coverage(read_run(tmp_path, LEFT), read_run(tmp_path, RIGHT))
+
+    assert any(one.pattern.startswith("^result\\.checkpoints") for one in REQUIRED_FIELD_FAMILIES)
+    assert not any(path.startswith("result.checkpoints") for path in coverage.unverified)
+
+
+def test_every_required_field_is_named_or_belongs_to_a_family_and_never_both() -> None:
+    """The two halves of the required set are one set, and the derived patterns prove it.
+
+    IDENTICAL_FIELDS is what asks a path whether it is required, and REQUIRED_FIELDS is what
+    the coverage check looks for by name. A named path a family also matches would be
+    reported unverified while its family said the count was the data's business, which is
+    two answers to one question.
+    """
+    for path in REQUIRED_FIELDS:
+        assert any(one.fullmatch(path) for one in IDENTICAL_FIELDS), path
+        assert not any(one.fullmatch(path) for one in REQUIRED_FIELD_FAMILIES), path
+    assert len(set(REQUIRED_FIELDS)) == len(REQUIRED_FIELDS)
 
 
 def test_a_second_attempt_is_a_difference_even_though_attempt_records_are_not_walked(

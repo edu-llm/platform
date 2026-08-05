@@ -167,7 +167,7 @@ The kind column separates a `record`, which some payload is validated against, f
 | ComparedField | edullm_platform.run_comparison | record | unversioned | sha256:25693216d0652deffbf2bf769ad65433205dc1d93170d61d77c86878efb0dda9 |
 | RecordField | edullm_platform.run_comparison | record | unversioned | sha256:85ed7e23a9932d370881ca8c98bf0226dde5f926d00f5fd32ac84f1091d7136f |
 | RecordedRun | edullm_platform.run_comparison | record | unversioned | sha256:33c8621f4396a4f96fb63fd05689875253b4f2133180ab57006aee9b80e97630 |
-| TwoRunComparison | edullm_platform.run_comparison | record | 1 | sha256:21c6f5f6b912413dff9be800aff13c9b13d39c9a8e168255dbc58648b33fd4db |
+| TwoRunComparison | edullm_platform.run_comparison | record | 1 | sha256:f68980a6ae7a884289de94fea97afe355ed1f5f00edebd4ce45cfc6b0c36cddb |
 
 ## Exported JSON Schema files
 

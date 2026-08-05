@@ -3,12 +3,75 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any, Final
 
 import pytest
 
 from tests.test_run_comparison import LEFT, RIGHT, written
-from tools.compare_two_runs import EXIT_DIFFERED, EXIT_MATCHED, EXIT_UNUSABLE, main
+from tools.compare_two_runs import (
+    CELL_BUDGET,
+    EXIT_DIFFERED,
+    EXIT_MATCHED,
+    EXIT_UNUSABLE,
+    EXIT_UNVERIFIED,
+    main,
+)
+
+#: The five leaves a real July pair in the lineage store carries on neither side, in the
+#: shape the records actually have them: ``exit_code`` gone from the document, and the two
+#: objects present and null. Both spellings reach the same place -- there is no
+#: ``result.wandb_run.entity`` leaf to compare -- and the null is the one the store holds,
+#: so the fixture holds it too.
+JULY_SHAPE: Final[tuple[str, ...]] = (
+    "result.exit_code",
+    "result.wandb_run.entity",
+    "result.wandb_run.project",
+    "result.checkpoint_survey.outcome",
+    "result.checkpoint_survey.objects_seen",
+)
+
+
+def edited(root: Path, run_id: str, prefix: str, change: Callable[[dict[str, Any]], None]) -> None:
+    """One record rewritten in place, the way a schema change would have written it."""
+    record = root / prefix / f"{run_id}.json"
+    document = json.loads(record.read_text(encoding="utf-8"))
+    change(document)
+    record.write_text(json.dumps(document), encoding="utf-8")
+
+
+def as_the_store_held_it_in_july(document: dict[str, Any]) -> None:
+    del document["exit_code"]
+    document["wandb_run"] = None
+    document["checkpoint_survey"] = None
+
+
+def leaving_the_table_untouched(document: dict[str, Any]) -> None:
+    """Drop required result fields the two fixture runs agree about, and only those.
+
+    Every leaf this removes is one both runs carry identically, so it produced no row
+    before and produces none after. That is what the guard below rests on: with these gone
+    from both records there is nothing left for the two reports to differ about except
+    whether the tool says the fields went unchecked. ``wandb_run`` is deliberately not
+    among them -- its ``run_id`` differs by the run id, so nulling it would take a row out
+    of the table and hand the guard an incidental difference to pass on.
+    """
+    del document["exit_code"]
+    document["checkpoint_survey"] = None
+
+
+def rows(report: str) -> list[str]:
+    """The table, which is everything a reader compares two of these reports on."""
+    return [line for line in report.splitlines() if line.startswith("| ")]
+
+
+def compared(root: Path, capsys: pytest.CaptureFixture[str], **extra: str) -> tuple[int, str]:
+    arguments = ["--lineage-root", str(root), "--left", LEFT, "--right", RIGHT]
+    for name, value in extra.items():
+        arguments += [f"--{name}", value]
+    code = main(arguments)
+    return code, capsys.readouterr().out
 
 
 def test_two_runs_of_one_submission_exit_zero_and_name_every_difference(
@@ -94,24 +157,190 @@ def test_the_two_run_ids_must_differ(tmp_path: Path, capsys: pytest.CaptureFixtu
 def test_a_required_field_one_run_stopped_carrying_is_named_in_its_own_section(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Mutation: drop identical_fields_missing from the report.
+    """Mutation: drop the required-fields section from the report.
 
     A field present on one side and gone from the other is reported twice on purpose --
     once as a difference against `<absent>`, and once under a heading that says the
-    comparison required it. Only the second survives the case the first cannot see, which
-    is both records dropping the field together; keeping the section is what makes that
-    reading available to somebody holding the report rather than the tree.
+    comparison required it. The second is what makes the reading available to somebody
+    holding the report rather than the tree, and it is what the section below it, for the
+    fields neither run carries, is the other half of.
     """
     written(tmp_path, LEFT)
     written(tmp_path, RIGHT)
-    record = tmp_path / "intent" / f"{RIGHT}.json"
-    document = json.loads(record.read_text(encoding="utf-8"))
-    del document["manifest_sha256"]
-    record.write_text(json.dumps(document), encoding="utf-8")
+    edited(tmp_path, RIGHT, "intent", lambda document: document.pop("manifest_sha256"))
 
-    code = main(["--lineage-root", str(tmp_path), "--left", LEFT, "--right", RIGHT])
+    code, printed = compared(tmp_path, capsys)
 
-    printed = capsys.readouterr().out
     assert code == EXIT_DIFFERED
-    assert "Fields the comparison requires" in printed
+    assert "one of these runs does not carry" in printed
     assert "intent.manifest_sha256" in printed
+
+
+# ----------------------------------------------------------------------------------------
+# A field neither run carries
+# ----------------------------------------------------------------------------------------
+
+
+def test_a_clean_comparison_and_one_that_checked_fewer_fields_do_not_read_alike(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """THE REGRESSION GUARD. Mutation: require only the paths the two records carry.
+
+    That mutation is what shipped, and it needs a test of this shape because it survives
+    every check written against one report at a time. Both records dropping a field
+    together produces no difference row, no missing-field line and no non-zero exit, so
+    there is nothing in a single report to assert about. Held against a clean pass it is
+    visible and damning: the two are the SAME TABLE, the SAME COUNT and the SAME EXIT, and
+    one of them checked three fewer fields than the other.
+
+    Two answers that must not read alike, in the sense the exit codes above already use.
+    One says the comparison looked and found nothing; the other says three of the fields it
+    claims to check were never compared. The first assertion is what makes the second
+    load-bearing: it pins the fixture to dropping only fields the runs agree about, so a
+    report that differs can differ for no reason other than saying so.
+    """
+    clean, holed = tmp_path / "clean", tmp_path / "holed"
+    for root in (clean, holed):
+        written(root, LEFT)
+        written(root, RIGHT)
+    for run_id in (LEFT, RIGHT):
+        edited(holed, run_id, "result", leaving_the_table_untouched)
+
+    matched, agreement = compared(clean, capsys)
+    unverified, silence = compared(holed, capsys)
+
+    assert rows(silence) == rows(agreement), "the fixture drops nothing the table was showing"
+    assert silence != agreement, "so the only thing left to differ about is saying so"
+    assert unverified != matched, "a comparison that did not look is not one that found nothing"
+    assert (matched, unverified) == (EXIT_MATCHED, EXIT_UNVERIFIED)
+    for path in ("result.checkpoint_survey.objects_seen", "result.exit_code"):
+        assert f"- `{path}`" in silence
+        assert path not in agreement
+    assert "NEITHER of these runs carries" in silence
+    assert "NEITHER" not in agreement
+
+
+def test_a_field_neither_run_carries_is_recorded_in_the_json_and_not_only_printed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: print the unverified fields and leave them out of the document.
+
+    ``--output`` is what gets committed as evidence and read months later by somebody who
+    does not have the tree. A document that lists differences alone cannot tell a
+    comparison that found nothing wrong from one that did not look, which is the same
+    defect one layer down from the terminal.
+    """
+    written(tmp_path, LEFT)
+    written(tmp_path, RIGHT)
+    for run_id in (LEFT, RIGHT):
+        edited(tmp_path, run_id, "result", as_the_store_held_it_in_july)
+    report = tmp_path / "comparison.json"
+
+    code, _ = compared(tmp_path, capsys, output=str(report))
+
+    assert code == EXIT_UNVERIFIED
+    document = json.loads(report.read_text(encoding="utf-8"))
+    assert tuple(document["unverified"]) == tuple(sorted(JULY_SHAPE))
+    assert all(one["cause"] for one in document["differences"])
+
+
+def test_a_run_that_differs_outranks_a_field_that_was_never_checked(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: return the unverified code whenever anything went unchecked.
+
+    Both are printed and only one can be a return value. A difference nothing explains is
+    actionable now; a field nobody could check is a caveat on how much of the search was
+    possible. Reporting the caveat and swallowing the finding would let an unexplained
+    difference through on any pair old enough to be missing a field.
+    """
+    written(tmp_path, LEFT)
+    written(tmp_path, RIGHT, wandb_project="somewhere-else")
+    for run_id in (LEFT, RIGHT):
+        edited(tmp_path, run_id, "result", as_the_store_held_it_in_july)
+
+    code, printed = compared(tmp_path, capsys)
+
+    assert code == EXIT_DIFFERED
+    assert "intent.manifest.wandb_project" in printed
+    assert "NEITHER of these runs carries" in printed
+
+
+def test_the_four_exit_codes_are_four_answers() -> None:
+    """Four answers, and no two of them may read alike.
+
+    The tool is wired to a done-condition, so the codes are the interface. Collapsing any
+    pair of them is how a caller stops being able to tell one of these situations apart
+    from another.
+    """
+    assert len({EXIT_MATCHED, EXIT_DIFFERED, EXIT_UNUSABLE, EXIT_UNVERIFIED}) == 4
+
+
+# ----------------------------------------------------------------------------------------
+# A value too long for a table
+# ----------------------------------------------------------------------------------------
+
+
+def test_a_command_too_long_for_a_cell_is_cut_in_the_table_and_printed_whole_below(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: put the value in the cell.
+
+    ``intent.manifest.command[N]`` is a real leaf and the longest one in the lineage store
+    on 2026-08-04 is seven thousand characters. Inline that is not a table: it is one row
+    wrapped over eighty screen lines with every other row pushed off the top. The pipe
+    matters as much as the length -- an unescaped one inside a cell invents two columns and
+    the rest of the table stops parsing anywhere it is rendered as markdown.
+    """
+    written(tmp_path, LEFT)
+    written(tmp_path, RIGHT)
+    scripts = {
+        LEFT: "python -m train | tee " + "a" * 450,
+        RIGHT: "python -m train | tee " + "b" * 450,
+    }
+    for run_id, script in scripts.items():
+        edited(
+            tmp_path,
+            run_id,
+            "intent",
+            lambda document, script=script: document["manifest"].update(  # type: ignore[misc]
+                command=["bash", "-lc", script]
+            ),
+        )
+
+    _, printed = compared(tmp_path, capsys)
+
+    row = next(line for line in rows(printed) if "intent.manifest.command[2]" in line)
+    assert scripts[LEFT] not in row
+    assert "..." in row
+    # Bounded by the budget at all is the property. Before this a row was bounded by
+    # whatever the submitter typed, which in this store reaches seven thousand characters.
+    assert max(len(line) for line in rows(printed)) < 2 * CELL_BUDGET + 120
+    # Four columns is five delimiters. A pipe the value carried is escaped and does not add
+    # one, which is the whole of what escaping buys.
+    assert row.count("|") - row.count("\\|") == 5
+    table, _, below = printed.partition("### The values the table above had to cut short")
+    assert scripts[LEFT] in below and scripts[RIGHT] in below
+    assert scripts[LEFT] not in table
+
+
+def test_a_value_the_table_can_hold_is_left_whole_in_its_cell(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mutation: shorten every value, or repeat every value below the table.
+
+    A run id is forty-two characters and an output prefix is a hundred, and both are rows a
+    reader came for: the whole point of the prefix row is watching the run id substituted
+    into it. Cutting those would send somebody below the table on every comparison, which
+    would cost the section its meaning by the second time they read one.
+    """
+    written(tmp_path, LEFT)
+    written(tmp_path, RIGHT)
+
+    _, printed = compared(tmp_path, capsys)
+
+    assert "had to cut short" not in printed
+    assert "..." not in printed
+    for path in ("intent.run_id", "result.output_prefixes[0]"):
+        row = next(line for line in printed.splitlines() if line.startswith(f"| `{path}`"))
+        assert LEFT in row and RIGHT in row

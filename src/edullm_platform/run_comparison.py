@@ -14,6 +14,18 @@ a line in a report. :data:`IDENTICAL_FIELDS` is checked positively, because a co
 identical set quietly shrank would otherwise still pass -- an empty document differs from an
 empty document in nothing at all.
 
+**Checking a required field positively means naming it before reading a record, and for a
+while this did not.** The required set was a tuple of patterns, and a pattern can only be
+asked whether a path it was handed matches. So the check gathered the paths the two records
+carried, kept the ones a pattern matched, and required those to be on both sides -- which
+means a field absent from BOTH records was never in the gathered set and was never checked.
+That is the exact case the paragraph above says the positive check exists for, and it could
+not fail. On a real July pair five required fields went unexamined this way, among them
+``result.exit_code``. :data:`REQUIRED_FIELDS` is therefore a list of names rather than of
+patterns, and :func:`required_field_coverage` reports a name neither record carries as
+UNVERIFIED rather than as agreement or as a difference: nothing was compared, and neither
+of the other two words is true of nothing.
+
 **Three records and one integer.** ``intent/``, ``decision/`` and ``result/`` are what the
 platform writes about a run and are walked leaf by leaf. ``attempt/{run_id}/{attempt_id}.json``
 is per-attempt and keyed by an id Batch mints, so every leaf of it is an id or a time; walking
@@ -40,18 +52,21 @@ from edullm_platform.contracts.identity import RunId
 __all__ = [
     "IDENTICAL_FIELDS",
     "RECORD_PREFIXES",
+    "REQUIRED_FIELDS",
+    "REQUIRED_FIELD_FAMILIES",
     "VARIANCE_CAUSES",
     "ComparedField",
     "FieldDifference",
     "RecordField",
     "RecordedRun",
+    "RequiredFieldCoverage",
     "TwoRunComparison",
     "VarianceCause",
     "cause_for",
     "compare_runs",
     "flatten",
-    "identical_fields_missing",
     "read_run",
+    "required_field_coverage",
     "unexplained",
 ]
 
@@ -97,6 +112,21 @@ class FieldDifference:
     path: str
     left: str
     right: str
+
+
+@dataclass(frozen=True)
+class RequiredFieldCoverage:
+    """Which required fields two runs let a comparison check, and which they do not.
+
+    **Two absences that read alike in a difference count and mean opposite things.**
+    ``missing`` is a field one record carries and the other does not, which is a finding
+    about the runs and shows in the table as a value against ``<absent>``. ``unverified``
+    is a field NEITHER record carries, which is a finding about the comparison: nothing was
+    compared, no difference could have been produced, and the silence is not agreement.
+    """
+
+    missing: tuple[str, ...]
+    unverified: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -189,33 +219,68 @@ VARIANCE_CAUSES: Final[tuple[VarianceCause, ...]] = (
     ),
 )
 
-#: The leaves that must be present on both sides and equal. Stated as a list to be checked
-#: rather than left implicit in the absence of a difference: two records that both stopped
-#: carrying a field agree about it, and that is not the same as agreeing.
-IDENTICAL_FIELDS: Final[tuple[re.Pattern[str], ...]] = (
-    re.compile(r"^attempt_count$"),
-    re.compile(r"^intent\.manifest_sha256$"),
-    re.compile(r"^intent\.submitter$"),
-    re.compile(r"^intent\.approving_environment$"),
-    re.compile(
-        r"^intent\.manifest\."
-        r"(repository|commit_sha|image_digest|workload_profile|compute_profile"
-        r"|dataset_release|team|wandb_project|maximum_runtime_hours|maximum_attempts)$"
-    ),
+#: Every required leaf whose path is known before a record is read. Written out one path per
+#: line rather than folded into alternations, because a name here is a name this comparison
+#: can look for in a record that does not carry it -- and that is the only reading under
+#: which "both records dropped the field" is a sentence the tool can say. Held as strings
+#: rather than patterns for the same reason: a pattern can be asked whether a path it was
+#: given matches, and cannot be asked what it wanted.
+REQUIRED_FIELDS: Final[tuple[str, ...]] = (
+    "attempt_count",
+    "intent.manifest_sha256",
+    "intent.submitter",
+    "intent.approving_environment",
+    "intent.manifest.repository",
+    "intent.manifest.commit_sha",
+    "intent.manifest.image_digest",
+    "intent.manifest.workload_profile",
+    "intent.manifest.compute_profile",
+    "intent.manifest.dataset_release",
+    "intent.manifest.team",
+    "intent.manifest.wandb_project",
+    "intent.manifest.maximum_runtime_hours",
+    "intent.manifest.maximum_attempts",
+    "intent.workflow_run.run_repository",
+    "intent.workflow_run.workflow_repository",
+    "intent.workflow_run.workflow_path",
+    "intent.workflow_run.workflow_ref",
+    "intent.workflow_run.run_attempt",
+    "decision.accepted",
+    "decision.reason",
+    "decision.detail",
+    "decision.policy_version",
+    "decision.approval_class",
+    "decision.approving_environment",
+    "decision.manifest_sha256",
+    "result.outcome",
+    "result.exit_code",
+    "result.retention_class",
+    "result.wandb_run.entity",
+    "result.wandb_run.project",
+    "result.checkpoint_survey.outcome",
+    "result.checkpoint_survey.objects_seen",
+)
+
+#: The required leaves whose paths the data decides: a list index, or a key set the record
+#: chooses. These cannot be enumerated in advance and so cannot be reported as absent from
+#: both records -- a family with no members is a run that wrote no checkpoints, which is a
+#: fact about the run and not a field that went missing. Every member a record does carry is
+#: still required to be present on the other side and equal, which is the part that catches
+#: a checkpoint appearing in one run and not the other.
+REQUIRED_FIELD_FAMILIES: Final[tuple[re.Pattern[str], ...]] = (
     re.compile(r"^intent\.manifest\.command\[\d+\]$"),
-    re.compile(
-        r"^intent\.workflow_run\."
-        r"(run_repository|workflow_repository|workflow_path|workflow_ref|run_attempt)$"
-    ),
-    re.compile(
-        r"^decision\.(accepted|reason|detail|policy_version|approval_class"
-        r"|approving_environment|manifest_sha256)$"
-    ),
     re.compile(r"^decision\.(cost|authorization)\.[a-z_]+$"),
-    re.compile(r"^result\.(outcome|exit_code|retention_class)$"),
-    re.compile(r"^result\.wandb_run\.(entity|project)$"),
-    re.compile(r"^result\.checkpoint_survey\.(outcome|objects_seen)$"),
     re.compile(r"^result\.checkpoints\[\d+\]\.(step|epoch|size_bytes)$"),
+)
+
+#: The leaves that must be present on both sides and equal, as one set of patterns to ask a
+#: path about. Derived rather than written a second time, so the named set and this stay one
+#: thing. Checked positively rather than left implicit in the absence of a difference: two
+#: records that both stopped carrying a field agree about it, and that is not the same as
+#: agreeing.
+IDENTICAL_FIELDS: Final[tuple[re.Pattern[str], ...]] = (
+    *(re.compile(f"^{re.escape(path)}$") for path in REQUIRED_FIELDS),
+    *REQUIRED_FIELD_FAMILIES,
 )
 
 
@@ -237,6 +302,15 @@ class TwoRunComparison(ContractModel):
     differences: Annotated[
         tuple[ComparedField, ...], BeforeValidator(require_ordered_sequence)
     ] = Field(default=(), strict=False)
+    #: Required fields NEITHER run carries, so nothing about them was compared. Recorded
+    #: here and not only printed, because this document is what a reader has months later,
+    #: and a document listing differences alone cannot distinguish a comparison that found
+    #: nothing wrong from one that did not look. The fields present on exactly one side are
+    #: deliberately not duplicated here: those appear in ``differences`` against
+    #: ``<absent>``, which is the same fact written once.
+    unverified: Annotated[tuple[str, ...], BeforeValidator(require_ordered_sequence)] = Field(
+        default=(), strict=False
+    )
 
     @property
     def unexplained_paths(self) -> tuple[str, ...]:
@@ -319,13 +393,26 @@ def unexplained(differences: Sequence[FieldDifference]) -> tuple[str, ...]:
     return tuple(one.path for one in differences if cause_for(one.path) is None)
 
 
-def identical_fields_missing(left: RecordedRun, right: RecordedRun) -> tuple[str, ...]:
-    """Paths that IDENTICAL_FIELDS requires and at least one of the two runs does not carry.
+def required_field_coverage(left: RecordedRun, right: RecordedRun) -> RequiredFieldCoverage:
+    """How much of the required set these two records actually let a comparison check.
 
     Absence and agreement are different facts, and the whole reason this function exists is
-    that the second is what a difference count reports when it means the first.
+    that the second is what a difference count reports when it means the first. There are
+    two absences and they are not the same absence, which is why they leave here separately.
     """
-    shared = set(left.field_map()) & set(right.field_map())
-    either = set(left.field_map()) | set(right.field_map())
-    required = {path for path in either if any(one.fullmatch(path) for one in IDENTICAL_FIELDS)}
-    return tuple(sorted(required - shared))
+    left_paths = set(left.field_map())
+    right_paths = set(right.field_map())
+    families = {
+        path
+        for path in left_paths | right_paths
+        if any(one.fullmatch(path) for one in REQUIRED_FIELD_FAMILIES)
+    }
+    required = set(REQUIRED_FIELDS) | families
+    return RequiredFieldCoverage(
+        missing=tuple(sorted(required & (left_paths ^ right_paths))),
+        # Only a named path can reach this. A family's members are gathered from the two
+        # records, so a family neither record populates contributes nothing to `required`
+        # and is silently uncheckable -- see the note on REQUIRED_FIELD_FAMILIES for why
+        # that is the honest answer for a list index rather than a second hole.
+        unverified=tuple(sorted(set(REQUIRED_FIELDS) - left_paths - right_paths)),
+    )
