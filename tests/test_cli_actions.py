@@ -9,6 +9,8 @@ the verbs that are settled and unbuilt, which have to answer with a plan rather 
 
 from __future__ import annotations
 
+import io
+import json
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,11 +20,17 @@ import pytest
 
 from edullm_platform.cli.actions import (
     CANCEL_WORKFLOW,
+    COMPLETION_ATTEMPTS,
+    COMPLETION_INTERVAL,
+    NEW_RUN_ATTEMPTS,
+    NEW_RUN_INTERVAL,
     PLATFORM_REPOSITORY,
     PRINTED_RUN_ID,
     SUBMIT_WORKFLOW,
+    PlatformActions,
     elapsed_said,
     read_report_sections,
+    report_ceiling_seconds,
     submission_state,
 )
 from edullm_platform.cli.configuration import (
@@ -30,10 +38,10 @@ from edullm_platform.cli.configuration import (
     ConfigurationUnreadableError,
     find_config_directory,
 )
-from edullm_platform.cli.main import EXIT_UNUSABLE, NOT_BUILT_YET
+from edullm_platform.cli.main import EXIT_UNUSABLE, NOT_BUILT_YET, _SignOfLife
 from edullm_platform.cli.workspace import SubprocessRunner, read_git_facts
 from edullm_platform.phase0_gate import EXPECTED_GITHUB_ORG, EXPECTED_GITHUB_REPOSITORY
-from tests.cli_support import PROJECT_ROOT, FakeRunner, invoke
+from tests.cli_support import PROJECT_ROOT, FakeRunner, invoke, ok
 
 
 def test_the_repository_this_dispatches_into_is_the_one_phase0_expects() -> None:
@@ -247,3 +255,77 @@ def test_the_git_reading_works_against_a_real_repository(tmp_path: Path) -> None
     # Nothing has been pushed anywhere, which is what a fresh local repository looks like
     # and is the state the refusal about an unbuilt commit is derived from.
     assert facts.commit_on_a_remote is False
+
+
+# ---------------------------------------------------------------------------------------
+# the two waits, and what a reader sees while they run
+# ---------------------------------------------------------------------------------------
+
+
+def test_the_ceiling_is_the_two_polls_added_up_rather_than_a_number_in_a_sentence() -> None:
+    """Mutation: write the total into the sentence that quotes it.
+
+    ``logs`` announced tens of seconds and could take eleven minutes, which is the shape of
+    every stale number this repository has been bitten by. Widening either poll has to move
+    the sentence, and the only way that happens by itself is if the sentence never held the
+    number. Both loops sleep between attempts and not before the first, so a bound of ``n``
+    attempts is ``n - 1`` sleeps, and getting that off by one would understate the wait.
+    """
+    expected = (NEW_RUN_ATTEMPTS - 1) * NEW_RUN_INTERVAL
+    expected += (COMPLETION_ATTEMPTS - 1) * COMPLETION_INTERVAL
+
+    assert report_ceiling_seconds() == expected
+    assert report_ceiling_seconds() > 600
+
+
+def test_a_poll_hands_the_caller_one_clock_across_both_of_its_loops() -> None:
+    """Mutation: restart the clock in the second loop.
+
+    A dispatch waits for a runner and then waits for the workflow, and they are two loops.
+    A reader who has waited six minutes and is told "1 minute so far" learns that the
+    number means nothing, which is worse than printing no number: the line exists to say
+    the wait is progressing rather than hung.
+    """
+    seen: list[float] = []
+    runs = iter(
+        [
+            {"status": "in_progress"},
+            {"status": "in_progress"},
+            {"status": "completed", "conclusion": "success"},
+        ]
+    )
+    actions = PlatformActions(
+        FakeRunner({("gh", "api"): lambda _: ok(json.dumps(next(runs)))}),
+        sleep=lambda _: None,
+    )
+
+    conclusion = actions.wait_for_completion(
+        22001, interval=6.0, waiting=seen.append, elapsed_already=57.0
+    )
+
+    assert conclusion == "success"
+    assert seen == [63.0, 69.0]
+
+
+def test_the_sign_of_life_is_a_whole_line_a_minute_and_never_a_spinner() -> None:
+    """**The one thing added to the wait, held to the property the whole tool rests on.**
+
+    Mutation: a spinner, or a dot per poll. A spinner is a carriage return and a cursor
+    move, so a run piped into a file stops being the run a terminal showed and a pasted
+    transcript stops being what the next person reads. A dot per poll is a hundred and
+    twenty dots. This is one ordinary line at a whole minute, on stderr with the sentence
+    that announced the wait, so the bytes are the same either way and a script reading the
+    log tail off stdout still gets the log tail.
+    """
+    err = io.StringIO()
+    saying = _SignOfLife(err)
+
+    for elapsed in (6.0, 30.0, 59.0, 60.0, 66.0, 119.0, 121.0):
+        saying(elapsed)
+
+    lines = err.getvalue().splitlines()
+
+    assert len(lines) == 2
+    assert all(line.startswith("still waiting,") for line in lines)
+    assert "\x1b" not in err.getvalue() and "\r" not in err.getvalue()
+    assert saying.elapsed == 121.0

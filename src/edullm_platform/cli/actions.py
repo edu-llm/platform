@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -68,9 +68,15 @@ __all__ = [
     "PlatformActions",
     "RunFacts",
     "SubmissionRun",
+    "Waiting",
     "elapsed_said",
     "read_run_facts",
+    "report_ceiling_seconds",
 ]
+
+#: What a poll loop calls between attempts, handed the seconds spent so far. The loop knows
+#: when it is idle and nothing else does; what to say about it is the caller's business.
+type Waiting = Callable[[float], None]
 
 #: The repository holding both workflows. Restated here rather than imported from
 #: ``phase0_gate``, which owns ``EXPECTED_GITHUB_ORG`` and ``EXPECTED_GITHUB_REPOSITORY``:
@@ -103,6 +109,29 @@ SUBMISSION_SEARCH_DEPTH: Final = 30
 
 #: How many characters of a run id the listing prints, measured in :attr:`short_run_id`.
 PRINTED_RUN_ID: Final = 13
+
+#: The two polls behind every dispatch, hoisted out of the method signatures they used to
+#: be defaults on. A caller that has to make somebody wait needs to say how long the wait
+#: can run before it starts, and it cannot say that from the inside of the wait -- so the
+#: numbers live where both the loop and the sentence about the loop can read them, and
+#: :func:`report_ceiling_seconds` adds them up rather than anybody writing the total down.
+NEW_RUN_ATTEMPTS: Final = 20
+NEW_RUN_INTERVAL: Final = 3.0
+COMPLETION_ATTEMPTS: Final = 100
+COMPLETION_INTERVAL: Final = 6.0
+
+
+def report_ceiling_seconds() -> float:
+    """The longest a dispatch-and-read can take before it gives up, in seconds.
+
+    Both loops sleep between attempts and not before the first, so a bound of ``n``
+    attempts holds ``n - 1`` sleeps. Derived rather than written down because the sentence
+    that quotes it reaches a terminal, and ``tests/test_cli_no_hardcoded_bounds.py`` fails
+    the build on a duration typed into a string this binary prints.
+    """
+    return (NEW_RUN_ATTEMPTS - 1) * NEW_RUN_INTERVAL + (
+        COMPLETION_ATTEMPTS - 1
+    ) * COMPLETION_INTERVAL
 
 
 class GithubUnreachableError(RuntimeError):
@@ -196,14 +225,26 @@ class PlatformActions:
         *,
         repository: str = PLATFORM_REPOSITORY,
         sleep: Any = time.sleep,
+        dispatched: list[str] | None = None,
     ) -> None:
         self._runner = runner
         self._repository = repository
         self._sleep = sleep
+        # A LIST THE CALLER MAY OWN, BECAUSE THE CALLER IS WHAT ANSWERS FOR AN INTERRUPT.
+        # ``main`` catches Ctrl-C for the whole binary and has to say whether a workflow is
+        # still running with nobody watching it, which is a fact only this class learns and
+        # only at the moment of learning it. Handing the list down is what lets one handler
+        # answer for four verbs without any of them holding the answer.
+        self._dispatched = [] if dispatched is None else dispatched
 
     @property
     def repository(self) -> str:
         return self._repository
+
+    @property
+    def dispatched(self) -> tuple[str, ...]:
+        """Every workflow this has set going, in order, and empty until one has been."""
+        return tuple(self._dispatched)
 
     def dispatch(self, workflow: str, fields: Mapping[str, str]) -> None:
         """``gh workflow run``, with every value passed as its own ``-f`` argument.
@@ -230,6 +271,7 @@ class PlatformActions:
                 "of the submission. Check gh auth status and that you can see "
                 f"{self._repository}."
             )
+        self._dispatched.append(workflow)
 
     def workflow_runs(
         self, workflow: str, *, actor: str | None = None, limit: int = 20
@@ -255,8 +297,9 @@ class PlatformActions:
         *,
         actor: str | None,
         after: datetime,
-        attempts: int = 20,
-        interval: float = 3.0,
+        attempts: int = NEW_RUN_ATTEMPTS,
+        interval: float = NEW_RUN_INTERVAL,
+        waiting: Waiting | None = None,
     ) -> dict[str, Any] | None:
         """The run a dispatch just created, found by being newer than the dispatch.
 
@@ -268,6 +311,7 @@ class PlatformActions:
         """
         for attempt in range(attempts):
             if attempt:
+                self._said_waiting(waiting, attempt * interval)
                 self._sleep(interval)
             for run in self.workflow_runs(workflow, actor=actor, limit=10):
                 created = _instant(run.get("created_at"))
@@ -361,12 +405,19 @@ class PlatformActions:
         self,
         workflow_run_id: int,
         *,
-        attempts: int = 100,
-        interval: float = 6.0,
+        attempts: int = COMPLETION_ATTEMPTS,
+        interval: float = COMPLETION_INTERVAL,
+        waiting: Waiting | None = None,
+        elapsed_already: float = 0.0,
     ) -> str:
-        """Poll one run to a conclusion, and answer with whichever one it reached."""
+        """Poll one run to a conclusion, and answer with whichever one it reached.
+
+        ``elapsed_already`` is what the caller spent finding the run in the first place, so
+        that the two waits behind one dispatch report one clock rather than restarting it.
+        """
         for attempt in range(attempts):
             if attempt:
+                self._said_waiting(waiting, elapsed_already + attempt * interval)
                 self._sleep(interval)
             run = self._api(f"repos/{self._repository}/actions/runs/{workflow_run_id}")
             status = run.get("status")
@@ -378,6 +429,19 @@ class PlatformActions:
             f"{attempts * interval:.0f}s. Nothing has been decided either way; the run page "
             "carries what it is doing."
         )
+
+    @staticmethod
+    def _said_waiting(waiting: Waiting | None, elapsed: float) -> None:
+        """Hand the caller the clock, before each sleep and never during one.
+
+        Called from inside the loop rather than from a thread, so it can print only at a
+        moment the binary is otherwise idle and it can print a whole line. That is the
+        difference between a sign of life and a spinner: a spinner needs a carriage return
+        and a cursor move, which would make a run piped into a file a different run from
+        the one a terminal showed.
+        """
+        if waiting is not None:
+            waiting(elapsed)
 
     def _api(self, path: str) -> dict[str, Any]:
         document = self._read(path)
