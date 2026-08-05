@@ -2222,20 +2222,37 @@ def test_the_recorder_role_writes_lineage_and_cannot_make_anything_happen() -> N
     enumerates every team's output and the claim above would be false. The prefix pattern
     is the one ``checkpoints_under`` sends, which is the path of ``EDULLM_CHECKPOINT_DIR``.
 
-    ``s3:GetObject`` is absent, and it is the read the exact list still refuses. The
-    projection reads keys, sizes and write times and never an object's contents, so the
-    grant would buy nothing and would let the recorder read what every run produced.
+    ``s3:GetObject`` IS PRESENT NOW, AND THE SENTENCE THAT USED TO STAND HERE WAS AN
+    ARGUMENT FROM A PREMISE THAT HAS SINCE CHANGED. It said the grant would buy nothing,
+    because the projection reads keys, sizes and write times and never an object's contents.
+    That was true until the projection began reading one: ``metrics.json``, which is how a
+    run's scores reach its ``ResultManifest`` rather than staying in W&B where nothing
+    content-addresses them.
+
+    So the grant is argued the same way the listing above it is -- by what it is bounded to
+    rather than by what it is called -- and the bound is asserted beside the action for the
+    same reason. It names one key, ``metrics.json``, under ``teams/*/runs/*``. It cannot
+    reach a checkpoint, a log, a dataset or any other object a run wrote, which is what
+    ``s3:GetObject`` on the bucket would have done and what the old sentence was right to
+    refuse. The property this test holds is unchanged: the recorder still cannot cause an
+    effect, and reading a document some other principal already wrote starts no job and
+    changes no state.
     """
     actions = role_actions(LIFECYCLE_ROLE_PATH, LIFECYCLE_ROLE_NAME)
     s3_actions = [action for action in actions if action.startswith("s3:")]
-    listing = [
+    statements = [
         statement
         for policy in role_named(LIFECYCLE_ROLE_PATH, LIFECYCLE_ROLE_NAME)["Policies"]
         for statement in policy["PolicyDocument"]["Statement"]
-        if "s3:ListBucket" in statement_actions(statement)
+    ]
+    listing = [
+        statement for statement in statements if "s3:ListBucket" in statement_actions(statement)
+    ]
+    reading = [
+        statement for statement in statements if "s3:GetObject" in statement_actions(statement)
     ]
 
-    assert s3_actions == ["s3:PutObject", "s3:ListBucket"]
+    assert s3_actions == ["s3:PutObject", "s3:ListBucket", "s3:GetObject"]
     assert "sqs:ReceiveMessage" in actions
     assert "sqs:DeleteMessage" in actions
     assert len(listing) == 1
@@ -2243,6 +2260,13 @@ def test_the_recorder_role_writes_lineage_and_cannot_make_anything_happen() -> N
         f"arn:${{AWS::Partition}}:s3:::{OUTPUTS_BUCKET}"
     ]
     assert listing[0]["Condition"]["StringLike"]["s3:prefix"] == "teams/*/runs/*/checkpoints/*"
+    # The bound, asserted rather than described. A resource ending in anything other than the
+    # one key name is the mutation this catches, and it is the one that would turn a metrics
+    # read into a read of everything every team produced.
+    assert len(reading) == 1
+    assert resource_arns(reading[0]["Resource"]) == [
+        f"arn:${{AWS::Partition}}:s3:::{OUTPUTS_BUCKET}/teams/*/runs/*/metrics.json"
+    ]
 
 
 def test_the_recorder_role_holds_no_batch_action_at_all() -> None:

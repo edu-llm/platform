@@ -266,6 +266,55 @@ def pending_amendments() -> tuple[PendingAmendment, ...]:
                 ),
             ),
         ),
+        # A SECOND RECORD BECAUSE IT IS A SECOND ROLE, WHICH IS THE ONE SPLIT THIS REGISTRY
+        # WANTS. The note above refuses two records for one role, because a capture reports
+        # the sum of the drift on it and two records would each describe an account state
+        # that never exists. That reasoning is about one role, and the deploys here are
+        # separate acts on separate stacks: this one is the lifecycle recorder learning to
+        # read the metrics.json an eval run writes, which is what puts eval_metrics on a
+        # ResultManifest instead of leaving the scores only in W&B.
+        PendingAmendment(
+            role_name="sbsandbox-intern-edullm-lifecycle-lambda",
+            reason=(
+                "infra/iam/lifecycle-lambda-role.yaml gained one s3:GetObject statement in "
+                "the record-what-batch-reported inline policy, scoped to "
+                "sbsandbox-intern-edullm-outputs/teams/*/runs/*/metrics.json. The recorder "
+                "needs it to read the metrics document an eval run writes and put the scores "
+                "on the ResultManifest it was already writing."
+                "\n\n"
+                "Narrower is the only direction this can be in, and the read is the narrowest "
+                "form of the grant that works: one action, on one key name, under a prefix "
+                "the role could already ListBucket. It cannot reach a checkpoint, a log or "
+                "any other object a run wrote."
+                "\n\n"
+                "WHAT THE OUTSTANDING DEPLOY COSTS, WHICH IS LESS THAN IT LOOKS. "
+                "lifecycle_handler._MetricsReader answers None on both NoSuchKey and "
+                "AccessDenied, and lifecycle_projection then records a result with no scores "
+                "rather than failing the delivery. So while this stands, an eval run's result "
+                "manifest is written and is silent about metrics; it does not lose the run. "
+                "tests/test_eval_metrics.py holds that behaviour to it in both directions, "
+                "which is why the grant is safe to commit before it is applied."
+            ),
+            cleared_by=(
+                "Deploying the sbsandbox-intern-edullm-phase3-batch-iam stack from a laptop "
+                "with credentials, per infra/README.md, then re-capturing the Phase 3 roles. "
+                "The re-capture is what ends this record: the findings are compared for "
+                "equality, so it fails the moment the account stops differing in exactly "
+                "this way."
+            ),
+            findings=(
+                RoleDriftFinding(
+                    direction=DriftDirection.NARROWER,
+                    element="inline policy 'record-what-batch-reported'",
+                    detail=(
+                        "the template declares a statement the deployed role does not: Allow "
+                        "Action [s3:GetObject] Resource "
+                        "[arn:<partition>:s3:::sbsandbox-intern-edullm-outputs/teams/*/runs/"
+                        "*/metrics.json]"
+                    ),
+                ),
+            ),
+        ),
     )
     declared = declared_role_templates()
     for amendment in amendments:
@@ -619,9 +668,38 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "moves the count of roster members with no bound role from sixteen to "
                 "fifteen, which is the difference the build index and this table had between "
                 "them. Still nothing the validator reads."
+                "\n\n"
+                "A SIXTH EDIT IS THE LARGEST OF THEM BY LINE COUNT AND THE SMALLEST BY "
+                "DEPLOYED BEHAVIOUR. Schema version two of the run manifest landed in "
+                "contracts/manifest.py as RunManifestV2 and RunInput, beside a "
+                "read_run_manifest that dispatches on the declared version; "
+                "contracts/vocabulary.py gained InputRole; contracts/dataset_registry.py "
+                "gained WEIGHTS_FAMILIES and may_fill; contracts/results.py gained "
+                "EvalMetric, EvalMetrics and an optional ResultManifest.eval_metrics. All "
+                "four modules are packaged, so the digest moved again."
+                "\n\n"
+                "NOTHING THE VALIDATOR DOES MOVES WITH ANY OF IT, AND THE REASON IS THAT "
+                "VERSION ONE WAS NOT EDITED. RunManifest is byte-identical: version two is a "
+                "second class standing beside it rather than a rewrite of it, which is what "
+                "keeps the manifest_sha256 on every intent and decision record in the "
+                "lineage store computing to the value that record carries. The validator "
+                "parses a submitted manifest through RunManifest exactly as before and "
+                "recomputes exactly the same digest for it. Nothing constructs a "
+                "RunManifestV2 yet, and no code path in the packaged half calls "
+                "read_run_manifest."
+                "\n\n"
+                "ResultManifest.eval_metrics is the one addition that changes a canonical "
+                "form, and it is worth saying why that is safe rather than asserting it. It "
+                "is optional and defaulted, so a document written before it existed still "
+                "parses; what it does change is the digest of any ResultManifest hashed "
+                "today, because the canonical form now carries an explicit null. That costs "
+                "nothing only because no stored record carries a ResultManifest digest -- "
+                "every manifest_sha256 in the store is over a run manifest, which is the one "
+                "this change deliberately did not touch. The validator does not construct a "
+                "ResultManifest at all; the recorder does."
             ),
             cleared_by="uv run python tools/release_lambda.py --function validator",
-            builds_to="4a5febf3e7712519140672e6ae8219ee61c69707f3b55217ffa8b74782420769",
+            builds_to="49df73e7e2062fe17e65c6b2a519298f8847ec2bbd471ea08b449a283a8124ae",
             released="d2c42173589e7c91ff20faeaa7b5b9f705f02e28214ad15fcf782964bf7bf3af",
             recorded_on=date(2026, 8, 5),
         ),
@@ -650,9 +728,33 @@ def pending_releases() -> tuple[PendingRelease, ...]:
                 "quiet one: a stale validator refuses a submission and somebody reads the "
                 "refusal, and a stale recorder writes lineage that looks exactly like correct "
                 "lineage into immutable records."
+                "\n\n"
+                "A SECOND CHANGE JOINED IT AND THIS ONE DOES CARRY A BEHAVIOUR, WHICH IS THE "
+                "DIFFERENCE WORTH READING. The recorder learned to read the metrics document "
+                "an eval run writes and to put the scores on the ResultManifest it was "
+                "already writing. lifecycle_projection.py gained a MetricsReader protocol and "
+                "an optional metrics_reader parameter on project_batch_state_change and "
+                "project_batch_event; lifecycle_handler.py gained the _MetricsReader that "
+                "adapts the boto3 client it already holds; eval_metrics.py is new and is "
+                "packaged because the handler imports it; contracts/results.py gained the "
+                "EvalMetrics the projection constructs."
+                "\n\n"
+                "The behaviour is additive in every direction. A delivery for a run that "
+                "wrote no metrics.json records exactly what it recorded before. A delivery "
+                "for a run that wrote one gains an eval_metrics block. A delivery whose read "
+                "is refused -- which is every delivery until the lifecycle-lambda amendment "
+                "recorded above is applied -- records no scores rather than failing, because "
+                "_MetricsReader answers None on AccessDenied as well as on NoSuchKey."
+                "\n\n"
+                "That is why a record is open here and another against the role at the same "
+                "time, and why neither ordering is a problem. Release this zip before the "
+                "role is amended and the recorder tries the read, is refused, and writes the "
+                "record it always wrote. Amend the role first and nothing reads the grant "
+                "until the zip lands. Neither ordering loses a delivery, which is the "
+                "property tests/test_eval_metrics.py holds it to in both directions."
             ),
             cleared_by="uv run python tools/release_lambda.py --function recorder",
-            builds_to="98bfb171fdfee26a4b36453c5a38d91a70fba799062a22af748385e1c9a899c9",
+            builds_to="46b44ae3bb921fd3a3bf48225e49eda5d1a8e1dda1bff4b61cee84708f7523e7",
             released="82d291969f3b7c3922ea4096387abb0cd121e78b036858a36bcfc54b775027e2",
             recorded_on=date(2026, 8, 5),
         ),
