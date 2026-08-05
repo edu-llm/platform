@@ -297,9 +297,23 @@
     {
       "base": false,
       "module": "edullm_platform.contracts.manifest",
+      "name": "RunInput",
+      "schema_version": "unversioned",
+      "structural_digest": "sha256:4efe3bb59ec0161fe55a7dc8c7508abc4727adaa56682045afa33b2002bd21d8"
+    },
+    {
+      "base": false,
+      "module": "edullm_platform.contracts.manifest",
       "name": "RunManifest",
       "schema_version": "1",
       "structural_digest": "sha256:1f6d150b79887bbc6f2962f71964b08180ea13894329c783907e5309df48cedc"
+    },
+    {
+      "base": false,
+      "module": "edullm_platform.contracts.manifest",
+      "name": "RunManifestV2",
+      "schema_version": "2",
+      "structural_digest": "sha256:bee34bb15d322ef2b1404bd2f26d16c609c28d1d5c096269d8e8d6c77fcb015e"
     },
     {
       "base": false,
