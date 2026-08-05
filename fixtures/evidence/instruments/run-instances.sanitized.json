@@ -1,0 +1,34 @@
+{
+  "Events": [
+    {
+      "CloudTrailEvent": "{\"eventVersion\": \"1.11\", \"userIdentity\": {\"type\": \"AssumedRole\", \"principalId\": \"AROAQ2QWZFWTETX6UBM2A:aws-batch\", \"arn\": \"arn:aws:sts::<aws-account-id>:assumed-role/AWSServiceRoleForBatch/aws-batch\", \"accountId\": \"<aws-account-id>\", \"sessionContext\": {\"sessionIssuer\": {\"type\": \"Role\", \"principalId\": \"AROAQ2QWZFWTETX6UBM2A\", \"arn\": \"arn:aws:iam::<aws-account-id>:role/aws-service-role/batch.amazonaws.com/AWSServiceRoleForBatch\", \"accountId\": \"<aws-account-id>\", \"userName\": \"AWSServiceRoleForBatch\"}, \"attributes\": {\"creationDate\": \"2026-08-05T22:52:55Z\", \"mfaAuthenticated\": \"false\"}}, \"invokedBy\": \"batch.amazonaws.com\"}, \"eventTime\": \"2026-08-05T22:52:56Z\", \"eventSource\": \"ec2.amazonaws.com\", \"eventName\": \"RunInstances\", \"awsRegion\": \"us-east-1\", \"sourceIPAddress\": \"batch.amazonaws.com\", \"userAgent\": \"batch.amazonaws.com\", \"errorCode\": \"Client.DryRunOperation\", \"errorMessage\": \"Request would have succeeded, but DryRun flag is set.\", \"requestParameters\": {\"instancesSet\": {\"items\": [{\"minCount\": 1, \"maxCount\": 1}]}, \"instanceType\": \"g5.xlarge\", \"blockDeviceMapping\": {}, \"availabilityZone\": \"us-east-1d\", \"monitoring\": {\"enabled\": false}, \"subnetId\": \"subnet-08792525c62ba31c0\", \"disableApiTermination\": false, \"disableApiStop\": false, \"clientToken\": \"36fb6e46-e737-4b08-a3f0-20f376f0a26b\", \"launchTemplate\": {\"launchTemplateId\": \"lt-066318d2a22361d74\", \"version\": \"1\"}}, \"responseElements\": null, \"requestID\": \"b4b1b6a2-94fb-47c8-a8e7-1534b88c4f84\", \"eventID\": \"1ce50844-7dcd-4ed0-9d8b-46ca8f160b97\", \"readOnly\": false, \"eventType\": \"AwsApiCall\", \"managementEvent\": true, \"recipientAccountId\": \"<aws-account-id>\", \"eventCategory\": \"Management\"}",
+      "EventId": "1ce50844-7dcd-4ed0-9d8b-46ca8f160b97",
+      "EventName": "RunInstances",
+      "EventSource": "ec2.amazonaws.com",
+      "EventTime": "2026-08-05T17:52:56-05:00",
+      "ReadOnly": "false",
+      "Resources": [
+        {
+          "ResourceName": "subnet-08792525c62ba31c0",
+          "ResourceType": "AWS::EC2::Subnet"
+        }
+      ],
+      "Username": "aws-batch"
+    },
+    {
+      "CloudTrailEvent": "{\"eventVersion\": \"1.11\", \"userIdentity\": {\"type\": \"AssumedRole\", \"principalId\": \"AROAQ2QWZFWTETX6UBM2A:aws-batch\", \"arn\": \"arn:aws:sts::<aws-account-id>:assumed-role/AWSServiceRoleForBatch/aws-batch\", \"accountId\": \"<aws-account-id>\", \"sessionContext\": {\"sessionIssuer\": {\"type\": \"Role\", \"principalId\": \"AROAQ2QWZFWTETX6UBM2A\", \"arn\": \"arn:aws:iam::<aws-account-id>:role/aws-service-role/batch.amazonaws.com/AWSServiceRoleForBatch\", \"accountId\": \"<aws-account-id>\", \"userName\": \"AWSServiceRoleForBatch\"}, \"attributes\": {\"creationDate\": \"2026-08-05T22:52:55Z\", \"mfaAuthenticated\": \"false\"}}, \"invokedBy\": \"batch.amazonaws.com\"}, \"eventTime\": \"2026-08-05T22:52:56Z\", \"eventSource\": \"ec2.amazonaws.com\", \"eventName\": \"RunInstances\", \"awsRegion\": \"us-east-1\", \"sourceIPAddress\": \"batch.amazonaws.com\", \"userAgent\": \"batch.amazonaws.com\", \"errorCode\": \"Client.DryRunOperation\", \"errorMessage\": \"Request would have succeeded, but DryRun flag is set.\", \"requestParameters\": {\"instancesSet\": {\"items\": [{\"minCount\": 1, \"maxCount\": 1}]}, \"instanceType\": \"p5.48xlarge\", \"blockDeviceMapping\": {}, \"availabilityZone\": \"us-east-1d\", \"monitoring\": {\"enabled\": false}, \"subnetId\": \"subnet-08792525c62ba31c0\", \"disableApiTermination\": false, \"disableApiStop\": false, \"clientToken\": \"fcdc707b-0901-4dd2-9844-ab88707d6a15\", \"launchTemplate\": {\"launchTemplateId\": \"lt-0cac09d4d7def197e\", \"version\": \"1\"}}, \"responseElements\": null, \"requestID\": \"b4d3dc38-148d-4651-9527-276a73aa865f\", \"eventID\": \"e7387620-ef4a-40bf-a853-f25a3b2fa399\", \"readOnly\": false, \"eventType\": \"AwsApiCall\", \"managementEvent\": true, \"recipientAccountId\": \"<aws-account-id>\", \"eventCategory\": \"Management\"}",
+      "EventId": "e7387620-ef4a-40bf-a853-f25a3b2fa399",
+      "EventName": "RunInstances",
+      "EventSource": "ec2.amazonaws.com",
+      "EventTime": "2026-08-05T17:52:56-05:00",
+      "ReadOnly": "false",
+      "Resources": [
+        {
+          "ResourceName": "subnet-08792525c62ba31c0",
+          "ResourceType": "AWS::EC2::Subnet"
+        }
+      ],
+      "Username": "aws-batch"
+    }
+  ]
+}
