@@ -22,11 +22,23 @@ is reported under the name it claimed.
 removed the refusal that stopped a submitter claiming a group the roster records them
 elsewhere from. It fired inside admission, past the approval gate, so it never prevented any
 spend and only ever wasted a lead's signature. What replaced it was ``team_verified`` on the
-decision record, and nothing read that, which left this report quietly less reliable than it
-read. :func:`~edullm_platform.run_costs.attribute_to_teams` measures the doubt instead. Each
-team's line carries how much of it was claimed by somebody the roster puts elsewhere, and the
+decision record. Each team's line carries how much of it carries that flag as false, and the
 section beneath the split names those runs. It refuses nothing, pages nobody, and moves no
 spend between groups.
+
+**IT READS THE FLAG NOW, WHERE IT USED TO WORK THE ANSWER OUT AGAIN.** The first version of
+this section compared the submitter on the intent record against ``member_logins`` as the
+roster stood when the report ran, which is a different question from the one the record
+answers and gave a different answer. Eighteen runs from 2026-08-01 -- every one of them
+admitted before any group's membership was written down, when nothing could have been
+mis-claimed by anybody -- were named as people charging work to other groups' budgets.
+:mod:`edullm_platform.run_costs` argues the reading in full, including why a false flag is
+not always a verdict and what this reports for a run that has none.
+
+The third prefix is read for that and for nothing else. ``decision/`` is not in
+:data:`LINEAGE_PREFIXES`, which is the pair the nightly board's role is granted and the pair
+``tools/read_substrate.py`` and ``tools/report_team_assignments.py`` stage; widening that
+constant would ask a scheduled reader for a grant it does not hold and does not need.
 
 Exit codes follow the repository's convention: 0 reported, 2 the inputs could not be read.
 There is no 1, because this tool judges nothing and so has nothing to refuse.
@@ -49,7 +61,7 @@ if str(PROJECT_ROOT / "src") not in sys.path:
 
 from edullm_platform.capture_tooling import CaptureFailedError, aws
 from edullm_platform.config import load_yaml
-from edullm_platform.contracts.admission import IntentRecord
+from edullm_platform.contracts.admission import DecisionRecord, IntentRecord
 from edullm_platform.contracts.bindings import TeamBindingCatalog
 from edullm_platform.contracts.inventory import OrganizationInventory
 from edullm_platform.contracts.lifecycle import SchedulerAttempt
@@ -69,10 +81,21 @@ from edullm_platform.run_costs import (
 EXIT_OK = 0
 EXIT_UNUSABLE = 2
 
-#: The two prefixes this report reads. Named rather than globbed over the whole bucket so
-#: that a prefix added later is a deliberate edit here, and so that syncing pulls only what
-#: is needed rather than every result and decision record as well.
+#: The two prefixes every reader of this module's helpers needs. Named rather than globbed
+#: over the whole bucket so that a prefix added later is a deliberate edit here, and so that
+#: syncing pulls only what is needed rather than every result record as well.
 LINEAGE_PREFIXES = ("intent", "attempt")
+
+#: The prefix carrying what admission concluded, which this report reads and the other
+#: callers of :data:`LINEAGE_PREFIXES` do not. Held apart from that constant rather than
+#: appended to it, because the nightly reader role grants ``intent``, ``attempt`` and
+#: ``result`` object by object, ``sync_bucket`` raises on a prefix it is refused, and a
+#: scheduled board that asks for this one would lose its whole cost mapping over a grant it
+#: has no use for.
+DECISION_PREFIX = "decision"
+
+#: What this report itself pulls, which is the pair plus the decisions.
+REPORT_PREFIXES = (*LINEAGE_PREFIXES, DECISION_PREFIX)
 
 
 class ReportInputError(Exception):
@@ -142,6 +165,29 @@ def read_records(directory: Path) -> tuple[list[IntentRecord], list[SchedulerAtt
             unparsed += 1
 
     return intents, attempts, unparsed
+
+
+def read_decisions(directory: Path) -> tuple[list[DecisionRecord], int]:
+    """What admission concluded about each run, counting what would not parse.
+
+    A function of its own rather than a third value out of :func:`read_records`, because
+    four callers read that pair and only two of them ask this question. Widening the tuple
+    would make ``tools/read_substrate.py``, ``tools/report_team_assignments.py`` and
+    ``tools/visibility_board.py`` all name a value they discard.
+
+    An absent ``decision/`` directory raises, exactly as a missing ``intent/`` does. A
+    reading that quietly carried on with no verdicts would report every run's team claim as
+    unrecorded, which is a real state a store can be in and must not be spelled the same way
+    as not having looked.
+    """
+    decisions: list[DecisionRecord] = []
+    unparsed = 0
+    for document in _load(directory, DECISION_PREFIX):
+        try:
+            decisions.append(DecisionRecord.model_validate(document))
+        except ValueError:
+            unparsed += 1
+    return decisions, unparsed
 
 
 def sync_bucket(
@@ -218,8 +264,8 @@ def _bound_line(spend: TeamSpend) -> str:
         # publish a number no record supports.
         line += (
             f". ${_plain(spend.contradicted_cost_usd)} of that, across "
-            f"{_runs(spend.contradicted_runs)}, was claimed by somebody the roster records "
-            "on another group"
+            f"{_runs(spend.contradicted_runs)}, carries a decision record saying the claim "
+            "on it was never verified"
         )
     return line
 
@@ -245,7 +291,8 @@ def by_team(costs: Sequence[RunCost], teams: TeamBindingCatalog) -> list[str]:
         "Which group a run is charged to is the group its manifest claimed, and since "
         "2026-08-05 nothing on the platform refuses a claim the roster disagrees with. So "
         "these figures are what each group was charged rather than what each group ran, and "
-        "the gap between the two is measured below rather than left to be assumed."
+        "the gap between the two is read out of the decision records below rather than left "
+        "to be assumed."
     )
     lines.append("")
     if attribution.bound:
@@ -280,10 +327,41 @@ def by_team(costs: Sequence[RunCost], teams: TeamBindingCatalog) -> list[str]:
 
 def _contradicted_line(claim: ContradictedClaim) -> str:
     figure = "no figure" if claim.cost_usd is None else f"${_plain(claim.cost_usd)}"
-    return (
+    line = (
         f"- `{claim.run_id}` {figure}: {claim.submitter} claimed {claim.claimed_team} and "
-        f"the roster records them on {', '.join(claim.recorded_teams)}"
+        "its decision record carries `team_verified: false`"
     )
+    if claim.recorded_teams:
+        # Present tense and separated from the verdict, because it is the one thing on this
+        # line a roster edit can change. It is here to answer "who do I ask" and not to
+        # establish anything.
+        line += f". The roster today records them on {', '.join(claim.recorded_teams)}"
+    return line
+
+
+def _without_verdict_lines(attribution: TeamAttribution) -> list[str]:
+    """How many runs above this section is deliberately saying nothing about.
+
+    Printed whether or not anything was contradicted, because the whole finding of this
+    section is what the records say and "most of them say nothing" is the larger half of
+    that. It is also the sentence that stops the empty case reading as a clean bill: with no
+    contradicted runs and no line here, a reader would take the split as fully verified.
+    """
+    if not attribution.without_verdict:
+        return []
+    counted = attribution.without_verdict
+    return [
+        (
+            f"{_runs(counted)} above {'carries' if counted == 1 else 'carry'} no verdict "
+            "either way and are reported as neither. `team_verified` is false both for a "
+            "claim the roster contradicted and for one nothing was in a position to check, "
+            "and until a submitter's group was written down every record they left said "
+            "false and meant nothing by it. `src/edullm_platform/run_costs.py` says how the "
+            "two are told apart and why a run sealed before its submitter's membership was "
+            "recorded gets no answer rather than the wrong one."
+        ),
+        "",
+    ]
 
 
 def _contradicted_lines(attribution: TeamAttribution) -> list[str]:
@@ -294,42 +372,67 @@ def _contradicted_lines(attribution: TeamAttribution) -> list[str]:
     wants the runs comes here, and one fact enumerated in two reports is two reports to keep
     in step.
     """
-    if not attribution.contradicted:
+    if not attribution.contradicted and not attribution.without_verdict:
         return []
+    lines = ["### What the decision records say about the group each run claimed", ""]
+    if not attribution.contradicted:
+        lines += [
+            (
+                "No run above carries a decision record saying its team claim was "
+                "contradicted."
+            ),
+            "",
+        ]
+        return lines + _without_verdict_lines(attribution)
+
     counted = len(attribution.contradicted)
-    return [
-        "### Claimed against a group the roster puts the submitter on a different one from",
-        "",
+    lines += [
         (
             f"{_runs(counted)} above, carrying "
             f"${_plain(attribution.contradicted_cost_usd)}, "
-            f"{'names' if counted == 1 else 'name'} a declared group whose "
-            "member list does not carry the person who submitted them. Until 2026-08-05 "
-            "admission refused these, from inside AWS and after a lead had already released "
-            "the run, so it never prevented the spend and only ever wasted the approval. "
-            "The refusal is gone and this is what replaced it. Nothing here stops a run, "
-            "and each one is still counted in its claimed team's total above, because "
-            "moving it would attribute spend to a group that did not ask for it."
+            f"{'was' if counted == 1 else 'were'} admitted with `team_verified: false` on "
+            "the decision record, meaning admission compared the group claimed against the "
+            "group the submitter was recorded on and they were not the same. Until "
+            "2026-08-05 admission refused these, from inside AWS and after a lead had "
+            "already released the run, so it never prevented the spend and only ever wasted "
+            "the approval. The refusal is gone and the flag is what replaced it. Nothing "
+            "here stops a run, and each one is still counted in its claimed team's total "
+            "above, because moving it would attribute spend to a group that did not ask "
+            "for it."
         ),
         "",
         (
-            "It is a floor. A submitter the roster records on no group at all is not listed, "
-            "because nothing contradicts them, and `tools/report_onboarding_readiness.py` "
-            "already names those people. `edullm check` still refuses this locally, before "
-            "anything is spent, which is the cheap place to ask."
+            "It is a floor. `edullm check` still refuses this locally, before anything is "
+            "spent, which is the cheap place to ask."
         ),
         "",
         *[_contradicted_line(claim) for claim in attribution.contradicted],
         "",
     ]
+    return lines + _without_verdict_lines(attribution)
 
 
 def render(costs: Sequence[RunCost], *, teams: TeamBindingCatalog, unparsed: int) -> str:
     lines = ["# What runs have cost", ""]
     lines.append(
         "Compute at the catalog's published rate, measured from the attempt records this "
-        "platform wrote. It excludes instance start-up, idle time, storage and transfer, "
-        "so it is what the work cost rather than what AWS charged."
+        "platform wrote. A figure here is the container's own wall clock at that rate and "
+        "nothing else: not instance start-up, not the minutes an instance stays warm "
+        "afterwards, not storage and not transfer."
+    )
+    lines.append("")
+    lines.append(
+        "**No figure below is what AWS charged, and it is not a floor on it or a ceiling on "
+        "it either.** A short run reads as almost free because the instance under it is not "
+        "counted. `run_019fd2fa-5a1e-709c-9181-6a4dffd364e6` ran for 0.215 seconds and is "
+        "priced at $0.00 here; the `g4dn.xlarge` behind it was alive for four minutes and "
+        "seventeen seconds, which is about $0.04 at the same rate, so this report prices "
+        "under a thousandth of the instance time that run occupied. In the other direction "
+        "the catalog rate is a list rate this account is not billed: on 2026-08-04 the "
+        "figures below total $603.97 of compute against $434.25 of amortised EC2 charge for "
+        "the whole account, most families being covered and `p4d.24xlarge` billing at less "
+        "than half its catalog rate. What AWS charged is the `Amazon EC2 - Compute` line in "
+        "Cost Explorer, which this account can read."
     )
     lines.append("")
 
@@ -384,7 +487,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--lineage-root", type=Path, help="a directory already holding records")
-    source.add_argument("--bucket", help="sync this bucket's intent/ and attempt/ prefixes first")
+    source.add_argument(
+        "--bucket", help="sync this bucket's intent/, attempt/ and decision/ prefixes first"
+    )
     parser.add_argument("--config-dir", type=Path, default=PROJECT_ROOT / "config")
     parser.add_argument("--output", type=Path, help="write the report here rather than to stdout")
     parser.add_argument("--profile")
@@ -400,11 +505,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             if arguments.bucket:
                 root = Path(scratch)
                 sync_bucket(
-                    arguments.bucket, root, profile=arguments.profile, region=arguments.region
+                    arguments.bucket,
+                    root,
+                    profile=arguments.profile,
+                    region=arguments.region,
+                    prefixes=REPORT_PREFIXES,
                 )
             else:
                 root = arguments.lineage_root
             intents, attempts, unparsed = read_records(root)
+            decisions, unparsed_decisions = read_decisions(root)
+            unparsed += unparsed_decisions
             catalog = load_yaml(arguments.config_dir / "workload-catalog.yaml", WorkloadCatalog)
             organization = load_yaml(
                 arguments.config_dir / "organization.yaml", OrganizationInventory
@@ -414,7 +525,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             return EXIT_UNUSABLE
 
     costs = run_costs(
-        intents=intents, attempts=attempts, compute_profiles=catalog.compute_profiles
+        intents=intents,
+        attempts=attempts,
+        compute_profiles=catalog.compute_profiles,
+        decisions=decisions,
     )
     report = render(costs, teams=organization.team_bindings, unparsed=unparsed)
 

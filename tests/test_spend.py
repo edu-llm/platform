@@ -190,7 +190,7 @@ def test_a_team_with_spend_and_no_figure_is_not_printed_as_idle() -> None:
     assert "memory-split: $0.00 across 4 runs, 4 with no figure" in section
 
 
-def test_the_split_says_how_much_of_it_the_roster_disagrees_with() -> None:
+def test_the_split_says_how_much_of_it_the_records_never_verified() -> None:
     """Mutation: render the split without the contradicted figure.
 
     Until #221 a run reaching an attempt record had had its claimed group checked against
@@ -218,10 +218,13 @@ def test_the_split_says_how_much_of_it_the_roster_disagrees_with() -> None:
     )
 
     assert (
-        "memory-split: $40.00 across 4 runs, of which $10.00 across 1 run was claimed by "
-        "somebody the roster records elsewhere" in section
+        "memory-split: $40.00 across 4 runs, of which $10.00 across 1 run carries a "
+        "decision record saying the claim on it was never verified" in section
     )
-    assert "1 run above, carrying $10.00, was claimed against a group" in section
+    assert (
+        "1 run above, carrying $10.00, was admitted with `team_verified: false` on the "
+        "decision record" in section
+    )
     assert "what each group was charged rather than what each group ran" in section
     assert "tools/report_run_costs.py` names the runs" in section
     assert "It is a floor" in section
@@ -243,9 +246,12 @@ def test_a_split_nothing_contradicts_carries_no_paragraph_about_it() -> None:
         limit_source="tools/spend-limits.yaml",
     )
 
-    assert "claimed by somebody the roster records elsewhere" not in section
+    assert "saying the claim on it was never verified" not in section
     assert "It is a floor" not in section
     assert "nothing on the platform checks against the roster any more" in section
+    assert "not a share of it, in either direction" in section, (
+        "the standing caveat says both ways the figures miss the bill, every morning"
+    )
 
 
 def test_the_limit_is_read_from_a_file_rather_than_written_into_the_code() -> None:

@@ -40,6 +40,14 @@ compared that claim against the roster inside AWS, on the grounds that it fired 
 approval gate and so wasted approvals without ever preventing spend. So a line here is what a
 group was charged and not what a group ran, and :class:`TeamShare` carries the size of the
 difference rather than leaving the reader to assume there is none.
+
+**THE SPLIT IS NOT A SHARE OF THE TOTAL AND IS NOT SMALLER THAN IT EITHER**, which this said
+for a while and which is not true of this account. A container's wall clock excludes the
+minutes the instance spends starting and staying warm, so a short run reads as near zero
+against a bill of real minutes. The catalog's hourly rate is a list rate, and something is
+covering most of the instance families the platform runs on, so a long run reads high against
+what was actually charged for it. Both directions are live at once and neither bounds the
+other, so the two figures are printed as two measurements and never reconciled.
 """
 
 from __future__ import annotations
@@ -105,7 +113,8 @@ class TeamShare:
     #221 nothing on the platform refuses a submitter who claims a group the roster records
     them elsewhere from, so a line here is what a group was charged rather than what it ran.
     Carrying the size of that gap is what stops the split implying a precision it stopped
-    having. :mod:`edullm_platform.run_costs` computes it and argues it, and
+    having. It is read off ``team_verified`` on each run's decision record rather than worked
+    out again from today's roster; :mod:`edullm_platform.run_costs` argues that at length and
     ``tools/report_run_costs.py`` is the one place the runs behind it are named.
     """
 
@@ -113,10 +122,10 @@ class TeamShare:
     cost_usd: Decimal
     runs: int
     unpriced_runs: int
-    #: How many of ``runs`` a submitter claimed whom the roster records on another group,
-    #: and how much of ``cost_usd`` they carry. Counted into both rather than deducted: this
-    #: says how reliable the line is, and netting it off would publish an attribution no
-    #: record supports.
+    #: How many of ``runs`` carry a decision record saying the group they claimed was never
+    #: verified, and how much of ``cost_usd`` they carry. Counted into both rather than
+    #: deducted: this says how reliable the line is, and netting it off would publish an
+    #: attribution no record supports.
     contradicted_runs: int = 0
     contradicted_cost_usd: Decimal = Decimal(0)
 
@@ -244,10 +253,17 @@ def _team_lines(shares: Sequence[TeamShare] | None) -> list[str]:
             "platform's own lineage and not a share of the figure above. Cost allocation "
             "tags are refused in a linked "
             "account, so grouping Cost Explorer by `edullm:team` puts every dollar under the "
-            "empty key. These numbers exclude instance start-up, idle time, storage and "
-            "transfer, so they are smaller than the bill by construction. A line is the "
-            "group each run's manifest claimed, which nothing on the platform checks against "
-            "the roster any more."
+            "empty key. A line is the group each run's manifest claimed, which nothing on "
+            "the platform checks against the roster any more."
+        ),
+        "",
+        (
+            "These numbers are each container's own wall clock at the catalog's list rate. "
+            "They do not add up to the figure above and are not a share of it, in either "
+            "direction: instance start-up, idle time, storage and transfer are excluded, so "
+            "a short run reads as near zero while its instance ran for minutes, and the "
+            "catalog rate is a list rate this account is not billed, so a long run on a "
+            "covered instance family reads high."
         ),
         "",
     ]
@@ -266,13 +282,13 @@ def _team_lines(shares: Sequence[TeamShare] | None) -> list[str]:
 
 
 def _contradicted_note(share: TeamShare) -> str:
-    """What part of one line was booked by somebody the roster puts on another group."""
+    """What part of one line the decision records say was never verified."""
     if not share.contradicted_runs:
         return ""
     return (
         f", of which {_money(share.contradicted_cost_usd)} across "
-        f"{share.contradicted_runs} run{'' if share.contradicted_runs == 1 else 's'} was "
-        "claimed by somebody the roster records elsewhere"
+        f"{share.contradicted_runs} run{'' if share.contradicted_runs == 1 else 's'} "
+        "carries a decision record saying the claim on it was never verified"
     )
 
 
@@ -295,12 +311,13 @@ def _precision_lines(shares: Sequence[TeamShare]) -> list[str]:
     return [
         (
             f"{runs} run{'s' if runs != 1 else ''} above, carrying {_money(money)}, "
-            f"{'were' if runs != 1 else 'was'} claimed against a group the roster records "
-            "the submitter on a different one from. Nothing refuses that any more, so each "
-            "one is counted where it was claimed and the split is what each group was "
-            "charged rather than what each group ran. `tools/report_run_costs.py` names the "
-            "runs. It is a floor: a submitter the roster records on no group at all "
-            "contradicts nothing and is not counted here."
+            f"{'were' if runs != 1 else 'was'} admitted with `team_verified: false` on the "
+            "decision record, meaning the group claimed was not the group the submitter was "
+            "recorded on. Nothing refuses that any more, so each one is counted where it was "
+            "claimed and the split is what each group was charged rather than what each "
+            "group ran. `tools/report_run_costs.py` names the runs. It is a floor: a run "
+            "sealed before its submitter's membership was recorded anywhere carries the same "
+            "false flag and means nothing by it, so it is counted here as neither."
         ),
         "",
     ]
