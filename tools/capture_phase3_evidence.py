@@ -95,6 +95,7 @@ from edullm_platform.publisher_denials import assumed_role_identity
 from edullm_platform.role_drift import (
     DATASET_VALIDATOR_ROLE_TEMPLATES,
     PHASE3_ROLE_TEMPLATES,
+    RESEARCHER_ROLE_TEMPLATES,
     PolicyNotComparableError,
     compare_role_to_template,
     load_template_roles,
@@ -1529,6 +1530,29 @@ def capture_phase2_roles_target(arguments: argparse.Namespace) -> int:
     )
 
 
+def capture_researcher_role_target(arguments: argparse.Namespace) -> int:
+    """The one role a person assumes directly, compared to the template declaring it.
+
+    A TARGET HERE FOR THE REASON WRITTEN ABOVE ``capture_phase2_roles_target``: this file is
+    where the role-capture machinery lives, and all of it is parameterised by registry so a
+    further caller costs an argument rather than a copy.
+
+    WHAT THIS EXISTS TO CATCH IS DIFFERENT FROM THE OTHER TARGETS, and worth saying because the
+    difference is the reason the role is worth having at all. Every other captured role is
+    assumed by a service or by a workflow, so a console edit widening one is a change to what a
+    pipeline may do. This one is assumed by a person, and for the roster members who hold no
+    ``Intern-*`` role it is the whole of their AWS access -- ``system-overview.md``, "The
+    umbrella". A statement quietly removed from it does not break anything; it silently
+    converts a bounded population into an unbounded one, and nothing else in this repository
+    would report that.
+
+    Exit 0 when the role matches its template, 1 when it does not.
+    """
+    return capture_one_registry(
+        arguments, target_name="researcher-role", role_templates=RESEARCHER_ROLE_TEMPLATES
+    )
+
+
 def capture_compute_environment_target(arguments: argparse.Namespace) -> int:
     """The compute environment on its own, with no run to hang it off.
 
@@ -1685,6 +1709,7 @@ CAPTURE_TARGETS: Final[dict[str, Callable[[argparse.Namespace], int]]] = {
     "compute-environment": capture_compute_environment_target,
     "dataset-validator": capture_dataset_validator_target,
     "phase2-roles": capture_phase2_roles_target,
+    "researcher-role": capture_researcher_role_target,
     "roles": capture_roles_target,
     "run": capture_run_target,
 }
