@@ -1,6 +1,6 @@
 name: Nightly (the checks that are not about one change)
 
-# Eight checks that answer a question about the repository or about the account rather
+# Nine checks that answer a question about the repository or about the account rather
 # than about a change, and that either cost too much or fail too unpredictably to sit on
 # the pull-request path. Nothing here is continue-on-error, and that is the whole point of
 # moving them: there is no alerting infrastructure, so a red scheduled run is the signal,
@@ -38,6 +38,16 @@ name: Nightly (the checks that are not about one change)
 #     diff that was never merged, and a run that logged nowhere logged nowhere weeks ago.
 #     They also need an AWS identity, and putting one on the
 #     pull-request path would mean a fork's pull request runs with it in reach.
+#
+#   registered-dockerfiles — the ninth, and the only one whose subject is other people's
+#     repositories. It reads the research repositories over the GitHub API to ask whether
+#     each registration's dockerfile_path is actually on the branch it names, which is a
+#     question no diff to this repository can answer: a registration goes stale when
+#     somebody else's default branch moves, not when this one does. It is here rather than
+#     on the pull-request path for the same reason as the account checks -- a research
+#     repository renamed at four in the afternoon would turn every unrelated pull request
+#     red -- and because a fork's pull request should not be able to spend this
+#     repository's API budget enumerating an organisation.
 #
 # ONE OF THE EIGHT IS NO LONGER ONLY A SIGNAL, AND THAT CHANGES WHAT A RED CROSS ON IT
 # COSTS. wandb-credential publishes its answer as an artifact, and submit-run.yml refuses a
@@ -161,6 +171,43 @@ jobs:
       # reason it is here rather than on the pull-request path.
       - name: Run the acceptance gate
         run: uv run --frozen python tools/validate_phase1.py
+
+  registered-dockerfiles:
+    name: every registration names a Dockerfile that is there
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      # WHAT THIS CATCHES IS A REGISTRATION NOTHING EVER LOOKED AT. Seven of a
+      # registration's eight fields are held against something in this repository. The
+      # eighth, dockerfile_path, is a free string that tools/register_repository.py writes
+      # and never checks, and its own help text calls .edullm/Dockerfile a convention -- so
+      # open-instruct-scored-rewards was registered against a directory it does not have,
+      # validated, merged, created its ECR repository, widened the publisher role and
+      # reached the submission form's dropdown with nothing going red anywhere. The file is
+      # only read by docker build inside the caller repository's own workflow, and that
+      # repository has no caller workflow either, so no build ever ran to discover it.
+      #
+      # The GITHUB_TOKEN is enough because every registered repository is public. It is
+      # read-only here and this job writes nothing.
+      #
+      # No translation of the exit code, for the reason the AWS jobs below give. The tool
+      # prints its own reason and its own sentence, and tells a registration that points at
+      # nothing apart from a check that could not look -- restating that here would be a
+      # second place for the two to drift apart.
+      - name: Check every registration against the repository it names
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run --frozen python tools/verify_registered_dockerfiles.py
 
   checkpoint-reconciliation:
     name: runs that promised a checkpoint have one
