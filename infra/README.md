@@ -108,20 +108,20 @@ under *Stack 1: the delete a retry needs, re-applied 2026-08-01* below.
 The rule has a corollary that is easy to get backwards. If your change has not merged yet,
 you have not earned the right to apply it, and applying it early is how the account comes
 to hold something no reviewer has seen. The one exception this repository has made is a
-grant CI needs before its first scheduled run — the nightly reader's
+grant CI needs before its first scheduled run — the audit reader's
 `cloudformation:GetTemplate` was applied from a branch on 2026-08-01 for exactly that
 reason — and the cost of the exception is a window in which the account is ahead of `main`
 and the check below reports it. Merge promptly and the window closes.
 
 **What catches it when somebody forgets is `tools/verify_deployed_stacks.py`**, which the
-nightly workflow runs as the `deployed-stack-templates` job. It reads each deployed stack's
+audit runs as the `deployed-stack-templates` job. It reads each deployed stack's
 template out of CloudFormation, holds it against the file in `main` that declares it, and
 names the resource and the property that differ. It reads which template belongs to which
 stack from `STACKS` in that file, and a stack the account holds that `STACKS` does not name
 is reported rather than skipped, so a stack somebody deploys next is a finding and not a
 blind spot. Adding a stack therefore means adding three things in the same change: the
 entry in `STACKS`, the stack's ARN in the `cloudformation:GetTemplate` grant in
-`infra/iam/nightly-reader-role.yaml`, and the row in the phase table below. Run it by hand
+`infra/iam/audit-reader-role.yaml`, and the row in the phase table below. Run it by hand
 after applying anything, which is faster than waiting for 05:00:
 
 ```bash
@@ -468,11 +468,11 @@ lineage record of a cancelled run is complete in the same way a successful one i
 | 2 | `sbsandbox-intern-edullm-phase4-gpu` | `infra/batch-compute-gpu.yaml` | compute environment, queue, job definition, log group | CI |
 | 3 | `sbsandbox-intern-edullm-dataset-validator-iam` | `infra/iam/dataset-validator-role.yaml` | `…-dataset-validator` | laptop, not applied yet |
 | 4 | `sbsandbox-intern-edullm-run-canceller-iam` | `infra/iam/run-canceller-role.yaml` | `…-run-canceller` | laptop |
-| 5 | `sbsandbox-intern-edullm-nightly-reader-iam` | `infra/iam/nightly-reader-role.yaml` | `…-nightly-reader` | laptop |
+| 5 | `sbsandbox-intern-edullm-audit-reader-iam` | `infra/iam/audit-reader-role.yaml` | `…-audit-reader` | laptop |
 
 Stacks 4 and 5 each need a repository variable as well as a deploy:
 `AWS_RUN_CANCELLER_ROLE_ARN` for stack 4, which `.github/workflows/cancel-run.yml` reads,
-and `AWS_NIGHTLY_READER_ROLE_ARN` for stack 5, which `.github/workflows/nightly.yml` reads.
+and `AWS_AUDIT_READER_ROLE_ARN` for stack 5, which `.github/workflows/audit.yml` reads.
 Without it the workflow fails at the credential step with an empty role, which is a
 confusing way to say the stack was never applied. Both workflows guard on the variable and
 name the stack instead, but the guard is a better message rather than a substitute.
@@ -571,7 +571,7 @@ so the line would have read `only in main` and the repair would have been to re-
 directions because they are different jobs, which is the whole of what the message adds over
 knowing that something differs.
 
-What this does not claim is that a nightly would have caught the 2026-08-01 revert. The gap
+What this does not claim is that an audit would have caught the 2026-08-01 revert. The gap
 between 17:53 and 18:07 is fourteen minutes and the check runs at 05:00. What it ends is the
 open-ended case: an account that differs from `main` and stays that way, unnoticed, until a
 container fails on a credential months later.
@@ -654,16 +654,16 @@ submitting a CPU run for the purpose, dispatching `cancel-run.yml` against it in
 and reading the termination back off the job — `statusReason` naming the actor and the
 reason, which is what `lifecycle_projection` reads to tell a cancellation from a failure.
 
-### Stack 5: the nightly reader role, deployed 2026-08-01
+### Stack 5: the audit reader role, deployed 2026-08-01
 
 Laptop-applied, like every IAM stack in this file. The command is the one under *Deploying
-one IAM stack* above, with `sbsandbox-intern-edullm-nightly-reader-iam` as the stack name and
-`infra/iam/nightly-reader-role.yaml` as the template.
+one IAM stack* above, with `sbsandbox-intern-edullm-audit-reader-iam` as the stack name and
+`infra/iam/audit-reader-role.yaml` as the template.
 
 **It exists because pinning a workflow file works.** Every OIDC role here fixes
 `job_workflow_ref` with `StringEquals` to one file, which is what makes each role's reach
 readable off the workflow that can assume it. The consequence is that a token minted for
-`nightly.yml` matches none of them, so the nightly checks that read the account had no
+`audit.yml` matches none of them, so the audit's checks that read the account had no
 identity at all. Widening an existing role's condition to a list was the smaller diff and the
 worse change: the admission role can start an execution and the canceller can stop any job on
 either queue, and either would then sit behind a scheduled workflow nobody watches dispatch.
@@ -673,7 +673,7 @@ lineage store, the runs' own output under `teams/*/runs/*`, the one W&B secret, 
 deployed code digest of the two admission functions. Both listings carry a prefix condition,
 because
 `s3:ListBucket` cannot be scoped by an object ARN and without one it enumerates the whole
-bucket. `tests/test_nightly_workflow.py` asserts the granted action set exactly, so an action
+bucket. `tests/test_audit_workflow.py` asserts the granted action set exactly, so an action
 added later is argued for in a test rather than merely not forbidden.
 
 Verified after the deploy by `iam simulate-principal-policy` rather than by reading the
@@ -686,7 +686,7 @@ that is subtly wrong, which reading the template cannot.
 #### Amended 2026-08-01 for the deployed-Lambda check
 
 `lambda:GetFunctionConfiguration` was added on the two function ARNs by name, for
-`.github/workflows/nightly.yml`'s `deployed-lambda-release` job. Re-applied with the same
+`.github/workflows/audit.yml`'s `deployed-lambda-release` job. Re-applied with the same
 command as the original deploy; CloudFormation updates the inline policy in place, so nothing
 about the role's identity or its trust changed and no repository variable moved.
 
@@ -700,7 +700,7 @@ resource widened by accident shows up as the update becoming allowed.
 
 #### Amended again 2026-08-01 for the deployed-stack check
 
-`cloudformation:GetTemplate` was added for `.github/workflows/nightly.yml`'s
+`cloudformation:GetTemplate` was added for `.github/workflows/audit.yml`'s
 `deployed-stack-templates` job, on twenty-one stack ARNs written out in full rather than on a
 `stack/sbsandbox-intern-edullm-*` prefix. A template is the entire configuration of a stack,
 which makes this the widest read the role holds and the one where a prefix would matter most:
@@ -709,7 +709,7 @@ and being unable to read a new stack is precisely how that stack gets reported i
 absorbed. The trailing `/*` on each ARN is CloudFormation's stack id, a uuid chosen at
 creation that cannot be predicted from the name, so it is unavoidable and reaches nothing
 beyond the stack it names. The list is the same one `STACKS` declares in
-`tools/verify_deployed_stacks.py`; `tests/test_nightly_workflow.py` reads both and fails when
+`tools/verify_deployed_stacks.py`; `tests/test_audit_workflow.py` reads both and fails when
 they diverge, so a stack added to one and not the other is caught at review rather than as a
 denial at 05:00.
 
@@ -762,7 +762,7 @@ schedule, under this role — was refused on its second prefix every night. It d
 attempt records alone: `sync_bucket` raises on a refused prefix rather than skipping it, so
 the whole cost mapping came back `None` and every run on the board rendered as `not costed`.
 The attempt records are the only place a run's measured duration exists, so nothing
-substitutes for them. `tests/test_nightly_workflow.py` now derives the required prefix set
+substitutes for them. `tests/test_audit_workflow.py` now derives the required prefix set
 from the workflow and from that constant and asserts the fetchable and listable sets are
 equal, rather than restating either, so this pair cannot drift apart again without a red
 review.
@@ -793,7 +793,7 @@ yet, and it is a read of the account's whole management event history, which is 
 anything else this role holds and should arrive with the tool that needs it.
 
 The change set was read before it was executed, as *Deploying one IAM stack* above requires.
-One entry: `Modify` on `NightlyReaderRole`, scope `Properties`, target `Policies`,
+One entry: `Modify` on `AuditReaderRole`, scope `Properties`, target `Policies`,
 `Replacement: False` and `RequiresRecreation: Never`. No replacement and no deletion, which is
 what the read is for — an IAM role replaced rather than modified gets a new ARN and every
 `role-to-assume` pointing at it stops resolving.
@@ -808,13 +808,53 @@ on an `attempt/` key. `tag:GetResources` is `allowed` in `us-east-1` and `implic
 are `tag:TagResources`, `tag:UntagResources` and `batch:ListJobs` — the last confirming there
 is still no substitute read for the tagging grant.
 
-**Proved end to end rather than by simulation alone.** `nightly.yml` was dispatched by hand
+**Proved end to end rather than by simulation alone.** `audit.yml` was dispatched by hand
 against this commit. The `visibility-board` job had emitted two gaps on every night since it
 shipped and now emits none: it reports 78 runs in the account with no W&B run and prices
 `$60.47` of that from the attempt records, where every run previously read `not costed`. Both
 figures are unobtainable without these grants, so each one is its own proof. The job still
 exits 1 — that is `EXIT_DISAGREES`, the three records genuinely disagreeing, which is a run to
 go and open rather than a grant to go and apply, and no IAM change closes it.
+
+#### Renamed to the audit, and therefore replaced, 2026-08-05
+
+The workflow, the role and the stack were called the nightly, which named the schedule
+rather than the work. What the seven checks do is hold what the platform recorded against
+what is actually there and go red when the two disagree, so the name is now the audit.
+
+**This was a replacement rather than an update, and that is forced by IAM.** A role's name
+is its physical id, so renaming it deletes the old role and creates a new one with a new
+ARN. The stack name carried the old word too, so both moved together: the new stack was
+created first and the old one deleted after, which means there was never a window with no
+role and never two roles holding the same grants.
+
+```bash
+aws cloudformation deploy \
+  --stack-name sbsandbox-intern-edullm-audit-reader-iam \
+  --template-file infra/iam/audit-reader-role.yaml \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --no-fail-on-empty-changeset \
+  --profile sbsandbox --region us-east-1
+
+aws cloudformation delete-stack \
+  --stack-name sbsandbox-intern-edullm-nightly-reader-iam \
+  --profile sbsandbox --region us-east-1
+```
+
+No `--s3-bucket` here. `infra/iam/infra-deployer-role.yaml` needs one because it is past
+CloudFormation's 51,200-byte limit for an inline template body, and this template is 34 KB.
+
+**The trust policy and the workflow file had to land in the same change.** The condition is
+`StringEquals` on `job_workflow_ref`, so a workflow renamed without the trust policy mints
+a token that matches nothing, and a role renamed without the workflow leaves
+`role-to-assume` pointing at an ARN that no longer exists. Renaming one alone is an access
+denial at 05:00 with nothing in the message saying which half moved.
+
+Three things kept the old name because they are records rather than labels.
+`fixtures/evidence/phase-2/github/secrets.sanitized.json` says the repository held
+`AWS_NIGHTLY_READER_ROLE_ARN` at 2026-08-02T14:30:06Z, which it did. The assertion in
+`tests/test_phase2_github_evidence.py` holds that capture to itself. The lineage records
+are untouched, as they are by everything.
 
 ### A hazard that has expired, and the one it does not take with it
 
@@ -868,8 +908,8 @@ anybody noticing. The drift comparison reported `ok` for all four Phase 3 roles 
 first time since the first of them was attached.
 
 "Not by anybody noticing" is the part that has since been addressed, though only for one of
-the two shapes. `tools/verify_deployed_stacks.py` runs nightly and would have reported the
-adopted ECR repository, because a stack's deployed template is what it compares. It would not
+the two shapes. `tools/verify_deployed_stacks.py` runs in the audit and would have reported
+the adopted ECR repository, because a stack's deployed template is what it compares. It would not
 have reported the removed inline policy: `dataset-validator` was attached to the role
 directly, outside CloudFormation, so the stack's template never mentioned it and a template
 comparison cannot see it. Reading the roles themselves, which is what
@@ -1105,11 +1145,11 @@ enabled on the secret, and no workflow here holds `secretsmanager:PutSecretValue
 Three principals read it, confirmed against the account on 2026-08-02 and worth knowing
 before changing anything about it. `…-batch-execution` and `…-batch-gpu-execution` inject it
 into a container at task start, and they are trusted to `ecs-tasks.amazonaws.com`, so no
-person and no workflow can assume either. `…-nightly-reader` is trusted to
-`nightly.yml@refs/heads/main` and holds the read so the nightly can ask W&B whether the
+person and no workflow can assume either. `…-audit-reader` is trusted to
+`audit.yml@refs/heads/main` and holds the read so the audit can ask W&B whether the
 stored value is one it would accept. Nothing else in the account reaches it by name.
 
-**Dispatching the nightly is part of the rotation, not a follow-up to it.**
+**Dispatching the audit is part of the rotation, not a follow-up to it.**
 
 ```bash
 aws secretsmanager put-secret-value \
@@ -1117,7 +1157,7 @@ aws secretsmanager put-secret-value \
   --secret-string file:///path/to/the/key \
   --profile sbsandbox --region us-east-1
 
-gh workflow run nightly.yml --ref main
+gh workflow run audit.yml --ref main
 ```
 
 `--secret-string file://…` rather than the value on the command line, and the file must hold
@@ -1129,7 +1169,7 @@ nowhere, and dies later with `ProcessGroup is not registered`.
 
 The second command is what closes the window this rotation opens.
 `.github/workflows/submit-run.yml` refuses a submission on the strength of the verdict
-`nightly.yml` publishes, because no identity the submit path can obtain holds the read —
+`audit.yml` publishes, because no identity the submit path can obtain holds the read —
 `infra/iam/admission-role.yaml` argues that at length beside the grant it declines. So
 between writing a value and the next verdict, the preflight is reading the answer to a
 question about the value before this one. The schedule closes that within a day and the
@@ -1222,8 +1262,11 @@ elements, so several exact values are allowed and nothing outside the list is.
   `deploy-phase2-admission.yml@refs/heads/main` and
   `deploy-phase3-batch.yml@refs/heads/main`; `infra/iam/ecr-publisher-role.yaml` pins
   `build-research-image.yml@refs/heads/main`; `infra/iam/admission-role.yaml` pins
-  `submit-run.yml@refs/heads/main`. Renaming or moving any of those files revokes that
-  role's deployments.
+  `submit-run.yml@refs/heads/main`; `infra/iam/audit-reader-role.yaml` pins
+  `audit.yml@refs/heads/main`. Renaming or moving any of those files revokes that
+  role's deployments. The last of those is the one this has actually happened to.
+  `nightly.yml` became `audit.yml` on 2026-08-05, and the trust policy, the role name and
+  the stack name moved in the same change for exactly the reason below.
 - **The GitHub environment.** `infra/iam/admission-role.yaml` pins the subject claim to
   `…:environment:run-approval-lead` and `…:environment:run-approval-admin`, because GitHub
   puts `:environment:<name>` in the subject of a job that declared an `environment:` and

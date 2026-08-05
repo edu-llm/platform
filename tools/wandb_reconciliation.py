@@ -25,9 +25,9 @@ manifest exists only for a run that reached a terminal state with an attempt beh
 the set of result records *is* the set of runs to ask about. Nothing here subscribes to
 anything or holds state between runs.
 
-**WHERE IT RUNS: THE NIGHTLY BOARD, NOT A LAMBDA, AND NOT A JOB OF ITS OWN.**
-``tools/visibility_board.py`` already runs on ``nightly.yml`` under
-``sbsandbox-intern-edullm-nightly-reader``, already resolves the W&B key out of Secrets
+**WHERE IT RUNS: THE AUDIT BOARD, NOT A LAMBDA, AND NOT A JOB OF ITS OWN.**
+``tools/visibility_board.py`` already runs on ``audit.yml`` under
+``sbsandbox-intern-edullm-audit-reader``, already resolves the W&B key out of Secrets
 Manager, already reads *every* run in the entity across every project, and already syncs the
 lineage bucket. So this reconciliation costs no role, no builder, no release record, no
 stack, no CI step, no entry in either deployment verifier -- and no second call to W&B, since
@@ -49,7 +49,7 @@ could tell" for every run that ended that day, and nothing could ever correct it
 observation that can be `unreachable` has to be re-askable, which means it belongs somewhere
 recomputed rather than somewhere sealed.
 
-So the answer is written into the nightly board -- the step summary a person reads and, with
+So the answer is written into the audit board -- the step summary a person reads and, with
 ``--wandb-observations``, a JSON file a machine reads -- recomputed from the immutable result
 records and a live read of W&B every night. It is idempotent, it corrects itself the night
 after an outage, and it adds no writer to a role whose whole property is that it cannot
@@ -116,10 +116,10 @@ __all__ = [
 
 #: The lineage prefix a reference is read out of. Named here because this module is what
 #: makes the board sync it: the cost report reads ``intent/`` and ``attempt/`` and the
-#: checkpoint reconciliation reads ``intent/`` and ``result/``, so the nightly reader role
+#: checkpoint reconciliation reads ``intent/`` and ``result/``, so the audit reader role
 #: already grants this one and asking for it costs no IAM change. It reaches the role check
 #: through ``visibility_board.REQUIRED_LINEAGE_PREFIXES``, which
-#: ``tests/test_nightly_workflow.py`` derives the expected grant from rather than restating
+#: ``tests/test_audit_workflow.py`` derives the expected grant from rather than restating
 #: -- the arrangement that stopped ``attempt/`` being missing for months.
 RESULT_PREFIX: Final = "result"
 
@@ -153,7 +153,7 @@ class LoggedRun(Protocol):
     into a frozen dataclass of exactly this shape, and taking it through a Protocol is what
     lets the existence question be answered from a listing that has already been fetched
     instead of from a second round trip. A test supplies its own instances and gets the same
-    code path the nightly takes.
+    code path the audit takes.
     """
 
     @property

@@ -1164,8 +1164,8 @@ jobs:
       # allocation, a run, and the afternoon of whoever went looking at torch.
       #
       # `tools/verify_wandb_credential.py` has answered this question every night since the
-      # nightly started asking it. What the answer had never been until this step existed is
-      # on the path that spends money. A refused key made `nightly.yml` red and stopped
+      # audit started asking it. What the answer had never been until this step existed is
+      # on the path that spends money. A refused key made `audit.yml` red and stopped
       # nothing: the header of that file says there is no alerting infrastructure and a red
       # scheduled run is the whole signal, so a key W&B had already refused went on costing
       # a GPU allocation per dispatch for as long as nobody happened to look. Two seconds
@@ -1177,7 +1177,7 @@ jobs:
       # `sbsandbox-intern-edullm-wandb-api-key-*`, read off the live account on 2026-08-02:
       # `…-batch-execution` and `…-batch-gpu-execution`, which are trusted to
       # `ecs-tasks.amazonaws.com` and put the value into a container at task start, and
-      # `…-nightly-reader`, which is trusted to `nightly.yml@refs/heads/main` and exists to
+      # `…-audit-reader`, which is trusted to `audit.yml@refs/heads/main` and exists to
       # ask W&B this exact question. No identity this file can obtain holds it.
       #
       # Both of the obvious ways to change that are worse than the gap they close. Adding
@@ -1195,7 +1195,7 @@ jobs:
       #
       # So the credential path for this preflight is that there is not one. The submit job
       # already holds `actions: read` for the approvals endpoint, and that is enough to read
-      # what the nightly published. This step adds no permission to any identity, in GitHub
+      # what the audit published. This step adds no permission to any identity, in GitHub
       # or in AWS.
       #
       # WHAT THAT COSTS, SAID PLAINLY RATHER THAN LEFT TO BE FOUND OUT. The verdict is up to
@@ -1232,8 +1232,8 @@ jobs:
       #
       # That asymmetry is deliberate and is argued where the decision is made. A measured
       # refusal does not expire because a schedule slipped; the absence of a fresh
-      # acceptance is not evidence of anything. And this file lands before the first nightly
-      # that can publish anything at all, so a step that failed closed on a missing verdict
+      # acceptance is not evidence of anything. And this file lands before the first audit
+      # run that can publish anything at all, so a step that failed closed on a missing verdict
       # would take the platform down in order to add a check to it, which is the hazard
       # *Why IAM is laptop-only* in infra/README.md is about wearing different clothes.
       - name: Refuse a submission the W&B key would not authenticate
@@ -1248,7 +1248,7 @@ jobs:
             --repository "${PREFLIGHT_REPOSITORY}" \
             --output "${report}" || preflight_status=$?
           if [[ "${preflight_status}" -eq 0 ]]; then
-            echo "The last nightly check accepted the key every container on this platform is given."
+            echo "The last audit accepted the key every container on this platform is given."
             exit 0
           fi
           # The tool has already printed its answer, including the published report whole,
@@ -1257,7 +1257,7 @@ jobs:
           if [[ "${preflight_status}" -ne 1 ]]; then
             echo "wandb_preflight_not_attempted" >&2
             echo "No usable W&B credential verdict was found, so nothing was checked and this submission continues. This is not a verdict on the key." >&2
-            echo "The verdict is published by the nightly workflow, which is the only thing here holding secretsmanager:GetSecretValue on that secret. Dispatch it to produce one." >&2
+            echo "The verdict is published by the audit workflow, which is the only thing here holding secretsmanager:GetSecretValue on that secret. Dispatch it to produce one." >&2
             exit 0
           fi
           {
@@ -1271,7 +1271,7 @@ jobs:
             echo "The key is set from a laptop and from nowhere else, so repairing it is a"
             echo "person. Open a run problem issue and quote this workflow run."
             echo
-            echo "If the key has just been repaired, dispatch the nightly workflow to check it"
+            echo "If the key has just been repaired, dispatch the audit workflow to check it"
             echo "again. Until something does, this reads the last answer anybody measured."
             echo
             echo "Submitting anyway is what this step exists to stop. A container given a key"

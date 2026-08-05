@@ -216,7 +216,7 @@ class CheckpointState(StrEnum):
 
     Collapsing it into ABSENT is the bug it exists to fix: the reader said "nothing is
     stored at this prefix" about a directory holding a 48 MB adapter and a 96 MB optimizer
-    state, and the nightly then told the researcher they had forgotten ``--save-folder``.
+    state, and the audit then told the researcher they had forgotten ``--save-folder``.
     Collapsing it into UNCOMMITTED would be the opposite error, because that word means a
     write that did not finish and a resume from it starts at step zero -- where a
     HuggingFace checkpoint resumes perfectly well, just not through OLMo-core's loader.

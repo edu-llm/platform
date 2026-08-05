@@ -472,7 +472,7 @@ def test_the_module_documents_the_three_states_and_where_it_runs() -> None:
 
     for claim in (
         "THE FIX IS NOT IN ``wandb_run_for``",
-        "WHERE IT RUNS: THE NIGHTLY BOARD",
+        "WHERE IT RUNS: THE AUDIT BOARD",
         "WHAT IT WRITES, AND WHY NOT INTO THE RECORD IT IS ABOUT",
         "THREE STATES",
         "IT REPORTS AND IT DOES NOT COMPEL",

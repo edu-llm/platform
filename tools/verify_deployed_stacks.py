@@ -157,8 +157,8 @@ def _stacks(*entries: tuple[str, Path]) -> dict[str, Stack]:
 #:
 #: A template appears once even where two phases amended it, because a stack is deployed from
 #: one file whatever the history of that file is. Adding a stack means adding a row here and
-#: adding its ARN to the nightly reader's ``cloudformation:GetTemplate`` grant in
-#: ``infra/iam/nightly-reader-role.yaml``; a row without the grant is a denial rather than a
+#: adding its ARN to the audit reader's ``cloudformation:GetTemplate`` grant in
+#: ``infra/iam/audit-reader-role.yaml``; a row without the grant is a denial rather than a
 #: silence, and a grant without a row is caught by the listing.
 STACKS: Final = _stacks(
     ("sbsandbox-intern-edullm-phase1-ecr", INFRA_ROOT / "ecr-repositories.yaml"),
@@ -183,7 +183,7 @@ STACKS: Final = _stacks(
     ("sbsandbox-intern-edullm-phase4-gpu-shapes", INFRA_ROOT / "batch-compute-gpu-shapes.yaml"),
     ("sbsandbox-intern-edullm-dataset-validator-iam", IAM_ROOT / "dataset-validator-role.yaml"),
     ("sbsandbox-intern-edullm-run-canceller-iam", IAM_ROOT / "run-canceller-role.yaml"),
-    ("sbsandbox-intern-edullm-nightly-reader-iam", IAM_ROOT / "nightly-reader-role.yaml"),
+    ("sbsandbox-intern-edullm-audit-reader-iam", IAM_ROOT / "audit-reader-role.yaml"),
     ("sbsandbox-intern-edullm-phase5-image-resolver-iam", IAM_ROOT / "image-resolver-role.yaml"),
     ("sbsandbox-intern-edullm-run-preview-iam", IAM_ROOT / "run-preview-role.yaml"),
 )
@@ -226,7 +226,7 @@ def _masked(text: str) -> str:
 
     ``edullm_platform.evidence.redact_aws_account_ids`` is the sanctioned mask and is not
     used here, because it raises on text that also carries another credential shape. That is
-    right for a capture somebody is about to commit and wrong for a nightly check: a drift
+    right for a capture somebody is about to commit and wrong for an audit check: a drift
     report that turned into a traceback would report nothing at all, on the one morning the
     account was holding something nobody expected. The same expression is reused so the mask
     cannot be stepped around differently here than it is anywhere else.
@@ -481,8 +481,8 @@ def _refusal(stack_name: str, status: int, stderr: str) -> DeployedStackFinding:
         "deployed_stack_unreadable",
         f"reading the deployed template of {stack_name} was refused with {named}(the CLI "
         f"exited {status}), so what is deployed has not been read and this run says nothing "
-        "about it either way. A denial here is usually the grant: the nightly reader needs "
-        "cloudformation:GetTemplate on this stack, which infra/iam/nightly-reader-role.yaml "
+        "about it either way. A denial here is usually the grant: the audit reader needs "
+        "cloudformation:GetTemplate on this stack, which infra/iam/audit-reader-role.yaml "
         "declares by name and which is applied from a laptop like every IAM stack in "
         "infra/README.md. The full message is not printed because it names the calling and "
         "resource ARNs, and both carry the account id.",
@@ -526,8 +526,8 @@ def list_deployed_stacks(*, profile: str | None, region: str) -> dict[str, str]:
             "deployed_stacks_not_listed",
             f"listing the account's stacks was refused with {named}(the CLI exited "
             f"{finished.returncode}), so a stack nothing in this repository accounts for "
-            "would not be seen on this run. The nightly reader needs cloudformation:"
-            "ListStacks, which infra/iam/nightly-reader-role.yaml declares; the action takes "
+            "would not be seen on this run. The audit reader needs cloudformation:"
+            "ListStacks, which infra/iam/audit-reader-role.yaml declares; the action takes "
             "no resource, and the template says why. The full message is not printed because "
             "it names the calling ARN, which carries the account id.",
             code=EXIT_UNUSABLE,
@@ -597,7 +597,7 @@ def _report(finding: DeployedStackFinding) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else None)
-    # No default profile. The nightly runs on an assumed role and passes none, and a default
+    # No default profile. The audit runs on an assumed role and passes none, and a default
     # of `sbsandbox` would send it looking for an SSO session that is not there.
     parser.add_argument("--profile", default=None)
     parser.add_argument("--region", default="us-east-1")
@@ -628,7 +628,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "was deployed from, so this check has no idea whether it matches main and is not "
             "going to pretend it does. Add it to STACKS in tools/verify_deployed_stacks.py "
             "beside the template it was applied from, add its ARN to the "
-            "cloudformation:GetTemplate grant in infra/iam/nightly-reader-role.yaml, and "
+            "cloudformation:GetTemplate grant in infra/iam/audit-reader-role.yaml, and "
             "record the stack name in infra/README.md if it is applied by hand. If it should "
             "not exist, that is the finding.",
             code=EXIT_DISAGREES,

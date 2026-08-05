@@ -1,11 +1,11 @@
-"""Decide a submission against the last W&B credential verdict the nightly published.
+"""Decide a submission against the last W&B credential verdict the audit published.
 
 Makes no AWS call and holds no AWS credential, which is the point of it rather than a
 limitation. ``edullm_platform.wandb_preflight`` carries the argument in full; the short
 version is that the three principals able to read
 ``sbsandbox-intern-edullm-wandb-api-key-*`` are the two Batch execution roles and
-``sbsandbox-intern-edullm-nightly-reader``, none of them reachable from ``submit-run.yml``,
-and the right response to that is to read the answer the nightly already computes rather
+``sbsandbox-intern-edullm-audit-reader``, none of them reachable from ``submit-run.yml``,
+and the right response to that is to read the answer the audit already computes rather
 than to put the platform's shared W&B credential behind a runner.
 
 Everything it needs comes through ``gh``, under the ``actions: read`` the submit job
@@ -32,11 +32,11 @@ from pathlib import Path
 from typing import Any, Final
 
 from edullm_platform.wandb_preflight import (
+    AUDIT_BRANCH,
+    AUDIT_VERDICT_ARTIFACT,
+    AUDIT_VERDICT_FILENAME,
+    AUDIT_WORKFLOW,
     FRESHNESS,
-    NIGHTLY_BRANCH,
-    NIGHTLY_VERDICT_ARTIFACT,
-    NIGHTLY_VERDICT_FILENAME,
-    NIGHTLY_WORKFLOW,
     Outcome,
     Preflight,
     decide,
@@ -47,7 +47,7 @@ EXIT_REFUSE: Final = 1
 EXIT_NOT_ESTABLISHED: Final = 2
 
 #: How far back to look for a run that published one. More than a schedule's worth, because
-#: a nightly that failed before its check ran publishes nothing and the answer from the
+#: an audit that failed before its check ran publishes nothing and the answer from the
 #: night before is still the newest one anybody has. Bounded rather than unbounded so the
 #: step costs a fixed handful of API calls; anything older is stale by any reading.
 RUNS_EXAMINED: Final = 10
@@ -64,7 +64,7 @@ __all__ = [
     "RUNS_EXAMINED",
     "GitHubUnreachable",
     "build_parser",
-    "completed_nightly_runs",
+    "completed_audit_runs",
     "download_the_verdict",
     "main",
     "read_the_published_verdict",
@@ -93,13 +93,13 @@ def _gh(arguments: Sequence[str]) -> str:
     return finished.stdout
 
 
-def completed_nightly_runs(
+def completed_audit_runs(
     *, repository: str, workflow: str, branch: str, examined: int = RUNS_EXAMINED
 ) -> list[int]:
     """Completed runs of that workflow on that branch, newest first.
 
-    Filtered to one branch, and that is load-bearing rather than tidy. The nightly reader
-    role pins its subject to ``ref:refs/heads/main``, so a dispatch of the nightly from a
+    Filtered to one branch, and that is load-bearing rather than tidy. The audit reader
+    role pins its subject to ``ref:refs/heads/main``, so a dispatch of the audit from a
     branch cannot assume it and cannot read the secret at all -- a verdict from one would be
     a statement produced by a tool somebody edited, about a value it never saw.
     """
@@ -127,14 +127,14 @@ def download_the_verdict(*, repository: str, run_id: int, into: Path) -> dict[st
                 "--repo",
                 repository,
                 "--name",
-                NIGHTLY_VERDICT_ARTIFACT,
+                AUDIT_VERDICT_ARTIFACT,
                 "--dir",
                 str(into),
             ]
         )
     except GitHubUnreachable:
         return None
-    published = into / NIGHTLY_VERDICT_FILENAME
+    published = into / AUDIT_VERDICT_FILENAME
     if not published.is_file():
         return None
     try:
@@ -148,7 +148,7 @@ def read_the_published_verdict(
     *, repository: str, workflow: str, branch: str, examined: int = RUNS_EXAMINED
 ) -> tuple[dict[str, Any] | None, int | None]:
     """The newest published report and the run that published it, or ``(None, None)``."""
-    for run_id in completed_nightly_runs(
+    for run_id in completed_audit_runs(
         repository=repository, workflow=workflow, branch=branch, examined=examined
     ):
         with tempfile.TemporaryDirectory() as scratch:
@@ -165,8 +165,8 @@ def build_parser() -> argparse.ArgumentParser:
         description="Decide a submission against the last published W&B credential verdict."
     )
     parser.add_argument("--repository", required=True, help="owner/name of this repository.")
-    parser.add_argument("--workflow", default=NIGHTLY_WORKFLOW)
-    parser.add_argument("--branch", default=NIGHTLY_BRANCH)
+    parser.add_argument("--workflow", default=AUDIT_WORKFLOW)
+    parser.add_argument("--branch", default=AUDIT_BRANCH)
     parser.add_argument(
         "--freshness-hours",
         type=float,
@@ -184,10 +184,10 @@ def _render(preflight: Preflight, *, report: dict[str, Any] | None, run_id: int 
         "sentence": preflight.sentence,
         "verdict": str(preflight.verdict) if preflight.verdict is not None else None,
         "checked_at": preflight.checked_at.isoformat() if preflight.checked_at else None,
-        "nightly_run_id": run_id,
+        "audit_run_id": run_id,
         # The published report verbatim. It carries a length, a four character prefix, a
         # truncated digest and the entity W&B named, and never the key -- the tool that
-        # writes it has a test for exactly that, and the nightly already prints the same
+        # writes it has a test for exactly that, and the audit already prints the same
         # bytes into a world-readable log.
         "published": report,
     }

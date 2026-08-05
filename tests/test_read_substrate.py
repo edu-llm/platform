@@ -434,7 +434,7 @@ def test_nothing_printed_carries_an_account_id(
     fabricated = "9" * 12
     denial = (
         "An error occurred (AccessDenied) when calling the ListObjectsV2 operation: User: "
-        f"arn:aws:sts::{fabricated}:assumed-role/sbsandbox-intern-edullm-nightly-reader/x "
+        f"arn:aws:sts::{fabricated}:assumed-role/sbsandbox-intern-edullm-audit-reader/x "
         "is not authorized to perform: s3:ListBucket"
     )
     calls: list[list[str]] = []

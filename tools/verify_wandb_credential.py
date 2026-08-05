@@ -2,7 +2,7 @@
 
 Prints a length, a truncated digest and the resolved entity. Never prints the key.
 
-The report is also read by something other than a person. ``nightly.yml`` publishes it as
+The report is also read by something other than a person. ``audit.yml`` publishes it as
 an artifact and ``submit-run.yml`` refuses a submission on the strength of it, because no
 identity the submit path can obtain holds the read this tool makes and
 ``edullm_platform.wandb_preflight`` argues at length why none should. That is what the

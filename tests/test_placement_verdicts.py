@@ -1,4 +1,4 @@
-"""That the nightly placement check reproduces the shipped verdicts and can still fail.
+"""That the audit placement check reproduces the shipped verdicts and can still fail.
 
 ``config/capacity.yaml`` has taken eight corrections and every one ran the same way: an
 instant probe was refused, the refusal was written down as a verdict, and a queue that kept

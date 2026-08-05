@@ -1,8 +1,8 @@
 """Hold each ``places`` verdict in ``config/capacity.yaml`` against what the queues show.
 
-``config/capacity.yaml``'s header asks for this by name: a nightly job that reads the sixteen
+``config/capacity.yaml``'s header asks for this by name: an audit that reads the sixteen
 queues, recomputes each verdict, and goes red when one disagrees with what is committed. It
-was not built because the nightly reader role held neither ``batch:ListJobs`` nor
+was not built because the audit reader role held neither ``batch:ListJobs`` nor
 ``batch:DescribeJobs``; #227 added both and the stack is applied, so the job can ship without
 being red from its first night.
 
@@ -493,7 +493,7 @@ def _aws(*arguments: str, profile: str | None, region: str) -> Any:
             f"Batch refused {arguments[1]} with {named}(the CLI exited "
             f"{finished.returncode}), so what the account has placed has not been read. A "
             "denial here is usually the grant: this needs batch:ListJobs and "
-            "batch:DescribeJobs, which infra/iam/nightly-reader-role.yaml declares under "
+            "batch:DescribeJobs, which infra/iam/audit-reader-role.yaml declares under "
             "ReadTheQueuesThePlacementVerdictNeeds and which is applied from a laptop like "
             "every IAM stack in infra/README.md. The full message is not printed because it "
             "names the calling ARN, which carries the account id.",
@@ -833,7 +833,7 @@ def _limits_note(evidence: QueueEvidence) -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else None)
-    # No default profile. The nightly runs on an assumed role and passes none, and a default
+    # No default profile. The audit runs on an assumed role and passes none, and a default
     # of `sbsandbox` would send it looking for an SSO session that is not there.
     parser.add_argument("--profile", default=None)
     parser.add_argument("--region", default="us-east-1")

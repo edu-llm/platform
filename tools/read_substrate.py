@@ -33,7 +33,7 @@ truth, and the grant belongs to the slice that publishes the snapshot. :data:`BA
 the absence so that nothing downstream has to infer it.
 
 **THE LAUNCH FEED HAS NO READER YET.** ``tools/read_launch_events.py`` is a task of its own and
-does not exist, and the nightly reader role holds no ``cloudtrail:LookupEvents``. Both are
+does not exist, and the audit reader role holds no ``cloudtrail:LookupEvents``. Both are
 reported as the launch feed not having been read, in the reader's own words, because a
 substrate that reported an empty mismatch list would be describing an account nobody looked at.
 Nothing here needs editing when that module lands: it is found by name.
@@ -144,7 +144,7 @@ def _masked(text: str) -> str:
     ``edullm_platform.evidence.redact_aws_account_ids`` is the sanctioned mask and is not used
     here, for the reason ``tools/visibility_board.py`` gives beside its own copy of this
     function: that one raises on text also carrying another credential shape, which is right
-    for a capture somebody is about to commit and wrong for a nightly report, where a traceback
+    for a capture somebody is about to commit and wrong for an audit report, where a traceback
     in place of a reading would report nothing at all on the one morning the account held
     something unexpected. The same expression is reused so the mask cannot be stepped around
     differently here than anywhere else.
@@ -234,7 +234,7 @@ def read_lineage(
     ``intent/`` is required: an activity with no runs and a lineage store nobody could read are
     the same page and only one of them is true. ``attempt/`` is not, because refusing to report
     anything until a grant lands would leave the whole surface dark over one prefix -- and the
-    grant has been missing before. ``infra/iam/nightly-reader-role.yaml`` is where it lives.
+    grant has been missing before. ``infra/iam/audit-reader-role.yaml`` is where it lives.
     """
     staged = stage_prefixes(scratch / STAGED_LINEAGE, LINEAGE_PREFIXES)
     refused: dict[str, str] = {}
@@ -283,7 +283,7 @@ def read_lineage(
                 reason=refused["attempt"],
                 unanswered=(
                     "no run has a duration or a cost, and no run can be reported as having "
-                    "failed to start. infra/iam/nightly-reader-role.yaml is where the grant goes"
+                    "failed to start. infra/iam/audit-reader-role.yaml is where the grant goes"
                 ),
             )
         )
@@ -358,7 +358,7 @@ def collect(
     ``offline`` skips every network read, which is how the assembly is exercised against local
     records, and it therefore requires ``lineage_root``: there is nothing to read otherwise and
     silently syncing would make a flag that promises no network calls make several. It is not a
-    mode the nightly runs in -- it produces a substrate whose launch feed is unread, which
+    mode the audit runs in -- it produces a substrate whose launch feed is unread, which
     downstream renders as a mismatch list that does not exist rather than an empty one.
     """
     if offline and lineage_root is None:

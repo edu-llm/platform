@@ -11,7 +11,7 @@ Resources:
       MaxSessionDuration: 3600
       # WHY THIS ROLE EXISTS. Every other role trusted to a workflow in this repository pins
       # its subject to `refs/heads/main`: the deployer, the image resolver, the run canceller
-      # and the nightly reader all carry `:ref:refs/heads/main`, and the admission role
+      # and the audit reader all carry `:ref:refs/heads/main`, and the admission role
       # carries the three `main`-only approval environments instead. The consequence is that
       # `submit-run.yml` dispatched from a branch dies in its second job, at the credential
       # step, before anything is compiled and before any gate is reached. A change to the

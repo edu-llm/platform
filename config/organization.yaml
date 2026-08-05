@@ -53,7 +53,7 @@ admins:
 #
 # then copy the file into fixtures/evidence/phase-2/github/ and read the diff.
 #
-# A nightly job would be better and cannot be had. Reading orgs/edu-llm/teams/team-leads/
+# A scheduled check would be better and cannot be had. Reading orgs/edu-llm/teams/team-leads/
 # members needs the Members organization permission, the Actions GITHUB_TOKEN has no
 # organization permissions at all, and a stored PAT would be a repository secret that
 # test_the_repository_holds_no_secret_a_branch_could_read forbids by name. The audit log

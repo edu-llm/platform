@@ -52,7 +52,7 @@
 # What compares the two is not a comment. fixtures/evidence/phase-2/github/lead-team
 # .sanitized.json is a committed capture of the GitHub team, checked against the roster in
 # both directions by tests/test_phase2_github_evidence.py and expiring after thirty days.
-# config/organization.yaml's header says how to re-take it and why a nightly job cannot.
+# config/organization.yaml's header says how to re-take it and why no scheduled job can.
 /.github/CODEOWNERS @philote-dev @BritishAmericqn
 /.github/workflows/** @philote-dev @BritishAmericqn
 /infra/** @philote-dev @BritishAmericqn

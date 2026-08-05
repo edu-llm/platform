@@ -1,6 +1,6 @@
-"""The three nightly checks that read the account, and the role that lets them.
+"""The audit's checks that read the account, and the role that lets them.
 
-**All three exist because the failure they describe is silent.** A training run whose save
+**Each one exists because the failure it describes is silent.** A training run whose save
 folder was left at OLMo-core's ``/tmp`` default trains, writes nothing anybody can reach, and
 exits zero; a W&B key that W&B refuses costs nothing at run time either, because a training
 run does not fail when its logging is declined; and a Lambda deployed out of band goes on
@@ -24,7 +24,7 @@ The role is here too rather than in a file of its own, because its shape is the 
 the workflow's shape. Three scheduled jobs can assume it, everything it reads is named, and
 it holds no write anywhere in the account. The action set is asserted exactly rather than
 checked for the absence of anything alarming, because a trust policy cannot distinguish jobs
-within a workflow: every job in ``nightly.yml`` presents the same claims and any of them can
+within a workflow: every job in ``audit.yml`` presents the same claims and any of them can
 assume this role, including one added later.
 """
 
@@ -60,15 +60,15 @@ from workflow_support import (
 from edullm_platform.admission_denials import LINEAGE_BUCKET
 from edullm_platform.contracts.results import OUTPUTS_BUCKET
 from edullm_platform.wandb_preflight import (
-    NIGHTLY_VERDICT_ARTIFACT,
-    NIGHTLY_VERDICT_FILENAME,
+    AUDIT_VERDICT_ARTIFACT,
+    AUDIT_VERDICT_FILENAME,
     VERDICT_FIELD,
     Verdict,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-WORKFLOW_PATH = WORKFLOWS_ROOT / "nightly.yml"
-ROLE_PATH = IAM_ROOT / "nightly-reader-role.yaml"
+WORKFLOW_PATH = WORKFLOWS_ROOT / "audit.yml"
+ROLE_PATH = IAM_ROOT / "audit-reader-role.yaml"
 
 RECONCILE_JOB = "checkpoint-reconciliation"
 WANDB_JOB = "wandb-credential"
@@ -91,7 +91,7 @@ RELEASE_STEP = "Compare what AWS is running against what was released"
 STACKS_STEP = "Compare each deployed stack against the template main declares"
 BOARD_STEP = "Join what W&B, the account and the outputs bucket each say"
 PLACEMENT_STEP = "Recompute each placement verdict from the sixteen queues"
-GUARD_STEP = "Check the nightly reader role is deployed"
+GUARD_STEP = "Check the audit reader role is deployed"
 
 #: Every job here that takes a credential. Each one is held to the same guard, the same
 #: role and the same refusal to be informational, so the list is what a seventh such job has
@@ -116,9 +116,9 @@ LAMBDA_TEMPLATES = ("admission-state-machine.yaml", "batch-events.yaml")
 #: resolves to the empty string, which is the failure the guard step in each job exists to
 #: name, and because the variable is set by hand in the repository settings and so cannot be
 #: found by a grep of the tree.
-ROLE_VARIABLE = "AWS_NIGHTLY_READER_ROLE_ARN"
-ROLE_NAME = "sbsandbox-intern-edullm-nightly-reader"
-WORKFLOW_REF = "edu-llm/platform/.github/workflows/nightly.yml@refs/heads/main"
+ROLE_VARIABLE = "AWS_AUDIT_READER_ROLE_ARN"
+ROLE_NAME = "sbsandbox-intern-edullm-audit-reader"
+WORKFLOW_REF = "edu-llm/platform/.github/workflows/audit.yml@refs/heads/main"
 
 #: The secret name is spelled out because the grant is scoped to it by name, and a rename on
 #: either side alone is an access denial at 05:00 rather than a test failure at review time.
@@ -128,7 +128,7 @@ WANDB_SECRET_NAME = "sbsandbox-intern-edullm-wandb-api-key"
 #: here uses. A run of twelve digits that is not that one reads as a real account to
 #: `tests/test_evidence.py`, which scans the tracked tree and does not care that this file is
 #: a test.
-SOME_ROLE_ARN = "arn:aws:iam::123456789012:role/sbsandbox-intern-edullm-nightly-reader"
+SOME_ROLE_ARN = "arn:aws:iam::123456789012:role/sbsandbox-intern-edullm-audit-reader"
 
 #: Every verb that changes something, matched against the action set as a substring. The
 #: exact-set assertion below is the primary check; this is the one that keeps reading true
@@ -206,7 +206,7 @@ def load_tool(name: str) -> Any:
 #
 # THE THREE FUNCTIONS BELOW EXIST BECAUSE THIS FACT WAS WRITTEN DOWN TWICE AND COMPARED
 # NOWHERE. `tools/report_run_costs.py` declared LINEAGE_PREFIXES = ("intent", "attempt") and
-# `infra/iam/nightly-reader-role.yaml` granted intent/ and result/, and the visibility board
+# `infra/iam/audit-reader-role.yaml` granted intent/ and result/, and the visibility board
 # -- the one caller of `sync_bucket` that runs on the schedule, under that role -- was
 # refused on attempt/ every night from the moment it shipped. Deriving both sides is what
 # makes the disagreement a red review instead of a line in a step summary nobody reads.
@@ -299,7 +299,7 @@ def listable_lineage_prefixes(role: dict[str, Any]) -> set[str]:
 # ----------------------------------------------------------------------------------------
 
 
-def test_the_nightly_runs_the_checkpoint_reconciliation(workflow: dict[str, Any]) -> None:
+def test_the_audit_runs_the_checkpoint_reconciliation(workflow: dict[str, Any]) -> None:
     """Mutation: keep the job and drop the step, or point it at a different tool.
 
     The whole of the checkpoint signal is one command. A job that installs the tooling,
@@ -316,7 +316,7 @@ def test_the_nightly_runs_the_checkpoint_reconciliation(workflow: dict[str, Any]
     )
 
 
-def test_the_nightly_runs_the_wandb_credential_check(workflow: dict[str, Any]) -> None:
+def test_the_audit_runs_the_wandb_credential_check(workflow: dict[str, Any]) -> None:
     """Mutation: check the shape only, by passing --offline.
 
     The fault this catches was the right length and very nearly the right shape: a good key
@@ -374,7 +374,7 @@ def test_a_result_sync_that_is_refused_leaves_no_half_read_tree(
 ) -> None:
     """Mutation: drop the `rm -rf`, or soften the sync to `|| true`.
 
-    The nightly reader role holds `result/` and has since the stack was applied, so a denial
+    The audit reader role holds `result/` and has since the stack was applied, so a denial
     here is a lapsed credential or a drifted role rather than the ordinary case -- and the
     job still has to survive it, because a denial that has become unexpected is not a denial
     that has become impossible. What it must not do is carry on with a partial tree. A run
@@ -407,7 +407,7 @@ def wandb_step(workflow: dict[str, Any]) -> str:
 def load_wandb_tool() -> Any:
     """The verifier as a module, so its vocabulary can be compared rather than grepped."""
     specification = importlib.util.spec_from_file_location(
-        "_nightly_wandb_tool", PROJECT_ROOT / WANDB_TOOL
+        "_audit_wandb_tool", PROJECT_ROOT / WANDB_TOOL
     )
     assert specification is not None and specification.loader is not None
     module = importlib.util.module_from_spec(specification)
@@ -452,7 +452,7 @@ def run_reconciliation(workflow: dict[str, Any], tmp_path: Path, *, exit_code: i
     )
 
 
-def test_a_run_with_no_loadable_checkpoint_fails_the_nightly(
+def test_a_run_with_no_loadable_checkpoint_fails_the_audit(
     workflow: dict[str, Any], tmp_path: Path
 ) -> None:
     """THE ONE THAT MATTERS. Mutation: report the finding and exit zero.
@@ -529,7 +529,7 @@ def run_wandb_check(workflow: dict[str, Any], tmp_path: Path, *, exit_code: int,
     )
 
 
-def test_a_key_wandb_would_refuse_fails_the_nightly(
+def test_a_key_wandb_would_refuse_fails_the_audit(
     workflow: dict[str, Any], tmp_path: Path
 ) -> None:
     """Mutation: report the faults and exit zero.
@@ -582,8 +582,8 @@ def test_the_verdict_is_written_where_the_submission_preflight_can_read_it(
 
     assert upload["uses"].startswith("actions/upload-artifact@")
     assert upload["if"] == "always()"
-    assert upload["with"]["name"] == NIGHTLY_VERDICT_ARTIFACT
-    assert upload["with"]["path"].endswith(NIGHTLY_VERDICT_FILENAME)
+    assert upload["with"]["name"] == AUDIT_VERDICT_ARTIFACT
+    assert upload["with"]["path"].endswith(AUDIT_VERDICT_FILENAME)
     assert upload["with"]["if-no-files-found"] == "error"
     assert names.index(WANDB_STEP) < names.index(WANDB_UPLOAD_STEP)
 
@@ -593,7 +593,7 @@ def test_the_verdict_is_written_where_the_submission_preflight_can_read_it(
     )
 
     assert finished.returncode == 0, finished.stderr
-    published = tmp_path / NIGHTLY_VERDICT_FILENAME
+    published = tmp_path / AUDIT_VERDICT_FILENAME
     assert published.is_file(), "the upload would find nothing to publish"
     assert json.loads(published.read_text(encoding="utf-8"))["verdict"] == "accepted"
     # In the log as well, because the person triaging a red cross is already looking at it.
@@ -627,7 +627,7 @@ def release_step(workflow: dict[str, Any]) -> str:
     return step(workflow["jobs"][RELEASE_JOB], RELEASE_STEP)["run"]
 
 
-def test_the_nightly_compares_the_deployed_functions_against_the_records(
+def test_the_audit_compares_the_deployed_functions_against_the_records(
     workflow: dict[str, Any],
 ) -> None:
     """Mutation: keep the job and drop the step, or point it at a builder instead.
@@ -643,7 +643,7 @@ def test_the_nightly_compares_the_deployed_functions_against_the_records(
     assert "uv run --frozen python" in body
 
 
-def test_a_deployed_function_that_is_not_the_released_one_fails_the_nightly(
+def test_a_deployed_function_that_is_not_the_released_one_fails_the_audit(
     workflow: dict[str, Any], tmp_path: Path
 ) -> None:
     """THE ONE THAT MATTERS. Mutation: report the difference and exit zero.
@@ -658,7 +658,7 @@ def test_a_deployed_function_that_is_not_the_released_one_fails_the_nightly(
     assert finished.returncode != 0
 
 
-def test_a_release_check_that_could_not_look_also_fails_the_nightly(
+def test_a_release_check_that_could_not_look_also_fails_the_audit(
     workflow: dict[str, Any], tmp_path: Path
 ) -> None:
     """Mutation: pass on exit 2, on the ground that it found nothing wrong.
@@ -720,7 +720,7 @@ def stacks_step(workflow: dict[str, Any]) -> str:
     return step(workflow["jobs"][STACKS_JOB], STACKS_STEP)["run"]
 
 
-def test_the_nightly_compares_each_deployed_stack_against_its_template(
+def test_the_audit_compares_each_deployed_stack_against_its_template(
     workflow: dict[str, Any],
 ) -> None:
     """Mutation: keep the job and drop the step, or point it at a template validator.
@@ -736,7 +736,7 @@ def test_the_nightly_compares_each_deployed_stack_against_its_template(
     assert "uv run --frozen python" in body
 
 
-def test_a_stack_that_is_not_the_template_on_main_fails_the_nightly(
+def test_a_stack_that_is_not_the_template_on_main_fails_the_audit(
     workflow: dict[str, Any], tmp_path: Path
 ) -> None:
     """THE ONE THAT MATTERS. Mutation: report the difference and exit zero.
@@ -752,7 +752,7 @@ def test_a_stack_that_is_not_the_template_on_main_fails_the_nightly(
     assert finished.returncode != 0
 
 
-def test_a_stack_check_that_could_not_look_also_fails_the_nightly(
+def test_a_stack_check_that_could_not_look_also_fails_the_audit(
     workflow: dict[str, Any], tmp_path: Path
 ) -> None:
     """Mutation: pass on exit 2, on the ground that it found nothing wrong.
@@ -808,7 +808,7 @@ def board_step(workflow: dict[str, Any]) -> str:
     return step(workflow["jobs"][BOARD_JOB], BOARD_STEP)["run"]
 
 
-def test_the_nightly_joins_the_three_records_of_a_run(workflow: dict[str, Any]) -> None:
+def test_the_audit_joins_the_three_records_of_a_run(workflow: dict[str, Any]) -> None:
     """Mutation: keep the job and drop the step, or point it at one of the sources alone.
 
     Each of the three systems already has something that reads it. What nothing did was join
@@ -835,7 +835,7 @@ def run_board(workflow: dict[str, Any], tmp_path: Path, *, exit_code: int) -> An
     )
 
 
-def test_a_run_only_one_of_the_three_sources_knows_about_fails_the_nightly(
+def test_a_run_only_one_of_the_three_sources_knows_about_fails_the_audit(
     workflow: dict[str, Any], tmp_path: Path
 ) -> None:
     """THE ONE THAT MATTERS. Mutation: print the board and exit zero.
@@ -938,7 +938,7 @@ def run_placement(workflow: dict[str, Any], tmp_path: Path, *, exit_code: int) -
     )
 
 
-def test_the_nightly_recomputes_each_placement_verdict(workflow: dict[str, Any]) -> None:
+def test_the_audit_recomputes_each_placement_verdict(workflow: dict[str, Any]) -> None:
     """Mutation: keep the job and drop the step, or run it without capturing the report.
 
     The grants #227 added were argued for on this job existing, so a workflow that holds the
@@ -952,7 +952,7 @@ def test_the_nightly_recomputes_each_placement_verdict(workflow: dict[str, Any])
     assert "uv run --frozen python" in body
 
 
-def test_a_verdict_the_queues_contradict_fails_the_nightly(
+def test_a_verdict_the_queues_contradict_fails_the_audit(
     workflow: dict[str, Any], tmp_path: Path
 ) -> None:
     finished = run_placement(workflow, tmp_path, exit_code=1)
@@ -1107,11 +1107,11 @@ def test_a_missing_role_is_named_rather_than_reported_as_no_credentials(
     refused = run_step_script(steps[guard]["run"], cwd=tmp_path, env={"ROLE_ARN": ""})
 
     assert refused.returncode == 1
-    assert "nightly_reader_role_not_deployed" in refused.stderr
+    assert "audit_reader_role_not_deployed" in refused.stderr
     # A diagnosis with nowhere to go is half an answer, and the template name is the half
     # that turns this into something the reader can act on.
     assert ROLE_VARIABLE in refused.stderr
-    assert "nightly-reader-role.yaml" in refused.stderr
+    assert "audit-reader-role.yaml" in refused.stderr
     assert "infra/README.md" in refused.stderr
 
     allowed = run_step_script(steps[guard]["run"], cwd=tmp_path, env={"ROLE_ARN": SOME_ROLE_ARN})
@@ -1498,11 +1498,11 @@ def test_the_role_can_list_and_fetch_every_prefix_the_scheduled_tools_sync(
         f"the scheduled tools sync {sorted(required - listable)} which the role cannot list. "
         "aws s3 sync lists first, so this is an access denial on the first call rather than "
         "a partial read. Add the prefix to ListLineageRecords in "
-        "infra/iam/nightly-reader-role.yaml and apply the stack from a laptop."
+        "infra/iam/audit-reader-role.yaml and apply the stack from a laptop."
     )
     assert required <= fetchable, (
         f"the scheduled tools sync {sorted(required - fetchable)} which the role cannot "
-        "fetch. Add a ReadRecords statement to infra/iam/nightly-reader-role.yaml and apply "
+        "fetch. Add a ReadRecords statement to infra/iam/audit-reader-role.yaml and apply "
         "the stack from a laptop."
     )
     assert fetchable == listable, (
@@ -1519,7 +1519,7 @@ def test_the_lambda_grant_names_the_functions_the_templates_declare(
 
     Either still reads as scoped and neither is. This is a shared sandbox account with
     sixteen other teams in it, and a function's configuration carries its environment
-    variable names, its role and its layers, so an unscoped describe is a nightly
+    variable names, its role and its layers, so an unscoped describe is an audit
     reconnaissance of everybody else's infrastructure to answer a question about two
     functions.
 
@@ -1580,7 +1580,7 @@ def test_the_role_trusts_the_scheduled_file_and_carries_the_boundary(
     A trust that matched a directory would make this role assumable from `submit-run.yml`,
     which is the file an unapproved dispatch reaches. The ref matters as much as the file: a
     schedule runs on the default branch, so pinning refs/heads/main stops a branch borrowing
-    the role by adding a job to nightly.yml and dispatching it from the branch.
+    the role by adding a job to audit.yml and dispatching it from the branch.
 
     The boundary is denied-by-default in this account rather than advisory: `iam:CreateRole`
     refuses a request that does not carry it, so a template without it does not create a
@@ -1611,7 +1611,7 @@ def test_no_role_that_already_existed_could_have_been_assumed_from_this_file() -
     """The reason a new template was written, asserted rather than left in a PR body.
 
     Every GitHub role under `infra/iam/` pins `job_workflow_ref` with a `StringEquals` naming
-    one workflow file, so a token minted for `nightly.yml` matched none of them and adding a
+    one workflow file, so a token minted for `audit.yml` matched none of them and adding a
     job to an existing file was not an option either. Read from the directory so that a
     second template trusting this file, which would be a second way into the same schedule
     reviewed somewhere else, fails here.

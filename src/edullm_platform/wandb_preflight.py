@@ -1,4 +1,4 @@
-"""Whether a submission may proceed, decided from the last nightly W&B credential check.
+"""Whether a submission may proceed, decided from the last W&B credential check the audit made.
 
 WHY THIS READS A VERDICT INSTEAD OF READING THE KEY, WHICH IS THE WHOLE DESIGN.
 
@@ -11,18 +11,18 @@ Exactly three principals in this account hold ``secretsmanager:GetSecretValue`` 
 ``sbsandbox-intern-edullm-wandb-api-key-*``, confirmed against the live account on
 2026-08-02: the two Batch execution roles, which are trusted to ``ecs-tasks.amazonaws.com``
 and inject the value into a container at task start, and
-``sbsandbox-intern-edullm-nightly-reader``, which is trusted to
-``nightly.yml@refs/heads/main`` and exists to answer exactly this question. No identity
+``sbsandbox-intern-edullm-audit-reader``, which is trusted to
+``audit.yml@refs/heads/main`` and exists to answer exactly this question. No identity
 ``submit-run.yml`` can obtain holds it, and that is deliberate rather than an oversight:
 ``infra/iam/admission-role.yaml`` argues it beside the grant it is an argument about.
 
 So the check is already made, once a night, under the one GitHub-facing role built to make
 it. What was missing is not a check. It is that the answer never reached the path that
-spends money -- a red nightly is a red scheduled run, and the nightly's own header says
-there is no alerting infrastructure, so a key W&B refuses can go on costing a GPU
+spends money. A red audit is a red scheduled run and nothing else, and the audit's own
+header says there is no alerting infrastructure, so a key W&B refuses can go on costing a GPU
 allocation per submission until somebody happens to look. This module is what connects the
 two, and it needs no credential at all: the submit job already holds ``actions: read`` for
-the approvals endpoint, and that is enough to read what the nightly published.
+the approvals endpoint, and that is enough to read what the audit published.
 
 WHAT THIS BUYS AND WHAT IT DOES NOT, STATED RATHER THAN LEFT TO BE DISCOVERED.
 
@@ -30,7 +30,7 @@ It buys a definite refusal on a key already known to be refused, which today sto
 at all. It does not buy detection of a key that broke after the last check. The stored
 value changes only when a person writes it -- rotation is not enabled on the secret,
 confirmed 2026-08-02 -- so that window is one bad paste away from mattering, and the remedy
-is procedural and cheap: dispatch ``nightly.yml`` after writing the key. ``infra/README.md``
+is procedural and cheap: dispatch ``audit.yml`` after writing the key. ``infra/README.md``
 carries that as a step rather than as advice.
 
 THE ASYMMETRY BETWEEN A STALE REFUSAL AND A STALE ACCEPTANCE IS DELIBERATE.
@@ -53,13 +53,13 @@ from enum import StrEnum
 from typing import Any, Final
 
 __all__ = [
+    "AUDIT_BRANCH",
+    "AUDIT_VERDICT_ARTIFACT",
+    "AUDIT_VERDICT_FILENAME",
+    "AUDIT_WORKFLOW",
     "CHECKED_AT_FIELD",
     "FAULTS_FIELD",
     "FRESHNESS",
-    "NIGHTLY_BRANCH",
-    "NIGHTLY_VERDICT_ARTIFACT",
-    "NIGHTLY_VERDICT_FILENAME",
-    "NIGHTLY_WORKFLOW",
     "VERDICT_FIELD",
     "Outcome",
     "Preflight",
@@ -70,15 +70,15 @@ __all__ = [
 ]
 
 #: The workflow that publishes the verdict, the branch it must have run on, and the
-#: artifact it publishes. The branch matters and is not belt and braces: the nightly reader
-#: role pins its subject to ``ref:refs/heads/main``, so a dispatch of ``nightly.yml`` from a
+#: artifact it publishes. The branch matters and is not belt and braces: the audit reader
+#: role pins its subject to ``ref:refs/heads/main``, so a dispatch of ``audit.yml`` from a
 #: branch cannot assume it and cannot read the secret. Accepting a verdict from a branch
 #: would therefore mean accepting one produced by a tool somebody edited on that branch,
 #: against a secret it was never able to read.
-NIGHTLY_WORKFLOW: Final = "nightly.yml"
-NIGHTLY_BRANCH: Final = "main"
-NIGHTLY_VERDICT_ARTIFACT: Final = "wandb-credential"
-NIGHTLY_VERDICT_FILENAME: Final = "wandb-credential.json"
+AUDIT_WORKFLOW: Final = "audit.yml"
+AUDIT_BRANCH: Final = "main"
+AUDIT_VERDICT_ARTIFACT: Final = "wandb-credential"
+AUDIT_VERDICT_FILENAME: Final = "wandb-credential.json"
 
 #: The three fields of the published report this module reads. The rest of the report -- a
 #: length, a four character prefix, a truncated digest, the entity W&B named -- is for a
@@ -87,20 +87,20 @@ VERDICT_FIELD: Final = "verdict"
 CHECKED_AT_FIELD: Final = "checked_at"
 FAULTS_FIELD: Final = "looks_wrong"
 
-#: How old an acceptance may be before it stops being treated as one. The nightly runs at
+#: How old an acceptance may be before it stops being treated as one. The audit runs at
 #: 05:00 UTC, so a healthy verdict is at most a day old and a bound of twenty-four hours
 #: would report every submission made shortly before 05:00 as stale. Thirty-six hours fires
 #: on one missed night and not on ordinary schedule jitter, which GitHub documents as
 #: possible and occasionally as a dropped run under load.
 #:
-#: Crossing it refuses nothing. It changes what the step says, so a nightly that has quietly
+#: Crossing it refuses nothing. It changes what the step says, so an audit that has quietly
 #: stopped running becomes visible on the path people use rather than only in a scheduled
-#: run the header of nightly.yml admits nobody watches.
+#: run the header of audit.yml admits nobody watches.
 FRESHNESS: Final = timedelta(hours=36)
 
 
 class Verdict(StrEnum):
-    """What the nightly check concluded, written by the tool that asked W&B.
+    """What the audit's check concluded, written by the tool that asked W&B.
 
     Derived where the answer is known rather than inferred later from prose. ``looks_wrong``
     is a list of sentences for a person, and a second reader matching strings against it
@@ -189,10 +189,10 @@ def decide(
     now: datetime,
     freshness: timedelta = FRESHNESS,
 ) -> Preflight:
-    """What to do about the newest verdict the nightly published, or the absence of one.
+    """What to do about the newest verdict the audit published, or the absence of one.
 
     ``report`` is ``None`` when no verdict could be found at all, which is the state this
-    lands in and stays in until the first nightly after it merges. Failing then would take
+    lands in and stays in until the first audit after it merges. Failing then would take
     every submission down in order to add a check to them, which is the hazard *Why IAM is
     laptop-only* in ``infra/README.md`` is about, in a different costume.
     """
@@ -202,8 +202,8 @@ def decide(
             reason="wandb_verdict_not_published",
             sentence=(
                 "No W&B credential verdict was found, so nothing was checked and this "
-                f"submission continues. The verdict comes from the {NIGHTLY_WORKFLOW} run "
-                f"on {NIGHTLY_BRANCH}; dispatch it to produce one."
+                f"submission continues. The verdict comes from the {AUDIT_WORKFLOW} run "
+                f"on {AUDIT_BRANCH}; dispatch it to produce one."
             ),
         )
 
@@ -217,7 +217,7 @@ def decide(
                 "The published W&B credential report names no verdict this can read, so "
                 "nothing was checked and this submission continues. A report written "
                 f"before the {VERDICT_FIELD} field existed reads this way, and the next "
-                f"{NIGHTLY_WORKFLOW} run replaces it."
+                f"{AUDIT_WORKFLOW} run replaces it."
             ),
             verdict=verdict,
             checked_at=checked_at,
@@ -227,7 +227,7 @@ def decide(
     if verdict is Verdict.REFUSED:
         # Honoured at any age. See the asymmetry paragraph in this module's docstring: a
         # measured refusal does not stop being one because the schedule slipped, and the
-        # remedy for a repair nothing has confirmed is one dispatch of the nightly.
+        # remedy for a repair nothing has confirmed is one dispatch of the audit.
         return Preflight(
             outcome=Outcome.REFUSE,
             reason="wandb_credential_would_be_refused",
@@ -260,7 +260,7 @@ def decide(
                 f"The last W&B credential check accepted the key {_hours(age)} ago, which "
                 f"is older than the {_hours(freshness)} this treats as current, so this "
                 "submission continues on a verdict nothing has renewed. The "
-                f"{NIGHTLY_WORKFLOW} schedule has slipped or stopped."
+                f"{AUDIT_WORKFLOW} schedule has slipped or stopped."
             ),
             verdict=verdict,
             checked_at=checked_at,

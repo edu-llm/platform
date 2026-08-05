@@ -1,6 +1,6 @@
 # Runs whose empty or unloadable checkpoint prefix has been read, adjudicated and cannot be
 # repaired. `tools/find_runs_that_saved_nothing.py` still inspects them, still lists them and
-# still prints what is there; the only thing an entry changes is whether the nightly job goes
+# still prints what is there; the only thing an entry changes is whether the audit goes
 # red on it.
 #
 # THIS EXISTS BECAUSE A PERMANENTLY RED JOB REPORTS NOTHING. The run below is finished, its

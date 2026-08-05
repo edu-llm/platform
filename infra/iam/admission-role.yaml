@@ -102,14 +102,14 @@ Resources:
               # is not a small addition to it; it is the end of a bright line, and the next
               # proposal argues from the precedent rather than from first principles.
               #
-              # What it would buy is also smaller than it looks. The nightly already asks
-              # W&B this question under sbsandbox-intern-edullm-nightly-reader, which holds
+              # What it would buy is also smaller than it looks. The audit already asks
+              # W&B this question under sbsandbox-intern-edullm-audit-reader, which holds
               # the read for exactly that purpose and can be assumed only from
-              # nightly.yml@refs/heads/main. So the grant here would not add a check. It
+              # audit.yml@refs/heads/main. So the grant here would not add a check. It
               # would move an existing one onto a session that a GitHub Actions runner
               # holds, in order to shorten the age of the answer from at most a night to
               # zero -- and the value changes only when a person writes it, since rotation
-              # is not enabled on the secret. The preflight reads the nightly verdict
+              # is not enabled on the secret. The preflight reads the audit verdict
               # instead, through the actions: read the submit job already holds, and
               # src/edullm_platform/wandb_preflight.py carries the whole argument.
               #

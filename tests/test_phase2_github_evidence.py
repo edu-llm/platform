@@ -361,11 +361,17 @@ def test_the_only_repository_variables_are_role_arns_and_the_region(
     #
     # Three more than this test knew about, found by re-capturing for the automatic gate
     # rather than by anybody looking. The capture behind it dated from 2026-07-27 and the
-    # account had moved: the resolver, canceller and nightly reader roles all landed after
+    # account had moved: the resolver, canceller and audit reader roles all landed after
     # it, and infra/README.md records the last two as stacks 4 and 5 with their variables
     # set by hand. So this list grew for reasons that have nothing to do with the approval
     # gate, and the test is renamed off the count it used to carry, because a count is the
     # part of an assertion like this that ages.
+    #
+    # AWS_NIGHTLY_READER_ROLE_ARN IS SPELLED HERE UNDER ITS OLD NAME ON PURPOSE. The
+    # variable was renamed to AWS_AUDIT_READER_ROLE_ARN on 2026-08-05 with the workflow and
+    # the role, and this list is not the live settings. It is what the capture beside it saw
+    # at 2026-08-02T14:30:06Z, so editing it would make the record claim it observed a name
+    # that did not exist yet. The next re-capture moves both together.
     assert secrets.repository_variable_names == (
         "AWS_ADMISSION_ROLE_ARN",
         "AWS_IMAGE_RESOLVER_ROLE_ARN",
