@@ -53,7 +53,7 @@ far behind the install is. Re-install with `--force`, which is the upgrade for b
 | `edullm run` | Ships this working tree to a machine of your own and streams the output of the command after a bare `--` back. Ungated, and no run anybody can cite. |
 | `edullm shell` | A terminal on that same machine, or a notebook on it with `--notebook`. |
 | `edullm stop` | Ends the machine those two started, and says what it ran up and where your files are. |
-| `edullm studio` | Opens your own SageMaker Studio space and prints a sign-in URL, or `--stop` ends its compute and keeps the disk. |
+| `edullm studio` | Opens the Studio space for one `--project` and prints a sign-in URL. Bare, it lists the spaces you have; `--stop` ends compute and keeps the disk. |
 
 Every verb in `BUILT_TODAY` is here and all of them are built. A bare `edullm` prints the list,
 and `edullm <verb> --help` prints what that verb takes.
@@ -71,11 +71,16 @@ and the run somebody cites goes through `submit`. What has no Studio equivalent 
 run` -- ship a working tree to a GPU, run one command, stream it back, discard the machine --
 and `edullm shell` onto the exact shape you are about to submit to.
 
-**Nothing stops a Studio app except `edullm studio --stop`.** The domain carries no
-idle-shutdown setting, so an app left running overnight bills every hour of it, and this has
-already happened here across three nights on a GPU shape. The verb prints its rate and says
-this before it starts anything; do not quote a Studio rate from memory or from a document,
-because `edullm studio` reads it from reviewed configuration and the numbers move.
+**`--project` names the Studio space, so a person has as many spaces as they have projects.**
+The same project resumes the same disk with the files as they were left; a new one makes a new
+space. `edullm studio` with no project lists what you have, because the project name is the only
+way back to a disk and forgetting it would otherwise be permanent. Nothing deletes a space.
+
+**The domain stops an idle app on its own, and `edullm studio --stop` is what stops paying for
+it now.** The idle timeout is a domain setting somebody can change, so the verb reads it and
+prints what it read rather than restating a number; an unattended GPU app already ran here for
+three nights before that setting existed. Do not quote a Studio rate or a timeout from memory or
+from a document, because `edullm studio` reads both and they move.
 
 **`edullm stop` terminates rather than stopping, and that is worth knowing before you type it.**
 The machine's own disk goes with it. The scratch prefix survives, `edullm run` syncs that prefix

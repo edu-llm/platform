@@ -206,32 +206,45 @@ from edullm_platform.cli.spec import (
 )
 from edullm_platform.cli.studio import (
     STUDIO_CONFIG_FILE,
+    OwnedSpace,
     RunningApp,
     StudioRequest,
     StudioSettings,
     StudioShape,
+    accumulation_said,
     already_running_said,
+    apps_by_space,
     could_not_resolve_the_image,
     create_app_argv,
     create_space_argv,
     create_user_profile_argv,
     delete_app_argv,
     describe_app_argv,
-    describe_space_argv,
+    describe_domain_argv,
     describe_user_profile_argv,
+    idle_said,
+    idle_shutdown,
     image_account_argv,
     image_arn_for,
+    list_apps_argv,
+    list_spaces_argv,
     load_studio_settings,
+    monthly_volume_cost,
     nothing_to_stop,
+    owned_spaces,
     presigned_url_argv,
     price_said,
+    project_collides_with_a_profile,
     running_app,
     shape_for,
+    space_belongs_to_somebody_else,
+    space_name_for,
+    space_named,
+    spaces_said,
     studio_document,
     studio_name_for,
     studio_refusals,
     unpriced_shape,
-    unstopped_said,
 )
 from edullm_platform.cli.workspace import (
     CommandRunner,
@@ -423,9 +436,11 @@ WHAT_A_VERB_DOES: Final = {
         "else's machine is reachable from here."
     ),
     "studio": (
-        "Starts or resumes your own SageMaker Studio space and prints a sign-in URL, after "
-        "saying what an hour of it costs. --stop ends the compute and keeps the disk. "
-        "Nothing here is checked, priced against a policy or recorded as a run you can cite."
+        "Opens the SageMaker Studio space for one project and prints a sign-in URL, after "
+        "saying what an hour of it costs. The project names the space: the same one brings "
+        "back the same disk, a new one makes a new space. With no --project it lists the "
+        "spaces you have. --stop ends the compute and keeps the disk. Nothing here is "
+        "checked, priced against a policy or recorded as a run you can cite."
     ),
 }
 
@@ -716,12 +731,21 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
 
     studio = verb_parser("studio", WHAT_A_VERB_DOES["studio"])
     # ``--project`` IS NOT ``required=True`` HERE AND IT IS ON ``stop``, WHICH LOOKS LIKE AN
-    # OVERSIGHT AND IS THE LANE'S OWN SPLIT. argparse's answer to a missing required flag is a
+    # OVERSIGHT AND IS TWO DELIBERATE THINGS. argparse's answer to a missing required flag is a
     # usage line and exit 2, which is right for a verb that can do nothing at all without one.
-    # This verb can: ``--stop`` needs no project, because the space it acts on is the caller's
-    # own and there is only ever one. So absence is judged by ``studio_refusals``, which answers
-    # ``no_project`` with a code a skill can match on rather than a usage line it cannot.
-    studio.add_argument("--project", help="what this space is for, which is what the tags carry")
+    # This verb can do two: with no project it lists the spaces somebody has, and with --stop
+    # and no project it stops every app of theirs that is running. Both are useful answers to
+    # somebody who cannot remember what they called something, which is precisely the person a
+    # usage line helps least.
+    studio.add_argument(
+        "--project",
+        help=(
+            "the project, which is also the space: the same one resumes the same disk with "
+            "your files on it, a new one makes a new space. There is no default, because a "
+            "default would put two unrelated pieces of work under one name and one bill. "
+            "Leave it off to list what you have"
+        ),
+    )
     studio.add_argument(
         "--instance-type",
         help=(
@@ -734,8 +758,9 @@ def build_parser_and_verbs() -> tuple[argparse.ArgumentParser, dict[str, argpars
         "--stop",
         action="store_true",
         help=(
-            "end the compute and keep the disk. This is the one that matters -- nothing else "
-            "stops an app, and the domain has no idle shutdown"
+            "end the compute and keep the disk. With --project it stops that one space, and "
+            "without one it stops every app you have running. The domain stops an idle app "
+            "on its own eventually, and this is what stops paying for it now"
         ),
     )
     _add_json(studio)
@@ -2187,10 +2212,16 @@ def _studio(
     plugin. Studio is reached through a browser, so a laptop with no plugin can use this verb,
     which is most of why Studio is the exploration surface at all.
 
-    **THE ORDER OF THE FOUR CALLS IS THE VERB.** Price, then profile, then space, then app.
-    Everything before the app is free and idempotent, so a first invocation sets somebody up
-    without anybody doing it by hand, and the one call that costs money happens last and after
-    the rate has already been printed.
+    **THE ORDER OF THE CALLS IS THE VERB.** Identity, then every space in the domain, then --
+    on the path that starts something -- price, domain, profile, space, app. Everything before
+    the app is free and idempotent, so a first invocation sets somebody up without anybody
+    doing it by hand, and the one call that costs money happens last and after the rate has
+    already been printed.
+
+    **ONE ``ListSpaces`` SERVES ALL THREE MODES**, which is why it is made here rather than in
+    each of them. It answers "which spaces are mine" for the listing, "which of mine is this
+    project's" for a start, and "which of mine could be running" for a stop, and the ownership
+    field it carries is what makes each of those an answer about the caller rather than a guess.
     """
     configuration = _configuration(arguments)
     settings = load_studio_settings(configuration.directory)
@@ -2212,14 +2243,13 @@ def _studio(
         return EXIT_UNREACHABLE
     facts = json.loads(identity.stdout)
     person = person_from_caller_arn(str(facts["Arn"])) or ""
+    studio_name = studio_name_for(person)
+    project = arguments.project or ""
     request = StudioRequest(
         person=person,
-        studio_name=studio_name_for(person),
-        # ``--stop`` NEEDS NO PROJECT AND THE PLACEHOLDER IS WHAT SAYS SO. The space is the
-        # caller's own and there is one of them, so nothing about stopping it depends on what
-        # it was for. Standing a value in here rather than making the field optional keeps
-        # ``studio_refusals`` a function of one shape instead of two.
-        project=arguments.project or ("--stop" if arguments.stop else ""),
+        studio_name=studio_name,
+        project=project,
+        space=space_name_for(studio_name, project),
     )
     refusals = studio_refusals(request)
     if refusals:
@@ -2232,7 +2262,11 @@ def _studio(
     assumed = runner(
         assume_lane_argv(
             account=str(facts["Account"]),
-            project=request.project,
+            # THE SESSION NAME NEEDS A PROJECT AND THE TWO PROJECTLESS MODES HAVE NONE. This
+            # value reaches the trust policy's session tag and the session name, and neither is
+            # a cost attribution: what tags a space and an app is ``studio_tags``, which is
+            # built from the real project and is never reached on these two paths.
+            project=request.project or "studio",
             person=request.person,
             lifetime_hours=load_lane_settings(configuration.directory).default_lifetime_hours,
         )
@@ -2242,15 +2276,30 @@ def _studio(
         return EXIT_UNREACHABLE
     environment = credentials_environment(json.loads(assumed.stdout)["Credentials"])
 
-    described = runner(describe_app_argv(settings=settings, request=request), env=environment)
-    app = running_app(described.stdout) if described.ok else None
+    listed = runner(list_spaces_argv(settings), env=environment)
+    if not listed.ok:
+        print(_could_not_list_studio_spaces(listed.stderr), end="", file=err)
+        return EXIT_UNREACHABLE
+    mine = owned_spaces(listed.stdout, owner=request.studio_name)
 
     if arguments.stop:
-        return _stop_the_studio_app(
+        return _stop_the_studio_apps(
             request,
             settings=settings,
-            app=app,
             shape=shape,
+            mine=mine,
+            runner=runner,
+            environment=environment,
+            out=out,
+            err=err,
+            as_document=bool(arguments.json),
+        )
+    if not request.project:
+        return _list_the_studio_spaces(
+            request,
+            settings=settings,
+            shape=shape,
+            mine=mine,
             runner=runner,
             environment=environment,
             out=out,
@@ -2260,8 +2309,9 @@ def _studio(
     return _open_the_studio_space(
         request,
         settings=settings,
-        app=app,
         shape=shape,
+        mine=mine,
+        listed=listed.stdout,
         runner=runner,
         environment=environment,
         out=out,
@@ -2270,19 +2320,79 @@ def _studio(
     )
 
 
-def _stop_the_studio_app(
+def _list_the_studio_spaces(
     request: StudioRequest,
     *,
     settings: StudioSettings,
-    app: RunningApp | None,
     shape: StudioShape,
+    mine: tuple[OwnedSpace, ...],
     runner: CommandRunner,
     environment: dict[str, str],
     out: TextIO,
     err: TextIO,
     as_document: bool,
 ) -> int:
-    """End the compute and keep the disk, which is the verb's whole reason for existing.
+    """What this person has, which is what a bare ``edullm studio`` now answers.
+
+    **IT USED TO REFUSE HERE AND THE REVERSAL IS THE POINT.** ``--project`` names the space, so
+    a person who cannot remember what they called last week's project cannot reach last week's
+    disk, and the tool that knows is the one that was refusing to say. The argument against
+    *defaulting* the project is untouched and is in the flag's own help; refusing to guess and
+    refusing to answer were never the same act.
+
+    Exit 0 with nothing to show, because having no spaces is a true and ordinary state rather
+    than an error, and :func:`no_spaces_said` is what turns it into an instruction.
+    """
+    running = runner(list_apps_argv(settings), env=environment)
+    if not running.ok:
+        print(_could_not_list_studio_spaces(running.stderr), end="", file=err)
+        return EXIT_UNREACHABLE
+    apps = apps_by_space(running.stdout)
+    if as_document:
+        emit(
+            {
+                **envelope("studio"),
+                **studio_document(
+                    request=request,
+                    settings=settings,
+                    shape=shape,
+                    app=None,
+                    spaces=mine,
+                    apps=apps,
+                ),
+                "stopped": False,
+                "refused": False,
+                "refusals": [],
+            },
+            out=out,
+        )
+        return EXIT_OK
+    for line in spaces_said(mine, apps, settings):
+        print("\n".join(_wrapped(line, indent="")) if line else "", file=out)
+    return EXIT_OK
+
+
+def _stop_the_studio_apps(
+    request: StudioRequest,
+    *,
+    settings: StudioSettings,
+    shape: StudioShape,
+    mine: tuple[OwnedSpace, ...],
+    runner: CommandRunner,
+    environment: dict[str, str],
+    out: TextIO,
+    err: TextIO,
+    as_document: bool,
+) -> int:
+    """End the compute and keep the disks, which is the verb's whole reason for existing.
+
+    **WITH NO ``--project`` IT STOPS EVERY APP THE CALLER HAS RUNNING, AND THAT IS THE END-OF-DAY
+    COMMAND.** Once a person may have six spaces, a stop that demanded to be told which one
+    would be six commands and a memory test, run by somebody who is leaving -- which is the
+    exact shape of the failure that produced a 69-hour ``ml.g4dn.xlarge`` bill. Stopping is
+    safe to do broadly in a way that terminating a lane machine is not: the disk and every file
+    on it belong to the space and survive, so the worst outcome of stopping too much is
+    starting it again.
 
     **EXIT_OK WHERE THERE IS NOTHING TO STOP**, which is ``_stop``'s ruling and holds here for
     the same reason: the state this exists to produce is already the state, and a cleanup
@@ -2290,13 +2400,31 @@ def _stop_the_studio_app(
     published under ``--json``, because "there was nothing running" and "I stopped something"
     are different facts to a program even where they are the same outcome to a person.
     """
-    if app is None or not app.is_billing:
-        told = nothing_to_stop(request)
+    running = runner(list_apps_argv(settings), env=environment)
+    if not running.ok:
+        print(_could_not_list_studio_spaces(running.stderr), end="", file=err)
+        return EXIT_UNREACHABLE
+    apps = apps_by_space(running.stdout)
+    targets = tuple(
+        space
+        for space in mine
+        if space.name in apps and (not request.project or space.name == request.space)
+    )
+
+    if not targets:
+        told = nothing_to_stop(mine, project=request.project)
         if as_document:
             emit(
                 {
                     **envelope("studio"),
-                    **studio_document(request=request, settings=settings, shape=shape, app=app),
+                    **studio_document(
+                        request=request,
+                        settings=settings,
+                        shape=shape,
+                        app=None,
+                        spaces=mine,
+                        apps=apps,
+                    ),
                     "stopped": False,
                     "refused": False,
                     "refusals": [{"code": told.code, "detail": told.detail}],
@@ -2307,24 +2435,40 @@ def _stop_the_studio_app(
             print("\n".join(_wrapped(told.detail, indent="")), file=out)
         return EXIT_OK
 
-    ended = runner(delete_app_argv(settings=settings, request=request), env=environment)
-    if not ended.ok:
-        print(_could_not_stop_the_studio_app(request, ended.stderr), end="", file=err)
-        return EXIT_UNREACHABLE
+    stopped: list[OwnedSpace] = []
+    for space in targets:
+        ended = runner(delete_app_argv(settings=settings, space=space.name), env=environment)
+        if not ended.ok:
+            print(
+                _could_not_stop_the_studio_app(space.name, ended.stderr, stopped=stopped),
+                end="",
+                file=err,
+            )
+            return EXIT_UNREACHABLE
+        stopped.append(space)
 
-    monthly = settings.volume_gib_month_usd * settings.volume_gib
+    monthly = monthly_volume_cost(stopped, settings)
+    named = ", ".join(space.name for space in stopped)
     said = (
-        f"Stopped the app on {request.studio_name}. The hourly charge has ended. Your files "
-        f"are on the space's {settings.volume_gib} GB volume and are not affected, and that "
-        f"volume goes on costing about ${monthly:.2f} a month. Running edullm studio again "
-        "brings the same disk back under a new app."
+        f"Stopped {'the app on' if len(stopped) == 1 else 'the apps on'} {named}. The hourly "
+        "charge has ended. Your files are on each space's own volume and are not affected, and "
+        f"those volumes go on costing about ${monthly:.2f} a month. Running edullm studio "
+        "--project <name> again brings the same disk back under a new app."
     )
     if as_document:
         emit(
             {
                 **envelope("studio"),
-                **studio_document(request=request, settings=settings, shape=shape, app=app),
+                **studio_document(
+                    request=request,
+                    settings=settings,
+                    shape=shape,
+                    app=None,
+                    spaces=mine,
+                    apps=apps,
+                ),
                 "stopped": True,
+                "stopped_spaces": [space.name for space in stopped],
                 "said": said,
                 "refused": False,
                 "refusals": [],
@@ -2340,22 +2484,61 @@ def _open_the_studio_space(
     request: StudioRequest,
     *,
     settings: StudioSettings,
-    app: RunningApp | None,
     shape: StudioShape,
+    mine: tuple[OwnedSpace, ...],
+    listed: str,
     runner: CommandRunner,
     environment: dict[str, str],
     out: TextIO,
     err: TextIO,
     as_document: bool,
 ) -> int:
-    """Start or resume, and hand back a link. The price is printed before anything is bought.
+    """Open this project's space, making it where there is none. Price first, always.
+
+    **THE OWNERSHIP CHECK COMES BEFORE EVERYTHING AND IS WHY DERIVING A NAME IS SAFE.**
+    ``space_name_for`` produces an address and nothing more; what settles whether this verb may
+    touch it is ``OwnershipSettingsSummary.OwnerUserProfileName`` as ``ListSpaces`` reported it.
+    A derived name that lands on somebody else's space is refused rather than opened, which
+    matters because the domain's execution role is shared and Studio would let it through.
 
     **A RUNNING APP IS ANSWERED WITH ITS LINK AND NEVER WITH A SECOND APP.** Studio permits
     more than one app on a space, so "start or resume" read carelessly is a second instance on
     the same person's name, billing beside the first, with nothing in either the console or
     this verb saying which one anybody is looking at.
     """
-    print("\n".join(_wrapped(price_said(shape, settings), indent="")), file=err)
+    existing = space_named(listed, request.space)
+    if existing is not None and existing.owner != request.studio_name:
+        taken: tuple[Refusal, ...] = (
+            space_belongs_to_somebody_else(request, owner=existing.owner),
+        )
+        if as_document:
+            emit(refusal_document("studio", taken), out=out)
+        else:
+            print(render_refusals(taken), end="", file=err)
+        return EXIT_REFUSED
+
+    # THE SPACE'S OWN SIZE AND NOT THE CONFIGURED ONE. The configured number is what a space
+    # this verb creates gets; the twenty in the domain were made by hand at a tenth of it, and
+    # quoting the wrong one is a disk cost that is wrong by ten times in the reassuring
+    # direction.
+    volume = (
+        settings.volume_gib
+        if existing is None or existing.volume_gib is None
+        else existing.volume_gib
+    )
+
+    app: RunningApp | None = None
+    if existing is not None:
+        described = runner(
+            describe_app_argv(settings=settings, space=request.space), env=environment
+        )
+        app = running_app(described.stdout) if described.ok else None
+
+    idle = idle_shutdown(runner(describe_domain_argv(settings), env=environment).stdout)
+
+    print("\n".join(_wrapped(price_said(shape, settings, volume_gib=volume), indent="")), file=err)
+    print(file=err)
+    print("\n".join(_wrapped(idle_said(idle, shape), indent="")), file=err)
     print(file=err)
 
     if app is None or not app.is_billing:
@@ -2370,22 +2553,34 @@ def _open_the_studio_space(
                 print(render_refusals(unreadable), end="", file=err)
             return EXIT_UNREACHABLE
         image = image_arn_for(settings, shape, account=published.text)
-        # THE PROFILE AND THE SPACE ARE CREATED BEFORE THE APP AND BOTH ARE FREE. Neither call
-        # allocates an instance, so the ordinary first invocation sets somebody up entirely and
-        # the only thing they had to know was the verb.
-        made = _ensure_the_studio_space(
-            request,
-            settings=settings,
-            shape=shape,
-            image_arn=image,
-            runner=runner,
-            environment=environment,
-            err=err,
-        )
-        if made is not None:
-            return made
-        print("\n".join(_wrapped(unstopped_said(), indent="")), file=err)
-        print(file=err)
+        if existing is None:
+            # THE PROFILE AND THE SPACE ARE CREATED BEFORE THE APP AND BOTH ARE FREE. Neither
+            # call allocates an instance, so the ordinary first invocation sets somebody up
+            # entirely and the only thing they had to know was the verb.
+            made = _make_the_studio_space(
+                request,
+                settings=settings,
+                shape=shape,
+                image_arn=image,
+                runner=runner,
+                environment=environment,
+                out=out,
+                err=err,
+                as_document=as_document,
+            )
+            if made is not None:
+                return made
+            mine = (
+                *mine,
+                OwnedSpace(
+                    name=request.space,
+                    project=request.project,
+                    volume_gib=settings.volume_gib,
+                    status="Pending",
+                ),
+            )
+            print("\n".join(_wrapped(accumulation_said(mine, settings), indent="")), file=err)
+            print(file=err)
         started = runner(
             create_app_argv(settings=settings, request=request, shape=shape, image_arn=image),
             env=environment,
@@ -2406,7 +2601,14 @@ def _open_the_studio_space(
         emit(
             {
                 **envelope("studio"),
-                **studio_document(request=request, settings=settings, shape=shape, app=app),
+                **studio_document(
+                    request=request,
+                    settings=settings,
+                    shape=shape,
+                    app=app,
+                    spaces=mine,
+                    idle=idle,
+                ),
                 "stopped": False,
                 "refused": False,
                 "refusals": [],
@@ -2415,13 +2617,13 @@ def _open_the_studio_space(
         )
         return EXIT_OK
     if app is not None and app.is_billing:
-        print(already_running_said(app, url=signed.text), file=out)
+        print(already_running_said(app, request, url=signed.text), file=out)
     else:
         print(signed.text, file=out)
     return EXIT_OK
 
 
-def _ensure_the_studio_space(
+def _make_the_studio_space(
     request: StudioRequest,
     *,
     settings: StudioSettings,
@@ -2429,33 +2631,65 @@ def _ensure_the_studio_space(
     image_arn: str,
     runner: CommandRunner,
     environment: dict[str, str],
+    out: TextIO,
     err: TextIO,
+    as_document: bool,
 ) -> int | None:
-    """Make the user profile and the space where they do not exist, or say why that failed.
+    """Make the user profile and the space, or say why that could not be done.
 
-    ``None`` for "there is a space now", which covers both the first invocation and every one
-    after it. Create is attempted only where describe says there is nothing, rather than
-    attempted-and-forgiven, so a ``ResourceInUse`` from this is a real collision rather than
-    the ordinary path.
+    ``None`` for "there is a space now", which is the only state the caller may go on from.
+
+    **THE SECOND ``describe-user-profile`` IS THE FIX FOR THE DEFECT THAT PRODUCED THIS
+    REWRITE.** Profiles and spaces share one namespace, so a space name that is already a
+    profile's is refused by ``CreateSpace`` with a sentence about user profiles -- true, and
+    incomprehensible to somebody who typed a project name. Asking first turns it into
+    :func:`project_collides_with_a_profile`, which names the project and the remedy. It costs
+    one free call and only on the path that creates a space, which a person walks once per
+    project.
     """
     profile = runner(
-        describe_user_profile_argv(settings=settings, request=request), env=environment
+        describe_user_profile_argv(settings=settings, name=request.studio_name), env=environment
     )
     if not profile.ok:
         made = runner(create_user_profile_argv(settings=settings, request=request), env=environment)
         if not made.ok:
             print(_could_not_make_a_studio_space(request, made.stderr), end="", file=err)
             return EXIT_UNREACHABLE
-    space = runner(describe_space_argv(settings=settings, request=request), env=environment)
-    if not space.ok:
-        made = runner(
-            create_space_argv(settings=settings, request=request, shape=shape, image_arn=image_arn),
-            env=environment,
-        )
-        if not made.ok:
-            print(_could_not_make_a_studio_space(request, made.stderr), end="", file=err)
-            return EXIT_UNREACHABLE
+    collision = runner(
+        describe_user_profile_argv(settings=settings, name=request.space), env=environment
+    )
+    if collision.ok:
+        collided: tuple[Refusal, ...] = (project_collides_with_a_profile(request),)
+        if as_document:
+            emit(refusal_document("studio", collided), out=out)
+        else:
+            print(render_refusals(collided), end="", file=err)
+        return EXIT_REFUSED
+    made = runner(
+        create_space_argv(settings=settings, request=request, shape=shape, image_arn=image_arn),
+        env=environment,
+    )
+    if not made.ok:
+        print(_could_not_make_a_studio_space(request, made.stderr), end="", file=err)
+        return EXIT_UNREACHABLE
     return None
+
+
+def _could_not_list_studio_spaces(said: str) -> str:
+    """SageMaker would not say what exists, so nothing was decided and nothing was touched."""
+    return "\n".join(
+        [
+            "",
+            *_wrapped(
+                "SageMaker would not list the spaces in the domain, so this could not tell "
+                "which of them are yours and did nothing at all. Nothing was started, nothing "
+                "was stopped and nothing changed about what is billing. That is a call that "
+                f"failed rather than anything about what you typed. What AWS said: {said.strip()}",
+                indent="",
+            ),
+            "",
+        ]
+    )
 
 
 def _could_not_make_a_studio_space(request: StudioRequest, said: str) -> str:
@@ -2464,7 +2698,7 @@ def _could_not_make_a_studio_space(request: StudioRequest, said: str) -> str:
         [
             "",
             *_wrapped(
-                f"SageMaker would not create the space {request.studio_name}, so nothing was "
+                f"SageMaker would not create the space {request.space}, so nothing was "
                 "started and nothing is billing. That is a call that failed rather than "
                 f"anything about what you typed. What AWS said: {said.strip()}",
                 indent="",
@@ -2480,7 +2714,7 @@ def _could_not_start_the_studio_app(request: StudioRequest, said: str) -> str:
         [
             "",
             *_wrapped(
-                f"SageMaker would not start an app on {request.studio_name}, so nothing is "
+                f"SageMaker would not start an app on {request.space}, so nothing is "
                 "billing by the hour. Your space and its volume are there either way. What "
                 f"AWS said: {said.strip()}",
                 indent="",
@@ -2502,8 +2736,8 @@ def _could_not_sign_in_to_studio(request: StudioRequest, said: str) -> str:
             "",
             *_wrapped(
                 "SageMaker would not mint a sign-in URL. If an app was started just now it is "
-                "running and it is billing, so run edullm studio --stop if you do not want it. "
-                f"What AWS said: {said.strip()}",
+                f"running and it is billing, so run edullm studio --stop --project "
+                f"{request.project} if you do not want it. What AWS said: {said.strip()}",
                 indent="",
             ),
             "",
@@ -2511,15 +2745,27 @@ def _could_not_sign_in_to_studio(request: StudioRequest, said: str) -> str:
     )
 
 
-def _could_not_stop_the_studio_app(request: StudioRequest, said: str) -> str:
-    """Stopping failed, which is the failure worth being blunt about: it is still costing."""
+def _could_not_stop_the_studio_app(space: str, said: str, *, stopped: Sequence[OwnedSpace]) -> str:
+    """Stopping failed, which is the failure worth being blunt about: it is still costing.
+
+    **IT NAMES WHAT DID STOP, BECAUSE A ``--stop`` WITH NO PROJECT ACTS ON SEVERAL.** A message
+    that reported only the failure would leave somebody believing none of them stopped, and the
+    remedy for that belief is running it again, which is harmless but is not what they need to
+    know. What they need to know is which one is still on the meter.
+    """
+    already = (
+        ""
+        if not stopped
+        else f"{', '.join(one.name for one in stopped)} did stop and {'is' if len(stopped) == 1 else 'are'} no longer billing. "
+    )
     return "\n".join(
         [
             "",
             *_wrapped(
-                f"SageMaker would not stop the app on {request.studio_name}, so it is still "
-                "running and still billing by the hour. Running this again is the remedy. "
-                f"What AWS said: {said.strip()}",
+                f"SageMaker would not stop the app on {space}, so it is still running and "
+                f"still billing by the hour. {already}Running this again is the remedy. That "
+                "is a call that failed rather than anything about what you typed. What AWS "
+                f"said: {said.strip()}",
                 indent="",
             ),
             "",

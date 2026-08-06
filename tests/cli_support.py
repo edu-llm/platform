@@ -33,7 +33,7 @@ from __future__ import annotations
 import io
 import json
 import os
-from collections.abc import Callable, Collection, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -450,6 +450,24 @@ STUDIO_URL = "https://studio-d-example.studio.us-east-1.sagemaker.aws/auth?token
 #: real value would put back the literal the design exists to avoid.
 STUDIO_IMAGE_ACCOUNT = "00image00acct"
 
+#: The person ``lane_answers`` federates as, that person's Studio name, and the space one
+#: project of theirs lives in. Held here rather than in the test module because
+#: :func:`studio_answers` has to build a ``ListSpaces`` answer that agrees with what the verb
+#: will derive, and two spellings of that agreement is one more than can be kept in step.
+STUDIO_PERSON = "caiiris"
+STUDIO_PROJECT = "mixlaw"
+STUDIO_SPACE = f"{STUDIO_PERSON}-{STUDIO_PROJECT}"
+
+#: What every space in the live domain is sized at, which is not what the verb creates one at.
+#: A fixture that used the configured size would never catch the verb quoting the configured
+#: size for a space that has its own.
+STUDIO_VOLUME_GIB = 5
+
+#: The domain's idle timeout on the afternoon of 2026-08-06. A number here rather than in the
+#: verb is the whole arrangement: this is a fixture standing in for what ``DescribeDomain``
+#: says, and the verb has none of its own to go stale.
+STUDIO_IDLE_MINUTES = 240
+
 
 def studio_answers(
     *,
@@ -458,6 +476,10 @@ def studio_answers(
     profile_exists: bool = True,
     instance_type: str = "ml.t3.medium",
     image_account: str | None = STUDIO_IMAGE_ACCOUNT,
+    spaces: Sequence[tuple[str, str, int]] | None = None,
+    profiles: Sequence[str] | None = None,
+    running: Sequence[str] = (),
+    idle_minutes: int | None = STUDIO_IDLE_MINUTES,
 ) -> dict[tuple[str, ...], CommandResult | Callable[[tuple[str, ...]], CommandResult]]:
     """Every SageMaker call ``edullm studio`` makes, answered as a laptop holding a session.
 
@@ -469,10 +491,19 @@ def studio_answers(
     ``app_status`` of ``None`` is the ordinary state: a space with no app on it, so
     ``describe-app`` fails the way it does for a space that has never been started. The
     defaults are a person who has been here before -- profile and space already made -- because
-    that is every invocation after the first, and the first is expressed by passing ``False``.
+    that is every invocation after the first, and the first is expressed by passing
+    ``space_exists=False``.
+
+    ``spaces`` is ``(name, owner, volume)`` triples and overrides ``space_exists`` entirely, for
+    the cases about somebody who owns several or somebody whose derived name has landed on a
+    space that is not theirs. ``running`` names the spaces ``ListApps`` reports an app on, which
+    is what the listing and both stops read; ``app_status`` is what ``DescribeApp`` says about
+    one space, which is what a start reads. They are separate because the verb asks two
+    different questions and a fixture that fused them could not express a disagreement.
 
     ``image_account`` of ``None`` is the public SSM parameter refusing, which is the one
-    failure that stops a start before anything is created.
+    failure that stops a start before anything is created. ``idle_minutes`` of ``None`` is a
+    domain with lifecycle management off, which is what this one was until 2026-08-06.
 
     **THE SSM ANSWER SHARES A PREFIX WITH ``lane_answers``' AMI LOOKUP AND MUST WIN.**
     ``FakeRunner`` matches on the longest declared prefix, and both are
@@ -492,6 +523,27 @@ def studio_answers(
             )
         )
     )
+    if spaces is None:
+        spaces = ((STUDIO_SPACE, STUDIO_PERSON, STUDIO_VOLUME_GIB),) if space_exists else ()
+    if profiles is None:
+        profiles = (STUDIO_PERSON,) if profile_exists else ()
+    known = set(profiles)
+
+    def profile_of(argv: tuple[str, ...]) -> CommandResult:
+        """``describe-user-profile`` is asked about two names and answers about both.
+
+        The caller's own, to decide whether to create it, and the space name the project
+        derived, to catch the shared-namespace collision before ``CreateSpace`` reports it in
+        words nobody can act on. A fixture that answered the same way to both could not tell
+        those two calls apart, which is exactly the bug this catches.
+        """
+        name = argv[argv.index("--user-profile-name") + 1]
+        return (
+            ok(json.dumps({"UserProfileName": name}))
+            if name in known
+            else failed("An error occurred (ResourceNotFound)")
+        )
+
     return {
         # Longer than ``lane_answers``' bare ``get-parameter`` on purpose: ``FakeRunner`` takes
         # the longest matching prefix, so naming the parameter is what keeps the AMI lookup and
@@ -501,23 +553,101 @@ def studio_answers(
             if image_account is None
             else ok(f"{image_account}\n")
         ),
+        ("aws", "sagemaker", "describe-domain"): ok(json.dumps(_a_domain(idle_minutes))),
+        ("aws", "sagemaker", "list-spaces"): ok(json.dumps(_listed_spaces(spaces))),
+        ("aws", "sagemaker", "list-apps"): ok(json.dumps(_listed_apps(running, instance_type))),
         ("aws", "sagemaker", "describe-app"): described,
-        ("aws", "sagemaker", "describe-user-profile"): (
-            ok(json.dumps({"UserProfileName": "caiiris"}))
-            if profile_exists
-            else failed("An error occurred (ResourceNotFound)")
-        ),
+        ("aws", "sagemaker", "describe-user-profile"): profile_of,
         ("aws", "sagemaker", "create-user-profile"): ok(json.dumps({"UserProfileArn": "arn:x"})),
-        ("aws", "sagemaker", "describe-space"): (
-            ok(json.dumps({"SpaceName": "caiiris"}))
-            if space_exists
-            else failed("An error occurred (ResourceNotFound)")
-        ),
         ("aws", "sagemaker", "create-space"): ok(json.dumps({"SpaceArn": "arn:x"})),
         ("aws", "sagemaker", "create-app"): ok(json.dumps({"AppArn": "arn:x"})),
         ("aws", "sagemaker", "delete-app"): ok(""),
         ("aws", "sagemaker", "create-presigned-domain-url"): ok(f"{STUDIO_URL}\n"),
     }
+
+
+def _a_domain(idle_minutes: int | None) -> dict[str, object]:
+    """``DescribeDomain`` as the live domain answers it, with or without a timeout.
+
+    The nesting is copied from the real answer rather than flattened, because the reader under
+    test walks four keys to reach the number and a shallower fixture would pass whatever it
+    did.
+    """
+    idle: dict[str, object] = (
+        {"LifecycleManagement": "DISABLED"}
+        if idle_minutes is None
+        else {
+            "LifecycleManagement": "ENABLED",
+            "IdleTimeoutInMinutes": idle_minutes,
+            "MinIdleTimeoutInMinutes": 60,
+            "MaxIdleTimeoutInMinutes": 480,
+        }
+    )
+    return {
+        "DomainId": "d-example",
+        "Status": "InService",
+        "AuthMode": "IAM",
+        "DefaultUserSettings": {
+            "JupyterLabAppSettings": {"AppLifecycleManagement": {"IdleSettings": idle}},
+        },
+    }
+
+
+def _listed_spaces(spaces: Sequence[tuple[str, str, int]]) -> dict[str, object]:
+    """``ListSpaces`` as the service shapes it, ``Summary`` suffixes and all.
+
+    The suffixes are the trap this fixture exists to hold: ``DescribeSpace`` answers
+    ``OwnershipSettings`` and ``ListSpaces`` answers ``OwnershipSettingsSummary``, so a reader
+    written against the wrong one finds nothing and reports that nobody owns anything.
+    """
+    return {
+        "Spaces": [
+            {
+                "DomainId": "d-example",
+                "SpaceName": name,
+                "Status": "InService",
+                "SpaceSettingsSummary": {
+                    "AppType": "JupyterLab",
+                    "SpaceStorageSettings": {"EbsStorageSettings": {"EbsVolumeSizeInGb": volume}},
+                },
+                "SpaceSharingSettingsSummary": {"SharingType": "Private"},
+                "OwnershipSettingsSummary": {"OwnerUserProfileName": owner},
+            }
+            for name, owner, volume in spaces
+        ]
+    }
+
+
+def _listed_apps(running: Sequence[str], instance_type: str) -> dict[str, object]:
+    """``ListApps``, carrying a ``Deleted`` record beside every live one.
+
+    Studio never forgets an app: a space stopped last week still appears, with ``Status``
+    ``Deleted``. A fixture that listed only running apps would let a reader that ignores status
+    pass, and that reader tells everybody in the domain they are paying for something they
+    stopped.
+    """
+    apps: list[dict[str, object]] = [
+        {
+            "DomainId": "d-example",
+            "SpaceName": "a-space-somebody-stopped",
+            "AppType": "JupyterLab",
+            "AppName": "default",
+            "Status": "Deleted",
+            "ResourceSpec": {"InstanceType": instance_type},
+        }
+    ]
+    apps.extend(
+        {
+            "DomainId": "d-example",
+            "SpaceName": space,
+            "AppType": "JupyterLab",
+            "AppName": "default",
+            "Status": "InService",
+            "ResourceSpec": {"InstanceType": instance_type},
+        }
+        for space in running
+    )
+    return {"Apps": apps}
 
 
 def write_spec(
