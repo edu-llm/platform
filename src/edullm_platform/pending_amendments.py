@@ -1084,7 +1084,44 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # noisy and never wrong in the direction that costs money. The tree is the permissive side
     # and it is the side under review, so nobody meets this until the release, and what they
     # meet before it is a false alarm rather than a missed reclaim.
+    #
+    # A NINTH, AND IT IS THE FIRST ENTRY IN THIS REGISTER WHOSE WINDOW IS A LIVE HAZARD RATHER
+    # THAN A WRONG LABEL, A REFUSAL OR BYTES WITH NO BEHAVIOUR BEHIND THEM. The notifier
+    # interpolates the experiment into the run-ended message and escapes nothing, and Slack
+    # reads `<`, `>` and `&` as control characters, so a run whose experiment is named
+    # `<!channel>` notifies every member of the workspace each time it ends and a fan-out
+    # notifies them once per cell. `messages.escaped` closes it per field, on the way in, and
+    # `tests/test_notification_escaping.py` holds both halves of that.
+    #
+    # THE HAZARD STANDS UNTIL THE RELEASE AND THE DEPLOY, AND THAT IS WORTH SAYING PLAINLY
+    # RATHER THAN LEAVING TO BE INFERRED FROM THE SHAPE OF THE RECORD. Every entry above
+    # describes an account that is behind on something harmless or on something strict. This
+    # one describes an account that goes on being able to ring every phone in the workspace for
+    # as long as it stands, so it is the one entry here that is worth releasing on its own
+    # rather than folding into whatever `--function all` next sweeps up. The run-ended message
+    # is the one being delivered today; the approval message has no caller yet, so the half of
+    # this change that touches it is not reachable in the account either way.
+    #
+    # WHAT MOVED THE ZIP IS ONE MODULE AND NOTHING ELSE, CHECKED RATHER THAN ASSUMED. A build
+    # of origin/main produces d78c4a48 exactly, which is what infra/notifier-release.yaml
+    # records, so no earlier change is riding along and this difference is entirely
+    # notifications/messages.py. No file under config/ moved, so the other three zips are
+    # untouched and the janitor's entry below is unaffected.
     releases: tuple[PendingRelease, ...] = (
+        PendingRelease(
+            function="notifier",
+            reason=(
+                "the run-ended message interpolated the submitter's experiment into Slack "
+                "without escaping it, so a run named <!channel> notified the whole workspace "
+                "every time it ended. messages.escaped now converts the three characters "
+                "Slack parses, per field and before the line is assembled so the link the "
+                "approval message builds survives."
+            ),
+            cleared_by=f"uv run python {RELEASE_COMMAND} --function notifier",
+            builds_to="15058807c08d7bddefbfa7413ee737a3ecd910de0955f4e6879cf0b2ddf75d8d",
+            released="d78c4a48482558039e7affc51331ec558e5880f8e48876bafb567fe683ee67b9",
+            recorded_on=date(2026, 8, 6),
+        ),
         PendingRelease(
             function="janitor",
             reason=(
