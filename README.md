@@ -16,7 +16,7 @@ Then the guide for what you are actually doing:
 | [Running an evaluation](guides/olmo-eval-full.md) | olmo-eval-full, for scoring a model against a task suite |
 | [Validating a corpus](guides/edullm-data.md) | edullm-data, for checking and publishing a dataset |
 
-Nothing above needs anything installed. If you would rather work in a terminal than in the Actions UI, `uv tool install --force git+https://github.com/edu-llm/platform` puts the `edullm` command on your path. It prices a submission offline before it sends it, and submits, follows and stops runs. [From a terminal](guides/the-platform.md#from-a-terminal) is the whole of it.
+Nothing above needs anything installed. If you would rather work in a terminal than in the Actions UI, `uv tool install --force git+https://github.com/edu-llm/platform` puts the `edullm` command on your path. It prices a submission offline before it sends it, and submits, follows and stops runs. Re-running that same line is how you upgrade, and do not reach for `uv tool upgrade`: for a tool installed from git it answers `Nothing to upgrade` however far behind you are. [From a terminal](guides/the-platform.md#from-a-terminal) is the whole of it.
 
 ## What it does
 
