@@ -93,8 +93,8 @@ median of     20 timed iterations after 3 warm-up
 When a run ends the platform composes one line for `#edullm-runs`. It looks like this.
 
 ```
-[runs] Aryan Verma · plan-b-phase0-100m-superbpe-eval · $0.02 spent, $2.01 authorised · ran 1m on gpu-1xa10g.
-[runs] Aryan Verma · plan-b-phase0-100m-superbpe-eval · $0.70 spent, nothing produced · died at 42m on gpu-1xa10g, exit 1, whether a checkpoint survived is unknown.
+Aryan Verma · plan-b-phase0-100m-superbpe-eval · $0.02 spent, $2.01 authorised · ran 1m on gpu-1xa10g.
+Aryan Verma · plan-b-phase0-100m-superbpe-eval · $0.70 spent, nothing produced · died at 42m on gpu-1xa10g, exit 1, whether a checkpoint survived is unknown.
 ```
 
 **These are sent.** This section said nothing sent them and that the webhook had never been supplied, which was true for about four hours after it was written. The webhook was created by hand on 2026-08-05, points at `#edullm-runs`, and `infra/README.md` records it under "It already exists". Messages have been posted through the deployed function since. Join the channel.

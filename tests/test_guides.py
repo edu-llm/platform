@@ -1116,6 +1116,73 @@ def test_no_guide_denies_a_notification_channel_the_infrastructure_record_says_e
         )
 
 
+def test_the_two_notification_lines_day_one_shows_are_lines_the_notifier_composes() -> None:
+    """Mutation: reword any clause in ``notifications/messages``, or the guide's copy of it.
+
+    Day one shows a researcher what to look for in ``#edullm-runs``, one succeeded line and
+    one failed line, and those lines are the only description anybody gets of a message they
+    are told to wait for rather than poll. The page carried them with a ``[runs]`` prefix
+    the notifier does not write: the channel is a field on the message and never a prefix on
+    its text, so a reader scanning the channel was looking for the wrong first character.
+
+    Held by rendering both from the composer rather than by reading the words back. The
+    facts are hand-built so the figures stay the ones the page shows, which makes this an
+    equality on the wording and on nothing else. Money, duration and the checkpoint clause
+    all come out of that module, so any of them being reworded fails here.
+    """
+    from edullm_platform.notifications.facts import RunEndedFacts
+    from edullm_platform.notifications.messages import render_run_ended
+
+    def facts(**overridden: Any) -> RunEndedFacts:
+        settled: dict[str, Any] = {
+            "run_id": "run_019fa73d-be37-7066-984b-a4bacf194f49",
+            "outcome": "succeeded",
+            "person": "Aryan Verma",
+            "team": "pre-training",
+            "experiment": "plan-b-phase0-100m-superbpe-eval",
+            "queue_name": None,
+            "compute_profile": "gpu-1xa10g",
+            "hourly_rate_usd": Decimal("1.006"),
+            "seconds_spent": 60,
+            "spent_usd": Decimal("0.02"),
+            "authorised_usd": Decimal("2.01"),
+            "exit_code": None,
+            "output_prefix": None,
+            "cells_total": None,
+            "cells_failed": None,
+            "cells_succeeded": None,
+            "cells_measured": None,
+            "failed_cell_indexes": None,
+            "checkpoint_state": "unknown",
+        }
+        settled.update(overridden)
+        return RunEndedFacts(**settled)
+
+    succeeded = render_run_ended(facts()).text
+    failed = render_run_ended(
+        facts(
+            outcome="failed",
+            seconds_spent=42 * 60,
+            spent_usd=Decimal("0.70"),
+            authorised_usd=None,
+            exit_code=1,
+        )
+    ).text
+
+    day_one = DAY_ONE_GUIDE_PATH.read_text(encoding="utf-8")
+    # Whole lines of a fenced block rather than a substring of the page, so a prefix in
+    # front of the message fails. That was the defect: `[runs] ` reads as part of what
+    # arrives, and a substring check cannot see it.
+    quoted = {row for block in fenced_blocks(day_one) for row in block.splitlines()}
+    for line in (succeeded, failed):
+        assert line in quoted, (
+            "day-one.md does not show the line the notifier composes. It now reads:"
+            f"\n\n{line}\n\nPut that in the notification block on a line of its own, with "
+            "nothing in front of it, or the one page a newcomer reads describes a message "
+            "that is not the one arriving"
+        )
+
+
 def test_the_version_day_one_makes_a_reader_check_for_is_one_they_can_install() -> None:
     """Mutation: raise the floor in day one above the version this repository releases.
 
