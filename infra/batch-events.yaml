@@ -196,22 +196,43 @@ Resources:
           # continuously on a known cause, so a real recorder failure would have changed
           # nothing anybody could see. An alarm that is always red is an alarm that is off.
           #
-          # A PREFIX AND NOT THE WHOLE SHAPE, deliberately. EventBridge has no regex, so the
-          # full `run_` + UUIDv7 pattern this platform's ids satisfy cannot be expressed
-          # here, and `wildcard` would only approximate it. The prefix is exactly the
-          # platform's own naming rule and nothing weaker: it is `RUN_ID_PREFIX` from
-          # contracts/identity.py, and tests/test_phase3_infrastructure.py reads that constant
-          # rather than restating the literal, so a rename there goes red here.
+          # A WILDCARD AND NOT A `run_` PREFIX, AND THE FOUR EXTRA CHARACTERS WERE EARNED.
           #
-          # The recorder keeps its own full-regex refusal. That is not redundancy to be
-          # tidied away: this rule is a deployed artifact and project_batch_event is a
-          # committed one, the recorder's queue is reachable by anything permitted to write
-          # to it, and the whole of #310 is what happens when the router's scope drifts. The
+          # The prefix was deployed first, and the check below immediately found what it
+          # leaves through. `run_db0f3291-e538-4860-ae87-4266c5f2b36a` ran twice on
+          # gpu-4xa10g on 2026-08-01. It is not in the lineage store, this platform never
+          # submitted it, and somebody named their own job as though it were a run. A UUIDv4,
+          # not a UUIDv7. It passed the prefix, reached the recorder and dead-lettered, which
+          # is #310 again at one job instead of two hundred and still enough to hold the
+          # alarm red.
+          #
+          # `-7` is the version nibble of a UUIDv7 and it sits at the head of the third group,
+          # so it is always preceded by a hyphen and always followed by two more. That is what
+          # this wildcard says and it is why it cannot exclude a run: every id `new_run_id`
+          # produces satisfies it by construction, not by luck. Read against EventBridge's own
+          # matcher over the 220 run ids in the lineage store and on these queues, all 220
+          # match and the UUIDv4 above does not. A UUIDv4 cannot match, because the only
+          # places a hyphen can be followed by `7` are the heads of groups three, four and
+          # five: three is the version and is `4`, four is the variant and is 8, 9, a or b,
+          # and five is last so nothing follows it.
+          #
+          # STILL NOT THE WHOLE SHAPE, because EventBridge has no regex and there is no way to
+          # say "hexadecimal" here. `run_zzzzzzzz-zzzz-7zzz-zzzz-zzzzzzzzzzzz` passes this and
+          # is not a run id.
+          #
+          # So the recorder keeps its own full-regex refusal, and that is not redundancy to be
+          # tidied away. This rule is a deployed artifact and project_batch_event is a
+          # committed one, the recorder's queue is reachable by anything permitted to write to
+          # it, and the whole of #310 is what happens when the router's scope drifts. The
           # rejected alternative in #310 was to make the projection return None for a name it
-          # does not recognise, which would have deleted that refusal -- and with it any
-          # chance of noticing a real run whose name shape changed.
+          # does not recognise, which would have deleted that refusal, and with it any chance
+          # of noticing a real run whose name shape changed.
+          #
+          # tests/test_phase3_infrastructure.py builds this string out of `RUN_ID_PREFIX` and
+          # `UUID7_VERSION` rather than restating it, and holds it against run ids `new_run_id`
+          # generates, so a change to what a run id is goes red here.
           jobName:
-            - prefix: run_
+            - wildcard: run_*-*-7*-*-*
       Targets:
         - Id: lifecycle-queue
           Arn:

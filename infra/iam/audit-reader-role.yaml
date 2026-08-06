@@ -501,7 +501,7 @@ Resources:
               # whether it would deliver one the recorder refuses. Both halves have to come
               # from the account: a pattern read out of infra/batch-events.yaml would describe
               # a rule that may not be deployed, and a matcher written here would eventually
-              # disagree with the bus about prefix matching, which is the clause the whole
+              # disagree with the bus about wildcard matching, which is the clause the whole
               # check turns on.
               #
               # DescribeRule is scoped to the one rule. TestEventPattern is not scoped to

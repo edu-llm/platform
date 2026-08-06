@@ -1925,8 +1925,8 @@ def test_the_role_can_read_and_cannot_write(role: dict[str, Any]) -> None:
     a pattern and an event as request parameters, runs EventBridge's matcher over them, and
     answers true or false. Nothing in the account is read, nothing is changed, and nothing is
     disclosed that the caller did not put in the request. It is here because the alternative
-    is writing a matcher in this repository and believing it, and prefix matching -- the
-    clause platform #310 turns on -- is exactly the sort that is easy to get almost right.
+    is writing a matcher in this repository and believing it, and the wildcard platform #310
+    turns on is exactly the sort that is easy to get almost right.
     The write half of that service stays absent and matters: a credential that could disable
     the lifecycle rule could stop every run's lineage being written and leave nothing red.
     """
