@@ -1,12 +1,11 @@
 """Hold the code AWS is running against the release records that claim to describe it.
 
-Two committed tripwires already compare each release record against a zip built from this
+A committed tripwire already compares each release record against a zip built from this
 tree, which settles record against tree.
-``tests/test_phase2_lambda_package.py::test_the_released_zip_is_the_one_this_tree_builds``
-is one and ``tests/test_phase3_lifecycle_package.py`` carries the other. Nothing settled
-deployed against record. AWS reports the running code as ``CodeSha256``, base64 of the same
-sha256 the records write as hex, and until this tool nothing had ever read it outside a
-maintainer doing it by hand.
+``tests/test_released_zips.py::test_the_released_zip_is_the_one_this_tree_builds`` is it,
+parametrized over the same table this module reads. Nothing settled deployed against record.
+AWS reports the running code as ``CodeSha256``, base64 of the same sha256 the records write
+as hex, and until this tool nothing had ever read it outside a maintainer doing it by hand.
 
 **The window that leaves open is one where CI is green and the account is not.** A function
 deployed out of band, a release recorded from a tree that did not build it, or two people
@@ -26,9 +25,9 @@ an IAM stack lapsed; reporting it as a pass silently stops the check covering an
 
 **It does not compare S3ObjectVersion, and that is a decision rather than an omission.** The
 release records keep a copy of the object version the template's ``Code`` block names so the
-two can be held together, and both tripwire modules already do exactly that -- between two
-committed files, with no AWS identity, failing on the pull request that causes it rather
-than on a schedule. Lambda could not contribute to that comparison in any case:
+two can be held together, and each function's own package module already does exactly that --
+between two committed files, with no AWS identity, failing on the pull request that causes it
+rather than on a schedule. Lambda could not contribute to that comparison in any case:
 ``GetFunctionConfiguration`` reports the digest of the deployed code and not the object
 version it was deployed from, and the digest is the stronger question, because it is about
 the bytes rather than about a pointer to them.

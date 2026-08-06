@@ -81,13 +81,33 @@ class Function:
     #: The record kept beside the template so the two can be compared. A version id edited
     #: in one and not the other is a template pointing at a zip nobody recorded.
     release_record: Path
-    #: The test module holding this function's record against a zip built from the tree.
-    #: Named on the function rather than looked up by display name, because two callers now
-    #: need it: `verify` below runs it after a release, and tools/verify_deployed_lambdas.py
-    #: cites it when the deployed digest disagrees -- it is what tells a stale record from
-    #: an out-of-band deployment, and a reader who is not pointed at it cannot choose which
+    #: The test holding this function's record against a zip built from the tree. Named on
+    #: the function rather than looked up by display name, because two callers now need it:
+    #: `verify` below runs it after a release, and tools/verify_deployed_lambdas.py cites it
+    #: when the deployed digest disagrees -- it is what tells a stale record from an
+    #: out-of-band deployment, and a reader who is not pointed at it cannot choose which
     #: side to change.
+    #:
+    #: A pytest node id rather than a module, and the precision is the repair. This was a
+    #: module path, and the notifier's named tests/test_notifications_infrastructure.py --
+    #: a real file, full of real assertions about roles and queues and alarms, carrying no
+    #: digest comparison at all. Both callers believed it: `verify` ran that module after a
+    #: release and it passed, and the drift finding sent readers to it. A node id has to
+    #: resolve to a test that exists, and
+    #: tests/test_released_zips.py::test_every_function_is_pointed_at_a_tripwire_that_runs
+    #: is what resolves every one of them.
     tripwire: str
+
+
+#: The one test holding every release record against a zip built from this tree, parametrized
+#: over the table below. One rather than one per function: three copies of that idea existed
+#: and the fourth function had none, which is how the notifier's zip drifted in silence.
+RELEASE_TRIPWIRE = "tests/test_released_zips.py::test_the_released_zip_is_the_one_this_tree_builds"
+
+
+def _tripwire(function: str) -> str:
+    """The node id selecting this function's case of the shared tripwire."""
+    return f"{RELEASE_TRIPWIRE}[{function}]"
 
 
 FUNCTIONS = {
@@ -97,7 +117,7 @@ FUNCTIONS = {
         s3_key="admission-validator/admission-validator.zip",
         template=PROJECT_ROOT / "infra" / "admission-state-machine.yaml",
         release_record=PROJECT_ROOT / "infra" / "admission-validator-release.yaml",
-        tripwire="tests/test_phase2_lambda_package.py",
+        tripwire=_tripwire("validator"),
     ),
     "recorder": Function(
         name="lifecycle recorder",
@@ -105,7 +125,7 @@ FUNCTIONS = {
         s3_key="lifecycle-recorder/lifecycle-recorder.zip",
         template=PROJECT_ROOT / "infra" / "batch-events.yaml",
         release_record=PROJECT_ROOT / "infra" / "lifecycle-recorder-release.yaml",
-        tripwire="tests/test_phase3_lifecycle_package.py",
+        tripwire=_tripwire("recorder"),
     ),
     "janitor": Function(
         name="expiry janitor",
@@ -113,7 +133,7 @@ FUNCTIONS = {
         s3_key="expiry-janitor/expiry-janitor.zip",
         template=PROJECT_ROOT / "infra" / "expiry-janitor.yaml",
         release_record=PROJECT_ROOT / "infra" / "expiry-janitor-release.yaml",
-        tripwire="tests/test_janitor_package.py",
+        tripwire=_tripwire("janitor"),
     ),
     "notifier": Function(
         name="notifier",
@@ -121,7 +141,7 @@ FUNCTIONS = {
         s3_key="notifier/notifier.zip",
         template=PROJECT_ROOT / "infra" / "notifications.yaml",
         release_record=PROJECT_ROOT / "infra" / "notifier-release.yaml",
-        tripwire="tests/test_notifications_infrastructure.py",
+        tripwire=_tripwire("notifier"),
     ),
 }
 
@@ -131,7 +151,13 @@ class ReleaseError(Exception):
 
 
 def _run(command: Sequence[str]) -> str:
-    answer = subprocess.run(command, capture_output=True, text=True, check=False)
+    # From the repository root whatever the caller's directory is. `build` below invokes a
+    # builder by its repository-relative path, so this was a latent dependency on being run
+    # from the root -- invisible while the only caller was a person in a checkout, and load
+    # bearing the moment the release tripwire started calling `build` from pytest's rootdir.
+    answer = subprocess.run(
+        command, cwd=PROJECT_ROOT, capture_output=True, text=True, check=False
+    )
     if answer.returncode != 0:
         raise ReleaseError(
             f"`{' '.join(command[:3])} …` exited {answer.returncode}: "
@@ -238,6 +264,13 @@ def verify(selected: Sequence[Function]) -> None:
     This is the step whose absence caused the incident in the module docstring. It is run
     as a subprocess with its exit code checked directly -- not piped anywhere, because a
     pipe is what swallowed the failure last time.
+
+    The targets are node ids now rather than whole modules, so this runs the digest
+    comparison for each selected function and nothing else. That is narrower than it was and
+    is the right width: what a release has to establish is that the two files it just edited
+    describe the zip it just uploaded. The rest of what those modules assert -- which config
+    an archive carries, which entry point a template names -- is a property of the tree and
+    is red on the pull request whether or not anybody cuts a release.
     """
     targets = sorted({function.tripwire for function in selected})
     answer = subprocess.run(

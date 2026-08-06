@@ -138,7 +138,11 @@ def test_the_tripwire_is_run_and_its_exit_code_is_read(monkeypatch: pytest.Monke
     assert main([]) == 1
     assert calls, "the tripwire was never run"
     assert "pytest" in calls[0]
-    assert "tests/test_phase2_lambda_package.py" in calls[0]
+    # The node ids the table carries, rather than a module path spelled here. A citation
+    # this test restated is a citation that goes on reading as covered after the test it
+    # names is deleted, which is the shape that left the notifier without one at all.
+    for function in FUNCTIONS.values():
+        assert function.tripwire in calls[0]
 
 
 def test_a_dry_run_uploads_nothing_and_edits_nothing(monkeypatch: pytest.MonkeyPatch) -> None:

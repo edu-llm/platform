@@ -1,8 +1,8 @@
-"""That the two functions AWS is running are the ones the release records describe.
+"""That the functions AWS is running are the ones the release records describe.
 
-The tripwires in ``tests/test_phase2_lambda_package.py`` and
-``tests/test_phase3_lifecycle_package.py`` hold each release record against a zip built from
-this tree, which is one half of the chain. Nothing held the other half: AWS reports the
+The tripwire in ``tests/test_released_zips.py`` holds each release record against a zip built
+from this tree, once per function in the same table this tool reads, which is one half of the
+chain. Nothing held the other half: AWS reports the
 running code as ``CodeSha256``, and until this tool nothing compared it to anything. A
 function deployed out of band, a release recorded from the wrong tree, or two releasers
 racing each other all leave CI green over an account running code ``main`` does not
@@ -228,7 +228,7 @@ def test_a_deployed_digest_that_is_not_the_recorded_one_fails(
     assert recorded[VALIDATOR] in err
     # The tripwire is what tells a stale record from an out-of-band deployment, and a
     # reader who does not know that has no way to choose which side to change.
-    assert "tests/test_phase2_lambda_package.py" in err
+    assert module.FUNCTIONS["validator"].tripwire in err
 
 
 def test_both_functions_are_reported_rather_than_the_first_one_that_disagrees(
@@ -263,11 +263,12 @@ def test_each_function_is_pointed_at_its_own_release_tripwire(
     capsys: pytest.CaptureFixture[str],
     recorded: dict[str, str],
 ) -> None:
-    """Mutation: name both tripwires in every message, which is one string and always true.
+    """Mutation: name every tripwire in every message, which is one string and always true.
 
-    It is also the message that stops being read. The two functions have different
-    tripwires and a reader chasing a drifted recorder has no use for the validator's, so
-    the citation is carried on the function rather than written into the sentence.
+    It is also the message that stops being read. The functions share one tripwire module
+    now and a reader chasing a drifted recorder still has no use for the validator's case of
+    it, so the citation is carried on the function -- as a node id selecting that function's
+    own parameter -- rather than written into the sentence.
     """
     answer_lambda_with(
         monkeypatch,
@@ -277,8 +278,12 @@ def test_each_function_is_pointed_at_its_own_release_tripwire(
 
     _, _, err = run_main(module, capsys, ["--function", "recorder"])
 
-    assert "tests/test_phase3_lifecycle_package.py" in err
-    assert "tests/test_phase2_lambda_package.py" not in err
+    assert module.FUNCTIONS["recorder"].tripwire in err
+    assert module.FUNCTIONS["validator"].tripwire not in err
+    assert "[recorder]" in err, (
+        "the citation no longer selects one function, so a reader is sent to a check that "
+        "asks about all four and told nothing about which of them drifted"
+    )
 
 
 def test_a_function_that_is_not_there_is_a_finding_about_the_account(
@@ -602,35 +607,37 @@ def test_every_function_the_release_tool_can_release_is_checked(module: Any) -> 
     assert set(module.FUNCTIONS) == {"validator", "recorder", "janitor", "notifier"}
 
 
-def test_the_object_version_comparison_is_owned_by_the_release_tripwires() -> None:
+def test_the_object_version_comparison_is_owned_by_the_release_tripwires(module: Any) -> None:
     """WHY THIS TOOL DOES NOT COMPARE S3ObjectVersion, asserted rather than left in a PR.
 
     The release record keeps a copy of the object version the template's `Code` block
     names, so that a version id edited in one place and not the other is visible. That
     comparison is between two committed files: it needs no AWS identity, it fails on the
-    change that causes it, and it already exists once per function in the two tripwire
-    modules. Re-implementing it here would move it to a schedule and put the same
-    property in two places, which is the arrangement
-    `tests/test_phase3_lifecycle_package.py` argues against in its own docstring.
+    change that causes it, and it already exists in `tests/test_released_zips.py`, once per
+    function in this same table. Re-implementing it here would move it to a schedule and put
+    the same property in two places.
+
+    It used to exist three times, once in each function's own package module, and the
+    notifier had none of the three -- the same asymmetry that left its zip with no digest
+    comparison, arriving through the same door. Both are parametrized over one table now.
 
     Lambda could not answer it in any case. `GetFunctionConfiguration` reports the digest
     of the code and not the S3 object version it was deployed from, so "deployed against
     record" has no object-version half to check; the digest settles the bytes, which is
     the stronger of the two questions.
 
-    Reading the citations rather than trusting them, because the reason this tool omits
-    the comparison is that those two tests make it, and a deletion or a rename there
-    would leave nothing making it at all.
+    Reading the citation rather than trusting it, because the reason this tool omits the
+    comparison is that that test makes it, and a deletion or a rename there would leave
+    nothing making it at all. Read for every function rather than for one, so a fifth added
+    to the table without a case is caught here too.
     """
-    import test_phase2_lambda_package
-    import test_phase3_lifecycle_package
+    import test_released_zips
 
-    assert callable(
-        test_phase2_lambda_package.test_the_template_pins_the_object_the_release_record_names
+    covered = test_released_zips.parametrized_ids(
+        test_released_zips.test_the_template_pins_the_object_the_release_record_names
     )
-    assert callable(
-        test_phase3_lifecycle_package.test_the_template_and_the_record_name_the_same_object
-    )
+
+    assert set(covered) == set(module.FUNCTIONS)
 
 
 def test_the_tool_exposes_a_parser(module: Any) -> None:
