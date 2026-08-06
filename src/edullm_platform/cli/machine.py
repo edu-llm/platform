@@ -47,9 +47,11 @@ from typing import Any, Final, TextIO
 
 from edullm_platform.cli.actions import RunFacts, SubmissionRun
 from edullm_platform.cli.configuration import ReviewedConfiguration
+from edullm_platform.cli.lane import placement_said
 from edullm_platform.cli.preflight import DEFERRED_TO_SUBMIT, Preflight, Refusal
 from edullm_platform.cli.presentation import plain_decimal
 from edullm_platform.cli.release import installed_version
+from edullm_platform.placement import PlacementRecord
 from edullm_platform.run_history import RUNGS
 
 __all__ = [
@@ -129,6 +131,7 @@ def check_document(
     *,
     configuration: ReviewedConfiguration,
     submitter: str | None,
+    placement: PlacementRecord | None = None,
 ) -> dict[str, Any]:
     """Everything ``edullm check`` established, in the compile job's own vocabulary.
 
@@ -136,6 +139,9 @@ def check_document(
     caller written against a compiled submission and a caller written against a check are
     reading the same key set, which is what lets one skill handle both, and a key that is
     absent on one path is a key every caller has to guard.
+
+    ``placement`` is passed in rather than read here, because the verb has already opened
+    ``config/capacity.yaml`` to print the sentence and two reads would describe two moments.
     """
     return {
         **envelope("check"),
@@ -162,6 +168,31 @@ def check_document(
         ),
         "cost": _cost_of(preflight),
         "history": _history_of(preflight),
+        "placement": _placement_of(placement),
+    }
+
+
+def _placement_of(verdict: PlacementRecord | None) -> dict[str, Any] | None:
+    """Whether this account has been able to get the shape, as a verdict and as the sentence.
+
+    ``None`` for a shape ``config/capacity.yaml`` records as placing reliably, and for a check
+    that never resolved a compute profile at all. Both are "there is nothing to say", and a key
+    that disappears would be one every caller has to guard.
+
+    ``places`` is the field to branch on and ``said`` is the one to print. That split is
+    ``_history_of``'s and the reason is the same: the verdict is a value from a closed set that
+    a reviewed file fixes, and the sentence is prose this repository rewords -- it has already
+    been rewritten once, when the third verdict arrived and ``after_a_wait`` stopped being told
+    it might never place.
+    """
+    if verdict is None or (said := placement_said(verdict)) is None:
+        return None
+    return {
+        "profile": verdict.profile,
+        "places": verdict.places,
+        "measured_by": verdict.measured_by,
+        "wait": verdict.wait,
+        "said": said,
     }
 
 
