@@ -5,6 +5,7 @@ import pytest
 from pydantic import ValidationError
 
 from edullm_platform.config import load_yaml
+from edullm_platform.contracts.policy import ApprovalPolicy
 from edullm_platform.contracts.workload import (
     CheckpointContract,
     ComputeProfileResolutionError,
@@ -14,8 +15,28 @@ from edullm_platform.contracts.workload import (
     WorkloadCatalog,
     resolve_compute_profile_for_execution,
 )
+from edullm_platform.execution import CONTAINER_SHAPES, RETRY_ONLY_WHAT_A_RETRY_FIXES
 
 COMPLIANT_DESTINATION_PREFIX = "s3://sbsandbox-intern-edullm-checkpoints/runs/"
+
+#: What one 370M arm of edullm-p1 has cost, in A100 device-hours, read off that repository's
+#: own READMEs rather than off this catalog. ``experiments/skill-dag/mixlaw`` records the four
+#: MixLaw arms at 44.11, 47.46, 48.39 and 48.78; ``experiments/token-selection`` records seven
+#: more at the same architecture and the same one-epoch budget, from 42.99 to 70.5. The
+#: heaviest is what ``edullm-p1-train`` has to bound, and it is deliberately not the MixLaw
+#: one: the entry names the repository rather than one experiment in it.
+EDULLM_P1_HEAVIEST_ARM_A100_HOURS = Decimal("70.5")
+
+#: What this platform adds that a figure measured on FarmShare never paid: a CUDA image with a
+#: prebuilt flash-attn wheel to pull, about 40 GB of shards to stage out of edullm-data and
+#: concatenate on a 250 MB/s root volume, torch.compile, and twenty ladder checkpoints to push
+#: back to S3.
+EDULLM_P1_PLATFORM_OVERHEAD_HOURS = Decimal(1)
+
+#: ``ARRAY_ARMS`` in ``experiments/skill-dag/mixlaw/platform_array_entrypoint.py``. Nothing on
+#: this side reads it -- the fan-out size arrives with a submission -- so it is written here as
+#: the shape of the submission this entry was added for.
+EDULLM_P1_ARRAY_ARMS = 7
 
 
 def catalog_payload() -> dict[str, object]:
@@ -328,7 +349,15 @@ def test_workload_catalog_yaml_validates_against_contract() -> None:
     # argument above is precisely that a bound written without a measurement is a ceiling
     # pretending to be an estimate. The pre-training team owns those three numbers; the
     # check exists so the path can be proved while they pick.
-    assert len(catalog.workloads) == 11
+    #
+    # TWELVE SINCE edullm-p1-train COMPLETED THAT PAIR. The three numbers were read off the
+    # repository and off the retry policy rather than picked: the measured device-hours of
+    # the eleven 370M arms it has run, the 125-step ladder its own checkpoint_ladder.py
+    # fixes, and one attempt, because nothing here resumes and Batch's only RETRY rule is a
+    # host fault. The entry in config/workload-catalog.yaml argues each of them, and
+    # test_edullm_p1_train_bounds_a_real_mixlaw_arm below pins the two that decide what a
+    # submission costs.
+    assert len(catalog.workloads) == 12
     # The check Phase 3 runs. It names OLMo-core, which was the only registered repository
     # with a published image when this was written; dolma-tokenize is the same shape against
     # a repository that still has neither.
@@ -368,6 +397,77 @@ def test_workload_catalog_yaml_validates_against_contract() -> None:
     assert gpu_cost.maximum_compute_cost_usd == Decimal("272.26")
 
 
+def test_edullm_p1_train_bounds_a_real_mixlaw_arm() -> None:
+    """Mutations: put the bound back to the check's ``"1"``, or widen it to ``"24"``.
+
+    Both go red, and they are the two ways this entry gets quietly ruined. One hour is what
+    ``edullm-p1-check`` declares and what the repository had before this entry existed, and a
+    revert to it re-refuses every real arm with ``runtime_above_the_workload_bound``.
+    Twenty-four is the figure the three neighbouring training entries carry, and copying it
+    here would inflate the ceiling a lead reads from $1,537 to $3,689 for a run nothing
+    measured at more than nine hours.
+
+    **The bound is checked against device-hours measured in the other repository, not against
+    itself.** ``7 x hours x rate`` computed from the catalog and asserted against the
+    catalog is a test that passes for every value of ``hours``, which is the shape of the six
+    assertions edullm-p1's own suite was found echoing its inputs back. So the arithmetic
+    starts at :data:`EDULLM_P1_HEAVIEST_ARM_A100_HOURS`, divides by the device count
+    ``CONTAINER_SHAPES`` declares for the shape this entry names, and adds the platform's own
+    overhead -- three numbers from three files, none of them this one.
+
+    The window is one hour wide, which is what makes the upper mutation fail. A whole-hour
+    bound has exactly one value in it.
+    """
+    project_root = Path(__file__).resolve().parents[1]
+    catalog = load_yaml(project_root / "config" / "workload-catalog.yaml", WorkloadCatalog)
+    train = next(workload for workload in catalog.workloads if workload.name == "edullm-p1-train")
+    assert train.repository == "edullm-p1"
+
+    devices = CONTAINER_SHAPES["gpu-8xa100"].gpus
+    needed = EDULLM_P1_HEAVIEST_ARM_A100_HOURS / devices + EDULLM_P1_PLATFORM_OVERHEAD_HOURS
+    assert train.maximum_runtime_hours >= needed
+    assert train.maximum_runtime_hours < needed + 1
+
+    # ONE ATTEMPT, PINNED TO ITS PREMISE RATHER THAN TO THE NUMBER. A second attempt of this
+    # workload re-runs the arm from step 0 -- platform_array_entrypoint.py writes
+    # RECOVERY_MODE=fail, each attempt gets an empty /scratch, and resolve_load_path refuses
+    # the s3:// path the durable ladder is at -- so two would be two full arms for one result
+    # and would double what a lead approves. The premise underneath that is the retry policy:
+    # its only RETRY is a host fault, which a container failing on its own merits never
+    # produces. A fourth rule that retries what this workload does die of is exactly the
+    # change that would make two attempts worth buying, and it goes red here rather than
+    # leaving this number sitting on a comment nobody rereads.
+    assert train.maximum_attempts == 1
+    assert [rule for rule in RETRY_ONLY_WHAT_A_RETRY_FIXES if rule["Action"] == "RETRY"] == [
+        {"OnStatusReason": "Host EC2*", "Action": "RETRY"}
+    ]
+
+    # The contract stays at one attempt, because what it buys here is durability rather than
+    # resume: it is what puts twenty ladder checkpoints in S3 for a person to restore by hand,
+    # and what makes require_a_save_folder_a_retry_can_find demand that the command expand
+    # $EDULLM_CHECKPOINT_DIR at all. resume_required says which of the two this is, and a true
+    # would be the false promise the field exists to expose.
+    assert train.checkpoint is not None
+    assert train.checkpoint.resume_required is False
+
+    # What the two readers see. A lead reads the array; nobody reads a single cell, and no
+    # single cell can run this entrypoint either -- FanOut.size starts at 2.
+    profile = next(entry for entry in catalog.compute_profiles if entry.name == "gpu-8xa100")
+    assert profile.provisioned
+    cost = CostInputs(
+        hourly_rate_usd=profile.hourly_rate_usd,
+        nodes=profile.nodes,
+        maximum_runtime_hours=train.maximum_runtime_hours,
+        maximum_attempts=train.maximum_attempts,
+    )
+    array = cost.model_copy(update={"cells": EDULLM_P1_ARRAY_ARMS})
+    automatic_below = load_yaml(
+        project_root / "config" / "policy.yaml", ApprovalPolicy
+    ).thresholds.automatic_below_cost_usd
+    assert cost.maximum_compute_cost_usd < automatic_below
+    assert array.maximum_compute_cost_usd >= automatic_below
+
+
 def test_catalog_rejects_duplicate_profile_name_when_every_other_field_differs() -> None:
     payload = catalog_payload()
     profiles = list(payload["compute_profiles"])  # type: ignore[arg-type]
@@ -394,9 +494,7 @@ def test_catalog_rejects_duplicate_profile_name_when_every_other_field_differs()
 
 
 def test_checkpoint_accepts_sandbox_owned_destination_prefix() -> None:
-    checkpoint = CheckpointContract.model_validate(
-        checkpoint_payload(COMPLIANT_DESTINATION_PREFIX)
-    )
+    checkpoint = CheckpointContract.model_validate(checkpoint_payload(COMPLIANT_DESTINATION_PREFIX))
     assert checkpoint.destination_prefix == COMPLIANT_DESTINATION_PREFIX
 
 

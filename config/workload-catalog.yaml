@@ -656,3 +656,197 @@ workloads:
     maximum_runtime_hours: "1"
     maximum_attempts: 1
     checkpoint: null
+  # edullm-p1-train: the entry the repository was registered for. The check above refuses
+  # every real arm on the hour -- runtime_above_the_workload_bound, read off `edullm check`
+  # before this was written -- so the registration could be selected, priced and submitted
+  # for, and the one thing it exists to run could not be asked for at all. Its null contract
+  # does not refuse anything, because EDULLM_CHECKPOINT_DIR is injected unconditionally; what
+  # it loses is the guard that the command points a trainer at that variable, and the
+  # interval and destination a lead reads on the approval page.
+  #
+  # TEN HOURS, AND EVERY PART OF THAT NUMBER IS SOMEBODY ELSE'S MEASUREMENT. A 370M arm is
+  # 2384 steps of 4,194,304 tokens, one epoch of about 10B, fixed in
+  # experiments/skill-dag/mixlaw/mixlaw_runtime.py rather than passed in. The repository's
+  # own READMEs record what the arms that have been run actually cost, in device-hours: the
+  # four MixLaw arms at 44.11, 47.46, 48.39 and 48.78 A100-hours, and the seven
+  # token-selection arms from 42.99 to 70.5 at the same architecture and the same one-epoch
+  # budget. Across the eight devices of a gpu-8xa100 the heaviest MixLaw arm is 6.10 hours
+  # and the heaviest arm of any kind, BLADE, is 8.81.
+  #
+  # THE HOUR ON TOP IS WHAT THE PLATFORM COSTS AND FARMSHARE DID NOT. A container here pulls
+  # a CUDA image carrying a prebuilt flash-attn wheel; stages the selected arm's shards out
+  # of edullm-data onto the P family's 500 GB gp3 root volume, which
+  # infra/batch-compute-gpu-shapes.yaml provisions at 250 MB/s, and concatenates them into
+  # per-domain memmaps at four bytes a token, so roughly 40 GB down and 40 GB written;
+  # compiles the model; and pushes twenty ladder checkpoints back to S3. None of that is in
+  # a figure measured where the pool was already on disk.
+  #
+  # 8.81 + 1 IS 9.81 AND THIS SAYS TEN. It is a ceiling for the widest arm the repository
+  # has rather than an estimate of the MixLaw one, which sits at 7.1 and has 40% of room
+  # under it.
+  #
+  # ERR HIGH HERE RATHER THAN LOW, WHICH IS A PROPERTY OF THIS REPOSITORY AND NOT GENERAL
+  # ADVICE. The bound becomes the Batch attempt timeout and Batch bills the time a job runs
+  # rather than the time it was allowed, so a ceiling nobody reaches costs only the figure
+  # on the approver's summary. Reaching it costs the whole arm, because nothing here
+  # resumes -- see below. Cutting the bound to the heaviest MixLaw arm's 7.1 hours would
+  # take $445.74 off a seven-cell ceiling and nothing off the bill, and would kill the first
+  # arm that ran long with $155.90 of that cell already spent.
+  #
+  # ONE ATTEMPT, AND THIS IS THE FIELD THIS ENTRY GOT WRONG FIRST. It was written as two, on
+  # the argument that a re-drive at least does not wait for a person. Reading
+  # RETRY_ONLY_WHAT_A_RETRY_FIXES against the failures this workload actually has retired
+  # that argument. The three rules are ordered, Batch takes the first match and ignores the
+  # rest, and only the first is a RETRY:
+  #
+  #   OnStatusReason "Host EC2*"     RETRY
+  #   OnReason "OutOfMemoryError*"   EXIT
+  #   OnExitCode "*"                 EXIT
+  #
+  # A collective timeout, a traceback and a CUDA out-of-memory all reach Batch as a
+  # non-zero exit under statusReason `Essential container in task exited` -- which is what
+  # every recorded job in fixtures/evidence carries, failed and succeeded alike. That is not
+  # `Host EC2*`, so rule one does not match; the container reason is either absent or starts
+  # with OutOfMemoryError, so rule two EXITs; otherwise rule three matches every exit code
+  # there is and EXITs. So a container that fails on its own merits cannot reach the one rule
+  # that retries, and that covers what an eight-rank job of this length actually dies of: a
+  # collective timeout, a staging error against edullm-data, a CUDA out-of-memory, a config
+  # OLMo-core refuses. That is not hypothetical -- three of the failures analysed in the week
+  # to 2026-08-06 were CUDA out-of-memory, and a second attempt would have been refused to
+  # every one of them. Rule one needs an EC2 host to go away underneath a running task, and
+  # infra/batch-compute-gpu-shapes.yaml provisions every GPU environment as `Type: EC2`
+  # rather than SPOT, so there are no reclaims to catch and it takes a hardware fault. No
+  # recorded job in this account has ever produced that reason.
+  #
+  # AND THE ONE FAILURE A SECOND ATTEMPT IS GUARANTEED TO BE SPENT ON IS THE ONE WHERE IT IS
+  # GUARANTEED TO BE WASTED. An attempt stopped for outrunning the bound carries
+  # statusReason `Job attempt duration exceeded timeout` and no container exit code at all;
+  # phase3_evidence.py holds that string as BATCH_TIMEOUT_STATUS_REASON, observed on
+  # 2026-07-28, and the evidence for run_019fa9a6-4460 records container_exit_code as null.
+  # So rule one does not match, rule two does not match, and rule three has no decimal exit
+  # code to glob against. Nothing matches -- and the Batch API reference is explicit about
+  # that case: "If none of the EvaluateOnExit conditions in a RetryStrategy match, then the
+  # job is retried." An arm that could not finish inside ten hours would be given another
+  # ten from step 0 and would hit the same wall, for $219.58 more per cell.
+  #
+  # AND WHEN RULE ONE DOES FIRE, WHAT IT BUYS IS A RE-RUN RATHER THAN A RESUME, THREE
+  # INDEPENDENT WAYS. platform_array_entrypoint.py writes RECOVERY_MODE=fail into the child
+  # environment on every launch, so no submitted command can change it. Each attempt gets a
+  # new container, so SAVE_FOLDER under /scratch/$AWS_BATCH_JOB_ID is empty and the
+  # fail-closed leftover check never fires -- the trainer logs "starting from scratch
+  # (ephemeral empty save-folder)" and begins at step 0 rather than stopping. And the durable
+  # copy it would have to reach for is refused by name: resolve_load_path raises on any
+  # s3:// --load-path, "S3 checkpoint resume is disabled", even though both the module
+  # docstring and --load-path's own help text promise that an s3:// step directory is pulled
+  # into the save folder. So two attempts is two full arms for one result, and it is priced
+  # that way on the approval page because that is what it costs. One attempt is the honest
+  # number.
+  #
+  # THE CHECKPOINT CONTRACT IS WHAT THE PROFILE TURNS ON, AND IT IS HONOURED ON SAVE.
+  # Established by reading the code rather than by spending: when --checkpoint-prefix is set,
+  # which the entrypoint sets from EDULLM_CHECKPOINT_DIR for every arm, the trainer uploads
+  # each permanent ladder checkpoint to <prefix>/step<N> through
+  # platform_artifacts.upload_checkpoint, fails the run closed if the upload fails, and
+  # records artifact_durability as local_scratch+platform_s3. Twenty checkpoints per arm
+  # outlive the instance. That is what makes a lost arm recoverable by a person -- restore
+  # one to scratch and pass a local --load-path, which is the route resolve_load_path does
+  # support -- and what makes a task-loss curve readable for an arm that never finished.
+  # Kept at one attempt because require_checkpoint_for_retries constrains attempts above one
+  # and says nothing about a contract without them, and because the contract is also what
+  # forces the submitted command to expand $EDULLM_CHECKPOINT_DIR at all.
+  #
+  # resume_required is false, and it is the only false one in this file. No retry of this
+  # workload resumes and none can, so a true here would be the declaration the field exists
+  # to let a reader check, made against three code paths that refuse it.
+  #
+  # WHAT WOULD MAKE THIS TWO, IN THE ORDER IT HAS TO HAPPEN. First, edullm-p1 learns to
+  # resume: RECOVERY_MODE stops being hard-coded, and either resolve_load_path accepts the
+  # s3:// prefix its own docstring already advertises or the entrypoint restores the last
+  # step<N> to scratch before exec. That is the load-bearing one, it lives in the research
+  # repository, and until it lands a second attempt cannot be cheaper than the first
+  # whatever the retry rules say. Second, RETRY_ONLY_WHAT_A_RETRY_FIXES gains a rule that
+  # retries what this workload actually dies of, and the timeout falls to an explicit EXIT
+  # rather than to no-match. With both, this becomes maximum_attempts: 2 and
+  # resume_required: true, and the ceiling doubles for something.
+  #
+  # TWENTY MINUTES IS A STEP COUNT IN MINUTES, WHICH IS AS CLOSE AS A CLOCK GETS TO THIS
+  # TRAINER. token_selection/olmo_ext/checkpoint_ladder.py fixes DEFAULT_CHECKPOINT_INTERVAL
+  # at 125 steps and --save-interval defaults to it, so the cadence is a step count and
+  # nothing reads this field to enforce a duration. At the four measured arms' throughput on
+  # eight A100s, 125 steps is 17.3 to 19.2 minutes; rounded up to 20 so that the figure a
+  # reader takes as "the most a lost machine throws away" is not under the measurement. It
+  # stretches in proportion on a slower card.
+  #
+  # PICK gpu-8xa100, AND THE ENTRYPOINT DECIDES THAT AS MUCH AS THE PRICE DOES.
+  # platform_array_entrypoint.py hard-codes GPU_RANKS = 8, so an eight-device shape is the
+  # only kind this starts on. Of the five here, gpu-8xt4 is Turing and has no bfloat16 at all
+  # against a trainer that is bf16 throughout -- and the bfloat16 guard cannot see that,
+  # because it reads the words of the command and this trainer fixes its dtype in code, so a
+  # seven-cell array on gpu-8xt4 checks clean at $1,095.36 and then dies on the first kernel
+  # that needs the format. gpu-8xl4 and gpu-8xl40s carry
+  # `places: unreliably` with `measured_by: probe`, which config/capacity.yaml names as the
+  # weakest claim it makes -- nothing has ever been submitted to either queue. That leaves
+  # the two a queue has measured, and gpu-8xa10g is the cheaper of them at $16.288 against
+  # $21.9576. Nobody has run this workload on an A10G, so what rules it out is a bound
+  # rather than a measurement: ten hours less the overhead above leaves nine, and a 6.10-hour
+  # A100 arm needs the substitute to hold about 68% of an A100's bf16 throughput to land
+  # inside it. An A10G is nowhere near that -- its bf16 tensor rate is roughly two fifths --
+  # so the arm is about fifteen hours and does not fit at any price. gpu-8xa100 is also the
+  # card every figure in this entry was measured on.
+  #
+  # AND `edullm check` WILL NOT SUGGEST IT, WHICH IS THE ONE SHARP EDGE ON THIS ENTRY.
+  # _pick_compute answers the cheapest provisioned shape whose card has bfloat16, so a
+  # scaffold written for this repository now says gpu-1xl4 at $0.8048. One L4 cannot start
+  # an eight-rank array, and nothing here refuses it: the command runs one process, an L4 is
+  # one card, so require_a_process_for_every_device is satisfied and says nothing.
+  # Measured -- seven cells on gpu-1xl4 through this entry prices at $112.67 with an empty
+  # refusal list. What fails is torchrun asking for eight devices inside the container,
+  # after the machine is billed. The suggestion exists to be edited and check prints both
+  # profiles beside it, and this paragraph is the rest of what a reader needs.
+  #
+  # The device-count guard cannot close that, because the waiver below is what this workload
+  # needs in order to run at all and the waiver is per-command rather than per-shape. Two
+  # true things at once: a command that starts one process is correct here, and the number
+  # of cards under it still has to be eight.
+  #
+  # THE COMMAND HAS TO WAIVE THE DEVICE-COUNT CHECK, WHICH NO OTHER ENTRY HERE DOES. This
+  # entrypoint is deliberately one process: it validates the platform's environment, writes
+  # the arm sidecar, and execs a shell script that runs torchrun --nproc_per_node=8 itself.
+  # require_a_process_for_every_device reads the submitted command, finds no launcher in it,
+  # and refuses. EDULLM_LAUNCH_CHECK=waived is the recorded way through, and
+  # waived_launch_check_note puts a sentence about it in front of the lead. So the command
+  # is
+  #
+  #   bash -lc 'EDULLM_LAUNCH_CHECK=waived python
+  #     experiments/skill-dag/mixlaw/platform_array_entrypoint.py
+  #     --checkpoint-prefix "$EDULLM_CHECKPOINT_DIR"'
+  #
+  # where the quoting matters twice: $EDULLM_CHECKPOINT_DIR has to be expanded by a shell for
+  # require_a_save_folder_a_retry_can_find to see it, and the entrypoint's own
+  # --checkpoint-prefix refuses a value that does not equal the variable.
+  #
+  # WHAT IT COSTS AND WHO RELEASES IT. The array is seven arms, so seven cells: 7 x 1
+  # attempt x 10 hours x $21.9576 is $1,537.03, and a fan-out is never automatic whatever it
+  # totals, so the whole array goes to a team lead. One cell is $219.58, under
+  # automatic_below_cost_usd and released by nobody -- and no single cell can run this
+  # entrypoint anyway, because FanOut.size starts at 2 and prepare_launch refuses without
+  # AWS_BATCH_JOB_ARRAY_INDEX. Both figures are ceilings: the expected spend on a clean
+  # seven-arm array is about 7.1 hours a cell, which is $1,091.29.
+  #
+  # AND WHAT AN END-TO-END PROOF COSTS, WHICH IS THE CHEAPEST THING TO DO BEFORE THE ARRAY.
+  # LENGTH_TOKENS is a pass-through with a 10e9 default that the entrypoint does not
+  # overwrite, so a command can set it low enough that the ladder is two checkpoints and the
+  # staged pool is a few hundred megabytes. Two cells, the smallest fan-out there is, with
+  # --hours 1: $43.92 of ceiling and perhaps $25 of actual spend once the image pull and the
+  # stage are paid for. That exercises the whole path -- admission, the waiver, eight ranks
+  # under torchrun, an upload to <prefix>/step<N> -- and it is the only way to learn whether
+  # the two deferred image checks pass. It cannot exercise resume, at any price, because the
+  # code refuses it.
+  - name: edullm-p1-train
+    repository: edullm-p1
+    maximum_runtime_hours: "10"
+    maximum_attempts: 1
+    checkpoint:
+      interval_minutes: 20
+      destination_prefix: "s3://sbsandbox-intern-edullm-outputs/teams/"
+      resume_required: false
