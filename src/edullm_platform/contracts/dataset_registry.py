@@ -65,6 +65,7 @@ from .dataset import (
 from .vocabulary import InputRole
 
 __all__ = [
+    "CORPUS_PAYLOAD_PROFILES",
     "TRAINABLE_FAMILIES",
     "WEIGHTS_FAMILIES",
     "DatasetRegistry",
@@ -119,6 +120,53 @@ TRAINABLE_FAMILIES: Final = frozenset({"pretrain", "sft"})
 #: is this file's, and the order has to be this way round -- a validated model with no family to
 #: land in is unreachable the day it is sealed.
 WEIGHTS_FAMILIES: Final = frozenset({"model"})
+
+#: Which payload shapes a run may name as the corpus it trains on.
+#:
+#: THE SECOND HALF OF ``TRAINABLE_FAMILIES``, AND THE HALF THAT WAS MISSING WHILE A CORPUS
+#: SAT IN THE GAP. A family says what a dataset is for. It does not say what is in the
+#: objects, and the reader does not ask -- ``NumpyFSLDatasetConfig`` memmaps whatever it is
+#: handed. ``pretrain/fineweb2-equal-bytes`` v1 is the case that proved the two are separate
+#: questions: it is sealed, frozen, current, in ``pretrain`` and therefore trainable by
+#: family, and its one group is ``text`` at profile ``text-corpus/v1`` holding gzipped JSONL
+#: rather than token shards. Nothing refused it. What a run naming it reached was OLMo-core
+#: memmapping compressed JSON as ``uint16``, which does not crash and produces a loss curve
+#: that looks ordinary.
+#:
+#: WHY THIS IS A PROFILE AND NOT "DECLARES NO TOKENIZER", WHICH IS THE OBVIOUS RULE AND IS
+#: THE WRONG ONE. Four registered entries are in a trainable family and declare no
+#: tokenizer, and only one of them is this hazard: the other three are the sft conversation
+#: corpora, where null is the honest answer because the text is pre-tokenization and the
+#: run's tokenizer comes from the model. Refusing on a null would refuse
+#: ``sft/pedagogy70-normal30``, which is the corpus ``TRAINABLE_FAMILIES`` above names as the
+#: reason ``sft`` is in the allowlist at all -- so that rule breaks three working
+#: registrations to catch one, and undoes a decision recorded a few lines up.
+#:
+#: It is also the accident this file has already been caught by once. ``tokenizer`` was
+#: mandatory and non-null, which happened to keep tokenizers out of the registry, and that
+#: property evaporated the moment the field learned to hold ``None``. The docstring on that
+#: field says in as many words that a null there is not what keeps a tokenizer off a
+#: training run and that relying on it would be the same accident again. Reasoning from the
+#: null a second time is exactly what it warns against.
+#:
+#: WHAT THE PROFILE IS AND WHY IT IS ALREADY TRUSTWORTHY. It is the ``profile`` of the group
+#: whose ``manifest_sha256`` a registration already pins, read out of the corpus's own sealed
+#: ``dataset.json``. So this is not a new claim about somebody else's bucket: it is a second
+#: field off the group this registry had already picked out, and the digest that picks it is
+#: the one a reader can re-derive. Every one of the twenty-nine committed entries resolved to
+#: exactly one group by that digest, with no ambiguity to break.
+#:
+#: AN ALLOWLIST, FOR THE REASON THE FAMILY SET GIVES AT LENGTH. The dataset standard owns
+#: this vocabulary and the bucket carries six values today. A denylist naming
+#: ``text-corpus/v1`` is correct this minute and admits the next raw-payload profile somebody
+#: publishes. Failing closed means a profile nobody here has considered is refused until a
+#: person adds it, and the cost of that is a refusal that names the file and the value.
+#:
+#: WHAT IT REFUSES TODAY, MEASURED RATHER THAN ASSUMED: one name,
+#: ``fineweb2-equal-bytes-v1``. The other twenty pretrain entries are ``pretrain-tokens/v1``
+#: and the three sft entries are ``sft-conversations/v1``, so every corpus a run can name
+#: today goes on being nameable. Nothing that runs is gated by this.
+CORPUS_PAYLOAD_PROFILES: Final = frozenset({"pretrain-tokens/v1", "sft-conversations/v1"})
 
 
 class RegisteredDatasetRelease(ContractModel):
@@ -190,6 +238,29 @@ class PublishedDatasetReference(ContractModel):
     #: image digests; the value published in ``dataset.json`` carries no prefix. Storing a
     #: re-encoded copy of somebody else's digest is the one thing a content pin must not do.
     manifest_sha256: BareSha256Digest
+    #: The ``profile`` of the group the digest above pins, copied from the corpus's own
+    #: sealed ``dataset.json``. What is IN the objects, where ``dataset_id``'s family segment
+    #: says what they are FOR.
+    #:
+    #: THE TWO WERE ASSUMED TO AGREE AND ONE CORPUS SHOWED THEY DO NOT. See
+    #: ``CORPUS_PAYLOAD_PROFILES`` for the case and for why this is a profile rather than an
+    #: inference from a null tokenizer. The short version is that a family is a statement of
+    #: intent by whoever chose the prefix, and a reader handed a dataset does not consult it.
+    #:
+    #: SHAPE-ONLY, NOT AN ENUM, FOR THE REASON ``dataset_id`` GIVES. The dataset standard
+    #: owns this vocabulary and the sealed bucket carries six values that this repository does
+    #: not get to ratify. A pattern pinned to those six would refuse a registration for a
+    #: corpus that exists and is sealed, which is a worse failure than carrying a value no
+    #: allowlist here admits -- that one is refused at the point of use, by name, with the
+    #: file to edit.
+    #:
+    #: REQUIRED AND NOT DEFAULTED, WHICH IS THE WHOLE OF ITS SAFETY. A default would be a
+    #: guess about somebody else's bytes, and the only guess worth making is
+    #: ``pretrain-tokens/v1`` because twenty entries carry it -- which is precisely the
+    #: value that makes the hazard invisible again. Pydantic refuses an entry that omits the
+    #: key, so registering a corpus means opening its ``dataset.json`` and reading this off
+    #: the same group the digest above came from.
+    payload_profile: str = Field(min_length=1, pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*/v[0-9]+$")
     #: The published tokenizer this corpus was built with, as ITS dataset id. Required rather
     #: than defaulted: the upstream family file turns its own family-wide tokenizer default OFF
     #: and records the reason -- a mismatched tokenizer's ids usually still fall in range, so
@@ -243,8 +314,21 @@ class PublishedDatasetReference(ContractModel):
 
     @property
     def is_a_corpus_a_run_may_read(self) -> bool:
-        """Whether a run may name this as the corpus it trains on. See TRAINABLE_FAMILIES."""
-        return self.family in TRAINABLE_FAMILIES
+        """Whether a run may name this as the corpus it trains on.
+
+        TWO CONDITIONS AND NOT ONE, BECAUSE THEY ANSWER DIFFERENT QUESTIONS AND A CORPUS
+        SATISFIED THE FIRST WHILE FAILING THE SECOND. ``TRAINABLE_FAMILIES`` asks what the
+        dataset is for and ``CORPUS_PAYLOAD_PROFILES`` asks what is in it; both have to hold,
+        because the reader consults neither and memmaps what it is handed. Each set carries
+        its own argument for being an allowlist, and both fail closed on a value nobody here
+        has considered.
+
+        Deliberately ``and`` rather than a single merged set. A family and a payload are two
+        facts from two places -- one derived from the id, one read off the seal -- and
+        folding them into one lookup would need a cross product that grows every time either
+        side gains a member.
+        """
+        return self.family in TRAINABLE_FAMILIES and self.payload_profile in CORPUS_PAYLOAD_PROFILES
 
     @property
     def is_weights_a_run_may_start_from(self) -> bool:

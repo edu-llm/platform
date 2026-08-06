@@ -2,7 +2,11 @@ import pytest
 from pydantic import ValidationError
 
 from edullm_platform.contracts.dataset import DatasetRelease
-from edullm_platform.contracts.dataset_registry import PublishedDatasetReference
+from edullm_platform.contracts.dataset_registry import (
+    CORPUS_PAYLOAD_PROFILES,
+    TRAINABLE_FAMILIES,
+    PublishedDatasetReference,
+)
 from tests.test_dataset import dataset_release_payload
 
 PUBLISHED_URI = "s3://edullm-data/pretrain/olmo-150b-dolma2/v1/"
@@ -38,6 +42,7 @@ def reference_payload(**overrides: object) -> dict[str, object]:
         "dataset_id": "pretrain/olmo-150b-dolma2",
         "version": "v1",
         "manifest_sha256": TOKENS_GROUP_DIGEST,
+        "payload_profile": "pretrain-tokens/v1",
         "tokenizer": "tokenizer/dolma2-bpe",
     }
     payload.update(overrides)
@@ -70,6 +75,7 @@ def test_a_reference_to_a_corpus_somebody_else_published_is_accepted() -> None:
             "dataset_id": "pretrain/olmo-150b-dolma2",
             "version": "v1",
             "manifest_sha256": TOKENS_GROUP_DIGEST,
+            "payload_profile": "pretrain-tokens/v1",
             "tokenizer": "tokenizer/dolma2-bpe",
         }
     )
@@ -77,7 +83,60 @@ def test_a_reference_to_a_corpus_somebody_else_published_is_accepted() -> None:
     assert reference.uri == PUBLISHED_URI
     assert reference.dataset_id == "pretrain/olmo-150b-dolma2"
     assert reference.version == "v1"
+    assert reference.payload_profile == "pretrain-tokens/v1"
     assert reference.tokenizer == "tokenizer/dolma2-bpe"
+
+
+def test_a_registration_that_does_not_say_what_is_in_the_objects_is_refused() -> None:
+    """Mutation: default ``payload_profile`` to ``pretrain-tokens/v1``, which twenty carry.
+
+    A default is the whole hazard back. Twenty of the twenty-nine committed entries are
+    token shards, so ``pretrain-tokens/v1`` is the value a defaulted field would take and is
+    the value that makes a raw-text payload indistinguishable from tokens -- which is
+    exactly the state ``pretrain/fineweb2-equal-bytes`` v1 was registered into and sat in.
+    The field is required so that registering a corpus means opening its ``dataset.json``
+    and reading the profile off the same group the ``manifest_sha256`` above came from.
+
+    Held here rather than only in the registry, because the registry is a file somebody
+    edits and this is a property of the model no edit to that file can restore.
+    """
+    payload = reference_payload()
+    del payload["payload_profile"]
+
+    with pytest.raises(ValidationError) as exc_info:
+        PublishedDatasetReference.model_validate(payload)
+
+    assert_validation_error(exc_info.value, error_type="missing", loc=("payload_profile",))
+
+
+def test_a_text_payload_in_a_trainable_family_is_not_a_corpus_a_run_may_read() -> None:
+    """The contract half of the refusal, on the entry that showed the two questions differ.
+
+    ``pretrain/fineweb2-equal-bytes`` v1 is the real registration: ``pretrain``, therefore
+    trainable by family, with one group named ``text`` at ``text-corpus/v1`` holding gzipped
+    JSONL. Both halves are asserted rather than only the conclusion, because a conclusion
+    reached by the family check failing would pass this test while meaning the opposite.
+
+    The mutation this is written against is adding ``text-corpus/v1`` to
+    ``CORPUS_PAYLOAD_PROFILES`` to make some other assertion pass. No tokenizer makes a text
+    corpus readable as tokens, so the day that value belongs in the allowlist is the day
+    OLMo-core learns to read documents, and it will arrive as a change to the reader rather
+    than to this line.
+    """
+    reference = PublishedDatasetReference.model_validate(
+        reference_payload(
+            reference_id="fineweb2-equal-bytes-v1",
+            uri="s3://edullm-data/pretrain/fineweb2-equal-bytes/v1/",
+            dataset_id="pretrain/fineweb2-equal-bytes",
+            manifest_sha256="5ad228082cc0ace73b15771734cbd3e4db3f40638f9673187f465362b01cc2b8",
+            payload_profile="text-corpus/v1",
+            tokenizer=None,
+        )
+    )
+
+    assert reference.family in TRAINABLE_FAMILIES
+    assert reference.payload_profile not in CORPUS_PAYLOAD_PROFILES
+    assert reference.is_a_corpus_a_run_may_read is False
 
 
 def test_a_digest_wearing_the_ecr_prefix_is_refused_because_upstream_publishes_bare_hex() -> None:
@@ -176,12 +235,19 @@ def test_a_corpus_that_declares_no_tokenizer_says_so_rather_than_borrowing_one()
             uri="s3://edullm-data/sft/pedagogy70-normal30/v1/",
             dataset_id="sft/pedagogy70-normal30",
             manifest_sha256="527f66916a4995f52ea667e6dc2008e7ecf83cdeb1886df9387bf04cc3b495fd",
+            payload_profile="sft-conversations/v1",
             tokenizer=None,
         )
     )
 
     assert reference.tokenizer is None
     assert reference.family == "sft"
+    # Still readable, and this is the assertion CORPUS_PAYLOAD_PROFILES had to keep true.
+    # The tempting rule for the text corpus in a trainable family was "refuse a trainable
+    # family that declares no tokenizer", and this entry is exactly that: sft, null
+    # tokenizer, and the corpus TRAINABLE_FAMILIES names as the reason sft is allowed at
+    # all. Its payload is conversations, so it reads; the rule that would have caught the
+    # text corpus would have caught this one too.
     assert reference.is_a_corpus_a_run_may_read
 
 
@@ -205,6 +271,7 @@ def test_a_tokenizer_is_registrable_and_is_not_a_corpus_a_run_may_read() -> None
             uri="s3://edullm-data/tokenizer/smollm2-bpe/v1/",
             dataset_id="tokenizer/smollm2-bpe",
             manifest_sha256="354a65ca1bd51076f972205fe1fbb8f261c6a022787be84f3bbae4aa13d3c529",
+            payload_profile="tokenizer/v1",
             tokenizer=None,
         )
     )

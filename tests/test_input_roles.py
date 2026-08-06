@@ -12,13 +12,23 @@ from edullm_platform.contracts.vocabulary import InputRole
 DIGEST = "0" * 64
 
 
-def reference(dataset_id: str, *, tokenizer: str | None = None) -> PublishedDatasetReference:
+def reference(
+    dataset_id: str,
+    *,
+    tokenizer: str | None = None,
+    payload_profile: str = "pretrain-tokens/v1",
+) -> PublishedDatasetReference:
+    # The payload defaults to a readable one so that these cases go on asking the question
+    # they were written for, which is whether the FAMILY picks the role. A default of
+    # anything else would make every corpus case fail for the other reason and the
+    # parametrisation below would stop distinguishing the two.
     return PublishedDatasetReference(
         reference_id=dataset_id.replace("/", "-") + "-v1",
         uri=f"s3://edullm-data/{dataset_id}/v1/",
         dataset_id=dataset_id,
         version="v1",
         manifest_sha256=DIGEST,
+        payload_profile=payload_profile,
         tokenizer=tokenizer,
     )
 

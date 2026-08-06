@@ -812,7 +812,7 @@ def refusals_for(dataset_release: str) -> tuple[str, ...]:
     return tuple(refused)
 
 
-def test_the_dataset_box_is_a_choice_because_six_registered_names_are_refused_by_nothing() -> (
+def test_the_dataset_box_is_a_choice_because_five_registered_names_are_refused_by_nothing() -> (
     None
 ):
     """THE SECOND ASYMMETRY ON THIS FORM, AND THE ONE #232's REASONING DOES NOT REACH.
@@ -847,23 +847,35 @@ def test_the_dataset_box_is_a_choice_because_six_registered_names_are_refused_by
     first, which is the edit that keeps this measuring the platform rather than measuring
     policy's list.
 
-    **``fineweb2-equal-bytes-v1`` GREW IT BACK BY ONE, WHICH IS THE DIRECTION THE ASSERTION
-    BELOW CALLS "SOMETHING REGISTERED BECAME REACHABLE THAT NOTHING CHECKS".** It is a real
+    **``fineweb2-equal-bytes-v1`` GREW IT BACK TO SIX AND A REFUSAL HAS TAKEN IT OFF
+    AGAIN, WHICH IS THE SELF-RETIRING DIRECTION WORKING FOR THE SECOND TIME.** It is a real
     sealed corpus in the ``pretrain`` family and its payload is ``.jsonl`` text rather than
     token shards: one group named ``text`` at profile ``text-corpus/v1``, because it is what
-    the gigatoken tokenizers were fitted on rather than anything either of them wrote. So
-    the family rule does not reach it, it declares no tokenizer and is therefore off the
-    form, and nothing between the two says a word. It is the first name in this set that is
-    in a trainable family *and* is not conversation text, and what a run picking it reaches
-    is OLMo-core memmapping gzipped JSON as ``uint16`` tokens.
+    the gigatoken tokenizers were fitted on rather than anything either of them wrote. The
+    family rule did not reach it, it declares no tokenizer and was therefore off the form,
+    and nothing between the two said a word -- so a submission naming it by any route that
+    skipped the dropdown reached OLMo-core memmapping gzipped JSON as ``uint16`` tokens,
+    which does not crash and produces a loss curve that looks ordinary.
 
-    Three of the six are the case that bites hardest and is easiest to miss.
+    What took it off is the refusal the previous version of this docstring asked for, in the
+    place it asked for: ``CORPUS_PAYLOAD_PROFILES`` reads the profile of the group the
+    registration already pins a digest for, and ``is_a_corpus_a_run_may_read`` requires it
+    alongside the family. ``dataset_is_not_a_corpus`` now fires, which is why the name is
+    below rather than here.
+
+    **THE RULE THAT LOOKED OBVIOUS WOULD HAVE COST THREE WORKING REGISTRATIONS, AND THAT IS
+    WHY THIS IS A PROFILE.** "Refuse a trainable family that declares no tokenizer" catches
+    ``fineweb2-equal-bytes-v1`` and also catches ``frontload-cl-chat-sft-v1``,
+    ``math-sft-60m-v1`` and ``pedagogy70-normal30-v1``, where a null tokenizer is the honest
+    answer because the conversations are pre-tokenization. One of those three is the corpus
+    ``TRAINABLE_FAMILIES`` names as the reason ``sft`` is in the allowlist, so that rule
+    refuses a real training input to catch one hazard, and undoes a recorded decision to do
+    it. Four refusals to prevent one is the wrong trade in a way a count makes obvious.
+
+    Two of the five that remain are the case that bites hardest and is easiest to miss.
     ``lean4-mathlib-bytes-v3`` and ``math-memory-full-v1`` depend on
     ``tokenizer/bytes-utf8``, which OLMo-core has no equivalent for, so the exclusion
     resolves itself the day upstream grows one rather than needing a refusal built here.
-    ``fineweb2-equal-bytes-v1`` does not resolve itself that way and should not: no
-    tokenizer would make a text corpus readable as tokens, so what would take it off this
-    list is a refusal that reads the group's profile.
 
     SELF-RETIRING IN THE DIRECTION THAT MATTERS. Build the missing refusals and this set
     shrinks; empty it and this test says so, at which point the list has become the second
@@ -889,7 +901,6 @@ def test_the_dataset_box_is_a_choice_because_six_registered_names_are_refused_by
     }
 
     assert held_back_only_by_this_form == {
-        "fineweb2-equal-bytes-v1",
         "frontload-cl-chat-sft-v1",
         "lean4-mathlib-bytes-v3",
         "math-memory-full-v1",
@@ -925,6 +936,47 @@ def test_the_two_names_this_set_lost_are_refused_rather_than_merely_unlisted() -
     # of v2. Asserted here rather than only in the registry so that un-retiring v2 to get
     # both versions onto the form fails on the refusal as well as on the duplicate check.
     assert refusals_for("formal-proof-premises-500m-v3") == ()
+
+
+def test_the_text_corpus_in_a_trainable_family_is_refused_rather_than_merely_unlisted() -> None:
+    """The fourth name the set above lost, held on the other side of the move.
+
+    ``pretrain/fineweb2-equal-bytes`` v1 is sealed, frozen, current and in a trainable
+    family, and its one group is ``text`` at profile ``text-corpus/v1`` holding gzipped
+    JSONL. Until ``CORPUS_PAYLOAD_PROFILES`` it compiled clean, classified routine and was
+    admitted, and what a run naming it reached was OLMo-core memmapping compressed JSON as
+    ``uint16``. That failure does not raise. It produces a loss curve, and a result produced
+    that way is indistinguishable from a real one until somebody asks what the model read.
+
+    ``dataset_is_not_a_corpus`` rather than a new condition, and that is not a shortcut.
+    The condition means "registered, and not a corpus a run may read", which is exactly and
+    completely true of this entry -- so what changed is that the condition became right
+    about a case it had been wrong about, rather than a second refusal being invented for
+    the same sentence. A new policy code would also have to be added to
+    ``config/policy.yaml``, which is a second reviewed file for no gain in what the
+    submitter is told.
+
+    THE THREE NAMES BELOW ARE THE POINT OF THE TEST AND NOT PADDING. They are every
+    registered entry in a trainable family that declares no tokenizer, which is the rule
+    somebody reaching for the obvious fix would have written. Each one is a real corpus a
+    run may read, so a refusal that fired on them would be this change costing three working
+    registrations to buy one -- and ``sft/pedagogy70-normal30`` is the corpus
+    ``TRAINABLE_FAMILIES`` names as its reason for admitting ``sft`` at all. Asserted here
+    so that narrowing the profile allowlist, or reaching for the null tokenizer later,
+    fails by name.
+    """
+    assert refusals_for("fineweb2-equal-bytes-v1") == ("dataset_is_not_a_corpus",)
+
+    for conversations in (
+        "frontload-cl-chat-sft-v1",
+        "math-sft-60m-v1",
+        "pedagogy70-normal30-v1",
+    ):
+        assert refusals_for(conversations) == (), (
+            f"{conversations} declares no tokenizer and is in a trainable family, which is "
+            "the shape the rejected rule would have refused; its payload is conversations "
+            "and a run may read it"
+        )
 
 
 def test_an_unregistered_dataset_is_refused_by_something_other_than_this_form() -> None:

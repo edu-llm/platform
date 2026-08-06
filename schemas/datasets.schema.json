@@ -15,6 +15,12 @@
           "title": "Manifest Sha256",
           "type": "string"
         },
+        "payload_profile": {
+          "minLength": 1,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*/v[0-9]+$",
+          "title": "Payload Profile",
+          "type": "string"
+        },
         "reference_id": {
           "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$",
           "title": "Reference Id",
@@ -55,6 +61,7 @@
         "dataset_id",
         "version",
         "manifest_sha256",
+        "payload_profile",
         "tokenizer"
       ],
       "title": "PublishedDatasetReference",
