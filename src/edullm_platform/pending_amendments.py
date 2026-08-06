@@ -931,44 +931,37 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # should not; what it costs is one lead's click per submission that crosses the ceiling,
     # and a refusal whose text does not mention the ceiling at all.
     #
-    # So this record is not the usual "a digest moved and nobody will notice". It is the one
-    # entry here that has to be cleared on the day it is opened, and the ordering is merge,
-    # then `deploy-phase2-admission.yml -f release_lambdas=true` from main, then paste the
-    # version id and digest into infra/admission-validator-release.yaml and
-    # infra/admission-state-machine.yaml and delete the entry.
+    # So that record was not the usual "a digest moved and nobody will notice", and it is the
+    # only entry this register has held that was cleared inside the hour it was opened. The
+    # ordering it named is the ordering that was followed: merge, then
+    # `deploy-phase2-admission.yml -f release_lambdas=true` from main, then the version id
+    # and digest into infra/admission-validator-release.yaml and
+    # infra/admission-state-machine.yaml, which is where the reason for that release now
+    # lives. Its entry is gone from here and the window it described is closed.
+    #
+    # THE OTHER TWO ARE THE OPPOSITE KIND OF ENTRY AND THEY STAY, WHICH IS THE DECISION WORTH
+    # RECORDING RATHER THAN THE TIDYING. The recorder is here for the first time, because its
+    # builder names no file under config/ and the last sweep skipped it for that reason.
+    # Neither the recorder nor the notifier classifies anything, so neither reads
+    # the ceiling and neither behaves differently by a byte of it. What moved their zips
+    # is that both package `contracts/admission.py` and `contracts/policy.py`, which
+    # gained `satisfies` and `automatic_daily_ceiling_usd`.
+    #
+    # THE RECORDER'S ZIP IS ALREADY IN THE BUCKET AND NOTHING POINTS AT IT, WHICH IS THE
+    # RIGHT PLACE FOR IT. `--function all` uploads both admission zips, so the release that
+    # closed the validator's window built and uploaded the recorder's too. Repointing
+    # infra/batch-events.yaml at it would put a Lambda nobody changed through a phase-3
+    # CloudFormation update to close a window that costs nothing, so the object is left
+    # unreferenced and the difference is left here. An artifact addressed by version that
+    # nobody points at is a rollback target rather than a mess.
+    #
+    # They are recorded anyway, and separately, because the register compares bytes and
+    # is right to. A digest that moved for a reason nobody wrote down is exactly what the
+    # tripwire is for, and "it cannot matter for this function" is the sentence somebody
+    # says just before it does. The difference from the validator entry is only in what
+    # the window costs: nothing, in these two cases, which is why neither was worth a
+    # deploy of its own.
     releases: tuple[PendingRelease, ...] = (
-        PendingRelease(
-            function="validator",
-            reason=(
-                "policy v6 adds automatic_daily_ceiling_usd and admission accepts the lead "
-                "gate for a run it derives as automatic, which is the one raise the daily "
-                "ceiling can produce. Until the zip carries both, a submission the ceiling "
-                "routes to a lead is refused with approval_environment_mismatch after the "
-                "lead has released it"
-            ),
-            cleared_by=(
-                "uv run python tools/release_lambda.py --function validator, from main, "
-                "then the version id and digest into infra/admission-validator-release.yaml "
-                "and infra/admission-state-machine.yaml in the same commit as deleting this"
-            ),
-            builds_to="237cc46703bc9145453d6ee6e5ea01feb0d9430f2107d6fded381f83f5988ed7",
-            released="22b3f176ae279e6214f11e8a6e6a1c4e1c7ac3f37fd9e744cfd45316c02e08df",
-            recorded_on=date(2026, 8, 6),
-        ),
-        # THE OTHER TWO ARE THE OPPOSITE KIND OF ENTRY FROM THE ONE ABOVE, AND THE RECORDER
-        # IS HERE FOR THE FIRST TIME SINCE ITS BUILDER NAMES NO FILE UNDER CONFIG/ AND THE
-        # LAST SWEEP SKIPPED IT. Neither the recorder nor the notifier classifies anything,
-        # so neither reads
-        # the ceiling and neither behaves differently by a byte of it. What moved their zips
-        # is that both package `contracts/admission.py` and `contracts/policy.py`, which
-        # gained `satisfies` and `automatic_daily_ceiling_usd`.
-        #
-        # They are recorded anyway, and separately, because the register compares bytes and
-        # is right to. A digest that moved for a reason nobody wrote down is exactly what the
-        # tripwire is for, and "it cannot matter for this function" is the sentence somebody
-        # says just before it does. The difference from the validator entry is only in what
-        # the window costs: nothing, in these two cases, which is why they are cleared with
-        # the same release rather than before it.
         PendingRelease(
             function="recorder",
             reason=(
