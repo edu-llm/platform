@@ -842,47 +842,22 @@ def pending_releases() -> tuple[PendingRelease, ...]:
     # second failed, and only the second was load-bearing, because the interval that moves
     # is the one between the upload and the merge.
     #
-    # AND A FIFTH VALIDATOR ENTRY OPENS FOR THE REFUSAL THAT CLOSES THE HOLE THE FOURTH ONE
-    # OPENED, WHICH IS WORTH SAYING PLAINLY. Registering the five corpora made
-    # pretrain/fineweb2-equal-bytes nameable, and that corpus is raw text in a trainable
-    # family. So the release that ended a submitter's disagreement with their own tooling
-    # also put a silent hazard within reach, and this entry is the interval before the
-    # refusal for it reaches the account. Both are correct changes and the second is owed to
-    # the first.
+    # A FIFTH VALIDATOR ENTRY OPENED FOR THE REFUSAL THAT CLOSED THE HOLE THE FOURTH ONE
+    # OPENED, AND IT IS CLEARED BY THE RELEASE THAT CARRIES THIS DELETION. Registering the
+    # five corpora made pretrain/fineweb2-equal-bytes nameable, and that corpus is raw text
+    # in a trainable family, so the release that ended a submitter's disagreement with their
+    # own tooling also put a silent hazard within reach. Both are correct changes and the
+    # second is owed to the first.
+    #
+    # IT IS THE FIRST ENTRY IN THIS REGISTER WHERE THE ACCOUNT WAS THE PERMISSIVE SIDE, AND
+    # THAT IS WORTH KEEPING AS THE SHAPE TO PREFER. Every entry before it described a tree
+    # that had learned something the deployed zip had not, so the refusal a submitter met
+    # came from inside AWS after the approval gate. This one ran the other way: the tree
+    # refused and the account admitted, so for the ninety seconds it stood, a submitter met
+    # the refusal on their own laptop from `edullm check`, ahead of the gate and ahead of
+    # anybody else's attention. A change that has to sit in this window should be arranged
+    # to sit in it this way round where it can be.
     releases: tuple[PendingRelease, ...] = (
-        PendingRelease(
-            function="validator",
-            reason=(
-                "A NEW REFUSAL, WHICH IS THE KIND OF PENDING RELEASE WHERE THE ACCOUNT IS "
-                "THE PERMISSIVE SIDE. Until this deploys, the tree refuses a submission "
-                "naming fineweb2-equal-bytes-v1 and the deployed validator admits it, so "
-                "the laptop is stricter than the account rather than the other way round. "
-                "That is the safe direction of the two -- a submitter meets the refusal "
-                "before the approval gate rather than after it, and `edullm check` is where "
-                "they meet it -- but it is still skew and it is still worth closing."
-                "\n\n"
-                "What moved is config/datasets.yaml, which gains a payload_profile on each "
-                "of the twenty-nine published entries, and "
-                "contracts/dataset_registry.py, which gains CORPUS_PAYLOAD_PROFILES and "
-                "requires it alongside the family in is_a_corpus_a_run_may_read. Both are "
-                "in the zip: the registry file is one of the seven in ADMISSION_CONFIG and "
-                "the contract is one of the twenty-eight modules."
-                "\n\n"
-                "IT CHANGES EXACTLY ONE ADMISSION ANSWER, MEASURED ACROSS THE WHOLE "
-                "REGISTRY RATHER THAN ASSUMED. pretrain/fineweb2-equal-bytes v1 goes from "
-                "admitted to dataset_is_not_a_corpus. The other twenty pretrain entries "
-                "carry pretrain-tokens/v1 and the three sft entries carry "
-                "sft-conversations/v1, so every corpus a run can name today stays nameable, "
-                "and the tokenizer and vendor entries were already refused by family. No "
-                "run has ever named the one entry this refuses: none of the 202 intent "
-                "records in the lineage bucket mention it, and it has been registered for "
-                "under an hour."
-            ),
-            cleared_by="uv run python tools/release_lambda.py --function validator",
-            builds_to="f8cdd56259ff2b3f9ff5c26f0bb67ec1e22f8532f841fcc4c811a7e9a73cf354",
-            released="b8db05da9915bacb12f13d7d6c5945f523e358186dd6afcb0e06d1066c53e7ec",
-            recorded_on=date(2026, 8, 6),
-        ),
         PendingRelease(
             function="recorder",
             reason=(

@@ -215,14 +215,35 @@
 # -- #271 is a behaviour change for it rather than an import -- but that difference is
 # recorded in its own pending entry with its own reason and window, and repointing its
 # template here would take a release somebody else is accountable for out of their hands.
+# AND THIS ONE IS OWED TO THE ONE ABOVE, WHICH IS A SHAPE THIS FILE HAS NOT RECORDED BEFORE.
+# Registering the five corpora made pretrain/fineweb2-equal-bytes nameable, and that corpus
+# is raw text in a trainable family: a submission naming it compiled clean, classified
+# routine and was admitted, and what it reached was OLMo-core memmapping gzipped JSON as
+# uint16 tokens. So the release that closed a disagreement between a laptop and the account
+# put a silent hazard within reach, and this release carries the refusal for it.
+#
+# What moved is config/datasets.yaml, which gains a payload_profile on each of the
+# twenty-nine published entries, and contracts/dataset_registry.py, which gains
+# CORPUS_PAYLOAD_PROFILES and requires it alongside the family. One admission answer changes
+# across the whole registry, measured rather than assumed: that corpus goes from admitted to
+# dataset_is_not_a_corpus, and every other registered name answers exactly as before.
+#
+# The skew this closes ran the safe way for once. Between #284 merging and this deploying,
+# the tree refused and the account admitted, so a submitter met the refusal on their laptop
+# ahead of the approval gate rather than from inside AWS behind it. That is the inverse of
+# the paragraph two entries up and is worth naming as the direction to prefer when a change
+# has to sit in the window.
+#
+# Cut from b54eb40. The pair was re-derived immediately before pasting rather than only
+# before dispatching, which is the correction the entry above earned.
 schema_version: 1
 
 #: The object the template's Code block names. Kept here as well so the two can be
 #: compared: a version id edited in one place and not the other is a template pointing at
 #: a zip nobody recorded, or a record describing a zip nobody deployed.
 s3_key: admission-validator/admission-validator.zip
-s3_object_version: x_FMf.Ppf.UhzL7kd_zjeIsKB0CO76Xu
+s3_object_version: Vo0zwrEJy.OnlYzCIpTFnkr6sQbYkBJb
 
 #: sha256 of the uploaded zip, as tools/build_admission_lambda.py reports it. This is the
 #: field that ties the release to a tree rather than to a moment.
-sha256: b8db05da9915bacb12f13d7d6c5945f523e358186dd6afcb0e06d1066c53e7ec
+sha256: f8cdd56259ff2b3f9ff5c26f0bb67ec1e22f8532f841fcc4c811a7e9a73cf354
