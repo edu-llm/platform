@@ -35,8 +35,8 @@ name = "edullm"
 #
 # 0.2.0 rather than 0.1.1 because 0.1.0 was never released and nothing was ever installed
 # from a tag; the first tag this repository has should not look like the second.
-# WHY THIS IS A MINOR RATHER THAN A PATCH. edullm studio and edullm data are new verbs, check prints the price it exists for and no longer refuses a tree with untracked files in it, submit says queued rather than compiling while it waits, registration hands you a compare URL, and the lane verbs find the AWS profile the credential broker wrote so AWS_PROFILE no longer has to be set in every terminal.
-version = "4.3.0"
+# WHY THIS IS A MINOR RATHER THAN A PATCH. edullm studio --project now names the space, so one person may have several; a bare edullm studio lists them instead of refusing, and --stop with no project stops every app you have running
+version = "4.4.0"
 requires-python = ">=3.12"
 dependencies = [
   "pydantic>=2,<3",
@@ -85,7 +85,7 @@ reader = [
 # needs on day one -- `docs-frank/reference/system-overview.md` counts twelve of the
 # fourteen surfaces that reach a researcher as this one command:
 #
-#   uv tool install --force git+https://github.com/edu-llm/platform@v4.3.0
+#   uv tool install --force git+https://github.com/edu-llm/platform@v4.4.0
 #
 # THAT LINE IS TESTED RATHER THAN PROOFREAD, by tests/test_cli_install_command.py, which
 # holds it to the one in `edullm_platform.cli.release`. What used to be written here was

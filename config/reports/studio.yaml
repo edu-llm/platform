@@ -44,12 +44,19 @@ schema_version: 1
 # files; choosing between them is not a thing a CLI should do silently.
 domain_id: d-bxqz8jfqjjnu
 
-# What a space's own volume is sized at when the verb creates one. Fifty is the size the one
-# space anybody has used in anger carries, and Studio bills it whether or not an app is running
-# -- it is the persistent disk that is the whole reason Studio beats the lane for exploration,
-# and it is also the charge --stop does not stop. At the rate below this is $5.60 a month per
-# person and it is the floor under pointing thirty-five people here.
-volume_gib: 50
+# What a space's own volume is sized at when the verb creates one, and it is deliberately small.
+# Studio bills it whether or not an app is running -- it is the persistent disk that is the whole
+# reason Studio beats the lane for exploration, and it is also the charge --stop does not stop.
+#
+# FIVE AND NOT FIFTY, WHICH IS A CORRECTION AND NOT A DEFAULT NOBODY THOUGHT ABOUT. This said
+# fifty while a person had one space. --project now names the space, so a person has as many as
+# they have projects, and a number that was one disk per person is now six or ten. Fifty would
+# be $5.60 a month each and better than $1,100 a month across thirty-five people who each keep a
+# handful -- which would make the accumulation argument in cli/studio.py false the moment it was
+# written. Five is what all twenty spaces in the domain already carry, it is SageMaker's own
+# default, and it is about $0.56 a month. A space that needs more can be grown in the console and
+# cannot be shrunk, which is the asymmetry that says to start small.
+volume_gib: 5
 
 # What a gigabyte-month of that volume costs, as USE1-Studio:VolumeUsage.gp3. A list price for
 # the same reason the instance rates are: this account was billed $0.09296 against it, which is
