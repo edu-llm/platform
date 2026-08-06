@@ -77,6 +77,26 @@ Resources:
       # policy and the target role's trust policy; without it the AssumeRole call fails, and
       # the failure names neither policy.
       #
+      # ONE STATEMENT PER ACTION, AND THE THREE CANNOT BE COLLAPSED BACK INTO ONE. They were
+      # one statement carrying all four conditions until 2026-08-06, and that shape granted
+      # nothing at all: every entry to the lane failed AccessDenied on sts:SetSourceIdentity,
+      # so edullm run, edullm shell and tools/enter_researcher_lane.py were unusable by
+      # everybody from the hour the role was created. STS authorises the three actions
+      # separately and gives each one only its own condition keys, which was measured against
+      # this account on a throwaway role rather than reasoned about:
+      #
+      #   sts:SetSourceIdentity is authorised with no aws:RequestTag/* in its request context,
+      #   so a presence test on one is a key that is absent, so StringLike fails and the
+      #   statement does not match.
+      #   sts:TagSession is authorised with no sts:SourceIdentity in its request context, and
+      #   fails the same way for the mirror-image reason.
+      #
+      # Splitting costs no strictness, which is the part worth checking before anybody tidies
+      # it. sts:AssumeRole sees every one of these keys and keeps all four tests, and no
+      # session exists without it -- so a caller still has to present both tags and a source
+      # identity to get in, and the two narrower statements below can only ever decorate a
+      # request that already passed the first one.
+      #
       # StringLike "?*" is a presence test. ? matches one character and * matches the rest, so
       # it demands a non-empty value and fails when the key is absent altogether.
       #
@@ -102,15 +122,14 @@ Resources:
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
+          # The gate. Every condition the lane has is here, because this is the one action
+          # whose request context carries all of them and the one no session exists without.
           - Sid: InternRolesMayEnterTheLane
             Effect: Allow
             Principal:
               AWS:
                 Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:root
-            Action:
-              - sts:AssumeRole
-              - sts:SetSourceIdentity
-              - sts:TagSession
+            Action: sts:AssumeRole
             Condition:
               ArnLike:
                 aws:PrincipalArn:
@@ -123,6 +142,45 @@ Resources:
                 aws:TagKeys:
                   - project
                   - lifetime
+          # The two tags cost attribution reads. No sts:SourceIdentity test, because this
+          # action is not given that key and a test on it refuses every session.
+          - Sid: InternRolesMayTagTheirLaneSession
+            Effect: Allow
+            Principal:
+              AWS:
+                Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:root
+            Action: sts:TagSession
+            Condition:
+              ArnLike:
+                aws:PrincipalArn:
+                  Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/Intern-*
+              StringLike:
+                aws:RequestTag/project: "?*"
+                aws:RequestTag/lifetime: "?*"
+              ForAllValues:StringEquals:
+                aws:TagKeys:
+                  - project
+                  - lifetime
+          # Who the working-tier fence and CloudTrail name. No aws:RequestTag test, for the
+          # mirror-image reason: this action is not given those keys.
+          #
+          # THE SID IS SHORT ON PURPOSE. It read InternRolesMayNameThePersonAtTheKeyboard,
+          # which is forty alphanumeric characters and therefore the shape of an AWS secret
+          # access key, so role_drift.py's scanner refused the template for carrying a
+          # credential. The scanner is right to be blunt about a forty-character run and this
+          # is the cheaper side to give way on.
+          - Sid: InternRolesMayNameThePerson
+            Effect: Allow
+            Principal:
+              AWS:
+                Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:root
+            Action: sts:SetSourceIdentity
+            Condition:
+              ArnLike:
+                aws:PrincipalArn:
+                  Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/Intern-*
+              StringLike:
+                sts:SourceIdentity: "?*"
       # Inline rather than a customer-managed policy, for the reason every role in this
       # repository carries: InternSandboxBoundary denies iam:CreatePolicyVersion on every
       # policy ARN, so a managed policy is create-once and the first amendment fails

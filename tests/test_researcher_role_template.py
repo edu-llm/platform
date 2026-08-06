@@ -87,30 +87,57 @@ def test_the_role_carries_the_boundary_and_names_itself() -> None:
     assert boundary["Fn::Sub"].endswith(":policy/InternSandboxBoundary")
 
 
+def trust_statement(action: str) -> dict[str, object]:
+    trust = role()["AssumeRolePolicyDocument"]
+    assert isinstance(trust, dict)
+    found = [one for one in trust["Statement"] if as_list(one["Action"]) == [action]]
+    assert len(found) == 1, f"{action} is granted by {len(found)} statements rather than one"
+    return found[0]
+
+
 def test_the_trust_policy_demands_a_project_a_lifetime_and_a_source_identity() -> None:
     """Mutation: drop sts:SetSourceIdentity from the action list.
 
     AWS requires SetSourceIdentity in both the caller's policy and the target role's trust
     policy, so dropping it here fails the AssumeRole call rather than merely losing the
-    attribution -- and the failure names neither. Mutation: drop one of the two StringLike
-    "?*" presence tests, which is what admits an untagged session.
+    attribution -- and the failure names neither. Mutation: drop one of the three StringLike
+    "?*" presence tests, which is what admits an untagged or unattributed session.
     """
-    trust = role()["AssumeRolePolicyDocument"]
-    assert isinstance(trust, dict)
-    entry = trust["Statement"][0]
+    entry = trust_statement("sts:AssumeRole")
     condition = entry["Condition"]
 
-    assert set(as_list(entry["Action"])) == {
-        "sts:AssumeRole",
-        "sts:SetSourceIdentity",
-        "sts:TagSession",
-    }
     assert condition["StringLike"] == {
         "aws:RequestTag/project": "?*",
         "aws:RequestTag/lifetime": "?*",
         "sts:SourceIdentity": "?*",
     }
     assert condition["ArnLike"]["aws:PrincipalArn"]["Fn::Sub"].endswith(":role/Intern-*")
+    assert condition["ForAllValues:StringEquals"]["aws:TagKeys"] == ["project", "lifetime"]
+
+
+def test_each_action_is_tested_only_on_the_keys_it_is_given() -> None:
+    """**THE SHAPE THAT MADE THE ROLE UNUSABLE FOR THE FIRST FIVE HOURS OF ITS LIFE.**
+    Mutation: collapse the three statements back into one carrying all four conditions.
+    Mutation: add sts:SourceIdentity to the TagSession statement, or aws:RequestTag to the
+    SetSourceIdentity one.
+
+    Either mutation restores a role nobody can assume. STS authorises the three actions of an
+    AssumeRole request separately and hands each one only its own condition keys, so a
+    presence test on a key the action is not given is a test on an absent key: StringLike
+    fails, the statement does not match, and the whole call is refused with an AccessDenied
+    naming an action rather than a condition. It was measured on a throwaway role in this
+    account on 2026-08-06, both ways round, and the yaml carries the measurement.
+
+    trust_statement asserting exactly one statement per action is half the test, because a
+    collapsed policy is a statement granting three actions and finds none of them.
+    """
+    tagging = trust_statement("sts:TagSession")["Condition"]
+    naming = trust_statement("sts:SetSourceIdentity")["Condition"]
+
+    assert "sts:SourceIdentity" not in tagging["StringLike"]
+    assert set(tagging["StringLike"]) == {"aws:RequestTag/project", "aws:RequestTag/lifetime"}
+    assert set(naming["StringLike"]) == {"sts:SourceIdentity"}
+    assert "ForAllValues:StringEquals" not in naming
 
 
 def test_the_instance_allow_list_is_exactly_what_the_catalog_prices() -> None:

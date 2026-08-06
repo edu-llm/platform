@@ -289,7 +289,7 @@
     }
   ],
   "max_session_duration_seconds": 3600,
-  "observed_at": "2026-08-06T02:17:43Z",
+  "observed_at": "2026-08-06T07:13:31Z",
   "permissions_boundary_policy_name": "InternSandboxBoundary",
   "role_name": "edullm-researcher",
   "source": "aws",
@@ -299,9 +299,7 @@
     {
       "action_match": {
         "actions": [
-          "sts:AssumeRole",
-          "sts:SetSourceIdentity",
-          "sts:TagSession"
+          "sts:AssumeRole"
         ],
         "element": "Action"
       },
@@ -354,6 +352,91 @@
         ]
       },
       "sid": "InternRolesMayEnterTheLane"
+    },
+    {
+      "action_match": {
+        "actions": [
+          "sts:TagSession"
+        ],
+        "element": "Action"
+      },
+      "conditions": [
+        {
+          "condition_key": "aws:PrincipalArn",
+          "operator": "ArnLike",
+          "values": [
+            "arn:aws:iam::<aws-account-id>:role/Intern-*"
+          ]
+        },
+        {
+          "condition_key": "aws:TagKeys",
+          "operator": "ForAllValues:StringEquals",
+          "values": [
+            "project",
+            "lifetime"
+          ]
+        },
+        {
+          "condition_key": "aws:RequestTag/lifetime",
+          "operator": "StringLike",
+          "values": [
+            "?*"
+          ]
+        },
+        {
+          "condition_key": "aws:RequestTag/project",
+          "operator": "StringLike",
+          "values": [
+            "?*"
+          ]
+        }
+      ],
+      "effect": "Allow",
+      "principal_match": {
+        "element": "Principal",
+        "principals": [
+          {
+            "identifier": "arn:aws:iam::<aws-account-id>:root",
+            "principal_type": "AWS"
+          }
+        ]
+      },
+      "sid": "InternRolesMayTagTheirLaneSession"
+    },
+    {
+      "action_match": {
+        "actions": [
+          "sts:SetSourceIdentity"
+        ],
+        "element": "Action"
+      },
+      "conditions": [
+        {
+          "condition_key": "aws:PrincipalArn",
+          "operator": "ArnLike",
+          "values": [
+            "arn:aws:iam::<aws-account-id>:role/Intern-*"
+          ]
+        },
+        {
+          "condition_key": "sts:SourceIdentity",
+          "operator": "StringLike",
+          "values": [
+            "?*"
+          ]
+        }
+      ],
+      "effect": "Allow",
+      "principal_match": {
+        "element": "Principal",
+        "principals": [
+          {
+            "identifier": "arn:aws:iam::<aws-account-id>:root",
+            "principal_type": "AWS"
+          }
+        ]
+      },
+      "sid": "InternRolesMayNameThePerson"
     }
   ]
 }
