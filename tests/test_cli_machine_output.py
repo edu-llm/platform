@@ -23,7 +23,7 @@ import pytest
 
 from edullm_platform.cli.machine import FORMAT_VERSION
 from edullm_platform.cli.main import EXIT_OK, EXIT_REFUSED
-from edullm_platform.cli.preflight import UNRESOLVED_IMAGE_DIGEST
+from edullm_platform.cli.preflight import DEFERRED_TO_SUBMIT, UNRESOLVED_IMAGE_DIGEST
 from edullm_platform.run_history import RUNS_FOR_A_FIGURE, load_run_history
 from tests.cli_support import FakeRunner, git_answers, invoke, ok, write_spec
 
@@ -149,7 +149,7 @@ def test_the_placeholder_digest_is_nowhere_in_the_document(
     assert document["manifest_sha256"] is None
 
 
-def test_the_document_carries_the_two_checks_a_laptop_could_not_make(
+def test_the_document_carries_every_check_a_laptop_could_not_make(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Mutation: leave `deferred` out, so a clean check reads as a clean bill of health.
@@ -157,6 +157,12 @@ def test_the_document_carries_the_two_checks_a_laptop_could_not_make(
     docs-frank/working/adarsh-rajesh-first-run.md is a transcript of what it costs when a
     submitter believes a clean preflight means a submission will go through. An agent
     believes it harder and faster than a person does.
+
+    Held against ``DEFERRED_TO_SUBMIT`` rather than against a list written here, because
+    which questions are deferred moves and this document has to move with it. What decides
+    that list is ``tests/test_check_refuses_what_compile_refuses.py``, which fails when a
+    compile-time refusal is neither asked locally nor named there -- so a list spelled here
+    would be the copy that stayed behind.
     """
     root, runner = checkout(tmp_path, compute="gpu-1xa10g")
 
@@ -169,10 +175,13 @@ def test_the_document_carries_the_two_checks_a_laptop_could_not_make(
 
     assert code == EXIT_OK, out + err
     document = only_document(out)
-    assert [entry["code"] for entry in document["deferred"]] == [
-        "no_published_image",
-        "image_scan_findings_unreviewed",
-    ]
+    deferred = [(entry["code"], entry["detail"]) for entry in document["deferred"]]
+
+    assert deferred == [(code_said, detail) for code_said, detail in DEFERRED_TO_SUBMIT]
+    assert "no_published_image" in {code_said for code_said, _ in deferred}, (
+        "the check the transcript is about is not among the deferred ones, so this document "
+        "tells a submitter nothing about whether their commit was built"
+    )
 
 
 def test_the_history_block_says_when_it_was_measured_and_over_how_many_runs(

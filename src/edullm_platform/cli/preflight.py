@@ -14,6 +14,7 @@ is the dataset registered, and a corpus      ``contracts.dataset_registry.Datase
 is the dataset still the current one         ``submission.require_a_dataset_release_that_is_current``
 is the compute profile real and provisioned  ``contracts.workload.resolve_compute_profile_for_execution``
 does the command start one process per card  ``launchers.require_a_process_for_every_device``
+does vLLM read the size the command names    ``launchers.require_a_tensor_parallel_flag_vllm_reads``
 does it save where a retry will look         ``checkpoint_commands.require_a_save_folder_a_retry_can_find``
 can the card run the dtype it asks for       ``precision.require_bfloat16_only_where_the_hardware_has_it``
 is the command startable and still quoted    ``contracts.manifest.RunManifest``
@@ -44,19 +45,24 @@ derived from one, so constructing the manifest is what buys every rule at once r
 a reimplementation of each. The one field a laptop cannot fill is the image digest: it is
 whatever the registry published for the declared commit, and asking the registry needs a
 credential this binary does not hold and must not. :data:`UNRESOLVED_IMAGE_DIGEST` stands
-in its place, is never printed, and the two checks that depend on it -- whether the commit
-published an image at all, and whether that image's scan findings have been read -- are
-reported as deferred rather than as passed. Reporting them as passed is the failure this
-paragraph exists to prevent; ``adarsh-rajesh-first-run.md`` is a transcript of what it
-costs when a submitter believes a clean preflight means a submission will go through.
+in its place, is never printed, and the checks that depend on it -- which image the commit
+published, and whether that image's scan findings have been read -- are reported as
+deferred rather than as passed. Reporting them as passed is the failure this paragraph
+exists to prevent; ``adarsh-rajesh-first-run.md`` is a transcript of what it costs when a
+submitter believes a clean preflight means a submission will go through.
 
-**IT IS TWO CHECKS DEFERRED AND NOT MORE, WHICH IS WHY THE VERB IS WORTH RUNNING.**
-:data:`DEFERRED_TO_SUBMIT` is the whole of what a laptop cannot decide, and everything else
-``submission.compile_submission`` refuses is refused here first, bar one:
-``require_a_tensor_parallel_flag_vllm_reads`` is called there and not by :func:`_check_command`,
-so a tensor-parallel width the vLLM server will not read clears this verb and is refused at
-compile time. That is a gap rather than a design and it is named here because naming it is
-what makes it findable.
+**WHAT IS DEFERRED IS :data:`DEFERRED_TO_SUBMIT` AND NOTHING ELSE, WHICH IS WHY THE VERB IS
+WORTH RUNNING.** That used to be an assertion this paragraph made and it is now a test.
+``tests/test_check_refuses_what_compile_refuses.py`` walks both paths out of the source,
+holds every refusal the compile job can raise against every refusal this module makes, and
+fails on a difference nothing accounts for.
+
+It was written because there was one. ``require_a_tensor_parallel_flag_vllm_reads`` was
+called by ``submission.compile_submission`` and by :func:`_check_command` never, so a sweep
+naming a tensor-parallel width the vLLM server will not read cleared this verb and was
+refused after the dispatch -- the same shape as the quoting rule before it, and found the
+same way, by somebody reading rather than by anything going red. The call is here now, and
+so is the test that would have said so.
 
 **THIS PARAGRAPH QUOTED A COUNT OUT OF ``system-overview.md`` UNTIL 2026-08-06 AND
 ``config/reports/surfaces.yaml`` QUOTED A DIFFERENT ONE OFF THE SAME LIST.** Both were copies
@@ -65,9 +71,9 @@ checkable against anything but a document. What is checkable is this tree: the c
 rules are the calls in ``submission.compile_submission``, this verb's are the calls in
 :func:`run_preflight` and :func:`_check_command`, and every refusal either can raise is a
 ``SubmissionRefusedError`` subclass in ``edullm_platform/errors.py`` carrying its own
-``reason_code``. Count those three and the two documents cannot disagree, because neither is
-being asked. ``tests/test_cli_no_hardcoded_bounds.py`` holds the sentence above to
-:data:`DEFERRED_TO_SUBMIT` for the same reason.
+``reason_code``. Counting those is what the test above does, so the two documents cannot
+disagree because neither is being asked. ``tests/test_cli_no_hardcoded_bounds.py`` holds any
+count this file writes to the same standard.
 """
 
 from __future__ import annotations
@@ -103,6 +109,7 @@ from edullm_platform.contracts.workload import (
     resolve_compute_profile_for_execution,
 )
 from edullm_platform.errors import (
+    AmbiguousImageError,
     ExperimentNotASlugError,
     NoPublishedImageError,
     RetiredDatasetReleaseError,
@@ -111,7 +118,10 @@ from edullm_platform.errors import (
     UnregisteredWorkloadProfileError,
     WorkloadProfileRepositoryMismatchError,
 )
-from edullm_platform.launchers import require_a_process_for_every_device
+from edullm_platform.launchers import (
+    require_a_process_for_every_device,
+    require_a_tensor_parallel_flag_vllm_reads,
+)
 from edullm_platform.manifest_helpers import build_request_facts, compute_manifest_cost_inputs
 from edullm_platform.precision import require_bfloat16_only_where_the_hardware_has_it
 from edullm_platform.run_history import HistoryAnswer, history_for
@@ -153,9 +163,15 @@ SCRATCH_TEAM: Final = "scratch"
 #: the workflow derive it from the commit.
 UNRESOLVED_IMAGE_DIGEST: Final = "sha256:" + "0" * 64
 
-#: The two checks a laptop cannot make, named so the output can say so rather than imply a
-#: clean bill of health. Both need the container registry, which needs a credential this
+#: The checks a laptop cannot make, named so the output can say so rather than imply a
+#: clean bill of health. Each needs the container registry, which needs a credential this
 #: binary holds none of.
+#:
+#: **THIS LIST IS WHAT MAKES A GAP HONEST RATHER THAN A GAP,** and
+#: ``tests/test_check_refuses_what_compile_refuses.py`` is what keeps it complete: every
+#: refusal the compile job can make is either asked here or named here, and a compile-time
+#: rule added without either goes red rather than shipping as a submission cleared locally
+#: and turned away after the dispatch.
 DEFERRED_TO_SUBMIT: Final = (
     (
         # The word the refusal itself carries, so a reader told the check was deferred
@@ -164,6 +180,14 @@ DEFERRED_TO_SUBMIT: Final = (
         (
             "Whether this commit published an image. A push to edullm/** builds one, and "
             "the submission workflow holds the credential that asks the registry."
+        ),
+    ),
+    (
+        AmbiguousImageError.reason_code,
+        (
+            "Which image, where that commit published more than one at the same instant. "
+            "The registry holds the push times and this cannot ask for them, so the "
+            "compile step is where a tie is seen and refused rather than guessed at."
         ),
     ),
     (
@@ -1058,23 +1082,35 @@ def _build_manifest(
 
 
 def _check_command(manifest: RunManifest, catalog: WorkloadCatalog) -> list[Refusal]:
-    """The three rules about the text of a command, asked against the resolved profile.
+    """Every rule about the text of a command, asked against the resolved profile.
 
     Against the resolved profile rather than the workload's, because ``--compute`` is what
     the run lands on and a device count read off anything else would clear a command that
-    trains on one card and bills for four. The third rule reads the same field for the same
-    reason, one step further along: the instance type behind the resolved profile is what
-    decides whether the devices have bfloat16.
+    trains on one card and bills for four. The bfloat16 rule reads the same field for the
+    same reason, one step further along: the instance type behind the resolved profile is
+    what decides whether the devices have bfloat16.
 
     The catalog is passed rather than closed over because that is where the shapes are, and
     the bfloat16 rule is derived from the instance type each profile declares there so that a
     shape added to that file is covered without an edit anywhere else.
+
+    **THE SPELLING RULE WAS THE FOURTH AND WAS ASKED ONLY BY THE COMPILE STEP, WHICH IS THE
+    FAILURE THIS WHOLE MODULE IS WRITTEN AGAINST.** A sweep asking for one device on a
+    one-device shape has nothing wrong with its process count, so
+    ``require_a_process_for_every_device`` cleared it and the short spelling travelled --
+    through this verb, through the dispatch, into the compile job, and back as a refusal
+    with a queue wait already spent. ``tests/test_check_refuses_what_compile_refuses.py``
+    is what stops a fifth rule arriving the same way.
     """
     refusals: list[Refusal] = []
     try:
         require_a_process_for_every_device(
             command=manifest.command, compute_profile=manifest.compute_profile
         )
+    except SubmissionRefusedError as exc:
+        refusals.append(Refusal(code=type(exc).reason_code, detail=str(exc)))
+    try:
+        require_a_tensor_parallel_flag_vllm_reads(manifest.command)
     except SubmissionRefusedError as exc:
         refusals.append(Refusal(code=type(exc).reason_code, detail=str(exc)))
     try:
