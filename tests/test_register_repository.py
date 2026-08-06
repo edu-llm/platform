@@ -791,6 +791,14 @@ def test_the_runbook_names_every_laptop_deploy_and_says_no_workflow_can_do_them(
     that deploys only the first produces a repository that publishes an image nothing may
     fetch. Every stack a registration moves is asserted here by name, so adding a grant to a
     template without adding its deploy to the runbook is a red test.
+
+    AND IT SAYS TO READ THE STACK BEFORE WRITING OVER IT. These four are laptop-applied, so
+    a stack ahead of `main` is the ordinary state of this repository rather than a fault:
+    two registrations a day apart both reach the account by hand. Deploying an older tree
+    over a newer stack drops the newer registration's grants and CloudFormation reports a
+    successful deploy, so the repository that published this morning stops being able to
+    start a job and nothing anywhere says why. The warning is asserted rather than trusted
+    to survive the next edit to this string.
     """
     laptop = [
         item
@@ -808,6 +816,10 @@ def test_the_runbook_names_every_laptop_deploy_and_says_no_workflow_can_do_them(
     ):
         assert stack in detail
     assert "no workflow can do this" in detail
+    assert "get-template" in detail, (
+        "the runbook has to say to read the deployed stack before applying this tree over "
+        "it, because these deploys are by hand and a stack ahead of main is ordinary"
+    )
 
 
 def test_the_workflow_reaches_no_aws_account_at_all(
